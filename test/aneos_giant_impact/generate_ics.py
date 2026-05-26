@@ -1,107 +1,103 @@
-"""Generate ICs for ANEOS giant impact test.
+"""Generate ICs for the ANEOS giant-impact test via the Phase 17h HSE builder.
 
-Creates a uniform-density differentiated sphere:
-  - Iron core (CompositionType=1): inner 50% by radius
-  - Forsterite mantle (CompositionType=0): outer shell
-  - ~5000 particles total, glass-like random placement
-  - At rest, with thermal energy set to ~2000 K
+Earth-mass differentiated body, forsterite mantle (68% by mass) + iron core
+(32%). The HSE solve uses Material.sesame() against the same Stewart S19/S20
+.sesame tables that GIZMO reads at run-time, so the IC's pressure profile and
+the runtime EOS are consistent at construction.
 
-Uses code units where G=1 and the sphere has radius=1, mass~1.
+Adiabatic zones throughout: each zone runs on its own adiabat anchored to the
+boundary T inherited from the layer outside it; outer surface is set at
+T=2000 K (warm enough to sit comfortably inside the Stewart table grid).
+
+CompositionType (EOS_ANEOS-only build):
+    0 -> forsterite (mantle, AneosTable0)
+    1 -> iron       (core,   AneosTable1)
+
+Glass-relaxed placement + per-particle u-correction so EOS(rho_SPH, u) =
+P_HSE_local, matching the recipe validated in test/hse_earth_smoke.
 """
 
+import os
+import sys
 import numpy as np
-import h5py
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from python_src.eos_tools.eos_dispatch import Material
+from python_src.eos_tools.hse_solver import Zone, solve_hse
+from python_src.eos_tools.shell_placement import (
+    glass_relax, atmosphere_shell, merge_placements,
+)
+from python_src.eos_tools.sph_density import correct_u_for_sph_density
+from python_src.eos_tools.build_layered_body import write_hdf5, hse_diagnostics
 
 
-def generate_sphere_particles(n_target, radius=1.0):
-    """Generate approximately n_target particles in a uniform sphere using rejection sampling."""
-    # Over-generate in a cube, then reject outside sphere
-    n_gen = int(n_target * 6 / np.pi * 1.1)  # ~10% extra
-    rng = np.random.default_rng(42)
+# Cv supplied as a fallback only — the SESAME u<->T conversion now bisects
+# on the table itself (post-fix). Setting Cv to a sane order-of-magnitude
+# value keeps any residual Cv-dependent code paths well-behaved.
+CV_FORSTERITE = 1.0e7   # erg/g/K
+CV_IRON       = 4.5e6   # erg/g/K
 
-    coords = rng.uniform(-radius, radius, (n_gen, 3))
-    r = np.linalg.norm(coords, axis=1)
-    mask = r < radius
-    coords = coords[mask]
-
-    # Trim to target
-    if len(coords) > n_target:
-        coords = coords[:n_target]
-
-    return coords
+M_EARTH = 5.972e27   # g
 
 
-def generate_ics(fname="aneos_giant_impact_ics.hdf5", n_particles=5000):
-    radius = 1.0
-    core_frac = 0.5  # core radius = 50% of total radius
+def main(out=None, n_particles=2000, n_sweeps=30,
+         n_atmo=1500, atmo_rho_frac=1.0e-3, atmo_R_outer_frac=3.0,
+         atmo_rho_taper_power=5.0):
+    here = os.path.dirname(os.path.abspath(__file__))
+    if out is None:
+        out = os.path.join(here, "aneos_giant_impact_ics.hdf5")
 
-    # Material densities in CGS (for setting thermal energy)
-    rho_forsterite = 3.2  # g/cm^3
-    rho_iron = 7.87       # g/cm^3
+    forsterite_path = os.path.join(here, "forsterite.sesame")
+    iron_path       = os.path.join(here, "iron.sesame")
+    for tbl in (forsterite_path, iron_path):
+        if not os.path.isfile(tbl):
+            raise FileNotFoundError(
+                f"{tbl} not found. Run setup_tables() in "
+                "test_aneos_giant_impact.py first (downloads + converts the "
+                "Stewart S19/S20 release tables)."
+            )
 
-    coords = generate_sphere_particles(n_particles, radius)
-    n = len(coords)
-    r = np.linalg.norm(coords, axis=1)
+    forsterite = Material.sesame("forsterite_S19", forsterite_path,
+                                 composition_type=0, Cv=CV_FORSTERITE)
+    iron       = Material.sesame("iron_S20", iron_path,
+                                 composition_type=1, Cv=CV_IRON)
+    zones = [
+        Zone(forsterite, inner_mass_frac=0.32, T_profile="adiabatic"),
+        Zone(iron,       inner_mass_frac=0.00, T_profile="adiabatic"),
+    ]
 
-    # Assign materials: core (iron) vs mantle (forsterite)
-    is_core = r < core_frac * radius
-    comp_type = np.where(is_core, 1, 0).astype(np.int32)
+    prof = solve_hse(M_total=M_EARTH, T_surface=2000.0, P_surface=1e6,
+                     zones=zones, n_steps=1500, verbose=True)
+    print(f"  Solved R = {prof['R']:.3e} cm  P_c = {prof['P'][-1]:.3e}  "
+          f"T_c = {prof['T'][-1]:.3e}")
+    hse_diagnostics(prof)
 
-    # Uniform density in code units
-    volume = 4.0 / 3.0 * np.pi * radius**3
-    total_mass = 1.0
-    particle_mass = total_mass / n
-    masses = np.full(n, particle_mass)
+    body = glass_relax(prof, zones, n_particles=n_particles, n_sweeps=n_sweeps)
+    correct_u_for_sph_density(body, prof, zones, des_num_ngb=32, verbose=True)
 
-    # Velocities: at rest
-    velocities = np.zeros((n, 3))
+    # Add a low-density atmosphere shell to cure the SPH-isolated-body
+    # surface pathology (Bern-SPH / Reinhardt-Stadel recipe). ρ_atmo is set
+    # to atmo_rho_frac × surface ρ of the HSE profile; T matches the body's
+    # surface T. Same material as the outermost body zone, so the runtime
+    # ANEOS dispatch is identical.
+    rho_surface = float(prof["rho"][0])
+    T_surface_body = float(prof["T"][0])
+    rho_atmo = atmo_rho_frac * rho_surface
+    R_atmo = atmo_R_outer_frac * prof["R"]
+    print(f"  Atmosphere: rho_inner={rho_atmo:.3e} g/cm^3 "
+          f"({atmo_rho_frac:.0e} x rho_surface), taper=(R_in/r)^{atmo_rho_taper_power}, "
+          f"T={T_surface_body:.1f} K, R_outer={R_atmo:.3e} cm, N={n_atmo}")
+    atmo = atmosphere_shell(prof, zones, n_particles=n_atmo,
+                            rho_atmo=rho_atmo, T_atmo=T_surface_body,
+                            R_outer=R_atmo, rho_taper_power=atmo_rho_taper_power,
+                            equal_mass_to=body)
 
-    # Internal energy: set to give ~2000 K
-    # For forsterite at rho~3.2 g/cm^3, Cv ~ 1e7 erg/g/K -> u = Cv*T ~ 2e10 erg/g
-    # For iron at rho~7.87 g/cm^3, Cv ~ 4.5e6 erg/g/K -> u = Cv*T ~ 9e9 erg/g
-    # In code units we need u such that the EOS gives reasonable results.
-    # Since the ANEOS dispatch converts to CGS using UNIT_*_IN_CGS,
-    # and we'll set UnitLength=1cm, UnitMass=1g, UnitVelocity=1cm/s (CGS=code),
-    # we can use CGS values directly.
-    u_forsterite = 1.0e10  # erg/g, ~ 1000 K for forsterite
-    u_iron = 5.0e9         # erg/g, ~ 1000 K for iron
-    internal_energy = np.where(is_core, u_iron, u_forsterite)
+    placed = merge_placements(body, atmo)
 
-    # Write HDF5
-    with h5py.File(fname, "w") as f:
-        # Header
-        h = f.create_group("Header")
-        h.attrs["NumPart_ThisFile"] = np.array([n, 0, 0, 0, 0, 0], dtype=np.int32)
-        h.attrs["NumPart_Total"] = np.array([n, 0, 0, 0, 0, 0], dtype=np.uint32)
-        h.attrs["NumPart_Total_HighWord"] = np.array([0, 0, 0, 0, 0, 0], dtype=np.uint32)
-        h.attrs["MassTable"] = np.array([0, 0, 0, 0, 0, 0], dtype=np.float64)
-        h.attrs["Time"] = 0.0
-        h.attrs["Redshift"] = 0.0
-        h.attrs["BoxSize"] = 10.0  # large enough box
-        h.attrs["NumFilesPerSnapshot"] = 1
-        h.attrs["Omega0"] = 0.0
-        h.attrs["OmegaLambda"] = 0.0
-        h.attrs["HubbleParam"] = 1.0
-        h.attrs["Flag_Sfr"] = 0
-        h.attrs["Flag_Feedback"] = 0
-        h.attrs["Flag_Cooling"] = 0
-        h.attrs["Flag_StellarAge"] = 0
-        h.attrs["Flag_Metals"] = 0
-        h.attrs["Flag_DoublePrecision"] = 1
-
-        # PartType0
-        g = f.create_group("PartType0")
-        g.create_dataset("Coordinates", data=coords + 5.0)  # center in box
-        g.create_dataset("Velocities", data=velocities)
-        g.create_dataset("Masses", data=masses)
-        g.create_dataset("InternalEnergy", data=internal_energy)
-        g.create_dataset("ParticleIDs", data=np.arange(1, n + 1, dtype=np.uint32))
-        g.create_dataset("CompositionType", data=comp_type)
-
-    n_core = np.sum(is_core)
-    n_mantle = n - n_core
-    print(f"Generated {fname}: {n} particles ({n_mantle} forsterite + {n_core} iron)")
+    box = 2.0 * R_atmo + 2.0 * prof["R"]   # comfortable padding around atmo
+    write_hdf5(out, placed, prof, box_size=box)
 
 
 if __name__ == "__main__":
-    generate_ics()
+    main()

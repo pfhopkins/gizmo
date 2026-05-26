@@ -102,57 +102,201 @@ def fibonacci_shells(prof, zones, n_particles, particles_per_shell=None):
             "u_p": u_p, "T_p": T_p, "comp_p": comp_p}
 
 
-def glass_relax(prof, zones, n_particles, n_sweeps=20, eta=0.25, seed=17):
-    """Repulsive-relaxation glass placement. Initialize from Fibonacci shells,
-    then iteratively shift particles toward equal local volume given the
-    target rho(r). Pairwise interaction limited to k-nearest neighbors via
-    a coarse spatial hash; no scipy dependency.
+def glass_relax(prof, zones, n_particles, n_sweeps=20, seed=17,
+                tol=1e-2, gradient="hybrid", **legacy_kwargs):
+    """Stretched-glass placement (meshoid-backed WVT recipe).
+
+    Builds a uniform-density particle glass in the inscribed sphere of the
+    unit cube via meshoid's gradient-descent relaxer, then radial-stretches
+    each particle so its enclosed mass matches the HSE profile m(r). The
+    result is an SPH-density-flat IC matching the target ρ(r) — the Bern-SPH
+    / Reinhardt-Stadel "stretched glass" recipe that gives ~percent-level
+    rho_SPH/rho_HSE flatness, vs ~50% with the prior repulsive-force version.
+
+    Backwards-compatible signature; n_sweeps maps to meshoid's max iteration
+    count, eta (legacy) is silently dropped (meshoid uses adaptive step size).
+
+    Args:
+        prof: HSE profile dict from solve_hse().
+        zones: list of Zone (used to map zone_id -> CompositionType).
+        n_particles: target number of particles inside the body.
+        n_sweeps: max meshoid relaxation iterations (default 20). meshoid
+            converges when RMS density variation falls below `tol`.
+        tol: meshoid convergence tolerance on RMS density variation
+            (default 1e-2).
+        gradient: meshoid gradient method, "hybrid" | "sph" | "leastsquares"
+            (default "hybrid", recommended).
+        seed: RNG seed for the initial QMC sample (passed via numpy state).
+
+    Returns: dict with keys coords, masses, rho_p, u_p, T_p, comp_p — same
+        schema as fibonacci_shells.
     """
-    init = fibonacci_shells(prof, zones, n_particles)
-    coords = init["coords"].copy()
-    R = prof["R"]; n = len(coords)
-    rng = np.random.default_rng(seed)
+    from meshoid.glass import particle_glass
 
-    # Target: each particle should occupy a volume m_i/rho(r_i).
-    for sweep in range(n_sweeps):
-        r = np.linalg.norm(coords, axis=1)
-        rho_local = _interp_along_profile(r, prof, "rho")
-        h = np.cbrt(3.0 * init["masses"] / (4.0 * np.pi * np.maximum(rho_local, 1e-30)))
+    # Generate uniform glass in the unit cube. Inscribed unit-sphere fills
+    # π/6 ≈ 52% of the cube — oversample so we land near n_particles after
+    # rejection.
+    n_cube = int(np.ceil(n_particles * 6.0 / np.pi * 1.05))
+    np.random.seed(seed)
+    coords_cube = particle_glass(N=n_cube, L=1.0, dim=3, tol=tol,
+                                 gradient=gradient, num_steps=n_sweeps)
+    # particle_glass returns coords in [0, L=1]; recenter on origin.
+    x = coords_cube - 0.5
+    r_unit = np.linalg.norm(x, axis=1)
+    inside = r_unit < 0.5
+    x = x[inside]
+    r_unit = r_unit[inside]
+    # Rescale unit sphere from radius 0.5 to 1.0 for readability of stretch.
+    r_unit *= 2.0
+    x *= 2.0
 
-        # Coarse cell-grid neighbor lookup.
-        cell = np.floor(coords / (2.0 * np.median(h))).astype(int)
-        from collections import defaultdict
-        bins = defaultdict(list)
-        for i in range(n): bins[tuple(cell[i])].append(i)
+    # Trim to exactly n_particles if we got more (after rejection).
+    if len(x) > n_particles:
+        keep = np.argsort(r_unit)[:n_particles]  # keep innermost — preserves uniformity
+        x = x[keep]
+        r_unit = r_unit[keep]
+    n_actual = len(x)
 
-        disp = np.zeros_like(coords)
-        for i in range(n):
-            ci = tuple(cell[i])
-            # Collect candidates from this cell + 26 neighbors.
-            cand = []
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for dz in (-1, 0, 1):
-                        cand.extend(bins.get((ci[0] + dx, ci[1] + dy, ci[2] + dz), ()))
-            for j in cand:
-                if j == i: continue
-                d = coords[i] - coords[j]
-                dist = np.sqrt(d @ d) + 1e-30
-                hij = 0.5 * (h[i] + h[j])
-                if dist < 2.0 * hij:
-                    w = (1.0 - dist / (2.0 * hij)) ** 2
-                    disp[i] += w * d / dist * hij
+    # Radial stretch: a uniform-density unit sphere has M_enclosed(r) =
+    # M_total * r³. Invert prof['m'](r) = r_unit³ * M_total to find new
+    # radius for each particle.
+    r_grid = prof["r"][::-1]
+    m_grid = prof["m"][::-1].copy()
+    m_grid[0] = 0.0
+    m_grid[-1] = prof["M_total"]
+    m_grid = np.maximum.accumulate(m_grid)
+    target_M_enc = (r_unit ** 3) * prof["M_total"]
+    r_new = np.interp(target_M_enc, m_grid, r_grid)
 
-        # Cap step, apply, project back into r<=R.
-        step = eta * h[:, None] * disp / (np.linalg.norm(disp, axis=1, keepdims=True) + 1e-30)
-        coords = coords + step
-        r = np.linalg.norm(coords, axis=1)
-        out = r > R
-        if out.any():
-            coords[out] *= (R / r[out])[:, None]
+    # Apply stretch. Origin handled via tiny-r clamp.
+    safe_r = np.maximum(r_unit, 1e-30)
+    coords = x * (r_new / safe_r)[:, None]
 
     rho_p, u_p, T_p, zid = _attach_thermo(coords, prof, zones)
-    masses = np.full(n, prof["M_total"] / n)
+    masses = np.full(n_actual, prof["M_total"] / n_actual)
     comp_p = np.array([zones[z].material.composition_type for z in zid], dtype=np.int32)
     return {"coords": coords, "masses": masses, "rho_p": rho_p,
             "u_p": u_p, "T_p": T_p, "comp_p": comp_p}
+
+
+def atmosphere_shell(prof, zones, n_particles,
+                     rho_atmo, T_atmo,
+                     R_outer=None, R_inner=None,
+                     material=None, particles_per_shell=None,
+                     rho_taper_power=None, equal_mass_to=None, seed=23):
+    """Place a low-density "atmosphere" shell around an HSE body to cure
+    the isolated-SPH-body-in-vacuum surface pathology.
+
+    Standard recipe in the SPH-planet literature (Bern-SPH, Reinhardt &
+    Stadel 2017): without an atmosphere, surface kernel sums are
+    asymmetric and the outer body cells get accelerated outward by the
+    pressure cliff into vacuum, ejecting them with runaway u.
+
+    Particles are placed on equal-volume Fibonacci shells from R_inner to
+    R_outer at constant rho_atmo and T_atmo. Material defaults to the
+    outermost body zone's material so the runtime EOS path is identical
+    to the body. Internal energy is set by `material.u_from_T(rho, T)`.
+
+    Returns a dict with the same schema as fibonacci_shells/glass_relax:
+        coords, masses, rho_p, u_p, T_p, comp_p (int32 CompositionType).
+
+    Tunables:
+        rho_atmo  — atmosphere density [g/cm^3]. Typical values are
+                    ~1e-4 .. 1e-2 of the body's surface density.
+        T_atmo    — atmosphere temperature [K]. Set close to the body's
+                    surface T (T_outer of zones[0]).
+        R_inner   — inner shell radius. Defaults to prof['R'] (body
+                    surface). Set slightly outside R if you want a thin
+                    gap (rarely needed).
+        R_outer   — outer shell radius. Defaults to 2*prof['R'].
+        material  — Material instance. Defaults to zones[0].material.
+        rho_taper_power — if not None, use a power-law ρ(r) = rho_atmo *
+                    (R_inner/r)**n with n = rho_taper_power. This makes
+                    most of the atmosphere mass sit near the body and the
+                    outer edge approach vacuum smoothly (particle masses
+                    scale with the local target ρ). Recommended n=4..6
+                    for SPH-isolated-body protection. Default None
+                    (constant ρ) for simplicity.
+        equal_mass_to — if a `placed` dict (e.g. the body), atmosphere
+                    particles take its per-particle mass; rho_atmo +
+                    rho_taper_power then determine particle SPACING (i.e.
+                    n_particles is auto-derived from rho profile + that
+                    mass). This gives a Lagrangian-mass-matched IC, which
+                    SPH/MFM handle better at body↔atmo boundary than a
+                    mass jump.
+    """
+    if material is None:
+        material = zones[0].material
+    if R_inner is None:
+        R_inner = prof["R"]
+    if R_outer is None:
+        R_outer = 2.0 * prof["R"]
+    if R_outer <= R_inner:
+        raise ValueError(f"R_outer={R_outer} must exceed R_inner={R_inner}")
+
+    if particles_per_shell is None:
+        n_shells = max(2, int(round(n_particles / 24.0)))
+    else:
+        n_shells = max(1, n_particles // particles_per_shell)
+    n_per = max(1, n_particles // n_shells)
+    n_actual = n_per * n_shells
+
+    # Equal-volume shell spacing across [R_inner, R_outer].
+    Vmin = R_inner ** 3
+    Vmax = R_outer ** 3
+    V_b = np.linspace(Vmin, Vmax, n_shells + 1)
+    r_b = np.cbrt(V_b)
+
+    coords = np.empty((n_actual, 3))
+    rng = np.random.default_rng(seed)
+    for k in range(n_shells):
+        r_mid = np.cbrt(0.5 * (r_b[k] ** 3 + r_b[k + 1] ** 3))
+        dirs = _fibonacci_sphere(n_per)
+        a = rng.uniform(0, 2 * np.pi, 3)
+        Rx = np.array([[1, 0, 0], [0, np.cos(a[0]), -np.sin(a[0])], [0, np.sin(a[0]), np.cos(a[0])]])
+        Ry = np.array([[np.cos(a[1]), 0, np.sin(a[1])], [0, 1, 0], [-np.sin(a[1]), 0, np.cos(a[1])]])
+        Rz = np.array([[np.cos(a[2]), -np.sin(a[2]), 0], [np.sin(a[2]), np.cos(a[2]), 0], [0, 0, 1]])
+        dirs = dirs @ (Rx @ Ry @ Rz).T
+        coords[k * n_per:(k + 1) * n_per] = r_mid * dirs
+
+    # Per-particle thermo. ρ either constant or power-law tapered toward
+    # vacuum at the outer edge. T fixed (no thermal taper — the body's
+    # gravitational scale height for an isothermal rocky atmosphere is
+    # tiny compared to R_body; physical atmosphere is ~negligible. The
+    # shell exists to give body cells SPH neighbors, not to be physical).
+    r_p = np.linalg.norm(coords, axis=1)
+    if rho_taper_power is None:
+        rho_p = np.full(n_actual, rho_atmo, dtype=np.float64)
+    else:
+        rho_p = rho_atmo * (R_inner / np.maximum(r_p, R_inner)) ** float(rho_taper_power)
+    T_p   = np.full(n_actual, T_atmo, dtype=np.float64)
+    u_p   = np.array([material.u_from_T(rho_p[i], T_atmo) for i in range(n_actual)],
+                     dtype=np.float64)
+    comp_p = np.full(n_actual, material.composition_type, dtype=np.int32)
+
+    # Mass: by default, each particle gets a mass proportional to its
+    # local target ρ times its share of the shell volume (equal-volume
+    # shells → equal volume per particle). For constant-ρ this is
+    # uniform; for tapered ρ, outer particles are lighter → their
+    # ejection contributes negligibly to total momentum.
+    #
+    # equal_mass_to=body forces atmo particles to share the body's mass
+    # per particle, eliminating the body↔atmo mass discontinuity that
+    # otherwise breaks SPH/MFM closure at the surface.
+    if equal_mass_to is None:
+        V_per_particle = ((4.0 / 3.0) * np.pi * (R_outer ** 3 - R_inner ** 3)) / n_actual
+        masses = rho_p * V_per_particle
+    else:
+        m_body = float(np.mean(equal_mass_to["masses"]))
+        masses = np.full(n_actual, m_body, dtype=np.float64)
+
+    return {"coords": coords, "masses": masses, "rho_p": rho_p,
+            "u_p": u_p, "T_p": T_p, "comp_p": comp_p}
+
+
+def merge_placements(*placements):
+    """Concatenate placements (e.g. body + atmosphere) into one dict with
+    the same schema. Particle order is the order of arguments."""
+    keys = ("coords", "masses", "rho_p", "u_p", "T_p", "comp_p")
+    out = {k: np.concatenate([p[k] for p in placements], axis=0) for k in keys}
+    return out

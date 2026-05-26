@@ -48,33 +48,61 @@ class Material:
         return cls("sesame", composition_type, name, tbl, Cv)
 
     # --- forward to backend, papering over the (rho,u) vs (rho,T) split ---
+    #
+    # For Tillotson the natural state variable is u, so mode='T' converts via
+    # the analytic Cv = const. For SESAME the natural state is T (tables are
+    # (rho,T)-indexed); converting u<->T uses the table itself, NOT a scalar
+    # Cv. Tabulated Cv depends on (rho,T), so the old Cv shortcut produced
+    # wrong T for hot/dense interiors and pushed downstream HSE inversions
+    # off-trajectory. T_from_u below bisects on the table at fixed rho.
 
     def pressure(self, rho, val, mode):
         """mode='u': val=internal energy [erg/g]; mode='T': val=temperature [K]."""
         if self.kind == "tillotson":
             u = val if mode == "u" else self.Cv * val
             return self._backend.pressure(rho, u)
-        else:
-            T = val if mode == "T" else val / self.Cv  # SESAME tables are (rho,T)
-            return self._backend.pressure(rho, T)
+        T = val if mode == "T" else self.T_from_u(rho, val)
+        return self._backend.pressure(rho, T)
 
     def pressure_cs2(self, rho, val, mode):
         """Return (P, cs²). Analytic for Tillotson, table-evaluated for SESAME."""
         if self.kind == "tillotson":
             u = val if mode == "u" else self.Cv * val
             return self._backend.pressure_cs2(rho, u)
-        else:
-            T = val if mode == "T" else val / self.Cv
-            cs = self._backend.soundspeed(rho, T)
-            return self._backend.pressure(rho, T), cs * cs
+        T = val if mode == "T" else self.T_from_u(rho, val)
+        cs = self._backend.soundspeed(rho, T)
+        return self._backend.pressure(rho, T), cs * cs
 
     def rho_from_P(self, P, val, mode):
+        """Return rho such that the EOS yields the requested P at the supplied
+        thermodynamic state (val,mode). For SESAME mode='u' this is a nested
+        inversion: T tracks u along the rho axis, and P(rho, T(rho,u)) is
+        bisected on rho. Monotone in rho on the compressive branch, which is
+        where the HSE shooter operates."""
         if self.kind == "tillotson":
             u = val if mode == "u" else self.Cv * val
             return self._backend.rho_from_Pu(P, u)
-        else:
-            T = val if mode == "T" else val / self.Cv
-            return self._backend.rho_from_PT(P, T)
+        if mode == "T":
+            return self._backend.rho_from_PT(P, val)
+        # mode == 'u': bisect rho s.t. pressure(rho, T_from_u(rho,u)) = P.
+        u = val
+        tbl = self._backend
+        rho_lo = tbl.rho_axis[0]
+        rho_hi = tbl.rho_axis[-1]
+        def _Pfn(rho):
+            T = self.T_from_u(rho, u)
+            return tbl.pressure(rho, T)
+        Plo = _Pfn(rho_lo)
+        Phi = _Pfn(rho_hi)
+        if P <= Plo: return rho_lo
+        if P >= Phi: return rho_hi
+        for _ in range(80):
+            rm = 0.5 * (rho_lo + rho_hi)
+            Pm = _Pfn(rm)
+            if Pm < P: rho_lo = rm
+            else: rho_hi = rm
+            if (rho_hi - rho_lo) / max(rm, 1e-300) < 1e-8: break
+        return 0.5 * (rho_lo + rho_hi)
 
     def u_from_T(self, rho, T):
         if self.kind == "tillotson":

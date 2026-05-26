@@ -1,12 +1,16 @@
-% Phase 17d smoke test: 1D adiabatic compression of H/He fluid using the
-% Chabrier-Debras 2021 (CD21) tabulated H/He EOS, loaded through the
-% existing ANEOS dispatch (EOS_ANEOS). The native CD21 (logT, logP) ASCII
-% table is converted offline to SESAME format by
-% python_src/eos_tools/cms_to_sesame.py; the converted file is hosted at
-%   http://www.tapir.caltech.edu/~phopkins/sims/cd21_y0275.sesame
-% (placeholder path; update once uploaded).
+% Phase 17h smoke test: 1D periodic adiabatic compression of H/He fluid via
+% the Chabrier-Debras 2021 (CD21, Y=0.275) tabulated EOS, loaded through
+% the existing ANEOS dispatch (EOS_ANEOS). The native CD21 (logT, logP)
+% ASCII table is converted to SESAME format by
+% python_src/eos_tools/cms_to_sesame.py; the converted file
+% cd21_y0275.sesame ships next to this params file.
 %
-% This is intentionally a compile-and-smoke target only. Physics validation
+% IC built by make_ics.py: 128 particles, uniform rho=1e-2 g/cm^3, T=1000 K,
+% sinusoidal velocity perturbation amplitude 1e3 cm/s. CGS code units.
+% Sound speed ~3.4e5 cm/s -> sound-crossing time ~3e-5 s; TimeMax=3e-4 s
+% (~10 crossings, plenty for smoke).
+%
+% This is a compile-and-smoke target only. Physics validation
 % (Jupiter/Saturn polytrope vs published interior models) is deferred.
 %
 %        HYDRO_MESHLESS_FINITE_MASS
@@ -17,35 +21,35 @@
 
 InitCondFile                       compression_ics
 OutputDir                          output
-TimeMax                            1.0
+TimeMax                            3.0e-4
 BoxSize                            10
-TimeBetSnapshot                    0.1
-MaxSizeTimestep                    0.001
+TimeBetSnapshot                    1.0e-4
+MaxSizeTimestep                    1.0e-7
+MinSizeTimestep                    1.0e-10
+TimeBetStatistics                  1.0e-4
 DesNumNgb                          4
 MaxNumNgbDeviation                 1e-6
 MaxMemSize                         1000
 ErrTolIntAccuracy                  0.0025
 CourantFac                         0.05
 MaxRMSDisplacementFac              0.125
-TimeBetStatistics                  0.5
 ResubmitOn                         0
 ResubmitCommand                    none
 ErrTolTheta                        0.7
 ErrTolForceAcc                     0.001
 
-% Code units (chosen so code units = CGS for direct comparison with the
-% CD21 table; the SESAME loader feeds rho/u in CGS regardless).
+% Code units: CGS direct.
 UnitLength_in_cm                   1.0
 UnitMass_in_g                      1.0
 UnitVelocity_in_cm_per_s           1.0
 UnitMagneticField_in_gauss         1.0
 GravityConstantInternal            0
 
-% ANEOS table parameters
+% ANEOS table parameters.
 AneosNumMaterials                  1
 AneosTable0                        cd21_y0275.sesame
 
-InitGasTemp                        100
+InitGasTemp                        1000
 MinGasTemp                         10
 MinGasHsmlFractional               0
 SofteningGas                       0.05

@@ -1,23 +1,21 @@
-% ANEOS giant impact smoke test: differentiated Earth-mass body, forsterite
-% mantle (68%) + iron core (32%), built with the Phase 17h HSE IC builder
-% against the Stewart S19/S20 tables loaded through EOS_ANEOS.
-%
-% This default config has SELFGRAVITY_OFF and runs only a tiny fraction of a
-% dynamical time. The companion Config_selfgrav.sh + aneos_giant_impact_selfgrav.params
-% turns SELFGRAVITY on for the actual HSE validation gate.
+% ANEOS giant-impact HSE validation gate (SELFGRAVITY=ON variant).
+% Earth-mass differentiated body (forsterite mantle 68% + iron core 32%) built
+% with the Phase 17h HSE IC builder against the Stewart S19/S20 tables.
+% t_dyn(surface) ~ 740 s; TimeMax = 8000 s ~ 11 t_dyn.
 %
 %        HYDRO_MESHLESS_FINITE_MASS
-%        SELFGRAVITY_OFF
 %        EOS_ANEOS
+%        ADAPTIVE_GRAVSOFT_FORGAS
+% (no SELFGRAVITY_OFF -> self-gravity is ON)
 
 InitCondFile                       aneos_giant_impact_ics
-OutputDir                          output
+OutputDir                          output_selfgrav
 TimeBegin                          0.0
-TimeMax                            5.0
-TimeBetSnapshot                    2.5
-MaxSizeTimestep                    1.0
+TimeMax                            8000.0
+TimeBetSnapshot                    1000.0
+MaxSizeTimestep                    5.0
 MinSizeTimestep                    1.0e-3
-TimeBetStatistics                  1.0
+TimeBetStatistics                  100.0
 
 BoxSize                            6.0e9
 DesNumNgb                          32
@@ -29,9 +27,8 @@ ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
 
 ErrTolTheta                        0.7
-ErrTolForceAcc                     0.005
+ErrTolForceAcc                     0.001
 
-% CGS code units (matches Stewart .sesame tables).
 UnitLength_in_cm                   1.0
 UnitMass_in_g                      1.0
 UnitVelocity_in_cm_per_s           1.0
@@ -50,7 +47,6 @@ BufferSize                         100
 ResubmitOn                         0
 ResubmitCommand                    none
 
-% ANEOS table parameters.
 AneosNumMaterials                  2
 AneosTable0                        forsterite.sesame
 AneosTable1                        iron.sesame
