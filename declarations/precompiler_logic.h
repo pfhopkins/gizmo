@@ -779,11 +779,11 @@
    DelayTimeHII have their own independent gates (GALSF_ISMDUSTCHEM_MODEL,
    COOL_MOLECFRAC_NONEQM, GALSF_FB_FIRE_RT_HIIHEATING).
 
-   HYDRO_MULTIFLUID_DM also disables the device path: set_eos_pressure_impl's
-   FluidType==FLUID_DM early return calls set_dark_eos_pressure (host-only
-   `static inline` in sidm/dm_fluid_functions.h). Could be migrated to a
-   KOKKOS_INLINE_FUNCTION later if the device path is needed under DM. */
-#if !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(HYDRO_GENERATE_TARGET_MESH) && !defined(HYDRO_MULTIFLUID_DM)
+   HYDRO_MULTIFLUID_DM is intentionally NOT in this disable set: its
+   set_eos_pressure_impl early return calls set_dark_eos_pressure which is
+   KOKKOS_INLINE_FUNCTION (sidm/dm_fluid_functions.h), so the device kernel
+   path is fully supported under DM builds. */
+#if !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(HYDRO_GENERATE_TARGET_MESH)
 #define POST_COOLING_DEVICE_EOS_SUPPORTED
 #endif
 

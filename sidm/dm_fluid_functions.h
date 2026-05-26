@@ -36,8 +36,18 @@
 
 /* Trivial dark-fluid EOS: P = (γ-1) ρ u with γ=5/3. Pure ideal-gas adiabat,
  * no chemistry / cooling / radiation coupling. Mirrors the structure of
- * eos.cc::set_eos_pressure's early-pre-cooling branch. */
-static inline void set_dark_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
+ * eos.cc::set_eos_pressure's early-pre-cooling branch.
+ *
+ * KOKKOS_INLINE_FUNCTION (device-clean): body is pure arithmetic on macro
+ * constants (GAMMA_DEFAULT, PROTONMASS_CGS, BOLTZMANN_CGS, UNIT_*) plus
+ * device-callable cell_data accessors (density_for_energy, InternalEnergyPred).
+ * Lets eos_functions.h::set_eos_pressure_impl dispatch to it unconditionally
+ * under HYDRO_MULTIFLUID_DM — no __CUDA_ARCH__ exclusion or
+ * POST_COOLING_DEVICE_EOS_SUPPORTED disable needed for safety. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
+static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double gamma_eos_index = GAMMA_DEFAULT;
     double press = (gamma_eos_index - 1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
