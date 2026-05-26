@@ -14,7 +14,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
-#include "../sidm/dm_fluid_functions.h"
+#include "../sidm/dm_fluid_functions.h"   /* EOS-only; cooling chain lives in dm_cooling_functions.h, owned by cooling.cc */
 #include "../mesh/kernel.h"
 
 #include "../declarations/gpu_numeric_macros.h"

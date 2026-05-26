@@ -13,6 +13,24 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
+
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+/* DMCoolTables OWNER (mirrors the CoolTables pattern below at line ~94 for
+   cooling_tables_t). __managed__ definition must precede ANY include path that
+   pulls sidm/dm_fluid_functions.h (most notably eos/eos_functions.h:382), so
+   nvcc rejects `extern + __managed__ in same TU`. Builder bodies (dm_*_impl
+   + InitCool_dm) appear later in this file, after sidm/dm_fluid_functions.h
+   is in scope (they call dm_g_integral et al.). Per the cooling_tables.h:50-57
+   rule, this owner TU does NOT extern-declare DMCoolTables anywhere; the
+   definition itself is sufficient and any other declaration would conflict. */
+#include "../sidm/dm_cooling_tables.h"
+#if defined(GIZMO_GPU_COMPILER)
+__managed__ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
+#else
+struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
+#endif
+#endif /* HYDRO_MULTIFLUID_DM_COOLING */
+
 /* On CUDA, nvcc uses the FIRST declaration's execution-space attributes.
    proto.h declares RT functions as host-only (no __device__).  If proto.h
    is seen first, device calls get stubs returning 0.  Fix: include the RT
@@ -49,7 +67,8 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 #include "../radiation/rt_functions.h"
 #include "../core/proto.h"
-#include "../sidm/dm_fluid_functions.h"
+#include "../sidm/dm_fluid_functions.h"      /* set_dark_eos_pressure (called from set_eos_pressure_impl above; also pulled via eos_functions.h transitively but explicit is clearer) */
+#include "../sidm/dm_cooling_functions.h"    /* HYDRO_MULTIFLUID_DM_COOLING cooling chain + do_dark_cooling_for_particle (DMCoolTables defined above) */
 #include "./cooling.h"
 /* evaluate_NH_from_GradRho — single source in predict_functions.h */
 #include "../core/predict_functions.h"
@@ -101,19 +120,10 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
 #endif /* !CHIMES */
 
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
-/* ADM cooling tables (HYDRO_MULTIFLUID_DM_COOLING). Same managed-struct pattern
-   as CoolTables — the dm-cooling chain in sidm/dm_fluid_functions.h is
-   KOKKOS_INLINE_FUNCTION and reads DMCoolTables fields on the device hot path.
-   Struct definition is in sidm/dm_cooling_tables.h; the builder InitCool_dm()
-   is below (this TU is in GPU_OBJS so it has Kokkos_Core.hpp + nvcc, mirroring
-   the CoolTables owner-TU pattern at cooling/cooling.cc::InitCoolMemory). */
-#include "../sidm/dm_cooling_tables.h"
-#include "../sidm/dm_fluid_functions.h"  /* integrand chain + integral helpers used by dm_MakeCoolingTable below */
-#if defined(GIZMO_GPU_COMPILER)
-__managed__ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
-#else
-struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
-#endif
+/* DMCoolTables OWNER's builder bodies. The __managed__ instance is defined
+   earlier in this file (above the eos_functions.h include); the integral
+   chain helpers used here come from sidm/dm_fluid_functions.h via
+   eos_functions.h's transitive include. */
 
 /* dm cooling table builder. Mirrors InitCoolMemory + the cooling-table
    construction loop below for the SM cooling case. Single owner TU (cooling.cc)
