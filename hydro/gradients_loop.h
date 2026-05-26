@@ -25,6 +25,7 @@
  * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h" 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "gradient_functions.h"               /* Quantities_for_Gradients,
@@ -122,6 +123,9 @@ struct GradientsActiveData
     double V_i;
     int    sph_gradients_flag_i;
     int    kernel_mode_i;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;   /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
 };
 
 /* NeighborData carries the integer index j plus the base P/CellP pointers.
@@ -347,6 +351,9 @@ struct GradientsSpec
 #if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
         active.kernel_mode_i = 0;
 #endif
+#ifdef HYDRO_MULTIFLUID
+        active.FluidType = ctx.P[i].FluidType;
+#endif
         return active;
     }
 
@@ -356,7 +363,8 @@ struct GradientsSpec
                                        const IdentitySidecar& /*id*/,
                                        const ActiveData& /*active*/)
     {
-        return NeighborData{j, ctx.P, ctx.CellP};
+        NeighborData nb{j, ctx.P, ctx.CellP};
+        return nb;
     }
 
     /* The physics — forwards to the unchanged inline pair body. const_cast
@@ -368,6 +376,9 @@ struct GradientsSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
+#if defined(HYDRO_MULTIFLUID) 
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
+#endif
         struct kernel_GasGrad kernel;
         kernel.h_i = active.local.KernelRadius;
         gradient_accumulate_neighbor(

@@ -29,6 +29,7 @@
  * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "../core/timestep_functions.h"       /* get_particle_timestep_in_physical */
@@ -79,9 +80,11 @@ struct HydroForceActiveData
     /* Mode B remote walker requirements */
     Vec3<double> pos;
     double       h_search;
-
     /* Per-active input — the per-particle hydra block */
     struct hydro_data_in local;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
 };
 
 /* NeighborData carries the integer j plus the j-owning rank's pointers /
@@ -383,6 +386,9 @@ struct HydroForceSpec
 #ifdef GALSF_SUBGRID_WINDS
         local.DelayTime = kc[i].DelayTime;
 #endif
+#ifdef HYDRO_MULTIFLUID
+        active.FluidType = ctx.P[i].FluidType;
+#endif
         return active;
     }
 
@@ -420,6 +426,9 @@ struct HydroForceSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
+#if defined(HYDRO_MULTIFLUID)
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
+#endif
         struct kernel_hydra kernel;
         for(size_t b = 0; b < sizeof(kernel); b++) ((char*)&kernel)[b] = 0;
         kernel.h_i           = active.local.KernelRadius;

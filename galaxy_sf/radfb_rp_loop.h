@@ -37,6 +37,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 
@@ -238,6 +239,9 @@ static void radfb_rp_pair_kick(
     RadFBRPAccum& out)
 {
     if (Pj.Type != 0) return;
+#ifdef HYDRO_MULTIFLUID_DM
+    if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
+#endif
     double Mass_j = (double)Pj.Mass;
     if (Mass_j <= 0 || r2 <= 0) return;
     if (loc.wt_sum <= 0) return;
@@ -573,6 +577,9 @@ struct RadFBRPSpec {
         struct gas_cell_data &Cj = *neighbor.neighbor_cell;
 
         if (Pj.Type != 0) return;
+#ifdef HYDRO_MULTIFLUID_DM
+        if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
+#endif
         if (Pj.Mass <= 0) return;
 #ifdef SINK_WIND_SPAWN
         if (Pj.ID == active.scalars.spawned_wind_cell_id) return;

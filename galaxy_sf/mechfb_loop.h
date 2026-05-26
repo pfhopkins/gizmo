@@ -28,6 +28,7 @@
 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"     /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
+#include "../declarations/multifluid_helpers.h"
 #include "mechanical_fb_types.h"             /* struct MechFBGasDelta */
 /* MechFBCallScalars + shared kernel helpers + host-side inline helpers */
 #include "mechanical_fb_functions.h"
@@ -447,6 +448,9 @@ struct MechFBSpec {
         if (neighbor.neighbor_particle == nullptr) return;
         struct particle_data &Pj = *neighbor.neighbor_particle;
         if (Pj.Type != 0) return;
+#ifdef HYDRO_MULTIFLUID_DM
+        if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
+#endif
         if (Pj.Mass <= 0) return;
         if (neighbor.neighbor_cell == nullptr) return;  /* gas-only safety */
 

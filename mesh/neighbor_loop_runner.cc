@@ -112,7 +112,7 @@
 #include "../sidm/dm_fuzzy_loop.h"
 #endif
 
-#ifdef GRAIN_FLUID
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
 #include "../solids/grain_physics_loop.h"
 #endif
 
@@ -5094,10 +5094,10 @@ template void run_neighbor_loop<DMGradSpec>(const neighbor_loop_args&);
  * interpolate_fluxes_opacities_gasgrains_evaluate_gpu in
  * solids/grain_physics_gpu.cc (retired in cleanup commit). See
  * solids/grain_physics_loop.{h,cc}. */
-#if defined(GRAIN_FLUID) && defined(GRAIN_BACKREACTION)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) && defined(GRAIN_BACKREACTION)
 template void run_neighbor_loop<GrainBackrxSpec>(const neighbor_loop_args&);
 #endif
-#if defined(GRAIN_FLUID) && defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) && defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
 template void run_neighbor_loop<GrainRTGasSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<GrainRTGrainSpec>(const neighbor_loop_args&);
 #endif

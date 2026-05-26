@@ -22,6 +22,7 @@
  * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 
@@ -67,6 +68,9 @@ struct CellcorrectionsActiveData {
                              * false so subset-non-members contribute zero.
                              * For the legacy 5a / Mode B path the active
                              * list is already narrow, so enabled=true. */
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
 };
 
 struct CellcorrectionsAccum {
@@ -77,6 +81,9 @@ struct CellcorrectionsNeighborData {
     Vec3<double> pos;           /* P[j].Pos */
     double       kernel_radius; /* P[j].KernelRadius — pair kernel uses j's radius */
     double       volume_0;      /* CellP[j].Volume_0 — the contribution weight */
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;    /* packed P[j].FluidType */
+#endif
 };
 
 /* ============================================================================
@@ -91,6 +98,9 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         const CellcorrectionsNeighborData &nb,
                                         CellcorrectionsAccum &out)
 {
+#if defined(HYDRO_MULTIFLUID) 
+    if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
+#endif
     /* Per-row narrow-filter gate (commit 5b external-CSR consumption):
      * corridor row list is broad; rows that fail the narrow GasGrad_isactive
      * predicate contribute zero. apply_active_writeback's += keeps
@@ -198,6 +208,9 @@ struct CellcorrectionsSpec {
         active.enabled = ctx.CellP
                           ? (GasGrad_isactive_gpu(i, ctx.P, ctx.CellP) != 0)
                           : false;
+#ifdef HYDRO_MULTIFLUID
+        active.FluidType = ctx.P[i].FluidType;
+#endif
         return active;
     }
 
@@ -213,6 +226,9 @@ struct CellcorrectionsSpec {
         nb.volume_0      = (ctx.CellP && ctx.P[j].Type == 0)
                               ? (double)ctx.CellP[j].Volume_0
                               : 0.0;
+#ifdef HYDRO_MULTIFLUID
+        nb.FluidType     = ctx.P[j].FluidType;
+#endif
         return nb;
     }
 

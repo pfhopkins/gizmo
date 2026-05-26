@@ -43,9 +43,14 @@
  * #20011-D physics error on the device pass). */
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 
+#include "../declarations/multifluid_helpers.h"
+
 /* return an estimate of the Hydrogen molecular fraction of gas */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    if(pp[i].FluidType == FLUID_DM) return 0; /* dark fluid: no molecular tracking in placeholder model */
+#endif
 #ifdef GALSF_EFFECTIVE_EQS
     return 0; /* in the effective equation of state, H2 is not tracked explicitly here and the cooling function explicitly assumes an ionized+atomic medium. the 'molecular' compoennt is part of the implicit sub-grid model for clouds. so any non-zero value here will be invalid */
 #endif
@@ -367,9 +372,23 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #include "cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
 
+/* HYDRO_MULTIFLUID_DM: dark-fluid early-return into set_dark_eos_pressure
+   (host-only, defined in sidm/dm_fluid_functions.h). HYDRO_MULTIFLUID_DM is
+   listed in POST_COOLING_DEVICE_EOS_SUPPORTED's disable set in
+   declarations/precompiler_logic.h so the device kernel never calls this
+   function under that build — the host-only set_dark_eos_pressure call is
+   reached only on the host path. */
+#ifdef HYDRO_MULTIFLUID_DM
+#include "../declarations/multifluid_helpers.h"
+#include "../sidm/dm_fluid_functions.h"
+#endif
+
 KOKKOS_INLINE_FUNCTION
 void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
+#endif
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;
     if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
     cell[i].Gamma = gamma_eos_index;

@@ -802,6 +802,7 @@ enum iofields
   IO_DAMAGE_POROSITY_DAMAGE,      /* Phase 17e: Grady-Kipp scalar D in [0,1] */
   IO_DAMAGE_POROSITY_DISTENTION,  /* Phase 17e: Jutzi P-alpha alpha in [1,alpha_0] */
   IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Phase 17e: Grady-Kipp active-crack radius */
+  IO_FLUIDTYPE,                   
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 

@@ -27,13 +27,14 @@
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* IS_PARTICLE_DRAGVALID + FLUID_* IDs for GrainBackrxSpec::is_active */
 #include "../core/proto.h"
 #include "../mesh/kernel.h"            /* MUST precede grain_physics_loop.h (no include guards) */
 #include "grain_physics_loop.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_writeback_ops.h"   /* GHOST_WRITEBACK_BUNDLE_* manifest macros — explicit include, not pulled transitively (matches thermal_fb_loop.cc) */
 
-#ifdef GRAIN_FLUID
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
 
 /* ============================================================================
  * Finite-aware relative-error helper for compare_accum.
@@ -58,7 +59,7 @@ inline double nlr_rel_update(double max_rel, double a, double b) {
 
 bool GrainBackrxSpec::is_active(int i)
 {
-    return (((1 << P[i].Type) & (GRAIN_PTYPES))
+    return (IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)
             && P[i].TimeBin >= 0
             && P[i].Mass > 0
             && P[i].KernelRadius > 0);
@@ -371,4 +372,4 @@ void grain_rt_opacity_calc(void)
 
 #endif /* RT_OPACITY_FROM_EXPLICIT_GRAINS */
 
-#endif /* GRAIN_FLUID */
+#endif /* DO_FLUID_ALTSPECIES_DRAG_CALCULATION */

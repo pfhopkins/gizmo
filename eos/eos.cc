@@ -12,7 +12,9 @@
 #include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../sidm/dm_fluid_functions.h"
 #include "../mesh/kernel.h"
 
 #include "../declarations/gpu_numeric_macros.h"

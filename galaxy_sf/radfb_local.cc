@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
@@ -194,6 +195,9 @@ static void hii_greedy_ionize_source(const HIISourcePrep& src,
                 if(mionized >= mionizable) break;
                 int j = ngb_list_touse[n];
                 if(P[j].Mass <= 0 || P[j].Type != 0) continue;
+#ifdef HYDRO_MULTIFLUID_DM
+                if(P[j].FluidType == FLUID_DM) continue; /* skip dark-fluid neighbors */
+#endif
                 if(CellP[j].DelayTimeHII > 0) continue;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && !defined(CHIMES_HII_REGIONS)
                 if(CellP[j].Ne > 0.8) continue;

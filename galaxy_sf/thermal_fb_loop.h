@@ -22,6 +22,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef GALSF_FB_THERMAL
 
@@ -149,6 +150,9 @@ static void thermal_fb_pair_kernel(
     ThermalFBOut& out)
 {
     if (Pj.Type != 0) return;
+#ifdef HYDRO_MULTIFLUID_DM
+    if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
+#endif
     double Mass_j = (double)Pj.Mass;
     if (Mass_j <= 0) return;
     /* Belt-and-suspenders guards — Spec::pair_kernel already short-circuits

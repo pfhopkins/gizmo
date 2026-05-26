@@ -56,7 +56,7 @@ static double grain_extinction_Q_inline(int i, int k_freq, struct particle_data 
 /* -------------------------------------------------------------------------
  *  B7a: grain_backrx (GRAIN_BACKREACTION)
  * ------------------------------------------------------------------------- */
-#if defined(GRAIN_FLUID) && defined(GRAIN_BACKREACTION)
+#if defined(GRAIN_BACKREACTION)
 
 struct GrainBackrxLocalIn
 {
@@ -157,7 +157,7 @@ static void grain_backrx_pair_kernel(
 #endif
 }
 
-#endif /* GRAIN_FLUID && GRAIN_BACKREACTION */
+#endif /* GRAIN_BACKREACTION */
 
 
 /* -------------------------------------------------------------------------

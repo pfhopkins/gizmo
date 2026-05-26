@@ -299,12 +299,13 @@ double DensitySpec::compare_accum(const AccumData& local, const AccumData& oracl
     upd((double)local.Sink_dr_to_NearestGasNeighbor, (double)oracle.Sink_dr_to_NearestGasNeighbor);
   #endif
 #endif
-#if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
+#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     for (int k = 0; k < 3; ++k) upd((double)local.GasVel[k], (double)oracle.GasVel[k]);
 #endif
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+    upd((double)local.AmbientGasRho, (double)oracle.AmbientGasRho);
     upd((double)local.Gas_InternalEnergy, (double)oracle.Gas_InternalEnergy);
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     for (int k = 0; k < 3; ++k) upd((double)local.Gas_B[k], (double)oracle.Gas_B[k]);
   #endif
   #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
@@ -396,15 +397,16 @@ void DensitySpec::merge_accum(AccumData& local, const AccumData& peer) {
   #endif
 #endif
 
-#if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
+#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     local.GasVel[0] += peer.GasVel[0];
     local.GasVel[1] += peer.GasVel[1];
     local.GasVel[2] += peer.GasVel[2];
 #endif
 
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+    local.AmbientGasRho += peer.AmbientGasRho;
     local.Gas_InternalEnergy += peer.Gas_InternalEnergy;
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS) 
     local.Gas_B[0] += peer.Gas_B[0];
     local.Gas_B[1] += peer.Gas_B[1];
     local.Gas_B[2] += peer.Gas_B[2];
@@ -415,6 +417,7 @@ void DensitySpec::merge_accum(AccumData& local, const AccumData& peer) {
     }
   #endif
 #endif
+
 
 #ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
     local.GradH_numer[0] += peer.GradH_numer[0];
@@ -1036,14 +1039,15 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 #endif
         }
 
-#if defined(GRAIN_FLUID)
-        if ((1 << P[i].Type) & (GRAIN_PTYPES)) {
-            P[i].Gas_Density = (MyFloat)accum.Rho;
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+        /* multi-fluid collisional interaction ambient gas scatter. */
+        if (IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) {
+            P[i].Gas_Density = (MyFloat)accum.AmbientGasRho;
             P[i].Gas_InternalEnergy = (MyFloat)accum.Gas_InternalEnergy;
             P[i].Gas_Velocity[0] = (MyFloat)accum.GasVel[0];
             P[i].Gas_Velocity[1] = (MyFloat)accum.GasVel[1];
             P[i].Gas_Velocity[2] = (MyFloat)accum.GasVel[2];
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
             P[i].Gas_B[0] = (MyFloat)accum.Gas_B[0];
             P[i].Gas_B[1] = (MyFloat)accum.Gas_B[1];
             P[i].Gas_B[2] = (MyFloat)accum.Gas_B[2];
@@ -1289,8 +1293,8 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             set_eos_pressure(i, P, CellP);
         } // P[i].Type == 0 && P[i].Mass > 0
 
-#if defined(GRAIN_FLUID)
-        if ((1 << P[i].Type) & (GRAIN_PTYPES)) {
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+        if (IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) {
             if (P[i].Gas_Density > 0) {
                 P[i].Gas_InternalEnergy /= P[i].Gas_Density;
                 P[i].Gas_Velocity[0] /= P[i].Gas_Density;
@@ -1304,7 +1308,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             } else {
                 P[i].Gas_InternalEnergy = 0;
                 P[i].Gas_Velocity[0] = P[i].Gas_Velocity[1] = P[i].Gas_Velocity[2] = 0;
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
                 P[i].Gas_B[0] = P[i].Gas_B[1] = P[i].Gas_B[2] = 0;
   #endif
   #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))

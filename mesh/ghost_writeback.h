@@ -139,7 +139,10 @@ void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
 /* Grain backreaction (B7a) retired: the ghost_writeback_{zero_,}grainbackrx
  * compatibility wrappers had no remaining callers — GrainBackrxSpec in
  * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
- * j-writes via the generic ghost-writeback bundle. */
+ * j-writes via the generic ghost-writeback bundle. The multifluid intent
+ * to drop the GRAIN_FLUID half of the gate (so GRAIN_BACKREACTION compiles
+ * under HYDRO_MULTIFLUID-only builds) is captured by the wider
+ * DO_FLUID_ALTSPECIES_DRAG_CALCULATION outer guard on grain_physics_loop.{cc,h}. */
 
 /* sinkswallow retired in 3d.3 (port + cleanup): replaced by the bundle
  * scaffold's compound callback in sinks/sink_swk_loop.cc (snapshot +

@@ -305,13 +305,14 @@ struct ghost_delta_hydro_t {
  * callers remained. */
 
 
-/* --- Grain backreaction (B7a) variant (RETIRED) -------------------------
- * The ghost_writeback_{zero_,}grainbackrx compatibility wrappers were
- * retired once GrainBackrxSpec migrated to the generic bundle scaffold:
- * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
- * j-writes (Vel/VelPred/dp + Grain_AccelTimeMin min-update, plus the
- * GRAIN_EVOLUTION COND/SUBL fields) via the generic ghost-writeback
- * bundle. No callers remained. */
+    /* --- Grain backreaction (B7a) variant (RETIRED) -------------------------
+     * The ghost_writeback_{zero_,}grainbackrx compatibility wrappers were
+     * retired once GrainBackrxSpec migrated to the generic bundle scaffold:
+     * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
+     * j-writes (Vel/VelPred/dp + Grain_AccelTimeMin min-update, plus the
+     * GRAIN_EVOLUTION COND/SUBL fields) via the generic ghost-writeback
+     * bundle. The multifluid GRAIN_FLUID-gate removal is captured upstream
+     * via DO_FLUID_ALTSPECIES_DRAG_CALCULATION on grain_physics_loop.{cc,h}. */
 
 
 

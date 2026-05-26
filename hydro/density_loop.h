@@ -43,7 +43,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-
+#include "../declarations/multifluid_helpers.h"  
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 /* NOTE: caller TUs must include "../mesh/kernel.h" before this header.
@@ -156,13 +156,14 @@ struct DensityAccumData {
   #endif
 #endif
 
-#if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
+#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     Vec3<MyDouble>             GasVel;
 #endif
 
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+    MyDouble                   AmbientGasRho;
     MyDouble                   Gas_InternalEnergy;
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     Vec3<MyDouble>             Gas_B;
   #endif
   #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
@@ -226,6 +227,9 @@ struct DensityActiveState {
     MyFloat            DelayTime;
 #endif
     int                Type;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char      FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
     DensityCallScalars scalars;
 };
 
@@ -409,12 +413,13 @@ struct DensitySpec {
         accum.Sink_dr_to_NearestGasNeighbor = MAX_REAL_NUMBER;   /* MIN-reduction sentinel */
   #endif
 #endif
-#if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
+#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
         accum.GasVel[0] = 0; accum.GasVel[1] = 0; accum.GasVel[2] = 0;
 #endif
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+        accum.AmbientGasRho = 0;
         accum.Gas_InternalEnergy = 0;
-  #if defined(GRAIN_LORENTZFORCE)
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
         accum.Gas_B[0] = 0; accum.Gas_B[1] = 0; accum.Gas_B[2] = 0;
   #endif
   #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
@@ -488,6 +493,10 @@ struct DensitySpec {
         a.DelayTime = i_is_gas ? (MyFloat)ctx.CellP[i].DelayTime : (MyFloat)0;
 #endif
 
+#ifdef HYDRO_MULTIFLUID
+        a.FluidType = ctx.P[i].FluidType;
+#endif
+
         a.scalars = scalars;
         (void)active_slot;
         return a;
@@ -529,6 +538,7 @@ struct DensitySpec {
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
+
         /* CallScalars are carried by the active snapshot, matching the AGS
          * runner pattern and avoiding device-side global reads. */
         const CallScalars& cs = i_active.scalars;
@@ -568,6 +578,45 @@ struct DensitySpec {
         kernel_main(u, hinv3, hinv4, &wk, &dwk, 0);
         const double mass_j = (double)Pj.Mass;
         const double mj_wk  = mass_j * wk;
+
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
+        int is_valid_fordrag = IS_PARTICLE_DRAGVALID(i_active.Type, i_active.FluidType);
+#ifdef HYDRO_MULTIFLUID
+        is_valid_fordrag = (is_valid_fordrag && neighbor.neighbor_particle->FluidType == FLUID_DEFAULT);
+#endif
+        if (is_valid_fordrag) {
+            /* Cross-fluid ambient gas sampling for cross-fluid sources. */
+            if (r > 0) {
+                accum.AmbientGasRho += mj_wk;
+                Vec3<double> dv;
+                dv[0] = (double)i_active.Vel[0] - (double)CellPj->VelPred[0];
+                dv[1] = (double)i_active.Vel[1] - (double)CellPj->VelPred[1];
+                dv[2] = (double)i_active.Vel[2] - (double)CellPj->VelPred[2];
+                {
+                    Vec3<MyDouble> pos_i_md;
+                    pos_i_md[0] = i_active.pos[0]; pos_i_md[1] = i_active.pos[1]; pos_i_md[2] = i_active.pos[2];
+                    NGB_SHEARBOX_BOUNDARY_VELCORR_(pos_i_md, Pj.Pos, dv, 1);
+                }
+                accum.Gas_InternalEnergy += mj_wk * (double)CellPj->InternalEnergyPred;
+                accum.GasVel[0] += mj_wk * ((double)i_active.Vel[0] - dv[0]); /* shares with TURB_DRIVING SmoothedVel; combo unsupported */
+                accum.GasVel[1] += mj_wk * ((double)i_active.Vel[1] - dv[1]);
+                accum.GasVel[2] += mj_wk * ((double)i_active.Vel[2] - dv[2]);
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
+                accum.Gas_B[0] += wk * (double)CellPj->BPred[0];
+                accum.Gas_B[1] += wk * (double)CellPj->BPred[1];
+                accum.Gas_B[2] += wk * (double)CellPj->BPred[2];
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+                for (int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; ++kv) {
+                    accum.Gas_VolatileSpecies[kv] += mj_wk * (double)CellPj->VolatileSpecies[kv];
+                }
+#endif
+            }
+        }
+#endif
+#ifdef HYDRO_MULTIFLUID
+        if (!same_lagrangian_fluid_id(i_active.FluidType, neighbor.neighbor_particle->FluidType)) return;
+#endif
 
         /* Always-on accumulators (legacy line 206-217). */
         accum.Ngb += wk;
@@ -639,24 +688,6 @@ struct DensitySpec {
             const double mj_dwk_r = mass_j * dwk / r;
 
             if (i_active.Type != 0) {
-#if defined(GRAIN_FLUID)
-                if ((1 << i_active.Type) & (GRAIN_PTYPES)) {
-                    accum.Gas_InternalEnergy += mj_wk * (double)CellPj->InternalEnergyPred;
-                    accum.GasVel[0] += mj_wk * ((double)i_active.Vel[0] - dv[0]);
-                    accum.GasVel[1] += mj_wk * ((double)i_active.Vel[1] - dv[1]);
-                    accum.GasVel[2] += mj_wk * ((double)i_active.Vel[2] - dv[2]);
-  #if defined(GRAIN_LORENTZFORCE)
-                    accum.Gas_B[0] += wk * (double)CellPj->BPred[0];
-                    accum.Gas_B[1] += wk * (double)CellPj->BPred[1];
-                    accum.Gas_B[2] += wk * (double)CellPj->BPred[2];
-  #endif
-  #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-                    for (int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; ++kv) {
-                        accum.Gas_VolatileSpecies[kv] += mj_wk * (double)CellPj->VolatileSpecies[kv];
-                    }
-  #endif
-                }
-#endif
 #if defined(SINK_PARTICLES)
                 if (i_active.Type == 5) {
                     /* Read-only MIN reductions; the j-side SwallowID/SwallowTime/Sink_Ngb_Flag

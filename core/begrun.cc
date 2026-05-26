@@ -11,6 +11,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../sidm/dm_fluid_functions.h"
 
 
 /*! \file begrun.c
@@ -105,6 +106,9 @@ void begrun(void)
 
 #ifdef COOLING
   InitCool();
+#endif
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+  InitCool_dm();
 #endif
 
 #ifdef BOX_PERIODIC
@@ -1706,6 +1710,13 @@ void read_parameter_file(char *fname)
       strcpy(alternate_tag[nt], "Minimum_Gas_Temperature");
       addr[nt] = &All.MinGasTemp;
       id[nt++] = REAL;
+
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+      strcpy(tag[nt], "ADM_FineStructure");      addr[nt] = &All.ADM_FineStructure;      id[nt++] = REAL;
+      strcpy(tag[nt], "ADM_ProtonMass");         addr[nt] = &All.ADM_ProtonMass;         id[nt++] = REAL;
+      strcpy(tag[nt], "ADM_ElectronMass");       addr[nt] = &All.ADM_ElectronMass;       id[nt++] = REAL;
+      strcpy(tag[nt], "ADM_MolecularFraction");  addr[nt] = &All.ADM_MolecularFraction;  id[nt++] = REAL;
+#endif
 
 #ifdef DISK_BETA_COOL
       strcpy(tag[nt], "BetaCool_Beta");

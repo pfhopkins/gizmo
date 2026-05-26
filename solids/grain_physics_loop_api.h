@@ -13,7 +13,11 @@
 #ifndef GRAIN_PHYSICS_LOOP_API_H
 #define GRAIN_PHYSICS_LOOP_API_H
 
-#ifdef GRAIN_FLUID
+/* DO_FLUID_ALTSPECIES_DRAG_CALCULATION widens the gate from GRAIN_FLUID-only
+ * to also cover HYDRO_MULTIFLUID_DUST_DRAG / HYDRO_MULTIFLUID_IONNEUTRAL —
+ * those builds auto-define GRAIN_BACKREACTION (precompiler_logic.h) and
+ * apply_grain_dragforce() in grain_physics.cc calls grain_backrx_calc(). */
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
 
 #if defined(GRAIN_BACKREACTION)
 /* Replaces grain_backrx_evaluate_gpu + ghost_writeback_{zero_,}grainbackrx.
@@ -30,6 +34,6 @@ void grain_backrx_calc(void);
 void grain_rt_opacity_calc(void);
 #endif
 
-#endif /* GRAIN_FLUID */
+#endif /* DO_FLUID_ALTSPECIES_DRAG_CALCULATION */
 
 #endif /* GRAIN_PHYSICS_LOOP_API_H */

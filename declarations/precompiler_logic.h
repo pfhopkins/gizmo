@@ -125,6 +125,12 @@
 #define EOS_GENERAL
 #endif
 
+#ifdef HYDRO_MULTIFLUID
+#ifndef EOS_GENERAL
+#define EOS_GENERAL
+#endif
+#endif
+
 #if defined(CBE_INTEGRATOR) || defined(DM_FUZZY)
 #define AGS_FACE_CALCULATION_IS_ACTIVE
 #endif
@@ -771,8 +777,13 @@
 
    NOTHING ELSE in the post-cooling kernel keys off this macro — dust, molecfrac,
    DelayTimeHII have their own independent gates (GALSF_ISMDUSTCHEM_MODEL,
-   COOL_MOLECFRAC_NONEQM, GALSF_FB_FIRE_RT_HIIHEATING). */
-#if !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(HYDRO_GENERATE_TARGET_MESH)
+   COOL_MOLECFRAC_NONEQM, GALSF_FB_FIRE_RT_HIIHEATING).
+
+   HYDRO_MULTIFLUID_DM also disables the device path: set_eos_pressure_impl's
+   FluidType==FLUID_DM early return calls set_dark_eos_pressure (host-only
+   `static inline` in sidm/dm_fluid_functions.h). Could be migrated to a
+   KOKKOS_INLINE_FUNCTION later if the device path is needed under DM. */
+#if !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(HYDRO_GENERATE_TARGET_MESH) && !defined(HYDRO_MULTIFLUID_DM)
 #define POST_COOLING_DEVICE_EOS_SUPPORTED
 #endif
 
@@ -826,6 +837,28 @@
 #define GRAVITY_TESTPROBLEM_RT 0.5
 #endif
 #endif
+
+
+#if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) || defined(HYDRO_MULTIFLUID_IONNEUTRAL)
+  #define DO_FLUID_ALTSPECIES_DRAG_CALCULATION
+  #if defined(GRAIN_FLUID)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((1 << (Type)) & (GRAIN_PTYPES))
+  #endif
+  #if defined(HYDRO_MULTIFLUID_DUST_DRAG)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((Type==0) && (FluidType == FLUID_DUST_GRAIN))
+  #endif
+  #if defined(HYDRO_MULTIFLUID_IONNEUTRAL)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((Type==0) && (FluidType == FLUID_ION))
+  #endif
+
+  #if (defined(GRAIN_LORENTZFORCE) || defined(HYDRO_MULTIFLUID_DUST_DRAG)) && defined(MAGNETIC)
+   #define DO_FLUID_DRAG_CALCULATION_WITHBFIELDS
+  #endif
+  #if defined(HYDRO_MULTIFLUID) && !defined(GRAIN_BACKREACTION)
+   #define GRAIN_BACKREACTION /* no 'passive' option for the multifluid case */
+  #endif
+#endif
+
 
 
 #if defined(COOL_MOLECFRAC)

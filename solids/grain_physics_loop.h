@@ -26,6 +26,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* FLUID_DEFAULT for j-side fluid filter in pair_kernel */
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 
@@ -33,7 +34,7 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
-#ifdef GRAIN_FLUID
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
 #include "grain_physics_functions.h"   /* SSOT: pair-kernel bodies + LocalIn types */
 
 
@@ -185,6 +186,12 @@ struct GrainBackrxSpec {
         if(nb.oracle_dry_run) return;
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr || nb.CellP_arr == nullptr) return;
+#ifdef HYDRO_MULTIFLUID
+        /* Backreaction targets only default-fluid gas; specialty-fluid neighbors
+         * (e.g. FLUID_DUST_GRAIN, FLUID_ION) are sources, not receivers. Mirrors
+         * the j-side filter that lived in the legacy grain_backrx_evaluate_gpu. */
+        if(nb.P_arr[nb.j].FluidType != FLUID_DEFAULT) return;
+#endif
         Vec3<double> dp;
         dp[0] = active.pos[0] - (double)nb.P_arr[nb.j].Pos[0];
         dp[1] = active.pos[1] - (double)nb.P_arr[nb.j].Pos[1];
@@ -486,6 +493,6 @@ struct GrainRTGrainSpec {
 
 #endif /* RT_OPACITY_FROM_EXPLICIT_GRAINS */
 
-#endif /* GRAIN_FLUID */
+#endif /* DO_FLUID_ALTSPECIES_DRAG_CALCULATION */
 
 #endif /* GRAIN_PHYSICS_LOOP_H */

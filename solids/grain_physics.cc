@@ -5,6 +5,7 @@
 #include <math.h>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../solids/grain_physics_loop_api.h"
@@ -24,7 +25,7 @@
 
 
 
-#ifdef GRAIN_FLUID
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 
 extern void grain_drag_evaluate(struct particle_data *, struct gas_cell_data *, int *, int);
 
@@ -38,14 +39,15 @@ void apply_grain_dragforce(void)
        drag kernel, so filtering here makes the grain count honest for the tiny-N
        dispatch decision inside grain_drag_evaluate. */
     {
+        auto drag_eligible_caller = [](int ii) {
+            return IS_PARTICLE_DRAGVALID(P[ii].Type, P[ii].FluidType) && (P[ii].Mass > 0);
+        };
         int num_grain = 0;
-        for(int ii : ActiveParticleList)
-            if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) num_grain++;
+        for(int ii : ActiveParticleList) if(drag_eligible_caller(ii)) num_grain++;
         if(num_grain > 0) {
             int *grain_indices = (int *) malloc(num_grain * sizeof(int));
             int aa = 0;
-            for(int ii : ActiveParticleList)
-                if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) grain_indices[aa++] = ii;
+            for(int ii : ActiveParticleList) if(drag_eligible_caller(ii)) grain_indices[aa++] = ii;
             grain_drag_evaluate(P, CellP, grain_indices, num_grain);
             free(grain_indices);
         }
@@ -73,6 +75,11 @@ void apply_grain_dragforce(void)
  'work' between neighbors, but all of the parallelization, looping, communication blocks,
  etc, are all handled for you. */
 
+/* The legacy grain_backrx() host-driver function was retired by the runner
+   port; the toplevel now lives as grain_backrx_calc() in
+   solids/grain_physics_loop.cc and is invoked from apply_grain_dragforce()
+   above. The multifluid IS_PARTICLE_DRAGVALID predicate intent has been
+   transposed into GrainBackrxSpec::is_active(). */
 
 
 

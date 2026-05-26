@@ -21,6 +21,7 @@
 #include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 
@@ -43,7 +44,7 @@ extern struct cooling_tables_t CoolTables;
 #include "../declarations/gpu_dispatch_templates.h"
 
 
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 
 #ifdef GRAIN_EVOLUTION
 #include "grain_evolution_functions.h"
@@ -61,17 +62,23 @@ KOKKOS_FUNCTION
 static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp)
 {
     int k;
-    if(!((1 << pp[idx].Type) & (GRAIN_PTYPES))) {pp[idx].Grain_AccelTimeMin = MAX_REAL_NUMBER; return;}
+    /* Check drag eligibility and set defaults for non-eligible particles */
+    const bool drag_eligible_source = IS_PARTICLE_DRAGVALID(pp[idx].Type, pp[idx].FluidType);
+    if(!drag_eligible_source) {pp[idx].Grain_AccelTimeMin = MAX_REAL_NUMBER; return;}
 #ifdef BOX_BND_PARTICLES
     if(pp[idx].ID <= 0) return;
 #endif
-    if(!( ((1 << pp[idx].Type) & (GRAIN_PTYPES)) && (pp[idx].Mass > 0) )) return;
+    if(!( drag_eligible_source && (pp[idx].Mass > 0) )) return;
 
-#ifdef SINK_PARTICLES
-    pp[idx].SwallowID = 0;
+#if defined(SINK_PARTICLES) && defined(GRAIN_FLUID)
+    /* SwallowID/SwallowTime on Type==0 belong to sink physics; do not reset
+     * here for Type==0 dust-fluid sources. */
+    if(drag_eligible_source) {
+        pp[idx].SwallowID = 0;
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-    pp[idx].SwallowTime = MAX_REAL_NUMBER;
+        pp[idx].SwallowTime = MAX_REAL_NUMBER;
 #endif
+    }
 #endif
 #if defined(GRAIN_BACKREACTION)
     pp[idx].Grain_DeltaMomentum = {};
@@ -86,26 +93,37 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
     double vgas_mag = sqrt((pp[idx].Gas_Velocity - pp[idx].Vel).norm_sq()) / All.cf_atime;
     int grain_subtype = 1;
 #if defined(PIC_MHD)
-    grain_subtype = pp[idx].MHD_PIC_SubType;
+    /* MHD_PIC_SubType is only meaningful for Type=3-style grain particles;
+     * Type==0 dust-fluid sources keep the default subtype = 1 (Epstein/Stokes). */
+    if(drag_eligible_source) {grain_subtype = pp[idx].MHD_PIC_SubType;}
 #endif
+
+
 
     if((grain_subtype <= 2) && (dt > 0) && (pp[idx].Gas_Density > 0) && (vgas_mag > 0))
     {
         double gamma_eff = GAMMA_DEFAULT;
         double cs = sqrt((gamma_eff*(gamma_eff-1)) * pp[idx].Gas_InternalEnergy);
-        double R_grain_cgs = pp[idx].Grain_Size, R_grain_code = R_grain_cgs / UNIT_LENGTH_IN_CGS;
         double rho_gas = pp[idx].Gas_Density * All.cf_a3inv;
-        double rho_grain_physical = All.Grain_Internal_Density, rho_grain_code = rho_grain_physical / UNIT_DENSITY_IN_CGS;
         double x0 = 0.469993*sqrt(gamma_eff) * vgas_mag/cs;
-        double tstop_inv = 1.59577/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code);
+        double tstop_inv = MAX_REAL_NUMBER;
 
-#ifdef GRAIN_LORENTZFORCE
+#if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) /* below block calculates grain-gas drag, only makes sense for dust modules specifically */
+        double grain_size_cgs = 1.e-5; 
+        double grain_rho_cgs = 1.;
+#if defined(GRAIN_FLUID)
+        grain_size_cgs = pp[idx].Grain_Size;
+        grain_rho_cgs = All.Grain_Internal_Density;
+#endif
+        double R_grain_cgs = grain_size_cgs, R_grain_code = R_grain_cgs / UNIT_LENGTH_IN_CGS;
+        double rho_grain_physical = grain_rho_cgs, rho_grain_code = rho_grain_physical / UNIT_DENSITY_IN_CGS;
+        tstop_inv = 1.59577/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code);
+#ifdef DO_FLUID_DRAG_CALCULATION_WITHBFIELDS
         double cs_cgs = cs * UNIT_VEL_IN_CGS;
         double tau_draine_sutin = R_grain_cgs * (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (gamma_eff * ELECTRONCHARGE_CGS*ELECTRONCHARGE_CGS);
         double Z_grain = -DMAX(1./(1. + sqrt(1.0e-3/tau_draine_sutin)), 2.5*tau_draine_sutin);
         if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
 #endif
-
 #ifdef GRAIN_EPSTEIN_STOKES
         if(grain_subtype == 0 || grain_subtype == 1)
         {
@@ -117,8 +135,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
             if(corr_mfp > 1) {tstop_inv /= corr_mfp;}
         }
 #endif
-
-#if defined(GRAIN_LORENTZFORCE) && defined(GRAIN_EPSTEIN_STOKES)
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS) && defined(GRAIN_EPSTEIN_STOKES)
         if(grain_subtype == 1)
         {
             double a_Coulomb = sqrt(2.*gamma_eff*gamma_eff*gamma_eff/(9.*M_PI));
@@ -137,25 +154,39 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
             tstop_inv += tstop_Coulomb_inv;
         }
 #endif
+#elif defined(HYDRO_MULTIFLUID_IONNEUTRAL)
+        /* Draine ambipolar drag: tstop_inv = (<sigma v>_in / (m_i + m_n)) * rho_neutral.
+         * Hardcoded HI/H+ values; edit two constants for other regimes (HCO+/H2 etc.). */
+        double sigmav_in_cgs          = 1.9e-9;                /* HI/H+ momentum-transfer rate coefficient (Draine 1980; ~T^0.5 dep neglected v1) */
+        double m_ion_plus_neutral_cgs = 2.0 * PROTONMASS_CGS;  /* H+/HI; replace for other regimes */
+        double gamma_AD_cgs  = sigmav_in_cgs / m_ion_plus_neutral_cgs;
+        double gamma_AD_code = gamma_AD_cgs * UNIT_DENSITY_IN_CGS * UNIT_TIME_IN_CGS;
+        tstop_inv = gamma_AD_code * rho_gas;
+#endif /* closes grain-fluid-specific drag calculation block */
 
         double external_forcing[3]={0}, eps=MIN_REAL_NUMBER;
         pp[idx].Grain_AccelTimeMin = DMAX(1./(eps+tstop_inv), sqrt(pp[idx].Get_Particle_Size()*All.cf_atime/(eps+vgas_mag*tstop_inv)));
 
-#ifdef GRAIN_LORENTZFORCE
+#ifdef DO_FLUID_DRAG_CALCULATION_WITHBFIELDS
         if(grain_subtype == 1)
         {
-            double grain_mass = (4.*M_PI/3.) * R_grain_code*R_grain_code*R_grain_code * rho_grain_code;
+            double grain_charge_cinv = 0;
             double lorentz_units = UNIT_B_IN_GAUSS;
             lorentz_units *= (ELECTRONCHARGE_CGS/C_LIGHT_CGS) * UNIT_VEL_IN_CGS / UNIT_MASS_IN_CGS;
             lorentz_units /= UNIT_VEL_IN_CGS / UNIT_TIME_IN_CGS;
+#if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) /* below block calculates grain-gas drag, only makes sense for dust modules specifically */
+            double grain_mass = (4.*M_PI/3.) * R_grain_code*R_grain_code*R_grain_code * rho_grain_code;
+            grain_charge_cinv = Z_grain / grain_mass * lorentz_units;
+#ifdef GRAIN_RDI_TESTPROBLEM
+            if(All.Grain_Charge_Parameter != 0) {grain_charge_cinv = -All.Grain_Charge_Parameter*sqrt(1.)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * pow(All.Grain_Size_Max/pp[idx].Grain_Size,2);}
+#endif
+#endif
+            /* this part defines the non-relativistic Boris integrator */
             Vec3<double> bhat, efield={}; double bmag=0, efield_coeff=0;
             bhat = pp[idx].Gas_B * All.cf_a2inv; bmag = bhat.norm_sq();
             Vec3<double> dv = (pp[idx].Vel - pp[idx].Gas_Velocity) / All.cf_atime;
             if(bmag>0) {bmag=sqrt(bmag); bhat /= bmag;} else {bmag=0;}
-            double grain_charge_cinv = Z_grain / grain_mass * lorentz_units;
-#ifdef GRAIN_RDI_TESTPROBLEM
-            if(All.Grain_Charge_Parameter != 0) {grain_charge_cinv = -All.Grain_Charge_Parameter*sqrt(1.)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * pow(All.Grain_Size_Max/pp[idx].Grain_Size,2);}
-#endif
+
             double lorentz_coeff = (0.5*dt) * bmag * grain_charge_cinv;
             Vec3<double> v_m = dv + efield * (0.5*efield_coeff);
             Vec3<double> vcrosst = cross(v_m, bhat);
@@ -170,6 +201,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         }
 #endif
 
+        /* update conservative variables */
         double delta_egy=0, delta_mom[3]={0}, xf=0, dt_tinv=dt*tstop_inv, C1=-(1+sqrt(1+x0*x0))/x0;
         if(dt_tinv < 100.) {double C2 = C1*exp(dt_tinv); xf=-2*C2/(C2*C2-1);}
         double slow_fac = 1 - xf/x0;
@@ -247,8 +279,9 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
      * the existing GRAIN_BACKREACTION writeback infrastructure rather than
      * requiring a parallel pass. Gated on grain_subtype <= 2 so PIC
      * particles (subtype >= 3) -- whose Composition[] would be meaningless
-     * -- are skipped. */
-    if((grain_subtype <= 2) && (dt > 0)) {
+     * -- are skipped. Restricted to GRAIN_PTYPES sources: Type==0 dust-fluid
+     * sources will not be compatible in COND/SUBL/sputter */
+    if(drag_eligible_source && (grain_subtype <= 2) && (dt > 0)) {
         grain_evolution_local_step(idx, pp, dt);
     }
 #endif
@@ -306,7 +339,7 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
         int ii = active_indices[j];
         P_host[ii].GravAccel = compact_P[j].GravAccel;
         P_host[ii].Grain_AccelTimeMin = compact_P[j].Grain_AccelTimeMin;
-#ifdef SINK_PARTICLES
+#if defined(SINK_PARTICLES) && defined(GRAIN_FLUID)
         P_host[ii].SwallowID = compact_P[j].SwallowID;
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         P_host[ii].SwallowTime = compact_P[j].SwallowTime;
@@ -337,4 +370,4 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
 
 void grain_drag_evaluate(struct particle_data *, struct gas_cell_data *, int *, int) {}
 
-#endif /* GRAIN_FLUID */
+#endif /* DO_FLUID_ALTSPECIES_DRAG_CALCULATION */

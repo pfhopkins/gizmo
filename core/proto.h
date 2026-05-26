@@ -608,7 +608,7 @@ int is_star_eligible_for_binary_merge_away(int j);
 #endif
 #endif
 
-#ifdef GRAIN_FLUID
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 void apply_grain_dragforce(void);
 #endif
 

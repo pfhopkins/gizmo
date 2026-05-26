@@ -5,6 +5,9 @@ extern ALIGN(32) struct particle_data
 {
     short int Type;                 /*!< flags particle type.  0=gas, 1=halo/high-res dm, 2=alt dm/disk/collisionless, 3=pic/dust/bulge/alt dm, 4=new stars, 5=sink */
     short int TimeBin;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;        /* Lagrangian-fluid partition ID for Type=0; placed in existing alignment padding (see multifluid_helpers.h) */
+#endif
     MyIDType ID;                    /*! < unique ID of particle (assigned at beginning of the simulation) */
     MyIDType ID_child_number;       /*! < child number for particles 'split' from main (retain ID, get new child number) */
 #ifndef SINK_WIND_SPAWN
@@ -133,8 +136,10 @@ extern ALIGN(32) struct particle_data
     MyFloat NewStar_Momentum_For_JetFeedback; /* amount of momentum to return from protostellar jet sub-grid model */
 #endif
     
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 #if defined(GRAIN_FLUID)
     MyFloat Grain_Size;
+#endif
     MyFloat Gas_Density;
     MyFloat Gas_InternalEnergy;
     Vec3<MyFloat> Gas_Velocity;
@@ -142,7 +147,7 @@ extern ALIGN(32) struct particle_data
 #if defined(GRAIN_BACKREACTION)
     Vec3<MyFloat> Grain_DeltaMomentum;
 #endif
-#if defined(GRAIN_LORENTZFORCE)
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     Vec3<MyFloat> Gas_B;
 #endif
 #if defined(GRAIN_EVOLUTION)

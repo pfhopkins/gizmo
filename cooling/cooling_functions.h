@@ -23,6 +23,7 @@
 
 #include "cooling_tables.h"
 #include "../eos/eos_functions.h"
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef COOLING
 #if !defined(CHIMES)
@@ -536,6 +537,16 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 KOKKOS_INLINE_FUNCTION
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
+    if(target >= 0 && pp[target].FluidType == FLUID_DM) {
+        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0;
+        *nHe0_guess = 1; *nHep_guess = 0; *nHepp_guess = 0;
+        *mu_guess = 1.0;
+        return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
+               * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
+    }
+#endif
 #if defined(CHIMES)
     int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
     *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];

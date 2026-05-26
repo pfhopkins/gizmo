@@ -11,6 +11,7 @@
 #include "../system/eigen_symmetric.h"
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h" 
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
@@ -382,6 +383,9 @@ void merge_and_split_particles(void)
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef HYDRO_MULTIFLUID
+                    if (do_allow_merger && !same_lagrangian_fluid_id(P[i].FluidType, P[j].FluidType)) {do_allow_merger = 0;}
+#endif
                     if (do_allow_merger) {threshold_val=m_eff; target_for_merger=j;}
                 }
                 if (target_for_merger >= 0) {
