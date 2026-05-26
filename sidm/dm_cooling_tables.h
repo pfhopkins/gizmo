@@ -5,7 +5,7 @@
  * cooling/cooling.cc so device kernels can read it directly.  Pointer members
  * point to UVM-managed buffers allocated via Kokkos::kokkos_malloc<SharedSpace>.
  *
- * The dm-cooling chain in sidm/dm_fluid_functions.h is device-callable
+ * The dm-cooling chain in sidm/dm_cooling_functions.h is device-callable
  * (KOKKOS_INLINE_FUNCTION) for the on-the-fly cooling rate evaluation;
  * the per-temperature table-builder helpers (dm_g_integral et al.) stay
  * host-only because they run once at startup in dm_MakeCoolingTable.

@@ -550,9 +550,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifdef HYDRO_MULTIFLUID_DM
     /* Dark-fluid early return: adiabatic by default. Under HYDRO_MULTIFLUID_DM_COOLING
      * the dispatch runs the consolidated ADM cooling chain in
-     * sidm/dm_fluid_functions.h. The whole chain is KOKKOS_INLINE_FUNCTION and
-     * reads from the managed DMCoolTables struct (defined below alongside
-     * CoolTables), so this is device-clean. */
+     * sidm/dm_cooling_functions.h. The whole chain is KOKKOS_INLINE_FUNCTION
+     * and reads from the managed DMCoolTables struct (defined at the top of
+     * this file alongside CoolTables), so this is device-clean. */
     if(pp[i].FluidType == FLUID_DM) {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
         do_dark_cooling_for_particle(i, pp, cell);

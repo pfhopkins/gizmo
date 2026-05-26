@@ -131,6 +131,10 @@
 #endif
 #endif
 
+#if defined(HYDRO_MULTIFLUID_DM_COOLING) && (!defined(HYDRO_MULTIFLUID_DM) || !defined(COOLING))
+#error "HYDRO_MULTIFLUID_DM_COOLING requires HYDRO_MULTIFLUID_DM and COOLING."
+#endif
+
 #if defined(CBE_INTEGRATOR) || defined(DM_FUZZY)
 #define AGS_FACE_CALCULATION_IS_ACTIVE
 #endif
