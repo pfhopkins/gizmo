@@ -100,6 +100,19 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
    No convenience aliases — they caused linker symbol ownership bugs on CUDA. */
 #endif /* !CHIMES */
 
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+/* ADM cooling tables (HYDRO_MULTIFLUID_DM_COOLING). Same managed-struct pattern
+   as CoolTables — the dm-cooling chain in sidm/dm_fluid_functions.h is
+   KOKKOS_INLINE_FUNCTION and reads DMCoolTables fields on the device hot path.
+   Struct definition is in sidm/dm_cooling_tables.h. */
+#include "../sidm/dm_cooling_tables.h"
+#if defined(GIZMO_GPU_COMPILER)
+__managed__ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
+#else
+struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
+#endif
+#endif /* HYDRO_MULTIFLUID_DM_COOLING */
+
 #if defined(CHIMES)
 int ChimesEqmMode, ChimesUVBMode, ChimesInitIonState, N_chimes_full_output_freq, Chimes_incl_full_output = 1;
 double chimes_rad_field_norm_factor, shielding_length_factor, cr_rate;
@@ -475,25 +488,14 @@ void cooling_parent_routine(void)
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 KOKKOS_FUNCTION
-/* Hard compile-time gate: HYDRO_MULTIFLUID_DM_COOLING dispatches into the
- * ADM Roy cooling chain (dm_DoCooling and helpers), which remains host-only
- * — GSL-style numerical integration that has not been ported to a
- * Kokkos-device-callable form. Calling it from a KOKKOS_FUNCTION device
- * kernel is exactly the host-from-device pattern we reject. Refuse the
- * build until the chain is ported. Mac OpenMP builds (no KOKKOS_ENABLE_CUDA/HIP)
- * route do_the_cooling_for_particle to the host at runtime, so the call is
- * legal there; the gate is CUDA/HIP-specific. */
-#if defined(HYDRO_MULTIFLUID_DM_COOLING) && (defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP))
-#error "HYDRO_MULTIFLUID_DM_COOLING is incompatible with KOKKOS_ENABLE_CUDA / KOKKOS_ENABLE_HIP: do_dark_cooling_for_particle (sidm/dm_fluid_functions.h) calls the host-only dm_DoCooling chain from a KOKKOS_FUNCTION device kernel. Port dm_DoCooling + dm_CoolingRate + dm_find_abundances_and_rates + gizmo_gl20_integrate to KOKKOS_INLINE_FUNCTION before enabling this combination."
-#endif
-
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MULTIFLUID_DM
     /* Dark-fluid early return: adiabatic by default. Under HYDRO_MULTIFLUID_DM_COOLING
-     * the dispatch into the (host-only) ADM Roy cooling chain runs; the
-     * preprocessor #error above refuses the build under CUDA/HIP so a
-     * device kernel can never reach this host-only path. */
+     * the dispatch runs the consolidated ADM cooling chain in
+     * sidm/dm_fluid_functions.h. The whole chain is KOKKOS_INLINE_FUNCTION and
+     * reads from the managed DMCoolTables struct (defined below alongside
+     * CoolTables), so this is device-clean. */
     if(pp[i].FluidType == FLUID_DM) {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
         do_dark_cooling_for_particle(i, pp, cell);

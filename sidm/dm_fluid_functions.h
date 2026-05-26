@@ -66,19 +66,16 @@ static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_
  * ============================================================================ */
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
 
+#include <Kokkos_Core.hpp>                   /* Kokkos::kokkos_malloc<SharedSpace> for UVM table allocation */
 #include "../declarations/gizmo_quadrature.h"
 #include "../core/timestep_functions.h"      /* get_particle_timestep_in_physical (called by do_dark_cooling_for_particle below) */
+#include "dm_cooling_tables.h"               /* dm_cooling_tables_t + NCOOLTAB_DM */
 
-/* ---- cooling tables (inline globals: one instance shared across TUs) ---- */
-inline int    NCOOLTAB_DM_g     = 2000;     /* table size */
-inline double Tmin_dm_g         = -1.0;     /* log10(T_min/K), set in MakeCoolingTable_dm */
-inline double Tmax_dm_g         =  9.0;     /* log10(T_max/K) */
-inline double deltaT_dm_g       =  0.0;     /* (Tmax-Tmin)/NCOOLTAB */
-inline double *BetaH0_dm_g       = nullptr;
-inline double *Betaff_dm_g       = nullptr;
-inline double *AlphaHp_dm_g      = nullptr;
-inline double *AlphaHpRate_dm_g  = nullptr;
-inline double *GammaeH0_dm_g     = nullptr;
+/* DMCoolTables instance is __managed__ in cooling/cooling.cc — see file header.
+   Device-callable cooling-chain helpers below read DMCoolTables.{Tmin,Tmax,deltaT,
+   BetaH0[],Betaff[],AlphaHp[],AlphaHpRate[],GammaeH0[]} directly from the
+   managed struct, so the same code path is used by Mac OpenMP and Vista CUDA. */
+extern struct dm_cooling_tables_t DMCoolTables;
 
 /* ---- species indices for cooling_DarkH2 (file-scope; was per-function dup) ---- */
 static const int QH_DM = 0, QH2_DM = 1, QHj_DM = 2, QE_DM = 3;
@@ -171,9 +168,9 @@ static inline double dm_recomb_cool_integral(double y2) {
  *  2008 + Glover 2015 SM curves with ADM scalings).
  * ============================================================================ */
 
-static inline double dm_sigmoid(double x, double x0, double s) { return 10.0 / (10.0 + exp(-s * (x - x0))); }
+static KOKKOS_INLINE_FUNCTION double dm_sigmoid(double x, double x0, double s) { return 10.0 / (10.0 + exp(-s * (x - x0))); }
 
-static inline double dm_wCool(double logTgas, double logTmin, double logTmax) {
+static KOKKOS_INLINE_FUNCTION double dm_wCool(double logTgas, double logTmin, double logTmax) {
     double x = (logTgas - logTmin) / (logTmax - logTmin);
     double w = pow(10., 200.0 * (dm_sigmoid(x, -0.2, 50.) * dm_sigmoid(-x, -1.2, 50.) - 1.0));
     if(w < 1e-199) {w = 0.0;}
@@ -182,7 +179,7 @@ static inline double dm_wCool(double logTgas, double logTmin, double logTmax) {
 }
 
 /* Glover & Abel 2008 + Glover 2015 SM H2 rovib piece. typeCurve in {0,1,2,3}. */
-static inline double dm_computeSMCurve(int typeCurve, double temp, double winScaleLow, double winScaleHigh) {
+static KOKKOS_INLINE_FUNCTION double dm_computeSMCurve(int typeCurve, double temp, double winScaleLow, double winScaleHigh) {
     double T3 = temp * 1e-3, logt3 = log10(T3), logt = log10(temp);
     double l2 = logt3*logt3, l3 = l2*logt3, l4 = l3*logt3, l5 = l4*logt3;
     if(typeCurve == 0) { /* H2-H */
@@ -216,7 +213,7 @@ static inline double dm_computeSMCurve(int typeCurve, double temp, double winSca
 }
 
 /* Multi-case piecewise rescaled SM rovib (Soliman et al. arXiv:2106.13245 Appx). */
-static inline double dm_computeMultiCase(int typeCurve, double Tgas, double critTemp, double Tscale,
+static KOKKOS_INLINE_FUNCTION double dm_computeMultiCase(int typeCurve, double Tgas, double critTemp, double Tscale,
                                           double atomScale, double tempScaleR, double tempScaleV,
                                           double ldlScaleR, double ldlScaleV, double nX) {
     double Tr = Tgas*tempScaleR, Tv = Tgas*tempScaleV;
@@ -245,7 +242,7 @@ static inline double dm_computeMultiCase(int typeCurve, double Tgas, double crit
 }
 
 /* Total dark-H2 cooling rate (low-density + LTE combined). */
-static inline double dm_cooling_DarkH2(double *n, double Tgas)
+static KOKKOS_INLINE_FUNCTION double dm_cooling_DarkH2(double *n, double Tgas)
 {
     double ra = All.ADM_FineStructure / FINE_STRUCTURE_SM;
     double rP = All.ADM_ProtonMass / PROTONMASS_CGS;
@@ -300,38 +297,42 @@ static inline double dm_cooling_DarkH2(double *n, double Tgas)
  * ============================================================================ */
 static inline void dm_InitCoolMemory(void)
 {
-    int N = NCOOLTAB_DM_g + 1;
-    BetaH0_dm_g      = (double *) malloc(N * sizeof(double));
-    AlphaHp_dm_g     = (double *) malloc(N * sizeof(double));
-    AlphaHpRate_dm_g = (double *) malloc(N * sizeof(double));
-    GammaeH0_dm_g    = (double *) malloc(N * sizeof(double));
-    Betaff_dm_g      = (double *) malloc(N * sizeof(double));
+    /* UVM allocation: device cooling kernel reads DMCoolTables.<field>[i] directly
+       (same SharedSpace pattern as cooling.cc::InitCoolMemory for CoolTables). */
+    const size_t N = (size_t)(NCOOLTAB_DM + 1);
+    #define DMCOOLMEM(name) DMCoolTables.name = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, N * sizeof(double))
+    DMCOOLMEM(BetaH0);
+    DMCOOLMEM(AlphaHp);
+    DMCOOLMEM(AlphaHpRate);
+    DMCOOLMEM(GammaeH0);
+    DMCOOLMEM(Betaff);
+    #undef DMCOOLMEM
 }
 
 static inline void dm_MakeCoolingTable(void)
 {
-    Tmin_dm_g = (All.MinGasTemp > 0.0) ? log10(All.MinGasTemp) : -1.0;
-    deltaT_dm_g = (Tmax_dm_g - Tmin_dm_g) / NCOOLTAB_DM_g;
+    DMCoolTables.Tmin = (All.MinGasTemp > 0.0) ? log10(All.MinGasTemp) : -1.0;
+    DMCoolTables.deltaT = (DMCoolTables.Tmax - DMCoolTables.Tmin) / NCOOLTAB_DM;
     /* unit-conversion bookkeeping for recombination rate normalization */
     const double gtoGeV    = 1.0 / 1.79e-24;
     const double TtoGeV    = 1.0 / 1.16e13;
     const double InGeVcm   = 1.9733e-14;
     const double GeVtoergs = 0.001602;
-    for(int i = 0; i <= NCOOLTAB_DM_g; i++) {
-        double T = pow(10.0, Tmin_dm_g + deltaT_dm_g * i);
+    for(int i = 0; i <= NCOOLTAB_DM; i++) {
+        double T = pow(10.0, DMCoolTables.Tmin + DMCoolTables.deltaT * i);
         double y2 = All.ADM_ElectronMass * pow(All.ADM_FineStructure, 2.0) * pow(C_LIGHT_CGS, 2.0)
                   / (2.0 * BOLTZMANN_CGS * T);
-        BetaH0_dm_g[i]      = 7.4e-18 * pow(All.ADM_FineStructure/0.01, 2.0) * sqrt(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass) * sqrt(1.0e5/T) * dm_g_integral(y2);
-        Betaff_dm_g[i]      = 3.7e-27 * (pow(All.ADM_FineStructure/0.01, 3.0) / pow(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS, 1.5)) * sqrt(T);
-        AlphaHp_dm_g[i]     = (pow(All.ADM_FineStructure, 5.0) / sqrt(pow(T,3.0) * All.ADM_ElectronMass))
+        DMCoolTables.BetaH0[i]      = 7.4e-18 * pow(All.ADM_FineStructure/0.01, 2.0) * sqrt(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass) * sqrt(1.0e5/T) * dm_g_integral(y2);
+        DMCoolTables.Betaff[i]      = 3.7e-27 * (pow(All.ADM_FineStructure/0.01, 3.0) / pow(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS, 1.5)) * sqrt(T);
+        DMCoolTables.AlphaHp[i]     = (pow(All.ADM_FineStructure, 5.0) / sqrt(pow(T,3.0) * All.ADM_ElectronMass))
                               * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
                               * (C_LIGHT_CGS * pow(InGeVcm, 2.0) / sqrt(gtoGeV * pow(TtoGeV, 3.0)))
                               * dm_recomb_rate_integral(y2);
-        AlphaHpRate_dm_g[i] = (pow(All.ADM_FineStructure, 5.0) / sqrt(T * All.ADM_ElectronMass))
+        DMCoolTables.AlphaHpRate[i] = (pow(All.ADM_FineStructure, 5.0) / sqrt(T * All.ADM_ElectronMass))
                               * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
                               * (C_LIGHT_CGS * pow(InGeVcm, 2.0) * GeVtoergs / sqrt(gtoGeV * TtoGeV))
                               * dm_recomb_cool_integral(y2);
-        GammaeH0_dm_g[i]    = 2.2e-7 * pow(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass, 1.5) * sqrt(1.0e5/T) * dm_f_integral(y2);
+        DMCoolTables.GammaeH0[i]    = 2.2e-7 * pow(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass, 1.5) * sqrt(1.0e5/T) * dm_f_integral(y2);
     }
 }
 
@@ -340,34 +341,34 @@ static inline void InitCool_dm(void) { dm_InitCoolMemory(); dm_MakeCoolingTable(
 /* ============================================================================
  *  IONIZATION EQUILIBRIUM + ATOMIC LAMBDA (closed-form: no photoionization)
  * ============================================================================ */
-static inline double dm_find_abundances_and_rates(double logT, double rho, int target, int return_cooling_mode,
+static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, double rho, int target, int return_cooling_mode,
                                                    double *ne_guess, double *nH0_guess, double *nHp_guess,
                                                    double *mu_guess,
                                                    struct gas_cell_data *cell)
 {
-    if(!isfinite(logT) || !isfinite(rho)) {logT = Tmin_dm_g;}
-    if(logT <= Tmin_dm_g) {
+    if(!isfinite(logT) || !isfinite(rho)) {logT = DMCoolTables.Tmin;}
+    if(logT <= DMCoolTables.Tmin) {
         *nH0_guess = 1.0; *nHp_guess = 0.0; *ne_guess = 1.e-22;
         *mu_guess = 1.0/(1.0 + *ne_guess);
         return 0;
     }
-    if(logT >= Tmax_dm_g) {
+    if(logT >= DMCoolTables.Tmax) {
         *nH0_guess = 0.0; *nHp_guess = 1.0; *ne_guess = 1.0;
         *mu_guess = 1.0/(1.0 + *ne_guess);
         return 0;
     }
-    double t = (logT - Tmin_dm_g) / deltaT_dm_g;
+    double t = (logT - DMCoolTables.Tmin) / DMCoolTables.deltaT;
     int j = (int)t;
     if(j < 0) {j = 0;}
-    if(j > NCOOLTAB_DM_g) {j = NCOOLTAB_DM_g;}
+    if(j > NCOOLTAB_DM) {j = NCOOLTAB_DM;}
     double fhi = t - j, flow = 1.0 - fhi;
 
     /* Closed-form equilibrium: recombination vs collisional ionization
      * (no photoionization in this placeholder; iteration of Roy's version
      * was structurally pointless since the formula has no n_elec dependence). */
-    double aHp     = flow * AlphaHp_dm_g[j]     + fhi * AlphaHp_dm_g[j+1];
-    double aHpRate = flow * AlphaHpRate_dm_g[j] + fhi * AlphaHpRate_dm_g[j+1];
-    double geH0    = DMAX(flow * GammaeH0_dm_g[j] + fhi * GammaeH0_dm_g[j+1], 1.e-40);
+    double aHp     = flow * DMCoolTables.AlphaHp[j]     + fhi * DMCoolTables.AlphaHp[j+1];
+    double aHpRate = flow * DMCoolTables.AlphaHpRate[j] + fhi * DMCoolTables.AlphaHpRate[j+1];
+    double geH0    = DMAX(flow * DMCoolTables.GammaeH0[j] + fhi * DMCoolTables.GammaeH0[j+1], 1.e-40);
     double nH0     = aHp / (MIN_REAL_NUMBER + aHp + geH0);
     double nHp     = 1.0 - nH0;
     double n_elec  = nHp;
@@ -377,8 +378,8 @@ static inline double dm_find_abundances_and_rates(double logT, double rho, int t
     if(target >= 0) {cell[target].Ne = n_elec;}
 
     if(return_cooling_mode == 1) {
-        double bH0 = flow * BetaH0_dm_g[j] + fhi * BetaH0_dm_g[j+1];
-        double bff = flow * Betaff_dm_g[j] + fhi * Betaff_dm_g[j+1];
+        double bH0 = flow * DMCoolTables.BetaH0[j] + fhi * DMCoolTables.BetaH0[j+1];
+        double bff = flow * DMCoolTables.Betaff[j] + fhi * DMCoolTables.Betaff[j+1];
         double LambdaExc = bH0 * n_elec * nH0;
         double LambdaIon = 0.5 * All.ADM_ElectronMass * pow(C_LIGHT_CGS, 2.0) * pow(All.ADM_FineStructure, 2.0) * geH0 * n_elec * nH0;
         double LambdaRec = aHpRate * n_elec * nHp;
@@ -389,7 +390,7 @@ static inline double dm_find_abundances_and_rates(double logT, double rho, int t
 }
 
 /* Convert specific u to T via Newton iteration on mu. */
-static inline double dm_convert_u_to_temp(double u, double rho, int target, double *ne_guess,
+static KOKKOS_INLINE_FUNCTION double dm_convert_u_to_temp(double u, double rho, int target, double *ne_guess,
                                            double *nH0_guess, double *nHp_guess, double *mu_guess,
                                            struct gas_cell_data *cell)
 {
@@ -399,28 +400,28 @@ static inline double dm_convert_u_to_temp(double u, double rho, int target, doub
     int iter = 0;
     while(iter < MAXITER) {
         double temp_old = temp;
-        dm_find_abundances_and_rates(log10(DMAX(temp, pow(10., Tmin_dm_g))), rho, target, 0,
+        dm_find_abundances_and_rates(log10(DMAX(temp, pow(10., DMCoolTables.Tmin))), rho, target, 0,
                                       ne_guess, nH0_guess, nHp_guess, mu_guess, cell);
         temp = (5./3.-1.) * (*mu_guess) * T_0;
         if(fabs(temp - temp_old) / DMAX(temp, 1.0) < 1.e-4) {break;}
         iter++;
     }
-    if(temp <= 0) {temp = pow(10., Tmin_dm_g);}
-    if(log10(temp) < Tmin_dm_g) {temp = pow(10., Tmin_dm_g);}
+    if(temp <= 0) {temp = pow(10., DMCoolTables.Tmin);}
+    if(log10(temp) < DMCoolTables.Tmin) {temp = pow(10., DMCoolTables.Tmin);}
     return temp;
 }
 
 /* Net cooling rate (heating − cooling) per nH^2 in cgs. */
-static inline double dm_CoolingRate(double logT, double rho, double n_elec_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_CoolingRate(double logT, double rho, double n_elec_guess, int target, struct gas_cell_data *cell)
 {
     double n_elec = n_elec_guess, nH0, nHp, mu;
     double nHcgs = rho / All.ADM_ProtonMass;
-    if(logT <= Tmin_dm_g) {logT = Tmin_dm_g + 0.5 * deltaT_dm_g;}
+    if(logT <= DMCoolTables.Tmin) {logT = DMCoolTables.Tmin + 0.5 * DMCoolTables.deltaT;}
     if(!isfinite(rho)) {return 0;}
     double T = pow(10.0, logT);
 
     double Lambda;
-    if(logT < Tmax_dm_g) {
+    if(logT < DMCoolTables.Tmax) {
         Lambda = dm_find_abundances_and_rates(logT, rho, target, 1, &n_elec, &nH0, &nHp, &mu, cell);
         /* dark-H2 rovib contribution at low T (cap at the SM-analog 4.4 logT plus ADM scalings) */
         if(logT <= 4.4 + log10(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS) + 2.0*log10(All.ADM_FineStructure/FINE_STRUCTURE_SM)) {
@@ -442,7 +443,7 @@ static inline double dm_CoolingRate(double logT, double rho, double n_elec_guess
     return Q;
 }
 
-static inline double dm_CoolingRateFromU(double u, double rho, double ne_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_CoolingRateFromU(double u, double rho, double ne_guess, int target, struct gas_cell_data *cell)
 {
     double nH0, nHp, mu; (void)nH0; (void)nHp;
     double temp = dm_convert_u_to_temp(u, rho, target, &ne_guess, &nH0, &nHp, &mu, cell);
@@ -450,7 +451,7 @@ static inline double dm_CoolingRateFromU(double u, double rho, double ne_guess, 
 }
 
 /* Implicit cooling solver via bisection (mirrors standard DoCooling pattern). */
-static inline double dm_DoCooling(double u_old, double rho, double dt, double ne_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, double dt, double ne_guess, int target, struct gas_cell_data *cell)
 {
     rho   *= UNIT_DENSITY_IN_CGS;
     u_old *= UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
@@ -494,7 +495,7 @@ static inline double dm_DoCooling(double u_old, double rho, double dt, double ne
 /* Placeholder dark cooling entry point. With HYDRO_MULTIFLUID_DM_COOLING off,
  * this is a strict-adiabatic no-op. With it on, dispatches to the consolidated
  * ADM cooling chain above. */
-static inline void do_dark_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION void do_dark_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
     double dtime = get_particle_timestep_in_physical(i, pp);
