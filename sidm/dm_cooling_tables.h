@@ -33,4 +33,12 @@ struct dm_cooling_tables_t {
    Other TUs include sidm/dm_fluid_functions.h, which forward-declares the
    instance via `extern struct dm_cooling_tables_t DMCoolTables;`. */
 
+/* Table builder: allocates DMCoolTables buffers in Kokkos SharedSpace
+   (UVM) and populates them. Body lives in cooling/cooling.cc (GPU_OBJS,
+   has Kokkos_Core.hpp). Called once at startup from core/begrun.cc. This
+   declaration is the ONLY symbol core/begrun.cc needs to see for ADM
+   cooling -- letting begrun.cc include this minimal header instead of
+   sidm/dm_fluid_functions.h keeps Kokkos CUDA headers out of host TUs. */
+void InitCool_dm(void);
+
 #endif /* DM_COOLING_TABLES_H */

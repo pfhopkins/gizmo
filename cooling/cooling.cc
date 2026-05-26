@@ -104,13 +104,60 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
 /* ADM cooling tables (HYDRO_MULTIFLUID_DM_COOLING). Same managed-struct pattern
    as CoolTables — the dm-cooling chain in sidm/dm_fluid_functions.h is
    KOKKOS_INLINE_FUNCTION and reads DMCoolTables fields on the device hot path.
-   Struct definition is in sidm/dm_cooling_tables.h. */
+   Struct definition is in sidm/dm_cooling_tables.h; the builder InitCool_dm()
+   is below (this TU is in GPU_OBJS so it has Kokkos_Core.hpp + nvcc, mirroring
+   the CoolTables owner-TU pattern at cooling/cooling.cc::InitCoolMemory). */
 #include "../sidm/dm_cooling_tables.h"
+#include "../sidm/dm_fluid_functions.h"  /* integrand chain + integral helpers used by dm_MakeCoolingTable below */
 #if defined(GIZMO_GPU_COMPILER)
 __managed__ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
 #else
 struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullptr, nullptr, nullptr};
 #endif
+
+/* dm cooling table builder. Mirrors InitCoolMemory + the cooling-table
+   construction loop below for the SM cooling case. Single owner TU (cooling.cc)
+   for the kokkos_malloc<SharedSpace>; called once at startup from begrun.cc. */
+static void dm_InitCoolMemory_impl(void)
+{
+    const size_t N = (size_t)(NCOOLTAB_DM + 1);
+    #define DMCOOLMEM(name) DMCoolTables.name = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, N * sizeof(double))
+    DMCOOLMEM(BetaH0);
+    DMCOOLMEM(AlphaHp);
+    DMCOOLMEM(AlphaHpRate);
+    DMCOOLMEM(GammaeH0);
+    DMCOOLMEM(Betaff);
+    #undef DMCOOLMEM
+}
+
+static void dm_MakeCoolingTable_impl(void)
+{
+    DMCoolTables.Tmin = (All.MinGasTemp > 0.0) ? log10(All.MinGasTemp) : -1.0;
+    DMCoolTables.deltaT = (DMCoolTables.Tmax - DMCoolTables.Tmin) / NCOOLTAB_DM;
+    /* unit-conversion bookkeeping for recombination rate normalization */
+    const double gtoGeV    = 1.0 / 1.79e-24;
+    const double TtoGeV    = 1.0 / 1.16e13;
+    const double InGeVcm   = 1.9733e-14;
+    const double GeVtoergs = 0.001602;
+    for(int i = 0; i <= NCOOLTAB_DM; i++) {
+        double T = pow(10.0, DMCoolTables.Tmin + DMCoolTables.deltaT * i);
+        double y2 = All.ADM_ElectronMass * pow(All.ADM_FineStructure, 2.0) * pow(C_LIGHT_CGS, 2.0)
+                  / (2.0 * BOLTZMANN_CGS * T);
+        DMCoolTables.BetaH0[i]      = 7.4e-18 * pow(All.ADM_FineStructure/0.01, 2.0) * sqrt(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass) * sqrt(1.0e5/T) * dm_g_integral(y2);
+        DMCoolTables.Betaff[i]      = 3.7e-27 * (pow(All.ADM_FineStructure/0.01, 3.0) / pow(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS, 1.5)) * sqrt(T);
+        DMCoolTables.AlphaHp[i]     = (pow(All.ADM_FineStructure, 5.0) / sqrt(pow(T,3.0) * All.ADM_ElectronMass))
+                                      * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
+                                      * (C_LIGHT_CGS * pow(InGeVcm, 2.0) / sqrt(gtoGeV * pow(TtoGeV, 3.0)))
+                                      * dm_recomb_rate_integral(y2);
+        DMCoolTables.AlphaHpRate[i] = (pow(All.ADM_FineStructure, 5.0) / sqrt(T * All.ADM_ElectronMass))
+                                      * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
+                                      * (C_LIGHT_CGS * pow(InGeVcm, 2.0) * GeVtoergs / sqrt(gtoGeV * TtoGeV))
+                                      * dm_recomb_cool_integral(y2);
+        DMCoolTables.GammaeH0[i]    = 2.2e-7 * pow(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass, 1.5) * sqrt(1.0e5/T) * dm_f_integral(y2);
+    }
+}
+
+void InitCool_dm(void) { dm_InitCoolMemory_impl(); dm_MakeCoolingTable_impl(); }
 #endif /* HYDRO_MULTIFLUID_DM_COOLING */
 
 #if defined(CHIMES)

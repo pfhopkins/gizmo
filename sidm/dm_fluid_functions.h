@@ -66,10 +66,17 @@ static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_
  * ============================================================================ */
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
 
-#include <Kokkos_Core.hpp>                   /* Kokkos::kokkos_malloc<SharedSpace> for UVM table allocation */
+/* NO <Kokkos_Core.hpp> in this header: it is included by core/begrun.cc (a
+   plain mpicxx host TU) and by other host TUs. On Vista with the CUDA Kokkos
+   build, Kokkos_Setup_Cuda.hpp emits a catastrophic #error if seen by a
+   compiler that does not define __CUDACC__. The kokkos_malloc-using table
+   builder (dm_InitCoolMemory / dm_MakeCoolingTable / InitCool_dm) therefore
+   lives in cooling/cooling.cc, which is in GPU_OBJS (compiled by nvcc and
+   already owns Kokkos_Core.hpp). Only the declaration of InitCool_dm()
+   leaks into broadly-included headers — see sidm/dm_cooling_tables.h. */
 #include "../declarations/gizmo_quadrature.h"
 #include "../core/timestep_functions.h"      /* get_particle_timestep_in_physical (called by do_dark_cooling_for_particle below) */
-#include "dm_cooling_tables.h"               /* dm_cooling_tables_t + NCOOLTAB_DM */
+#include "dm_cooling_tables.h"               /* dm_cooling_tables_t + NCOOLTAB_DM + InitCool_dm() decl */
 
 /* DMCoolTables instance is __managed__ in cooling/cooling.cc — see file header.
    Device-callable cooling-chain helpers below read DMCoolTables.{Tmin,Tmax,deltaT,
@@ -294,49 +301,15 @@ static KOKKOS_INLINE_FUNCTION double dm_cooling_DarkH2(double *n, double Tgas)
 
 /* ============================================================================
  *  COOLING TABLE BUILDER (one-shot at startup)
+ *
+ *  Body moved to cooling/cooling.cc -- that TU is in GPU_OBJS (compiled by
+ *  nvcc on Vista) and already owns Kokkos_Core.hpp + the analogous CoolTables
+ *  builder. Keeping the kokkos_malloc-using allocator out of this header
+ *  prevents Kokkos CUDA headers from leaking into plain mpicxx TUs like
+ *  core/begrun.cc. Forward declaration of InitCool_dm() lives in
+ *  sidm/dm_cooling_tables.h. The integrand/integral chain above stays here
+ *  (used by cooling.cc::dm_MakeCoolingTable via its include of this header).
  * ============================================================================ */
-static inline void dm_InitCoolMemory(void)
-{
-    /* UVM allocation: device cooling kernel reads DMCoolTables.<field>[i] directly
-       (same SharedSpace pattern as cooling.cc::InitCoolMemory for CoolTables). */
-    const size_t N = (size_t)(NCOOLTAB_DM + 1);
-    #define DMCOOLMEM(name) DMCoolTables.name = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, N * sizeof(double))
-    DMCOOLMEM(BetaH0);
-    DMCOOLMEM(AlphaHp);
-    DMCOOLMEM(AlphaHpRate);
-    DMCOOLMEM(GammaeH0);
-    DMCOOLMEM(Betaff);
-    #undef DMCOOLMEM
-}
-
-static inline void dm_MakeCoolingTable(void)
-{
-    DMCoolTables.Tmin = (All.MinGasTemp > 0.0) ? log10(All.MinGasTemp) : -1.0;
-    DMCoolTables.deltaT = (DMCoolTables.Tmax - DMCoolTables.Tmin) / NCOOLTAB_DM;
-    /* unit-conversion bookkeeping for recombination rate normalization */
-    const double gtoGeV    = 1.0 / 1.79e-24;
-    const double TtoGeV    = 1.0 / 1.16e13;
-    const double InGeVcm   = 1.9733e-14;
-    const double GeVtoergs = 0.001602;
-    for(int i = 0; i <= NCOOLTAB_DM; i++) {
-        double T = pow(10.0, DMCoolTables.Tmin + DMCoolTables.deltaT * i);
-        double y2 = All.ADM_ElectronMass * pow(All.ADM_FineStructure, 2.0) * pow(C_LIGHT_CGS, 2.0)
-                  / (2.0 * BOLTZMANN_CGS * T);
-        DMCoolTables.BetaH0[i]      = 7.4e-18 * pow(All.ADM_FineStructure/0.01, 2.0) * sqrt(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass) * sqrt(1.0e5/T) * dm_g_integral(y2);
-        DMCoolTables.Betaff[i]      = 3.7e-27 * (pow(All.ADM_FineStructure/0.01, 3.0) / pow(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS, 1.5)) * sqrt(T);
-        DMCoolTables.AlphaHp[i]     = (pow(All.ADM_FineStructure, 5.0) / sqrt(pow(T,3.0) * All.ADM_ElectronMass))
-                              * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
-                              * (C_LIGHT_CGS * pow(InGeVcm, 2.0) / sqrt(gtoGeV * pow(TtoGeV, 3.0)))
-                              * dm_recomb_rate_integral(y2);
-        DMCoolTables.AlphaHpRate[i] = (pow(All.ADM_FineStructure, 5.0) / sqrt(T * All.ADM_ElectronMass))
-                              * sqrt(pow(2.0, 11.0) * M_PI / 27.0)
-                              * (C_LIGHT_CGS * pow(InGeVcm, 2.0) * GeVtoergs / sqrt(gtoGeV * TtoGeV))
-                              * dm_recomb_cool_integral(y2);
-        DMCoolTables.GammaeH0[i]    = 2.2e-7 * pow(ELECTRON_MASS_SM_CGS/All.ADM_ElectronMass, 1.5) * sqrt(1.0e5/T) * dm_f_integral(y2);
-    }
-}
-
-static inline void InitCool_dm(void) { dm_InitCoolMemory(); dm_MakeCoolingTable(); }
 
 /* ============================================================================
  *  IONIZATION EQUILIBRIUM + ATOMIC LAMBDA (closed-form: no photoionization)
@@ -360,7 +333,11 @@ static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, d
     double t = (logT - DMCoolTables.Tmin) / DMCoolTables.deltaT;
     int j = (int)t;
     if(j < 0) {j = 0;}
-    if(j > NCOOLTAB_DM) {j = NCOOLTAB_DM;}
+    /* Tables allocated as NCOOLTAB_DM+1 entries (indices 0..NCOOLTAB_DM). The
+       interpolation reads array[j] and array[j+1], so clamp j to NCOOLTAB_DM-1
+       to keep j+1 in bounds. The logT >= Tmax early return above eliminates
+       the common case; this clamp guards roundoff at the boundary. */
+    if(j > NCOOLTAB_DM - 1) {j = NCOOLTAB_DM - 1;}
     double fhi = t - j, flow = 1.0 - fhi;
 
     /* Closed-form equilibrium: recombination vs collisional ionization

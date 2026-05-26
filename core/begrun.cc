@@ -11,7 +11,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#include "../sidm/dm_fluid_functions.h"
+#include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
 /*! \file begrun.c
