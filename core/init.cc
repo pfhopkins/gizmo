@@ -4,7 +4,7 @@
 #include <mpi.h>
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h" 
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"

@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h" 
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #if defined(DM_SIDM)

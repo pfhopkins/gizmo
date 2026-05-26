@@ -43,7 +43,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  
+#include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 /* NOTE: caller TUs must include "../mesh/kernel.h" before this header.

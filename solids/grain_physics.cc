@@ -5,7 +5,7 @@
 #include <math.h>
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../solids/grain_physics_loop_api.h"
@@ -53,12 +53,22 @@ void apply_grain_dragforce(void)
         }
     }
 #if defined(GRAIN_BACKREACTION)
-    /* Reset active gas Grain_AccelTimeMin to MAX_REAL_NUMBER before grain_backrx min-applies
+    /* Reset receiver gas Grain_AccelTimeMin to MAX_REAL_NUMBER before grain_backrx min-applies
      * grain constraints. grain_backrx only reduces the field, never resets it. Without this,
      * gas particles retain zero from IC struct zero-fill, collapsing their timestep to zero.
-     * This matches the implicit reset the old code did via scatter-back on every drag call. */
-    for(int ii : ActiveParticleList)
-        if(P[ii].Type == 0) P[ii].Grain_AccelTimeMin = MAX_REAL_NUMBER;
+     * Under HYDRO_MULTIFLUID the source is itself a Type=0 particle (FLUID_DUST_GRAIN or
+     * FLUID_ION) and has already had its own drag timestep constraint written by
+     * grain_drag_evaluate above; resetting it here would wipe the source constraint and
+     * defeat the receiver min-update (GrainBackrxSpec::load_active would see MAX_REAL_NUMBER).
+     * Restrict the reset to receiver-fluid gas, i.e. FLUID_DEFAULT under multifluid,
+     * all Type=0 under non-multifluid GRAIN_FLUID. */
+    for(int ii : ActiveParticleList) {
+        if(P[ii].Type != 0) continue;
+#ifdef HYDRO_MULTIFLUID
+        if(P[ii].FluidType != FLUID_DEFAULT) continue;
+#endif
+        P[ii].Grain_AccelTimeMin = MAX_REAL_NUMBER;
+    }
     grain_backrx_calc(); /* assign the back-reaction force among neighbors [runner port] */
 #endif
     PRINT_STATUS(" ..particulate/grain/PIC force evaluation done.");

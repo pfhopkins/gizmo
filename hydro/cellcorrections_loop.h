@@ -22,7 +22,7 @@
  * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 
@@ -98,7 +98,7 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         const CellcorrectionsNeighborData &nb,
                                         CellcorrectionsAccum &out)
 {
-#if defined(HYDRO_MULTIFLUID) 
+#if defined(HYDRO_MULTIFLUID)
     if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
 #endif
     /* Per-row narrow-filter gate (commit 5b external-CSR consumption):

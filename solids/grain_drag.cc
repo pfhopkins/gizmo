@@ -21,7 +21,7 @@
 #include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 
@@ -109,7 +109,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         double tstop_inv = MAX_REAL_NUMBER;
 
 #if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) /* below block calculates grain-gas drag, only makes sense for dust modules specifically */
-        double grain_size_cgs = 1.e-5; 
+        double grain_size_cgs = 1.e-5;
         double grain_rho_cgs = 1.;
 #if defined(GRAIN_FLUID)
         grain_size_cgs = pp[idx].Grain_Size;

@@ -30,5 +30,5 @@ bool cross_lagrangian_fluid_pair_id(unsigned char ft_i, unsigned char ft_j)
     return ft_i != ft_j;
 }
 
-#endif 
+#endif
 #endif /* MULTIFLUID_HELPERS_H */

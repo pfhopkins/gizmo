@@ -372,12 +372,17 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #include "cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
 
-/* HYDRO_MULTIFLUID_DM: dark-fluid early-return into set_dark_eos_pressure
-   (host-only, defined in sidm/dm_fluid_functions.h). HYDRO_MULTIFLUID_DM is
-   listed in POST_COOLING_DEVICE_EOS_SUPPORTED's disable set in
-   declarations/precompiler_logic.h so the device kernel never calls this
-   function under that build — the host-only set_dark_eos_pressure call is
-   reached only on the host path. */
+/* HYDRO_MULTIFLUID_DM: dark-fluid early-return into set_dark_eos_pressure.
+   set_dark_eos_pressure is a host-only `static inline` defined in
+   sidm/dm_fluid_functions.h, so the call site is wrapped with the same
+   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES + __CUDA_ARCH__ / __HIP_DEVICE_COMPILE__
+   exclusion used for EOS_HELMHOLTZ / EOS_TILLOTSON / EOS_ANEOS / HYDRO_GENERATE_TARGET_MESH
+   below. EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES is defined only in the eos.cc TU
+   (the single host emission site), so device-side includers (cooling.cc) instantiate
+   an empty early-return and never parse the host-only call. HYDRO_MULTIFLUID_DM is also
+   listed in POST_COOLING_DEVICE_EOS_SUPPORTED's disable set in precompiler_logic.h, so
+   the post-cooling device kernel does not invoke this function in DM builds anyway —
+   the wrap is defense-in-depth for any other device caller that may emerge. */
 #ifdef HYDRO_MULTIFLUID_DM
 #include "../declarations/multifluid_helpers.h"
 #include "../sidm/dm_fluid_functions.h"
@@ -386,7 +391,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 KOKKOS_INLINE_FUNCTION
 void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#ifdef HYDRO_MULTIFLUID_DM
+#if defined(HYDRO_MULTIFLUID_DM) && defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
     if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
 #endif
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;

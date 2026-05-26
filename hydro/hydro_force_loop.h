@@ -29,7 +29,7 @@
  * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  
+#include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "../core/timestep_functions.h"       /* get_particle_timestep_in_physical */

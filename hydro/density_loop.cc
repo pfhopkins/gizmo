@@ -406,7 +406,7 @@ void DensitySpec::merge_accum(AccumData& local, const AccumData& peer) {
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     local.AmbientGasRho += peer.AmbientGasRho;
     local.Gas_InternalEnergy += peer.Gas_InternalEnergy;
-  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS) 
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     local.Gas_B[0] += peer.Gas_B[0];
     local.Gas_B[1] += peer.Gas_B[1];
     local.Gas_B[2] += peer.Gas_B[2];
