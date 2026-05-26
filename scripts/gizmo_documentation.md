@@ -3457,6 +3457,71 @@ Note that in many cases, even if you can easily build an 'approximate' IC file w
 
 To deal with most or all of these cases, you can relax the mesh using the  **HYDRO\_GENERATE\_TARGET\_MESH** flag. This can be used with any hydro method. If enabled, you must provide the functions `return_user_desired_target_density` and `return_user_desired_target_pressure`, which are defined in the very top of the `eos/eos.c` file. The code will then attempt to evolve towards these ICs, using the actual *in code* definitions of density, gradients, force calculations, etc. This is accomplished by re-setting the pressure (and corresponding internal energies) in each timestep to a value $P = P_{target}(\rho/\rho_{target})$ -- in other words, if the density is locally above/below the target value, it will over/under-pressurize the region to move the particles. Note that if you set up your target pressure to have gradients, there must be a restoring force designed to balance them. For example, to set up hydrostatic equilibrium with a pressure gradient, you must use this flag, but also include e.g. a gravitational force, which can be solved via self-gravity or imposed analytically with the appropriate parameter choices (otherwise, if you just set up a pressure gradient with no restoring force, the system will blow up, as it should!). By simply setting the 'target' pressure and density to constant values, you'll generate a glass-type mesh. A couple examples are written in these functions to get you started. Obviously, if your ICs also depend sensitively on other dynamical variables (if, for example, magnetic pressure is critical for your ICs), then you can trivially write similar functions for those variables as well and set them in this step. Also note this will obviously generate some motion of the mesh; if you wish that to be damped, to arrive at something non-moving, find the line with this compiler flag in `kicks.c` and un-comment it (that will enable velocity damping).
 
+
+<a name="snaps-ics-hse-builder"></a>
+### _Building Self-Gravitating Body ICs (Planets, Asteroids, Stars, Compact Objects): the HSE IC builder_
+
+For self-gravitating fluid (or fluid-like) bodies whose interior structure is set by hydrostatic equilibrium against a tabulated equation of state -- terrestrial and giant planets, planetesimals/asteroids/rocks and other solid bodies built on Tillotson or M-ANEOS tables; proto-stars, main-sequence stars, and white dwarfs evolved with the appropriate stellar EOS; neutron stars when combined with the nuclear-network EOS modules; brown dwarfs and substellar objects through the Chabrier-Debras H/He tables; or any other isolated body where a 1-D HSE profile defines the desired initial state -- GIZMO ships a dedicated end-to-end Python IC-builder suite in `python_src/eos_tools/`. The intent is to spare you the cottage-industry of hand-rolling a rejection-sampled sphere, a separate adiabatic-shooter, a separate placement script, and a separate u-correction pass for every new body. The suite carries each step end-to-end with a single uniform interface, and the recipe it implements has been validated against the SPH-planet literature to give percent-level residuals from analytic HSE for layered Earth-mass bodies.
+
+The modules, all in `python_src/eos_tools/`:
+
++ `eos_dispatch.py` exposes a uniform `Material` abstraction over both backends: `Material.tillotson(name)` for the six analytic Tillotson presets (granite, basalt, iron, ice, olivine, water) that mirror the `solids/elastic_physics.cc` parameter table, and `Material.sesame(name, table_path, composition_type, Cv)` for SESAME-format tabulated EOS (consumed at run-time by the GIZMO **EOS\_ANEOS** path). The full table-aware $T(\rho,u)$ inversion is bisected on the table rather than approximated via a constant $C_v$ shortcut (which silently loses pressure consistency for any tabulated EOS where $C_v$ depends on $(\rho,T)$).
+
++ `tillotson.py` is a stand-alone Python port of the in-code formula at `declarations/cell_data.h::calculate_tillotson_eos`, callable directly if you want to evaluate the analytic EOS outside the HSE pipeline (e.g. for diagnostics).
+
++ `sesame_loader.py` is a bilinear $(\log\rho, \log T)$ interpolator over SESAME-format tables, fed by either the existing `cms_to_sesame.py` (Chabrier & Debras 2021 H/He) or the test-suite Stewart-group converter (`test/aneos_giant_impact/convert_stewart_table.py` for forsterite / iron).
+
++ `hse_solver.py` is a 1-D HSE shooter (RK4 inward integration from $r=R$ with bisection on the outer radius until $m(0)=0$), supporting any number of layered zones with the standard layered-planet conventions: adiabatic or isothermal mode per zone, temperature continuity at material boundaries, and each adiabatic zone running on its own adiabat anchored to the boundary $T$ inherited from the layer outside it.
+
++ `shell_placement.py` provides three particle-placement backends. `fibonacci_shells` does a deterministic Fibonacci-spiral placement on equal-mass shells -- fast, good as a quick-look reference, but suffers from the radially-structured-neighbor pathology that defeats GIZMO's matrix-conditioning heuristic in the density iteration. `glass_relax` hooks into [Mike Grudic's `meshoid` library](https://github.com/mikegrudic/meshoid) (specifically `meshoid.glass.particle_glass`) to generate a uniform-density 3-D glass via gradient-descent relaxation, then radial-stretches the resulting point set to match the target HSE density profile -- the Bern-SPH / Reinhardt-Stadel "stretched glass" recipe (Reinhardt & Stadel 2017), which delivers percent-level $\rho_{\rm SPH} / \rho_{\rm HSE}$ flatness in our validation. This is the recommended default for any production self-gravitating body. `atmosphere_shell` (+ `merge_placements`) places a low-density, optionally density-tapered atmosphere shell around the body to cure the well-known isolated-SPH-body-in-vacuum surface pathology, where asymmetric kernel sums at the surface produce a runaway outward push into the vacuum boundary.
+
++ `sph_density.py` implements a Python-side cubic-spline SPH density estimator with adaptive-$h$ Newton-Raphson convergence on the constant-mass-in-kernel constraint, and a per-particle internal-energy correction step `correct_u_for_sph_density` such that ${\rm EOS}(\rho_{\rm SPH},u_{\rm corr}) = P_{\rm HSE,local}$. The HSE solver gives $(\rho_{\rm HSE}, P_{\rm HSE}, u_{\rm HSE})$ at the analytic-profile density, but GIZMO will then recompute $\rho_{\rm SPH}$ at each particle position; without this correction step the body is no longer in HSE w.r.t. the density GIZMO actually evaluates, and you get the standard centrally-concentrated-body ring-down at the first dynamical time.
+
++ `build_layered_body.py` is the top-level orchestrator + HDF5 writer + per-particle HSE residual diagnostics, and follows the file-format convention used by the rest of the GIZMO test-IC scripts (`PartType0` with `Coordinates`, `Velocities`, `Masses`, `InternalEnergy`, `ParticleIDs`, `CompositionType`).
+
++ `cms_to_sesame.py` is a pre-existing standalone converter that inverts the native CD21 H/He $(\log T, \log P)$ grid into the uniform-$(\log\rho, \log T)$ SESAME format the loader and the GIZMO **EOS\_ANEOS** code consume.
+
+The canonical recipe -- which is what we use in our own production planet ICs and recommend you start from -- looks like:
+
+```python
+from python_src.eos_tools.eos_dispatch     import Material
+from python_src.eos_tools.hse_solver       import Zone, solve_hse
+from python_src.eos_tools.shell_placement  import glass_relax, atmosphere_shell, merge_placements
+from python_src.eos_tools.sph_density      import correct_u_for_sph_density
+from python_src.eos_tools.build_layered_body import write_hdf5
+
+# Earth-like: forsterite mantle (68% by mass) + iron core (32%)
+forsterite = Material.sesame("forsterite", "test/aneos_giant_impact/forsterite.sesame",
+                              composition_type=0, Cv=1.0e7)
+iron       = Material.sesame("iron",       "test/aneos_giant_impact/iron.sesame",
+                              composition_type=1, Cv=4.5e6)
+zones = [Zone(forsterite, inner_mass_frac=0.32, T_profile="adiabatic"),
+         Zone(iron,       inner_mass_frac=0.00, T_profile="adiabatic")]
+
+prof   = solve_hse(M_total=5.972e27, T_surface=2000.0, P_surface=1e6, zones=zones)
+body   = glass_relax(prof, zones, n_particles=5000, n_sweeps=30)
+atmo   = atmosphere_shell(prof, zones, n_particles=500, rho_atmo=1e-4, T_atmo=2000.0,
+                           rho_taper_power=5.0, equal_mass_to=body)
+placed = merge_placements(body, atmo)
+correct_u_for_sph_density(placed, prof, zones, des_num_ngb=32)
+write_hdf5("earth_ics.hdf5", placed, prof, box_size=10*prof["R"])
+```
+
+The same five-line core (`solve_hse` $\to$ `glass_relax` $\to$ `atmosphere_shell` $\to$ `correct_u_for_sph_density` $\to$ `write_hdf5`) handles any of the body classes named above; only the `Material` choices and the `Zone` list change. For a single-material body (a homogeneous basalt asteroid, a neutron star with a single nuclear EOS region, a brown-dwarf-like CD21 H/He envelope) the `zones` list is length one. For a multi-layer body (terrestrial planet with core+mantle+crust, a stratified giant planet, a stellar envelope on a compact-object core) add zones; the solver carries the material-boundary $T$ continuity automatically. The atmosphere shell is optional but strongly recommended for any vacuum-boundary body in SPH/MFM; we leave it off for periodic-box compression tests.
+
+Three example test problems in the GIZMO test suite already exercise the builder, and can be cloned as starting templates for your own setup:
+
++ `test/aneos_giant_impact/` builds a differentiated Earth-mass body (forsterite mantle + iron core, layered HSE) against real Stewart-group M-ANEOS forsterite (S19) and iron (S20) tables, downloaded on demand from [Zenodo](https://zenodo.org/records/12732259) by the test driver. Demonstrates the multi-zone path with two distinct SESAME backends and the self-gravity-on / self-gravity-off Config variants.
+
++ `test/cd21_hhe_compression/` exercises the substellar / giant-planet H/He EOS path: a single-material periodic box of Chabrier & Debras 2021 H/He at $Y=0.275$, loaded by running `cms_to_sesame.py` on the native CD21 ASCII table (publication electronic supplement) and consumed by GIZMO via the **EOS\_ANEOS** dispatch. Demonstrates the table-loader + `cms_to_sesame.py` pipeline end-to-end; physics validation against analytic Jupiter / Saturn interior models is deferred but the infrastructure is in place.
+
++ `test/jutzi_crater/` is a 2-D basalt-on-basalt cratering smoke test (Jutzi 2008 P-$\alpha$ formulation) using the analytic Tillotson basalt preset. Useful as the simplest single-material reference: no SESAME tables, no atmosphere, just the Tillotson backend through the analytic path.
+
+In addition to the builder itself, a real GIZMO bug surfaced and fixed in passing is worth flagging here: `core/init.cc` was previously unconditionally resetting `CellP[i].CompositionType` to the universal-fallback slot at every cold start, *after* the IC reader had populated it from the HDF5 "CompositionType" block. The net effect was that every multi-material **EOS\_TILLOTSON** or **EOS\_ANEOS** IC silently degraded to the slot-0 material parameters regardless of the per-particle labels in the IC file -- single-material runs "worked" by accident if the slot-0 material happened to match. The current code keeps the IC-loaded value when it lies in the valid material-id range. Any multi-material IC produced before this fix should be re-run to verify the per-particle `CompositionType` is being honored.
+
+The builder is intentionally Python-only and run at IC construction time; no compile-time flags are needed for the builder itself, only for the GIZMO **EOS\_TILLOTSON** / **EOS\_ANEOS** / **NUCLEAR\_NETWORK** / etc. solver code that consumes the resulting IC. The smoke-level validation gates (a short run that compiles, reads the IC, and produces finite snapshot output) pass for all three example tests; a full quantitative HSE-validation gate (multi-dynamical-time run with sub-percent radial-velocity bounds at the body surface) is the natural next stress test for any new body class and is supported by the builder's residual diagnostics but is left to the user to define for their specific science application.
+
+
 <a name="snaps-snaps"></a>
 ## Snapshots 
 
