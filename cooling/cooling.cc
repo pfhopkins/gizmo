@@ -82,13 +82,24 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #endif
 /* Simple steady-state chemistry — single source in simple_chemistry.h */
 #include "./simple_chemistry.h"
-/* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
- * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
- * doubling the device stack depth and causing CUDA OOM on the H200.  It is
- * therefore not called inside do_the_cooling_for_particle (host or device);
- * the scatter pass in cooling_parent_routine() calls it on the host once per
- * cell after writeback.  Likewise finish_cooling_host_deferred_dust_updates
- * (GALSF_ISMDUSTCHEM_MODEL) is invoked from the scatter pass, not the kernel. */
+/* NOTE: set_eos_pressure and finish_cooling_host_deferred_dust_updates are
+ * intentionally NOT called inside do_the_cooling_for_particle (host or device).
+ * Their bodies call ThermalProperties (which calls convert_u_to_temp ->
+ * hydrogen_molecule chain), doubling the device stack depth and causing CUDA OOM
+ * on the H200. Phase 2 chunk 2 (2026-05-27) routes both into a separate
+ * post_cooling_tail device kernel:
+ *   - set_eos_pressure_impl runs in the device tail when
+ *     POST_COOLING_DEVICE_EOS_SUPPORTED (otherwise the GPU-path scatter loop
+ *     calls the host wrapper).
+ *   - dust + molecfrac + DelayTimeHII run in the device tail when
+ *     GALSF_ISMDUSTCHEM_MODEL. Their host wrapper
+ *     finish_cooling_host_deferred_dust_updates is no longer invoked from the
+ *     GPU-path scatter loop; only the CPU OMP fallback below still calls it.
+ * For non-ISMDUSTCHEM builds, the second-half molecfrac update and the
+ * DelayTimeHII countdown live inside do_the_cooling_for_particle (lines ~860+,
+ * #if !defined(GALSF_ISMDUSTCHEM_MODEL)) so they always run. The
+ * GALSF_ISMDUSTCHEM_MODEL gate on the device-tail dust+molecfrac+HII block is
+ * coupling parity with that existing branch, not a physics gate. */
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
@@ -289,16 +300,34 @@ void cooling_parent_routine(void)
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
+    /* Per-particle dtime captured at gather time (host) so the device
+     * post_cooling_tail kernel can drive update_dust_processes /
+     * update_explicit_molecular_fraction / DelayTimeHII countdown.
+     * get_particle_timestep_in_physical is host-only and not worth porting. */
+    double *compact_dtime = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(double));
 
-#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
-    /* TEMP audit-E1 Phase 1d: per-cooling-call ORACLE accumulators.  Compares the
-     * post-cooling device EOS kernel output against the host set_eos_pressure
-     * symbol on a scratch copy of the same compact inputs.  Detects the
-     * pre-93897f62 wrong-results-on-CUDA failure mode (bisected f8d2619f..63474bcd)
-     * and any future device/host divergence.  Bounded summary only — no per-particle
-     * floods.  Compile-time #ifdef GIZMO_POSTCOOL_ORACLE; default-off; strip once
-     * the port is fully blessed. */
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+    /* TEMP per-cooling-call ORACLE accumulators (audit-E1 Phase 1d +
+     * Phase 2 chunk 2 extension to cover the full post_cooling_tail).
+     * Compares device-kernel output against host wrapper re-run on a
+     * scratch copy of the same compact inputs. Detects the
+     * pre-93897f62 wrong-results-on-CUDA failure mode (bisected
+     * f8d2619f..63474bcd) plus any Chunk-2 device/host divergence in
+     * the deferred tail. Bounded summary only -- no per-particle floods.
+     * Compile-time #ifdef GIZMO_POSTCOOL_ORACLE, default-off, strip once
+     * the port is fully blessed (oracle is temporary scaffolding per
+     * feedback_behavioral §6). */
+    /* EOS-side max-rel accumulators (Phase 1d) */
     double oracle_max_rel_Press = 0.0, oracle_max_rel_Temp = 0.0, oracle_max_rel_Gamma = 0.0, oracle_max_rel_Cs = 0.0;
+    /* Deferred-tail max-rel accumulators (Phase 2 chunk 2). Per-class
+     * maxima keep the oracle "bounded summary" (one log line per cooling
+     * call) while covering every field the post_cooling_tail kernel can
+     * touch -- dust scalars + arrays, molecfrac scalars, DelayTimeHII. */
+    double oracle_max_rel_DustMetal = 0.0, oracle_max_rel_DustSource = 0.0, oracle_max_rel_DustSpecies = 0.0;
+    double oracle_max_rel_DustNumberInBin = 0.0, oracle_max_rel_DustSlopeInBin = 0.0;
+    double oracle_max_rel_CinCO = 0.0, oracle_max_rel_DenseMolFrac = 0.0, oracle_max_rel_DelayTimeSputt = 0.0;
+    double oracle_max_rel_MolFrac = 0.0, oracle_max_rel_MolFracNeutH = 0.0;
+    double oracle_max_rel_DelayTimeHII = 0.0;
     long long oracle_n_mismatch = 0;
     unsigned long long oracle_first_mismatch_ID = 0ULL;
     const double oracle_tol = 1.0e-10;
@@ -312,8 +341,14 @@ void cooling_parent_routine(void)
         /* Gather batch */
         for(int j = 0; j < batch_n; j++)
         {
-            compact_P[j]    = P[cool_indices[batch_start + j]];
-            compact_Cell[j] = CellP[cool_indices[batch_start + j]];
+            int i = cool_indices[batch_start + j];
+            compact_P[j]    = P[i];
+            compact_Cell[j] = CellP[i];
+            double dt = get_particle_timestep_in_physical(i, P);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+            dt *= All.Transport_Subcycle_dt_fraction; /* cooling fires N times in the subcycle loop, each with dt/N */
+#endif
+            compact_dtime[j] = dt;
         }
 
 /* RETIREMENT NOTE (Step 5 B2): the [GPU_RT_DIAG] A/B comparison blocks below
@@ -385,51 +420,105 @@ void cooling_parent_routine(void)
         }
 #endif /* GIZMO_DEBUG_RT_COOLING */
 
-        /* Post-cooling EOS device kernel (audit-E1 Phase 1c).  Runs the body of
-         * set_eos_pressure on the compact arrays in-place, BEFORE scatter-back.
-         * Gated by POST_COOLING_DEVICE_EOS_SUPPORTED (defined iff
-         * EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/HYDRO_GENERATE_TARGET_MESH are all
-         * inactive — see declarations/precompiler_logic.h).  In supported builds,
-         * the host scatter loop below skips set_eos_pressure.  In unsupported
-         * builds the device path is compiled out and the host scatter call below
-         * runs exactly as before this commit.  Separate kernel from the cooling
-         * loop above to keep per-launch device stack depth bounded — set_eos_pressure
-         * itself calls ThermalProperties→convert_u_to_temp→hydrogen_molecule chain,
-         * which the cooling loop already exercises; nesting would double the
-         * stack at the H200 OOM limit. */
-#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
-        /* ORACLE: snapshot compact arrays BEFORE the device EOS kernel so we can
-         * re-run the host wrapper on the same inputs and diff afterwards. */
+        /* Post-cooling tail device kernel (Phase 2 chunk 2, 2026-05-27).
+         * Three blocks, each independently #ifdef-gated:
+         *   - POST_COOLING_DEVICE_EOS_SUPPORTED -> set_eos_pressure_impl
+         *     (defined iff EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/
+         *     HYDRO_GENERATE_TARGET_MESH are all inactive; see
+         *     declarations/precompiler_logic.h).
+         *   - GALSF_ISMDUSTCHEM_MODEL -> update_dust_processes + (gated)
+         *     update_explicit_molecular_fraction + (gated) DelayTimeHII
+         *     countdown. The outer GALSF_ISMDUSTCHEM_MODEL gate is coupling
+         *     parity with the existing branch in do_the_cooling_for_particle
+         *     (lines ~860+, #if !defined(GALSF_ISMDUSTCHEM_MODEL)), where
+         *     non-ISMDUSTCHEM builds already run the second-half molecfrac
+         *     update and DelayTimeHII countdown inline with cooling. It is
+         *     NOT a physics descope: every Config still runs molecfrac+HII
+         *     exactly once per cooling call, either inline (no-dust) or here
+         *     (dust). The kernel body mirrors finish_cooling_host_deferred_dust_updates
+         *     byte-for-byte so the GPU path and the CPU OMP fallback (below)
+         *     compute the same physics for every supported Config (multi-path
+         *     principle, Phil directive 6).
+         * Kernel launches whenever EITHER family is active. The post-Chunk-2
+         * GPU-path scatter loop skips finish_cooling_host_deferred_dust_updates
+         * (the device kernel above did it) and skips set_eos_pressure when
+         * POST_COOLING_DEVICE_EOS_SUPPORTED (likewise). Solid-EOS+dust builds
+         * still get device dust here AND host set_eos_pressure in the scatter
+         * loop -- the two gates are orthogonal by design (codex 2026-05-26).
+         * Separate kernel from the cooling loop above to keep per-launch
+         * device stack depth bounded -- set_eos_pressure_impl and
+         * update_dust_processes each call ThermalProperties (->
+         * convert_u_to_temp -> hydrogen_molecule chain), which the cooling
+         * loop already exercises; nesting would double the stack at the
+         * H200 OOM limit. */
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+        /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
+         * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
         struct particle_data *oracle_P_scratch = (struct particle_data *) malloc(batch_n * sizeof(struct particle_data));
         struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) malloc(batch_n * sizeof(struct gas_cell_data));
         memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
         memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
 #endif
-#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
+#if defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL)
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
-            gizmo_gpu_kernel_launch("post_cooling_eos", batch_n, KOKKOS_LAMBDA(int j) {
+            double               *kdt = compact_dtime;
+            gizmo_gpu_kernel_launch("post_cooling_tail", batch_n, KOKKOS_LAMBDA(int j) {
+#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
                 set_eos_pressure_impl(j, kp, kc);
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+                if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
+                    update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
+#ifdef COOL_MOLECFRAC_NONEQM
+                    update_explicit_molecular_fraction(j, 0.5 * kdt[j] * UNIT_TIME_IN_CGS, kp, kc);
+#endif
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING)
+                    if(kc[j].DelayTimeHII > 0) {
+                        kc[j].DelayTimeHII -= kdt[j];
+                    #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
+                        if(kc[j].DelayTimeHII <= 0) {kc[j].DelayTimeHII = -DMAX(fabs(kc[j].DelayTimeHII), fabs(kdt[j]));}
+                    #endif
+                    }
+                  #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
+                    if(kc[j].DelayTimeHII < 0) {kc[j].DelayTimeHII = 0;}
+                  #endif
+#endif /* GALSF_FB_FIRE_RT_HIIHEATING */
+                }
+#endif /* GALSF_ISMDUSTCHEM_MODEL */
             }, batch_start);
         }
 #endif
-#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
-        /* ORACLE: re-run the public host wrapper set_eos_pressure on the scratch
-         * (codex pattern — the wrapper is the reference path all existing host
-         * callers use; matching the wrapper, not the inline impl, is what we want). */
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+        /* ORACLE: re-run the public host wrapper(s) on the scratch arrays.
+         * Match the device kernel's gate structure (codex Phase 2 chunk 2 rule
+         * "oracle covers the whole tail, not just EOS"): set_eos_pressure runs
+         * when POST_COOLING_DEVICE_EOS_SUPPORTED; finish_cooling_host_deferred_dust_updates
+         * runs when GALSF_ISMDUSTCHEM_MODEL (with the same dtime + Mass + Type
+         * guard the kernel uses). Wrappers are the host reference path; matching
+         * the wrapper, not the inline impl, is what we want. */
         for(int j = 0; j < batch_n; j++) {
+#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
             set_eos_pressure(j, oracle_P_scratch, oracle_Cell_scratch);
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            if((compact_dtime[j] > 0) && (oracle_Cell_scratch[j].Mass > 0) && (oracle_P_scratch[j].Type == 0)) {
+                finish_cooling_host_deferred_dust_updates(j, compact_dtime[j], oracle_P_scratch, oracle_Cell_scratch);
+            }
+#endif
         }
-        /* Diff the EOS-written scalar fields, accumulate bounded summary stats.
-         * Track max relative diff per field plus a global mismatch count above
-         * oracle_tol and the first offending particle ID.  No per-particle output. */
+        /* Diff every field the post_cooling_tail kernel can write -- EOS
+         * scalars, dust scalars + arrays, molecfrac scalars, DelayTimeHII --
+         * accumulating bounded per-class max-rel summaries plus a global
+         * mismatch count above oracle_tol and the first offending particle ID.
+         * No per-particle output (codex Phase 2 chunk 2 rule "oracle covers
+         * the whole tail"). Per-class maxima keep the oracle line bounded
+         * regardless of array length / particle count. */
         for(int j = 0; j < batch_n; j++) {
-            #define POSTCOOL_ORACLE_CMP(field, accum) do { \
-                double a = compact_Cell[j].field; \
-                double b = oracle_Cell_scratch[j].field; \
-                double dn = fabs(a - b); \
-                double dd = fabs(b) + 1.0e-300; \
+            #define POSTCOOL_ORACLE_CMP(a_val, b_val, accum) do { \
+                double dn = fabs((a_val) - (b_val)); \
+                double dd = fabs(b_val) + 1.0e-300; \
                 double rd = dn / dd; \
                 if(rd > (accum)) (accum) = rd; \
                 if(rd > oracle_tol) { \
@@ -437,22 +526,75 @@ void cooling_parent_routine(void)
                     if(oracle_first_mismatch_ID == 0ULL) oracle_first_mismatch_ID = (unsigned long long)compact_P[j].ID; \
                 } \
             } while(0)
-            POSTCOOL_ORACLE_CMP(Pressure,    oracle_max_rel_Press);
-            POSTCOOL_ORACLE_CMP(Temperature, oracle_max_rel_Temp);
-            POSTCOOL_ORACLE_CMP(Gamma,       oracle_max_rel_Gamma);
+            #define POSTCOOL_ORACLE_CMP_ARR(a_arr, b_arr, n, accum) do { \
+                for(int _k = 0; _k < (n); _k++) { \
+                    POSTCOOL_ORACLE_CMP((a_arr)[_k], (b_arr)[_k], (accum)); \
+                } \
+            } while(0)
+            #define POSTCOOL_ORACLE_CMP_2D(a_arr, b_arr, n1, n2, accum) do { \
+                for(int _k1 = 0; _k1 < (n1); _k1++) for(int _k2 = 0; _k2 < (n2); _k2++) { \
+                    POSTCOOL_ORACLE_CMP((a_arr)[_k1][_k2], (b_arr)[_k1][_k2], (accum)); \
+                } \
+            } while(0)
+#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].Pressure,    oracle_Cell_scratch[j].Pressure,    oracle_max_rel_Press);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].Temperature, oracle_Cell_scratch[j].Temperature, oracle_max_rel_Temp);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].Gamma,       oracle_Cell_scratch[j].Gamma,       oracle_max_rel_Gamma);
 #ifdef EOS_GENERAL
-            POSTCOOL_ORACLE_CMP(SoundSpeed,  oracle_max_rel_Cs);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].SoundSpeed,  oracle_Cell_scratch[j].SoundSpeed,  oracle_max_rel_Cs);
 #endif
+#endif /* POST_COOLING_DEVICE_EOS_SUPPORTED */
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Metal,
+                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Metal,
+                                    NUM_ISMDUSTCHEM_ELEMENTS, oracle_max_rel_DustMetal);
+            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Source,
+                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Source,
+                                    NUM_ISMDUSTCHEM_SOURCES, oracle_max_rel_DustSource);
+            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Species,
+                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Species,
+                                    NUM_ISMDUSTCHEM_SPECIES, oracle_max_rel_DustSpecies);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_C_in_CO,
+                                oracle_Cell_scratch[j].ISMDustChem_C_in_CO, oracle_max_rel_CinCO);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_MassFractionInDenseMolecular,
+                                oracle_Cell_scratch[j].ISMDustChem_MassFractionInDenseMolecular, oracle_max_rel_DenseMolFrac);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_DelayTimeSNeSputtering,
+                                oracle_Cell_scratch[j].ISMDustChem_DelayTimeSNeSputtering, oracle_max_rel_DelayTimeSputt);
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_NumberInBin,
+                                   oracle_Cell_scratch[j].ISMDustChem_Dust_NumberInBin,
+                                   NUM_ISMDUSTCHEM_SPECIES, NUM_ISMDUSTCHEM_SIZE_BINS, oracle_max_rel_DustNumberInBin);
+            POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_SlopeInBin,
+                                   oracle_Cell_scratch[j].ISMDustChem_Dust_SlopeInBin,
+                                   NUM_ISMDUSTCHEM_SPECIES, NUM_ISMDUSTCHEM_SIZE_BINS, oracle_max_rel_DustSlopeInBin);
+#endif /* GALSF_ISMDUSTCHEM_GRAINSIZEEVO */
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING)
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].DelayTimeHII, oracle_Cell_scratch[j].DelayTimeHII, oracle_max_rel_DelayTimeHII);
+#endif
+#endif /* GALSF_ISMDUSTCHEM_MODEL */
+#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM)
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].MolecularMassFraction,
+                                oracle_Cell_scratch[j].MolecularMassFraction, oracle_max_rel_MolFrac);
+#endif
+#if defined(COOL_MOLECFRAC_NONEQM)
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].MolecularMassFraction_perNeutralH,
+                                oracle_Cell_scratch[j].MolecularMassFraction_perNeutralH, oracle_max_rel_MolFracNeutH);
+#endif
+            #undef POSTCOOL_ORACLE_CMP_2D
+            #undef POSTCOOL_ORACLE_CMP_ARR
             #undef POSTCOOL_ORACLE_CMP
         }
         free(oracle_P_scratch); free(oracle_Cell_scratch);
 #endif
 
-        /* Scatter batch back.  set_eos_pressure runs on host ONLY for builds that
-         * don't support the device post-cooling EOS kernel above (solid-EOS or
-         * HYDRO_GENERATE_TARGET_MESH builds).  Other deferred-tail calls (dust,
-         * molecfrac, DelayTimeHII) still run on host here — Phase 2 will move
-         * them to the post-cooling kernel too. */
+        /* Scatter batch back. Post Chunk 2 (2026-05-27):
+         *   - set_eos_pressure runs on host ONLY when POST_COOLING_DEVICE_EOS_SUPPORTED
+         *     is undefined (solid-EOS or HYDRO_GENERATE_TARGET_MESH builds).
+         *     Otherwise the device tail kernel above already ran it.
+         *   - The deferred dust+molecfrac+DelayTimeHII tail now runs on device
+         *     inside the post_cooling_tail kernel above; no host call here.
+         *     The CPU OMP fallback (below) still calls
+         *     finish_cooling_host_deferred_dust_updates host-side. */
         for(int j = 0; j < batch_n; j++)
         {
             int i = cool_indices[batch_start + j];
@@ -461,35 +603,54 @@ void cooling_parent_routine(void)
 #ifndef POST_COOLING_DEVICE_EOS_SUPPORTED
             set_eos_pressure(i, P, CellP);
 #endif
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-            double dtime = get_particle_timestep_in_physical(i, P);
-#ifdef TRANSPORT_SUBCYCLE_COOLING
-            dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
-#endif
-            if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
-#endif
         }
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
-#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
-    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d).
-     * Single-line print on rank 0 — no per-particle data, no per-batch lines.
-     * MPI_MAX on the first-mismatch ID is a deliberate "best effort first";
-     * for forensic detail re-run a smaller config or raise the tolerance. */
-    double local_max[4] = { oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs };
-    double global_max[4];
-    MPI_Allreduce(local_max, global_max, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d +
+     * Phase 2 chunk 2 extension for the deferred-tail fields). Single-line print
+     * on rank 0 -- no per-particle data, no per-batch lines. MPI_MAX on the
+     * first-mismatch ID is a deliberate "best effort first"; for forensic detail
+     * re-run a smaller config or raise the tolerance. */
+    /* 15-element MPI_MAX reduction across all monitored fields. Slots gated
+     * out of the per-cell compare stay 0 -> MPI_MAX(0, real) = real, so the
+     * unused slots are harmless. Single-line print on rank 0; per-class
+     * column even if the field isn't active under this Config (always 0).
+     * Bounded output regardless of N_active or array dimensions. */
+    double local_max[15] = {
+        /* 0-3 EOS */            oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs,
+        /* 4-6 dust arrays */    oracle_max_rel_DustMetal, oracle_max_rel_DustSource, oracle_max_rel_DustSpecies,
+        /* 7-9 dust scalars */   oracle_max_rel_CinCO, oracle_max_rel_DenseMolFrac, oracle_max_rel_DelayTimeSputt,
+        /* 10-11 grain bins */   oracle_max_rel_DustNumberInBin, oracle_max_rel_DustSlopeInBin,
+        /* 12-13 molecfrac */    oracle_max_rel_MolFrac, oracle_max_rel_MolFracNeutH,
+        /* 14 HII countdown */   oracle_max_rel_DelayTimeHII
+    };
+    double global_max[15];
+    MPI_Allreduce(local_max, global_max, 15, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     long long global_n_mismatch = 0;
     MPI_Allreduce(&oracle_n_mismatch, &global_n_mismatch, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     unsigned long long global_first_ID = 0ULL;
     MPI_Allreduce(&oracle_first_mismatch_ID, &global_first_ID, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
     if(ThisTask == 0) {
-        printf("[POSTCOOL_ORACLE] step=%lld N_active=%d tol=%.1e   max_rel: Pressure=%.3e Temperature=%.3e Gamma=%.3e SoundSpeed=%.3e   mismatches=%lld first_ID=%llu\n",
-            (long long)All.NumCurrentTiStep, N_active, oracle_tol, global_max[0], global_max[1], global_max[2], global_max[3], global_n_mismatch, global_first_ID);
+        printf("[POSTCOOL_ORACLE] step=%lld N_active=%d tol=%.1e   max_rel: "
+               "Press=%.3e Temp=%.3e Gamma=%.3e Cs=%.3e   "
+               "DustMetal=%.3e DustSource=%.3e DustSpecies=%.3e "
+               "CinCO=%.3e DenseMolFrac=%.3e DelayTimeSputt=%.3e "
+               "DustNumberInBin=%.3e DustSlopeInBin=%.3e "
+               "MolFrac=%.3e MolFracNeutH=%.3e DelayTimeHII=%.3e   "
+               "mismatches=%lld first_ID=%llu\n",
+            (long long)All.NumCurrentTiStep, N_active, oracle_tol,
+            global_max[0], global_max[1], global_max[2], global_max[3],
+            global_max[4], global_max[5], global_max[6],
+            global_max[7], global_max[8], global_max[9],
+            global_max[10], global_max[11],
+            global_max[12], global_max[13], global_max[14],
+            global_n_mismatch, global_first_ID);
         fflush(stdout);
     }
 #endif

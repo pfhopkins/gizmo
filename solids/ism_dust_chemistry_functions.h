@@ -29,6 +29,12 @@
 #define KOKKOS_FUNCTION
 #endif
 
+/* Self-sufficient dependency includes so any TU that pulls this header gets
+ * every symbol the migrated bodies use. Originally Chunk 1 leaned on
+ * ism_dust_chemistry.cc's own include block; that left cooling.cc (Phase 2
+ * chunk 2) missing gpu_rng.h for the shattering/coagulation RNG path under
+ * GALSF_ISMDUSTCHEM_GRAINSIZEEVO. */
+#include "../declarations/gpu_rng.h"   /* gizmo_gpu_rand_double */
 #include "grain_collisional_outcomes.h"
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
