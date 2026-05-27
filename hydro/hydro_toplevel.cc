@@ -8,6 +8,11 @@
 #include "../core/proto.h"
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #include "../mesh/kernel.h"
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+/* get_ISMDustChemEvo_bin_mass + update_ISMDustChemEvo_bin_number_and_slope are
+ * KOKKOS_INLINE_FUNCTION in this header (Chunk 1, 2026-05-26); no plain proto. */
+#include "../solids/ism_dust_chemistry_functions.h"
+#endif
 #include "../mesh/neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,

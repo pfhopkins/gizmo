@@ -14,6 +14,11 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+/* update_ISMDustChemEvo_bin_number_and_slope + get_ISMDustChemEvo_bin_mass are
+ * KOKKOS_INLINE_FUNCTION in this header (Chunk 1, 2026-05-26); no plain proto. */
+#include "../solids/ism_dust_chemistry_functions.h"
+#endif
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 #include "../system/gpu_particles_arena.h"
 

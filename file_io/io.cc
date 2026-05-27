@@ -10,6 +10,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+/* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
+#include "../solids/ism_dust_chemistry_functions.h"
+#endif
 
 /*! \file io.c
  *  \brief Output of a snapshot file to disk.
