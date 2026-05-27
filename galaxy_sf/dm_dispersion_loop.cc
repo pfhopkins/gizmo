@@ -28,7 +28,7 @@
 #include "../mesh/kernel.h"                       /* MUST precede dm_dispersion_loop.h (no include guards) */
 #include "dm_dispersion_loop.h"
 
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 
 /* ============================================================================
  * is_active — active-particle predicate.
@@ -143,6 +143,7 @@ double DMDispersionSpec::compare_accum(const AccumData& local, const AccumData& 
     upd(local.DM_Vy,      oracle.DM_Vy);
     upd(local.DM_Vz,      oracle.DM_Vz);
     upd(local.DM_VelDisp, oracle.DM_VelDisp);
+    upd(local.DM_Rho,     oracle.DM_Rho);
     return max_rel;
 }
 
@@ -160,6 +161,7 @@ void DMDispersionSpec::merge_accum(AccumData& local, const AccumData& peer)
     local.DM_Vy      += peer.DM_Vy;
     local.DM_Vz      += peer.DM_Vz;
     local.DM_VelDisp += peer.DM_VelDisp;
+    local.DM_Rho     += peer.DM_Rho;
 }
 
 /* ============================================================================
@@ -321,6 +323,8 @@ void dm_dispersion_finalize_post_runner(const neighbor_loop_args_iterative& args
             CellP[i].DM_Vy      = (MyDouble)vy;
             CellP[i].DM_Vz      = (MyDouble)vz;
             CellP[i].DM_VelDisp = (MyDouble)(sqrt(variance) / (sqrt(3.) * common.cf_atime));
+            /* Comoving kernel density → physical via cf_a3inv. */
+            CellP[i].DM_Rho     = (MyDouble)(accum.DM_Rho * common.cf_a3inv);
         } else {
             /* No DM neighbors found: zero velocity stats; fall back to
              * gas particle's own velocity for dispersion estimate (legacy
@@ -333,8 +337,9 @@ void dm_dispersion_finalize_post_runner(const neighbor_loop_args_iterative& args
                                       + (double)P[i].Vel[1]*(double)P[i].Vel[1]
                                       + (double)P[i].Vel[2]*(double)P[i].Vel[2]);
             CellP[i].DM_VelDisp = (MyDouble)(vel_mag / common.cf_atime);
+            CellP[i].DM_Rho     = 0;
         }
     }
 }
 
-#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 */
+#endif /* DM_DISPERSION_LOOP_ACTIVE */

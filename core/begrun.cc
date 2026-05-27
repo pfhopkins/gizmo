@@ -641,6 +641,52 @@ void set_units(void)
 #endif
 
 
+#ifdef DM_HEATING
+    /* CGS → code unit conversions, and parameter sanity validation. The
+     * heating rate is dE/dt/m_gas; the dimensional analysis (see
+     * OPEN_dm_heating_design.md) gives:
+     *   <sigma v>/m_chi:  cm^3 s^-1 g^-1 → code (L^3/T/M):  × UNIT_MASS · UNIT_TIME / UNIT_LENGTH^3
+     *   Gamma:            s^-1          → code (1/T):       × UNIT_TIME */
+    {
+        const double sv_factor = UNIT_MASS_IN_CGS * UNIT_TIME_IN_CGS
+                               / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+        All.DM_AnnihilationSigmaV_over_mChi *= sv_factor;
+        All.DM_DecayRate                    *= UNIT_TIME_IN_CGS;
+
+        /* Validation: hard-abort on physically impossible inputs. */
+        if(All.DM_AnnihilationSigmaV_over_mChi < 0) {
+            if(ThisTask == 0) printf("ERROR: DM_AnnihilationSigmaV_over_mChi = %g < 0. Must be non-negative.\n", All.DM_AnnihilationSigmaV_over_mChi);
+            endrun(91302);
+        }
+        if(All.DM_DecayRate < 0) {
+            if(ThisTask == 0) printf("ERROR: DM_DecayRate = %g < 0. Must be non-negative.\n", All.DM_DecayRate);
+            endrun(91302);
+        }
+        if(All.DM_AnnihilationHeatingFraction < 0 || All.DM_AnnihilationHeatingFraction > 1) {
+            if(ThisTask == 0) printf("ERROR: DM_AnnihilationHeatingFraction = %g out of [0,1].\n", All.DM_AnnihilationHeatingFraction);
+            endrun(91302);
+        }
+        if(All.DM_DecayHeatingFraction < 0 || All.DM_DecayHeatingFraction > 1) {
+            if(ThisTask == 0) printf("ERROR: DM_DecayHeatingFraction = %g out of [0,1].\n", All.DM_DecayHeatingFraction);
+            endrun(91302);
+        }
+
+        if(ThisTask == 0) {
+            const int ann_on = (All.DM_AnnihilationSigmaV_over_mChi > 0) && (All.DM_AnnihilationHeatingFraction > 0);
+            const int dec_on = (All.DM_DecayRate > 0) && (All.DM_DecayHeatingFraction > 0);
+            if(!ann_on && !dec_on) {
+                printf("DM_HEATING active but all rate parameters are zero — module is inert.\n"
+                       "  Set DM_AnnihilationSigmaV_over_mChi (cm^3/s/g) + DM_AnnihilationHeatingFraction (~1) for annihilation,\n"
+                       "  or DM_DecayRate (s^-1) + DM_DecayHeatingFraction (~1) for decay.\n");
+            } else {
+                printf("DM_HEATING: annihilation %s, decay %s.\n",
+                       ann_on ? "ENABLED" : "off", dec_on ? "ENABLED" : "off");
+            }
+        }
+    }
+#endif
+
+
 #if defined(CONDUCTION_SPITZER) || defined(VISCOSITY_BRAGINSKII)
     /* Note: Because we replace \nabla(T) in the conduction equation with \nabla(u), our conduction coefficient is not the usual kappa, but
      * rather kappa*(gamma-1)*mu/kB. We therefore need to multiply with another factor of (meanweight_ion / k_B * (gamma-1)) */
@@ -771,6 +817,29 @@ void open_outputfiles(void)
     if(!(FdInfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "energy.txt");
     if(!(FdEnergy = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+#if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
+    /* CBE per-output-interval diagnostic counters log (Wave-CBE Commit 2,
+     * 2026-05-24). Counters populated by Wave-CBE Commits 3 (root-found
+     * v_F), 4 (gradient/reconstruction), 5 (SPD repair); columns
+     * documented in the header line written below. Separate file rather
+     * than tagged lines in energy.txt to keep energy.txt fixed-column. */
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "cbe_diagnostics.txt");
+    if(!(FdCbeDiagnostics = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    else if(RestartFlag == 0 && ThisTask == 0) {
+        fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations (Commit 3 populates; 0 otherwise)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations (Commit 3); note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4 Phase 1 populates)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 5 SPD repair populates; 0 in Commits 3/4)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
+#endif
+    }
+#endif
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "timings.txt");
     if(!(FdTimings = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 
@@ -1529,6 +1598,24 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.DM_InteractionVelocityScale;
         id[nt++] = REAL;
 #endif
+#endif
+
+#ifdef DM_HEATING
+        strcpy(tag[nt], "DM_AnnihilationSigmaV_over_mChi");
+        addr[nt] = &All.DM_AnnihilationSigmaV_over_mChi;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_AnnihilationHeatingFraction");
+        addr[nt] = &All.DM_AnnihilationHeatingFraction;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_DecayRate");
+        addr[nt] = &All.DM_DecayRate;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_DecayHeatingFraction");
+        addr[nt] = &All.DM_DecayHeatingFraction;
+        id[nt++] = REAL;
 #endif
 
 
@@ -2742,6 +2829,12 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
+#endif
+#ifdef DM_HEATING
+                if(strcmp("DM_AnnihilationSigmaV_over_mChi",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (annihilation channel disabled) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_AnnihilationHeatingFraction",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (no annihilation heating) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_DecayRate",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (decay channel disabled) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_DecayHeatingFraction",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (no decay heating) \n",tag[i],alternate_tag[i]); continue;}
 #endif
 #ifdef NUCLEAR_NETWORK
                 if(strcmp("NuclearNetworkDataFile",tag[i])==0) {strcpy((char *)addr[i], ""); continue;} /* empty = built-in aprox13, no external data needed */

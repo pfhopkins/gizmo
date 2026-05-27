@@ -28,7 +28,7 @@
 
 #include <vector>
 
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 
 /* ============================================================================
  * (1) CallScalars
@@ -55,6 +55,7 @@ struct DMDispOut {
     double DM_Vy;       /* sum of Vel[1] over j */
     double DM_Vz;       /* sum of Vel[2] over j */
     double DM_VelDisp;  /* sum of Vel·Vel over j */
+    double DM_Rho;      /* kernel-weighted DM mass density (comoving units; physical conversion in finalize) */
 };
 
 /* ============================================================================
@@ -182,6 +183,7 @@ struct DMDispersionSpec {
         accum.DM_Vy      = 0;
         accum.DM_Vz      = 0;
         accum.DM_VelDisp = 0;
+        accum.DM_Rho     = 0;
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -208,15 +210,19 @@ struct DMDispersionSpec {
         return n;
     }
 
-    /* pair_kernel: accumulate unweighted DM velocity statistics.
+    /* pair_kernel: accumulate unweighted DM velocity statistics + kernel-weighted DM density.
      *
-     * Legacy dm_dispersion_gpu.cc kernel:
+     * Legacy dm_dispersion_gpu.cc kernel (velocity statistics, unweighted):
      *   if (kp[j].Mass <= 0) continue;
      *   if (r2 >= h2) continue;
      *   DM_Vx += Vel[0]; DM_Vy += Vel[1]; DM_Vz += Vel[2];
      *   DM_VelDisp += Vel·Vel;
      *   Ngb += 1.0;
-     * No kernel weighting — unweighted count. */
+     *
+     * DM_Rho (added for DM_HEATING): canonical kernel density.
+     *   kernel_main(u, hinv3, hinv4, &wk, &dwk, 0) returns wk already normalized
+     *   by hinv3 (mode=0), matching hydro/density_loop.h:565-573.
+     *   Accumulation is comoving; finalize converts to physical via cf_a3inv. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
@@ -229,9 +235,20 @@ struct DMDispersionSpec {
         dp[1] = (double)i_active.pos[1] - (double)Pj.Pos[1];
         dp[2] = (double)i_active.pos[2] - (double)Pj.Pos[2];
         nearest_xyz(dp);
-        const double h = (double)i_active.h_search;
-        if (dp.norm_sq() >= h * h) return;
+        const double h  = (double)i_active.h_search;
+        const double h2 = h * h;
+        const double r2 = dp.norm_sq();
+        if (r2 >= h2) return;
 
+        /* Kernel-weighted DM density (canonical pattern; matches density_loop.h:565-573). */
+        const double r = sqrt(r2);
+        double hinv, hinv3, hinv4;
+        kernel_hinv(h, &hinv, &hinv3, &hinv4);
+        double wk, dwk;
+        kernel_main(r * hinv, hinv3, hinv4, &wk, &dwk, 0);
+        accum.DM_Rho += (double)Pj.Mass * wk;
+
+        /* Unweighted velocity-stat accumulators (legacy behavior, unchanged). */
         const double vx = (double)Pj.Vel[0];
         const double vy = (double)Pj.Vel[1];
         const double vz = (double)Pj.Vel[2];
@@ -246,5 +263,5 @@ struct DMDispersionSpec {
 /* Forward decl — defined in galaxy_sf/dm_dispersion_loop.cc. */
 void dm_dispersion_finalize_post_runner(const neighbor_loop_args_iterative& args);
 
-#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 */
+#endif /* DM_DISPERSION_LOOP_ACTIVE */
 #endif /* DM_DISPERSION_LOOP_H */

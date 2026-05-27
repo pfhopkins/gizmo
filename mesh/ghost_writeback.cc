@@ -352,7 +352,13 @@ void ghost_write_detector_register_writeback(void) { gwd_wb_count++; }
  * those updates are NOT a "kernel write" the detector should flag (they're
  * caller-side predicted-state setup), so we move the comparison baseline to
  * the post-drift state. The remaining detector window (kernel + scatter) then
- * catches any genuine kernel-side writes that need a writeback. */
+ * catches any genuine kernel-side writes that need a writeback.
+ *
+ * CellP may be NULL when this fires for a DM/sidm/CBE-only run with no gas
+ * particles allocated (AgsDensity opted into the detector via the default
+ * runner hook in commit 73af8554, and AgsDensity is the first detector
+ * client that can run with CellP unallocated). Skip the CellP snapshot in
+ * that case; the gwd_CellP_snap pointer stays NULL from begin(). */
 void ghost_write_detector_resnapshot_after_lazy_drift(void)
 {
     if(!gwd_active) return;
@@ -363,7 +369,9 @@ void ghost_write_detector_resnapshot_after_lazy_drift(void)
      * snapshot alone; the original alarm logic handles it. */
     if(local != gwd_local_at_snap || n != gwd_n_snap) return;
     memcpy(gwd_P_snap,    P     + local, n * sizeof(struct particle_data));
-    memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+    if(CellP != NULL && gwd_CellP_snap != NULL) {
+        memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+    }
 }
 
 void ghost_write_detector_begin(const char *kernel_name)
@@ -379,9 +387,18 @@ void ghost_write_detector_begin(const char *kernel_name)
         endrun(91234);
     }
     gwd_P_snap = (struct particle_data *) malloc(n * sizeof(struct particle_data));
-    gwd_CellP_snap = (struct gas_cell_data *) malloc(n * sizeof(struct gas_cell_data));
-    memcpy(gwd_P_snap,    P     + local, n * sizeof(struct particle_data));
-    memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+    memcpy(gwd_P_snap, P + local, n * sizeof(struct particle_data));
+    /* CellP=NULL guard: DM-only / sidm-only / CBE-only runs have no gas
+     * particles and no CellP backing. The detector was added via the
+     * default runner hook in 73af8554 for AgsDensity, which is the first
+     * detector client that can fire with CellP unallocated. Leave
+     * gwd_CellP_snap=NULL in that case; end() skips the CellP memcmp. */
+    if(CellP != NULL) {
+        gwd_CellP_snap = (struct gas_cell_data *) malloc(n * sizeof(struct gas_cell_data));
+        memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+    } else {
+        gwd_CellP_snap = NULL;
+    }
     gwd_n_snap = n;
     gwd_local_at_snap = local;
     gwd_wb_count_at_snap = gwd_wb_count;
@@ -400,11 +417,15 @@ void ghost_write_detector_end(void)
         int n_now = ghost_get_num_ghosts();
         int n_diff = 0, first_diff = -1;
         if(local_now == gwd_local_at_snap && n_now == gwd_n_snap) {
+            /* CellP comparison skipped when CellP wasn't allocated at begin()
+             * (DM/sidm/CBE-only runs); the gwd_CellP_snap pointer is NULL
+             * in that case and there is nothing to diff. */
+            int cellp_ok = (CellP != NULL && gwd_CellP_snap != NULL);
             for(int g = 0; g < gwd_n_snap; g++) {
-                if(memcmp(&P[gwd_local_at_snap + g],     &gwd_P_snap[g],     sizeof(struct particle_data)) != 0 ||
-                   memcmp(&CellP[gwd_local_at_snap + g], &gwd_CellP_snap[g], sizeof(struct gas_cell_data)) != 0) {
-                    n_diff++; if(first_diff < 0) first_diff = g;
-                }
+                int p_diff = (memcmp(&P[gwd_local_at_snap + g], &gwd_P_snap[g], sizeof(struct particle_data)) != 0);
+                int c_diff = cellp_ok &&
+                             (memcmp(&CellP[gwd_local_at_snap + g], &gwd_CellP_snap[g], sizeof(struct gas_cell_data)) != 0);
+                if(p_diff || c_diff) { n_diff++; if(first_diff < 0) first_diff = g; }
             }
         } else {
             n_diff = -1; /* layout changed — can't compare */
@@ -436,18 +457,20 @@ void ghost_write_detector_end(void)
                     fprintf(stderr, "  P[].first_byte = 0x%02x → 0x%02x (snap → now)\n",
                             snap_P[first_byte], cur_P[first_byte]);
                 }
-                const unsigned char *cur_C = (const unsigned char *) &CellP[gwd_local_at_snap + first_diff];
-                const unsigned char *snap_C = (const unsigned char *) &gwd_CellP_snap[first_diff];
-                size_t sc = sizeof(struct gas_cell_data);
-                size_t first_byteC = (size_t)-1, last_byteC = 0, diff_bytesC = 0;
-                for(size_t b = 0; b < sc; b++) {
-                    if(cur_C[b] != snap_C[b]) {
-                        if(first_byteC == (size_t)-1) first_byteC = b;
-                        last_byteC = b; diff_bytesC++;
+                if(CellP != NULL && gwd_CellP_snap != NULL) {
+                    const unsigned char *cur_C = (const unsigned char *) &CellP[gwd_local_at_snap + first_diff];
+                    const unsigned char *snap_C = (const unsigned char *) &gwd_CellP_snap[first_diff];
+                    size_t sc = sizeof(struct gas_cell_data);
+                    size_t first_byteC = (size_t)-1, last_byteC = 0, diff_bytesC = 0;
+                    for(size_t b = 0; b < sc; b++) {
+                        if(cur_C[b] != snap_C[b]) {
+                            if(first_byteC == (size_t)-1) first_byteC = b;
+                            last_byteC = b; diff_bytesC++;
+                        }
                     }
+                    fprintf(stderr, "  CellP[]: diff at bytes [%zu..%zu], %zu bytes total within sizeof(gas_cell_data)=%zu\n",
+                            first_byteC, last_byteC, diff_bytesC, sc);
                 }
-                fprintf(stderr, "  CellP[]: diff at bytes [%zu..%zu], %zu bytes total within sizeof(gas_cell_data)=%zu\n",
-                        first_byteC, last_byteC, diff_bytesC, sc);
             }
             endrun(91234);
         }

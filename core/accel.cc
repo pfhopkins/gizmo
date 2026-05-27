@@ -186,8 +186,15 @@ void compute_hydro_densities_and_forces(void)
 
 void compute_additional_forces_for_all_particles(void)
 {
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR_WITHGRADIENTS)
+#if defined(DM_FUZZY)
     DMGrad_gradient_calc();
+#endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* Persistent CBE basis-moment gradients refreshed for AGSForce-active
+     * particles each call; inactive particles retain prior-step gradients
+     * (hydro semantics). Independent of DMGrad_gradient_calc (different
+     * Spec, different storage); both fire when both flags are on. */
+    CBEGrad_gradient_calc();
 #endif
 #if defined(DM_FUZZY) || defined(CBE_INTEGRATOR) || defined(DM_SIDM)
     AGSForce_calc();

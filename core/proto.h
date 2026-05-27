@@ -667,11 +667,13 @@ void radiation_pressure_winds_consolidated(void);
 #if defined(SINK_PARTICLES)
 #endif
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 void disp_setup_smoothinglengths(void);
 void disp_density(void);
 #endif
+
+#ifdef DM_HEATING
+void apply_dm_heating(void);
 #endif
 
 
@@ -953,6 +955,33 @@ void do_cbe_initialization(void);
    live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
    entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
    (sidm/sidm_gpu_decls.h). */
+/* Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
+ * 2026-05-24). Counters defined in sidm/cbe_integrator.cc; populated by
+ * later commits; emitted to FdCbeDiagnostics (cbe_diagnostics.txt) when
+ * the CBE_INTEGRATOR_OUTPUT_MOREINFO gate is set (or under the broader
+ * OUTPUT_ADDITIONAL_RUNINFO gate). Gated entirely so production runs can
+ * purge the diagnostic subsystem by disabling the flag. */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+void cbe_step_diagnostics_reset(void);
+void cbe_step_diagnostics_emit(void);
+void cbe_step_diagnostics_observe_face(double face_residual_max,
+                                        double face_residual_sum,
+                                        long long bracket_fail_count);
+void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
+                                         long long S_clamp_count);
+void cbe_step_diagnostics_observe_repair(double dP, double dT);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+void cbe_step_diagnostics_observe_grad_nonfinite(long long count);
+#endif
+#endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+/* CBE persistent gradient pre-force pass — parallel to DMGrad_gradient_calc.
+ * Called from core/accel.cc compute_additional_forces_for_all_particles().
+ * Refreshes P[i].Gradients_CBE_basis_moments for AGSForce-active i (two
+ * passes: raw LSQ + pairwise BJ-style limiter); inactive particles retain
+ * prior gradient (hydro semantics). */
+void CBEGrad_gradient_calc(void);
+#endif
 #endif
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)

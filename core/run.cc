@@ -210,8 +210,7 @@ void run(void)
 
         STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
 #ifdef PMGRID
         //if(All.Ti_Current == All.PM_Ti_endstep && get_random_number(1+All.Ti_Current) < 0.05) // compute the DM velocity dispersion around gas particles every 20 PM steps, should be sufficient ? not ideal for many applications, in fact, now only acts on active //
@@ -223,7 +222,6 @@ void run(void)
             disp_density();
         }
 #endif
-#endif
 
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
@@ -234,6 +232,9 @@ void run(void)
 #endif
 
         STEP_PHASE_TIME("compute_hydro", compute_hydro_densities_and_forces());	/* densities, gradients, & hydro-accels for synchronous particles */
+#ifdef DM_HEATING
+        STEP_PHASE_TIME("dm_heating", apply_dm_heating());  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
+#endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
@@ -569,6 +570,13 @@ void compute_statistics(void)
          * on TimeBetStatistics so this doesn't fire every step. */
         gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
+#if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
+        /* Wave-CBE Commit 3: emit per-output-interval CBE diagnostic line and
+         * reset the per-rank accumulators. Co-located with energy_statistics
+         * cadence so the cbe_diagnostics.txt line number matches energy.txt. */
+        cbe_step_diagnostics_emit();
+        cbe_step_diagnostics_reset();
+#endif
         All.TimeLastStatistics += All.TimeBetStatistics;
     }
 }

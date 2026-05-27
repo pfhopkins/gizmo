@@ -49,6 +49,17 @@ struct global_data_all_processes
     MyDouble DM_InteractionVelocityScale; /*!< scale above which the scattering becomes velocity-dependent */
 #endif
 
+#ifdef DM_HEATING
+    /* Continuous gas heating from DM annihilation and/or decay. Annihilation
+     * uses self-conjugate-DM convention with no factor of 1/2 (see
+     * Template_Config.sh and gizmo_documentation.md). Dirac/non-self-conjugate
+     * users fold the appropriate factor into DM_AnnihilationSigmaV_over_mChi. */
+    double DM_AnnihilationSigmaV_over_mChi;  /*!< <sigma v> / m_chi; input cm^3 s^-1 g^-1, stored in code units after set_units() */
+    double DM_AnnihilationHeatingFraction;   /*!< f_h^ann in [0,1], fraction of rest-mass energy thermalized locally per annihilation */
+    double DM_DecayRate;                     /*!< Gamma; input s^-1, stored in code units after set_units() */
+    double DM_DecayHeatingFraction;          /*!< f_h^dec in [0,1], fraction of m_chi*c^2 thermalized locally per decay */
+#endif
+
   int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. */
   int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. */
   int ICFormat;			/*!< selects different versions of IC file-format */

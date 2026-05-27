@@ -1503,5 +1503,35 @@
 
 
 #ifdef CBE_INTEGRATOR_WITHGRADIENTS
-#error "CBE_INTEGRATOR_WITHGRADIENTS is not implemented: the CBE gradient module is incomplete (the CBE_basis_moments_Gradients field in declarations/particle_data.h has no element type, so this option cannot compile), and the dm_fuzzy DMGrad gradient loop does not populate the CBE moment gradients. This option is scope-fenced off until the CBE gradient loop is intentionally ported. See OPEN_3d_dm_fuzzy_design.md sec 7."
+#ifndef CBE_INTEGRATOR
+#error "CBE_INTEGRATOR_WITHGRADIENTS requires CBE_INTEGRATOR."
+#endif
+/* CBE_INTEGRATOR_SECONDMOMENT 3D fence is enforced separately below; not
+ * duplicated here. */
+#endif
+
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(CBE_INTEGRATOR)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires CBE_INTEGRATOR."
+#endif
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
+#endif
+
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
+ * guardrail, codex 2026-05-25). The do_cbe_flux_computation /
+ * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
+ * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
+ * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
+ * off-diag Sxy/Sxz/Syz). NMOMENTS = 3 (1D) and NMOMENTS = 6 (2D) use
+ * different index layouts -- silently mis-indexed by the same code,
+ * which would corrupt fluxes without raising a compile error. The
+ * hardcoded init at sidm/cbe_integrator.cc:62 and the Commit-3 pad
+ * computation at sidm/cbe_integrator_flux_functions.h:100 inherit the
+ * same assumption. Until dimension-aware moment-index helpers land
+ * (deferred until/unless 1D or 2D production CBE is actually wanted),
+ * fence non-3D second-moment CBE at compile time. */
+#if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
+#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
+#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
+#endif
 #endif

@@ -4,7 +4,7 @@
 % least once so that DM_VelDisp is populated before the first wind kick.
 %
 InitCondFile                       isodisk_dmdispersion_ics
-OutputDir                          output
+OutputDir                          output_dmheating_inert
 TimeMax                            0.005
 BoxSize                            200
 TimeBetSnapshot                    0.002
@@ -72,3 +72,12 @@ VariableWindSpecMomentum 5000.
 % DM_AnnihilationHeatingFraction  0   % f_h^ann in [0,1]
 % DM_DecayRate                    0   % Gamma in s^-1
 % DM_DecayHeatingFraction         0   % f_h^dec in [0,1]
+
+%---- INERT test channel (Config_dm_heating.sh / Config_dm_heating_with_winds.sh)
+%     All rate params explicitly zero. Verifies that DM_HEATING-compiled
+%     builds with zero rates produce DtInternalEnergy / thermal evolution
+%     identical (to float round-off) to the no-DM_HEATING baseline.
+DM_AnnihilationSigmaV_over_mChi 0
+DM_AnnihilationHeatingFraction  0
+DM_DecayRate                    0
+DM_DecayHeatingFraction         0

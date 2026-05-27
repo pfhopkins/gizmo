@@ -324,6 +324,9 @@ extern FILE *FdSinkSwallowDetails;
 #ifdef OUTPUT_SINK_FORMATION_PROPS
 extern FILE *FdSinkFormationDetails;
 #endif
+#if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)) && defined(CBE_INTEGRATOR)
+extern FILE *FdCbeDiagnostics;
+#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
 #ifdef SINK_OUTPUT_MOREINFO
@@ -402,7 +405,13 @@ extern struct Subfind_DensityOtherPropsEval_data_out
 extern struct global_data_all_processes All;
 #endif
 
-
+/* SSOT for whether the dm_dispersion neighbor loop is compiled AND called.
+ * Resolved AFTER global_data_all_struct.h sets GALSF_SUBGRID_WIND_SCALING
+ * and BEFORE particle_data.h / cell_data.h / proto.h consume it. Future
+ * physics needing rho_DM / sigma_DM at gas cells: add to this OR. */
+#if (defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)) || defined(DM_HEATING)
+#define DM_DISPERSION_LOOP_ACTIVE
+#endif
 
 #include "particle_data.h"
 #include "cell_data.h"
