@@ -44,11 +44,16 @@ static constexpr double CBE_SPD_RELATIVE_FLOOR = 1.0e-12;
  * Global mass/p/T conservation holds regardless of which pairing rule is
  * used; different rules produce different mixing patterns.
  *
- * Only velocity-only cost + greedy outgoing assignment are exposed here
- * (matches the corrected post-Commit-0 inline path). Other cost forms (W2,
- * free-slot-fallback) and assignment forms (Hungarian) will land with
- * their implementations and dimensional/realizability handling intact;
- * see also the 'theta uses dp not Face_Area_Vec' note in
+ * C0 / C1 exposed velocity-only cost + greedy outgoing assignment (matches
+ * the corrected post-C0 inline path). C6a adds trace-W2 cost and the
+ * adaptive-free-slot row transform per harness §4.4; these are unused in
+ * C6a (no callers; default routing flips in C6c via the compile-time
+ * selectors added in C6b). Hungarian assignment is deliberately NOT
+ * added in C6 -- harness §4.1 + Phil designate one-sided-nearest (=
+ * greedy) the production assignment; Hungarian is a comparator option
+ * that may be added in a future commit on explicit request.
+ *
+ * See also the 'theta uses dp not Face_Area_Vec' note in
  * cbe_integrator_flux_functions.h.
  * -------------------------------------------------------------------------- */
 
@@ -89,6 +94,138 @@ void cbe_assign_outgoing_greedy(
             if(C[m][n] < best) { best = C[m][n]; best_n = n; }
         }
         beta_of_alpha[m] = best_n;
+    }
+}
+
+
+/* Trace-W^2 squared cost between two basis components (Wave-CBE Commit 6a,
+ * 2026-05-27). Rotationally invariant 3D generalization of the harness
+ * 1D form  C = (v_a - v_b)^2 + (sqrt(S_a) - sqrt(S_b))^2  (cbe_cosmology
+ * python_harness HARNESS_RESULTS_AND_FINDINGS §2.4 / §4.4).
+ *
+ * Velocity term: sum_k (v_a_k - v_b_k)^2, same float-op ordering as
+ * cbe_cost_v_only. NMOMENTS=4 builds (no stress slots) reduce to the
+ * exact velocity-only sum and are byte-identical to cbe_cost_v_only.
+ *
+ * Stress term [#if NMOMENTS >= 7]: trace-of-covariance form
+ * tr(S) = sum_k (T_kk/m - v_k^2), with each diagonal piece floored at 0
+ * before summation to absorb pre-SPD-repair numerical noise. The cost
+ * contribution is (sqrt(tr(S_a)) - sqrt(tr(S_b)))^2 -- one scalar add,
+ * one sqrt per side, no matrix sqrt. Rotationally invariant; collapses
+ * to the harness 1D form exactly when only one stress component is
+ * meaningful. Diagonal-only sum would be coordinate-frame dependent and
+ * was rejected during codex+Phil review 2026-05-27.
+ *
+ * Full multivariate Gaussian Wasserstein-2 (needs matrix sqrt of
+ * Sigma_a^{1/2} Sigma_b Sigma_a^{1/2}) is NOT this function; if a
+ * comparator is ever wanted, it lands as a separate cbe_cost_w2_full
+ * symbol and selector.
+ *
+ * Unused in C6a (no callers yet); SSOT pair-matching builder in C6b
+ * routes to this via the CBE_PAIRING_COST compile-time selector. */
+KOKKOS_INLINE_FUNCTION
+double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
+                         const double moments_b[CBE_INTEGRATOR_NMOMENTS])
+{
+    double inv_a = 1.0 / DMAX(moments_a[0], MIN_REAL_NUMBER);
+    double inv_b = 1.0 / DMAX(moments_b[0], MIN_REAL_NUMBER);
+    double v_a[3], v_b[3];
+    double c = 0;
+    for(int k=0; k<3; k++) {
+        v_a[k] = moments_a[k+1] * inv_a;
+        v_b[k] = moments_b[k+1] * inv_b;
+        double dv = v_a[k] - v_b[k];
+        c += dv * dv;
+    }
+#if (CBE_INTEGRATOR_NMOMENTS >= 7)
+    double tr_S_a = 0, tr_S_b = 0;
+    for(int k=0; k<3; k++) {
+        double S_a_kk = moments_a[4+k] * inv_a - v_a[k]*v_a[k];
+        double S_b_kk = moments_b[4+k] * inv_b - v_b[k]*v_b[k];
+        tr_S_a += DMAX(S_a_kk, 0.0);
+        tr_S_b += DMAX(S_b_kk, 0.0);
+    }
+    double dsqrt_S = sqrt(tr_S_a) - sqrt(tr_S_b);
+    c += dsqrt_S * dsqrt_S;
+#endif
+    return c;
+}
+
+
+/* Adaptive free-slot row-fallback transform on an NBASIS x NBASIS cost
+ * matrix (Wave-CBE Commit 6a, 2026-05-27). Implements the harness §2.4
+ * free-slot principle: when source basis alpha has NO good velocity match
+ * on the target side (row min exceeds the adaptive threshold tau =
+ * median(C) per call), shrink that row's costs by
+ *     target_masses[beta] / (source_masses[alpha] + target_masses[beta] + eps)
+ * so empty / lightly-occupied target slots become cheaper destinations.
+ * Reduces the perturbation-degrading "overwrite dominant stream" cost and
+ * captures the harness Test 3.9 result (one-sided-theta + free_slot_w2
+ * preserves the +2 perturbation +78% vs plain w2 or v_only and halves
+ * KE drift).
+ *
+ * Direction is asymmetric. Caller passes (source_masses, target_masses)
+ * matching the cost-matrix BUILD direction. For an a->b matrix
+ *   C[alpha_on_a][beta_on_b] = cost(Q_a[alpha], Q_b[beta]):
+ *     source_masses[i] = Q_a[i][0]        // mass density of a-side basis i
+ *     target_masses[j] = Q_b[j][0]        // mass density of b-side basis j
+ * The b->a direction (separately built C') requires its own free-slot
+ * call with source = Q_b masses, target = Q_a masses. It is NOT a
+ * transpose of this transform.
+ *
+ * fired_count_inout is NULLABLE. When non-null, increments by 1 per
+ * alpha-row where the tau test triggered. Used at the flux call site
+ * only (in C6c); gradient and BJ-limiter call sites pass NULL since
+ * pre-pass matching shares the SSOT helper but is not a flux-pairing
+ * decision. The diagnostic semantic: SUM over directional basis rows
+ * for which the free-slot fallback transformed a cost-matrix row during
+ * flux pairing. Each flux face evaluation builds TWO cost matrices
+ * (a->b and b->a); each can fire on up to NBASIS rows, so per-face
+ * increment is bounded by 2*NBASIS.
+ *
+ * tau is computed by insertion-sorting a flat copy of all NBASIS^2
+ * entries on the stack (NBASIS <= 8 -> at most 64 doubles; no
+ * allocations, no library calls, Kokkos-portable).
+ *
+ * Unused in C6a (no callers yet); SSOT pair-matching builder in C6b
+ * routes to this via the CBE_PAIRING_USE_FREE_SLOT compile-time
+ * selector (off in C6b temporary defaults, on in C6c final). */
+KOKKOS_INLINE_FUNCTION
+void cbe_apply_free_slot_fallback(
+    double C[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS],
+    const double source_masses[CBE_INTEGRATOR_NBASIS],
+    const double target_masses[CBE_INTEGRATOR_NBASIS],
+    int *fired_count_inout)
+{
+    const int N  = CBE_INTEGRATOR_NBASIS;
+    const int NN = CBE_INTEGRATOR_NBASIS * CBE_INTEGRATOR_NBASIS;
+    double flat[CBE_INTEGRATOR_NBASIS * CBE_INTEGRATOR_NBASIS];
+    int idx = 0;
+    for(int m=0; m<N; m++) {
+        for(int p=0; p<N; p++) flat[idx++] = C[m][p];
+    }
+    /* insertion sort -- stable, in-place, branch-friendly at NN<=64. */
+    for(int i=1; i<NN; i++) {
+        double x = flat[i];
+        int j = i;
+        while(j > 0 && flat[j-1] > x) { flat[j] = flat[j-1]; j--; }
+        flat[j] = x;
+    }
+    double tau = (NN & 1) ? flat[NN/2]
+                          : 0.5 * (flat[NN/2 - 1] + flat[NN/2]);
+
+    for(int m=0; m<N; m++) {
+        double row_min = MAX_REAL_NUMBER;
+        for(int p=0; p<N; p++) {
+            if(C[m][p] < row_min) row_min = C[m][p];
+        }
+        if(row_min > tau) {
+            for(int p=0; p<N; p++) {
+                double denom = source_masses[m] + target_masses[p] + MIN_REAL_NUMBER;
+                C[m][p] *= target_masses[p] / denom;
+            }
+            if(fired_count_inout) { (*fired_count_inout)++; }
+        }
     }
 }
 
