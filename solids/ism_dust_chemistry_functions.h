@@ -223,7 +223,21 @@ KOKKOS_INLINE_FUNCTION
 void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, int *key_elem, double *key_num_atoms, double *key_mass)
 {
     int k;
-    *key_elem = -1; *key_num_atoms = 1; *key_mass = 1;
+    /* Entry-time defaults. Per codex 2026-05-27: on CUDA the non-silicate
+     * branches below NEVER explicitly write *key_num_atoms; on host that's
+     * fine because the default-init below persists, but nvc++ aggressive
+     * device-side optimization can elide the store as dead-code if it
+     * concludes the only downstream writer is the silicate branch. The
+     * resulting register-uninitialized read gives garbage species_yields[]
+     * in update_dust_accretion -> DustSpecies diverges first and
+     * catastrophically (matches Vista t2 oracle signature: step 88,
+     * DustSpecies=1.5e+01 while DustMetal/Source still ~5e-13). Defensive
+     * per-branch reassignment below makes the function independent of the
+     * entry-time init surviving any optimization. The value 1.0 is the
+     * physically-correct atoms-per-formula-unit count for carbon, SiC
+     * (Si or C key), free iron, and the O reservoir; preserves
+     * pre-Phase-2-port behaviour exactly. */
+    *key_elem = -1; *key_num_atoms = 1.0; *key_mass = 1.0;
     /******** SILICATE ********/
     if (spec_indx==All.ISMDustChem_Sil_Index) {
         double sil_elem_abunds[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES] = {0.};
@@ -241,20 +255,21 @@ void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, i
         *key_mass = All.ISMDustChem_AtomicMassTable[*key_elem];
     }
     /******** CARBONACEOUS ********/
-    else if (spec_indx==All.ISMDustChem_Carb_Index) {if (dust_metallicity[2]>0) {*key_elem=2; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
+    else if (spec_indx==All.ISMDustChem_Carb_Index) {if (dust_metallicity[2]>0) {*key_elem=2; *key_num_atoms=1.0; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
     /******** SiC ********/
     else if (spec_indx==All.ISMDustChem_SiC_Index) {
         if (dust_metallicity[2]>0 && dust_metallicity[7]>0)
         {
             if (dust_metallicity[7]/All.ISMDustChem_AtomicMassTable[7] < dust_metallicity[2]/All.ISMDustChem_AtomicMassTable[2]) *key_elem = 7;
             else *key_elem = 2;
+            *key_num_atoms = 1.0;
             *key_mass = All.ISMDustChem_AtomicMassTable[*key_elem];
         }
     }
     /******** METALLIC IRON ********/
-    else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {if (dust_metallicity[10]>0) {*key_elem=10; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
+    else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {if (dust_metallicity[10]>0) {*key_elem=10; *key_num_atoms=1.0; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
     /******** O RESERVOIR ********/
-    else if (spec_indx==All.ISMDustChem_ORes_Index) {if (dust_metallicity[4]>0) {*key_elem=4; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
+    else if (spec_indx==All.ISMDustChem_ORes_Index) {if (dust_metallicity[4]>0) {*key_elem=4; *key_num_atoms=1.0; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
 }
 
 KOKKOS_INLINE_FUNCTION
