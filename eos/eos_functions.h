@@ -537,9 +537,13 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
 
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
-    /* Tier-2 dust battery EMF (Soliman, Hopkins & Squire 2025). Currently a
-       scaffolded stub returning {0,0,0}; SHS25 Eqs. 9, 10-12, 16-18 still to
-       be implemented in solids/dust_battery_functions.h. */
+    /* Tier-2 dust battery EMF (Soliman, Hopkins & Squire 2025).
+       Aggregator in solids/dust_battery_functions.h dispatches on the bitmask:
+       bit 8 -> battery_E_dust_explicit (SHS25 Eq. 9 with sh25_alpha_coeffs +
+                                          cell.J_dust_cell summed from grains);
+       bit 4 -> battery_E_dust_TVA      (SHS25 Eq. 17 mostly-neutral TVA form,
+                                          driven by dust-vs-gas radiation-pressure
+                                          differential acceleration). */
     cell[i].E_battery_T2_cell += dust_battery_assemble_E_cell(i, cell, pp);
 #endif
 
