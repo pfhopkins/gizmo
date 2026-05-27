@@ -152,6 +152,24 @@
 #else
 #define CBE_INTEGRATOR_NMOMENTS ((BOX_SPATIAL_DIMENSION)+1)
 #endif
+/* Wave-CBE Commit 6b pairing selectors. Temporary defaults are
+ * CBE_COST_V_ONLY + USE_FREE_SLOT=0 so the SSOT pair-matching helper
+ * reproduces the pre-C6b open-coded path byte-for-byte. C6c flips both
+ * to the harness §4.4 production defaults (CBE_COST_TRACE_W2 + free-slot
+ * on). CBE_PAIRING_ASSIGN is a sentinel; greedy (= one-sided-nearest) is
+ * the only assignment exposed in C6 per harness §4.1 + Phil. */
+#define CBE_COST_V_ONLY     0
+#define CBE_COST_TRACE_W2   1
+#define CBE_ASSIGN_GREEDY   0
+#ifndef CBE_PAIRING_COST
+#define CBE_PAIRING_COST            CBE_COST_V_ONLY   /* C6b temporary; C6c -> CBE_COST_TRACE_W2 */
+#endif
+#ifndef CBE_PAIRING_USE_FREE_SLOT
+#define CBE_PAIRING_USE_FREE_SLOT   0                 /* C6b temporary; C6c -> 1 */
+#endif
+#ifndef CBE_PAIRING_ASSIGN
+#define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
+#endif
 #endif
 
 #if defined(GRAIN_COLLISIONS)

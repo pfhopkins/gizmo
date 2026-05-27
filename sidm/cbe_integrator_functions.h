@@ -230,6 +230,112 @@ void cbe_apply_free_slot_fallback(
 }
 
 
+/* SSOT pair-matching builder (Wave-CBE Commit 6b, 2026-05-27). Single
+ * canonical helper used by the flux body, gradient LSQ accumulator, and
+ * BJ limiter to produce basis-pair matchings. Replaces three open-coded
+ * (cost-matrix build + greedy assignment) patterns; after wiring, all
+ * three call sites are reduced to one call to this helper.
+ *
+ * Cost: dispatched on the compile-time selector CBE_PAIRING_COST. C6b
+ * temporary default = CBE_COST_V_ONLY (byte-compatible with pre-C6b);
+ * C6c flips to CBE_COST_TRACE_W2 per harness §4.4.
+ *
+ * Free-slot: applied iff the compile-time selector
+ * CBE_PAIRING_USE_FREE_SLOT is 1. C6b temporary default = 0
+ * (byte-compatible); C6c flips to 1 per harness §4.4. Direction is
+ * asymmetric: the a->b pass uses source = Q_a masses, target = Q_b
+ * masses; the b->a pass (only built when alpha_of_beta_for_b is
+ * non-null) builds a fresh cost matrix and uses source = Q_b masses,
+ * target = Q_a masses. The b->a matrix is NOT the transpose of the a->b
+ * matrix when free-slot is on, because free-slot transforms each row
+ * with the directional mass ratio.
+ *
+ * Assignment: cbe_assign_outgoing_greedy (one-sided-nearest per side).
+ * CBE_PAIRING_ASSIGN sentinel exists so a future Hungarian comparator
+ * (not part of C6) can be added cleanly; only CBE_ASSIGN_GREEDY is
+ * supported in C6.
+ *
+ * Outputs:
+ *   beta_of_alpha_for_a[m] = b-side basis matched as a's outgoing target
+ *                            for a-side basis m. ALWAYS written.
+ *   alpha_of_beta_for_b[n] = a-side basis matched as b's outgoing target
+ *                            for b-side basis n. Optional -- pass NULL if
+ *                            only one direction is needed (gradient/BJ
+ *                            limiter call sites). Flux passes a real
+ *                            pointer (both directions needed).
+ *   free_slot_fired_count_inout: nullable counter (see
+ *                            cbe_apply_free_slot_fallback). Flux call
+ *                            site (in C6c) passes &out.cbe_pairing_free_
+ *                            slot_count; gradient and BJ-limiter call
+ *                            sites pass NULL since pre-pass matching is
+ *                            not a flux-pairing decision. */
+KOKKOS_INLINE_FUNCTION
+void cbe_build_pair_matching(
+    const double Q_a[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double Q_b[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    int beta_of_alpha_for_a[CBE_INTEGRATOR_NBASIS],
+    int alpha_of_beta_for_b[CBE_INTEGRATOR_NBASIS],
+    int *free_slot_fired_count_inout)
+{
+    const int N = CBE_INTEGRATOR_NBASIS;
+
+    /* a->b cost matrix. */
+    double C_ab[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
+    for(int m=0; m<N; m++) {
+        for(int n=0; n<N; n++) {
+#if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
+            C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
+#else
+            C_ab[m][n] = cbe_cost_v_only(Q_a[m], Q_b[n]);
+#endif
+        }
+    }
+#if CBE_PAIRING_USE_FREE_SLOT
+    {
+        double src_masses[CBE_INTEGRATOR_NBASIS];
+        double tgt_masses[CBE_INTEGRATOR_NBASIS];
+        for(int m=0; m<N; m++) {
+            src_masses[m] = Q_a[m][0];
+            tgt_masses[m] = Q_b[m][0];
+        }
+        cbe_apply_free_slot_fallback(C_ab, src_masses, tgt_masses,
+                                     free_slot_fired_count_inout);
+    }
+#else
+    (void)free_slot_fired_count_inout;
+#endif
+    cbe_assign_outgoing_greedy(C_ab, beta_of_alpha_for_a);
+
+    if(alpha_of_beta_for_b) {
+        /* b->a cost matrix (separately built; not a transpose of C_ab
+         * because free-slot is direction-asymmetric). */
+        double C_ba[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
+        for(int m=0; m<N; m++) {
+            for(int n=0; n<N; n++) {
+#if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
+                C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
+#else
+                C_ba[m][n] = cbe_cost_v_only(Q_b[m], Q_a[n]);
+#endif
+            }
+        }
+#if CBE_PAIRING_USE_FREE_SLOT
+        {
+            double src_masses[CBE_INTEGRATOR_NBASIS];
+            double tgt_masses[CBE_INTEGRATOR_NBASIS];
+            for(int m=0; m<N; m++) {
+                src_masses[m] = Q_b[m][0];
+                tgt_masses[m] = Q_a[m][0];
+            }
+            cbe_apply_free_slot_fallback(C_ba, src_masses, tgt_masses,
+                                         free_slot_fired_count_inout);
+        }
+#endif
+        cbe_assign_outgoing_greedy(C_ba, alpha_of_beta_for_b);
+    }
+}
+
+
 /* --------------------------------------------------------------------------
  * Per-face root-found face-normal velocity v_F_n (Wave-CBE Commit 3,
  * 2026-05-25). Replaces the bulk-average vface_new computation in

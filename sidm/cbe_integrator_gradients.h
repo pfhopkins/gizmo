@@ -206,17 +206,15 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching (velocity-only cost, greedy outgoing assignment) —
-     * SAME helpers and order as the flux body so the gradient applies to
-     * the basis pairs the flux will later see. */
-    double cost_matrix[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
-    int    matched_j_for_i[CBE_INTEGRATOR_NBASIS];
-    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
-        for(int n = 0; n < CBE_INTEGRATOR_NBASIS; n++) {
-            cost_matrix[m][n] = cbe_cost_v_only(Q_i[m], Q_j[n]);
-        }
-    }
-    cbe_assign_outgoing_greedy(cost_matrix, matched_j_for_i);
+    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Same selector
+     * dispatch as the flux body, so gradient/limiter and flux see the same
+     * basis pairs by construction. Single-direction (a->b only); the
+     * fired-count counter is NULL because pre-pass matching is not a
+     * flux-pairing decision. */
+    int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
+    cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
+                            /*alpha_of_beta_for_b=*/NULL,
+                            /*free_slot_fired_count_inout=*/NULL);
 
     /* B_i[m][k][e] += w * (Q_j_matched - Q_i)[m][k] * (x_j - x_i)[e]. With
      * dp = x_i - x_j, (x_j - x_i)[e] = -dp[e]. */
@@ -329,15 +327,12 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Velocity-only greedy basis matching — identical to LSQ + flux. */
-    double cost_matrix[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
-    int    matched_j_for_i[CBE_INTEGRATOR_NBASIS];
-    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
-        for(int n = 0; n < CBE_INTEGRATOR_NBASIS; n++) {
-            cost_matrix[m][n] = cbe_cost_v_only(Q_i[m], Q_j[n]);
-        }
-    }
-    cbe_assign_outgoing_greedy(cost_matrix, matched_j_for_i);
+    /* Basis matching via SSOT helper (Wave-CBE Commit 6b) — identical to
+     * LSQ + flux by construction (same selector dispatch). */
+    int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
+    cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
+                            /*alpha_of_beta_for_b=*/NULL,
+                            /*free_slot_fired_count_inout=*/NULL);
 
     /* Per (m, k): predicted delta from Q_i to Q_face on i's side =
      *   grad_i[m][k] . face_offset_i, face_offset_i = -psi_i * dp.
