@@ -545,6 +545,7 @@ void cooling_parent_routine(void)
 #endif
 #endif /* POST_COOLING_DEVICE_EOS_SUPPORTED */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
+            /* Dust arrays always present under ISMDUSTCHEM_MODEL */
             POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Metal,
                                     oracle_Cell_scratch[j].ISMDustChem_Dust_Metal,
                                     NUM_ISMDUSTCHEM_ELEMENTS, oracle_max_rel_DustMetal);
@@ -554,12 +555,12 @@ void cooling_parent_routine(void)
             POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Species,
                                     oracle_Cell_scratch[j].ISMDustChem_Dust_Species,
                                     NUM_ISMDUSTCHEM_SPECIES, oracle_max_rel_DustSpecies);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_C_in_CO,
-                                oracle_Cell_scratch[j].ISMDustChem_C_in_CO, oracle_max_rel_CinCO);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_MassFractionInDenseMolecular,
-                                oracle_Cell_scratch[j].ISMDustChem_MassFractionInDenseMolecular, oracle_max_rel_DenseMolFrac);
             POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_DelayTimeSNeSputtering,
                                 oracle_Cell_scratch[j].ISMDustChem_DelayTimeSNeSputtering, oracle_max_rel_DelayTimeSputt);
+            /* C_in_CO + MassFractionInDenseMolecular and the grain-bin arrays
+             * are mutually exclusive in cell_data.h (lines 65-73): GRAINSIZEEVO
+             * builds carry the grain bins instead of the dense-MC C-tracking
+             * scalars. Gate the oracle comparisons accordingly. */
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_NumberInBin,
                                    oracle_Cell_scratch[j].ISMDustChem_Dust_NumberInBin,
@@ -567,6 +568,11 @@ void cooling_parent_routine(void)
             POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_SlopeInBin,
                                    oracle_Cell_scratch[j].ISMDustChem_Dust_SlopeInBin,
                                    NUM_ISMDUSTCHEM_SPECIES, NUM_ISMDUSTCHEM_SIZE_BINS, oracle_max_rel_DustSlopeInBin);
+#else
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_C_in_CO,
+                                oracle_Cell_scratch[j].ISMDustChem_C_in_CO, oracle_max_rel_CinCO);
+            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_MassFractionInDenseMolecular,
+                                oracle_Cell_scratch[j].ISMDustChem_MassFractionInDenseMolecular, oracle_max_rel_DenseMolFrac);
 #endif /* GALSF_ISMDUSTCHEM_GRAINSIZEEVO */
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
             POSTCOOL_ORACLE_CMP(compact_Cell[j].DelayTimeHII, oracle_Cell_scratch[j].DelayTimeHII, oracle_max_rel_DelayTimeHII);
