@@ -170,6 +170,15 @@
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
 #endif
+/* Loud guard against silently-ignored selector values. The sentinel slot
+ * exists so a future Hungarian comparator (or other assignment) can be
+ * added cleanly, but only CBE_ASSIGN_GREEDY is wired through C6's SSOT
+ * helper (cbe_build_pair_matching). A user-supplied
+ * -DCBE_PAIRING_ASSIGN=<other> must fail to build, not silently fall
+ * back to greedy. */
+#if (CBE_PAIRING_ASSIGN != CBE_ASSIGN_GREEDY)
+#error "CBE_PAIRING_ASSIGN currently supports only CBE_ASSIGN_GREEDY in C6. Hungarian (or other) assignment is not wired through cbe_build_pair_matching; the SSOT helper would silently use greedy. Either set the selector to CBE_ASSIGN_GREEDY or wire the additional assignment first."
+#endif
 #endif
 
 #if defined(GRAIN_COLLISIONS)

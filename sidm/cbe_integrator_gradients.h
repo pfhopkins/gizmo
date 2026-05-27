@@ -207,10 +207,13 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
     }
 
     /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Same selector
-     * dispatch as the flux body, so gradient/limiter and flux see the same
-     * basis pairs by construction. Single-direction (a->b only); the
-     * fired-count counter is NULL because pre-pass matching is not a
-     * flux-pairing decision. */
+     * dispatch / cost policy as the flux body, so gradient/limiter matching
+     * stays method-consistent with flux matching. Exact pair identity is
+     * NOT guaranteed: gradient pre-pass uses cell-centered Q_i / Q_j here,
+     * while flux uses face-reconstructed Qface_i / Qface_j, so the cost
+     * matrices can differ pair-by-pair even at identical selectors.
+     * Single-direction (a->b only); the fired-count counter is NULL
+     * because pre-pass matching is not a flux-pairing decision. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
@@ -327,8 +330,12 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching via SSOT helper (Wave-CBE Commit 6b) — identical to
-     * LSQ + flux by construction (same selector dispatch). */
+    /* Basis matching via SSOT helper (Wave-CBE Commit 6b) — same selector
+     * dispatch / cost policy as the LSQ pre-pass and the flux body, so
+     * limiter matching stays method-consistent. Exact pair identity vs
+     * the flux is not guaranteed (limiter uses cell-centered Q_i / Q_j;
+     * flux uses face-reconstructed Qface_i / Qface_j). Single-direction;
+     * counter NULL (not a flux-pairing decision). */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
