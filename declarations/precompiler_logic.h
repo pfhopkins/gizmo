@@ -170,12 +170,17 @@
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
 #endif
-/* Loud guard against silently-ignored selector values. The sentinel slot
- * exists so a future Hungarian comparator (or other assignment) can be
- * added cleanly, but only CBE_ASSIGN_GREEDY is wired through C6's SSOT
- * helper (cbe_build_pair_matching). A user-supplied
- * -DCBE_PAIRING_ASSIGN=<other> must fail to build, not silently fall
- * back to greedy. */
+/* Loud guards against silently-ignored selector values. cbe_build_pair_
+ * matching dispatches on CBE_PAIRING_COST via a single #if/#else and on
+ * CBE_PAIRING_USE_FREE_SLOT via #if; any unsupported value silently
+ * falls through to legacy behavior, which is the same fake-selector
+ * footgun the ASSIGN guard prevents. Fail the build loud instead. */
+#if (CBE_PAIRING_COST != CBE_COST_V_ONLY) && (CBE_PAIRING_COST != CBE_COST_TRACE_W2)
+#error "CBE_PAIRING_COST must be CBE_COST_V_ONLY or CBE_COST_TRACE_W2. cbe_build_pair_matching's #if/#else dispatch silently falls back to cbe_cost_v_only for any unsupported value; set the selector to one of the supported sentinels or wire the new cost into the helper."
+#endif
+#if (CBE_PAIRING_USE_FREE_SLOT != 0) && (CBE_PAIRING_USE_FREE_SLOT != 1)
+#error "CBE_PAIRING_USE_FREE_SLOT must be 0 or 1. cbe_build_pair_matching's #if-only dispatch silently treats any non-1 value as 0; set the selector explicitly."
+#endif
 #if (CBE_PAIRING_ASSIGN != CBE_ASSIGN_GREEDY)
 #error "CBE_PAIRING_ASSIGN currently supports only CBE_ASSIGN_GREEDY in C6. Hungarian (or other) assignment is not wired through cbe_build_pair_matching; the SSOT helper would silently use greedy. Either set the selector to CBE_ASSIGN_GREEDY or wire the additional assignment first."
 #endif
