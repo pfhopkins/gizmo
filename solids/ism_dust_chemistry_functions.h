@@ -310,7 +310,12 @@ void update_dense_molecular_fields(int i, double temp, double rho, double nh0, d
     double fH2=0., new_ISMDustChem_MassFractionInDenseMolecular=0.; // mass fraction of gas that is H2 and gas in dense MC phase
     double NH2 = 1.5E21; // cm^-2 Column density of H2 needed to be in dense MC phase (this is a tuned value but falls within observed range for rapid C->CO conversion)
     double l_depth, x_dens; // depth into cloud to reach NH2 and radial fraction of cloud in dense MC phase
-    double surface_density = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS; // converts to cgs
+    /* Pass `pp` explicitly: proto.h declares evaluate_NH_from_GradRho with
+     * `struct particle_data *pp = P` default, where P is the host extern.
+     * On device, P is undefined -> nvcc error "identifier 'P' is undefined
+     * in device code". Mac OMP tolerated the default; Vista CUDA caught it.
+     * Surface-and-fix Phase 2 chunk 3 sweep, 2026-05-27. */
+    double surface_density = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
     // shielding length giving effective radius of gas particle
     double l_shield = surface_density / rho;
     fH2 = Get_Gas_Molecular_Mass_Fraction(i, temp, nh0, ne, 0., pp, cell);
