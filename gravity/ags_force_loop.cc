@@ -78,7 +78,7 @@ AgsForceSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     return scalars;
 }
 
-void AgsForceSpec::populate_device_context(const neighbor_loop_args& /*args*/,
+void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
     ctx.oracle_dry_run = false;
@@ -96,6 +96,11 @@ void AgsForceSpec::populate_device_context(const neighbor_loop_args& /*args*/,
         GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
     std::memcpy(ctx.geofactor_uvm, GeoFactorTable, GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
 #endif
+
+    /* CBE gradients are persistent on P[i].Gradients_CBE_basis_moments and
+     * ghost-transported naturally by standard P[] import — no scratch
+     * pointer to plumb through the DeviceContext. */
+    (void)args;
 }
 
 void AgsForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
@@ -172,6 +177,9 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                        accum.cbe_bracket_fail_count);
     cbe_step_diagnostics_observe_recon(accum.cbe_recon_rho_clamp_count,
                                         accum.cbe_recon_S_clamp_count);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    cbe_step_diagnostics_observe_grad_nonfinite(accum.cbe_grad_nonfinite_count);
+#endif
 #endif
 #endif
     (void)accum; (void)i;
@@ -215,6 +223,9 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
     ACCUM_ADD(cbe_bracket_fail_count)
     ACCUM_ADD(cbe_recon_rho_clamp_count)
     ACCUM_ADD(cbe_recon_S_clamp_count)
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    ACCUM_ADD(cbe_grad_nonfinite_count)
+#endif
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
@@ -291,6 +302,9 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
     CMP_INT(cbe_bracket_fail_count)
     CMP_INT(cbe_recon_rho_clamp_count)
     CMP_INT(cbe_recon_S_clamp_count)
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    CMP_INT(cbe_grad_nonfinite_count)
+#endif
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
@@ -339,9 +353,10 @@ GHOST_WRITEBACK_BUNDLE_END(ags_force)
 
 /* ghost_write_detector_begin/end: runner default (loop_name = "ags_force"). */
 
-void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
+void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& args,
                                            const NeighborLoopPlan& /*plan*/)
 {
+    (void)args;   /* may be unused depending on physics flags below */
 #if defined(DM_SIDM) || defined(CBE_INTEGRATOR)
     /* Pre-zero ghost P[j].wakeup BEFORE the bundle snapshot. Restores the
      * event semantics of the retired ghost_writeback_zero_agsforce: any
@@ -360,6 +375,11 @@ void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
      * the retired ghost_writeback_zero_agsforce path (now deleted). */
     gpu_particles_arena_invalidate();
 #endif
+    /* CBE gradients are persistent on P[i].Gradients_CBE_basis_moments,
+     * so the standard P[] ghost import (driven by the runner's ghost
+     * lifecycle, not this hook) carries them onto ghost slots
+     * automatically. No custom CBE import call lives here under the v5
+     * corrective architecture. */
     ghost_writeback_begin_bundle(ags_force_ghost_writeback_bundle_ptr());
 }
 
@@ -491,8 +511,15 @@ void AGSForce_calc(void)
     double ags_ghost_safety = gizmo_ghost_safety_factor();
     gizmo_density_prep_ghosts(ags_ghost_safety);
 
-    /* Drive the runner. */
+    /* CBE gradients (when CBE_INTEGRATOR_WITHGRADIENTS is on) are refreshed
+     * pre-force by CBEGrad_gradient_calc() (called from core/accel.cc
+     * before this toplevel), with persistent storage on
+     * P[i].Gradients_CBE_basis_moments. AGSForce_calc itself owns no
+     * gradient scratch; the flux body reads the persistent field via
+     * load_active's by-value snapshot (i side) and direct P[j] access
+     * (j side, naturally ghost-imported). */
     AgsForceSpec::Aux aux{};
+
     neighbor_loop_args_iterative args{};
     static_cast<neighbor_loop_args&>(args) = nlr_default_args();
     args.P                   = P;

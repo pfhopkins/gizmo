@@ -974,6 +974,17 @@ void cbe_step_diagnostics_observe_face(double face_residual_max,
                                         long long bracket_fail_count);
 void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
                                          long long S_clamp_count);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+void cbe_step_diagnostics_observe_grad_nonfinite(long long count);
+#endif
+#endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+/* CBE persistent gradient pre-force pass — parallel to DMGrad_gradient_calc.
+ * Called from core/accel.cc compute_additional_forces_for_all_particles().
+ * Refreshes P[i].Gradients_CBE_basis_moments for AGSForce-active i (two
+ * passes: raw LSQ + pairwise BJ-style limiter); inactive particles retain
+ * prior gradient (hydro semantics). */
+void CBEGrad_gradient_calc(void);
 #endif
 #endif
 

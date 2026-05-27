@@ -35,6 +35,12 @@ void do_cbe_initialization(void)
     for(i=0;i<NumPart;i++)
     {
         for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {P[i].CBE_basis_moments_dt[j][k]=0;}} // no time derivatives //
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        /* Zero-init persistent gradient storage. Particles not yet visited
+         * by CBEGrad_gradient_calc must read 0 (first-order Q_face = Q
+         * fallback at the flux body, hydro convention). */
+        for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {for(int d=0;d<3;d++) {P[i].Gradients_CBE_basis_moments[j][k][d]=0;}}}
+#endif
         double v2=0, v0=0;
         v2 = P[i].Vel.norm_sq();
         if(v2>0) {v0=sqrt(v2);} else {v0=1.e-10;}
@@ -130,6 +136,15 @@ struct cbe_step_accumulators {
     /* Populated by Wave-CBE Commit 5 (SPD repair): */
     double repair_dP_sum;                 /* sum |dP| introduced by repair */
     double repair_dT_sum;                 /* sum |dT| introduced by repair */
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* Populated by Wave-CBE Commit 4 Phase 2 #5 (face reconstruction):
+     * counts non-finite grad·dp events observed per pair in the flux body.
+     * Defense-in-depth; Tikhonov regularization in the LSQ pass should
+     * keep grads finite under normal physics. Emitted as col-9 of
+     * cbe_diagnostics.txt only when WITHGRADIENTS is on; WITHGRADIENTS-off
+     * builds emit the original 8-col Phase-1 format. */
+    long long grad_nonfinite_count;
+#endif
 };
 static struct cbe_step_accumulators CbeStepAccum;
 
@@ -143,6 +158,9 @@ void cbe_step_diagnostics_reset(void)
     CbeStepAccum.recon_S_clamp_count         = 0;
     CbeStepAccum.repair_dP_sum               = 0;
     CbeStepAccum.repair_dT_sum               = 0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    CbeStepAccum.grad_nonfinite_count        = 0;
+#endif
 }
 
 
@@ -174,6 +192,17 @@ void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
 }
 
 
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+/* Wave-CBE Commit 4 Phase 2 #5 observer: per-active particle's merged
+ * AgsForceOut.cbe_grad_nonfinite_count from the flux body's per-pair tally
+ * of non-finite grad·dp events. */
+void cbe_step_diagnostics_observe_grad_nonfinite(long long count)
+{
+    CbeStepAccum.grad_nonfinite_count += count;
+}
+#endif
+
+
 void cbe_step_diagnostics_emit(void)
 {
     double rmax_local = CbeStepAccum.face_mass_flux_residual_max;
@@ -192,9 +221,20 @@ void cbe_step_diagnostics_emit(void)
     MPI_Reduce(&sc_local,   &sc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&dP_local,   &dP,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&dT_local,   &dT,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    long long gnf_local = CbeStepAccum.grad_nonfinite_count, gnf;
+    MPI_Reduce(&gnf_local, &gnf, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
     if(ThisTask == 0 && FdCbeDiagnostics != NULL) {
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        /* 9-col extended format under WITHGRADIENTS. */
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT, gnf);
+#else
+        /* 8-col Phase-1 format — bit-identical baseline when WITHGRADIENTS off. */
         fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g\n",
                 All.Time, rmax, rsum, brk, rc, sc, dP, dT);
+#endif
         fflush(FdCbeDiagnostics);
     }
 }

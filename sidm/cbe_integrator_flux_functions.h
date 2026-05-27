@@ -59,7 +59,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 
     /* Wave-CBE Commit 4 (2026-05-25): build "flux-frame" Q on both sides
      * via the SSOT helper so the cosmology / velocity-boost convention
-     * matches whatever the future CbeGradientsSpec uses for its LSQ.
+     * matches whatever CBEGradSpec uses for its LSQ pass.
      * Stored basis moments are U-frame (cell-integrated, basis-frame
      * momentum); Q is per-volume comoving density with physical-frame
      * momentum baked in -- exactly what do_cbe_flux_computation expects. */
@@ -74,24 +74,88 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             P[j].CBE_basis_moments, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
     }
 
-    /* Face reconstruction (Wave-CBE Commit 4 Phase 1 = scaffolding):
-     * gradient pass not yet wired in this commit; Q_face = Q (cell-centered)
-     * for now, which is the zeroth-order MFM face state. Commit 4 Phase 2
-     * (next commit on this branch) lands the CbeGradientsSpec + BJ +
-     * ghost-import + actual reconstruction:
+    /* Face reconstruction. With CBE_INTEGRATOR_WITHGRADIENTS on, the
+     * persistent gradient row written by CBEGrad_gradient_calc is read for
+     * each side and the MFM face state is built as
      *     Q_face_i[m][k] = Q_i[m][k] - psi_i * grad_Q_i[m][k] . kernel.dp
      *     Q_face_j[m][k] = Q_j[m][k] + psi_j * grad_Q_j[m][k] . kernel.dp
      * with psi_i = h_j / (h_i+h_j) = MFM FACE POSITION weight (NOT a flux
-     * share). With grad = 0 today, Q_face equals Q at cell centers but the
-     * downstream code path is already plumbed for the Phase-2 wire-in. */
+     * share). grad_i is read from local.Gradients_CBE_basis_moments
+     * (by-value snapshot in AgsForceSpec::load_active, Mode-B-safe per
+     * design invariant I2); grad_j is read directly from
+     * P[j].Gradients_CBE_basis_moments (standard P[] ghost transport
+     * carries the field onto ghost slots).
+     *
+     * WITHGRADIENTS off → fall through to Qface = Q (cell-centered),
+     * byte-identical to the Phase-1 baseline. */
     double Qface_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Qface_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    {
+        const double psi_i_denom = kernel.h_i + kernel.h_j;
+        long long local_nonfinite_count = 0;
+        /* AGSForce's pair-overlap filter guarantees both h_i and h_j > 0
+         * for any pair reaching this point — psi_i_denom > 0 is structural.
+         * This is device code, so we cannot endrun; defense-in-depth is to
+         * (a) fall back to first-order Qface = Q rather than NaN the face
+         * state, and (b) bump local_nonfinite_count by NBASIS*NMOMENTS so
+         * the event is observable when diagnostics are enabled (a clean
+         * pair contributes 0; a denom-bad pair contributes the full row). */
+        if(psi_i_denom > 0) {
+            const double psi_i = kernel.h_j / psi_i_denom;
+            const double psi_j = 1.0 - psi_i;
+            const double dp[3] = { kernel.dp[0], kernel.dp[1], kernel.dp[2] };
+            for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+                for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                    const double gi_dp = local.Gradients_CBE_basis_moments[m][k][0]*dp[0]
+                                       + local.Gradients_CBE_basis_moments[m][k][1]*dp[1]
+                                       + local.Gradients_CBE_basis_moments[m][k][2]*dp[2];
+                    const double gj_dp = P[j].Gradients_CBE_basis_moments[m][k][0]*dp[0]
+                                       + P[j].Gradients_CBE_basis_moments[m][k][1]*dp[1]
+                                       + P[j].Gradients_CBE_basis_moments[m][k][2]*dp[2];
+                    const bool   finite_i = isfinite(gi_dp);
+                    const bool   finite_j = isfinite(gj_dp);
+                    const double gi_safe  = finite_i ? gi_dp : 0.0;
+                    const double gj_safe  = finite_j ? gj_dp : 0.0;
+                    if(!finite_i || !finite_j) ++local_nonfinite_count;
+                    Qface_i[m][k] = Q_i[m][k] - psi_i * gi_safe;
+                    Qface_j[m][k] = Q_j[m][k] + psi_j * gj_safe;
+                }
+            }
+        } else {
+            /* Denom <= 0 — should be unreachable. Surface the event by
+             * tallying a full row of non-finite contributions, then fall
+             * back to first-order Qface so downstream code does not see
+             * NaN. */
+            local_nonfinite_count = (long long)CBE_INTEGRATOR_NBASIS
+                                  * (long long)CBE_INTEGRATOR_NMOMENTS;
+            for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+                for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                    Qface_i[m][k] = Q_i[m][k];
+                    Qface_j[m][k] = Q_j[m][k];
+                }
+            }
+        }
+        /* Tally non-finite events into the diagnostic counter — gated on
+         * the diagnostic block (same nesting as the field itself in
+         * AgsForceOut). When the diagnostic block is off but WITHGRADIENTS
+         * is on, the count is computed but discarded. */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+        out.cbe_grad_nonfinite_count += local_nonfinite_count;
+#else
+        (void)local_nonfinite_count;
+#endif
+    }
+#else
+    /* Phase-1 fallback — Q_face = Q (cell-centered). Byte-identical
+     * baseline when CBE_INTEGRATOR_WITHGRADIENTS is off. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
             Qface_i[m][k] = Q_i[m][k];
             Qface_j[m][k] = Q_j[m][k];
         }
     }
+#endif
     /* Density clamp + counter (density-only in Commit 4; full SPD repair on
      * the stress slots is deferred to Commit 5 -- partial diagonal-only
      * clamping risks producing realizable-looking-but-not-SPD face states.

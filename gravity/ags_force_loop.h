@@ -117,6 +117,16 @@ struct AgsForceLocalIn {
 #if defined(CBE_INTEGRATOR)
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
 #endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* By-value snapshot of P[i].Gradients_CBE_basis_moments — populated by
+     * load_active so the flux body's face reconstruction (read of i's
+     * gradient row) is Mode-B-safe envelope-transit per design invariant
+     * I2. The j-side gradient is read directly from P[j] (natural ghost
+     * import). Refreshed each step by CBEGrad_gradient_calc(); inactive
+     * particles retain prior-step values (hydro semantics). */
+    double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS]
+                                      [CBE_INTEGRATOR_NMOMENTS][3];
+#endif
 #if defined(DM_SIDM)
     double dtime_sidm;
     MyIDType ID;
@@ -171,6 +181,15 @@ struct AgsForceOut {
      * Commit 5 SPD repair (cbe_recon_S_clamp_count stays 0 in Commit 4). */
     long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
     long long cbe_recon_S_clamp_count;     /* SUM, populated in Commit 5 only */
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* Per-pair non-finite grad·dp event count (defense-in-depth). The flux
+     * body sanitises gi_dp/gj_dp to 0 if non-finite; this counter surfaces
+     * the event so we know if Tikhonov regularisation failed for some
+     * (m,k) on degenerate inputs. Nested WITHGRADIENTS gate keeps the
+     * field absent (and cbe_diagnostics.txt at 8 columns) when the
+     * reconstruction path is compiled out — bit-identical baseline. */
+    long long cbe_grad_nonfinite_count;
+#endif
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
@@ -395,7 +414,11 @@ struct AgsForceSpec {
 #endif
     };
 
-    /* Empty Aux — load_active reads directly from ctx.P[i]. */
+    /* Aux is empty under the v5 corrective architecture — CBE gradients are
+     * persistent on P[i].Gradients_CBE_basis_moments and ghost-transported
+     * naturally by standard P[] import, so there is no scratch pointer to
+     * thread through here. Kept as the conventional empty struct so the
+     * Spec contract typedef remains satisfied. */
     struct Aux { };
 
     static constexpr bool uses_ghost_write_detector = true;
@@ -475,6 +498,18 @@ struct AgsForceSpec {
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
                 L.CBE_basis_moments[m][k] = dctx.P[i].CBE_basis_moments[m][k];
+#endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        /* By-value snapshot of the persistent gradient row for Mode-B-safe
+         * envelope transit (invariant I2). The flux body reads
+         * local.Gradients_CBE_basis_moments for i's contribution to
+         * Q_face; for j it reads P[j].Gradients_CBE_basis_moments directly
+         * (natural P[] ghost import). */
+        for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
+            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
+                for(int d = 0; d < 3; d++)
+                    L.Gradients_CBE_basis_moments[m][k][d] =
+                        dctx.P[i].Gradients_CBE_basis_moments[m][k][d];
 #endif
 #if defined(DM_SIDM)
         L.dtime_sidm = dctx.P[i].dtime_sidm;

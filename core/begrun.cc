@@ -826,6 +826,9 @@ void open_outputfiles(void)
         fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 5 SPD repair populates; 0 in Commits 3/4)\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
+#endif
     }
 #endif
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "timings.txt");

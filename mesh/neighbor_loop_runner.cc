@@ -76,6 +76,10 @@
 #include "../gravity/ags_force_loop.h"
 #endif
 
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+#include "../sidm/cbe_integrator_gradients.h"
+#endif
+
 #include "../hydro/density_loop.h"
 
 #ifdef GALSF_FB_MECHANICAL
@@ -5048,6 +5052,17 @@ template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_
  * mirrors DensitySpec exactly. See galaxy_sf/dm_dispersion_loop.{h,cc}. */
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_args_iterative&);
+#endif
+
+/* Wave-CBE Phase 2 commit #5 corrective architecture pivot
+ * (sidm/cbe_integrator_gradients.{h,cc}). CBEGradSpec is non-iterative
+ * (paralleling DMGradSpec); the two passes (raw LSQ then pairwise BJ-style
+ * conservative limiter) are orchestrated by CBEGrad_gradient_calc() at the
+ * toplevel via Aux::loop_iteration. Persistent storage on
+ * P[i].Gradients_CBE_basis_moments; standard P[] ghost transport carries
+ * gradients across ranks (no scratch, no custom Alltoallv). */
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+template void run_neighbor_loop<CBEGradSpec>(const neighbor_loop_args&);
 #endif
 
 /* Phase 4 Wave-3 / rt_source_injection: RtSrcInjectionSpec — radiation source
