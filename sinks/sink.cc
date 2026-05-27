@@ -720,6 +720,18 @@ void sink_final_operations(void)
     for(i=0; i<N_active_loc_Sink; i++)
     {
         n = SinkTempInfo[i].index;
+        /* Skip swallowed-sink slots. sink_swk_pair_kernel zeroes Mass / Sink_Mass / Sink_Mdot
+         * on the absorbed sink; running radiation-loss / timebin accounting / protostellar
+         * evolution (ps_Tc bisection) on those zeroed fields is the cause of the post-Accretion-done
+         * Vista stall + degenerate-input ps_Tc warnings. Increment count_sink_elim here to preserve
+         * the pre-fix bookkeeping (the prior late-check at end of loop body served the same role
+         * AFTER the bad protostellar-update call). */
+        if(P[n].Type != 5 || P[n].Mass <= 0 || !isfinite(P[n].Mass) || P[n].SwallowID != 0) {
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+            count_sink_elim++;
+#endif
+            continue;
+        }
         int update_sink_moments = 0; // flag whether to go into the block below updating conserved quantities like mass, momentum, etc
         if(P[n].Mass > 0)
         {
