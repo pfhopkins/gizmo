@@ -156,16 +156,17 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         }
     }
 #endif
-    /* Density clamp + counter (density-only in Commit 4; full SPD repair on
-     * the stress slots is deferred to Commit 5 -- partial diagonal-only
-     * clamping risks producing realizable-looking-but-not-SPD face states.
-     * Counter feeds AgsForceOut.cbe_recon_rho_clamp_count). */
+    /* Density clamp + counter (rho slot, all NMOMENTS). Wave-CBE Commit 5
+     * (2026-05-26): face-state SPD repair on the stress block of each
+     * rho-active basis row (NMOMENTS>=10 only) via cbe_spd_repair_S3x3
+     * inside cbe_clamp_face_Q. Counters feed AgsForceOut.cbe_recon_rho_clamp_count
+     * (col-5) and cbe_recon_S_clamp_count (col-6). */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    cbe_clamp_face_Q(Qface_i, &out.cbe_recon_rho_clamp_count);
-    cbe_clamp_face_Q(Qface_j, &out.cbe_recon_rho_clamp_count);
+    cbe_clamp_face_Q(Qface_i, &out.cbe_recon_rho_clamp_count, &out.cbe_recon_S_clamp_count);
+    cbe_clamp_face_Q(Qface_j, &out.cbe_recon_rho_clamp_count, &out.cbe_recon_S_clamp_count);
 #else
-    cbe_clamp_face_Q(Qface_i, (long long*)0);
-    cbe_clamp_face_Q(Qface_j, (long long*)0);
+    cbe_clamp_face_Q(Qface_i, (long long*)0, (long long*)0);
+    cbe_clamp_face_Q(Qface_j, (long long*)0, (long long*)0);
 #endif
 
     /* Guarded per-basis face-normal velocities + K (= clamped face density).

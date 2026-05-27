@@ -176,11 +176,13 @@ struct AgsForceOut {
     double    cbe_face_residual_max;       /* MAX over faces of |sum_basis F_m*A| */
     double    cbe_face_residual_sum;       /* SUM over faces of |sum_basis F_m*A| */
     long long cbe_bracket_fail_count;      /* SUM over faces of root-find bracket fails */
-    /* Wave-CBE Commit 4 face-reconstruction clamp counters. Density-only
-     * clamp populated by cbe_clamp_face_Q; stress S-clamp deferred to
-     * Commit 5 SPD repair (cbe_recon_S_clamp_count stays 0 in Commit 4). */
+    /* Wave-CBE Commit 4 + Commit 5 face-reconstruction clamp counters,
+     * populated by cbe_clamp_face_Q. Density-only clamp (Commit 4 Phase 1)
+     * zeroes the basis row when Q_face[m][0] <= MIN_REAL_NUMBER; stress
+     * SPD repair (Commit 5) projects [Sxx..Syz] to the nearest SPD tensor
+     * with eigenvalue floor when NMOMENTS >= 10. */
     long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
-    long long cbe_recon_S_clamp_count;     /* SUM, populated in Commit 5 only */
+    long long cbe_recon_S_clamp_count;     /* SUM over faces+sides of S SPD repairs */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     /* Per-pair non-finite grad·dp event count (defense-in-depth). The flux
      * body sanitises gi_dp/gj_dp to 0 if non-finite; this counter surfaces

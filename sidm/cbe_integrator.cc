@@ -180,10 +180,10 @@ void cbe_step_diagnostics_observe_face(double face_residual_max,
 }
 
 
-/* Wave-CBE Commit 4 observer: per-active particle's merged
- * AgsForceOut.cbe_recon_rho_clamp_count / cbe_recon_S_clamp_count.
- * S-clamp stays 0 in Commit 4 (full SPD repair = Commit 5); the field
- * is plumbed now so wiring doesn't need a touch when Commit 5 lands. */
+/* Wave-CBE Commit 4 + Commit 5 observer: per-active particle's merged
+ * AgsForceOut.cbe_recon_rho_clamp_count + cbe_recon_S_clamp_count from
+ * cbe_clamp_face_Q in the flux body. rho-clamp populated by Commit 4
+ * Phase 1; S-clamp populated by Commit 5 face-state SPD repair. */
 void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
                                          long long S_clamp_count)
 {
@@ -201,6 +201,22 @@ void cbe_step_diagnostics_observe_grad_nonfinite(long long count)
     CbeStepAccum.grad_nonfinite_count += count;
 }
 #endif
+
+
+/* Wave-CBE Commit 5 observer (2026-05-26): cell-state SPD-repair drift
+ * accumulators from do_cbe_drift_kick_kernel (Site A). Called once per
+ * cbe_drift_kick_evaluate_gpu invocation with the host-summed dT_scratch
+ * (deterministic sum order; no device atomics).
+ *
+ * dP is always 0.0 from Site A (SPD repair touches only stress slots
+ * [4..9], not momentum [1..3]). Kept as a parameter so any future repair
+ * site that touches momentum can plumb in without an API change. Phil's
+ * directive: dP=0 is a useful invariant for the diagnostic. */
+void cbe_step_diagnostics_observe_repair(double dP, double dT)
+{
+    CbeStepAccum.repair_dP_sum += dP;
+    CbeStepAccum.repair_dT_sum += dT;
+}
 
 
 void cbe_step_diagnostics_emit(void)

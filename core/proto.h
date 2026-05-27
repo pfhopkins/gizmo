@@ -974,6 +974,7 @@ void cbe_step_diagnostics_observe_face(double face_residual_max,
                                         long long bracket_fail_count);
 void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
                                          long long S_clamp_count);
+void cbe_step_diagnostics_observe_repair(double dP, double dT);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
 void cbe_step_diagnostics_observe_grad_nonfinite(long long count);
 #endif
