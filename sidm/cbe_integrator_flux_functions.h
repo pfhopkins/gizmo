@@ -290,22 +290,29 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         if(K_j[m] > 0 && v_alpha_n_j[m] - v_F_normal < 0) theta_j[m] = 1;
     }
 
-    /* Basis-pair matching via SSOT helper (Wave-CBE Commit 6b). At C6b
-     * temporary selector defaults (CBE_COST_V_ONLY + USE_FREE_SLOT=0) this
-     * is byte-compatible with the pre-C6b open-coded (cost_v_only + greedy
-     * on C and C^T) path: cost_v_only is symmetric in its arguments, so
-     * the helper's b->a build produces the same matrix entries as the
-     * pre-C6b transpose. C6c flips selectors to CBE_COST_TRACE_W2 +
-     * USE_FREE_SLOT=1 per harness §4.4. The fired-count counter argument
-     * (NULL here in C6b) is wired to &out.cbe_pairing_free_slot_count in
-     * C6c after the AccumData field lands. */
+    /* Basis-pair matching via SSOT helper (Wave-CBE Commit 6b). C6c flips
+     * the selectors to CBE_COST_TRACE_W2 + USE_FREE_SLOT=1 per harness
+     * §4.4 (trace-W2 cost + adaptive median-tau free-slot fallback). The
+     * free-slot fire-count is accumulated per face into a local int (bound:
+     * 2*NBASIS<=16 per face) gated by the diagnostic compile flag, then
+     * folded into out.cbe_pairing_free_slot_count for the standard
+     * merge/compare/writeback channel that feeds cbe_diagnostics.txt. */
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
     double vsig = 0;
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    int free_slot_fired_this_face = 0;
+    cbe_build_pair_matching(Qface_i, Qface_j,
+                            matching_basis_j_for_basis_in_i,
+                            matching_basis_i_for_basis_in_j,
+                            &free_slot_fired_this_face);
+    out.cbe_pairing_free_slot_count += (long long)free_slot_fired_this_face;
+#else
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
                             /*free_slot_fired_count_inout=*/NULL);
+#endif
 
     /* Flux loop. Wave-CBE Commit 4 retires the psi=0.5 / wt_prefac scheme:
      * with face-reconstructed Q passed to do_cbe_flux_computation, fluxes[0]

@@ -162,10 +162,10 @@
 #define CBE_COST_TRACE_W2   1
 #define CBE_ASSIGN_GREEDY   0
 #ifndef CBE_PAIRING_COST
-#define CBE_PAIRING_COST            CBE_COST_V_ONLY   /* C6b temporary; C6c -> CBE_COST_TRACE_W2 */
+#define CBE_PAIRING_COST            CBE_COST_TRACE_W2 /* harness §4.4 production default (flipped in C6c from C6b temp CBE_COST_V_ONLY) */
 #endif
 #ifndef CBE_PAIRING_USE_FREE_SLOT
-#define CBE_PAIRING_USE_FREE_SLOT   0                 /* C6b temporary; C6c -> 1 */
+#define CBE_PAIRING_USE_FREE_SLOT   1                 /* harness §4.4 production default (flipped in C6c from C6b temp 0) */
 #endif
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */

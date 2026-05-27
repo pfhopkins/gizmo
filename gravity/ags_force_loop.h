@@ -184,6 +184,15 @@ struct AgsForceOut {
      * with eigenvalue floor when NMOMENTS >= 10. */
     long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
     long long cbe_recon_S_clamp_count;     /* SUM over faces+sides of S SPD repairs */
+    /* Wave-CBE Commit 6c: SUM over directional basis rows for which the
+     * free-slot fallback transformed a cost-matrix row during flux
+     * pairing. Each flux face evaluation builds TWO cost matrices (a->b
+     * and b->a); each can fire on up to NBASIS rows, so per-face
+     * increment is bounded by 2*NBASIS. Gradient and BJ-limiter matching
+     * share the SSOT pair-builder but pass NULL for the counter (pre-pass
+     * matching is not a flux-pairing decision). 0 in builds that disable
+     * the free-slot transform via CBE_PAIRING_USE_FREE_SLOT=0. */
+    long long cbe_pairing_free_slot_count;
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     /* Per-pair non-finite grad·dp event count (defense-in-depth). The flux
      * body sanitises gi_dp/gj_dp to 0 if non-finite; this counter surfaces

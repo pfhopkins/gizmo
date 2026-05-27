@@ -177,6 +177,7 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                        accum.cbe_bracket_fail_count);
     cbe_step_diagnostics_observe_recon(accum.cbe_recon_rho_clamp_count,
                                         accum.cbe_recon_S_clamp_count);
+    cbe_step_diagnostics_observe_pairing_free_slot(accum.cbe_pairing_free_slot_count);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     cbe_step_diagnostics_observe_grad_nonfinite(accum.cbe_grad_nonfinite_count);
 #endif
@@ -223,6 +224,7 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
     ACCUM_ADD(cbe_bracket_fail_count)
     ACCUM_ADD(cbe_recon_rho_clamp_count)
     ACCUM_ADD(cbe_recon_S_clamp_count)
+    ACCUM_ADD(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     ACCUM_ADD(cbe_grad_nonfinite_count)
 #endif
@@ -302,6 +304,7 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
     CMP_INT(cbe_bracket_fail_count)
     CMP_INT(cbe_recon_rho_clamp_count)
     CMP_INT(cbe_recon_S_clamp_count)
+    CMP_INT(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     CMP_INT(cbe_grad_nonfinite_count)
 #endif

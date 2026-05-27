@@ -136,6 +136,14 @@ struct cbe_step_accumulators {
     /* Populated by Wave-CBE Commit 5 (SPD repair): */
     double repair_dP_sum;                 /* sum |dP| introduced by repair */
     double repair_dT_sum;                 /* sum |dT| introduced by repair */
+    /* Populated by Wave-CBE Commit 6c (pairing free-slot fallback): SUM
+     * over directional basis rows for which the cbe_apply_free_slot_
+     * fallback transform fired during flux pairing. Independent of
+     * WITHGRADIENTS — emitted as the appended last column of
+     * cbe_diagnostics.txt (col-9 in WITHGRADIENTS-off 9-col format;
+     * col-10 in WITHGRADIENTS-on 10-col format). 0 in builds with
+     * CBE_PAIRING_USE_FREE_SLOT=0 (compile-time selector). */
+    long long pairing_free_slot_count;
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     /* Populated by Wave-CBE Commit 4 Phase 2 #5 (face reconstruction):
      * counts non-finite grad·dp events observed per pair in the flux body.
@@ -158,6 +166,7 @@ void cbe_step_diagnostics_reset(void)
     CbeStepAccum.recon_S_clamp_count         = 0;
     CbeStepAccum.repair_dP_sum               = 0;
     CbeStepAccum.repair_dT_sum               = 0;
+    CbeStepAccum.pairing_free_slot_count     = 0;
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     CbeStepAccum.grad_nonfinite_count        = 0;
 #endif
@@ -219,6 +228,16 @@ void cbe_step_diagnostics_observe_repair(double dP, double dT)
 }
 
 
+/* Wave-CBE Commit 6c observer: per-active particle's merged
+ * AgsForceOut.cbe_pairing_free_slot_count from the flux body's per-pair
+ * tally of free-slot fallback firings. Independent of WITHGRADIENTS;
+ * appended as the last column of cbe_diagnostics.txt. */
+void cbe_step_diagnostics_observe_pairing_free_slot(long long count)
+{
+    CbeStepAccum.pairing_free_slot_count += count;
+}
+
+
 void cbe_step_diagnostics_emit(void)
 {
     double rmax_local = CbeStepAccum.face_mass_flux_residual_max;
@@ -237,19 +256,24 @@ void cbe_step_diagnostics_emit(void)
     MPI_Reduce(&sc_local,   &sc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&dP_local,   &dP,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&dT_local,   &dT,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    long long fs_local = CbeStepAccum.pairing_free_slot_count, fs;
+    MPI_Reduce(&fs_local, &fs, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     long long gnf_local = CbeStepAccum.grad_nonfinite_count, gnf;
     MPI_Reduce(&gnf_local, &gnf, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
     if(ThisTask == 0 && FdCbeDiagnostics != NULL) {
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-        /* 9-col extended format under WITHGRADIENTS. */
-        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld\n",
-                All.Time, rmax, rsum, brk, rc, sc, dP, dT, gnf);
+        /* 10-col extended format under WITHGRADIENTS. col-9 stays as
+         * cbe_grad_nonfinite_count (Commit 4 Phase 2 #5); col-10 is the
+         * new cbe_pairing_free_slot_count (Commit 6c). */
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld %lld\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT, gnf, fs);
 #else
-        /* 8-col Phase-1 format — bit-identical baseline when WITHGRADIENTS off. */
-        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g\n",
-                All.Time, rmax, rsum, brk, rc, sc, dP, dT);
+        /* 9-col format. cols 1-8 unchanged from Phase-1; col-9 is the
+         * new cbe_pairing_free_slot_count (Commit 6c). */
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT, fs);
 #endif
         fflush(FdCbeDiagnostics);
     }

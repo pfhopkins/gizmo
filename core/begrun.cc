@@ -837,6 +837,9 @@ void open_outputfiles(void)
         fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
         fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+#else
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
 #endif
     }
 #endif
