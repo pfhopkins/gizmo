@@ -43,6 +43,17 @@
  * #20011-D physics error on the device pass). */
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 
+/* Forward declaration for return_dust_to_metals_ratio_vs_solar (defined below
+ * in this header at line ~298). Needed because Get_Gas_Molecular_Mass_Fraction
+ * (below at line ~49) calls it under the (COOL_MOLECFRAC == 5) branch, and not
+ * every TU that includes eos_functions.h has seen proto.h first (cooling.cc
+ * includes eos_functions.h at line 64, proto.h at line 69). Surface-and-fix
+ * 2026-05-27 -- bug surfaced under GALSF_FB_FIRE_STELLAREVOLUTION>2 + COOLING
+ * + GALSF_SFR_CRITERION & 256 (eos_functions.h:75-77 implicitly sets
+ * COOL_MOLECFRAC=5, activating the line 104+ block). KOKKOS_INLINE_FUNCTION
+ * storage class matches the eventual definition. */
+KOKKOS_INLINE_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
+
 #include "../declarations/multifluid_helpers.h"
 
 /* return an estimate of the Hydrogen molecular fraction of gas */
@@ -227,7 +238,19 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 #endif
 
 
-#if (SINGLE_STAR_SINK_FORMATION & 256) || (COOL_MOLECFRAC == 2) /* estimate f_H2 with Krumholz & Gnedin 2010 fitting function, assuming simple scalings of radiation field, clumping, and other factors with basic gas properties so function only of surface density and metallicity, truncated at low values (or else it gives non-sensical answers) */
+/* Phase 2 chunk 2 surface-and-fix 2026-05-27: subordinate the
+ * SINGLE_STAR_SINK_FORMATION-bit-256 fallback to any other already-selected
+ * MOLECFRAC method. The original gate `(SINGLE_STAR_SINK_FORMATION & 256) ||
+ * (COOL_MOLECFRAC == 2)` triggered simultaneously with the COOL_MOLECFRAC==5
+ * block above for any Config carrying GALSF_FB_FIRE_STELLAREVOLUTION>2 +
+ * COOLING + GALSF_SFR_CRITERION & 256 (e.g. an isodisk_mechfb run with the
+ * `1+256` SF criterion plus stellar evolution). precompiler_logic.h:356
+ * mirrors GALSF_SFR_CRITERION onto SINGLE_STAR_SINK_FORMATION, and eos_functions.h:75-77
+ * implicitly sets COOL_MOLECFRAC=5 under that combo, so both branches got
+ * compiled and `clumping_factor` was declared twice in the same function
+ * scope -> redefinition error. The intent is mutual exclusion: this KG10
+ * fallback only when no other explicit method is selected. */
+#if (COOL_MOLECFRAC == 2) || ((SINGLE_STAR_SINK_FORMATION & 256) && !((COOL_MOLECFRAC == 5) || (COOL_MOLECFRAC == 4) || (COOL_MOLECFRAC == 3))) /* estimate f_H2 with Krumholz & Gnedin 2010 fitting function, assuming simple scalings of radiation field, clumping, and other factors with basic gas properties so function only of surface density and metallicity, truncated at low values (or else it gives non-sensical answers) */
     double clumping_factor=1, fH2_kg=0, tau_fmol = (0.1 + pp[i].Metallicity[0]/All.SolarAbundances[0]) * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * 434.78 * UNIT_SURFDEN_IN_CGS; // convert units for surface density. also limit to Z>=0.1, where their fits were actually good, or else get unphysically low molecular fractions
     if(tau_fmol>0) {double y = 0.756 * (1 + 3.1*pow(pp[i].Metallicity[0]/All.SolarAbundances[0],0.365)) / clumping_factor; // this assumes all the equilibrium scalings of radiation field, density, SFR, etc, to get a trivial expression
         y = log(1 + 0.6*y + 0.01*y*y) / (0.6*tau_fmol); y = 1 - 0.75*y/(1 + 0.25*y); fH2_kg=DMIN(1,DMAX(0,y));}

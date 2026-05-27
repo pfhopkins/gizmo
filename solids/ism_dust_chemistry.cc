@@ -439,7 +439,15 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
     yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+    /* Wind dust grain-size yields scale with stellar mass return per step,
+     * which is tracked in P[i].MassReturn_ThisTimeStep only under
+     * GALSF_FB_FIRE_STELLAREVOLUTION (see declarations/particle_data.h:121).
+     * Without stellar-evolution tracking there are no continuous wind yields
+     * to apportion across grain-size bins, so skip the call rather than
+     * compile-fail. Previously the inner ifdef gated only on GRAINSIZEEVO,
+     * which made any GRAINSIZEEVO Config without STELLAREVOLUTION fail to
+     * build (latent since the field was introduced). */
     ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,P[i].Mass*P[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields (i is a star-particle index; MassReturn_ThisTimeStep lives on particle_data, not gas_cell_data) //
 #endif
 }
