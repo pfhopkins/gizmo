@@ -156,12 +156,12 @@ void run(void)
             if(ThisTask == 0) {
                 const char *r = gizmo_controlled_stop_local_reason();
                 printf("Controlled stop (code=%d): %s. Leaving run loop at "
-                       "sync-point %d, Time=%g. No restart written at the "
+                       "sync-point %lld, Time=%g. No restart written at the "
                        "error point -- recover from an earlier periodic "
                        "restart.\n",
                        gizmo_controlled_stop_code(),
                        r ? r : "(reason set on other rank only)",
-                       (int)All.NumCurrentTiStep, All.Time);
+                       (long long)All.NumCurrentTiStep, All.Time);
                 fflush(stdout);
             }
             break;
