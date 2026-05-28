@@ -769,6 +769,26 @@ void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
 void run(void);
+/* Controlled-stop helper (Wave-CBE 2026-05-28). Distinct from endrun(),
+ * which is an emergency brake (MPI_Abort; no Kokkos / MPI cleanup;
+ * assumes corrupt state). The functions below let a known-safe call
+ * site flag a CONTROLLED stop that drains through main()'s normal
+ * gizmo_kokkos_finalize() + MPI_Finalize() shutdown.
+ *
+ * Use ONLY where (a) all ranks reach gizmo_collect_controlled_stop()
+ * in the same step regardless of which rank flagged, AND (b) the
+ * flagging rank can keep iterating its current loop body without
+ * violating any physics invariant. STOP_WHEN_BELOW_MINTIMESTEP at
+ * core/timestep.cc is the first call site. Migration rule: real
+ * corruption / impossible branch paths stay on endrun(); only safe
+ * expected terminations move to this API.
+ *
+ * The "_local_reason" accessor is honest: ranks that did not flag
+ * return NULL. Run-loop printers should NULL-check. */
+void        gizmo_request_controlled_stop(int code, const char *reason);
+void        gizmo_collect_controlled_stop(void);
+int         gizmo_controlled_stop_code(void);
+const char *gizmo_controlled_stop_local_reason(void);
 void savepositions(int num);
 double my_second(void);
 void set_softenings(void);

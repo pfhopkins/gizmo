@@ -66,6 +66,39 @@ static void rt_step_checksum(const char *label) {
 }
 #endif
 
+/* --------------------------------------------------------------------------
+ * Controlled-stop helper (Wave-CBE 2026-05-28). See core/proto.h for the
+ * contract + migration rule. First-set wins; we do not clear the local
+ * code after collection because the only caller (run loop) exits
+ * immediately on a non-zero global code, so reuse within the same
+ * process is not a requirement. The reason pointer must reference
+ * static-storage (string literal); we do not copy.
+ * -------------------------------------------------------------------------- */
+static int         ControlledStop_LocalCode    = 0;
+static const char *ControlledStop_LocalReason  = NULL;
+static int         ControlledStop_GlobalCode   = 0;
+
+void gizmo_request_controlled_stop(int code, const char *reason)
+{
+    /* No MPI, no allocation, no Kokkos calls — safe inside per-particle
+     * loops or device-dispatcher callers. */
+    if(ControlledStop_LocalCode == 0) {
+        ControlledStop_LocalCode   = code;
+        ControlledStop_LocalReason = reason;
+    }
+}
+
+void gizmo_collect_controlled_stop(void)
+{
+    int local = ControlledStop_LocalCode, global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    ControlledStop_GlobalCode = global;
+}
+
+int         gizmo_controlled_stop_code(void)         { return ControlledStop_GlobalCode; }
+const char *gizmo_controlled_stop_local_reason(void) { return ControlledStop_LocalReason; }
+
+
 /*! This routine contains the main simulation loop that iterates over
  * single timesteps. The loop terminates when the cpu-time limit is
  * reached, when a `stop' file is found in the output directory, or
@@ -107,6 +140,32 @@ void run(void)
         }
 
         STEP_PHASE_TIME("find_timesteps", find_timesteps());		/* find-timesteps */
+
+        /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
+         * just ran gizmo_collect_controlled_stop() on every rank; if any
+         * rank flagged a controlled-stop request earlier in the step
+         * (currently only the STOP_WHEN_BELOW_MINTIMESTEP path in
+         * get_timestep), all ranks now see the global code. Print +
+         * break to main(), which runs gizmo_kokkos_finalize() +
+         * MPI_Finalize() cleanly. NO restart written here: this is an
+         * error condition (unphysical timestep), and writing a restart
+         * at the error point would lock the user into the bad state +
+         * clobber the prior good periodic restart. Recover from the
+         * periodic restart files at run.cc:322 instead. */
+        if(gizmo_controlled_stop_code() != 0) {
+            if(ThisTask == 0) {
+                const char *r = gizmo_controlled_stop_local_reason();
+                printf("Controlled stop (code=%d): %s. Leaving run loop at "
+                       "sync-point %d, Time=%g. No restart written at the "
+                       "error point -- recover from an earlier periodic "
+                       "restart.\n",
+                       gizmo_controlled_stop_code(),
+                       r ? r : "(reason set on other rank only)",
+                       (int)All.NumCurrentTiStep, All.Time);
+                fflush(stdout);
+            }
+            break;
+        }
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
