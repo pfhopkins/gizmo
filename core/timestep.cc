@@ -1326,6 +1326,24 @@ void process_wake_ups(void)
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
 
     if(NeedToWakeupParticles){
+	/* Floor for positive (relative) wakeup: the lowest currently-OCCUPIED
+	 * and ACTIVE bin (global across ranks). Without this floor, repeated
+	 * a-wakes-b-wakes-c shells of relative wakeup can drive bins below
+	 * anything currently being processed (waker_bin - offset cascades down
+	 * each generation). The floor caps relative wakeup at the most-aggressive
+	 * bin already in flight, preventing the multiplicative cascade while
+	 * preserving legitimate hydro-style subcycle wakeups in [floor, max]. */
+	int local_lowest_occupied_active_bin = TIMEBINS;
+	for(n = 0; n < TIMEBINS; n++) {
+	    if(TimeBinActive[n] && TimeBinCount[n] > 0) {
+	        local_lowest_occupied_active_bin = n;
+	        break;
+	    }
+	}
+	int lowest_occupied_active_bin = TIMEBINS;
+	MPI_Allreduce(&local_lowest_occupied_active_bin, &lowest_occupied_active_bin,
+	              1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+
 	for(i = 0; i < NumPart; i++)
 	{
 	    if(!P[i].wakeup) {continue;}
@@ -1340,6 +1358,9 @@ void process_wake_ups(void)
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
 		int waker_bin = P[i].wakeup - 1;
 		bin = IMAX(0, waker_bin - wakeup_bin_offset);
+		/* Floor at the lowest-currently-occupied-and-active bin (see comment
+		 * above the i-loop). Prevents the multiplicative wakeup cascade. */
+		if(bin < lowest_occupied_active_bin) bin = lowest_occupied_active_bin;
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
 		/* Surface-fail-loud guard (codex 2026-05-30): if wakeup assigns a bin
 		 * whose physical timestep is below MinSizeTimestep, abort with full
