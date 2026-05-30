@@ -40,6 +40,16 @@ void read_ic(char *fname)
 
     CPU_Step[CPU_MISC] += measure_time();
 
+#ifdef CBE_INTEGRATOR
+    /* C7 (2026-05-30): reset per-type VlasovMoments-loaded flags before
+     * any HDF5 open. Static globals are zero-initialized at process
+     * start but this defensive reset covers any future case where
+     * read_ic() is called more than once in-process. The flags are then
+     * set per PartType in the optional-block HDF5 reader inside the
+     * `if(hdf5_dataset >= 0)` branch after H5Dread succeeds. */
+    for(int t = 0; t < 6; t++) { CBE_Moments_LoadedFromIC_PType[t] = 0; }
+#endif
+
     NumPart = 0;
     N_gas = 0;
     All.TotNumPart = 0;
@@ -626,6 +636,29 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_CBE_MOMENTS:   /* C7 (2026-05-30): real reader — see comment */
+#ifdef CBE_INTEGRATOR
+            /* CommBuffer holds the per-particle flat array of
+             * NBASIS*NMOMENTS MyInputFloat values. For ranks/PartTypes
+             * whose /PartTypeX/VlasovMoments dataset was absent in the
+             * HDF5 file, the upstream optional-block path memset
+             * CommBuffer to zero (read_ic.cc around line 1246), so this
+             * case will store zeros — that's harmless because
+             * CBE_Moments_LoadedFromIC_PType[type] stays at 0 for those
+             * cases and do_cbe_initialization() will overwrite the
+             * zeros with the cold-default synthesis. The per-type flag
+             * (set up at the HDF5 H5Dread success point) is the SSOT
+             * distinguishing "actually loaded" vs "absent → zeros". */
+            for(n = 0; n < pc; n++) {
+                for(k = 0; k < CBE_INTEGRATOR_NBASIS; k++) {
+                    for(int kf = 0; kf < CBE_INTEGRATOR_NMOMENTS; kf++) {
+                        P[offset + n].CBE_basis_moments[k][kf] = (MyFloat)(*fp++);
+                    }
+                }
+            }
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -637,7 +670,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_AGS_PSI_IM:
         case IO_EOSCS:
         case IO_EOS_STRESS_TENSOR:
-        case IO_CBE_MOMENTS:
         case IO_SFR:
         case IO_POT:
         case IO_ACCEL:
@@ -1238,6 +1270,19 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_in_memory);
                                         H5Sclose(hdf5_dataspace_in_file);
                                         H5Dclose(hdf5_dataset);
+#ifdef CBE_INTEGRATOR
+                                        /* C7 (2026-05-30): per-type flag set ONLY here, inside the
+                                         * `if(hdf5_dataset >= 0)` block after a successful H5Dread.
+                                         * Setting it inside empty_read_buffer's case would mark
+                                         * absent-dataset zeros as "loaded" and silently corrupt the
+                                         * IC. Per-PartType (not a global flag) because VlasovMoments
+                                         * lives under /PartTypeX/ in the HDF5 layout. */
+                                        if(blocknr == IO_CBE_MOMENTS) {
+                                            if(type >= 0 && type < 6) {
+                                                CBE_Moments_LoadedFromIC_PType[type] = 1;
+                                            }
+                                        }
+#endif
                                       }
                                       else
                                       {

@@ -232,6 +232,13 @@ FILE *FdSinkWindDetails;
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)) && defined(CBE_INTEGRATOR)
 FILE *FdCbeDiagnostics;
 #endif
+#ifdef CBE_INTEGRATOR
+/* C7 (2026-05-30): see allvars.h for the contract. Zero-initialized
+ * here; reset to {0,...} at the top of read_ic() each call; set per
+ * PartType inside read_ic.cc's `if(hdf5_dataset >= 0)` block on
+ * successful H5Dread of the VlasovMoments dataset. */
+int CBE_Moments_LoadedFromIC_PType[6] = {0, 0, 0, 0, 0, 0};
+#endif
 
 
 
