@@ -169,13 +169,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     cbe_clamp_face_Q(Qface_j, (long long*)0, (long long*)0);
 #endif
 
-    /* Guarded per-basis face-normal velocities + K (= clamped face density).
-     * The helper returns K=0, v_n=0 for any basis clamped inactive, so the
+    /* Guarded per-basis face-normal state (Wave-CBE Commit 9): K = density,
+     * v_alpha_n = v . Ahat, c_x = HLLC normal stress speed. The helper
+     * returns all three as zero for any basis clamped inactive, so the
      * residual / cost-matrix / flux loop all naturally skip those bases. */
     double v_alpha_n_i[CBE_INTEGRATOR_NBASIS], v_alpha_n_j[CBE_INTEGRATOR_NBASIS];
-    double K_i[CBE_INTEGRATOR_NBASIS], K_j[CBE_INTEGRATOR_NBASIS];
-    cbe_face_K_and_vn_from_Q(Qface_i, A_hat, K_i, v_alpha_n_i);
-    cbe_face_K_and_vn_from_Q(Qface_j, A_hat, K_j, v_alpha_n_j);
+    double K_i[CBE_INTEGRATOR_NBASIS],         K_j[CBE_INTEGRATOR_NBASIS];
+    double c_x_i[CBE_INTEGRATOR_NBASIS],       c_x_j[CBE_INTEGRATOR_NBASIS];
+    cbe_face_K_and_vn_from_Q(Qface_i, A_hat, K_i, v_alpha_n_i, c_x_i);
+    cbe_face_K_and_vn_from_Q(Qface_j, A_hat, K_j, v_alpha_n_j, c_x_j);
 
     /* Dispersion-based bracket pad (NMOMENTS>4 only; fence guarantees the
      * 3D [4]/[5]/[6]=diag layout). 1D dispersion = sqrt(trace(S)/rho); use
@@ -266,11 +268,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         vbulk_dot_Ahat = v_F_guess;
     }
 
-    /* Root-find face-normal v_F. K=0 rows contribute 0 to the residual so
-     * the root location depends only on the active-basis set. */
+    /* Root-find face-normal v_F on the HLLC mass-flux residual (Wave-CBE
+     * Commit 9): bisection in v_F_n until basis-summed F_m_HLLC across both
+     * sides vanishes. K=0 rows contribute 0 to the residual, so the root
+     * depends only on the active-basis set. Fallback on bracket failure is
+     * vbulk_dot_Ahat (bulk-weighted normal velocity over the active set,
+     * i.e. the paper's analytic strict-an form). */
     int bracket_ok = 0;
     double v_F_normal = cbe_face_solve_v_F_normal(
-        v_alpha_n_i, v_alpha_n_j, K_i, K_j,
+        v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j,
         v_F_lo, v_F_hi, vbulk_dot_Ahat, &bracket_ok);
 
     /* Face velocity for the flux call: pure normal component along the
@@ -356,11 +362,12 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         if(vsig > WAKEUP * P[j].AGS_vsig) { r.set_wakeup_j = 1; }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    /* Wave-CBE Commit 3 diagnostic: residual at the converged v_F_normal,
+    /* Diagnostic: HLLC mass-flux residual at the converged v_F_normal
+     * (Wave-CBE Commit 9 replaced cold-F0 form with HLLC branched form),
      * converted to dM/dt units by multiplying by Face_Area_Norm. */
     {
         double R_final = cbe_face_mass_residual_per_unit_area(
-            v_F_normal, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+            v_F_normal, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
         double abs_R_full = fabs(R_final) * Face_Area_Norm;
         if(abs_R_full > out.cbe_face_residual_max) out.cbe_face_residual_max = abs_R_full;
         out.cbe_face_residual_sum += abs_R_full;

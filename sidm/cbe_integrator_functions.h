@@ -341,26 +341,100 @@ void cbe_build_pair_matching(
 
 
 /* --------------------------------------------------------------------------
+ * SSOT scalar c_x = sqrt(gamma_e * n_hat . S . n_hat), gamma_e = 3.
+ * Computed from one basis row of stored raw second moments R = <v(x)v>;
+ * central stress is S = R - v(x)v. NMOMENTS=4 (no stress stored) returns 0;
+ * NMOMENTS>=7 uses diagonal-only (S_kk = R_kk - v_k^2) since off-diagonal
+ * raw moments are absent in 7-moment builds; NMOMENTS>=10 uses the full
+ * 3D tensor. Negative n_hat.S.n_hat (should not occur post cbe_clamp_face_Q
+ * SPD enforcement; defensive) returns 0.
+ *
+ * Used by:
+ *   - cbe_face_K_and_vn_from_Q -- fills per-basis c_x array for downstream
+ *     HLLC residual evaluation and bracket-pad sizing.
+ *   - cbe_flux_hllc_vacuum -- gets its scalar c_x from here while still
+ *     building the per-basis stress contraction S_n[] locally for the
+ *     full-tensor flux.
+ * -------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+double cbe_face_normal_stress_speed_from_Qrow(
+    const double moments[CBE_INTEGRATOR_NMOMENTS],
+    const double n_hat[3])
+{
+    if(!(moments[0] > MIN_REAL_NUMBER)) return 0;
+    const double inv_rho = 1.0 / moments[0];
+    const double v[3] = { moments[1]*inv_rho, moments[2]*inv_rho, moments[3]*inv_rho };
+    double nSn = 0;
+#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+    {
+        const double R[3][3] = {
+            { moments[4]*inv_rho, moments[7]*inv_rho, moments[8]*inv_rho },
+            { moments[7]*inv_rho, moments[5]*inv_rho, moments[9]*inv_rho },
+            { moments[8]*inv_rho, moments[9]*inv_rho, moments[6]*inv_rho }
+        };
+        for(int k=0; k<3; k++) {
+            double s = 0;
+            for(int l=0; l<3; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
+            nSn += n_hat[k] * s;
+        }
+    }
+#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
+    {
+        const double S_diag[3] = {
+            moments[4]*inv_rho - v[0]*v[0],
+            moments[5]*inv_rho - v[1]*v[1],
+            moments[6]*inv_rho - v[2]*v[2]
+        };
+        for(int k=0; k<3; k++) nSn += S_diag[k] * n_hat[k] * n_hat[k];
+    }
+#endif
+    return (nSn > 0) ? sqrt(3.0 * nSn) : 0;
+}
+
+
+/* --------------------------------------------------------------------------
+ * SSOT HLLC vacuum mass-flux density per unit face area, per basis. Branches
+ * on the source-side outward normal velocity u_out exactly as the full
+ * flux solver (cbe_flux_hllc_vacuum) does for its mass slot; extracting it
+ * lets the v_F root-find residual and the deposited flux use bit-identical
+ * branching, which is the requirement of the strict-root-found policy
+ * (basis-summed F_m at v_F == 0 implies cell-summed mass conservation).
+ *
+ *   u_out >=  c_x         -> rho * u_out         (cold F0 supersonic)
+ *  -c_x/3 <  u_out <  c_x -> rho * (3 u_out + c_x) / 4   (subsonic vacuum)
+ *   u_out <= -c_x/3       -> 0                   (vacuum, no outflow)
+ *
+ * Cold limit c_x -> 0: F0 branch for u_out > 0, F = 0 for u_out < 0
+ * (recovers cold-F0 cleanly when no stress is stored or n.S.n is zero).
+ * -------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+double cbe_hllc_mass_flux_per_unit_area(double rho, double u_out, double c_x)
+{
+    if(u_out >= c_x)              return rho * u_out;
+    else if(u_out > -c_x / 3.0)   return 0.25 * rho * (3.0 * u_out + c_x);
+    else                          return 0;
+}
+
+
+/* --------------------------------------------------------------------------
  * Per-face root-found face-normal velocity v_F_n (Wave-CBE Commit 3,
- * 2026-05-25). Replaces the bulk-average vface_new computation in
- * cbe_integrator_flux_functions.h with a scalar normal v_F chosen so the
- * basis-summed mass flux across the face is machine-zero. Per harness
- * test_density_wave_root_found this drops per-cell mass drift by ~11
- * orders of magnitude vs the paper-formula bulk average.
+ * 2026-05-25; HLLC update Wave-CBE Commit 9, 2026-05-30). Returns net
+ * per-unit-area face mass flux at trial v_F_n, summing the HLLC vacuum
+ * mass-flux contribution from every basis on both sides.
  *
- * Residual function. Returns net per-unit-area face mass flux at trial
- * v_F_n, in (rho * v) units. Theta convention: face-normal Ahat (i->j),
- * a-side basis outgoing iff v_alpha_n_i > v_F_n; b-side basis outgoing
- * iff v_alpha_n_j < v_F_n. K_i[m] = m_i[m][0] * rho_i / M_i (>=0) folds
- * the wt_prefac density factor in so the returned residual matches the
- * actual flux update sign-for-sign.
+ * Sign convention matches the deposited flux (Wave-CBE Commit 8): i-side
+ * basis outflow (u_out_i = v_alpha_n_i - v_F_n) carries mass in +A_hat,
+ * j-side basis outflow (u_out_j = v_F_n - v_alpha_n_j) carries mass in
+ * -A_hat. Net flux in +A_hat is therefore
  *
- * Piecewise-linear monotonically DECREASING in v_F_n (each active term
- * loses magnitude as v_F_n rises): R(v_F_lo) >= 0 >= R(v_F_hi) when the
- * bracket spans the unique zero. Bisection is sufficient (codex's
- * "boring, device-safe" pick; no Brent edge cases on Kokkos device
- * headers). Hand-rolled brent can swap in behind the same interface
- * later if profiling shows root-find cost matters.
+ *   r(v_F_n) = sum_m  F_m_HLLC(K_i[m], u_out_i, c_x_i[m])
+ *            - sum_m  F_m_HLLC(K_j[m], u_out_j, c_x_j[m]).
+ *
+ * Monotone non-increasing in v_F_n (each per-basis F_m_HLLC is monotone
+ * non-decreasing in u_out: F0 slope rho, F1 slope 3 rho / 4, F=0 slope 0;
+ * u_out_i decreases as v_F_n rises; u_out_j increases as v_F_n rises);
+ * bisection in cbe_face_solve_v_F_normal converges to the unique zero.
+ * K==0 (rho-clamped-inactive) rows contribute 0 by construction.
  * -------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
 double cbe_face_mass_residual_per_unit_area(
@@ -368,14 +442,16 @@ double cbe_face_mass_residual_per_unit_area(
     const double v_alpha_n_i[CBE_INTEGRATOR_NBASIS],
     const double v_alpha_n_j[CBE_INTEGRATOR_NBASIS],
     const double K_i[CBE_INTEGRATOR_NBASIS],
-    const double K_j[CBE_INTEGRATOR_NBASIS])
+    const double K_j[CBE_INTEGRATOR_NBASIS],
+    const double c_x_i[CBE_INTEGRATOR_NBASIS],
+    const double c_x_j[CBE_INTEGRATOR_NBASIS])
 {
     double r = 0;
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        double dv_i = v_alpha_n_i[m] - v_F_n;
-        double dv_j = v_alpha_n_j[m] - v_F_n;
-        if(dv_i > 0) r += dv_i * K_i[m];
-        if(dv_j < 0) r += dv_j * K_j[m];
+        const double u_out_i = v_alpha_n_i[m] - v_F_n;
+        const double u_out_j = v_F_n - v_alpha_n_j[m];
+        r += cbe_hllc_mass_flux_per_unit_area(K_i[m], u_out_i, c_x_i[m]);
+        r -= cbe_hllc_mass_flux_per_unit_area(K_j[m], u_out_j, c_x_j[m]);
     }
     return r;
 }
@@ -396,20 +472,22 @@ double cbe_face_solve_v_F_normal(
     const double v_alpha_n_j[CBE_INTEGRATOR_NBASIS],
     const double K_i[CBE_INTEGRATOR_NBASIS],
     const double K_j[CBE_INTEGRATOR_NBASIS],
+    const double c_x_i[CBE_INTEGRATOR_NBASIS],
+    const double c_x_j[CBE_INTEGRATOR_NBASIS],
     double v_F_lo, double v_F_hi,
     double fallback_v_F_n,
     int *bracket_ok_out)
 {
     double lo = v_F_lo, hi = v_F_hi;
-    double f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
-    double f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+    double f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
+    double f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
     int bracketed = (f_lo * f_hi <= 0) ? 1 : 0;
     for(int widen = 0; widen < 4 && !bracketed; widen++) {
         double mid  = 0.5 * (lo + hi);
         double half = 4.0 * 0.5 * (hi - lo);
         lo = mid - half; hi = mid + half;
-        f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
-        f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
+        f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
         if(f_lo * f_hi <= 0) { bracketed = 1; break; }
     }
     if(!bracketed) {
@@ -417,13 +495,21 @@ double cbe_face_solve_v_F_normal(
         return fallback_v_F_n;
     }
     *bracket_ok_out = 1;
+    /* Tightened tol_rel to 1e-14 (Wave-CBE Commit 9): the strict-root-found
+     * policy means the per-face mass residual at v_F is bounded by
+     * |F_m_HLLC'(v_F)| * (hi - lo), and |F_m'| ~ sum of active basis K's
+     * times Face_Area_Norm. For Hernquist v_F bracket scale ~200 the
+     * 1e-12 rel tol left residuals at ~1e-10 (above the col-2 <= 1e-11
+     * gate); 1e-14 brings them solidly below. Extra iterations are cheap
+     * vs the flux loop. 60-iter cap still allows convergence: 2^60 >> any
+     * physically plausible width / 1e-14. */
     const double tol_abs = 1e-12;
-    const double tol_rel = 1e-12;
+    const double tol_rel = 1e-14;
     for(int it=0; it<60; it++) {
         double scale = DMAX(fabs(lo), fabs(hi));
         if((hi - lo) <= tol_abs + tol_rel * scale) break;
         double mid = 0.5 * (lo + hi);
-        double f_mid = cbe_face_mass_residual_per_unit_area(mid, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        double f_mid = cbe_face_mass_residual_per_unit_area(mid, v_alpha_n_i, v_alpha_n_j, K_i, K_j, c_x_i, c_x_j);
         if(f_lo * f_mid <= 0) { hi = mid; f_hi = f_mid; }
         else                  { lo = mid; f_lo = f_mid; }
     }
@@ -665,16 +751,27 @@ void cbe_face_K_and_vn_from_Q(
     const double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     const double Ahat[3],
     double K[CBE_INTEGRATOR_NBASIS],
-    double v_alpha_n[CBE_INTEGRATOR_NBASIS])
+    double v_alpha_n[CBE_INTEGRATOR_NBASIS],
+    double c_x[CBE_INTEGRATOR_NBASIS])
 {
+    /* Per-basis face state for the HLLC vacuum mass-flux residual + flux
+     * loop. K = rho (basis density on the face), v_alpha_n = v . Ahat
+     * (normal velocity), c_x = sqrt(gamma_e * Ahat.S.Ahat) (HLLC normal
+     * stress speed, gamma_e = 3). Inactive rows (Qface[m][0] <=
+     * MIN_REAL_NUMBER post cbe_clamp_face_Q) zero all three outputs so
+     * downstream consumers naturally skip them. c_x is computed via the
+     * SSOT helper cbe_face_normal_stress_speed_from_Qrow so the wave-speed
+     * definition matches what cbe_flux_hllc_vacuum and the residual use. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface[m][0] > MIN_REAL_NUMBER) {
             double inv_Q0 = 1.0 / Qface[m][0];
             v_alpha_n[m] = (Qface[m][1]*Ahat[0] + Qface[m][2]*Ahat[1] + Qface[m][3]*Ahat[2]) * inv_Q0;
             K[m]         = Qface[m][0];
+            c_x[m]       = cbe_face_normal_stress_speed_from_Qrow(Qface[m], Ahat);
         } else {
             v_alpha_n[m] = 0.0;
             K[m]         = 0.0;
+            c_x[m]       = 0.0;
         }
     }
 }
@@ -749,10 +846,9 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
      * NMOMENTS=7 has only diagonal raw moments stored, so off-diagonal
      * CENTRAL stress is ABSENT (not zero) — synthesizing -v_k v_l in those
      * slots would invent unphysical off-diagonal stress. Use diagonal-only
-     * formula in that branch. (Codex 2026-05-30 correction #1.) */
+     * formula in that branch. Scalar c_x comes from the SSOT helper to
+     * keep the wave-speed definition identical to the residual function. */
     double S_n[3] = {0};
-    double n_S_n  = 0;
-    double c_x    = 0;
 #if (CBE_INTEGRATOR_NMOMENTS >= 10)
     {
         const double R[3][3] = {
@@ -763,8 +859,7 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
         for(int k=0; k<3; k++) {
             double s = 0;
             for(int l=0; l<3; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
-            S_n[k]  = s;
-            n_S_n  += n_hat[k] * s;
+            S_n[k] = s;
         }
     }
 #elif (CBE_INTEGRATOR_NMOMENTS >= 7)
@@ -774,29 +869,27 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
             moments[5]*inv_rho - v[1]*v[1],
             moments[6]*inv_rho - v[2]*v[2]
         };
-        for(int k=0; k<3; k++) {
-            S_n[k]  = S_diag[k] * n_hat[k];
-            n_S_n  += S_diag[k] * n_hat[k] * n_hat[k];
-        }
+        for(int k=0; k<3; k++) S_n[k] = S_diag[k] * n_hat[k];
     }
 #endif
-    if(n_S_n > 0) c_x = sqrt(3.0 * n_S_n);   /* gamma_e = 3 */
+    const double c_x = cbe_face_normal_stress_speed_from_Qrow(moments, n_hat);
 
-    double prefactor;
-    double u_or_c;
-    if(u_out >= c_x) {                       /* F0 (cold supersonic outflow) */
-        prefactor = rho;
-        u_or_c    = u_out;
-    } else if(u_out > -c_x / 3.0) {          /* F1 (subsonic vacuum, warm); c_x > 0 here */
-        prefactor = 0.25 * rho * (3.0 * u_out / c_x + 1.0);
-        u_or_c    = c_x;
-    } else {                                  /* F = 0 (no outgoing flux) */
+    /* Mass slot via SSOT HLLC helper -- bit-identical to what the v_F
+     * root-find residual sums over, so basis-summed F_m at v_F == 0
+     * exactly implies cell-summed mass conservation. F = 0 vacuum branch
+     * returns short-circuit (no stress / momentum work needed). */
+    const double F_m_per_area = cbe_hllc_mass_flux_per_unit_area(rho, u_out, c_x);
+    if(F_m_per_area == 0) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
         return (fabs(u_out) + c_x) * A_norm;
     }
+    fluxes[0] = F_m_per_area * A_norm;
 
-    /* Mass: F_m = prefactor * u_or_c * |A|. */
-    fluxes[0] = prefactor * u_or_c * A_norm;
+    /* prefactor and u_or_c are derived from the helper's branching for
+     * use in the momentum + stress slots, which still need the tensor
+     * structure that the scalar helper does not return. */
+    const double prefactor = (u_out >= c_x) ? rho : 0.25 * rho * (3.0 * u_out / c_x + 1.0);
+    const double u_or_c    = (u_out >= c_x) ? u_out : c_x;
 
     /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. */
     for(int k=0; k<3; k++) {
