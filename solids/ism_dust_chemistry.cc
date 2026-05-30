@@ -288,7 +288,7 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
     SNeIa_age =  0.044;
 #endif
     if(t_gyr < SNeIa_age) {source_key=2;} // 1=1a, 2=II
-    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES]=0;} // initialize yields to null
+    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=0;} // initialize yields to null
     if(GALSF_ISMDUSTCHEM_MODEL & 1) {
         double C_condens_eff     = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.5),
                other_condens_eff = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.8);
@@ -299,8 +299,8 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
         dust_yields[4] = 16 * (dust_yields[6]/All.ISMDustChem_AtomicMassTable[6] + dust_yields[7]/All.ISMDustChem_AtomicMassTable[7] + dust_yields[10]/All.ISMDustChem_AtomicMassTable[10]); // O
         if(dust_yields[4]>yields[4]) {dust_yields[4]=yields[4];} // Just in case there's not enough O
         for(k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++)  dust_yields[0] += dust_yields[k]; // Fraction of yields that is dust
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-        yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
+        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=dust_yields[k];}
+        yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY+source_key] = dust_yields[0]; // total yield goes to the source term of this type
         return; // all done, if only using this model
     } // below follows species model, will be default if above not set
 
@@ -343,9 +343,9 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
     }
 
     ISMDustChem_get_elem_yields_from_species_yields(dust_yields,species_yields);
-    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-    yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
-    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
+    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=dust_yields[k];}
+    yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY+source_key] = dust_yields[0]; // total yield goes to the source term of this type
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]=species_yields[k];}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     ISMDustChemEvo_get_SNe_dust_grain_size_yields(yields,i,SNeIaFlag,Msne, pp, cell); // get dust grain size/mass yields
 #endif
@@ -356,7 +356,7 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
 void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_data *cell)
 {
     double dust_yields[NUM_ISMDUSTCHEM_ELEMENTS]={0}, species_yields[NUM_ISMDUSTCHEM_SPECIES]={0}; int j,k,spec_indx,source_key=3;
-    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES]=0;} // initialize yields to null
+    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=0;} // initialize yields to null
     double transition_age = 0.03753, star_age = evaluate_stellar_age_Gyr(i); // Assume AGB dust production stars at SNe II to SNe Ia transition. This limits AGB stars with mass < ~8 solar masses
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
     transition_age =  0.044;
@@ -376,8 +376,8 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
             if (dust_yields[4] > yields[4]-(4./3.*yields[2])) {dust_yields[4] = yields[4]-(4./3.*yields[2]);}
             for(k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {dust_yields[0]+=dust_yields[k];}
         }
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-        yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
+        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=dust_yields[k];}
+        yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY+source_key] = dust_yields[0]; // total yield goes to the source term of this type
         return; // end routine
     } // below follows species model, and will be default if above not set
     double dt,Z,elem_yield,wind_rate;
@@ -436,9 +436,9 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
         dust_yields[0]=0;
         for (k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {dust_yields[0] += dust_yields[k];}
     }
-    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-    yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
-    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
+    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]=dust_yields[k];}
+    yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY+source_key] = dust_yields[0]; // total yield goes to the source term of this type
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]=species_yields[k];}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
     /* Wind dust grain-size yields scale with stellar mass return per step,
      * which is tracked in P[i].MassReturn_ThisTimeStep only under
@@ -604,7 +604,7 @@ void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SN
     double total_Msne = pp[i].SNe_ThisTimeStep * (Msne/UNIT_MASS_IN_SOLAR); // need the total mass returned to get the total dust mass per bin
     for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)
     {
-        double total_species_mass = yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]*total_Msne*UNIT_MASS_IN_CGS;
+        double total_species_mass = yields[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]*total_Msne*UNIT_MASS_IN_CGS;
         ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[k], &dust_atomic_weight, &bulk_dens);
         C1_norm = total_species_mass*3*(gamma-4)*a_cut*pow(a_min,gamma)*exp(-(pow(log(a_cut/a0),2)/(2*sigma*sigma))) /
         (2*M_PI*bulk_dens*(2*pow(a_cut,gamma)*pow(a_min,4) -
@@ -638,8 +638,8 @@ void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SN
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
         for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
             // Convert number and mass of grains injected as mass fraction scalars since all the feedback injection routines expect mass fractions. This works for the number of grains even thought its not a true mass fraction.
-            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES]=number_yields[k][l]/total_Msne;
-            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)]=mass_yields[k][l]/(total_Msne*UNIT_MASS_IN_CGS);
+            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_NUMBERINBIN_OFFSET_IN_METALLICITY]=number_yields[k][l]/total_Msne;
+            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_SLOPEINBIN_OFFSET_IN_METALLICITY]=mass_yields[k][l]/(total_Msne*UNIT_MASS_IN_CGS);
         }
     }
 
@@ -657,7 +657,7 @@ void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
     for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)
     {
         ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[k], &dust_atomic_weight, &bulk_dens);
-        C_norm = (yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]*Msne*UNIT_MASS_IN_CGS)*(3*a0*exp(-(sigma*sigma)/2.))/(pow(2.,5./2.)*pow(M_PI,3./2.)*sigma*bulk_dens);
+        C_norm = (yields[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]*Msne*UNIT_MASS_IN_CGS)*(3*a0*exp(-(sigma*sigma)/2.))/(pow(2.,5./2.)*pow(M_PI,3./2.)*sigma*bulk_dens);
         // Now step through grain size bins and fit bins to inital distribution
         for (l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++)
         {
@@ -672,8 +672,8 @@ void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
         for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
             // Convert number and mass of grains injected as mass fraction scalars since all the feedback injection routines expect mass fractions. This works for the number of grains even thought its not a true mass fraction.
-            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES]=number_yields[k][l]/Msne;
-            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)]=mass_yields[k][l]/(Msne*UNIT_MASS_IN_CGS);
+            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_NUMBERINBIN_OFFSET_IN_METALLICITY]=number_yields[k][l]/Msne;
+            yields[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_SLOPEINBIN_OFFSET_IN_METALLICITY]=mass_yields[k][l]/(Msne*UNIT_MASS_IN_CGS);
         }
     }
 }
@@ -684,7 +684,7 @@ void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
 /* simple indexing routine to return the value we need when looping over yields and the like */
 double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct gas_cell_data *cell)
 {
-    k -= NUM_METAL_SPECIES;
+    k -= ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; // convert from absolute Metallicity[] index to dustchem-block-local index
     if(k<NUM_ISMDUSTCHEM_ELEMENTS) {return cell[i].ISMDustChem_Dust_Metal[k];}
     k -= NUM_ISMDUSTCHEM_ELEMENTS;
     if(k<NUM_ISMDUSTCHEM_SOURCES) {return cell[i].ISMDustChem_Dust_Source[k];}
@@ -819,24 +819,24 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
     // AGB dust routines can give neglible amounts of dust and the feedback routine can cause yields with initially zero dust to have floating point precision errors.
     // To avoid this, only inject dust when the species mass fractional change is greater than a very small number or dust is being injected where none exists.
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
-        if ((CellP[j].ISMDustChem_Dust_Species[k] <= 0 && Z_injected[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]>0) || fabs(((1./mf) * DMAX(0.,Z_injected[0+NUM_METAL_SPECIES])) / ((m0/mf) * CellP[j].ISMDustChem_Dust_Metal[0])) > 1E-10) {
+        if ((CellP[j].ISMDustChem_Dust_Species[k] <= 0 && Z_injected[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]>0) || fabs(((1./mf) * DMAX(0.,Z_injected[0+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY])) / ((m0/mf) * CellP[j].ISMDustChem_Dust_Metal[0])) > 1E-10) {
             skip_injection = 0;
             break;
         }
     }
     if (~skip_injection) {
         // Z_injection has the total mass injected so need to be careful updating scalars
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k]   = (m0/mf)*CellP[j].ISMDustChem_Dust_Metal[k]   + (1./mf)*DMAX(0.,Z_injected[k+NUM_METAL_SPECIES]);}
-        for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++)  {CellP[j].ISMDustChem_Dust_Source[k]  = (m0/mf)*CellP[j].ISMDustChem_Dust_Source[k]  + (1./mf)*DMAX(0.,Z_injected[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS]);}
-        for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {CellP[j].ISMDustChem_Dust_Species[k] = (m0/mf)*CellP[j].ISMDustChem_Dust_Species[k] + (1./mf)*DMAX(0.,Z_injected[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]);}
+        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k]   = (m0/mf)*CellP[j].ISMDustChem_Dust_Metal[k]   + (1./mf)*DMAX(0.,Z_injected[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]);}
+        for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++)  {CellP[j].ISMDustChem_Dust_Source[k]  = (m0/mf)*CellP[j].ISMDustChem_Dust_Source[k]  + (1./mf)*DMAX(0.,Z_injected[k+ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY]);}
+        for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {CellP[j].ISMDustChem_Dust_Species[k] = (m0/mf)*CellP[j].ISMDustChem_Dust_Species[k] + (1./mf)*DMAX(0.,Z_injected[k+ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY]);}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
         // Inject number of grains and corresponding grain mass into each bin then update number and slope in bin
         // This is relatively simple since Z_injection has the total mass and number injected
         double inject_N_in_bin, inject_M_in_bin, new_N_in_bin, new_M_in_bin;
         for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
             for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
-                inject_N_in_bin = Z_injected[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES];
-                inject_M_in_bin = Z_injected[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)]*UNIT_MASS_IN_CGS;
+                inject_N_in_bin = Z_injected[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_NUMBERINBIN_OFFSET_IN_METALLICITY];
+                inject_M_in_bin = Z_injected[(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)+ISMDUSTCHEM_DUST_SLOPEINBIN_OFFSET_IN_METALLICITY]*UNIT_MASS_IN_CGS;
                 // If either the number of grains or mass of grains injected into the bin are zero then nothing to do here. Also deals with rounding errors that can cause negative values
                 if (inject_N_in_bin>0 && inject_M_in_bin>0) {
                     new_N_in_bin = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + inject_N_in_bin;
