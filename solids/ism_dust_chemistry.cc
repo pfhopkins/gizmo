@@ -824,7 +824,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             break;
         }
     }
-    if (~skip_injection) {
+    if (!skip_injection) {
         // Z_injection has the total mass injected so need to be careful updating scalars
         for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k]   = (m0/mf)*CellP[j].ISMDustChem_Dust_Metal[k]   + (1./mf)*DMAX(0.,Z_injected[k+ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY]);}
         for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++)  {CellP[j].ISMDustChem_Dust_Source[k]  = (m0/mf)*CellP[j].ISMDustChem_Dust_Source[k]  + (1./mf)*DMAX(0.,Z_injected[k+ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY]);}
@@ -846,7 +846,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             }
         }
 #endif
-    } // ~skip_injection
+    } // !skip_injection
     else {
         for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k]   *= (m0/mf);}
         for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++)  {CellP[j].ISMDustChem_Dust_Source[k]  *= (m0/mf);}
