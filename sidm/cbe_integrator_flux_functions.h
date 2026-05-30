@@ -14,7 +14,7 @@
  * if NBASIS grows > ~32.
  *
  * Requires allvars.h / proto.h and sidm/cbe_integrator.h forward decls
- * (for do_cbe_flux_computation and get_particle_volume_ags).
+ * (for cbe_flux_hllc_vacuum and get_particle_volume_ags).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -62,7 +62,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * matches whatever CBEGradSpec uses for its LSQ pass.
      * Stored basis moments are U-frame (cell-integrated, basis-frame
      * momentum); Q is per-volume comoving density with physical-frame
-     * momentum baked in -- exactly what do_cbe_flux_computation expects. */
+     * momentum baked in -- exactly what cbe_flux_hllc_vacuum expects. */
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     {
@@ -231,11 +231,16 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     if(!any_active) { return r; }
     v_F_lo -= pad; v_F_hi += pad;
 
-    /* Initial bulk-tangential vface for the SM dispersion term in
-     * do_cbe_flux_computation (NMOMENTS>4 only). Use theta-on-Ahat with
-     * v_F_guess = vface_guess . Ahat as initial estimate; final v_F_normal
-     * replaces the normal component below. Tangential is second-order in
-     * (v - vface) so a small mismatch is acceptable. */
+    /* Bulk-weighted normal velocity as a root-find fallback (used by
+     * cbe_face_solve_v_F_normal only when bisection fails to bracket).
+     * Theta active set at vface_guess can be empty; in that case use
+     * vface_guess as the fallback carrier. Tangential bulk components
+     * are NOT needed for cbe_flux_hllc_vacuum (Fix #1, Commit 8 retired
+     * the old SM-dispersion term that consumed them); the final flux
+     * function only reads vface . n_hat, which equals v_F_normal under
+     * the vface = v_F_normal * A_hat construction below. The full bulk
+     * vector is retained here as raw material for Fix #7's analytic
+     * fallback rewrite. */
     double v_F_guess = vface_guess[0]*A_hat[0] + vface_guess[1]*A_hat[1] + vface_guess[2]*A_hat[2];
     double vface_bulk[3] = {0};
     double v_wt_sum = 0;
@@ -253,24 +258,13 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<3; k++) vface_bulk[k] += w * Qface_j[m][k+1] * inv_Q0;
         }
     }
-    /* No-outgoing-basis-at-vface_guess fallback (codex 2026-05-25): the
-     * theta active set at vface_guess can be empty; the root-find itself
-     * is robust to that (R == 0 at empty end of bracket, bisection finds
-     * the unique zero further in), so use vface_guess as tangential
-     * carrier rather than skipping the face. */
-    double vface_bulk_unit[3];
     double vbulk_dot_Ahat;
     if((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER)) {
         double inv_wt = 1.0 / v_wt_sum;
-        vface_bulk_unit[0] = vface_bulk[0]*inv_wt;
-        vface_bulk_unit[1] = vface_bulk[1]*inv_wt;
-        vface_bulk_unit[2] = vface_bulk[2]*inv_wt;
+        vbulk_dot_Ahat = (vface_bulk[0]*A_hat[0] + vface_bulk[1]*A_hat[1] + vface_bulk[2]*A_hat[2]) * inv_wt;
     } else {
-        vface_bulk_unit[0] = vface_guess[0];
-        vface_bulk_unit[1] = vface_guess[1];
-        vface_bulk_unit[2] = vface_guess[2];
+        vbulk_dot_Ahat = v_F_guess;
     }
-    vbulk_dot_Ahat = vface_bulk_unit[0]*A_hat[0] + vface_bulk_unit[1]*A_hat[1] + vface_bulk_unit[2]*A_hat[2];
 
     /* Root-find face-normal v_F. K=0 rows contribute 0 to the residual so
      * the root location depends only on the active-basis set. */
@@ -279,9 +273,13 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         v_alpha_n_i, v_alpha_n_j, K_i, K_j,
         v_F_lo, v_F_hi, vbulk_dot_Ahat, &bracket_ok);
 
-    /* vface = (I - Ahat Ahat^T) vface_bulk + v_F_normal * Ahat. */
-    double vface[3];
-    for(int k=0; k<3; k++) vface[k] = vface_bulk_unit[k] + (v_F_normal - vbulk_dot_Ahat) * A_hat[k];
+    /* Face velocity for the flux call: pure normal component along the
+     * canonical face unit normal A_hat. cbe_flux_hllc_vacuum reads only
+     * vface . n_out (n_out = +A_hat for i-side, -A_hat for j-side), so the
+     * tangential component cancels exactly; passing it as zero is clean. */
+    const double vface[3] = { v_F_normal * A_hat[0],
+                              v_F_normal * A_hat[1],
+                              v_F_normal * A_hat[2] };
 
     /* Final theta gates use the converged v_F_normal. K==0 rows are forced
      * inactive (theta=0) regardless of v_alpha_n. */
@@ -314,31 +312,39 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
                             /*free_slot_fired_count_inout=*/NULL);
 #endif
 
-    /* Flux loop. Wave-CBE Commit 4 retires the psi=0.5 / wt_prefac scheme:
-     * with face-reconstructed Q passed to do_cbe_flux_computation, fluxes[0]
-     * = vsig * Q_face[0] is the actual dM/dt flux density at the face
-     * (units mass/time once multiplied by the face normal length implicit
-     * in vsig). The flux update direction is -flux into the source basis
-     * and +flux into the matched destination basis -- i.e. just sign
-     * convention, no more density-per-side share. */
-    const double wt_prefac = -1.0;
-    double vface_dot_A = vface[0]*Face_Area_Vec[0] + vface[1]*Face_Area_Vec[1] + vface[2]*Face_Area_Vec[2];
+    /* Flux loop. Wave-CBE Commit 8 (Fix #1, 2026-05-30) — sign convention
+     * is now explicit at the call site, not via a wt_prefac trick:
+     *   i-side call passes Area_outward = +Face_Area_Vec (i is upwind on
+     *     the +A_hat side; F is outflow from i; i LOSES it -> "-= flux").
+     *   j-side call passes Area_outward = -Face_Area_Vec (j is upwind on
+     *     the -A_hat side; F is outflow from j into i's basis i_m; i
+     *     GAINS it -> "+= flux").
+     * The HLLC vacuum flux solver branches on the SOURCE-side outward
+     * normal velocity u_out; passing the correct Area_outward per side is
+     * load-bearing for correctness (silently mis-orienting Area_outward
+     * inverts the physics). */
+    const double Area_i_out[3] = {  Face_Area_Vec[0],  Face_Area_Vec[1],  Face_Area_Vec[2] };
+    const double Area_j_out[3] = { -Face_Area_Vec[0], -Face_Area_Vec[1], -Face_Area_Vec[2] };
+    /* matching_basis_j_for_basis_in_i[] is populated by cbe_build_pair_matching
+     * for symmetric SSOT but is not consumed locally — matched-pair coupling
+     * for the i-side deposit happens via Q_face reconstruction (Fix #5,
+     * future commit) reading the matched j-basis through the gradient
+     * stencil, NOT through a per-pair flux-call neighbor argument. The
+     * j-side outflow path needs i_m to deposit gain into i's basis i_m. */
+    (void)matching_basis_j_for_basis_in_i;
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        int j_m = matching_basis_j_for_basis_in_i[m];
-        int i_m = matching_basis_i_for_basis_in_j[m];
+        const int i_m = matching_basis_i_for_basis_in_j[m];
         double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
         double vsig_i = 0, vsig_j = 0;
         if(theta_i[m] == 1) {
-            vsig_i = do_cbe_flux_computation(Qface_i[m], vface_dot_A, vface, Face_Area_Vec, Qface_j[j_m], flux);
+            vsig_i = cbe_flux_hllc_vacuum(Qface_i[m], vface, Area_i_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
-                flux[k] *= wt_prefac;
-                out.CBE_basis_moments_dt[m][k] += flux[k];
+                out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
         }
         if(theta_j[m] == 1) {
-            vsig_j = do_cbe_flux_computation(Qface_j[m], vface_dot_A, vface, Face_Area_Vec, Qface_i[i_m], flux);
+            vsig_j = cbe_flux_hllc_vacuum(Qface_j[m], vface, Area_j_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
-                flux[k] *= wt_prefac;
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
             }
         }

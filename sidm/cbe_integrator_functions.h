@@ -1,10 +1,14 @@
 /* cbe_integrator_functions.h — GPU-callable CBE (Collisionless Boltzmann
- * Equation) single-sided flux computation. Pure math with no global state.
+ * Equation) per-basis flux + face helpers + drift-kick. Pure math with no
+ * global state; called both from the CPU tree-walk path (via
+ * cbe_integrator_flux_functions.h) and from the AGSForce GPU kernel as
+ * KOKKOS_INLINE_FUNCTION.
  *
- * Mirrors do_cbe_flux_computation() in sidm/cbe_integrator.cc exactly, but
- * as a KOKKOS_INLINE_FUNCTION so it can be called both from the CPU
- * tree-walk (via cbe_integrator_flux_functions.h) and from the B2 AGSForce
- * GPU kernel.
+ * SSOT: the single per-basis flux implementation lives here as
+ * cbe_flux_hllc_vacuum (Wave-CBE Commit 8, 2026-05-30, replaces the
+ * pre-fix do_cbe_flux_computation). There is no CPU duplicate in
+ * cbe_integrator.cc; the legacy "mirrors do_cbe_flux_computation()"
+ * comment that lived here referenced a now-retired pre-GPU-port copy.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -448,7 +452,7 @@ double cbe_face_solve_v_F_normal(
  *                [7]/[8]/[9]=off-diag holds).
  *
  * "Flux-frame" = physical-frame momentum baked in (v_phys = Vel/cf_atime
- * folded into the [1..3] slots so do_cbe_flux_computation's vsig matches
+ * folded into the [1..3] slots so cbe_flux_hllc_vacuum's u_out matches
  * v_phys directly). NOT a generic U/V conversion. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_flux_frame_Q_from_stored_moments(
@@ -618,7 +622,7 @@ bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
 /* Density-only face-Q clamp + counter (codex 2026-05-25 #6 + #5). For each
  * basis with Q_face[m][0] <= MIN_REAL_NUMBER, zero the ENTIRE basis row.
  * Rationale: leaving nonzero momentum/stress at zero density would crash
- * do_cbe_flux_computation's m_inv = 1/moments[0] divide. Zeroing the row
+ * cbe_flux_hllc_vacuum's inv_rho = 1/moments[0] divide. Zeroing the row
  * marks the basis inactive at this face -- the downstream cbe_face_K_and_vn
  * helper gives it K=0, v_n=0 so it contributes nothing to the residual or
  * the flux loop.
@@ -677,47 +681,147 @@ void cbe_face_K_and_vn_from_Q(
 
 
 KOKKOS_INLINE_FUNCTION
-double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
-                               double vface_dot_A,
-                               double vface[3],
-                               double Area[3],
-                               double moments_ngb[CBE_INTEGRATOR_NMOMENTS],
-                               double fluxes[CBE_INTEGRATOR_NMOMENTS])
+/* Wave-CBE Commit 8 (Fix #1, 2026-05-30) — branched HLLC vacuum one-sided
+ * flux. Per-basis flux on one side of a face, in the SOURCE-side outward
+ * frame defined by Area_outward.
+ *
+ * CONTRACT (caller responsibility, NOT verified inside; device code):
+ *   - moments[]      Upwind flux-frame Q (cell or face-reconstructed)
+ *                    of the SOURCE basis. Layout: [m, p_x, p_y, p_z,
+ *                    R_xx, R_yy, R_zz, R_xy, R_xz, R_yz] for NMOMENTS=10;
+ *                    [m, p_x, p_y, p_z, R_xx, R_yy, R_zz] for NMOMENTS=7;
+ *                    [m, p_x, p_y, p_z] for NMOMENTS=4. Slots [4..9] are
+ *                    RAW second moments R_kl = <v_k v_l>, NOT central
+ *                    stress S_kl. Central S = R - v⊗v is built locally.
+ *   - vface[3]       Face velocity in code units (typically v_F_normal
+ *                    times the canonical face unit normal; tangential
+ *                    components are silently ignored by this function
+ *                    because they cancel in the n_hat contraction).
+ *   - Area_outward   SOURCE-side outward face area vector (NOT
+ *                    normalized). For a pair sharing one face:
+ *                       i-side call: Area_outward = +Face_Area_Vec
+ *                       j-side call: Area_outward = -Face_Area_Vec
+ *                    The function does NOT infer orientation from
+ *                    sign(vsig) — misuse silently inverts the physics.
+ *   - fluxes[]       Output, in Area_outward frame, area-integrated
+ *                    (units: [Q] × velocity × area).
+ *
+ * RETURNS: signal speed (|u_out| + c_x) * |Area_outward|. The full HLLC
+ * physical wave speed. Caller uses this for CFL and wakeup criteria.
+ *
+ * BRANCHING: with u_out = (<v> - vface) · n_out and
+ * c_x = sqrt(gamma_e * n_out · S · n_out), gamma_e = 3,
+ *     u_out >= c_x         -> F0 (cold supersonic outflow)
+ *     -c_x/3 < u_out < c_x -> F1 (subsonic vacuum, warm)
+ *     u_out <= -c_x/3      -> 0  (no outgoing flux from this basis)
+ * F1 prefactor (rho/4)(3 u_out/c_x + 1) goes continuously to F0 at u_out=c_x
+ * and to 0 at u_out=-c_x/3. Cold limit S->0: c_x->0, F1 collapses, F0
+ * recovers exactly.
+ *
+ * DEFENSIVE GUARD: if rho is non-positive or non-finite or A_norm_sq <= 0
+ * the function zeros the flux and returns 0. Device-safe (no endrun);
+ * caller's clamp helpers should already filter these cases. */
+KOKKOS_INLINE_FUNCTION
+double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
+                            const double vface[3],
+                            const double Area_outward[3],
+                            double fluxes[CBE_INTEGRATOR_NMOMENTS])
 {
-    double m_inv = 1. / moments[0];
-    double v[3], f00_vsig = 1;
-    v[0] = m_inv*moments[1]; v[1] = m_inv*moments[2]; v[2] = m_inv*moments[3];
-    double vsig = v[0]*Area[0] + v[1]*Area[1] + v[2]*Area[2] - vface_dot_A;
-    if(fabs(vsig) <= 0) return 0;
-    fluxes[0] = vsig * moments[0];
-    for(int k = 1; k < CBE_INTEGRATOR_NMOMENTS; k++) { fluxes[k] = (m_inv * moments[k]) * fluxes[0]; }
-
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
-    {
-        double dv2 = (v[0]-vface[0])*(v[0]-vface[0]) + (v[1]-vface[1])*(v[1]-vface[1]) + (v[2]-vface[2])*(v[2]-vface[2]);
-        double c_eff_over_vsig_A = sqrt(m_inv * (moments[4]+moments[5]+moments[6]) / dv2);
-        double SM_vsig = 1 + c_eff_over_vsig_A*c_eff_over_vsig_A/(1 + c_eff_over_vsig_A);
-        double f00_SdotA = 1 - c_eff_over_vsig_A / (SM_vsig + c_eff_over_vsig_A);
-        f00_vsig = (SM_vsig * (1 + c_eff_over_vsig_A)) / (SM_vsig + c_eff_over_vsig_A);
-
-        double S_dot_A[3];
-        S_dot_A[0] = f00_SdotA * (moments[4]*Area[0] + moments[7]*Area[1] + moments[8]*Area[2]);
-        S_dot_A[1] = f00_SdotA * (moments[7]*Area[0] + moments[5]*Area[1] + moments[9]*Area[2]);
-        S_dot_A[2] = f00_SdotA * (moments[8]*Area[0] + moments[9]*Area[1] + moments[6]*Area[2]);
-        fluxes[1] += S_dot_A[0];
-        fluxes[2] += S_dot_A[1];
-        fluxes[3] += S_dot_A[2];
-        fluxes[4] += 2.*v[0]*S_dot_A[0] + fluxes[0]*v[0]*v[0];
-        fluxes[5] += 2.*v[1]*S_dot_A[1] + fluxes[0]*v[1]*v[1];
-        fluxes[6] += 2.*v[2]*S_dot_A[2] + fluxes[0]*v[2]*v[2];
-        fluxes[7] += v[0]*S_dot_A[1] + v[1]*S_dot_A[0] + fluxes[0]*v[0]*v[1];
-        fluxes[8] += v[0]*S_dot_A[2] + v[2]*S_dot_A[0] + fluxes[0]*v[0]*v[2];
-        fluxes[9] += v[1]*S_dot_A[2] + v[2]*S_dot_A[1] + fluxes[0]*v[1]*v[2];
+    const double A_norm_sq = Area_outward[0]*Area_outward[0]
+                           + Area_outward[1]*Area_outward[1]
+                           + Area_outward[2]*Area_outward[2];
+    if(!(moments[0] > MIN_REAL_NUMBER) || !isfinite(moments[0]) || !(A_norm_sq > 0)) {
+        for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
+        return 0;
     }
-#else
-    (void)vface; (void)moments_ngb;
+    const double A_norm  = sqrt(A_norm_sq);
+    const double inv_A   = 1.0 / A_norm;
+    const double n_hat[3] = { Area_outward[0]*inv_A, Area_outward[1]*inv_A, Area_outward[2]*inv_A };
+
+    const double rho     = moments[0];
+    const double inv_rho = 1.0 / rho;
+    const double v[3]    = { moments[1]*inv_rho, moments[2]*inv_rho, moments[3]*inv_rho };
+    const double v_n     = v[0]*n_hat[0]    + v[1]*n_hat[1]    + v[2]*n_hat[2];
+    const double vF_n    = vface[0]*n_hat[0] + vface[1]*n_hat[1] + vface[2]*n_hat[2];
+    const double u_out   = v_n - vF_n;
+
+    /* Central stress contracted with n_hat: S_n_k = (R_kl - v_k v_l) n_hat_l.
+     * NMOMENTS=7 has only diagonal raw moments stored, so off-diagonal
+     * CENTRAL stress is ABSENT (not zero) — synthesizing -v_k v_l in those
+     * slots would invent unphysical off-diagonal stress. Use diagonal-only
+     * formula in that branch. (Codex 2026-05-30 correction #1.) */
+    double S_n[3] = {0};
+    double n_S_n  = 0;
+    double c_x    = 0;
+#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+    {
+        const double R[3][3] = {
+            { moments[4]*inv_rho, moments[7]*inv_rho, moments[8]*inv_rho },
+            { moments[7]*inv_rho, moments[5]*inv_rho, moments[9]*inv_rho },
+            { moments[8]*inv_rho, moments[9]*inv_rho, moments[6]*inv_rho }
+        };
+        for(int k=0; k<3; k++) {
+            double s = 0;
+            for(int l=0; l<3; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
+            S_n[k]  = s;
+            n_S_n  += n_hat[k] * s;
+        }
+    }
+#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
+    {
+        const double S_diag[3] = {
+            moments[4]*inv_rho - v[0]*v[0],
+            moments[5]*inv_rho - v[1]*v[1],
+            moments[6]*inv_rho - v[2]*v[2]
+        };
+        for(int k=0; k<3; k++) {
+            S_n[k]  = S_diag[k] * n_hat[k];
+            n_S_n  += S_diag[k] * n_hat[k] * n_hat[k];
+        }
+    }
 #endif
-    return vsig * f00_vsig;
+    if(n_S_n > 0) c_x = sqrt(3.0 * n_S_n);   /* gamma_e = 3 */
+
+    double prefactor;
+    double u_or_c;
+    if(u_out >= c_x) {                       /* F0 (cold supersonic outflow) */
+        prefactor = rho;
+        u_or_c    = u_out;
+    } else if(u_out > -c_x / 3.0) {          /* F1 (subsonic vacuum, warm); c_x > 0 here */
+        prefactor = 0.25 * rho * (3.0 * u_out / c_x + 1.0);
+        u_or_c    = c_x;
+    } else {                                  /* F = 0 (no outgoing flux) */
+        for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
+        return (fabs(u_out) + c_x) * A_norm;
+    }
+
+    /* Mass: F_m = prefactor * u_or_c * |A|. */
+    fluxes[0] = prefactor * u_or_c * A_norm;
+
+    /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. */
+    for(int k=0; k<3; k++) {
+        fluxes[k+1] = v[k] * fluxes[0] + prefactor * A_norm * S_n[k];
+    }
+
+    /* Stress: F_T_kl = R_kl * F_m + prefactor * |A| * (v_k S_n_l + S_n_k v_l).
+     * Note the u_or_c-multiplied piece uses RAW R; the cross piece uses
+     * central S contracted with n_hat. NMOMENTS=7 has only diagonal slots
+     * [4,5,6]; NMOMENTS=10 also has off-diagonal [7,8,9].
+     * (Fixes a latent NMOMENTS=7 OOB read in the pre-Commit-8 code.) */
+#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+    fluxes[4] = moments[4]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[0] * S_n[0];
+    fluxes[5] = moments[5]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[1] * S_n[1];
+    fluxes[6] = moments[6]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[2] * S_n[2];
+    fluxes[7] = moments[7]*inv_rho * fluxes[0] + prefactor * A_norm * (v[0]*S_n[1] + S_n[0]*v[1]);
+    fluxes[8] = moments[8]*inv_rho * fluxes[0] + prefactor * A_norm * (v[0]*S_n[2] + S_n[0]*v[2]);
+    fluxes[9] = moments[9]*inv_rho * fluxes[0] + prefactor * A_norm * (v[1]*S_n[2] + S_n[1]*v[2]);
+#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
+    fluxes[4] = moments[4]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[0] * S_n[0];
+    fluxes[5] = moments[5]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[1] * S_n[1];
+    fluxes[6] = moments[6]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[2] * S_n[2];
+#endif
+
+    return (fabs(u_out) + c_x) * A_norm;
 }
 
 

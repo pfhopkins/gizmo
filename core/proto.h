@@ -971,7 +971,7 @@ void special_rt_feedback_injection(void);
 
 #ifdef CBE_INTEGRATOR
 void do_cbe_initialization(void);
-/* do_cbe_flux_computation, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel
+/* cbe_flux_hllc_vacuum, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel
    live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
    entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
    (sidm/sidm_gpu_decls.h). */

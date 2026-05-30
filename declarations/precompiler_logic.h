@@ -1550,7 +1550,7 @@
 #endif
 
 /* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
- * guardrail, codex 2026-05-25). The do_cbe_flux_computation /
+ * guardrail, codex 2026-05-25). The cbe_flux_hllc_vacuum /
  * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
  * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
  * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
