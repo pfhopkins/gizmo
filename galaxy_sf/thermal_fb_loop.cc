@@ -30,6 +30,7 @@
 #include "../mesh/kernel.h"                       /* MUST precede thermal_fb_loop.h (no include guards) */
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_writeback_ops.h"
+#include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate -- needed for ghost pre-zero pattern */
 #include "thermal_fb_loop.h"
 
 #ifdef GALSF_FB_THERMAL
@@ -220,6 +221,7 @@ void thermal_fb_local_fill(int i,
     loc->Vel          = P_host[i].Vel;
     loc->KernelRadius = P_host[i].KernelRadius;
     loc->wt_sum       = P_host[i].DensityAroundParticle;
+    loc->TimeBin      = P_host[i].TimeBin;  /* source TimeBin for receiver wakeup-mark */
 
     struct addFB_evaluate_data_in_ fb;
     particle2in_addFB_fromstars(&fb, i, 0);
@@ -277,6 +279,13 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(thermalfb)
 #ifdef GALSF_FB_TURNOFF_COOLING
     GHOST_WRITEBACK_GAS_MAX(DelayTimeCoolingSNe)
 #endif
+    /* wakeup written via atomic_max(Pj.wakeup, source.TimeBin+1) in
+     * thermal_fb_pair_kernel. MAX-reverse-comm semantics match the device
+     * side. Pre-zero of imported ghost wakeup happens in ghost_writeback_begin
+     * below (same pattern as gravity/ags_force_loop.cc:317-339 -- without
+     * pre-zero, an imported ghost wakeup >= the kernel's post-write would
+     * silently fail to ship home). */
+    GHOST_WRITEBACK_PARTICLE_MAX(wakeup)
 GHOST_WRITEBACK_BUNDLE_END(thermalfb)
 
 /* ghost_write_detector_begin/end: runner default (loop_name = "thermalfb"). */
@@ -284,6 +293,19 @@ GHOST_WRITEBACK_BUNDLE_END(thermalfb)
 void ThermalFBSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                             const NeighborLoopPlan& /*plan*/)
 {
+    /* Pre-zero ghost P[j].wakeup BEFORE the bundle snapshot. Same pattern as
+     * gravity/ags_force_loop.cc:317-339. Without this, an imported ghost that
+     * arrived with a wakeup already >= what the kernel writes would fail to
+     * trip the MAX op's "post > snap" predicate, and the kernel write would
+     * not ship home. Pre-zeroing forces every kernel-side wakeup write on a
+     * ghost to be visible to the MAX reverse-comm. */
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    for(int g = 0; g < num_ghosts; g++) {
+        P[num_local + g].wakeup = 0;
+    }
+    /* Host mutated ghost particles; force the next arena acquire to re-stage P. */
+    gpu_particles_arena_invalidate();
     ghost_writeback_begin_bundle(thermalfb_ghost_writeback_bundle_ptr());
 }
 

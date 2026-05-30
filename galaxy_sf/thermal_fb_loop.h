@@ -100,6 +100,10 @@ struct ThermalFBLocalIn {
     MyFloat Msne;         /* ejecta mass */
     MyFloat Esne;         /* ejecta kinetic energy = 0.5*Msne*v_ej^2 */
     MyFloat kernel_zero;  /* kernel_main(0.0, 1.0, 1.0, ...) at u=0 */
+    short int TimeBin;    /* source.TimeBin -- encoded as wakeup_val
+                           * (TimeBin+1) on the receiver via atomic_max in the
+                           * pair kernel, so direct thermal-energy receivers
+                           * are marked for positive wakeup at deposition. */
 #ifdef METALS
     MyFloat yields[NUM_METAL_SPECIES];
 #endif
@@ -215,6 +219,15 @@ static void thermal_fb_pair_kernel(
     }
     Kokkos::atomic_add(&Cj.InternalEnergy,     (MyDouble)dIE);
     Kokkos::atomic_add(&Cj.InternalEnergyPred, (MyDouble)dIE);
+
+    /* Mark this directly-perturbed gas receiver for positive wakeup using
+     * the standard hydro-convention encoding (source.TimeBin + 1). atomic_max
+     * preserves any earlier-written more-aggressive wakeup. Coupled with the
+     * process_wake_ups floor at lowest_occupied_active_bin (commit c4c270bf),
+     * the receiver wakes at the right pace immediately, killing the multi-
+     * generation cascade that would otherwise emerge once shell-by-shell
+     * pair-body wakeup-checks discover the stale-low MaxSignalVel. */
+    Kokkos::atomic_max(&Pj.wakeup, (short int)((int)local.TimeBin + 1));
 
 #ifdef METALS
     for (int k = 0; k < NUM_METAL_SPECIES; k++) {
