@@ -159,18 +159,26 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double dt = get_particle_timestep_in_physical(j), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
                 if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {
                     CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;
-                    /* Direct-dU branch only: refresh EOS closure + floor MaxSignalVel
-                     * to the now-elevated effective_soundspeed. Without this, the
-                     * wakeup-limiter at hydro/hydro_functions.h:472 compares
-                     * kernel.vsig against a stale-low MaxSignalVel for these
-                     * SN-shocked neighbors -> over-aggressive wakeup -> cascade
-                     * down to bin 0 (Mac OMP reproduced 2026-05-30, codex-diagnosed).
-                     * Deferred-dU branch intentionally NOT refreshed: it leaves u
-                     * unchanged and accumulates DtInternalEnergy for the next
-                     * cooling integration -- refreshing EOS there would close
-                     * against a pre-integration state. */
-                    set_eos_pressure(j, P, CellP);
-                    CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, CellP[j].effective_soundspeed());
+                    /* Direct-dU branch: mark this receiver for positive wakeup
+                     * from the most-aggressive source TimeBin that contributed.
+                     * Without this, the receiver's stale post-injection state
+                     * (huge u, low MaxSignalVel) is only "discovered" later by a
+                     * pair-body wakeup-check, which then propagates shell-by-shell
+                     * with waker_bin - offset per generation, cascading bins down.
+                     * Coupled to the process_wake_ups floor at lowest_occupied_
+                     * active_bin (commit c4c270bf), this gets the receiver active
+                     * at the right pace immediately, killing the cascade at its
+                     * root. Standard hydro-convention encoding via max_source_wakeup
+                     * accumulator -- no special encoding, no EOS/MaxSignalVel
+                     * refresh (which would be silent suppression of legitimate
+                     * wakeup -- regression from the prior 97ab9ea0 attempt at
+                     * this site that this block replaces). Deferred-dU branch
+                     * intentionally NOT marked: u unchanged there, no perturbation. */
+                    int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
+                    if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
+                        P[j].wakeup = (short int)wakeup_val;
+                        NeedToWakeupParticles_local = 1;
+                    }
                 }
                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
             }

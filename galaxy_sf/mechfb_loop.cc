@@ -122,6 +122,7 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
     loc->KernelRadius = fb.KernelRadius;
     loc->V_i = fb.V_i;
     loc->SNe_v_ejecta = fb.SNe_v_ejecta;
+    loc->TimeBin = P[i].TimeBin;  /* source TimeBin -- for downstream wakeup-mark encoding */
     for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) loc->Area_weighted_sum[k] = fb.Area_weighted_sum[k];
 #ifdef METALS
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) loc->yields[k] = fb.yields[k];
@@ -506,7 +507,8 @@ static int mechfb_gas_delta_nonzero(const struct MechFBGasDelta *d) {
 
 KOKKOS_INLINE_FUNCTION
 static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
-    d->N_injected  = 0;
+    d->N_injected         = 0;
+    d->max_source_wakeup  = 0;  /* MAX identity */
     d->m_injected  = 0;
     d->KE_injected = 0;
     d->TE_injected = 0;
@@ -528,6 +530,7 @@ KOKKOS_INLINE_FUNCTION
 static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
                                  const struct MechFBGasDelta *src) {
     dst->N_injected  += src->N_injected;
+    dst->max_source_wakeup = IMAX(dst->max_source_wakeup, src->max_source_wakeup);
     dst->m_injected  += src->m_injected;
     dst->KE_injected += src->KE_injected;
     dst->TE_injected += src->TE_injected;

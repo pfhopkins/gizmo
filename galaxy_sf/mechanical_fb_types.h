@@ -19,6 +19,16 @@
 struct MechFBGasDelta
 {
     int N_injected;
+    int max_source_wakeup;  /* MAX over source events into this receiver of
+                             * (source.TimeBin + 1) -- hydro-convention wakeup
+                             * value. Applied by mechanical_fb.cc's direct-dU
+                             * branch as P[j].wakeup = max(P[j].wakeup, ...).
+                             * Identity = 0 (no source events yet). Rides
+                             * along with N_injected -- mechfb_gas_delta_nonzero
+                             * remains gated on N_injected > 0 (every wakeup
+                             * accumulation is coupled to a real feedback delta
+                             * write, so this field does not create standalone
+                             * ghost packets). */
     double m_injected, p_injected[3], KE_injected, TE_injected, Z_injected[NUM_METAL_SPECIES];
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     double Mass_Where_Dust_Shocked;

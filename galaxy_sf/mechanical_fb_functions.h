@@ -123,6 +123,9 @@ struct MechFBLocalIn
     MyDouble Msne;
     MyFloat KernelRadius, V_i, SNe_v_ejecta;
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
+    short int TimeBin;  /* source's TimeBin -- accumulated into gas-side
+                         * max_source_wakeup so direct-dU receivers can be
+                         * marked for positive wakeup at apply time. */
 #ifdef METALS
     MyDouble yields[NUM_METAL_SPECIES];
 #endif
@@ -587,6 +590,11 @@ static void mechanical_fb_pair_kernel(
             mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
                                     home_gas_delta, ghost_gas_delta);
         Kokkos::atomic_add(&gd->N_injected, 1);
+        /* Track max wakeup_val across all source events into this receiver,
+         * for the host-side direct-dU branch in mechanical_fb.cc to apply as
+         * P[j].wakeup = max(P[j].wakeup, max_source_wakeup). Standard hydro-
+         * convention encoding: wakeup_val = source.TimeBin + 1. */
+        Kokkos::atomic_max(&gd->max_source_wakeup, (int)local.TimeBin + 1);
         Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
         Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
         Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
