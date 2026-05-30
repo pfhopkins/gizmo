@@ -332,11 +332,13 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     const double Area_i_out[3] = {  Face_Area_Vec[0],  Face_Area_Vec[1],  Face_Area_Vec[2] };
     const double Area_j_out[3] = { -Face_Area_Vec[0], -Face_Area_Vec[1], -Face_Area_Vec[2] };
     /* matching_basis_j_for_basis_in_i[] is populated by cbe_build_pair_matching
-     * for symmetric SSOT but is not consumed locally — matched-pair coupling
-     * for the i-side deposit happens via Q_face reconstruction (Fix #5,
-     * future commit) reading the matched j-basis through the gradient
-     * stencil, NOT through a per-pair flux-call neighbor argument. The
-     * j-side outflow path needs i_m to deposit gain into i's basis i_m. */
+     * for symmetric SSOT but is not consumed locally: matched-pair coupling
+     * for the i-side deposit happens via Q_face reconstruction reading the
+     * matched j-basis through the gradient stencil, NOT through a per-pair
+     * flux-call neighbor argument. The j-side outflow path needs i_m to
+     * deposit gain into i's basis i_m. This is the architected Q-cell/Q-face
+     * pairing split (gradient + limiter match on Q_cell; flux matches on
+     * Q_face), both via the same SSOT cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const int i_m = matching_basis_i_for_basis_in_j[m];
