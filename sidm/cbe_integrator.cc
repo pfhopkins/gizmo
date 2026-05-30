@@ -64,7 +64,13 @@ static void cbe_fibonacci_sphere_dir_rotated_to_vhat(int n, int N,
     double vhat[3] = {Vel[0]/v0, Vel[1]/v0, Vel[2]/v0};
     double dot = vhat[2];   /* zhat . vhat */
     if(fabs(dot) > 1.0 - 1.0e-12) {
-        if(dot < 0) { out[0] = -out[0]; out[1] = -out[1]; out[2] = -out[2]; }
+        /* C7 fixup (2026-05-30, codex): antiparallel case (vhat ~ -zhat).
+         * Apply a proper 180-deg rotation about the x-axis -- maps +z to
+         * -z, leaves +x unchanged. Previous draft negated all three
+         * components (an inversion, not a rotation); harmless for the
+         * tiny placeholder slot but inconsistent with the Rodrigues
+         * intent. */
+        if(dot < 0) { out[1] = -out[1]; out[2] = -out[2]; }
         return;
     }
     /* axis = zhat x vhat (axis[2] = 0 always); angle = acos(dot). */

@@ -1567,3 +1567,17 @@
 #error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
 #endif
 #endif
+/* C7 fixup (2026-05-30, codex): the 3D fence above only guards the
+ * SECONDMOMENT case. The no-SECONDMOMENT path at line ~153 sets
+ * CBE_INTEGRATOR_NMOMENTS = (BOX_SPATIAL_DIMENSION)+1 -> NMOMENTS=2 in
+ * 1D, NMOMENTS=3 in 2D. C7's do_cbe_initialization assumes slots [1],
+ * [2], [3] always exist (the conservation-renormalization pass writes
+ * `for(k=1;k<4;...)` and the synthesis helper writes m*Vel[0..2] into
+ * slots [1..3]); same OOB exists in the pre-C7 conservation pass and
+ * the flux body's 3D-vector code. Fence ALL CBE modes at 3D until
+ * dimension-aware moment-index helpers exist. */
+#if defined(CBE_INTEGRATOR)
+#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
+#error "CBE_INTEGRATOR currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The per-particle init synthesis + 2-pass conservation renormalization in sidm/cbe_integrator.cc and the flux body's vector ops in sidm/cbe_integrator_flux_functions.h all assume slots [1], [2], [3] are momentum components -- 1D (NMOMENTS=2) and 2D (NMOMENTS=3) would OOB-write to non-existent slots. Add dimension-aware moment-index helpers before unfencing."
+#endif
+#endif
