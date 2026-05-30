@@ -278,7 +278,27 @@ void cooling_parent_routine(void)
         cool_indices.push_back(i);
     }
     int N_active = (int) cool_indices.size();
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+    /* ORACLE accumulators -- hoisted above the early-return and outside the
+     * GPU/CPU branch decision so the MPI_Allreduce below is reached by every
+     * rank, regardless of local N_active or whether the GPU offload threshold
+     * is met. Neutral init (zeros) so ranks that take the CPU path or the
+     * early-return contribute MPI_MAX-neutral / MPI_SUM-neutral values. */
+    double oracle_max_rel_Press = 0.0, oracle_max_rel_Temp = 0.0, oracle_max_rel_Gamma = 0.0, oracle_max_rel_Cs = 0.0;
+    double oracle_max_rel_DustMetal = 0.0, oracle_max_rel_DustSource = 0.0, oracle_max_rel_DustSpecies = 0.0;
+    double oracle_max_rel_DustNumberInBin = 0.0, oracle_max_rel_DustSlopeInBin = 0.0;
+    double oracle_max_rel_CinCO = 0.0, oracle_max_rel_DenseMolFrac = 0.0, oracle_max_rel_DelayTimeSputt = 0.0;
+    double oracle_max_rel_MolFrac = 0.0, oracle_max_rel_MolFracNeutH = 0.0;
+    double oracle_max_rel_DelayTimeHII = 0.0;
+    long long oracle_n_mismatch = 0;
+    unsigned long long oracle_first_mismatch_ID = 0ULL;
+    long long oracle_n_compared = 0; /* cells actually device-vs-host compared; <= N_active */
+    const double oracle_tol = 1.0e-10;
+    /* DO NOT early-return when N_active==0 under ORACLE -- must reach the
+     * MPI_Allreduce below. Dispatch loop is a no-op for N_active==0. */
+#else
     if(N_active == 0) {return;}
+#endif
 
     /* Steps 2-4: Gather / Dispatch / Scatter in batches.
      *
@@ -306,32 +326,8 @@ void cooling_parent_routine(void)
      * get_particle_timestep_in_physical is host-only and not worth porting. */
     double *compact_dtime = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(double));
 
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-    /* TEMP per-cooling-call ORACLE accumulators (audit-E1 Phase 1d +
-     * Phase 2 chunk 2 extension to cover the full post_cooling_tail).
-     * Compares device-kernel output against host wrapper re-run on a
-     * scratch copy of the same compact inputs. Detects the
-     * pre-93897f62 wrong-results-on-CUDA failure mode (bisected
-     * f8d2619f..63474bcd) plus any Chunk-2 device/host divergence in
-     * the deferred tail. Bounded summary only -- no per-particle floods.
-     * Compile-time #ifdef GIZMO_POSTCOOL_ORACLE, default-off, strip once
-     * the port is fully blessed (oracle is temporary scaffolding per
-     * feedback_behavioral §6). */
-    /* EOS-side max-rel accumulators (Phase 1d) */
-    double oracle_max_rel_Press = 0.0, oracle_max_rel_Temp = 0.0, oracle_max_rel_Gamma = 0.0, oracle_max_rel_Cs = 0.0;
-    /* Deferred-tail max-rel accumulators (Phase 2 chunk 2). Per-class
-     * maxima keep the oracle "bounded summary" (one log line per cooling
-     * call) while covering every field the post_cooling_tail kernel can
-     * touch -- dust scalars + arrays, molecfrac scalars, DelayTimeHII. */
-    double oracle_max_rel_DustMetal = 0.0, oracle_max_rel_DustSource = 0.0, oracle_max_rel_DustSpecies = 0.0;
-    double oracle_max_rel_DustNumberInBin = 0.0, oracle_max_rel_DustSlopeInBin = 0.0;
-    double oracle_max_rel_CinCO = 0.0, oracle_max_rel_DenseMolFrac = 0.0, oracle_max_rel_DelayTimeSputt = 0.0;
-    double oracle_max_rel_MolFrac = 0.0, oracle_max_rel_MolFracNeutH = 0.0;
-    double oracle_max_rel_DelayTimeHII = 0.0;
-    long long oracle_n_mismatch = 0;
-    unsigned long long oracle_first_mismatch_ID = 0ULL;
-    const double oracle_tol = 1.0e-10;
-#endif
+    /* ORACLE accumulators are hoisted to function scope above for MPI
+     * collective correctness (see comment near N_active early-return). */
 
     for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
     {
@@ -591,6 +587,7 @@ void cooling_parent_routine(void)
             #undef POSTCOOL_ORACLE_CMP
         }
         free(oracle_P_scratch); free(oracle_Cell_scratch);
+        oracle_n_compared += batch_n;
 #endif
 
         /* Scatter batch back. Post Chunk 2 (2026-05-27):
@@ -617,49 +614,10 @@ void cooling_parent_routine(void)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d +
-     * Phase 2 chunk 2 extension for the deferred-tail fields). Single-line print
-     * on rank 0 -- no per-particle data, no per-batch lines. MPI_MAX on the
-     * first-mismatch ID is a deliberate "best effort first"; for forensic detail
-     * re-run a smaller config or raise the tolerance. */
-    /* 15-element MPI_MAX reduction across all monitored fields. Slots gated
-     * out of the per-cell compare stay 0 -> MPI_MAX(0, real) = real, so the
-     * unused slots are harmless. Single-line print on rank 0; per-class
-     * column even if the field isn't active under this Config (always 0).
-     * Bounded output regardless of N_active or array dimensions. */
-    double local_max[15] = {
-        /* 0-3 EOS */            oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs,
-        /* 4-6 dust arrays */    oracle_max_rel_DustMetal, oracle_max_rel_DustSource, oracle_max_rel_DustSpecies,
-        /* 7-9 dust scalars */   oracle_max_rel_CinCO, oracle_max_rel_DenseMolFrac, oracle_max_rel_DelayTimeSputt,
-        /* 10-11 grain bins */   oracle_max_rel_DustNumberInBin, oracle_max_rel_DustSlopeInBin,
-        /* 12-13 molecfrac */    oracle_max_rel_MolFrac, oracle_max_rel_MolFracNeutH,
-        /* 14 HII countdown */   oracle_max_rel_DelayTimeHII
-    };
-    double global_max[15];
-    MPI_Allreduce(local_max, global_max, 15, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    long long global_n_mismatch = 0;
-    MPI_Allreduce(&oracle_n_mismatch, &global_n_mismatch, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    unsigned long long global_first_ID = 0ULL;
-    MPI_Allreduce(&oracle_first_mismatch_ID, &global_first_ID, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-    if(ThisTask == 0) {
-        printf("[POSTCOOL_ORACLE] step=%lld N_active=%d tol=%.1e   max_rel: "
-               "Press=%.3e Temp=%.3e Gamma=%.3e Cs=%.3e   "
-               "DustMetal=%.3e DustSource=%.3e DustSpecies=%.3e "
-               "CinCO=%.3e DenseMolFrac=%.3e DelayTimeSputt=%.3e "
-               "DustNumberInBin=%.3e DustSlopeInBin=%.3e "
-               "MolFrac=%.3e MolFracNeutH=%.3e DelayTimeHII=%.3e   "
-               "mismatches=%lld first_ID=%llu\n",
-            (long long)All.NumCurrentTiStep, N_active, oracle_tol,
-            global_max[0], global_max[1], global_max[2], global_max[3],
-            global_max[4], global_max[5], global_max[6],
-            global_max[7], global_max[8], global_max[9],
-            global_max[10], global_max[11],
-            global_max[12], global_max[13], global_max[14],
-            global_n_mismatch, global_first_ID);
-        fflush(stdout);
-    }
-#endif
+    /* ORACLE MPI_Allreduce + print HOISTED OUT of the GPU branch (below both
+     * branches close) so that every rank reaches it, even when N_active is 0
+     * or the rank takes the CPU path. See comment near function-entry oracle
+     * accumulators for the collective-correctness rationale. */
 
   } else
 #endif
@@ -695,6 +653,53 @@ void cooling_parent_routine(void)
     free(compact_Cell);
     free(compact_P);
   } /* end CPU/GPU path selection */
+
+#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
+    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d +
+     * Phase 2 chunk 2 extension for the deferred-tail fields). Hoisted to this
+     * post-branches location so all ranks reach it -- ranks that took the early
+     * return (N_active==0), the CPU path, or didn't accumulate any oracle data
+     * contribute neutral zeros to MPI_MAX / MPI_SUM, which is correct.
+     *
+     * Reported N_compared is the GLOBAL SUM of cells actually device-vs-host
+     * compared (only the GPU branch fills it), NOT the local rank's N_active
+     * (which can include cells dispatched via the CPU fallback path that has
+     * no host-vs-device comparison). Codex 2026-05-30 review: the label must
+     * reflect what was actually compared so the oracle output stays honest. */
+    double local_max[15] = {
+        /* 0-3 EOS */            oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs,
+        /* 4-6 dust arrays */    oracle_max_rel_DustMetal, oracle_max_rel_DustSource, oracle_max_rel_DustSpecies,
+        /* 7-9 dust scalars */   oracle_max_rel_CinCO, oracle_max_rel_DenseMolFrac, oracle_max_rel_DelayTimeSputt,
+        /* 10-11 grain bins */   oracle_max_rel_DustNumberInBin, oracle_max_rel_DustSlopeInBin,
+        /* 12-13 molecfrac */    oracle_max_rel_MolFrac, oracle_max_rel_MolFracNeutH,
+        /* 14 HII countdown */   oracle_max_rel_DelayTimeHII
+    };
+    double global_max[15];
+    MPI_Allreduce(local_max, global_max, 15, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    long long global_n_mismatch = 0;
+    MPI_Allreduce(&oracle_n_mismatch, &global_n_mismatch, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    unsigned long long global_first_ID = 0ULL;
+    MPI_Allreduce(&oracle_first_mismatch_ID, &global_first_ID, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    long long global_n_compared = 0;
+    MPI_Allreduce(&oracle_n_compared, &global_n_compared, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {
+        printf("[POSTCOOL_ORACLE] step=%lld N_compared=%lld tol=%.1e   max_rel: "
+               "Press=%.3e Temp=%.3e Gamma=%.3e Cs=%.3e   "
+               "DustMetal=%.3e DustSource=%.3e DustSpecies=%.3e "
+               "CinCO=%.3e DenseMolFrac=%.3e DelayTimeSputt=%.3e "
+               "DustNumberInBin=%.3e DustSlopeInBin=%.3e "
+               "MolFrac=%.3e MolFracNeutH=%.3e DelayTimeHII=%.3e   "
+               "mismatches=%lld first_ID=%llu\n",
+            (long long)All.NumCurrentTiStep, global_n_compared, oracle_tol,
+            global_max[0], global_max[1], global_max[2], global_max[3],
+            global_max[4], global_max[5], global_max[6],
+            global_max[7], global_max[8], global_max[9],
+            global_max[10], global_max[11],
+            global_max[12], global_max[13], global_max[14],
+            global_n_mismatch, global_first_ID);
+        fflush(stdout);
+    }
+#endif
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
