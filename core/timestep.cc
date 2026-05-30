@@ -1340,6 +1340,30 @@ void process_wake_ups(void)
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
 		int waker_bin = P[i].wakeup - 1;
 		bin = IMAX(0, waker_bin - wakeup_bin_offset);
+#ifdef STOP_WHEN_BELOW_MINTIMESTEP
+		/* Surface-fail-loud guard (codex 2026-05-30): if wakeup assigns a bin
+		 * whose physical timestep is below MinSizeTimestep, abort with full
+		 * context. Without this, the wakeup-application path silently floors at
+		 * bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning
+		 * at line 1102, which lets wakeup-cascade pathologies (over-aggressive
+		 * propagation of small bins via stale-MaxSignalVel wakeups) run all
+		 * the way to Systemstep=0 without any abort signal. */
+		{
+		    double dt_assigned_physical = (double)GET_INTEGERTIME_FROM_TIMEBIN(bin) * All.Timebase_interval;
+		    if(dt_assigned_physical < All.MinSizeTimestep) {
+			printf("\n[WAKEUP-MINTIMESTEP] ABORT: rank=%d i=%d ID=%llu Type=%d  binold=%d -> bin=%d  waker_bin=%d  wakeup_bin_offset=%d  dt_assigned_physical=%g < MinSizeTimestep=%g  Mass=%g\n",
+			    ThisTask, i, (unsigned long long)P[i].ID, P[i].Type, binold, bin,
+			    waker_bin, wakeup_bin_offset,
+			    dt_assigned_physical, All.MinSizeTimestep, P[i].Mass);
+			if(P[i].Type == 0) {
+			    printf("[WAKEUP-MINTIMESTEP]   Pressure=%g Density=%g InternalEnergy=%g MaxSignalVel=%g\n",
+				CellP[i].Pressure, CellP[i].Density, CellP[i].InternalEnergy, CellP[i].MaxSignalVel);
+			}
+			fflush(stdout);
+			endrun(889);
+		    }
+		}
+#endif
 	    } else {
 		/* generic wakeup (sinks, merge, etc.): use highest active bin */
 		bin = max_time_bin_active;
