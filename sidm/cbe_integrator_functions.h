@@ -564,51 +564,125 @@ void cbe_build_flux_frame_Q_from_stored_moments(
 }
 
 
-/* Wave-CBE Commit 5 (2026-05-26) — symmetric 3x3 SPD projection of the
- * stress block of a CBE basis-moment row. Operates in-place on the 6-slot
- * tensor S = [Sxx, Syy, Szz, Sxy, Sxz, Syz] (= moment slots [4..9]).
- * Returns true iff S was modified (eigenvalue floor fired or degenerate-
- * input fallback). *dT_out (when non-null) is assigned trace_after -
- * trace_before; >= 0 by construction (positive eigenvalue floor).
+/* Wave-CBE Fix #2a (2026-05-30) — symmetric 3x3 SSOT realizability machinery.
  *
- * Algorithm: 6 fixed sweeps of symmetric 3x3 Jacobi eigendecomposition
- * (Press et al. "Numerical Recipes" formulation; off-diagonals fall to
- * <~1e-12 within 4-5 sweeps for symmetric 3x3, 6 sweeps for safety
- * margin). Eigenvalues are clamped to lambda_floor = CBE_SPD_RELATIVE_FLOOR
- * * max(trace_before, MIN_REAL_NUMBER), then S is reconstructed as
- * V * diag(lambda) * V^T.
+ * The three helpers below provide the canonical PSD predicate + projection
+ * for CBE basis rows, shared by the Commit-10 cone limiter, the face-state
+ * Q-clamp, and the cell-state drift-kick repair. Storage convention: raw
+ * moment slots [4..9] hold T_kl = m * R_kl = m * (S_kl + v_k v_l) (raw
+ * second-moment density). Central stress S_kl = R_kl - v_k v_l is built
+ * locally by the raw-row wrapper before projection.
  *
- * Degenerate-input policy (codex 2026-05-26): if trace_before is non-finite
- * or strictly non-positive, write isotropic S = MIN_REAL_NUMBER * I and set
- * *dT_out = trace_after (NOT trace_after - trace_before, to keep NaN out
- * of the diagnostic accumulator). Returns true.
- *
- * dP: NOT touched. SPD repair operates only on stress slots; momentum
- * slots [1..3] are not arguments. Caller documents dP=0.0 as an invariant.
- *
- * Used at TWO call sites with identical math (SSOT):
- *  - Cell-state drift-kick repair (do_cbe_drift_kick_kernel, replaces the
- *    Wave-CBE Commit 4-era if(2==2) 1D-collapse stopgap).
- *  - Face-state Q-clamp (cbe_clamp_face_Q, S-tensor portion).
- * Both call sites gate on CBE_INTEGRATOR_NMOMENTS >= 10 since the helper
- * assumes a full 3D second-moment tensor with off-diagonal slots present.
+ * 2a fixes a pre-existing units bug in the prior cbe_spd_repair_S3x3
+ * function (Commit 5 introduced; Commit 10 inherited at the face site):
+ * both call sites passed raw R slots to a helper that interpreted them
+ * as central S. Effective floor was CBE_SPD_RELATIVE_FLOOR * trace(raw R)
+ * ~ 1e-12 * m * (trace(S) + v_bulk^2) — a hidden bulk-KE floor on stress.
+ * The new raw-row wrapper does the raw <-> central conversion correctly,
+ * and the core projection takes an explicit eigenvalue_floor argument so
+ * each caller picks its own policy.
  */
+
+
+/* SSOT 3x3 symmetric PSD test via all principal minors (originally Commit 10
+ * Fix #6; moved here in Fix #2a). Returns true iff every principal minor
+ * of M is >= -eps_tol * scale, where scale is the natural amplitude for
+ * each minor order (trace for diagonal, trace^2 for 2x2, trace^3 for det).
+ * eps_tol = 0 gives strict Sylvester-style PSD; eps_tol > 0 absorbs
+ * FP-scale near-zero negative roundoff. Cone limiter uses 0 (strict);
+ * Fix #2 cell repair uses 1e-12. */
 KOKKOS_INLINE_FUNCTION
-bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
+bool cbe_sym3x3_all_principal_minors_nonneg(const double M[3][3], double eps_tol)
+{
+    const double trace_pos = DMAX(M[0][0] + M[1][1] + M[2][2], MIN_REAL_NUMBER);
+    const double eps_diag  = eps_tol * trace_pos;
+    const double eps_2x2   = eps_tol * trace_pos * trace_pos;
+    const double eps_det   = eps_tol * trace_pos * trace_pos * trace_pos;
+    if(M[0][0] < -eps_diag) return false;
+    if(M[1][1] < -eps_diag) return false;
+    if(M[2][2] < -eps_diag) return false;
+    if(M[0][0]*M[1][1] - M[0][1]*M[0][1] < -eps_2x2) return false;
+    if(M[0][0]*M[2][2] - M[0][2]*M[0][2] < -eps_2x2) return false;
+    if(M[1][1]*M[2][2] - M[1][2]*M[1][2] < -eps_2x2) return false;
+    const double det = M[0][0] * (M[1][1]*M[2][2] - M[1][2]*M[1][2])
+                     - M[0][1] * (M[0][1]*M[2][2] - M[1][2]*M[0][2])
+                     + M[0][2] * (M[0][1]*M[1][2] - M[1][1]*M[0][2]);
+    return (det >= -eps_det);
+}
+
+
+/* SSOT realizability predicate for a CBE basis row in raw-slot layout.
+ * A row is realizable iff m > 0 AND (NMOMENTS >= 7) M = m*T - p p^T is PSD,
+ * where T_kl = U_row[4..9] are the raw second-moment density slots and
+ * the PSD test uses cbe_sym3x3_all_principal_minors_nonneg with eps_tol.
+ * (Note the M expression: M = m * R_kl * m - p_k p_l = T_kl * m - p_k p_l
+ *  with T_kl = m * R_kl already, so M = T_kl * m - p p^T as written.)
+ *
+ * Consumers: cone limiter (strict, eps_tol = 0); Fix #2b cell repair
+ * (FP-scale, eps_tol = CBE_REPAIR_EPS_TOL). */
+KOKKOS_INLINE_FUNCTION
+bool cbe_basis_row_is_realizable(
+    const double Q_row[CBE_INTEGRATOR_NMOMENTS], double eps_tol)
+{
+    if(!(Q_row[0] > 0) || !isfinite(Q_row[0])) return false;
+#if (CBE_INTEGRATOR_NMOMENTS >= 7)
+    {
+        const double m  = Q_row[0];
+        const double p[3] = { Q_row[1], Q_row[2], Q_row[3] };
+        double M[3][3];
+        M[0][0] = Q_row[4] * m - p[0]*p[0];
+        M[1][1] = Q_row[5] * m - p[1]*p[1];
+        M[2][2] = Q_row[6] * m - p[2]*p[2];
+    #if (CBE_INTEGRATOR_NMOMENTS >= 10)
+        M[0][1] = M[1][0] = Q_row[7] * m - p[0]*p[1];
+        M[0][2] = M[2][0] = Q_row[8] * m - p[0]*p[2];
+        M[1][2] = M[2][1] = Q_row[9] * m - p[1]*p[2];
+    #else
+        /* NMOMENTS=7: off-diagonal central S absent (Commit 8 convention).
+         * Zero M off-diagonals so the full-3x3 PSD helper reduces to the
+         * diagonal-only check. */
+        M[0][1] = M[1][0] = 0;
+        M[0][2] = M[2][0] = 0;
+        M[1][2] = M[2][1] = 0;
+    #endif
+        if(!cbe_sym3x3_all_principal_minors_nonneg(M, eps_tol)) return false;
+    }
+#endif
+    return true;
+}
+
+
+/* CORE: symmetric 3x3 PSD projection of a CENTRAL stress tensor. Operates
+ * in-place on the 6-vector S = [Sxx, Syy, Szz, Sxy, Sxz, Syz] (NOT a raw
+ * moment row — use cbe_basis_row_project_central_stress_to_PSD for that).
+ * Returns true iff S was modified.
+ *
+ * Algorithm: 6 fixed Jacobi sweeps to diagonalize, clamp eigenvalues to
+ * max(lambda_k, eigenvalue_floor), reconstruct S = V * diag(lambda) * V^T.
+ *
+ * eigenvalue_floor: caller-supplied. Pass 0 for true PSD projection
+ * (Fix #2 cell repair); pass CBE_SPD_RELATIVE_FLOOR * trace_central_S_pos
+ * for the existing face-clamp floor policy. Fix #2a corrected the
+ * pre-existing units bug where this floor was computed from trace(raw R).
+ *
+ * Degenerate-input fallback: fires ONLY when input is non-finite (NaN/Inf
+ * in any S slot). trace_before <= 0 with finite entries is a legitimate
+ * central state to project (cold flows naturally give central S near or
+ * below zero) — Jacobi handles it, no isotropic-MIN_REAL injection.
+ * Codex round 4 explicit. */
+KOKKOS_INLINE_FUNCTION
+bool cbe_project_central_S_to_PSD(double S[6], double eigenvalue_floor,
+                                  double *dT_out)
 {
     /* Layout: [0]=Sxx, [1]=Syy, [2]=Szz, [3]=Sxy, [4]=Sxz, [5]=Syz. */
     double trace_before = S[0] + S[1] + S[2];
 
-    /* Degenerate-input fallback: ANY non-finite slot, or non-finite /
-     * non-positive trace -> isotropic tiny SPD. Checking the off-diagonals
-     * is load-bearing: if Sxy/Sxz/Syz are NaN but the diagonal trace is
-     * finite-positive, Jacobi propagates NaN through the eigenvalues,
-     * `lambda[k] < lambda_floor` evaluates false for NaN, the floor never
-     * fires, and non-finite stress survives into downstream consumers.
-     * Codex 2026-05-26. */
+    /* Degenerate-input fallback (non-finite only). Off-diagonal NaN check
+     * is load-bearing per codex 2026-05-26 (Jacobi propagates NaN through
+     * eigenvalues silently). */
     bool all_finite = true;
     for(int q = 0; q < 6; q++) { if(!isfinite(S[q])) { all_finite = false; break; } }
-    if(!all_finite || !isfinite(trace_before) || trace_before <= 0) {
+    if(!all_finite || !isfinite(trace_before)) {
         S[0] = MIN_REAL_NUMBER; S[1] = MIN_REAL_NUMBER; S[2] = MIN_REAL_NUMBER;
         S[3] = 0.0; S[4] = 0.0; S[5] = 0.0;
         if(dT_out) *dT_out = 3.0 * MIN_REAL_NUMBER;
@@ -667,13 +741,12 @@ bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
         }
     }
 
-    /* Eigenvalues = diagonal of converged A. Floor relative to trace_pos. */
+    /* Eigenvalues = diagonal of converged A. Floor with caller-supplied
+     * eigenvalue_floor (was: CBE_SPD_RELATIVE_FLOOR * trace_pos baked-in). */
     double lambda[3] = {A[0][0], A[1][1], A[2][2]};
-    double trace_pos    = DMAX(trace_before, MIN_REAL_NUMBER);
-    double lambda_floor = CBE_SPD_RELATIVE_FLOOR * trace_pos;
     bool floored = false;
     for(int k = 0; k < 3; k++) {
-        if(lambda[k] < lambda_floor) { lambda[k] = lambda_floor; floored = true; }
+        if(lambda[k] < eigenvalue_floor) { lambda[k] = eigenvalue_floor; floored = true; }
     }
     if(!floored) {
         /* Already SPD within floor — no modification, no diagnostic increment. */
@@ -693,15 +766,108 @@ bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
     S[0] = M[0][0]; S[1] = M[1][1]; S[2] = M[2][2];
     S[3] = M[0][1]; S[4] = M[0][2]; S[5] = M[1][2];
 
-    /* dT >= 0 by construction (eigenvalue floor only adds to the trace),
-     * but enforce defensively: roundoff in the V * diag(lambda) * V^T
-     * accumulation can produce a tiny negative residual when the floor
-     * fires on only one eigenvalue; clamp to 0 to preserve the col-8
-     * invariant. Codex 2026-05-26. */
+    /* dT enforcement: eigenvalue floor only adds to the trace by
+     * construction (>= 0); roundoff in V*diag(lambda)*V^T may produce a
+     * tiny negative residual when the floor fires on only one eigenvalue;
+     * clamp to 0 to preserve the col-8 invariant. */
     double dT = (M[0][0] + M[1][1] + M[2][2]) - trace_before;
     if(!isfinite(dT) || dT < 0.0) dT = 0.0;
     if(dT_out) *dT_out = dT;
     return true;
+}
+
+
+/* RAW-ROW WRAPPER: takes a CBE raw moment row, converts to central S,
+ * projects via cbe_project_central_S_to_PSD, rebuilds raw slots.
+ *
+ * U_row layout: slots [0..9] = (m, p_x, p_y, p_z, T_xx, T_yy, T_zz,
+ * T_xy, T_xz, T_yz) with T_kl = m * R_kl raw second-moment density.
+ * Central stress S_kl = R_kl - v_k v_l = T_kl / m - v_k v_l where v = p/m.
+ * On modification, rebuilds T_kl_new = m * (S_kl_repaired + v_k v_l).
+ *
+ * Named explicitly around "raw moment row" to prevent the bug 2a fixes
+ * (passing raw slots to a central-S-only API). dT_out is the raw-slot
+ * trace delta = m * (central-dT), preserving the dP_sum / dT_sum
+ * accumulator semantic Commit 5 wired into cbe_diagnostics col-8.
+ *
+ * NMOMENTS>=10 only: both current callers (cbe_clamp_face_Q + cell-side
+ * drift-kick) gate on >=10 since the central stress 3x3 is only present
+ * with the full 3D second-moment layout. NMOMENTS=7 callers (none yet)
+ * would need a diagonal-only variant. */
+KOKKOS_INLINE_FUNCTION
+bool cbe_basis_row_project_central_stress_to_PSD(
+    double U_row[CBE_INTEGRATOR_NMOMENTS],
+    double eigenvalue_floor,
+    double *dT_out)
+{
+#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+    /* Mass-positivity guard: m <= 0 means v = p/m undefined; caller is
+     * responsible for rho-clamping upstream (cbe_clamp_face_Q does so via
+     * Q_face[m][0] <= MIN_REAL_NUMBER row-zeroing; Fix #2b corrupt-cell
+     * guard does so at Step 0). Treat as no-op here. */
+    if(!(U_row[0] > 0) || !isfinite(U_row[0])) {
+        if(dT_out) *dT_out = 0;
+        return false;
+    }
+    const double m     = U_row[0];
+    const double inv_m = 1.0 / m;
+    const double v[3]  = { U_row[1]*inv_m, U_row[2]*inv_m, U_row[3]*inv_m };
+    /* Build central S in helper's slot order [Sxx, Syy, Szz, Sxy, Sxz, Syz]. */
+    double S[6];
+    S[0] = U_row[4]*inv_m - v[0]*v[0];
+    S[1] = U_row[5]*inv_m - v[1]*v[1];
+    S[2] = U_row[6]*inv_m - v[2]*v[2];
+    S[3] = U_row[7]*inv_m - v[0]*v[1];
+    S[4] = U_row[8]*inv_m - v[0]*v[2];
+    S[5] = U_row[9]*inv_m - v[1]*v[2];
+
+    double dT_central = 0;
+    bool modified = cbe_project_central_S_to_PSD(S, eigenvalue_floor, &dT_central);
+
+    if(modified) {
+        /* Rebuild raw slots: T_kl = m * (S_kl + v_k v_l). */
+        U_row[4] = m * (S[0] + v[0]*v[0]);
+        U_row[5] = m * (S[1] + v[1]*v[1]);
+        U_row[6] = m * (S[2] + v[2]*v[2]);
+        U_row[7] = m * (S[3] + v[0]*v[1]);
+        U_row[8] = m * (S[4] + v[0]*v[2]);
+        U_row[9] = m * (S[5] + v[1]*v[2]);
+    }
+    if(dT_out) *dT_out = dT_central * m;   /* raw-slot trace delta */
+    return modified;
+#else
+    /* NMOMENTS < 10: no off-diagonal stress slots; caller should not invoke. */
+    (void)U_row; (void)eigenvalue_floor;
+    if(dT_out) *dT_out = 0;
+    return false;
+#endif
+}
+
+
+/* COMPAT SHIM (Fix #2a): preserves the OLD pre-2a behavior of
+ * cbe_spd_repair_S3x3 for any latent caller not surfaced by the 2a grep.
+ * The two known callers (cbe_clamp_face_Q + do_cbe_drift_kick_kernel)
+ * are migrated to cbe_basis_row_project_central_stress_to_PSD in 2a.
+ * Fix #2b deletes this shim after verifying no other callers remain.
+ *
+ * Old behavior preserved: trace_before <= 0 (with finite entries) falls
+ * to isotropic MIN_REAL_NUMBER * I — this differs from the new core,
+ * which projects to PSD via Jacobi. The shim path retains the original
+ * fallback for byte-compatibility with any caller depending on it. */
+KOKKOS_INLINE_FUNCTION
+bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
+{
+    double trace_before = S[0] + S[1] + S[2];
+    bool all_finite = true;
+    for(int q = 0; q < 6; q++) { if(!isfinite(S[q])) { all_finite = false; break; } }
+    if(!all_finite || !isfinite(trace_before) || trace_before <= 0) {
+        S[0] = MIN_REAL_NUMBER; S[1] = MIN_REAL_NUMBER; S[2] = MIN_REAL_NUMBER;
+        S[3] = 0.0; S[4] = 0.0; S[5] = 0.0;
+        if(dT_out) *dT_out = 3.0 * MIN_REAL_NUMBER;
+        return true;
+    }
+    double trace_pos = DMAX(trace_before, MIN_REAL_NUMBER);
+    return cbe_project_central_S_to_PSD(S, CBE_SPD_RELATIVE_FLOOR * trace_pos, dT_out);
 }
 
 
@@ -714,10 +880,20 @@ bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
  * the flux loop.
  *
  * Wave-CBE Commit 5 (2026-05-26): face-state SPD enforcement on the
- * stress block of each rho-active basis row, via cbe_spd_repair_S3x3.
- * S_clamp_count increments once per basis row whose stress block was
- * modified (eigenvalue floor or degenerate-input fallback). Gated on
- * CBE_INTEGRATOR_NMOMENTS >= 10 since slots [4..9] only exist there. */
+ * stress block of each rho-active basis row.
+ *
+ * Wave-CBE Fix #2a (2026-05-30): migrated from cbe_spd_repair_S3x3 (which
+ * silently treated raw R as if it were central S) to the raw-row wrapper
+ * cbe_basis_row_project_central_stress_to_PSD, which correctly converts
+ * raw <-> central. The eigenvalue floor is computed from trace(central S)
+ * — NOT trace(raw R) which secretly included the bulk-KE contribution
+ * v_bulk^2 and acted as a hidden physical floor. Net physics change in
+ * cold flows: floor magnitude shrinks dramatically (1e-12 * trace_central_S
+ * is much smaller than 1e-12 * (trace_central_S + v_bulk^2) when bulk
+ * kinetic dominates). S_clamp_count semantic unchanged.
+ *
+ * Gated on CBE_INTEGRATOR_NMOMENTS >= 10 since slots [4..9] off-diagonals
+ * only exist there. */
 KOKKOS_INLINE_FUNCTION
 void cbe_clamp_face_Q(
     double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
@@ -731,8 +907,19 @@ void cbe_clamp_face_Q(
         }
 #if (CBE_INTEGRATOR_NMOMENTS >= 10)
         else {
+            /* Compute eigenvalue_floor from central S trace, NOT raw R trace.
+             * Mass-positivity guarded above (Qface[m][0] > MIN_REAL_NUMBER). */
+            const double m_face = Qface[m][0];
+            const double inv_m  = 1.0 / m_face;
+            const double v[3] = { Qface[m][1]*inv_m, Qface[m][2]*inv_m, Qface[m][3]*inv_m };
+            const double trace_S_central = (Qface[m][4] + Qface[m][5] + Qface[m][6]) * inv_m
+                                         - (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+            const double trace_S_pos     = DMAX(trace_S_central, MIN_REAL_NUMBER);
+            const double eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR * trace_S_pos;
             double dT_dump = 0.0;
-            if(cbe_spd_repair_S3x3(&Qface[m][4], &dT_dump) && S_clamp_count) {
+            if(cbe_basis_row_project_central_stress_to_PSD(Qface[m], eigenvalue_floor,
+                                                            &dT_dump)
+               && S_clamp_count) {
                 (*S_clamp_count)++;
             }
         }
@@ -988,17 +1175,46 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
         }
         if(crossnorm < 1) {for(k=7;k<10;k++) {pi.CBE_basis_moments[j][k] *= crossnorm;}}
         /* Wave-CBE Commit 5 (2026-05-26): symmetric 3x3 SPD projection on
-         * (Sxx, Syy, Szz, Sxy, Sxz, Syz) as the final pass after the
-         * existing diagonal-lower-clamp + Cauchy-Schwarz + determinant
-         * crossnorm chain. Replaces the if(2==2) 1D-collapse stopgap.
-         * Diagnostic accumulation gated on dT_out so production builds
-         * pay zero bookkeeping overhead (codex 2026-05-26 Strong fix). */
-        if(dT_out) {
-            double dT_basis = 0.0;
-            (void)cbe_spd_repair_S3x3(&pi.CBE_basis_moments[j][4], &dT_basis);
-            dT_local += dT_basis;
-        } else {
-            (void)cbe_spd_repair_S3x3(&pi.CBE_basis_moments[j][4], nullptr);
+         * the central stress block (Sxx, Syy, Szz, Sxy, Sxz, Syz) as the
+         * final pass after the existing diagonal-lower-clamp + Cauchy-
+         * Schwarz + determinant crossnorm chain. Replaces the if(2==2)
+         * 1D-collapse stopgap.
+         *
+         * Wave-CBE Fix #2a (2026-05-30): migrated from cbe_spd_repair_S3x3
+         * (which silently treated the raw R block at slots [4..9] as if it
+         * were central S) to the raw-row wrapper, which correctly converts
+         * raw <-> central before/after projection. The eigenvalue floor is
+         * now CBE_SPD_RELATIVE_FLOOR * trace(central S), NOT the hidden
+         * bulk-KE-inclusive trace(raw R) the old shim used.
+         *
+         * Note Fix #2b will replace this entire chain (diagonal floor +
+         * Cauchy-Schwarz + det crossnorm + this SPD projection + the
+         * split-largest below) with a conservative repair operator. 2a
+         * preserves the chain shape, fixing only the unit bug. */
+        {
+            const double m_pi    = pi.CBE_basis_moments[j][0];
+            double eigenvalue_floor = 0.0;
+            if(m_pi > 0 && isfinite(m_pi)) {
+                const double inv_m = 1.0 / m_pi;
+                const double v[3] = { pi.CBE_basis_moments[j][1]*inv_m,
+                                      pi.CBE_basis_moments[j][2]*inv_m,
+                                      pi.CBE_basis_moments[j][3]*inv_m };
+                const double trace_S_central = (pi.CBE_basis_moments[j][4]
+                                             +  pi.CBE_basis_moments[j][5]
+                                             +  pi.CBE_basis_moments[j][6]) * inv_m
+                                             - (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+                eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR
+                                 * DMAX(trace_S_central, MIN_REAL_NUMBER);
+            }
+            if(dT_out) {
+                double dT_basis = 0.0;
+                (void)cbe_basis_row_project_central_stress_to_PSD(
+                    pi.CBE_basis_moments[j], eigenvalue_floor, &dT_basis);
+                dT_local += dT_basis;
+            } else {
+                (void)cbe_basis_row_project_central_stress_to_PSD(
+                    pi.CBE_basis_moments[j], eigenvalue_floor, nullptr);
+            }
         }
 #endif
 #endif

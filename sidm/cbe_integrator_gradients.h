@@ -279,50 +279,18 @@ static double cbe_bj_phi_pair(double dQ, double predicted)
 
 
 /* ----------------------------------------------------------------------------
- * SSOT 3x3 symmetric PSD test via all principal minors (Wave-CBE Commit 10,
- * Fix #6). Returns true iff every principal minor of M is >= 0:
- *   - 3 diagonal minors M_kk
- *   - 3 leading 2x2 minors M_kk*M_ll - M_kl^2
- *   - the 3x3 determinant
- * Sylvester-style check sufficient for PSD on a symmetric matrix; the
- * realizability set {S PSD} we care about is closed under intersection
- * with any line in (m, p, T) space (see the convexity argument at
- * cbe_cone_phi_row).
- * ---------------------------------------------------------------------------- */
-KOKKOS_INLINE_FUNCTION
-static bool cbe_sym3x3_all_principal_minors_nonneg(const double M[3][3])
-{
-    if(M[0][0] < 0) return false;
-    if(M[1][1] < 0) return false;
-    if(M[2][2] < 0) return false;
-    if(M[0][0]*M[1][1] - M[0][1]*M[0][1] < 0) return false;
-    if(M[0][0]*M[2][2] - M[0][2]*M[0][2] < 0) return false;
-    if(M[1][1]*M[2][2] - M[1][2]*M[1][2] < 0) return false;
-    const double det = M[0][0] * (M[1][1]*M[2][2] - M[1][2]*M[1][2])
-                     - M[0][1] * (M[0][1]*M[2][2] - M[1][2]*M[0][2])
-                     + M[0][2] * (M[0][1]*M[1][2] - M[1][1]*M[0][2]);
-    return (det >= 0);
-}
-
-
-/* ----------------------------------------------------------------------------
  * Realizability predicate for one basis row at trial phi (Wave-CBE
  * Commit 10, Fix #6). Constructs Q_face = Q_cell_row + phi * g_row and
- * checks the two CBE realizability conditions on the face state:
- *   (1) mass positivity Q_face[0] > MIN_REAL_NUMBER
- *   (2) central stress S = (T*m - p(x)p) / m^2 PSD, S_floor = 0
- * For NMOMENTS=10 (full 3D second moment) condition (2) is the full
- * symmetric-3x3-PSD check via cbe_sym3x3_all_principal_minors_nonneg.
- * For NMOMENTS=7 the off-diagonal central S is absent (Commit 8
- * convention), so the stress 3x3 is diagonal at the row level; zeroing
- * the off-diagonal M entries reduces the PSD check to the three
- * diagonal conditions naturally. NMOMENTS=4 has no stress slot and the
- * predicate reduces to mass positivity.
+ * calls the SSOT realizability predicate cbe_basis_row_is_realizable
+ * (defined in sidm/cbe_integrator_functions.h, moved there in Fix #2a
+ * 2026-05-30 so cell repair + face clamp + cone limiter share one
+ * definition). Strict eps_tol = 0 preserves the original Commit-10
+ * strict-PSD semantics.
  *
- * Strict >=0 comparisons (no slack) are conservative: if roundoff trims
- * a few percent off allowable phi the cone over-limits slightly, never
- * under-limits. Tolerance can be added later if profiling shows
- * over-clipping.
+ * The cone-limiter realizability set { Q : m > 0, m*T - p p^T PSD } is
+ * convex (Schur-complement), so bisection on this predicate converges
+ * to the largest realizable phi in [0, phi_BJ_upper] — see comment at
+ * cbe_cone_phi_row below.
  * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
 static bool cbe_row_realizable_at_phi(
@@ -334,31 +302,7 @@ static bool cbe_row_realizable_at_phi(
     for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
         Q_face[k] = Q_cell_row[k] + phi * g_row[k];
     }
-    if(!(Q_face[0] > MIN_REAL_NUMBER)) return false;
-#if (CBE_INTEGRATOR_NMOMENTS >= 7)
-    {
-        const double m  = Q_face[0];
-        const double p[3] = { Q_face[1], Q_face[2], Q_face[3] };
-        double M[3][3];
-        M[0][0] = Q_face[4] * m - p[0]*p[0];
-        M[1][1] = Q_face[5] * m - p[1]*p[1];
-        M[2][2] = Q_face[6] * m - p[2]*p[2];
-    #if (CBE_INTEGRATOR_NMOMENTS >= 10)
-        M[0][1] = M[1][0] = Q_face[7] * m - p[0]*p[1];
-        M[0][2] = M[2][0] = Q_face[8] * m - p[0]*p[2];
-        M[1][2] = M[2][1] = Q_face[9] * m - p[1]*p[2];
-    #else
-        /* NMOMENTS=7: off-diagonal central S absent (not zero -- per
-         * Commit 8 convention). Zero the off-diagonal M entries so the
-         * full-3x3 PSD helper reduces correctly to diagonal-only. */
-        M[0][1] = M[1][0] = 0;
-        M[0][2] = M[2][0] = 0;
-        M[1][2] = M[2][1] = 0;
-    #endif
-        if(!cbe_sym3x3_all_principal_minors_nonneg(M)) return false;
-    }
-#endif
-    return true;
+    return cbe_basis_row_is_realizable(Q_face, /*eps_tol=*/ 0.0);
 }
 
 
