@@ -1006,7 +1006,18 @@ void CBEGrad_gradient_calc(void);
 #endif
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-double do_cbe_nvt_inversion_for_faces(int i);
+/* Result of inverting an AGS face moment matrix. cn_expansion is the signal
+ * that drives neighbor-count expansion (a large sentinel when the raw matrix
+ * is singular, because matrix_invert_ndims() reports CN=1 for a zero inverse);
+ * cn_final + status are diagnostics (status: 0=clean, 1=regularized via
+ * diagonal-loading, 2=could-not-condition / near-zero raw matrix, warned). */
+struct AgsNvtInversion { double cn_expansion; double cn_final; int status; };
+/* Invert the symmetric raw moment matrix (upper-triangle components
+ * sym6 = {00,01,02,11,12,22}) accumulated at AGS kernel size h into the full
+ * symmetric face operator Tinv_out (= inverse of the raw moment matrix). Uses
+ * the hydro density-path preconditioning (diagonal-loading until well-
+ * conditioned). Single source of truth for AGS/CBE face NV_T inversion. */
+AgsNvtInversion ags_invert_nvt_for_faces(const double sym6[6], double h, double Tinv_out[3][3]);
 #endif
 
 #ifdef DM_FUZZY

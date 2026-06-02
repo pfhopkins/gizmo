@@ -266,9 +266,10 @@ void AgsDensitySpec::merge_accum(AccumData& local_accum, const AccumData& peer_a
  *   - TimeBin negation (legacy line 279 / 403) is NOT done here — design
  *     v0.4.2 §10.5 lock: TimeBin marker stays caller-side post-runner.
  *
- *   - AGS_FACE_CALCULATION_IS_ACTIVE NV_T inversion is NOT done here
- *     either — do_cbe_nvt_inversion_for_faces stays in the caller's
- *     post-runner finalize pass.
+ *   - AGS_FACE_CALCULATION_IS_ACTIVE NV_T inversion IS done here (below):
+ *     the accumulated raw moment matrix is inverted into the symmetric face
+ *     operator P[i].NV_T via ags_invert_nvt_for_faces, and its condition
+ *     number drives the neighbor-count expansion in the convergence block.
  * ========================================================================== */
 IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ctx,
                                        const AccumData&                       accum)
@@ -358,14 +359,22 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
     P[i].AGS_zeta        = (MyFloat)AGS_zeta_raw;
     P[i].AGS_vsig        = (MyFloat)AGS_vsig;
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    P[i].NV_T[0][0] = (MyDouble)accum.NV_T_00;
-    P[i].NV_T[0][1] = (MyDouble)accum.NV_T_01;
-    P[i].NV_T[0][2] = (MyDouble)accum.NV_T_02;
-    P[i].NV_T[1][1] = (MyDouble)accum.NV_T_11;
-    P[i].NV_T[1][2] = (MyDouble)accum.NV_T_12;
-    P[i].NV_T[2][2] = (MyDouble)accum.NV_T_22;
-    /* Lower triangle stays at zero from accum side; legacy fills it
-     * symmetric only after do_cbe_nvt_inversion_for_faces (caller). */
+    /* Invert the accumulated raw moment matrix into the symmetric, fully-
+     * populated face operator P[i].NV_T (the inverted tensor that the
+     * CBE/dm_fuzzy face construction and the DMGrad gradient estimator both
+     * consume). Storing the raw moment matrix here -- the prior behavior --
+     * produced unphysical faces (wrong magnitude, sometimes wrong sign) with
+     * no conditioning control. The condition number captured here drives the
+     * neighbor-count expansion in the convergence block below. Mirrors the
+     * hydro density path (hydro/density_loop.cc:508-633). */
+    {
+        const double sym6[6] = { (double)accum.NV_T_00, (double)accum.NV_T_01, (double)accum.NV_T_02,
+                                 (double)accum.NV_T_11, (double)accum.NV_T_12, (double)accum.NV_T_22 };
+        double Tinv[3][3];
+        AgsNvtInversion inv = ags_invert_nvt_for_faces(sym6, current_h, Tinv);
+        for(int a = 0; a < 3; a++) { for(int b = 0; b < 3; b++) { P[i].NV_T[a][b] = (MyDouble)Tinv[a][b]; } }
+        if(inv.cn_expansion > scratch.condition_number_max) { scratch.condition_number_max = inv.cn_expansion; }
+    }
 #endif
 
     /* (2) Convergence test. minsoft / maxsoft clamping from
@@ -380,6 +389,22 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
     double desnumngbdev = scalars.AGS_MaxNumNgbDeviation;
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
+    /* Condition-number-driven neighbor expansion (mirrors hydro
+     * density_loop.cc:619-633): an ill-conditioned face matrix inflates the
+     * desired neighbor count, expanding the search radius next iteration,
+     * which lowers the condition number. Applied to BOTH target and deviation,
+     * and BEFORE the late-iter deviation relaxation below so that relaxation
+     * cannot silently undo the expanded target. */
+    {
+        const double c0 = 0.1 * (double)CONDITION_NUMBER_DANGER;
+        const double cn = scratch.condition_number_max;
+        double ncorr_ngb = 1.0;
+        if(cn > c0) { ncorr_ngb = sqrt(1.0 + (cn - c0) / (double)CONDITION_NUMBER_DANGER); }
+        if(ncorr_ngb > 2.0) { ncorr_ngb = 2.0; }
+        desnumngb    *= ncorr_ngb;
+        desnumngbdev *= ncorr_ngb;
+    }
+
     /* AGS_FACE relaxes desnumngbdev later (iter > 10) since the face
      * inversion is more sensitive (legacy rkern.cc:213-214). */
     if(iter > 10) {
