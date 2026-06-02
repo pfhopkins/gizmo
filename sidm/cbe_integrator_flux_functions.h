@@ -24,6 +24,7 @@
 
 #include "../gravity/ags_functions.h"
 #include "cbe_integrator_functions.h"
+#include "../core/predict_functions.h"   /* Get_Particle_Expected_Area — geometric face-area cap */
 
 struct CbeFluxResult {
     int set_wakeup_j;  /* 1 if P[j].wakeup should be set to -1 */
@@ -37,23 +38,68 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     struct particle_data *P,
     const KernelT &kernel,
     OutT &out,
-    const int *timebin_active)
+    const int *timebin_active,
+    long long spike_id_i = 0  /* SPIKE: codex round-12; 0 disables */)
 {
     CbeFluxResult r; r.set_wakeup_j = 0;
 #ifdef CBE_INTEGRATOR
+    /* SPIKE: codex round-12 (2026-05-31) — decompose signal-velocity
+     * contribution to AGS_vsig for failing IDs. Tracks per-basis
+     * v_alpha_n, c_x, u_out, vsig, rho, mass-fraction so we can identify
+     * whether max signal speed is from |u_out| (kinematic) or c_x
+     * (thermal), and whether it concentrates on a single basis or pair.
+     * REMOVE BEFORE COMMIT. Gate on spike_id_i matches the targeted IDs
+     * from the dt-floor diagnostic (11/22/31). */
+    const bool _spike_target = (spike_id_i == 11LL) || (spike_id_i == 22LL) || (spike_id_i == 31LL);
     double V_i = local.V_i, V_j = get_particle_volume_ags_P(j, P);
+
+    /* Always-on unequal-volume centered face weights (mirrors hydro
+     * compute_finitevol_faces_functions.h:62-65). When two interacting cells
+     * differ strongly in volume, the raw per-side V_i/V_j weighting lets the
+     * larger neighbor set a face that is oversized relative to the smaller
+     * cell, over-fluxing it; the symmetric harmonic-centered weight removes
+     * that asymmetry. wt_i/wt_j are used ONLY in the face-area geometry below;
+     * V_i/V_j still drive state reconstruction + conserved-quantity flux. */
+    double wt_i = V_i, wt_j = V_j;
+    {
+        double vmin = DMIN(V_i, V_j);
+        if((vmin > 0) && ((fabs(V_i - V_j) / vmin) / NUMDIMS > 1.25)) {
+            double wt_denom = V_i * kernel.wk_i + V_j * kernel.wk_j;
+            if((wt_denom > 0) && isfinite(wt_denom)) {
+                wt_i = wt_j = V_i * V_j * (kernel.wk_i + kernel.wk_j) / wt_denom;
+            }
+        }
+    }
 
     double Face_Area_Vec[3];
     double Face_Area_Norm = 0;
     double vface_guess[3];
     for(int k=0; k<3; k++) {
-        Face_Area_Vec[k] = -(kernel.wk_i * V_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
-                           + kernel.wk_j * V_j * (P[j].NV_T[k][0]*kernel.dp[0] + P[j].NV_T[k][1]*kernel.dp[1] + P[j].NV_T[k][2]*kernel.dp[2])) * All.cf_atime * All.cf_atime;
+        Face_Area_Vec[k] = -(kernel.wk_i * wt_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
+                           + kernel.wk_j * wt_j * (P[j].NV_T[k][0]*kernel.dp[0] + P[j].NV_T[k][1]*kernel.dp[1] + P[j].NV_T[k][2]*kernel.dp[2])) * All.cf_atime * All.cf_atime;
         Face_Area_Norm += Face_Area_Vec[k] * Face_Area_Vec[k];
         vface_guess[k] = 0.5 * (local.Vel[k] + P[j].Vel[k]) / All.cf_atime;
     }
     Face_Area_Norm = sqrt(Face_Area_Norm);
     if(!(Face_Area_Norm > 0)) { return r; }
+    /* Always-on geometric face-area cap (mirrors hydro
+     * compute_finitevol_faces_functions.h:123-132): the effective face cannot
+     * exceed the geometric cross-section of the smaller of the two cells. This
+     * bounds Face_Area_Norm to ~ L_cell^(NUMDIMS-1) so the per-step flux a cell
+     * can send/receive stays consistent with its own volume and the
+     * AGS_vsig-based CFL. Sizes are made PHYSICAL (* cf_atime) to match
+     * Face_Area_Norm (which carries cf_atime^2) -- matches hydro_functions.h:97-99,
+     * so the cap is cosmology-correct (reduces to L=V^(1/d) when cf_atime=1). */
+    {
+        double Lphys_i = pow(V_i, 1.0/NUMDIMS) * All.cf_atime;
+        double Lphys_j = pow(V_j, 1.0/NUMDIMS) * All.cf_atime;
+        double Amax = DMIN(Get_Particle_Expected_Area(Lphys_i), Get_Particle_Expected_Area(Lphys_j));
+        if((Amax > 0) && isfinite(Amax) && (Face_Area_Norm > Amax)) {
+            double area_scale = Amax / Face_Area_Norm;   /* uniform: preserves A_hat direction */
+            Face_Area_Vec[0] *= area_scale; Face_Area_Vec[1] *= area_scale; Face_Area_Vec[2] *= area_scale;
+            Face_Area_Norm = Amax;
+        }
+    }
     double inv_FAN = 1.0 / Face_Area_Norm;
     double A_hat[3] = { Face_Area_Vec[0]*inv_FAN, Face_Area_Vec[1]*inv_FAN, Face_Area_Vec[2]*inv_FAN };
 
