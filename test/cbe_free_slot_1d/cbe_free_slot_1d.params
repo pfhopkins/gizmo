@@ -1,0 +1,47 @@
+% cbe_free_slot_1d — 1D free-slot injection CBE test (4 streams +1/0/-1/-2,
+% Gaussian +2 perturbation at x=0.5). No gravity, no hydro, no gas.
+% Config: CBE_INTEGRATOR=4 (+OUTPUT_MOREINFO); free-slot pairing fallback on.
+
+InitCondFile                       cbe_free_slot_1d_ics
+OutputDir                          output
+
+TimeBegin                          0.0
+TimeMax                            0.10
+TimeBetSnapshot                    0.0125
+TimeBetStatistics                  0.0125
+
+BoxSize                            1.0
+
+AGS_DesNumNgb                      4
+AGS_MaxNumNgbDeviation             0.5
+DesNumNgb                          4
+MaxNumNgbDeviation                 0.5
+
+Softening_Type0                    0.01
+Softening_Type1                    0.01
+Softening_Type2                    0.01
+Softening_Type3                    0.01
+Softening_Type4                    0.01
+Softening_Type5                    0.01
+Softening_Type0_MaxPhysLimit       0.1
+Softening_Type1_MaxPhysLimit       0.1
+Softening_Type2_MaxPhysLimit       0.1
+Softening_Type3_MaxPhysLimit       0.1
+Softening_Type4_MaxPhysLimit       0.1
+Softening_Type5_MaxPhysLimit       0.1
+
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+MaxSizeTimestep                    0.01
+MinSizeTimestep                    1e-6
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+
+MaxMemSize                         1000
+ResubmitOn                         0
+ResubmitCommand                    none
