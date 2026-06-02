@@ -1,0 +1,50 @@
+% cbe_free_slot_3d — 3D slab free-slot injection CBE test.
+% Box = [1.0 x 0.0625 x 0.0625]: BoxSize sets the transverse (y,z) extent;
+% Config BOX_LONG_X=16 stretches x to 1.0. Velocities along x only.
+% No gravity, no hydro, no gas. CBE_INTEGRATOR=4 (+OUTPUT_MOREINFO).
+
+InitCondFile                       cbe_free_slot_3d_ics
+OutputDir                          output
+
+TimeBegin                          0.0
+TimeMax                            0.10
+TimeBetSnapshot                    0.0125
+TimeBetStatistics                  0.0125
+
+% Transverse extent; x extent = BoxSize * BOX_LONG_X = 1.0
+BoxSize                            0.0625
+
+% 3D neighbour target (cf. hernquist_sidm AGS_DesNumNgb=32)
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1.0
+DesNumNgb                          32
+MaxNumNgbDeviation                 1.0
+
+Softening_Type0                    0.005
+Softening_Type1                    0.005
+Softening_Type2                    0.005
+Softening_Type3                    0.005
+Softening_Type4                    0.005
+Softening_Type5                    0.005
+Softening_Type0_MaxPhysLimit       0.05
+Softening_Type1_MaxPhysLimit       0.05
+Softening_Type2_MaxPhysLimit       0.05
+Softening_Type3_MaxPhysLimit       0.05
+Softening_Type4_MaxPhysLimit       0.05
+Softening_Type5_MaxPhysLimit       0.05
+
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+MaxSizeTimestep                    0.01
+MinSizeTimestep                    1e-6
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+
+MaxMemSize                         1000
+ResubmitOn                         0
+ResubmitCommand                    none
