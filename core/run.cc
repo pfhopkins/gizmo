@@ -114,6 +114,32 @@ const char *gizmo_controlled_stop_local_reason(void) { return (ControlledStop_Lo
  * gizmo_kokkos_finalize() + MPI_Finalize() shutdown. */
 int gizmo_poll_controlled_stop(void) { gizmo_collect_controlled_stop(); return gizmo_controlled_stop_code(); }
 
+/* Stage 2 (Wave no-MPI_Abort): graceful drain at an existing collective phase
+ * boundary. Call ONLY on the unconditional all-rank path -- in place of, or
+ * immediately after, an existing MPI_Barrier / collective -- so every rank
+ * reaches it in the same collective order. gizmo_collect_controlled_stop() is
+ * itself an Allreduce(MAX); it synchronizes all ranks exactly like a barrier, so
+ * used as a drop-in barrier replacement it adds the bad-stop poll WITHOUT adding
+ * a collective. If ANY rank requested a bad stop earlier in the phase, every
+ * rank prints a receipt and unwinds via the clean shutdown (kokkos finalize +
+ * MPI_Finalize + nonzero exit) -- never MPI_Abort. No-op return otherwise. */
+void gizmo_exit_bad_stop_if_requested(const char *poll_site)
+{
+    gizmo_collect_controlled_stop();
+    if(gizmo_controlled_stop_code() == 0) { return; }
+    if(ThisTask == 0) {
+        const char *r = gizmo_controlled_stop_local_reason();
+        printf("Graceful bad-stop drained at phase boundary '%s' (code=%d): %s. "
+               "Finalizing cleanly (no MPI_Abort).\n",
+               poll_site ? poll_site : "(?)", gizmo_controlled_stop_code(),
+               r ? r : "(reason set on other rank only)");
+        fflush(stdout);
+    }
+    gizmo_kokkos_finalize();  /* must precede MPI_Finalize */
+    MPI_Finalize();
+    exit(1);                  /* small fixed nonzero; full code/reason printed above */
+}
+
 /* ---------------------------------------------------------------------------
  * Reviewed hard-abort — the INTENDED SSOT hard-abort home in GIZMO. NOTE: as
  * of Stage 1a this is NOT yet the sole MPI_Abort call site; the legacy
@@ -504,7 +530,7 @@ void calculate_non_standard_physics(void)
         }}
 #endif
 #endif
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_sinks"); CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif
 
@@ -575,7 +601,7 @@ void calculate_non_standard_physics(void)
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
 #endif
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -610,7 +636,7 @@ void calculate_non_standard_physics(void)
         }
 #endif
     }
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -634,20 +660,20 @@ void calculate_non_standard_physics(void)
 
 #ifdef NUCLEAR_NETWORK
     nuclear_parent_routine(); // nuclear burning (operator-split, before cooling; fixup is done inside on compact arrays) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 #ifdef DISK_BETA_COOL
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #ifdef PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
@@ -659,7 +685,7 @@ void calculate_non_standard_physics(void)
 #endif
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -758,7 +784,7 @@ void find_next_sync_point_and_drift(void)
         set_cosmo_factors_for_current_time();
 
         move_particles(All.Ti_nextoutput);
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_drift"); CPU_Step[CPU_DRIFT] += measure_time();
 
         /* Phase 10.6: potential is computed by the unified gravity tree walk
          * (gravtree.cc with EVALPOTENTIAL).  COMPUTE_POTENTIAL_ENERGY and

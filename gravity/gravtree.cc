@@ -77,9 +77,9 @@ void gravity_tree(void)
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
         rearrange_particle_sequence();
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
+        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done.");

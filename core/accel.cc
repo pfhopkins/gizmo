@@ -219,22 +219,22 @@ void compute_stellar_feedback(void)
 
 #ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */
     STEP_PHASE_TIME("mechanical_fb_calc", mechanical_fb_calc_toplevel());  /* call the parent loop for the different mechanical fb sub-loops */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_THERMAL
     STEP_PHASE_TIME("thermal_fb_calc", thermal_fb_calc()); /* thermal feedback */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     STEP_PHASE_TIME("HII_heating_singledomain", HII_heating_singledomain()); /* local photo-ionization heating */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
     STEP_PHASE_TIME("radiation_pressure_winds", radiation_pressure_winds_consolidated()); /* local radiation pressure */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_LOCALWIND] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_local_rp"); CPU_Step[CPU_LOCALWIND] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
     
     CPU_Step[CPU_MISC] += measure_time();

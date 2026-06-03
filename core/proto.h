@@ -806,6 +806,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
 void        gizmo_collect_controlled_stop(void);
 int         gizmo_poll_controlled_stop(void);   /* collect + return global code; for top-level poll points */
+void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
