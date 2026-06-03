@@ -501,14 +501,31 @@ void resolvedism_determine_SNe(void)
 
 void resolvedism_inject_fb_energy(void)
 {
-    /* ---- Pass 0: Momentum injection (wind + AGB) — before SN so final winds fire first ---- */
+    int ii;
+    /* STARFORGE two-pass pattern (adapted from mechanical_fb_calc_toplevel):
+     *   1. Weighting pre-pass walks neighbors and measures Σ_j (Mass_j × kernel.wk)
+     *      onto P[i].FB_Area_weighted_sum
+     *   2. Injection pass uses that measured sum as denominator → Σwk = 1 exactly
+     *   → all per-event sums (Mej, Esne, p_ejecta, yields[k]) conserve bit-exact.
+     * FB_ZERO_AWS() zeros the accumulator before each weighting pass to ensure
+     * the measurement is fresh (neighbor masses shift between passes when wind/AGB
+     * deposits ahead of SN/Ia). */
+    #define FB_ZERO_AWS() do { for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) { if(P[ii].Type == 4) P[ii].FB_Area_weighted_sum = 0; } } while(0)
+
+    /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
+     *      winds happen before the star explodes as SN. ---- */
+    FB_ZERO_AWS();
     MBARY_STEP("pre_fb_mom_p0");
-    resolvedism_fb_momentum_calc(0);
+    resolvedism_fb_momentum_calc(-1);   /* weighting pre-pass for wind/AGB */
+    resolvedism_fb_momentum_calc(0);    /* injection */
     MBARY_STEP("post_fb_mom_p0");
 
-    /* ---- Pass 1: Thermal injection (SN + Type Ia) ---- */
+    /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals).  Re-measure AWS
+     *      because wind/AGB may have shifted neighbor masses. ---- */
+    FB_ZERO_AWS();
     MBARY_STEP("pre_fb_thermal");
-    resolvedism_fb_thermal_calc();
+    resolvedism_fb_thermal_calc(-1);    /* weighting pre-pass for SN/Ia */
+    resolvedism_fb_thermal_calc(0);     /* injection */
     MBARY_STEP("post_fb_thermal");
 
     /* Budget tracking: local accumulators for [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia */
@@ -604,15 +621,19 @@ void resolvedism_inject_fb_energy(void)
         }
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-        /* Type Ia: WD fully disrupted, inject Chandrasekhar mass + energy */
+        /* Type Ia: WD fully disrupted.  Actual injected mass is the WD progenitor's
+         * current particle mass (P[i].Mass), not the canonical Chandrasekhar mass,
+         * because single-star sampling can leave the WD below 1.378 Msun after prior
+         * wind/AGB phases.  Yields are rescaled by (actual / Chandrasekhar) ratio. */
         if(P[i].SNe_ThisTimeStep == 4) {
             double M_WD = P[i].Mass * UNIT_MASS_IN_SOLAR; /* WD mass before disruption [Msun] */
+            double yield_rescale = M_WD / IA_EJECTA_MASS;
             n_events[4] += 1;
-            M_injected[4] += IA_EJECTA_MASS;
-            M_removed[4] += M_WD; /* particle mass removed */
+            M_injected[4] += M_WD;     /* actual injected mass (= WD mass) */
+            M_removed[4] += M_WD;      /* particle mass removed */
             E_injected[4] += IA_ENERGY_ERG;
             double Z_ia = 0;
-            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk);
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk) * yield_rescale;
             Z_injected[4] += Z_ia;
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
@@ -813,7 +834,13 @@ void resolvedism_inject_fb_energy(void)
     /* ---- Pass 2: radiation pressure (momentum) ---- */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     RadPressure_dp_thisStep = 0;
-    resolvedism_fb_momentum_calc(1);
+    /* Radpressure is mass-neutral but go through the same brackets for safety;
+     * any FB_M_coupled_pending should stay 0 (no P[j].Mass += dM happens). */
+    /* Radpressure is mass-neutral, but follow same two-pass pattern for the kernel-weighted
+     * momentum kicks → Σ wk = 1 exactly → Σ Δp_j = p_radpressure exactly. */
+    FB_ZERO_AWS();
+    resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
+    resolvedism_fb_momentum_calc(1);    /* radpressure injection */
 
     /* Count radiation pressure events */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {

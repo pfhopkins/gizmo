@@ -28,7 +28,9 @@ struct kernel_resolvedismFB_momentum {double dp[3], r, wk, dwk, hinv, hinv3, hin
 
 struct INPUT_STRUCT_NAME
 {
-    MyDouble Pos[3], KernelRadius, Mej, wt_sum;
+    MyDouble Pos[3], KernelRadius, Mej;
+    /* Bit-exact normalizer measured by the weighting pre-pass; see resolvedism_fb_thermal.cc */
+    MyDouble FB_Area_weighted_sum_in;
     MyDouble WindMomentum;
     MyDouble MetalMass;
     MyIDType StarID;
@@ -48,7 +50,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 {
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->KernelRadius = P[i].KernelRadius;
-    in->wt_sum = 0; in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
+    in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
+    /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
+    in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
     in->StarID = P[i].ID;
     in->StarMass = P[i].MstarSampleIMF[0];
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
@@ -60,7 +64,6 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
     if(P[i].Mass <= 0) return;
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    in->wt_sum = P[i].DensityAroundParticle;
     if(P[i].DensityAroundParticle <= 0) return;
 #endif
 
@@ -238,21 +241,24 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 
 struct OUTPUT_STRUCT_NAME
 {
+    /* Injection-pass accumulators: momentum delivered to neighbors (for star recoil)
+     * and total mass deposited (for star mass reduction). */
     MyFloat MomentumInjected[3];
-    /* Mass actually deposited to gas neighbors during the wind/AGB walk
-     * (loop_iteration 0).  Radpressure (loop_iteration 1) injects no mass
-     * so M_coupled stays 0 there.  Used in out2particle to reduce the
-     * dying star by exactly the amount that was injected → bit-exact mass
-     * conservation regardless of Σ_j wk_j ≠ 1. */
     MyFloat M_coupled;
+    /* Weighting-pass accumulator: Σ_j (Mass_j × kernel.wk) over neighbors walked. */
+    MyDouble FB_Area_weighted_sum_accum;
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
 void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    /* Star recoil for momentum conservation, then mass reduction by measured
-     * deposition (FIRE measured-coupling pattern).  Apply recoil first while
-     * the original star mass is still on P[i]. */
+    if(loop_iteration < 0) {
+        /* Weighting pass: accumulate measured kernel sum onto the star. */
+        P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
+        return;
+    }
+    /* Injection pass: recoil + mass subtraction.  With Σwk=1 from the weighting pre-pass,
+     * the TOTAL across all out2particle calls equals the intended Mej / p_ejecta exactly. */
     if(P[i].Mass > 0) {
         int k;
         for(k = 0; k < 3; k++) {
@@ -270,12 +276,14 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
 
-    if(loop_iteration == 0) {
+    /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure.  STARFORGE pattern:
+     * the weighting pre-pass uses the same active_check criterion as its injection. */
+    if(loop_iteration == 0 || loop_iteration == -1) {
         /* AGB (2) and wind (3) */
         if(P[i].SNe_ThisTimeStep == 2 || P[i].SNe_ThisTimeStep == 3) return 1;
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    if(loop_iteration == 1) {
+    if(loop_iteration == 1 || loop_iteration == -2) {
         if(P[i].Mass <= 0) return 0;
         double Mstar = 0;
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -303,7 +311,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
     if(mode == 0) {particle2in_resolvedismFB_momentum(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];}
     if(local.Mej <= 0 && local.WindMomentum <= 0) return 0;
     if(local.KernelRadius <= 0) return 0;
-    if(local.wt_sum <= 0) return 0;
+    /* Injection pass needs the AWS measured by the weighting pre-pass. */
+    if(loop_iteration >= 0 && local.FB_Area_weighted_sum_in <= 0) return 0;
     h2 = local.KernelRadius * local.KernelRadius;
     kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
 
@@ -335,7 +344,15 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 if(u<1) {kernel_main(u, kernel.hinv3, kernel.hinv4, &kernel.wk, &kernel.dwk, 0);} else {kernel.wk=kernel.dwk=0;}
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
-                double wk = Mass_j * kernel.wk / local.wt_sum;
+                /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration<0) just
+                 * measures Σ_j (Mass_j × kernel.wk); injection pass uses that measured sum
+                 * as the bit-exact normalizer → Σ wk_j = 1 by construction. */
+                if(loop_iteration < 0) {
+                    out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
+                    continue;
+                }
+                /* STARFORGE-style normalizer with MIN_REAL_NUMBER+fabs() guard. */
+                double wk = (Mass_j * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
 
                 /* ---- Mass + metals injection (wind and AGB ejecta) ---- */
                 if(local.Mej > 0) {

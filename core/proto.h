@@ -808,7 +808,7 @@ void diff_unpack_breakdown_log(double dMZ_pair_loc, double dMZ_clamp_loc);
 #ifdef GALSF_RESOLVEDISM_FB
 void resolvedism_determine_SNe(void);
 void resolvedism_inject_fb_energy(void);
-void resolvedism_fb_thermal_calc(void);
+void resolvedism_fb_thermal_calc(int loop_iteration);
 void resolvedism_fb_momentum_calc(int fb_loop_iteration);
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION

@@ -141,6 +141,15 @@ extern ALIGN(32) struct particle_data
     MyFloat M_current_old;       /*!< M_current at start of previous timestep [Msun] */
     MyFloat last_wind_log_age;   /*!< log10(age in yr) at last wind injection, for telescoping cumulative-table lookup */
 #endif
+#ifdef GALSF_RESOLVEDISM_FB
+    /* Σ_j (Mass_j × kernel.wk) measured by a FB weighting pre-pass.  Used as the
+     * bit-exact normalizer in the FB injection pass (replacing stale
+     * P[i].DensityAroundParticle): wk_j_normalized = Mass_j × kernel.wk /
+     * FB_Area_weighted_sum → Σwk = 1 by construction → all per-event sums
+     * (Mej, Esne, p_ejecta, yields[k]) conserve exactly.  STARFORGE pattern
+     * adapted from mechanical_fb.cc:282.  Zeroed before each weighting pass. */
+    MyDouble FB_Area_weighted_sum;
+#endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     MyFloat M_drawn_Ia;          /*!< original drawn mass for Type Ia DTD [Msun], >0 = WD eligible */
 #endif

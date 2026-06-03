@@ -135,6 +135,36 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("done with snapshot.\n");
 
+        /* Per-snapshot total baryonic mass at double precision for galaxy-scale
+         * mass-conservation tracing.  Writes one line per snapshot to
+         * <OutputDir>/mass_balance.txt.  Two MPI_Allreduce per snapshot. */
+        {
+            double Mloc_gas = 0, Mloc_star = 0;
+            int ii;
+            for(ii = 0; ii < NumPart; ii++) {
+                if(P[ii].Mass <= 0) continue;
+                if(P[ii].Type == 0) Mloc_gas += P[ii].Mass;
+                else if(P[ii].Type == 4) Mloc_star += P[ii].Mass;
+            }
+            double Mtot_gas = 0, Mtot_star = 0;
+            MPI_Allreduce(&Mloc_gas,  &Mtot_gas,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&Mloc_star, &Mtot_star, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                char mbpath[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                snprintf(mbpath, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance.txt", All.OutputDir);
+                FILE *mbf = fopen(mbpath, "a");
+                if(mbf) {
+                    if(ftell(mbf) == 0) {
+                        fprintf(mbf, "### Per-snapshot total baryonic mass [double precision] for conservation tracing.\n");
+                        fprintf(mbf, "###   (1) snap_num  (2) time  (3) M_gas[code]  (4) M_star[code]  (5) M_bary[code]\n");
+                    }
+                    fprintf(mbf, "%5d  %.10e  %.16e  %.16e  %.16e\n",
+                            num, All.Time, Mtot_gas, Mtot_star, Mtot_gas + Mtot_star);
+                    fclose(mbf);
+                }
+            }
+        }
+
         All.Ti_lastoutput = All.Ti_Current;
 
         CPU_Step[CPU_SNAPSHOT] += measure_time();

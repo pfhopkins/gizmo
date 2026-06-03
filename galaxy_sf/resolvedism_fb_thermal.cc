@@ -26,7 +26,12 @@ struct kernel_resolvedismFB_thermal {double dp[3], r, wk, dwk, hinv, hinv3, hinv
 
 struct INPUT_STRUCT_NAME
 {
-    MyDouble Pos[3], KernelRadius, Esne, Mej, wt_sum;
+    MyDouble Pos[3], KernelRadius, Esne, Mej;
+    /* Bit-exact normalizer measured by the weighting pre-pass (loop_iteration<0):
+     * FB_Area_weighted_sum_in = Σ_j (Mass_j × kernel.wk).  In the injection pass
+     * (loop_iteration>=0) we use wk_j = Mass_j × kernel.wk / FB_Area_weighted_sum_in
+     * so Σwk = 1 by construction. */
+    MyDouble FB_Area_weighted_sum_in;
     MyDouble MetalMass;
     int fb_channel; /* 0=SN, 3=Ia */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -43,7 +48,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 {
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->KernelRadius = P[i].KernelRadius;
-    in->wt_sum = 0; in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
+    in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
+    /* Load measured AWS from prior weighting pass (or 0 if this is the weighting pass). */
+    in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
@@ -53,7 +60,6 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #endif
     if(P[i].Mass <= 0) return;
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    in->wt_sum = P[i].DensityAroundParticle;
     if(P[i].DensityAroundParticle <= 0) return;
 #endif
 
@@ -61,10 +67,18 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     if(P[i].SNe_ThisTimeStep == 4) {
         in->Esne = IA_ENERGY_ERG / UNIT_ENERGY_IN_CGS;
-        in->Mej = IA_EJECTA_MASS / UNIT_MASS_IN_SOLAR;
+        /* Eject the entire WD progenitor mass.  In our single-star sampling the
+         * WD's P[i].Mass evolved through prior wind/AGB phases and may not equal
+         * the canonical Chandrasekhar mass (1.378 Msun); injecting the actual
+         * particle mass guarantees the star is fully disrupted to 0 and no excess
+         * mass is created.  Yields are rescaled by the actual-to-Chandrasekhar
+         * ratio so Σ yields = actual ejecta mass (preserves Fe-peak composition). */
+        in->Mej = P[i].Mass;
+        double Mej_actual_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+        double yield_rescale = Mej_actual_solar / IA_EJECTA_MASS;
         double metal_mass_solar = 0;
         for(int k = 0; k < STBL_NELEM; k++) {
-            double y_k = stellar_type_ia_yield(k);
+            double y_k = stellar_type_ia_yield(k) * yield_rescale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             in->ElemYields[k] = y_k / UNIT_MASS_IN_SOLAR;
 #endif
@@ -173,16 +187,28 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
 struct OUTPUT_STRUCT_NAME
 {
-    /* Mass actually deposited to gas neighbors during the walk.  Used in
-     * out2particle to reduce the dying star by exactly the amount that was
-     * injected → bit-exact mass conservation regardless of Σ_j wk_j ≠ 1.
-     * Mirrors FIRE thermal_fb / mechanical_fb measured-coupling pattern. */
+    /* Mass actually deposited to gas neighbors during the injection walk.
+     * out2particle subtracts this from the star → bit-exact mass conservation. */
     MyFloat M_coupled;
+    /* Weighting-pass accumulator: out.FB_Area_weighted_sum_accum = Σ_j (Mass_j × kernel.wk)
+     * over neighbors walked on this rank/iteration.  Out2particle sums these across all
+     * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
+    MyDouble FB_Area_weighted_sum_accum;
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
 void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
+    if(loop_iteration < 0) {
+        /* Weighting pass: accumulate measured kernel sum onto the star.  Called for
+         * mode=0 (local walk) AND mode=1 (per-remote-rank import return) — both
+         * contributions sum into P[i].FB_Area_weighted_sum for the upcoming injection. */
+        P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
+        return;
+    }
+    /* Injection pass: subtract M_coupled.  With Σwk=1 from the weighting pre-pass,
+     * the SUM of M_coupled across all calls (1 local + N remote) equals Mej exactly,
+     * so star ends at M_pre − Mej = rem_mass (table value) to FP precision. */
     if(P[i].Mass > 0) {
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
@@ -212,7 +238,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
     if(mode == 0) {particle2in_resolvedismFB_thermal(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];}
     if(local.Esne <= 0 && local.Mej <= 0) return 0;
     if(local.KernelRadius <= 0) return 0;
-    if(local.wt_sum <= 0) return 0;
+    /* Injection pass requires non-zero AWS from prior weighting pass to normalize. */
+    if(loop_iteration >= 0 && local.FB_Area_weighted_sum_in <= 0) return 0;
     h2 = local.KernelRadius * local.KernelRadius;
     kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
 
@@ -244,7 +271,15 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 if(u<1) {kernel_main(u, kernel.hinv3, kernel.hinv4, &kernel.wk, &kernel.dwk, 0);} else {kernel.wk=kernel.dwk=0;}
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
-                double wk = Mass_j * kernel.wk / local.wt_sum;
+                /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration<0) just
+                 * measures Σ_j (Mass_j × kernel.wk); injection pass (loop_iteration>=0)
+                 * uses that measured sum as denominator → Σ wk_j = 1 by construction. */
+                if(loop_iteration < 0) {
+                    out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
+                    continue;
+                }
+                /* STARFORGE-style normalizer with MIN_REAL_NUMBER+fabs() guard. */
+                double wk = (Mass_j * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
 
                 /* ---- Thermal energy injection ---- */
                 if(local.Esne > 0) {
@@ -421,10 +456,15 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 }
 
 
-void resolvedism_fb_thermal_calc(void)
+void resolvedism_fb_thermal_calc(int fb_loop_iteration)
 {
-    PRINT_STATUS(" ..injecting single-star SN/Ia thermal energy + mass + metals");
+    if(fb_loop_iteration < 0) {
+        PRINT_STATUS(" ..SN/Ia weighting pre-pass (measures Σ Mass_j*kernel.wk on each star)");
+    } else {
+        PRINT_STATUS(" ..injecting single-star SN/Ia thermal energy + mass + metals");
+    }
     #include "../system/code_block_xchange_perform_ops_malloc.h"
+    loop_iteration = fb_loop_iteration;  /* STARFORGE pattern: malloc.h declared loop_iteration=0; override */
     #include "../system/code_block_xchange_perform_ops.h"
     #include "../system/code_block_xchange_perform_ops_demalloc.h"
 }
