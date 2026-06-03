@@ -107,6 +107,262 @@ KOKKOS_INLINE_FUNCTION void cbe_basis_T_w(double *row, int a, int b, double val)
     (void)row; (void)a; (void)b; (void)val;
 #endif
 }
+
+/* Active-dimensional symmetric stress workspace helpers (commit 4a, 2026-06-03).
+ *
+ * Stress math operates on a 3x3 workspace tensor for shape uniformity (matches
+ * the 3-vector convention for dp[3]/Vel[3]/Face_Area_Vec[3]), but ONLY the
+ * upper-left NUMDIMS x NUMDIMS block carries meaningful values. Off-block
+ * entries are kept at exactly zero so that downstream consumers (Jacobi PSD
+ * projection, principal-minors realizability test, n.S.n contractions) reduce
+ * to the correct active-dim physics without per-D special-casing in callers.
+ *
+ * SECONDMOMENT non-3D was fenced until this commit; the new helpers carry the
+ * dim-aware layout to all stress consumers so the fence at
+ * declarations/precompiler_logic.h can be lifted.
+ *
+ * Semantics:
+ *   _load_active(row, T)  -- zero T[3][3], then fill the active D x D upper
+ *                            triangle (symmetrized) from row[T_idx(a,b)].
+ *   _load_active_scaled(row, scale, T)  -- same but pre-multiplied by `scale`
+ *                            (useful for R = T/m).
+ *   _store_active(row, T) -- write T_ab for active (a<=b)<NUMDIMS back into
+ *                            row[T_idx(a,b)]. Inactive entries ignored.
+ *   _trace_active(row, scale) -- sum_{a<NUMDIMS} row[T_idx(a,a)] * scale.
+ *
+ * Realizability + PSD projection helpers operate on the same 3x3 workspace
+ * but ignore inactive rows/cols, so e.g. in 1D the Jacobi sweep is a no-op
+ * and only S[0][0] participates in the eigenvalue floor / clamp. */
+KOKKOS_INLINE_FUNCTION void cbe_basis_T_load_active(
+    const double *row, double T[3][3])
+{
+    for(int a=0; a<3; a++) for(int b=0; b<3; b++) T[a][b] = 0.0;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        T[a][a] = row[cbe_T_idx(a, a)];
+        for(int b=a+1; b<NUMDIMS; b++) {
+            const double Tab = row[cbe_T_idx(a, b)];
+            T[a][b] = Tab; T[b][a] = Tab;
+        }
+    }
+#else
+    (void)row;
+#endif
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_T_load_active_scaled(
+    const double *row, double scale, double T[3][3])
+{
+    cbe_basis_T_load_active(row, T);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        T[a][a] *= scale;
+        for(int b=a+1; b<NUMDIMS; b++) { T[a][b] *= scale; T[b][a] = T[a][b]; }
+    }
+#else
+    (void)scale;
+#endif
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_T_store_active(
+    double *row, const double T[3][3])
+{
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        row[cbe_T_idx(a, a)] = T[a][a];
+        for(int b=a+1; b<NUMDIMS; b++) row[cbe_T_idx(a, b)] = T[a][b];
+    }
+#else
+    (void)row; (void)T;
+#endif
+}
+KOKKOS_INLINE_FUNCTION double cbe_basis_T_trace_active(
+    const double *row, double scale)
+{
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double tr = 0.0;
+    for(int a=0; a<NUMDIMS; a++) tr += row[cbe_T_idx(a, a)];
+    return tr * scale;
+#else
+    (void)row; (void)scale;
+    return 0.0;
+#endif
+}
+
+/* Active-dim symmetric PSD test via principal minors of the upper-left
+ * NUMDIMS x NUMDIMS block. Reduces to scalar nonnegativity in 1D, the
+ * 2x2 Sylvester chain in 2D, and the full 3x3 chain in 3D. eps_tol is
+ * relative to trace_pos (active diagonals only) at each minor order. */
+KOKKOS_INLINE_FUNCTION
+bool cbe_symNxN_active_principal_minors_nonneg(const double M[3][3], double eps_tol)
+{
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double trace_pos = MIN_REAL_NUMBER;
+    for(int a=0; a<NUMDIMS; a++) { trace_pos += M[a][a]; }
+    if(trace_pos < MIN_REAL_NUMBER) trace_pos = MIN_REAL_NUMBER;
+    const double eps_diag = eps_tol * trace_pos;
+    for(int a=0; a<NUMDIMS; a++) { if(M[a][a] < -eps_diag) return false; }
+#if (NUMDIMS >= 2)
+    const double eps_2x2 = eps_tol * trace_pos * trace_pos;
+    for(int a=0; a<NUMDIMS; a++)
+        for(int b=a+1; b<NUMDIMS; b++)
+            if(M[a][a]*M[b][b] - M[a][b]*M[a][b] < -eps_2x2) return false;
+#endif
+#if (NUMDIMS >= 3)
+    const double eps_det = eps_tol * trace_pos * trace_pos * trace_pos;
+    const double det = M[0][0] * (M[1][1]*M[2][2] - M[1][2]*M[1][2])
+                     - M[0][1] * (M[0][1]*M[2][2] - M[1][2]*M[0][2])
+                     + M[0][2] * (M[0][1]*M[1][2] - M[1][1]*M[0][2]);
+    if(det < -eps_det) return false;
+#endif
+    return true;
+#else
+    (void)M; (void)eps_tol;
+    return true;
+#endif
+}
+
+/* Active-dim symmetric PSD projection in-place on a 3x3 workspace. Outside
+ * the active block, entries are assumed zero and are NOT touched (no eigen-
+ * value floor on inactive dims -- the trace correction dT_out only counts
+ * active diagonals). Algorithm: Jacobi sweep over active (a<b<NUMDIMS) off-
+ * diagonals (no-op in 1D), clamp active diagonals to >= eigenvalue_floor,
+ * reconstruct via V D V^T on the active block.
+ *
+ * 3D path: existing 6-sweep over (0,1)/(0,2)/(1,2), matches the pre-commit
+ * cbe_project_central_S_to_PSD behavior. 2D: 6 sweeps over (0,1) only --
+ * conservative-overkill on a 2x2 (one sweep would suffice; 6 are cheap).
+ * 1D: no off-diagonal sweep; floor on S[0][0].
+ *
+ * Caller provides the eigenvalue_floor (e.g. CBE_SPD_RELATIVE_FLOOR * trace
+ * for the face-clamp policy, or 0 for Fix #2 cell repair true-PSD). dT_out
+ * (nullable) receives the post-minus-pre active-trace change. Non-finite
+ * input triggers the same MIN_REAL_NUMBER fallback on active diagonals as
+ * the 3D path used. */
+KOKKOS_INLINE_FUNCTION
+bool cbe_project_central_S_active_to_PSD(double S[3][3], double eigenvalue_floor,
+                                         double *dT_out)
+{
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    /* Self-protecting contract: explicitly zero inactive rows/cols on entry
+     * so callers that hand in stack workspaces with stale junk cannot
+     * pollute the active PSD test or the post-reconstruction store. */
+    for(int a=0; a<3; a++) for(int b=0; b<3; b++)
+        if(a >= NUMDIMS || b >= NUMDIMS) S[a][b] = 0.0;
+
+    /* Pre-trace over active diagonals. */
+    double trace_before = 0.0;
+    bool all_finite = true;
+    for(int a=0; a<NUMDIMS; a++) {
+        if(!isfinite(S[a][a])) { all_finite = false; }
+        else trace_before += S[a][a];
+        for(int b=a+1; b<NUMDIMS; b++)
+            if(!isfinite(S[a][b])) { all_finite = false; }
+    }
+    if(!all_finite || !isfinite(trace_before)) {
+        /* Reset active block to the same MIN_REAL_NUMBER isotropic-floor
+         * pattern as the old 3D helper. dT_out reports the post-reset
+         * trace; we do NOT compute a delta against a non-finite pre-trace
+         * (NaN/Inf would silently poison repair_dT_sum diagnostics). */
+        double tr_after = 0.0;
+        for(int a=0; a<NUMDIMS; a++) {
+            S[a][a] = MIN_REAL_NUMBER;
+            tr_after += MIN_REAL_NUMBER;
+            for(int b=a+1; b<NUMDIMS; b++) { S[a][b] = 0.0; S[b][a] = 0.0; }
+        }
+        if(dT_out) *dT_out = tr_after;
+        return true;
+    }
+
+    /* Working copies for Jacobi: A starts as S on the active block (others 0),
+     * V starts as identity on the active block (others 0 -- inactive rows/cols
+     * are not rotated). */
+    double A[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    double V[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    for(int a=0; a<NUMDIMS; a++) {
+        for(int b=0; b<NUMDIMS; b++) A[a][b] = S[a][b];
+        V[a][a] = 1.0;
+    }
+
+#if (NUMDIMS >= 2)
+    /* 6 fixed Jacobi sweeps over active off-diagonals (a<b<NUMDIMS). */
+    for(int sweep=0; sweep<6; sweep++) {
+        for(int p=0; p<NUMDIMS; p++) for(int q=p+1; q<NUMDIMS; q++) {
+            double Apq = A[p][q];
+            if(fabs(Apq) < 1.0e-300) continue;
+            double theta = (A[q][q] - A[p][p]) / (2.0 * Apq);
+            double t;
+            if(fabs(theta) > 1.0e15) {
+                t = 0.5 / theta;
+            } else {
+                double sgn = (theta >= 0) ? 1.0 : -1.0;
+                t = sgn / (fabs(theta) + sqrt(theta*theta + 1.0));
+            }
+            const double c   = 1.0 / sqrt(1.0 + t*t);
+            const double s   = t * c;
+            const double tau = s / (1.0 + c);
+            const double App = A[p][p], Aqq = A[q][q];
+            A[p][p] = App - t * Apq;
+            A[q][q] = Aqq + t * Apq;
+            A[p][q] = 0.0; A[q][p] = 0.0;
+            for(int r=0; r<NUMDIMS; r++) {
+                if(r == p || r == q) continue;
+                const double Arp = A[r][p], Arq = A[r][q];
+                A[r][p] = Arp - s * (Arq + tau * Arp);
+                A[r][q] = Arq + s * (Arp - tau * Arq);
+                A[p][r] = A[r][p]; A[q][r] = A[r][q];
+            }
+            for(int r=0; r<NUMDIMS; r++) {
+                const double Vrp = V[r][p], Vrq = V[r][q];
+                V[r][p] = Vrp - s * (Vrq + tau * Vrp);
+                V[r][q] = Vrq + s * (Vrp - tau * Vrq);
+            }
+        }
+    }
+#endif
+
+    /* Diagonals of A post-sweep are the eigenvalues. Check whether any active
+     * eigenvalue lies strictly below eigenvalue_floor: if not, S was already
+     * PSD relative to the requested floor and we MUST leave it untouched
+     * (do not let V*diag*V^T reconstruction roundoff drift S silently while
+     * we report dT=0 / floored=false). Matches the pre-refactor 3D helper
+     * semantics. */
+    bool floored = false;
+    double lambda[3] = {0,0,0};
+    for(int a=0; a<NUMDIMS; a++) {
+        if(A[a][a] < eigenvalue_floor) { floored = true; lambda[a] = eigenvalue_floor; }
+        else                            { lambda[a] = A[a][a]; }
+    }
+    if(!floored) {
+        if(dT_out) *dT_out = 0.0;
+        return false;
+    }
+
+    /* Reconstruct S_active = V * diag(lambda) * V^T on the active block;
+     * inactive entries stay at zero. */
+    double trace_after = 0.0;
+    for(int a=0; a<NUMDIMS; a++) {
+        for(int b=a; b<NUMDIMS; b++) {
+            double sum = 0.0;
+            for(int k=0; k<NUMDIMS; k++) sum += V[a][k] * lambda[k] * V[b][k];
+            S[a][b] = sum;
+            if(b > a) S[b][a] = sum;
+        }
+        trace_after += S[a][a];
+    }
+    /* Floor cannot mathematically reduce trace; protect repair_dT_sum
+     * diagnostics against tiny negative reconstruction roundoff (matches
+     * the pre-refactor 3D helper's invariant accounting). */
+    if(dT_out) {
+        double dT = trace_after - trace_before;
+        if(!isfinite(dT) || dT < 0.0) dT = 0.0;
+        *dT_out = dT;
+    }
+    return true;
+#else
+    (void)S; (void)eigenvalue_floor;
+    if(dT_out) *dT_out = 0.0;
+    return false;
+#endif
+}
 #endif
 
 
@@ -216,13 +472,16 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
         double dv = v_a[k] - v_b[k];
         c += dv * dv;
     }
-#if (CBE_INTEGRATOR_NMOMENTS >= 7)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    /* Active-block trace of central S = sum_{a<NUMDIMS} (T_aa/m - v_a^2),
+     * each piece floored at 0 before sqrt. Migrated in commit 4a from
+     * hardcoded 4+k indices that only worked in 3D. */
     double tr_S_a = 0, tr_S_b = 0;
-    for(int k=0; k<3; k++) {
-        double S_a_kk = moments_a[4+k] * inv_a - v_a[k]*v_a[k];
-        double S_b_kk = moments_b[4+k] * inv_b - v_b[k]*v_b[k];
-        tr_S_a += DMAX(S_a_kk, 0.0);
-        tr_S_b += DMAX(S_b_kk, 0.0);
+    for(int a=0; a<NUMDIMS; a++) {
+        double S_a_aa = cbe_basis_T_r(moments_a, a, a) * inv_a - v_a[a]*v_a[a];
+        double S_b_aa = cbe_basis_T_r(moments_b, a, a) * inv_b - v_b[a]*v_b[a];
+        tr_S_a += DMAX(S_a_aa, 0.0);
+        tr_S_b += DMAX(S_b_aa, 0.0);
     }
     double dsqrt_S = sqrt(tr_S_a) - sqrt(tr_S_b);
     c += dsqrt_S * dsqrt_S;
@@ -419,32 +678,26 @@ double cbe_face_normal_stress_speed_from_Qrow(
 {
     if(!(moments[0] > MIN_REAL_NUMBER)) return 0;
     const double inv_rho = 1.0 / moments[0];
-    /* Always-3-vector velocity. Missing components zero-padded by the helper
-     * so 1D/2D builds use the same 3-vector algebra below; the SECONDMOMENT
-     * stress block stays 3D-only via the precompiler_logic.h fence. */
+    /* Always-3-vector velocity. Missing components zero-padded by the helper.
+     * Stress block runs only under SECONDMOMENT and loops over the active
+     * NUMDIMS x NUMDIMS block via cbe_basis_T_load_active_scaled. Commit 4a
+     * migrated the layout to be dim-agnostic so the fence at
+     * precompiler_logic.h can be lifted in commit 4b once the relative-frame
+     * T_abs boost + dT_abs -> dT_rel conversion land; today the fence still
+     * pins SECONDMOMENT to NUMDIMS=3. */
     double v[3]; cbe_basis_v_load_3(moments, v);
     double nSn = 0;
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
     {
-        const double R[3][3] = {
-            { moments[4]*inv_rho, moments[7]*inv_rho, moments[8]*inv_rho },
-            { moments[7]*inv_rho, moments[5]*inv_rho, moments[9]*inv_rho },
-            { moments[8]*inv_rho, moments[9]*inv_rho, moments[6]*inv_rho }
-        };
-        for(int k=0; k<3; k++) {
+        /* R = T / m on the active block; inactive entries stay at zero so the
+         * n^T S n contraction below restricts to active dimensions of n_hat. */
+        double R[3][3];
+        cbe_basis_T_load_active_scaled(moments, inv_rho, R);
+        for(int k=0; k<NUMDIMS; k++) {
             double s = 0;
-            for(int l=0; l<3; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
+            for(int l=0; l<NUMDIMS; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
             nSn += n_hat[k] * s;
         }
-    }
-#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
-    {
-        const double S_diag[3] = {
-            moments[4]*inv_rho - v[0]*v[0],
-            moments[5]*inv_rho - v[1]*v[1],
-            moments[6]*inv_rho - v[2]*v[2]
-        };
-        for(int k=0; k<3; k++) nSn += S_diag[k] * n_hat[k] * n_hat[k];
     }
 #endif
     return (nSn > 0) ? sqrt(3.0 * nSn) : 0;
@@ -614,10 +867,14 @@ void cbe_build_flux_frame_Q_from_stored_moments(
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
             Q_out[m][k] = U[m][k] * inv_V * cf_a3inv;
         }
-        /* Velocity boost on the momentum slots [1..3]. Mirrors flux_functions.h
-         * pre-Commit-4 lines 71-74. */
-        for(int k=1; k<4 && k<CBE_INTEGRATOR_NMOMENTS; k++) {
-            Q_out[m][k] += Q_out[m][0] * Vel_code[k-1] * inv_a;
+        /* Velocity boost on the momentum slots [1..NUMDIMS]. Commit 4a: was
+         * hardcoded k=1..3 (silently treated T_xx as momentum in 1D/2D
+         * SECONDMOMENT builds where momentum occupies only [1..NUMDIMS] and
+         * the next slot is the stress block). cbe_basis_p_a is a no-op for
+         * a >= NUMDIMS so this is also a defensive guard against any future
+         * caller that hands in a row without the active-only convention. */
+        for(int a=0; a<NUMDIMS; a++) {
+            cbe_basis_p_a(Q_out[m], a, Q_out[m][0] * Vel_code[a] * inv_a);
         }
     }
 }
@@ -684,27 +941,24 @@ bool cbe_basis_row_is_realizable(
     const double Q_row[CBE_INTEGRATOR_NMOMENTS], double eps_tol)
 {
     if(!(Q_row[0] > 0) || !isfinite(Q_row[0])) return false;
-#if (CBE_INTEGRATOR_NMOMENTS >= 7)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
     {
-        const double m  = Q_row[0];
-        const double p[3] = { Q_row[1], Q_row[2], Q_row[3] };
-        double M[3][3];
-        M[0][0] = Q_row[4] * m - p[0]*p[0];
-        M[1][1] = Q_row[5] * m - p[1]*p[1];
-        M[2][2] = Q_row[6] * m - p[2]*p[2];
-    #if (CBE_INTEGRATOR_NMOMENTS >= 10)
-        M[0][1] = M[1][0] = Q_row[7] * m - p[0]*p[1];
-        M[0][2] = M[2][0] = Q_row[8] * m - p[0]*p[2];
-        M[1][2] = M[2][1] = Q_row[9] * m - p[1]*p[2];
-    #else
-        /* NMOMENTS=7: off-diagonal central S absent (Commit 8 convention).
-         * Zero M off-diagonals so the full-3x3 PSD helper reduces to the
-         * diagonal-only check. */
-        M[0][1] = M[1][0] = 0;
-        M[0][2] = M[2][0] = 0;
-        M[1][2] = M[2][1] = 0;
-    #endif
-        if(!cbe_sym3x3_all_principal_minors_nonneg(M, eps_tol)) return false;
+        /* Active-dim realizability: M = T * m - p p^T on the upper-left
+         * NUMDIMS x NUMDIMS block (zero-padded outside). T loaded via the
+         * stress helper so the slot layout is correct for any NUMDIMS;
+         * the predicate checks principal minors only of the active block. */
+        const double m = Q_row[0];
+        double p[3]; cbe_basis_p_load_3(Q_row, p);
+        double T[3][3]; cbe_basis_T_load_active(Q_row, T);
+        double M[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+        for(int a=0; a<NUMDIMS; a++) {
+            M[a][a] = T[a][a] * m - p[a]*p[a];
+            for(int b=a+1; b<NUMDIMS; b++) {
+                const double off = T[a][b] * m - p[a]*p[b];
+                M[a][b] = off; M[b][a] = off;
+            }
+        }
+        if(!cbe_symNxN_active_principal_minors_nonneg(M, eps_tol)) return false;
     }
 #endif
     return true;
@@ -849,17 +1103,17 @@ bool cbe_project_central_S_to_PSD(double S[6], double eigenvalue_floor,
  * trace delta = m * (central-dT), preserving the dP_sum / dT_sum
  * accumulator semantic Commit 5 wired into cbe_diagnostics col-8.
  *
- * NMOMENTS>=10 only: both current callers (cbe_clamp_face_Q + cell-side
- * drift-kick) gate on >=10 since the central stress 3x3 is only present
- * with the full 3D second-moment layout. NMOMENTS=7 callers (none yet)
- * would need a diagonal-only variant. */
+ * Commit 4a (2026-06-03): now SECONDMOMENT-gated (replaces NMOMENTS>=10
+ * gate) and operates on the active D x D stress block via the new
+ * active-dimensional helpers. Inactive rows/cols stay at zero; PSD
+ * projection only floors active eigenvalues. */
 KOKKOS_INLINE_FUNCTION
 bool cbe_basis_row_project_central_stress_to_PSD(
     double U_row[CBE_INTEGRATOR_NMOMENTS],
     double eigenvalue_floor,
     double *dT_out)
 {
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
     /* Mass-positivity guard: m <= 0 means v = p/m undefined; caller is
      * responsible for rho-clamping upstream (cbe_clamp_face_Q does so via
      * Q_face[m][0] <= MIN_REAL_NUMBER row-zeroing; Fix #2b corrupt-cell
@@ -870,32 +1124,37 @@ bool cbe_basis_row_project_central_stress_to_PSD(
     }
     const double m     = U_row[0];
     const double inv_m = 1.0 / m;
-    const double v[3]  = { U_row[1]*inv_m, U_row[2]*inv_m, U_row[3]*inv_m };
-    /* Build central S in helper's slot order [Sxx, Syy, Szz, Sxy, Sxz, Syz]. */
-    double S[6];
-    S[0] = U_row[4]*inv_m - v[0]*v[0];
-    S[1] = U_row[5]*inv_m - v[1]*v[1];
-    S[2] = U_row[6]*inv_m - v[2]*v[2];
-    S[3] = U_row[7]*inv_m - v[0]*v[1];
-    S[4] = U_row[8]*inv_m - v[0]*v[2];
-    S[5] = U_row[9]*inv_m - v[1]*v[2];
+    double v[3]; cbe_basis_v_load_3(U_row, v);
+
+    /* Central stress S = T/m - v v^T on the active block. Inactive entries
+     * are exactly zero on entry to the projection (cbe_basis_T_load_active_scaled
+     * zeros above NUMDIMS, and the v[k]*v[l] correction is only applied
+     * on the active loop). */
+    double S[3][3];
+    cbe_basis_T_load_active_scaled(U_row, inv_m, S);
+    for(int a=0; a<NUMDIMS; a++) {
+        S[a][a] -= v[a]*v[a];
+        for(int b=a+1; b<NUMDIMS; b++) {
+            const double off = S[a][b] - v[a]*v[b];
+            S[a][b] = off; S[b][a] = off;
+        }
+    }
 
     double dT_central = 0;
-    bool modified = cbe_project_central_S_to_PSD(S, eigenvalue_floor, &dT_central);
+    bool modified = cbe_project_central_S_active_to_PSD(S, eigenvalue_floor, &dT_central);
 
     if(modified) {
-        /* Rebuild raw slots: T_kl = m * (S_kl + v_k v_l). */
-        U_row[4] = m * (S[0] + v[0]*v[0]);
-        U_row[5] = m * (S[1] + v[1]*v[1]);
-        U_row[6] = m * (S[2] + v[2]*v[2]);
-        U_row[7] = m * (S[3] + v[0]*v[1]);
-        U_row[8] = m * (S[4] + v[0]*v[2]);
-        U_row[9] = m * (S[5] + v[1]*v[2]);
+        /* Rebuild raw slots: T_kl = m * (S_kl + v_k v_l) on active block. */
+        for(int a=0; a<NUMDIMS; a++) {
+            U_row[cbe_T_idx(a, a)] = m * (S[a][a] + v[a]*v[a]);
+            for(int b=a+1; b<NUMDIMS; b++)
+                U_row[cbe_T_idx(a, b)] = m * (S[a][b] + v[a]*v[b]);
+        }
     }
     if(dT_out) *dT_out = dT_central * m;   /* raw-slot trace delta */
     return modified;
 #else
-    /* NMOMENTS < 10: no off-diagonal stress slots; caller should not invoke. */
+    /* SECONDMOMENT not active: nothing to project. */
     (void)U_row; (void)eigenvalue_floor;
     if(dT_out) *dT_out = 0;
     return false;
@@ -951,8 +1210,10 @@ bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
  * is much smaller than 1e-12 * (trace_central_S + v_bulk^2) when bulk
  * kinetic dominates). S_clamp_count semantic unchanged.
  *
- * Gated on CBE_INTEGRATOR_NMOMENTS >= 10 since slots [4..9] off-diagonals
- * only exist there. */
+ * Commit 4a (2026-06-03): SECONDMOMENT-gated (was NMOMENTS>=10). The stress
+ * block runs in any dimension under SECONDMOMENT; trace and projection
+ * helpers loop over active NUMDIMS so 1D/2D warm physics participates
+ * correctly. */
 KOKKOS_INLINE_FUNCTION
 void cbe_clamp_face_Q(
     double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
@@ -964,15 +1225,19 @@ void cbe_clamp_face_Q(
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) Qface[m][k] = 0.0;
             if(rho_clamp_count) (*rho_clamp_count)++;
         }
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
         else {
-            /* Compute eigenvalue_floor from central S trace, NOT raw R trace.
+            /* Eigenvalue floor from active central-S trace. Active block
+             * only -- the prior 3D-hardcoded sum [4]+[5]+[6] silently set
+             * a floor proportional to inactive (y/z) diagonals in low-D.
              * Mass-positivity guarded above (Qface[m][0] > MIN_REAL_NUMBER). */
             const double m_face = Qface[m][0];
             const double inv_m  = 1.0 / m_face;
-            const double v[3] = { Qface[m][1]*inv_m, Qface[m][2]*inv_m, Qface[m][3]*inv_m };
-            const double trace_S_central = (Qface[m][4] + Qface[m][5] + Qface[m][6]) * inv_m
-                                         - (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+            double v[3]; cbe_basis_v_load_3(Qface[m], v);
+            double v_dot_v = 0.0;
+            for(int a=0; a<NUMDIMS; a++) v_dot_v += v[a]*v[a];
+            const double trace_R_active  = cbe_basis_T_trace_active(Qface[m], inv_m);
+            const double trace_S_central = trace_R_active - v_dot_v;
             const double trace_S_pos     = DMAX(trace_S_central, MIN_REAL_NUMBER);
             const double eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR * trace_S_pos;
             double dT_dump = 0.0;
@@ -1083,42 +1348,32 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
 
     const double rho     = moments[0];
     const double inv_rho = 1.0 / rho;
-    /* Always-3-vector velocity. Missing components zero-padded so 1D/2D
-     * builds use the same 3-vector algebra; SECONDMOMENT stress block
-     * stays 3D-only via the precompiler_logic.h fence. */
+    /* Always-3-vector velocity. Missing components zero-padded so the
+     * v.n_hat dot product collapses cleanly to NUMDIMS terms when n_hat
+     * has only active components (canonical 1D/2D face normals are
+     * axis-aligned; inactive n_hat slots would contribute zero against
+     * zero v). */
     double v[3]; cbe_basis_v_load_3(moments, v);
     const double v_n     = v[0]*n_hat[0]    + v[1]*n_hat[1]    + v[2]*n_hat[2];
     const double vF_n    = vface[0]*n_hat[0] + vface[1]*n_hat[1] + vface[2]*n_hat[2];
     const double u_out   = v_n - vF_n;
 
     /* Central stress contracted with n_hat: S_n_k = (R_kl - v_k v_l) n_hat_l.
-     * NMOMENTS=7 has only diagonal raw moments stored, so off-diagonal
-     * CENTRAL stress is ABSENT (not zero) — synthesizing -v_k v_l in those
-     * slots would invent unphysical off-diagonal stress. Use diagonal-only
-     * formula in that branch. Scalar c_x comes from the SSOT helper to
-     * keep the wave-speed definition identical to the residual function. */
+     * Active-block only (k,l < NUMDIMS). With the dim-aware layout via
+     * cbe_basis_T_load_active_scaled, R inactive entries are exactly zero
+     * and v inactive components are zero, so the loop bound here is
+     * cosmetic in 3D but load-bearing in 1D/2D where there is no
+     * physical y/z stress to contract. c_x from the SSOT scalar helper. */
     double S_n[3] = {0};
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
     {
-        const double R[3][3] = {
-            { moments[4]*inv_rho, moments[7]*inv_rho, moments[8]*inv_rho },
-            { moments[7]*inv_rho, moments[5]*inv_rho, moments[9]*inv_rho },
-            { moments[8]*inv_rho, moments[9]*inv_rho, moments[6]*inv_rho }
-        };
-        for(int k=0; k<3; k++) {
+        double R[3][3];
+        cbe_basis_T_load_active_scaled(moments, inv_rho, R);
+        for(int k=0; k<NUMDIMS; k++) {
             double s = 0;
-            for(int l=0; l<3; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
+            for(int l=0; l<NUMDIMS; l++) s += (R[k][l] - v[k]*v[l]) * n_hat[l];
             S_n[k] = s;
         }
-    }
-#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
-    {
-        const double S_diag[3] = {
-            moments[4]*inv_rho - v[0]*v[0],
-            moments[5]*inv_rho - v[1]*v[1],
-            moments[6]*inv_rho - v[2]*v[2]
-        };
-        for(int k=0; k<3; k++) S_n[k] = S_diag[k] * n_hat[k];
     }
 #endif
     const double c_x = cbe_face_normal_stress_speed_from_Qrow(moments, n_hat);
@@ -1149,22 +1404,23 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
         cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + prefactor * A_norm * S_n[k]);
     }
 
-    /* Stress: F_T_kl = R_kl * F_m + prefactor * |A| * (v_k S_n_l + S_n_k v_l).
-     * Note the u_or_c-multiplied piece uses RAW R; the cross piece uses
-     * central S contracted with n_hat. NMOMENTS=7 has only diagonal slots
-     * [4,5,6]; NMOMENTS=10 also has off-diagonal [7,8,9].
-     * (Fixes a latent NMOMENTS=7 OOB read in the pre-Commit-8 code.) */
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
-    fluxes[4] = moments[4]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[0] * S_n[0];
-    fluxes[5] = moments[5]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[1] * S_n[1];
-    fluxes[6] = moments[6]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[2] * S_n[2];
-    fluxes[7] = moments[7]*inv_rho * fluxes[0] + prefactor * A_norm * (v[0]*S_n[1] + S_n[0]*v[1]);
-    fluxes[8] = moments[8]*inv_rho * fluxes[0] + prefactor * A_norm * (v[0]*S_n[2] + S_n[0]*v[2]);
-    fluxes[9] = moments[9]*inv_rho * fluxes[0] + prefactor * A_norm * (v[1]*S_n[2] + S_n[1]*v[2]);
-#elif (CBE_INTEGRATOR_NMOMENTS >= 7)
-    fluxes[4] = moments[4]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[0] * S_n[0];
-    fluxes[5] = moments[5]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[1] * S_n[1];
-    fluxes[6] = moments[6]*inv_rho * fluxes[0] + prefactor * A_norm * 2.0 * v[2] * S_n[2];
+    /* Stress: F_T_ab = R_ab * F_m + prefactor * |A| * (v_a S_n_b + S_n_a v_b).
+     * Active block (a,b < NUMDIMS) with 2*v*S_n on diagonals (the v_a S_n_b
+     * + S_n_a v_b sum collapses to 2 v_a S_n_a when a==b). The R_ab * F_m
+     * piece carries RAW R; the cross piece uses central S contracted with
+     * n_hat (S_n). Writes via cbe_basis_T_w so inactive slots are silently
+     * untouched -- no OOB at any NUMDIMS. */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        const double R_aa = cbe_basis_T_r(moments, a, a) * inv_rho;
+        cbe_basis_T_w(fluxes, a, a,
+            R_aa * fluxes[0] + prefactor * A_norm * 2.0 * v[a] * S_n[a]);
+        for(int b=a+1; b<NUMDIMS; b++) {
+            const double R_ab = cbe_basis_T_r(moments, a, b) * inv_rho;
+            cbe_basis_T_w(fluxes, a, b,
+                R_ab * fluxes[0] + prefactor * A_norm * (v[a]*S_n[b] + S_n[a]*v[b]));
+        }
+    }
 #endif
 
     return (fabs(u_out) + c_x) * A_norm;
@@ -1208,18 +1464,22 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
         /* Momentum slots: indices 1..NUMDIMS only. 1D NMOMENTS=2 has just
          * slot [1]=p_x; 3D NMOMENTS=4/7/10 has [1..3]=p_x,p_y,p_z. */
         for(k=1;k<=NUMDIMS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k] - pi.CBE_basis_moments[j][0]*minv*dmoment[k]);}
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
-        /* dt-advance of stress slots: indices 1+NUMDIMS..NMOMENTS-1.
-         * Currently only fires in 3D SECONDMOMENT (precompiler fence). */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* dt-advance of stress slots: indices 1+NUMDIMS..NMOMENTS-1. */
         for(k=1+NUMDIMS;k<CBE_INTEGRATOR_NMOMENTS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k]);}
-        for(k=4;k<7;k++) {if(pi.CBE_basis_moments[j][k] < MIN_REAL_NUMBER) {pi.CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
-        /* Off-diagonal Cauchy-Schwarz + determinant crossnorm + Wave-CBE
-         * Commit 5 SPD projection. Only valid for the full 3D second-moment
-         * layout — slots [7]/[8]/[9] (Sxy/Sxz/Syz) are absent in 7-moment
-         * builds, which rely on the diagonal lower-clamp above for stress
-         * regularization. (Codex 2026-05-26: previously this whole block
-         * was gated on >4, an out-of-bounds access for 7-moment builds.) */
+        /* Active-diagonal lower clamp. */
+        for(int a=0;a<NUMDIMS;a++) {
+            const double Taa = cbe_basis_T_r(pi.CBE_basis_moments[j], a, a);
+            if(Taa < MIN_REAL_NUMBER) cbe_basis_T_w(pi.CBE_basis_moments[j], a, a, MIN_REAL_NUMBER);
+        }
+#if (NUMDIMS == 3)
+        /* Off-diagonal Cauchy-Schwarz + determinant crossnorm chain (3D only).
+         * 2D Cauchy-Schwarz on T_xy is in principle meaningful but this whole
+         * repair chain (diagonal floor + CS clamp + det test + SPD projection
+         * + split-largest) is slated for deletion in commit 5 (Fix #2b
+         * conservative-shift repair), so 4a leaves the 3D-only chain shape
+         * intact and lets the active-dim SPD projection below handle
+         * realizability in low-D. */
         double eps_tmp = 1.e-8;
         double xyMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][5]) * (1.-eps_tmp);
         double xzMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][6]) * (1.-eps_tmp);
@@ -1242,36 +1502,30 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
             crossnorm = (-detSMatrix_Diag * (1.-eps_tmp)) / detSMatrix_Cross;
         }
         if(crossnorm < 1) {for(k=7;k<10;k++) {pi.CBE_basis_moments[j][k] *= crossnorm;}}
-        /* Wave-CBE Commit 5 (2026-05-26): symmetric 3x3 SPD projection on
-         * the central stress block (Sxx, Syy, Szz, Sxy, Sxz, Syz) as the
-         * final pass after the existing diagonal-lower-clamp + Cauchy-
-         * Schwarz + determinant crossnorm chain. Replaces the if(2==2)
-         * 1D-collapse stopgap.
+#endif
+        /* Wave-CBE Commit 5 (2026-05-26): SPD projection on the central
+         * stress block. Migrated to active-dim helper in commit 4a so the
+         * projection's eigenvalue floor + Jacobi rotation only operate on
+         * the active NUMDIMS-block (no fake inactive-dim floor contributing
+         * to dT_out).
          *
-         * Wave-CBE Fix #2a (2026-05-30): migrated from cbe_spd_repair_S3x3
-         * (which silently treated the raw R block at slots [4..9] as if it
-         * were central S) to the raw-row wrapper, which correctly converts
-         * raw <-> central before/after projection. The eigenvalue floor is
-         * now CBE_SPD_RELATIVE_FLOOR * trace(central S), NOT the hidden
-         * bulk-KE-inclusive trace(raw R) the old shim used.
+         * Wave-CBE Fix #2a (2026-05-30): raw-row wrapper, raw <-> central
+         * units bug fix preserved.
          *
          * Note Fix #2b will replace this entire chain (diagonal floor +
          * Cauchy-Schwarz + det crossnorm + this SPD projection + the
-         * split-largest below) with a conservative repair operator. 2a
-         * preserves the chain shape, fixing only the unit bug. */
+         * split-largest below) with a conservative repair operator. */
         {
             const double m_pi    = pi.CBE_basis_moments[j][0];
             double eigenvalue_floor = 0.0;
             if(m_pi > 0 && isfinite(m_pi)) {
-                /* Always-3-vector velocity; missing components zero-padded.
-                 * This block is SECONDMOMENT-only (NMOMENTS>=10 outer gate)
-                 * → fenced 3D today, so v[1]/v[2] are real. The helper-based
-                 * load keeps the call site unfence-safe. */
+                /* Active-dim trace of central S = trace_R_active - v_active . v_active. */
                 double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
-                const double trace_S_central = (pi.CBE_basis_moments[j][4]
-                                             +  pi.CBE_basis_moments[j][5]
-                                             +  pi.CBE_basis_moments[j][6]) / m_pi
-                                             - (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+                double v_dot_v = 0.0;
+                for(int a=0;a<NUMDIMS;a++) v_dot_v += v[a]*v[a];
+                const double trace_R_active  = cbe_basis_T_trace_active(
+                    pi.CBE_basis_moments[j], 1.0 / m_pi);
+                const double trace_S_central = trace_R_active - v_dot_v;
                 eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR
                                  * DMAX(trace_S_central, MIN_REAL_NUMBER);
             }
@@ -1286,7 +1540,6 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
             }
         }
 #endif
-#endif
     }
     /* split the largest basis into the smallest when one becomes degenerate */
     double mmax=-1, mmin=1.e10*pi.Mass; int jmin=-1,jmax=-1;
@@ -1297,7 +1550,12 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
         for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
         {
             double dq = 0.5*pi.CBE_basis_moments[jmax][k];
-            if(k>0 && k<4) {
+            /* Random per-component perturbation on MOMENTUM slots only
+             * (k=1..NUMDIMS). Commit 4a: was hardcoded k>0 && k<4, which
+             * silently perturbed T_xx in 1D SECONDMOMENT (slot 2) and T_xx
+             * in 2D SECONDMOMENT (slot 3) as if it were a momentum
+             * component. */
+            if(k >= 1 && k <= NUMDIMS) {
                 uint64_t key = (uint64_t)pi.ID ^ ((uint64_t)jmax*65537ULL) ^ ((uint64_t)k*131071ULL);
                 uint64_t counter = ((uint64_t)All.Ti_Current << 32) ^ CBE_DRIFT_KICK_RNG_SALT;
                 dq *= 1. + 0.001*(gizmo_gpu_rand_double(key, counter) - 0.5);
@@ -1384,17 +1642,47 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
             pi.CBE_basis_moments_dt[j][k+1] -= pi.Vel[k] * dmdt_raw_alpha
                                             +  pi.CBE_basis_moments[j][0] * a_cbe[k];
         }
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* dT -> dS frame-conversion on the active stress block. The existing
+         * absolute-frame formula
+         *     dS_ab = dT_ab - m_inv * (dp_a * p_b + p_a * dp_b)
+         *                   + m_inv^2 * dm * p_a * p_b
+         * is dim-agnostic by structure; commit 4a loops over (a<=b)<NUMDIMS
+         * via the stress-slot helpers and the existing momentum-slot helpers,
+         * dropping the hardcoded 3D [4..9] / [1..3] indices. Inactive slots
+         * are not touched.
+         *
+         * Note (commit 4a): this is layout-only migration. The relative-frame
+         * dT_abs -> dT_rel conversion (with the additional -V*dp_abs - p_rel*a
+         * + dmdt_raw*V*V boost matching the momentum-side relative-frame
+         * convention) lands in commit 4b alongside the corresponding T_abs
+         * boost in cbe_build_flux_frame_Q_from_stored_moments. */
         {
-            double dS[6] = {0};
-            dS[0] = pi.CBE_basis_moments_dt[j][4] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][1] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][1]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][1];
-            dS[1] = pi.CBE_basis_moments_dt[j][5] - m_inv * (pi.CBE_basis_moments_dt[j][2]*pi.CBE_basis_moments[j][2] + pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments_dt[j][2]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments[j][2];
-            dS[2] = pi.CBE_basis_moments_dt[j][6] - m_inv * (pi.CBE_basis_moments_dt[j][3]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][3]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][3]*pi.CBE_basis_moments[j][3];
-            dS[3] = pi.CBE_basis_moments_dt[j][7] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][2] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][2]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][2];
-            dS[4] = pi.CBE_basis_moments_dt[j][8] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][3];
-            dS[5] = pi.CBE_basis_moments_dt[j][9] - m_inv * (pi.CBE_basis_moments_dt[j][2]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments[j][3];
-            if(pi.CBE_basis_moments_dt[j][0] > 0) { for(k=0;k<3;k++) {dS[k] = DMAX(dS[k], 0.);} }
-            for(k=4;k<CBE_INTEGRATOR_NMOMENTS;k++) { pi.CBE_basis_moments_dt[j][k] = dS[k-4]; }
+            const double dm   = pi.CBE_basis_moments_dt[j][0];
+            const double m2_inv = m_inv * m_inv;
+            const bool   dm_pos = (dm > 0);
+            for(int a=0;a<NUMDIMS;a++) {
+                const double p_a   = cbe_basis_p_r(pi.CBE_basis_moments[j],    a);
+                const double dp_a  = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
+                /* Diagonal a==b first (positivity clamp uses dm sign). */
+                {
+                    const double dT_aa = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
+                    double dS_aa = dT_aa
+                                 - m_inv * (dp_a * p_a + p_a * dp_a)
+                                 + m2_inv * dm * p_a * p_a;
+                    if(dm_pos && dS_aa < 0) dS_aa = 0;
+                    cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, a, dS_aa);
+                }
+                for(int b=a+1;b<NUMDIMS;b++) {
+                    const double p_b   = cbe_basis_p_r(pi.CBE_basis_moments[j],    b);
+                    const double dp_b  = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], b);
+                    const double dT_ab = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
+                    const double dS_ab = dT_ab
+                                       - m_inv * (dp_a * p_b + p_a * dp_b)
+                                       + m2_inv * dm * p_a * p_b;
+                    cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, b, dS_ab);
+                }
+            }
         }
 #endif
     }

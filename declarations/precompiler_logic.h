@@ -1560,16 +1560,27 @@
  * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
  * sites were migrated through them.
  *
- * The SECONDMOMENT path stays 3D-only: the stress-block helpers
- * (cbe_face_K_and_vn_from_Q, cbe_flux_hllc_vacuum, cbe_basis_row_*)
- * still hard-code the 3D triangular layout [4]=Sxx,[5]=Syy,[6]=Szz,
- * [7]=Sxy,[8]=Sxz,[9]=Syz. The CBE_NSTRESS = NUMDIMS*(NUMDIMS+1)/2 +
- * cbe_T_idx(a,b) stress accessors are in place in
- * cbe_integrator_functions.h for the eventual unfence — do not lift
- * this fence without migrating every stress-slot call site through
- * them. */
+ * The SECONDMOMENT path stays 3D-only through commit 4a (2026-06-03).
+ * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
+ * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
+ * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
+ * repair, postgravity dS) to access stress slots via cbe_T_idx /
+ * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
+ * code is now dim-agnostic in shape. The 3D-only Cauchy-Schwarz + det-test
+ * repair sub-block at sidm/cbe_integrator_functions.h is intentionally
+ * gated #if (NUMDIMS == 3) and is slated for replacement by Fix #2b
+ * conservative-shift repair (commit 5).
+ *
+ * The fence stays in 4a because warm physics correctness still requires
+ * commit 4b: the relative-frame T_abs boost in
+ * cbe_build_flux_frame_Q_from_stored_moments and the matching postgravity
+ * dT_abs -> dT_rel conversion mirroring the momentum-side relative-frame
+ * convention landed at 89fb05cc. Lifting the fence before 4b would compile
+ * but produce frame-inconsistent stress face states. Commit 4b lifts the
+ * fence as its final step, then warm 1D/2D regression vs exact analytic
+ * runs. */
 #if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
 #if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
-#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The stress-slot access pattern in sidm/cbe_integrator_functions.h hard-codes the 3D triangular layout [4]/[5]/[6]=diag, [7]/[8]/[9]=off-diag. The cbe_T_idx(a,b) + CBE_NSTRESS = NUMDIMS*(NUMDIMS+1)/2 helpers are in place; the fence stays until every stress-slot call site is migrated through them."
+#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). Commit 4a (2026-06-03) migrated every stress-slot site to cbe_T_idx / cbe_basis_T_r/_w with NUMDIMS-bounded loops; the layout is dim-agnostic. The fence stays until commit 4b adds the relative-frame T_abs boost in cbe_build_flux_frame_Q_from_stored_moments and the postgravity dT_abs -> dT_rel conversion. Without 4b the unfenced 1D/2D path would compile but compute frame-inconsistent stress face states."
 #endif
 #endif

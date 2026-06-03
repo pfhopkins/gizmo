@@ -216,20 +216,25 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     cbe_face_K_and_vn_from_Q(Qface_i, A_hat, K_i, v_alpha_n_i, c_x_i);
     cbe_face_K_and_vn_from_Q(Qface_j, A_hat, K_j, v_alpha_n_j, c_x_j);
 
-    /* Dispersion-based bracket pad (NMOMENTS>4 only; fence guarantees the
-     * 3D [4]/[5]/[6]=diag layout). 1D dispersion = sqrt(trace(S)/rho); use
-     * the face-state Qface to be consistent with the K, v_n above. */
+    /* Dispersion-based bracket pad. The pre-4a code computed trace(R)/m via
+     * the literal slot sum (Qface[m][4]+[5]+[6])/Qface[m][0] -- this is
+     * trace(raw R), NOT trace(central S), but the bracket pad is a heuristic
+     * upper bound on the wave-speed range so over-inclusion of the bulk-KE
+     * piece is conservative-safe (wider bracket only). Commit 4a preserves
+     * that semantic byte-for-byte in 3D and extends it to active-dim via
+     * cbe_basis_T_trace_active so 1D/2D builds get the same heuristic on
+     * only their physical (active) diagonals. */
     double pad = 0;
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface_i[m][0] > MIN_REAL_NUMBER) {
-            double trS_i = (Qface_i[m][4] + Qface_i[m][5] + Qface_i[m][6]) / Qface_i[m][0];
-            double sig_i = sqrt(DMAX(trS_i, 0.0));
+            double trR_i = cbe_basis_T_trace_active(Qface_i[m], 1.0 / Qface_i[m][0]);
+            double sig_i = sqrt(DMAX(trR_i, 0.0));
             if(sig_i > pad) pad = sig_i;
         }
         if(Qface_j[m][0] > MIN_REAL_NUMBER) {
-            double trS_j = (Qface_j[m][4] + Qface_j[m][5] + Qface_j[m][6]) / Qface_j[m][0];
-            double sig_j = sqrt(DMAX(trS_j, 0.0));
+            double trR_j = cbe_basis_T_trace_active(Qface_j[m], 1.0 / Qface_j[m][0]);
+            double sig_j = sqrt(DMAX(trR_j, 0.0));
             if(sig_j > pad) pad = sig_j;
         }
     }

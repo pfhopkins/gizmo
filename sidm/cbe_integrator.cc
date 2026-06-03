@@ -140,21 +140,17 @@ static void cbe_synthesize_cold_default(int i)
             cbe_basis_p_w(P[i].CBE_basis_moments[0], k, 0.0);
         }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* T_rel_kk = m * (v_rel_k^2 + S_floor) = m * S_floor since v_rel=0;
-         * T_rel off-diagonals all zero (no v_rel⊗v_rel piece). The
-         * SECONDMOMENT block is fenced at 3D in precompiler_logic.h until
-         * every stress-slot site is migrated through cbe_T_idx; explicit
-         * 3D triangular indices below are valid only under that fence. */
-        for(int k = 0; k < NUMDIMS; k++) {
-            P[i].CBE_basis_moments[0][1 + NUMDIMS + k] = m0 * S_floor;
+        /* T_rel_ab = m * (v_rel_a*v_rel_b + S_floor*delta_ab); v_rel = 0 for
+         * the dominant cold stream so T_rel_aa = m * S_floor and all
+         * off-diagonals are zero. Commit 4a: dim-agnostic via cbe_basis_T_w
+         * (was: explicit 3D triangular index block under the SECONDMOMENT
+         * fence). */
+        for(int a = 0; a < NUMDIMS; a++) {
+            cbe_basis_T_w(P[i].CBE_basis_moments[0], a, a, m0 * S_floor);
+            for(int b = a + 1; b < NUMDIMS; b++) {
+                cbe_basis_T_w(P[i].CBE_basis_moments[0], a, b, 0.0);
+            }
         }
-#if (NUMDIMS == 2)
-        P[i].CBE_basis_moments[0][1 + 2*NUMDIMS] = 0.0;                      /* xy */
-#elif (NUMDIMS == 3)
-        P[i].CBE_basis_moments[0][7] = 0.0;                                  /* xy */
-        P[i].CBE_basis_moments[0][8] = 0.0;                                  /* xz */
-        P[i].CBE_basis_moments[0][9] = 0.0;                                  /* yz */
-#endif
 #endif
     }
 
@@ -174,16 +170,16 @@ static void cbe_synthesize_cold_default(int i)
                 cbe_basis_p_w(P[i].CBE_basis_moments[j], k, m_each * v_rel[k]);
             }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-            for(int k = 0; k < NUMDIMS; k++) {
-                P[i].CBE_basis_moments[j][1 + NUMDIMS + k] = m_each * (v_rel[k]*v_rel[k] + S_floor);
+            /* T_rel_ab = m * (v_rel_a*v_rel_b + S_floor*delta_ab). Commit 4a:
+             * dim-agnostic via cbe_basis_T_w over active (a<=b)<NUMDIMS. */
+            for(int a = 0; a < NUMDIMS; a++) {
+                cbe_basis_T_w(P[i].CBE_basis_moments[j], a, a,
+                              m_each * (v_rel[a]*v_rel[a] + S_floor));
+                for(int b = a + 1; b < NUMDIMS; b++) {
+                    cbe_basis_T_w(P[i].CBE_basis_moments[j], a, b,
+                                  m_each * v_rel[a]*v_rel[b]);
+                }
             }
-#if (NUMDIMS == 2)
-            P[i].CBE_basis_moments[j][1 + 2*NUMDIMS] = m_each * v_rel[0]*v_rel[1];
-#elif (NUMDIMS == 3)
-            P[i].CBE_basis_moments[j][7] = m_each * v_rel[0]*v_rel[1];
-            P[i].CBE_basis_moments[j][8] = m_each * v_rel[0]*v_rel[2];
-            P[i].CBE_basis_moments[j][9] = m_each * v_rel[1]*v_rel[2];
-#endif
 #endif
         }
     }
