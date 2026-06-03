@@ -1354,21 +1354,54 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
             dmom_tot[k] += pi.CBE_basis_moments_dt[j][k];
         }
     }
-    /* Build dv0 as a 3-vector from dmom_tot's momentum slots [1..NUMDIMS].
-     * cbe_basis_p_r treats dmom_tot the same as a moment row (slot 0 mass,
-     * slots 1..NUMDIMS momentum), zero-padding missing axes. */
-    Vec3<double> dv0 = {
-        m_inv * cbe_basis_p_r(dmom_tot, 0),
-        m_inv * cbe_basis_p_r(dmom_tot, 1),
-        m_inv * cbe_basis_p_r(dmom_tot, 2)
+    /* CBE relative-frame postgravity (storage convention: basis moments are
+     * stored relative to the mesh-generating-point velocity P.Vel — i.e.
+     *    basis_p_stored[α] = m_α * (v_phys[α] − P.Vel)
+     *    v_phys[α]         = basis_p_stored[α]/m_α + P.Vel.
+     * Total physical accumulators from the per-basis flux pass are stored in
+     * dmom_tot:
+     *    dmom_tot[0]   = Σ_α dm_α/dt           (= 0 by MFM mass closure)
+     *    dmom_tot[k+1] = Σ_α dp_abs_α/dt       (absolute-frame momentum rate;
+     *                                           the flux solver works in
+     *                                           absolute frame and the sum
+     *                                           is the bulk momentum rate
+     *                                           in absolute frame).
+     * The bulk acceleration of the mesh-generating point in absolute frame:
+     *    a_cbe[k] = ( Σ dp_abs/dt[k+1] − P.Vel[k] * Σ dm/dt ) / M
+     * The −V·Σdmdt term is the projection of the COM acceleration onto the
+     * mass-weighted relative-frame storage (would vanish if Σdmdt = 0 exactly,
+     * but we include it for safety on residual MFM non-exactness). */
+    Vec3<double> a_cbe = {
+        m_inv * (cbe_basis_p_r(dmom_tot, 0) - pi.Vel[0] * dmom_tot[0]),
+        m_inv * (cbe_basis_p_r(dmom_tot, 1) - pi.Vel[1] * dmom_tot[0]),
+        m_inv * (cbe_basis_p_r(dmom_tot, 2) - pi.Vel[2] * dmom_tot[0])
     };
-    pi.GravAccel += dv0 / All.cf_a2inv;
+    /* Inject the CBE bulk acceleration into P.GravAccel so the regular
+     * half-step velocity kick advances P.Vel by a_cbe*dt. This is NOT
+     * self-gravity (SELFGRAVITY_OFF leaves this channel zero from gravtree);
+     * it is the mesh-generating-point acceleration from CBE flux-sum
+     * momentum and is the relative-convention path for advancing the COM. */
+    pi.GravAccel += a_cbe / All.cf_a2inv;
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
+        /* Capture RAW per-basis dmdt BEFORE the mass closure modifies it;
+         * the per-basis -V*dmdt_raw frame-projection below requires the
+         * pre-closure rate. */
+        const double dmdt_raw_alpha = pi.CBE_basis_moments_dt[j][0];
+        /* Mass closure: enforce Σ_α dmdt_α = 0 exactly (safety net;
+         * upstream MFM should already deliver Σdmdt ≈ 0 to machine eps). */
         pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot[0]);
-        /* Per-basis momentum subtraction on slots 1..NUMDIMS only. */
+        /* Per-basis relative-frame momentum conversion. The absolute-frame
+         * per-basis momentum rate from the flux pass projects onto the
+         * relative-frame stored quantity via
+         *    dpdt_rel[α][k] = dpdt_abs[α][k] − P.Vel[k] * dmdt_raw[α] − m_α * a_cbe[k].
+         * The −V*dmdt_raw term handles the frame-conversion of momentum
+         * carried by mass flux at nonzero bulk velocity; the −m*a_cbe term
+         * subtracts the COM-acceleration share so the stored rate is
+         * per-basis deviation about the bulk. */
         for(k=0;k<NUMDIMS;k++) {
-            pi.CBE_basis_moments_dt[j][k+1] -= pi.CBE_basis_moments[j][0] * dv0[k];
+            pi.CBE_basis_moments_dt[j][k+1] -= pi.Vel[k] * dmdt_raw_alpha
+                                            +  pi.CBE_basis_moments[j][0] * a_cbe[k];
         }
 #if (CBE_INTEGRATOR_NMOMENTS > 4)
         {

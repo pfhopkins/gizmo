@@ -657,16 +657,31 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_CBE_MOMENTS:   /* C7 (2026-05-30): real reader — see comment */
 #ifdef CBE_INTEGRATOR
             /* CommBuffer holds the per-particle flat array of
-             * NBASIS*NMOMENTS MyInputFloat values. For ranks/PartTypes
-             * whose /PartTypeX/VlasovMoments dataset was absent in the
-             * HDF5 file, the upstream optional-block path memset
-             * CommBuffer to zero (read_ic.cc around line 1246), so this
-             * case will store zeros — that's harmless because
-             * CBE_Moments_LoadedFromIC_PType[type] stays at 0 for those
-             * cases and do_cbe_initialization() will overwrite the
-             * zeros with the cold-default synthesis. The per-type flag
-             * (set up at the HDF5 H5Dread success point) is the SSOT
-             * distinguishing "actually loaded" vs "absent → zeros". */
+             * NBASIS*NMOMENTS MyInputFloat values, stored basis-major:
+             * index = NMOMENTS*basis + moment. Each per-basis row is
+             * [m, p_x, p_y, p_z, T_xx, T_yy, T_zz, T_xy, T_xz, T_yz]
+             * truncated to NMOMENTS = NUMDIMS+1 (no SECONDMOMENT) or
+             * +NUMDIMS*(NUMDIMS+1)/2 (with SECONDMOMENT).
+             *
+             * RELATIVE-FRAME STORAGE CONVENTION (binding):
+             *   basis_p_stored[α]  = m_α * (v_phys[α] − P.Vel)
+             *   v_phys[α]          = basis_p_stored[α] / m_α + P.Vel
+             *   Σ_α basis_p_stored = 0  (enforced by do_cbe_initialization
+             *                            closure and the IC writer in
+             *                            test/cbe_vlasov_common.py).
+             * Per-basis stress slots (when SECONDMOMENT) are likewise stored
+             * relative to P.Vel; the flux-frame helper performs the
+             * relative→absolute boost when needed for the HLLC vacuum solve.
+             *
+             * For ranks/PartTypes whose /PartTypeX/VlasovMoments dataset
+             * was absent in the HDF5 file, the upstream optional-block
+             * path memset CommBuffer to zero (read_ic.cc around line
+             * 1246), so this case will store zeros — that's harmless
+             * because CBE_Moments_LoadedFromIC_PType[type] stays at 0
+             * for those cases and do_cbe_initialization() will overwrite
+             * the zeros with the cold-default synthesis. The per-type
+             * flag (set up at the HDF5 H5Dread success point) is the
+             * SSOT distinguishing "actually loaded" vs "absent → zeros". */
             for(n = 0; n < pc; n++) {
                 for(k = 0; k < CBE_INTEGRATOR_NBASIS; k++) {
                     for(int kf = 0; kf < CBE_INTEGRATOR_NMOMENTS; kf++) {

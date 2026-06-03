@@ -6,8 +6,9 @@ These mirror the 1D Python harness at
   /Users/phopkins/Documents/work/papers/numerical_methods/cbe_cosmology/python_harness/
 ported to run on GIZMO like the other pytest-bench test problems.
 
-CBE-in-GIZMO contract (branch dmheat_cbe_c5_on_wave5next @ 700fcdbb, the
-"C7 IC reader" — to be merged into our working branch before any run):
+CBE-in-GIZMO contract (RELATIVE-FRAME storage convention; see also
+`reference_cbe_method_fix_list.md` and `do_cbe_initialization` /
+`do_cbe_postgravity_kernel` in sidm/cbe_integrator{.cc,_functions.h}):
 
   * CBE basis moments live on Type=1 particles. CBE_INTEGRATOR=N => NBASIS=N.
   * NMOMENTS (no CBE_INTEGRATOR_SECONDMOMENT) = BOX_SPATIAL_DIMENSION + 1.
@@ -21,11 +22,23 @@ CBE-in-GIZMO contract (branch dmheat_cbe_c5_on_wave5next @ 700fcdbb, the
     the dataset sets CBE_Moments_LoadedFromIC_PType[1] -> the loaded values
     are TRUSTED (validated finite + sum_basis m > 0, else endrun(8889));
     absent -> GIZMO synthesizes a cold single-stream default instead.
-  * do_cbe_initialization() then renormalizes sum_basis m -> P[i].Mass and
-    SHIFTS all basis momenta so sum_basis p = P[i].Mass * P[i].Vel. So the
-    IC MUST set Velocities = the mass-weighted-mean basis velocity (and
-    sum_basis m = particle mass) or the prescribed per-stream velocities
-    get boosted. Both invariants are enforced here by construction.
+
+  * RELATIVE-FRAME STORAGE CONVENTION (binding):
+        basis_p_stored[α]  = m_α * (v_phys[α] − P.Vel)
+        v_phys[α]          = basis_p_stored[α] / m_α + P.Vel
+    i.e. per-basis momenta are stored relative to the mesh-generating-point
+    velocity P.Vel. The absolute-frame bulk momentum is carried entirely by
+    P.Mass*P.Vel, and Σ_α basis_p_stored = 0 by construction. The IC writer
+    below enforces this: it subtracts the mass-weighted-mean bulk velocity
+    from every basis velocity before forming the momentum slot.
+
+  * do_cbe_initialization() runs a momentum closure that enforces
+    Σ basis_p_stored = 0 (relative convention; no boost of the
+    per-stream velocities). Velocities[] in the IC stores P.Vel = the
+    mass-weighted-mean basis velocity per particle. For zero-bulk ICs
+    (counter-streaming with equal mass; Velocities = 0) the relative
+    convention is byte-identical to absolute storage; for boosted ICs the
+    distinction is load-bearing.
 
 Units: raw P.Vel convention (no a/H factors); these are non-cosmological
 boxes so all cf_* = 1. v_stream = 1 in code velocity units throughout,
@@ -60,18 +73,30 @@ def basis_moment_row(mass: float, vel_xyz, dim: int) -> np.ndarray:
     return row
 
 
-def build_vlasov_moments(per_particle_bases, dim: int) -> np.ndarray:
+def build_vlasov_moments(per_particle_bases, dim: int,
+                         vel_bulk_per_particle=None) -> np.ndarray:
     """per_particle_bases: list (len N) of lists of (mass, vel_xyz) tuples,
     one tuple per basis (all particles must have the same NBASIS).
+
+    vel_bulk_per_particle: optional (N,3) per-particle bulk velocity. When
+    provided, each basis's momentum slot is written in the RELATIVE frame:
+        basis_p_stored = m_basis * (v_basis - v_bulk_i)
+    so that Σ_basis basis_p_stored = 0 by construction. When None (legacy),
+    the absolute-frame momentum m*v_basis is stored — kept for testing /
+    invariant checks; production tests should pass `bulk_velocity(...)`.
+
     Returns (N, NBASIS*NMOMENTS) basis-major flat array."""
     N = len(per_particle_bases)
     nbasis = len(per_particle_bases[0])
     nm = n_moments_for_dim(dim)
     out = np.zeros((N, nbasis * nm))
+    use_bulk = vel_bulk_per_particle is not None
     for i, bases in enumerate(per_particle_bases):
         assert len(bases) == nbasis, "all particles need the same NBASIS"
+        vbulk_i = np.asarray(vel_bulk_per_particle[i]) if use_bulk else np.zeros(3)
         for b, (m, v) in enumerate(bases):
-            out[i, nm * b:nm * (b + 1)] = basis_moment_row(m, v, dim)
+            v_rel = np.asarray(v, dtype=float) - vbulk_i
+            out[i, nm * b:nm * (b + 1)] = basis_moment_row(m, v_rel, dim)
     return out
 
 
@@ -106,7 +131,10 @@ def write_cbe_ic(fname, pos, per_particle_bases, dim, box_size,
     N = pos.shape[0]
     masses = np.array([sum(m for (m, v) in bases) for bases in per_particle_bases])
     vel = bulk_velocity(per_particle_bases)            # (N,3) mass-weighted mean
-    vmoments = build_vlasov_moments(per_particle_bases, dim)
+    # RELATIVE-FRAME STORAGE: pass per-particle bulk so each basis momentum
+    # slot is m_basis*(v_basis - v_bulk) — Σ_basis basis_p_stored = 0.
+    vmoments = build_vlasov_moments(per_particle_bases, dim,
+                                    vel_bulk_per_particle=vel)
     ids = np.arange(1, N + 1, dtype=np.uint32)
 
     with h5py.File(fname, "w") as F:

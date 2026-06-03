@@ -98,57 +98,67 @@ static void cbe_fibonacci_sphere_dir_rotated_to_vhat(int n, int N,
 }
 
 
-/* C7 (2026-05-30): synthesize cold-DM default for one particle when the
- * VlasovMoments dataset was absent for its PartType in the IC. Slot 0
- * carries (1-eps) of the particle mass at velocity P[i].Vel with a tiny
- * SPD floor on the second-moment tensor. Slots 1..NBASIS-1 are
- * placeholder streams with deterministic Fibonacci-sphere directions
- * rotated to align with vhat, carrying eps fraction of the mass total
- * (equal share per slot) and tiny velocity offsets. Units match P[i].Vel
- * raw -- no cf_atime / cf_a3inv conversion -- inherited from the
- * existing VlasovMoments snapshot-write convention. The conservation
- * renormalization pass in do_cbe_initialization() closes any residual
- * after this returns. */
+/* Synthesize cold-DM default for one particle when the VlasovMoments
+ * dataset was absent for its PartType in the IC.
+ *
+ * RELATIVE-FRAME storage convention: basis moments are stored relative to
+ * P.Vel (the mesh-generating-point velocity). Hence the synthesized values
+ * are about a per-basis relative velocity v_rel[α] = v_phys[α] − P.Vel:
+ *   Slot 0 (dominant):  v_rel = 0  ⇒  basis_p_stored[0] = 0,
+ *                                     basis_T_stored[0][k][k] = m_0 * S_floor
+ *                                     (off-diag = 0; no v_rel⊗v_rel piece).
+ *   Slots 1..N-1 (placeholders): v_rel[α] = dv * dir[α-1]
+ *                                with dir a deterministic Fibonacci-sphere
+ *                                direction (rotated to v_hat-aligned frame
+ *                                if v_hat is meaningful; falls back to a
+ *                                fixed basis when |P.Vel|=0). basis_p_stored
+ *                                = m_each * v_rel.
+ *
+ * Slot 0 carries (1-eps) of P[i].Mass; slots 1..N-1 share eps equally.
+ * The subsequent do_cbe_initialization() closure enforces Σ basis_p_stored = 0.
+ * Units inherit the existing VlasovMoments snapshot-write convention. */
 static void cbe_synthesize_cold_default(int i)
 {
-    const double eps = 1.0e-6;            /* placeholder-stream mass fraction (hardcoded per codex) */
-    const double S_floor_rel = 1.0e-12;   /* tiny SPD floor relative to v^2 */
-    const double dv_rel = 1.0e-3;         /* placeholder velocity offset relative to |v|_typical */
+    const double eps = 1.0e-6;            /* placeholder-stream mass fraction */
+    const double S_floor_rel = 1.0e-12;   /* tiny SPD floor relative to v_scale^2 */
+    const double dv_rel = 1.0e-3;         /* placeholder v_rel offset relative to v_scale */
 
+    /* v_scale is set from |P.Vel| if nonzero (sets the natural scale for the
+     * S floor and the placeholder relative-velocity offset); fallback floor
+     * for zero-bulk cells so the cold-default is still SPD. */
     double Vel[3] = {P[i].Vel[0], P[i].Vel[1], P[i].Vel[2]};
-    double v2 = Vel[0]*Vel[0] + Vel[1]*Vel[1] + Vel[2]*Vel[2];
-    double v0 = (v2 > 0.0) ? sqrt(v2) : 0.0;
+    double v2     = Vel[0]*Vel[0] + Vel[1]*Vel[1] + Vel[2]*Vel[2];
+    double v0     = (v2 > 0.0) ? sqrt(v2) : 0.0;
     double v_scale = (v0 > 1.0e-30) ? v0 : 1.0e-10;
     double S_floor = S_floor_rel * v_scale * v_scale;
 
-    /* Slot 0 -- dominant cold stream. Momentum + diagonal stress slot writes
-     * go through the NUMDIMS-aware helpers so 1D/2D builds don't OOB. The
-     * SECONDMOMENT off-diagonal slots are intrinsically D-dependent: 1D has
-     * none, 2D has 1 (xy at index 1+2*NUMDIMS), 3D has 3 (xy/xz/yz at 7/8/9).
-     * The SECONDMOMENT path is fenced at 3D in precompiler_logic.h until
-     * every stress-slot site is migrated through cbe_T_idx; the explicit
-     * 3D off-diagonal indices below are valid under the current fence. */
+    /* Slot 0 — dominant cold stream at v_rel = 0 (zero relative momentum). */
     {
         double m0 = (1.0 - eps) * P[i].Mass;
         P[i].CBE_basis_moments[0][0] = m0;
         for(int k = 0; k < NUMDIMS; k++) {
-            cbe_basis_p_w(P[i].CBE_basis_moments[0], k, m0 * Vel[k]);
+            cbe_basis_p_w(P[i].CBE_basis_moments[0], k, 0.0);
         }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* T_rel_kk = m * (v_rel_k^2 + S_floor) = m * S_floor since v_rel=0;
+         * T_rel off-diagonals all zero (no v_rel⊗v_rel piece). The
+         * SECONDMOMENT block is fenced at 3D in precompiler_logic.h until
+         * every stress-slot site is migrated through cbe_T_idx; explicit
+         * 3D triangular indices below are valid only under that fence. */
         for(int k = 0; k < NUMDIMS; k++) {
-            P[i].CBE_basis_moments[0][1 + NUMDIMS + k] = m0 * (Vel[k]*Vel[k] + S_floor);
+            P[i].CBE_basis_moments[0][1 + NUMDIMS + k] = m0 * S_floor;
         }
 #if (NUMDIMS == 2)
-        P[i].CBE_basis_moments[0][1 + 2*NUMDIMS] = m0 * Vel[0]*Vel[1];      /* xy */
+        P[i].CBE_basis_moments[0][1 + 2*NUMDIMS] = 0.0;                      /* xy */
 #elif (NUMDIMS == 3)
-        P[i].CBE_basis_moments[0][7] = m0 * Vel[0]*Vel[1];                  /* xy */
-        P[i].CBE_basis_moments[0][8] = m0 * Vel[0]*Vel[2];                  /* xz */
-        P[i].CBE_basis_moments[0][9] = m0 * Vel[1]*Vel[2];                  /* yz */
+        P[i].CBE_basis_moments[0][7] = 0.0;                                  /* xy */
+        P[i].CBE_basis_moments[0][8] = 0.0;                                  /* xz */
+        P[i].CBE_basis_moments[0][9] = 0.0;                                  /* yz */
 #endif
 #endif
     }
 
-    /* Slots 1..NBASIS-1 -- placeholder streams. */
+    /* Slots 1..NBASIS-1 — placeholder streams at small v_rel = dv*dir. */
     if(CBE_INTEGRATOR_NBASIS > 1) {
         int N_placeholder = CBE_INTEGRATOR_NBASIS - 1;
         double m_each = eps * P[i].Mass / (double)N_placeholder;
@@ -156,21 +166,23 @@ static void cbe_synthesize_cold_default(int i)
         for(int j = 1; j < CBE_INTEGRATOR_NBASIS; j++) {
             double dir[3];
             cbe_fibonacci_sphere_dir_rotated_to_vhat(j-1, N_placeholder, Vel, v0, dir);
-            double vj[3] = {Vel[0] + dv*dir[0], Vel[1] + dv*dir[1], Vel[2] + dv*dir[2]};
+            /* RELATIVE-FRAME placeholder velocity: v_rel = dv * dir (NOT
+             * absolute Vel + dv*dir). */
+            double v_rel[3] = { dv*dir[0], dv*dir[1], dv*dir[2] };
             P[i].CBE_basis_moments[j][0] = m_each;
             for(int k = 0; k < NUMDIMS; k++) {
-                cbe_basis_p_w(P[i].CBE_basis_moments[j], k, m_each * vj[k]);
+                cbe_basis_p_w(P[i].CBE_basis_moments[j], k, m_each * v_rel[k]);
             }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
             for(int k = 0; k < NUMDIMS; k++) {
-                P[i].CBE_basis_moments[j][1 + NUMDIMS + k] = m_each * (vj[k]*vj[k] + S_floor);
+                P[i].CBE_basis_moments[j][1 + NUMDIMS + k] = m_each * (v_rel[k]*v_rel[k] + S_floor);
             }
 #if (NUMDIMS == 2)
-            P[i].CBE_basis_moments[j][1 + 2*NUMDIMS] = m_each * vj[0]*vj[1];
+            P[i].CBE_basis_moments[j][1 + 2*NUMDIMS] = m_each * v_rel[0]*v_rel[1];
 #elif (NUMDIMS == 3)
-            P[i].CBE_basis_moments[j][7] = m_each * vj[0]*vj[1];
-            P[i].CBE_basis_moments[j][8] = m_each * vj[0]*vj[2];
-            P[i].CBE_basis_moments[j][9] = m_each * vj[1]*vj[2];
+            P[i].CBE_basis_moments[j][7] = m_each * v_rel[0]*v_rel[1];
+            P[i].CBE_basis_moments[j][8] = m_each * v_rel[0]*v_rel[2];
+            P[i].CBE_basis_moments[j][9] = m_each * v_rel[1]*v_rel[2];
 #endif
 #endif
         }
@@ -286,16 +298,26 @@ void do_cbe_initialization(void)
             }
         }
         if(P[i].Mass > 0) {
-            /* Momentum closure runs over slots 1..NUMDIMS only — slot 0 is
-             * mass; any higher slots are stress / SECONDMOMENT and are not
-             * part of the momentum closure. NUMDIMS bound replaces the
-             * prior unconditional [1..4) so 1D/2D builds don't OOB on
-             * non-existent momentum slots. */
+            /* Momentum closure (RELATIVE-FRAME storage convention): enforce
+             *     Σ_α basis_p_stored[α][k] = 0  for k = 1..NUMDIMS,
+             * i.e. the per-basis momenta are stored relative to P.Vel so
+             *     basis_p_stored[α] = m_α * (v_phys[α] − P.Vel)
+             * and the absolute-frame bulk momentum is carried entirely by
+             * P.Mass * P.Vel. The closure subtracts the residual mass-
+             * weighted bulk drift mom_tot[k]/M from each basis row so that
+             * the sum-over-bases is exactly zero. This is a per-cell no-op
+             * if the IC writer / synthesis already produced relative-frame
+             * storage; a safety net otherwise.
+             *
+             * Slots 1..NUMDIMS only — slot 0 is mass; higher slots are
+             * stress / SECONDMOMENT (the second-moment relative-to-
+             * absolute boost is handled by the flux-frame helper, NOT
+             * here). */
             for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 for(k = 1; k <= NUMDIMS; k++) {
-                    P[i].CBE_basis_moments[j][k] +=
+                    P[i].CBE_basis_moments[j][k] -=
                         P[i].CBE_basis_moments[j][0] *
-                        (P[i].Vel[k-1] - mom_tot[k] / P[i].Mass);
+                        (mom_tot[k] / P[i].Mass);
                 }
             }
         }
