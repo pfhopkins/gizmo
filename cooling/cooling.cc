@@ -1569,7 +1569,7 @@ void ReadMultiSpeciesTables(int iT)
     fname=GetMultiSpeciesFilename(iT,0);
     if(ThisTask == 0) printf(" ..opening Cooling Table %s \n",fname);
     if(!(fdcool = fopen(fname, "r"))) {
-        printf(" Cannot read species cooling table in file `%s'\n", fname); endrun(456);}
+        printf(" Cannot read species cooling table in file `%s'\n", fname); endrun(456); return;}
     for(i=0;i<kspecies;i++) {
         for(j=0;j<i_nH;j++) {
             for(k=0;k<i_Temp;k++) {
@@ -1593,7 +1593,7 @@ void ReadMultiSpeciesTables(int iT)
         fname=GetMultiSpeciesFilename(iT+1,0);
         if(ThisTask == 0) printf(" ..opening (z+) Cooling Table %s \n",fname);
         if(!(fdcool = fopen(fname, "r"))) {
-            printf(" Cannot read species 1 cooling table in file `%s'\n", fname); endrun(456);}
+            printf(" Cannot read species 1 cooling table in file `%s'\n", fname); endrun(456); return;}
         for(i=0;i<kspecies;i++) {
             for(j=0;j<i_nH;j++) {
                 for(k=0;k<i_Temp;k++) {
@@ -1647,7 +1647,7 @@ static int nheattab;		/* length of table */
 void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456);}
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
     for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
     fclose(fdcool);
