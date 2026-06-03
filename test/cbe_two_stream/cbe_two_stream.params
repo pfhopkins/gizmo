@@ -15,9 +15,9 @@ BoxSize                            1.0
 
 % Neighbour targets — CBE rides the AGS kernel/volume solve on Type=1.
 % 1D: keep the kernel local (cf. soundwave DesNumNgb=4).
-AGS_DesNumNgb                      4
+AGS_DesNumNgb                      8
 AGS_MaxNumNgbDeviation             0.5
-DesNumNgb                          4
+DesNumNgb                          8
 MaxNumNgbDeviation                 0.5
 
 % Softening — AGS_KernelRadius is adaptive; these bound it (unused for force
