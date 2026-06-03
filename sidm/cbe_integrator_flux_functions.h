@@ -38,19 +38,10 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     struct particle_data *P,
     const KernelT &kernel,
     OutT &out,
-    const int *timebin_active,
-    long long spike_id_i = 0  /* SPIKE: codex round-12; 0 disables */)
+    const int *timebin_active)
 {
     CbeFluxResult r; r.set_wakeup_j = 0;
 #ifdef CBE_INTEGRATOR
-    /* SPIKE: codex round-12 (2026-05-31) — decompose signal-velocity
-     * contribution to AGS_vsig for failing IDs. Tracks per-basis
-     * v_alpha_n, c_x, u_out, vsig, rho, mass-fraction so we can identify
-     * whether max signal speed is from |u_out| (kinematic) or c_x
-     * (thermal), and whether it concentrates on a single basis or pair.
-     * REMOVE BEFORE COMMIT. Gate on spike_id_i matches the targeted IDs
-     * from the dt-floor diagnostic (11/22/31). */
-    const bool _spike_target = (spike_id_i == 11LL) || (spike_id_i == 22LL) || (spike_id_i == 31LL);
     double V_i = local.V_i, V_j = get_particle_volume_ags_P(j, P);
 
     /* Always-on unequal-volume centered face weights (mirrors hydro
@@ -344,9 +335,10 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * is suppressed unphysically by the old gate. Inactive K=0 basis rows
      * are still skipped (no thermal channel; trivially zero flux). */
 
-    /* Basis-pair matching via SSOT helper (Wave-CBE Commit 6b). C6c flips
-     * the selectors to CBE_COST_TRACE_W2 + USE_FREE_SLOT=1 per harness
-     * §4.4 (trace-W2 cost + adaptive median-tau free-slot fallback). The
+    /* Basis-pair matching via SSOT helper. Selectors per harness §4.4:
+     * CBE_COST_TRACE_W2 cost + CBE_PAIRING_USE_FREE_SLOT=1 with the
+     * source-mass eps_rho free-slot fallback (Fix #3, see
+     * cbe_apply_free_slot_fallback in cbe_integrator_functions.h). The
      * free-slot fire-count is accumulated per face into a local int (bound:
      * 2*NBASIS<=16 per face) gated by the diagnostic compile flag, then
      * folded into out.cbe_pairing_free_slot_count for the standard
@@ -396,10 +388,19 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * AGS_vsig is gated by NONZERO FLUX rather than by gate-active — a
      * zero-flux F=0 vacuum branch must NOT contribute to vsig (would
      * otherwise pollute the CFL with spurious wave speed from a no-flux
-     * participation). Mass-rate flux[0] is the universal indicator of
-     * nonzero flux (when F=0 branch fires, all of [mass, momentum,
-     * stress] return zero; when F0/F1 fires with finite ρ, mass rate is
-     * nonzero). The fabs guard handles either sign convention. */
+     * participation).
+     *
+     * Mass-rate flux[0] is the universal indicator of nonzero flux: the
+     * HLLC vacuum F=0 branch returns exactly zero for ALL of mass,
+     * momentum, and stress slots (see cbe_flux_hllc_vacuum's F=0 branch
+     * in cbe_integrator_functions.h). The active F0/F1 branches both
+     * have F_m = rho * (u_out or (rho/4)(3 u/c + 1) c) — strictly
+     * nonzero for finite rho and u_out > -c_x/3. So fabs(flux[0]) > 0
+     * is sufficient AND necessary to identify a participating basis.
+     * Should the flux semantics ever change to allow zero F_m with
+     * nonzero F_p / F_T (e.g., a future Gaussian-flux Fix #12 variant
+     * with sub-noise mass rate but resolved momentum carrier), revisit
+     * this gate to check all flux slots. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const int i_m = matching_basis_i_for_basis_in_j[m];
         if(K_i[m] > 0) {
