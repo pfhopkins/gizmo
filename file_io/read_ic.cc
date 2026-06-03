@@ -1007,6 +1007,15 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef HYDRO_MULTIFLUID
                    && blocknr != IO_FLUIDTYPE
 #endif
+#ifdef CBE_INTEGRATOR
+                   /* C7 IC reader: allow VlasovMoments through during
+                    * RestartFlag==0 so the loaded values reach
+                    * do_cbe_initialization. Without this, blockpresent()
+                    * returns 1 but the dataset is silently skipped, and
+                    * cold-default synthesis quietly overwrites the IC
+                    * (CBE_Moments_LoadedFromIC_PType stays 0). */
+                   && blocknr != IO_CBE_MOMENTS
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR
                    && blocknr != IO_MASS_D_PROTOSTAR
