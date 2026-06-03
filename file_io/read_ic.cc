@@ -107,6 +107,24 @@ void read_ic(char *fname)
 
     myfree(CommBuffer);
 
+#ifdef CBE_INTEGRATOR
+    /* C7 IC reader multi-rank fix: CBE_Moments_LoadedFromIC_PType[] is set
+     * inside read_file()'s H5Dread block, which only fires on the task
+     * that actually reads the file (primaryTask via distribute_file for
+     * the single-file case, or each task's own file when num_files>=NTask).
+     * Other tasks receive their share of the loaded VlasovMoments data via
+     * MPI distribution from the reading task, but their per-type flag
+     * stays at 0. Without this broadcast, do_cbe_initialization would call
+     * cbe_synthesize_cold_default on non-reading ranks and overwrite the
+     * correctly-distributed loaded data with placeholder synth. MAX-reduce
+     * the flags so any rank that loaded the dataset propagates the truth
+     * to all ranks. */
+    {
+        int loaded_local[6];
+        for(int t = 0; t < 6; t++) { loaded_local[t] = CBE_Moments_LoadedFromIC_PType[t]; }
+        MPI_Allreduce(loaded_local, CBE_Moments_LoadedFromIC_PType, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
+#endif
 
     if(header.flag_ic_info != FLAG_SECOND_ORDER_ICS)
     {
