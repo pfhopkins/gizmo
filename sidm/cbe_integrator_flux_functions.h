@@ -292,8 +292,6 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double v_F_guess = vface_guess[0]*A_hat[0] + vface_guess[1]*A_hat[1] + vface_guess[2]*A_hat[2];
     double vface_bulk[3] = {0};
     double v_wt_sum = 0;
-    double theta_i[CBE_INTEGRATOR_NBASIS] = {0};
-    double theta_j[CBE_INTEGRATOR_NBASIS] = {0};
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(K_i[m] > 0 && v_alpha_n_i[m] - v_F_guess > 0) {
             double w = K_i[m]; v_wt_sum += w;
@@ -336,12 +334,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
                               v_F_normal * A_hat[1],
                               v_F_normal * A_hat[2] };
 
-    /* Final theta gates use the converged v_F_normal. K==0 rows are forced
-     * inactive (theta=0) regardless of v_alpha_n. */
-    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        if(K_i[m] > 0 && v_alpha_n_i[m] - v_F_normal > 0) theta_i[m] = 1;
-        if(K_j[m] > 0 && v_alpha_n_j[m] - v_F_normal < 0) theta_j[m] = 1;
-    }
+    /* Fix #4 (harness 2026-05-30 / reference_cbe_method_fix_list.md §"Fix #4"):
+     * DO NOT externally gate HLLC participation by (v_alpha_n − v_F) > 0
+     * (cold-limit θ gate). The HLLC vacuum solver itself returns zero
+     * flux when u_out ≤ −c_x/3 — so the participation condition is
+     * IMPLICIT in the flux solver, and the external cold-limit θ gate
+     * is too strict in the warm regime: a basis with −c_x/3 < u_out < 0
+     * (weakly receding mean, nonzero outgoing flux from thermal dispersion)
+     * is suppressed unphysically by the old gate. Inactive K=0 basis rows
+     * are still skipped (no thermal channel; trivially zero flux). */
 
     /* Basis-pair matching via SSOT helper (Wave-CBE Commit 6b). C6c flips
      * the selectors to CBE_COST_TRACE_W2 + USE_FREE_SLOT=1 per harness
@@ -389,23 +390,38 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * pairing split (gradient + limiter match on Q_cell; flux matches on
      * Q_face), both via the same SSOT cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
+    /* Fix #4 + AGS_vsig gating (codex 2026-06-03): call HLLC for every
+     * K>0 basis (no external θ gate). HLLC returns zero flux for inactive
+     * branches (u_out ≤ −c_x/3) and the participation gate is implicit.
+     * AGS_vsig is gated by NONZERO FLUX rather than by gate-active — a
+     * zero-flux F=0 vacuum branch must NOT contribute to vsig (would
+     * otherwise pollute the CFL with spurious wave speed from a no-flux
+     * participation). Mass-rate flux[0] is the universal indicator of
+     * nonzero flux (when F=0 branch fires, all of [mass, momentum,
+     * stress] return zero; when F0/F1 fires with finite ρ, mass rate is
+     * nonzero). The fabs guard handles either sign convention. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const int i_m = matching_basis_i_for_basis_in_j[m];
-        double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
-        double vsig_i = 0, vsig_j = 0;
-        if(theta_i[m] == 1) {
-            vsig_i = cbe_flux_hllc_vacuum(Qface_i[m], vface, Area_i_out, flux);
+        if(K_i[m] > 0) {
+            double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
+            double flux_vsig_i = cbe_flux_hllc_vacuum(Qface_i[m], vface, Area_i_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
+            if(fabs(flux[0]) > 0.0) {
+                vsig = DMAX(vsig, fabs(flux_vsig_i));
+            }
         }
-        if(theta_j[m] == 1) {
-            vsig_j = cbe_flux_hllc_vacuum(Qface_j[m], vface, Area_j_out, flux);
+        if(K_j[m] > 0) {
+            double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
+            double flux_vsig_j = cbe_flux_hllc_vacuum(Qface_j[m], vface, Area_j_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
             }
+            if(fabs(flux[0]) > 0.0) {
+                vsig = DMAX(vsig, fabs(flux_vsig_j));
+            }
         }
-        vsig = DMAX(DMAX(fabs(vsig_i), fabs(vsig_j)), vsig);
     }
     vsig /= Face_Area_Norm * All.cf_atime;
     if(vsig > out.AGS_vsig) { out.AGS_vsig = vsig; }
