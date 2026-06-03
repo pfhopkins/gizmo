@@ -143,7 +143,7 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
     char *sendbuf = (char *)sendbuf0;
     char *recvbuf = (char *)recvbuf0;
 
-    if(dest != source) endrun(3);
+    if(dest != source) gizmo_hard_abort_reviewed(3, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(3) -- mpi_util dest!=source invariant (mid-collective exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     
     MPI_Type_size(sendtype, &size_sendtype);
     MPI_Type_size(recvtype, &size_recvtype);

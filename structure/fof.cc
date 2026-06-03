@@ -276,7 +276,7 @@ static void fof_find_groups_modern(void)
         {
           printf("FOF modern distributed label propagation failed to converge after %d iterations\n", iter);
           fflush(stdout);
-          endrun(990503);
+          gizmo_hard_abort_reviewed(90000030, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(990503) -- FOF distributed label propagation non-convergence (mid-FOF collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
   while(changed_global);
@@ -392,7 +392,7 @@ static void fof_find_nearest_dmparticle_modern(void)
         {
           printf("FOF modern nearest-primary attachment failed to converge after %d iterations\n", iter);
           fflush(stdout);
-          endrun(990504);
+          gizmo_hard_abort_reviewed(90000031, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(990504) -- FOF nearest-primary attachment non-convergence (mid-FOF collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
   while(nleft_global > 0);
@@ -501,7 +501,7 @@ void fof_fof(int num)
 	  printf("oh no: ThisTask=%d i=%d Head[i]=%d  NumPart=%d MinIDTask[Head[i]]=%d\n",
 		 ThisTask, i, (int) Head[i], NumPart, (int) MinIDTask[Head[i]]);
 	  fflush(stdout);
-	  endrun(8812);
+	  gizmo_hard_abort_reviewed(90000032, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(8812) -- FOF Tail/MinIDTask out of range (mid-FOF group assembly; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
     }
 
@@ -565,11 +565,11 @@ void fof_fof(int num)
 	{
 	  start++;
 	  if(start > NumPart)
-	    endrun(78);
+	    gizmo_hard_abort_reviewed(90000050, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(78) -- FOF_PList start>NumPart overrun in group assignment (mid-FOF; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       if(FOF_PList[start].MinID != FOF_GList[i].MinID)
-	endrun(123);
+	gizmo_hard_abort_reviewed(90000051, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(123) -- FOF MinID/LocCount group invariant (mid-FOF; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 
       for(lenloc = 0; start + lenloc < NumPart;)
 	if(FOF_PList[start + lenloc].MinID == FOF_GList[i].MinID)
@@ -759,14 +759,14 @@ void fof_compile_catalogue(void)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
-	    endrun(7973);
+	    gizmo_hard_abort_reviewed(90000033, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(7973) -- FOF_GList start>=NgroupsExt in exchange (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       if(get_FOF_GList[i].LocCount != 0)
-	endrun(123);
+	gizmo_hard_abort_reviewed(90000051, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(123) -- FOF MinID/LocCount group invariant (mid-FOF; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 
       if(FOF_GList[start].MinIDTask != (MyIDType)ThisTask)
-	endrun(124);
+	gizmo_hard_abort_reviewed(90000034, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(124) -- FOF_GList MinIDTask mismatch (mid-FOF exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
       FOF_GList[start].ExtCount += get_FOF_GList[i].ExtCount;
 #ifdef FOF_DENSITY_SPLIT_TYPES
@@ -781,7 +781,7 @@ void fof_compile_catalogue(void)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
-	    endrun(797831);
+	    gizmo_hard_abort_reviewed(90000035, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(797831) -- FOF_GList start>=NgroupsExt in size-info copyback (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       get_FOF_GList[i].ExtCount = FOF_GList[start].ExtCount;
@@ -990,7 +990,7 @@ void fof_exchange_group_data(void)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
-	    endrun(797890);
+	    gizmo_hard_abort_reviewed(90000036, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(797890) -- Group start>=NgroupsExt in exchange_group_data (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       Group[start].Len += get_Group[i].Len;
@@ -1062,7 +1062,7 @@ void fof_finish_group_properties(void)
     }
 
   if(ngr != Ngroups)
-    endrun(876889);
+    gizmo_hard_abort_reviewed(90000037, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(876889) -- ngr!=Ngroups invariant in fof_compile_catalogue (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
   qsort(Group, Ngroups, sizeof(group_properties), fof_compare_Group_MinID);
 }
@@ -1115,7 +1115,7 @@ void fof_save_groups(int num)
   if(i != TotNgroups)
     {
       printf("i=%d\n", i);
-      endrun(123123);
+      gizmo_hard_abort_reviewed(90000038, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(123123) -- group-number count != TotNgroups after Allreduce (mid-FOF save; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
   /* bring the group list back into the original order */
@@ -1128,7 +1128,7 @@ void fof_save_groups(int num)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
-	    endrun(7297890);
+	    gizmo_hard_abort_reviewed(90000039, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(7297890) -- FOF_GList start>=NgroupsExt assigning GrNr (mid-FOF save; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
       Group[i].GrNr = FOF_GList[start].GrNr;
     }
@@ -1172,11 +1172,11 @@ void fof_save_groups(int num)
 	{
 	  start++;
 	  if(start > NumPart)
-	    endrun(78);
+	    gizmo_hard_abort_reviewed(90000050, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(78) -- FOF_PList start>NumPart overrun in group assignment (mid-FOF; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       if(FOF_PList[start].MinID != FOF_GList[i].MinID)
-	endrun(1313);
+	gizmo_hard_abort_reviewed(90000040, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1313) -- FOF_PList MinID mismatch in fof_save_groups (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
       for(lenloc = 0; start + lenloc < NumPart;)
 	if(FOF_PList[start + lenloc].MinID == FOF_GList[i].MinID)
@@ -1205,7 +1205,7 @@ void fof_save_groups(int num)
   if(totNids != TotNids)
     {
       printf("Task=%d Nids=%d totNids=%d TotNids=%d\n", ThisTask, Nids, (int) totNids, (int) TotNids);
-      endrun(12);
+      gizmo_hard_abort_reviewed(90000041, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(12) -- totNids!=TotNids invariant in fof_save_groups (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
   /* sort the particle IDs according to group-number */
@@ -1223,7 +1223,7 @@ void fof_save_groups(int num)
   MPI_Barrier(MPI_COMM_WORLD);
 
 
-  if(NTask < All.NumFilesWrittenInParallel) {printf("Fatal error.\nNumber of processors must be a smaller or equal than `NumFilesWrittenInParallel'.\n"); endrun(241931);}
+  if(NTask < All.NumFilesWrittenInParallel) {if(ThisTask==0) {printf("Fatal error.\nNumber of processors must be a smaller or equal than `NumFilesWrittenInParallel'.\n");} gizmo_hard_abort_reviewed(90000042, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(241931) -- NTask<NumFilesWrittenInParallel at head of per-rank FOF save loop (no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
 
   nprocgroup = NTask / All.NumFilesWrittenInParallel;
   if((NTask % All.NumFilesWrittenInParallel))
@@ -1256,7 +1256,7 @@ void fof_save_local_catalogue(int num)
   if(!(fd = fopen(fname, "w")))
     {
       printf("can't open file `%s`\n", fname);
-      endrun(1183);
+      gizmo_hard_abort_reviewed(90000043, "TEMP_HARD_CANDIDATE_IO: original endrun(1183) -- cannot open group_tab for write (per-rank FOF save IO; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
   my_fwrite(&Ngroups, sizeof(int), 1, fd);
@@ -1354,7 +1354,7 @@ void fof_save_local_catalogue(int num)
   if(!(fd = fopen(fname, "w")))
     {
       printf("can't open file `%s`\n", fname);
-      endrun(1184);
+      gizmo_hard_abort_reviewed(90000044, "TEMP_HARD_CANDIDATE_IO: original endrun(1184) -- cannot open group_ids for write (per-rank FOF save IO; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
   my_fwrite(&Ngroups, sizeof(int), 1, fd);
@@ -1459,7 +1459,7 @@ void fof_make_sink_particles(void)
 #elif (SINK_SEED_FROM_FOF==1)
             if(P[import_indices[n]].Type != 4)
 #endif
-                endrun(7772);
+                gizmo_hard_abort_reviewed(90000045, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(7772) -- imported particle wrong Type making FOF sink (mid-FOF seed exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         
         P[import_indices[n]].Mass = CellP[import_indices[n]].Mass; /* sync mass before type conversion */
         P[import_indices[n]].Type = 5;    /* make it a sink particle particle */
@@ -1790,7 +1790,7 @@ void read_fof(int num)
       if(!(fd = fopen(fname, "r")))
 	{
 	  printf("can't read file `%s`\n", fname);
-	  endrun(11831);
+	  gizmo_hard_abort_reviewed(90000052, "TEMP_HARD_CANDIDATE_IO: original endrun(11831) -- cannot read group_tab file in fof readback (per-rank IO; no symmetric poll; 3 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       my_fread(&Ngroups, sizeof(int), 1, fd);
@@ -1852,7 +1852,7 @@ void read_fof(int num)
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  endrun(11831);
+		  gizmo_hard_abort_reviewed(90000052, "TEMP_HARD_CANDIDATE_IO: original endrun(11831) -- cannot read group_tab file in fof readback (per-rank IO; no symmetric poll; 3 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 		}
 
 	      printf("reading '%s'\n", fname);
@@ -1936,7 +1936,7 @@ void read_fof(int num)
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  endrun(1184132);
+		  gizmo_hard_abort_reviewed(90000053, "TEMP_HARD_CANDIDATE_IO: original endrun(1184132) -- cannot read group_ids file in fof readback (per-rank IO; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	      my_fread(&ngroups, sizeof(int), 1, fd);
 	      my_fread(&TotNgroups, sizeof(int), 1, fd);
@@ -2036,7 +2036,7 @@ void read_fof(int num)
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  endrun(11831);
+		  gizmo_hard_abort_reviewed(90000052, "TEMP_HARD_CANDIDATE_IO: original endrun(11831) -- cannot read group_tab file in fof readback (per-rank IO; no symmetric poll; 3 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	      my_fread(&Ngroups, sizeof(int), 1, fd);
 	      my_fread(&TotNgroups, sizeof(int), 1, fd);
@@ -2091,7 +2091,7 @@ void read_fof(int num)
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  endrun(1184132);
+		  gizmo_hard_abort_reviewed(90000053, "TEMP_HARD_CANDIDATE_IO: original endrun(1184132) -- cannot read group_ids file in fof readback (per-rank IO; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	      my_fread(&Ngroups, sizeof(int), 1, fd);
 	      my_fread(&TotNgroups, sizeof(int), 1, fd);
@@ -2153,7 +2153,7 @@ void read_fof(int num)
   for(i = 0, totlen = 0; i < TotNgroups; i++)
     totlen += list_of_allgrouplen[i];
   if(totlen != TotNids)
-    endrun(8881);
+    gizmo_hard_abort_reviewed(90000046, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(8881) -- totlen!=TotNids invariant in fof readback (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
 
   for(i = 0, count = 0; i < ThisTask; i++)
@@ -2194,7 +2194,7 @@ void read_fof(int num)
 	}
     }
   if(count != Nids)
-    endrun(1231);
+    gizmo_hard_abort_reviewed(90000047, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(1231) -- count!=Nids invariant in fof readback (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
   myfree(idoffset);
 
@@ -2270,7 +2270,7 @@ void read_fof(int num)
 
   sumup_large_ints(1, &matches, &totlen);
   if(totlen != TotNids)
-    endrun(543);
+    gizmo_hard_abort_reviewed(90000048, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(543) -- matches!=TotNids after GrNr exchange in fof readback (mid-FOF; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
   t1 = my_second();
   if(ThisTask == 0)

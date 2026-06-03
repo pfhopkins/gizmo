@@ -67,24 +67,33 @@ static void rt_step_checksum(const char *label) {
 #endif
 
 /* --------------------------------------------------------------------------
- * Controlled-stop helper (Wave-CBE 2026-05-28). See core/proto.h for the
- * contract + migration rule. First-set wins; we do not clear the local
- * code after collection because the only caller (run loop) exits
- * immediately on a non-zero global code, so reuse within the same
- * process is not a requirement. The reason pointer must reference
- * static-storage (string literal); we do not copy.
+ * Controlled-stop / bad-stop helper (Wave-CBE 2026-05-28; generalized
+ * 2026-06-02 for the Vista no-MPI_Abort policy). See core/proto.h for the
+ * contract. First-set wins; we do not clear the local code after collection.
+ * The diagnostic is COPIED into owned static storage (callers may pass stack
+ * buffers, e.g. terminate(buf)), so there is no lifetime requirement on the
+ * caller's reason string.
  * -------------------------------------------------------------------------- */
-static int         ControlledStop_LocalCode    = 0;
-static const char *ControlledStop_LocalReason  = NULL;
-static int         ControlledStop_GlobalCode   = 0;
+static int  ControlledStop_LocalCode  = 0;
+static int  ControlledStop_GlobalCode = 0;
+/* Owned static storage for the first-set local diagnostic. We COPY here rather
+ * than store the caller's pointer: callers may pass stack buffers (e.g. the
+ * terminate(buf) macro), so a stored const char* would dangle. */
+static char ControlledStop_LocalDiag[MAX_PATH_BUFFERSIZE_TOUSE] = {0};
 
-void gizmo_request_controlled_stop(int code, const char *reason)
+void gizmo_request_controlled_stop(int code, const char *reason,
+                                   const char *file, int line, const char *func)
 {
     /* No MPI, no allocation, no Kokkos calls — safe inside per-particle
-     * loops or device-dispatcher callers. */
+     * loops or device-dispatcher callers. First-set-wins; copy the diagnostic
+     * into owned storage immediately (subsequent bad-state flow may clobber
+     * the caller's buffer or fail before global polling). */
     if(ControlledStop_LocalCode == 0) {
-        ControlledStop_LocalCode   = code;
-        ControlledStop_LocalReason = reason;
+        ControlledStop_LocalCode = code;
+        snprintf(ControlledStop_LocalDiag, MAX_PATH_BUFFERSIZE_TOUSE,
+                 "%s (%s()/%s/line %d)",
+                 reason ? reason : "(no reason given)",
+                 func ? func : "(?)", file ? file : "(?)", line);
     }
 }
 
@@ -96,7 +105,53 @@ void gizmo_collect_controlled_stop(void)
 }
 
 int         gizmo_controlled_stop_code(void)         { return ControlledStop_GlobalCode; }
-const char *gizmo_controlled_stop_local_reason(void) { return ControlledStop_LocalReason; }
+const char *gizmo_controlled_stop_local_reason(void) { return (ControlledStop_LocalCode != 0) ? ControlledStop_LocalDiag : NULL; }
+
+/* Collective poll helper: run the Allreduce and return the global stop code.
+ * Use ONLY at top-level control-flow points every rank reaches (e.g. early in
+ * begrun after each setup phase, or the run-loop boundaries) so a flagging
+ * rank's request is propagated and the caller can return/break to the clean
+ * gizmo_kokkos_finalize() + MPI_Finalize() shutdown. */
+int gizmo_poll_controlled_stop(void) { gizmo_collect_controlled_stop(); return gizmo_controlled_stop_code(); }
+
+/* ---------------------------------------------------------------------------
+ * Reviewed hard-abort — the INTENDED SSOT hard-abort home in GIZMO. NOTE: as
+ * of Stage 1a this is NOT yet the sole MPI_Abort call site; the legacy
+ * endrun/terminate macros and the mesh-transport naked aborts still abort
+ * directly until they are converted in Stage 1c/1d. Once converted,
+ * `grep MPI_Abort` must return only this function body.
+ *
+ * Use ONLY for the rare audited cases where a graceful bad-stop cannot reach
+ * a collective poll (mid-protocol MPI transport corruption; residual incidental
+ * allocator capacity failure that has no preflight coverage; and the myrealloc*
+ * invariant paths, which are TEMP_HARD_CANDIDATE_ALLOCATOR_INVARIANT until their
+ * callers in domain.cc / mpi_util.cc are guarded — a bad-stop+return there would
+ * hand the caller a falsely "resized" buffer). NOT large symmetric allocations,
+ * which get caller-side collective preflight; and NOT the myfree* invariant
+ * paths, which ARE bad-stop + immediate local return (void, safe to drain to the
+ * next poll).
+ * Best-effort damage reduction before aborting: print+flush the diagnostic and
+ * fence in-flight device work, which reduces but does NOT eliminate the Vista
+ * CG-stuck wedge risk inherent to MPI_Abort. Prefer
+ * gizmo_request_controlled_stop() everywhere it is remotely possible.
+ * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design.
+ * ------------------------------------------------------------------------- */
+[[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
+                                            const char *file, int line, const char *func)
+{
+    char buf[MAX_PATH_BUFFERSIZE_TOUSE];
+    snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE,
+             "HARD ABORT (reviewed) on task=%d, function '%s()', file '%s', "
+             "line %d: code %d: %s\n",
+             ThisTask, func ? func : "(?)", file ? file : "(?)", line, code,
+             reason ? reason : "(no reason given)");
+    fflush(stdout);
+    printf("%s", buf);
+    fflush(stdout);
+    gizmo_kokkos_fence();   /* drain in-flight device work before the abort */
+    MPI_Abort(MPI_COMM_WORLD, code);
+    exit(code ? code : 1);  /* defensive: MPI_Abort must not return; never fall through */
+}
 
 
 /*! This routine contains the main simulation loop that iterates over

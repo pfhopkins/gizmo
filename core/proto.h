@@ -769,26 +769,49 @@ void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
 void run(void);
-/* Controlled-stop helper (Wave-CBE 2026-05-28). Distinct from endrun(),
- * which is an emergency brake (MPI_Abort; no Kokkos / MPI cleanup;
- * assumes corrupt state). The functions below let a known-safe call
- * site flag a CONTROLLED stop that drains through main()'s normal
- * gizmo_kokkos_finalize() + MPI_Finalize() shutdown.
+/* Controlled-stop / bad-stop machinery (Wave-CBE 2026-05-28; generalized
+ * 2026-06-02 for the Vista no-MPI_Abort policy — see OPEN_endrun_audit_memo).
  *
- * Use ONLY where (a) all ranks reach gizmo_collect_controlled_stop()
- * in the same step regardless of which rank flagged, AND (b) the
- * flagging rank can keep iterating its current loop body without
- * violating any physics invariant. STOP_WHEN_BELOW_MINTIMESTEP at
- * core/timestep.cc is the first call site. Migration rule: real
- * corruption / impossible branch paths stay on endrun(); only safe
- * expected terminations move to this API.
+ * Vista policy: a bad stop is the DEFAULT termination. The flagging rank
+ * records the stop (no MPI / no alloc / no Kokkos here, so it is safe inside
+ * per-particle loops and device-dispatcher callers), keeps draining to the
+ * next collective poll, and the run exits through main()'s normal
+ * gizmo_kokkos_finalize() + MPI_Finalize() shutdown — NOT MPI_Abort, which
+ * wedges Vista GH200 nodes in SLURM CG.
+ *
+ * Use where (a) all ranks reach a collective poll in the same collective
+ * order regardless of which rank flagged (collective symmetry — a
+ * short-circuit that skips a collective peers still call DEADLOCKS), AND
+ * (b) the flagging rank can drain to that poll without dereferencing the
+ * failed object, mutating a table/global with the invalid value, or
+ * launching invalid device work (else add a tiny local return/break).
+ *
+ * gizmo_hard_abort_reviewed() is the INTENDED SSOT hard-abort home (not yet
+ * the sole MPI_Abort site until Stage 1c/1d convert the legacy macros + mesh
+ * naked aborts). Use ONLY for the rare audited cases where no collective poll
+ * is reachable: mid-protocol MPI transport corruption, and residual incidental
+ * allocator capacity failures with no preflight coverage. NOTE on allocation:
+ * this is NOT a blanket "allocation failure = hard-abort" rule — large
+ * symmetric allocations get caller-side collective preflight (graceful);
+ * myfree* invariant paths are bad-stop + immediate local return (void, safe to
+ * drain to the next poll); but myrealloc* invariant paths are temporary
+ * reviewed hard candidates until their two callers (domain.cc, mpi_util.cc) are
+ * guarded — a bad-stop+return there would hand the caller a falsely "resized"
+ * buffer. Only the residual incidental capacity failures + myrealloc* invariants
+ * are TEMP hard candidates. Everything else uses the bad-stop request.
  *
  * The "_local_reason" accessor is honest: ranks that did not flag
  * return NULL. Run-loop printers should NULL-check. */
-void        gizmo_request_controlled_stop(int code, const char *reason);
+void        gizmo_request_controlled_stop(int code, const char *reason,
+                                          const char *file, int line, const char *func);
 void        gizmo_collect_controlled_stop(void);
+int         gizmo_poll_controlled_stop(void);   /* collect + return global code; for top-level poll points */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
+int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
+size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
+[[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
+                                            const char *file, int line, const char *func);
 void savepositions(int num);
 double my_second(void);
 void set_softenings(void);
@@ -1033,4 +1056,5 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
+void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (reviewed hard-abort path) */
 void gizmo_gpu_sync_all(void);

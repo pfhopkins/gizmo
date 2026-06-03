@@ -93,13 +93,17 @@ void restart(int modus)
             if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 0))
             {
                 printf("Fatal error. Full set of restart files ('%s' or '%s') not found - check the restarts are uncorrupted and your MPI process number has not changed.\n", buf, buf_bak);
-                endrun(7871);
             }
             if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 1))
             {
                 printf("Default restartfiles ('%s') not found - they are incomplete or corrupted [number of files matching MPI process number not found. But apparently valid set of backup restartfiles ('%s') found. Attempting to use those.\n", buf, buf_bak);
             }
         }
+        /* All-rank bad-stop: every rank ran the file-existence scan above, so
+         * (regular==0 && backup==0) is identical on all ranks. endrun lives
+         * OUTSIDE the rank-0 printf so the flip turns it into a symmetric
+         * bad-stop; the poll before the per-rank file-IO loop drains it. */
+        if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 0)) { endrun(7871); }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     
@@ -110,10 +114,10 @@ void restart(int modus)
     
     if((NTask < All.NumFilesWrittenInParallel))
     {
-        printf("Fatal error.\nNumber of processors must be greater than or equal to `NumFilesWrittenInParallel'.\n");
-        endrun(2131);
+        if(ThisTask == 0) {printf("Fatal error.\nNumber of processors must be greater than or equal to `NumFilesWrittenInParallel'.\n");}
+        endrun(2131);   /* symmetric (NTask + All identical on all ranks) -> all-rank bad-stop */
     }
-    
+
     nprocgroup = NTask / All.NumFilesWrittenInParallel;
     
     if((NTask % All.NumFilesWrittenInParallel))
@@ -122,6 +126,14 @@ void restart(int modus)
     }
 
   primaryTask = (ThisTask / nprocgroup) * nprocgroup;
+
+  /* Bad-stop poll BEFORE the per-rank restart file-IO loop. Drains the two
+   * symmetric setup bad-stops above (7871 missing restart set, 2131 NTask <
+   * NumFilesWrittenInParallel) after the Stage-1d flip. All ranks reach here
+   * (the MPI_Barrier above is unconditional); the intervening code is pure
+   * arithmetic, so this is the first collective-symmetric drain point before
+   * any restart data is touched. */
+  if(gizmo_poll_controlled_stop()) return;
 
   for(groupTask = 0; groupTask < nprocgroup; groupTask++)
     {
@@ -134,7 +146,7 @@ void restart(int modus)
 		  if(!(fd = fopen(buf_bak, "r")))
 		    {
 		      printf("Restart file '%s' nor '%s' found.\n", buf, buf_bak);
-		      endrun(7870);
+		      gizmo_hard_abort_reviewed(7870, "TEMP_HARD_CANDIDATE_IO: this rank's restart file (nor backup) found, mid per-rank groupTask read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		    }
 		}
 	    }
@@ -143,7 +155,7 @@ void restart(int modus)
 	      if(!(fd = fopen(buf, "w")))
 		{
 		  printf("Restart file '%s' cannot be opened.\n", buf);
-		  endrun(7878);
+		  gizmo_hard_abort_reviewed(7878, "TEMP_HARD_CANDIDATE_IO: cannot open this rank's restart file for write, mid per-rank groupTask turn (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	    }
 
@@ -187,9 +199,14 @@ void restart(int modus)
 		{
 		  printf("The restart file on task=%d is not consistent with the one on task=0\n", ThisTask);
 		  fflush(stdout);
-		  endrun(16);
+		  gizmo_hard_abort_reviewed(16, "TEMP_HARD_CANDIDATE_IO: restart file inconsistent with task-0 (per-rank, before in()/byten reads; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 
+	      /* allocate_memory() is subset/turn-called here (inside the per-rank
+	       * groupTask turn), so it holds NO MPI_COMM_WORLD collective and routes
+	       * OOM through the reviewed TEMPORARY hard path (see allocate.cc). No
+	       * poll here for the same deadlock reason -- the all-rank setup
+	       * bad-stops were already drained at the pre-loop poll above. */
 	      allocate_memory();
 	    }
 
@@ -198,7 +215,7 @@ void restart(int modus)
 	    {
 	      printf("it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", NumPart / (((double) All.TotNumPart) / NTask));
 	      printf("fatal error\n");
-	      endrun(22);
+	      gizmo_hard_abort_reviewed(22, "TEMP_HARD_CANDIDATE_IO: PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	    }
 
 	  if(modus)		/* read */
@@ -217,7 +234,7 @@ void restart(int modus)
 		{
 		  printf("GAS: it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", N_gas / (((double) All.TotN_gas) / NTask));
 		  printf("fatal error\n");
-		  endrun(222);
+		  gizmo_hard_abort_reviewed(222, "TEMP_HARD_CANDIDATE_IO: GAS PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
@@ -315,7 +332,7 @@ void restart(int modus)
 		  printf
 		    ("Tree storage: it seems you have reduced(!) 'PartAllocFactor' below the value needed to load the restart file (task=%d). "
 		     "Numnodestree=%d  MaxNodes=%d\n", ThisTask, Numnodestree, MaxNodes);
-		  endrun(221);
+		  gizmo_hard_abort_reviewed(221, "TEMP_HARD_CANDIDATE_IO: tree storage PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 
 	      byten(Nodes_base, Numnodestree * sizeof(struct NODE), modus);

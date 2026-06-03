@@ -113,7 +113,7 @@ void pm_init_periodic(void)
   if(!(rhogrid = (fftw_real *) mymalloc("rhogrid", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
       printf("failed to allocate memory for `FFT-rhogrid' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      endrun(1);
+      gizmo_hard_abort_reviewed(90000001, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-rhogrid alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
   bytes_tot += bytes;
 
@@ -148,7 +148,7 @@ void pm_init_periodic_allocate(void)
   if(!(forcegrid = (fftw_real *) mymalloc("forcegrid", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
       printf("failed to allocate memory for `FFT-forcegrid' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      endrun(1);
+      gizmo_hard_abort_reviewed(90000002, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-forcegrid alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
   bytes_tot += bytes;
 
@@ -156,14 +156,14 @@ void pm_init_periodic_allocate(void)
      (part = (struct part_slab_data *) mymalloc("part", bytes = 8 * NumPart * sizeof(struct part_slab_data))))
     {
       printf("failed to allocate memory for `part' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      endrun(1);
+      gizmo_hard_abort_reviewed(90000003, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- PM 'part' alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
   bytes_tot += bytes;
 
   if(!(part_sortindex = (int *) mymalloc("part_sortindex", bytes = 8 * NumPart * sizeof(int))))
     {
       printf("failed to allocate memory for `part_sortindex' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      endrun(1);
+      gizmo_hard_abort_reviewed(90000004, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- PM 'part_sortindex' alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
   bytes_tot += bytes;
 
@@ -171,7 +171,7 @@ void pm_init_periodic_allocate(void)
   if(!(tidal_workspace = (fftw_real *) mymalloc("tidal_workspace", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
       printf("failed to allocate memory for `FFT-tidal_workspace' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      endrun(1);
+      gizmo_hard_abort_reviewed(90000005, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-tidal_workspace alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 #endif
   bytes_tot += bytes;

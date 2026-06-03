@@ -2748,6 +2748,11 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
 #endif
 }
 void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
+/* Best-effort drain of in-flight device work. Used by the reviewed hard-abort
+ * path (core/run.cc) to quiesce the GPU before MPI_Abort, reducing (not
+ * eliminating) the Vista CG-stuck wedge risk. Guarded so it is safe to call
+ * before Kokkos init or after finalize. */
+void gizmo_kokkos_fence(void) { if(Kokkos::is_initialized() && !Kokkos::is_finalized()) { Kokkos::fence(); } }
 
 /* Central registry of per-TU AllDeviceMirror addresses.
  * Each GPU TU's gpu_all_mirror.h include instantiates a private

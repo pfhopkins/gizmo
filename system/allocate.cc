@@ -44,6 +44,21 @@ void allocate_memory(void)
 
   NTaskTimesThreads = maxThreads * NTask;
 
+  /* COLLECTIVE-SYMMETRY NOTE (codex 2026-06-02): allocate_memory() is called
+   * from SUBSET/turn contexts -- file_io/read_ic.cc read_file() (one rank, or
+   * one group, per driver-loop round, with the other ranks waiting at the
+   * MPI_Barrier) and the per-rank file_io/restart.cc groupTask turn. It MUST
+   * therefore contain NO MPI_COMM_WORLD collective: an Allreduce here would
+   * deadlock against the peers parked at that barrier. An earlier draft added a
+   * collective arena preflight at this point; it has been REMOVED. Arena
+   * (mymalloc) OOM now routes through mymalloc's own reviewed TEMPORARY hard
+   * path, and the UVM/STL failure below routes through a local reviewed hard
+   * path. NEITHER is acceptable as permanent -- gizmo_hard_abort_reviewed is
+   * mitigation (print/flush/fence before MPI_Abort), not a guarantee against the
+   * Vista CG wedge. TEMP follow-up: a real graceful allocator needs a separate
+   * all-rank "compute sizes/header -> allocate arrays" phase run BEFORE the
+   * per-file/per-rank IO, where a collective preflight is symmetric. */
+
   Exportflag = (int *) mymalloc("Exportflag", NTaskTimesThreads * sizeof(int));
   Exportindex = (int *) mymalloc("Exportindex", NTaskTimesThreads * sizeof(int));
   Exportnodecount = (int *) mymalloc("Exportnodecount", NTaskTimesThreads * sizeof(int));
@@ -56,52 +71,62 @@ void allocate_memory(void)
   ProcessedFlag = (unsigned char *) mymalloc("ProcessedFlag", bytes = All.MaxPart * sizeof(unsigned char));
   bytes_tot += bytes;
 
-  ActiveParticleList.reserve(All.MaxPart);
+  /* ---- Non-arena allocations (UVM + STL) use attempt-then-check (they return
+   * NULL / throw, unlike the arena path). Accumulate ONE local failure flag
+   * across all of them. Because allocate_memory() is subset/turn-called (see
+   * note above), this failure is NOT checked by an MPI collective -- it routes
+   * to the single reviewed TEMPORARY hard path (TEMP_HARD_CANDIDATE_OOM) at the
+   * end (an earlier draft used a combined Allreduce here; removed -- it would
+   * deadlock). Once the flag is set, later optional allocations are skipped
+   * (surgical; we are going to hard-abort anyway). Nothing between here and the
+   * final check dereferences P/CellP. An uncaught std::bad_alloc is also barred. */
+  int alloc_fail_local = 0;
 
-  NextInTimeBin.resize(All.MaxPart);
-  PrevInTimeBin.resize(All.MaxPart);
+  try {
+    ActiveParticleList.reserve(All.MaxPart);
+    NextInTimeBin.resize(All.MaxPart);
+    PrevInTimeBin.resize(All.MaxPart);
+  } catch(const std::bad_alloc&) { alloc_fail_local = 1; printf("allocate_memory: STL timebin vector alloc (MaxPart=%d) threw bad_alloc.\n", All.MaxPart); fflush(stdout); }
 
 
-  if(All.MaxPart > 0)
+  if(All.MaxPart > 0 && !alloc_fail_local)
     {
       bytes = All.MaxPart * sizeof(struct particle_data);
       P = (struct particle_data *) gpu_particles_uvm_alloc(bytes);
-      if(!P)
-	{
-	  printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0));
-	  endrun(1);
-	}
-      bytes_tot += bytes;
-
-      if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));}
+      if(P == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
+      else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
     }
 
-  if(All.MaxPartGas > 0)
+  if(All.MaxPartGas > 0 && !alloc_fail_local)
     {
       bytes_tot = 0;
 
       bytes = All.MaxPartGas * sizeof(struct gas_cell_data);
       CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes);
-      if(!CellP)
+      if(CellP == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
+      else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
+
+#ifdef CHIMES
+      /* ChimesGasVars is arena (covered by the combined preflight above). Only
+       * allocate when the UVM allocs above succeeded on THIS rank, so we never
+       * mymalloc on an already-failing path; the final collective check below
+       * still makes all ranks bad-stop together. */
+      if(!alloc_fail_local)
 	{
-	  printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0));
-	  endrun(1);
+	  ChimesGasVars = (struct gasVariables *) mymalloc("gasVars", bytes = All.MaxPartGas * sizeof(struct gasVariables));
+	  bytes_tot += bytes;
+	  if(ThisTask == 0) printf("Allocated %g MByte for storage of ChimesGasVars data.\n", bytes_tot / (1024.0 * 1024.0));
 	}
-      bytes_tot += bytes;
-
-      if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));}
-
-#ifdef CHIMES 
-      if (!(ChimesGasVars = (struct gasVariables *) mymalloc("gasVars", bytes = All.MaxPartGas * sizeof(struct gasVariables)))) 
-	{
-	  printf("failed to allocate memory for 'ChimesGasVars' (%g MB).\n", bytes / (1024.0 * 1024.0));
-	  endrun(1); 
-	}
-      bytes_tot += bytes; 
-
-      if(ThisTask == 0)
-	printf("Allocated %g MByte for storage of ChimesGasVars data.\n", bytes_tot / (1024.0 * 1024.0));
 #endif
+    }
+
+  /* UVM/STL allocation failure: NO collective here (allocate_memory() is
+   * subset/turn-called -- see note above). Route this rank's failure through the
+   * single reviewed TEMPORARY hard path (no MPI). NOT permanent; requires a
+   * Vista receipt + the all-rank-allocation-phase follow-up. */
+  if(alloc_fail_local)
+    {
+      gizmo_hard_abort_reviewed(1, "TEMP_HARD_CANDIDATE_OOM: UVM/STL particle allocation failed (allocate_memory subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
 

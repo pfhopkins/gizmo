@@ -231,7 +231,7 @@ void gravity_tree(void)
             if(Nexport > 0) {
                 printf("Phase 9.4 LET export retirement: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
                 fflush(stdout);
-                endrun(914040);
+                gizmo_hard_abort_reviewed(914040, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(914040) -- LET export-retirement invariant (mid tree force; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
             }
 
             /* Phase 9.4: export-back loop is retired under GPU offload, so the arena

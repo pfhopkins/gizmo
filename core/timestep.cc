@@ -1146,7 +1146,8 @@ integertime get_timestep(int p,		/*!< particle index */
          * per-particle loop where rank counts will differ. */
         if(P[p].Mass > 0) {
             gizmo_request_controlled_stop(888,
-                "STOP_WHEN_BELOW_MINTIMESTEP: timestep < MinSizeTimestep");
+                "STOP_WHEN_BELOW_MINTIMESTEP: timestep < MinSizeTimestep",
+                __FILE__, __LINE__, __FUNCTION__);
         }
 #endif
         dt = All.MinSizeTimestep;

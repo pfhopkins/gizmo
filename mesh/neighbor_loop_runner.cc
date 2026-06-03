@@ -1598,7 +1598,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         "(qi=%d). Transport corruption?\n",
                         rank, Spec::loop_name, env.origin_rank, p, qi);
                 fflush(stderr);
-                MPI_Abort(MPI_COMM_WORLD, 1);
+                gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
             }
             peer_actives.push_back(env.active);
             peer_provenance.push_back({p, qi, env.origin_slot, env.origin_rank});
@@ -1792,7 +1792,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                     rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                             fflush(stderr);
-                            MPI_Abort(MPI_COMM_WORLD, 1);
+                            gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                         }
                         const int slot = re.origin_slot;
                         if (slot < 0 || slot >= N) {
@@ -1800,7 +1800,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "dual reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                     rank, Spec::loop_name, slot, N, p);
                             fflush(stderr);
-                            MPI_Abort(MPI_COMM_WORLD, 1);
+                            gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                         }
                         Spec::merge_accum(accums_out[slot], re.accum_prod);
                         Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
@@ -1847,7 +1847,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                 rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                         fflush(stderr);
-                        MPI_Abort(MPI_COMM_WORLD, 1);
+                        gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                     }
                     const int slot = re.origin_slot;
                     if(slot < 0 || slot >= N) {
@@ -1855,7 +1855,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                 rank, Spec::loop_name, slot, N, p);
                         fflush(stderr);
-                        MPI_Abort(MPI_COMM_WORLD, 1);
+                        gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                     }
                     Spec::merge_accum(accums_out[slot], re.accum);
                 }
@@ -2706,7 +2706,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                     (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                     s_np0, NumPart);
             fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 81036);
+            gizmo_hard_abort_reviewed(81036, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
 
@@ -4236,7 +4236,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             }
             fprintf(stderr, "]\n");
             fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 81214);
+            /* Symmetric: the mismatch is detected from the MPI_Allreduce'd
+             * min/max/hash above, so EVERY rank enters this branch together.
+             * Graceful bad-stop + return drains all ranks identically (run
+             * loop returns void) to the next poll -- no MPI_Abort, no wedge. */
+            gizmo_request_controlled_stop(81214, "NLR_ITER subgroups[] length/order mismatch across ranks (caller partition contract violated)", __FILE__, __LINE__, __FUNCTION__);
+            return;
         }
 
         /* Check 2: no duplicate particle indices across subgroups (local-rank
@@ -4261,7 +4266,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                         "subgroup.\n",
                         rank, Spec::loop_name, seen[k]);
                     fflush(stderr);
-                    MPI_Abort(MPI_COMM_WORLD, 81215);
+                    /* TEMP_HARD_CANDIDATE: LOCAL per-rank duplicate check (each
+                     * rank sorts its own seen[]) -> asymmetric; only the
+                     * offending rank reaches here while peers proceed into the
+                     * ghost-exchange collectives, so a return would deadlock.
+                     * Internal partition-invariant violation; reviewed hard. */
+                    gizmo_hard_abort_reviewed(81215, "TEMP_HARD_CANDIDATE_INTERNAL: duplicate particle index across subgroups (asymmetric local check; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
                 }
             }
         }
@@ -4933,7 +4943,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                 s_np0, NumPart);
             fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 81213);
+            gizmo_hard_abort_reviewed(81213, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B iterative tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
     /* Driver destructor frees per-subgroup UVM allocations on scope exit. */
