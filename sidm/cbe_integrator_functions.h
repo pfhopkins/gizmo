@@ -35,6 +35,78 @@ static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_dri
  * below the intended stress scale, but large enough to deterministically
  * exclude strictly-zero / negative eigenvalues from downstream consumers). */
 static constexpr double CBE_SPD_RELATIVE_FLOOR = 1.0e-12;
+
+/* Dimension-aware momentum-slot accessors (2026-06-02). Stored basis-moment
+ * row layout is row[0] = mass, row[1..NUMDIMS] = p_x..p_{NUMDIMS-1}, and
+ * (under CBE_INTEGRATOR_SECONDMOMENT) row[1+NUMDIMS..NMOMENTS-1] = stress
+ * tensor components. NMOMENTS shrinks in 1D/2D so the y/z momentum slots
+ * literally don't exist in the array. These helpers read them as 0 and
+ * silently drop the write, matching the hydro convention where Vel[1] /
+ * Vel[2] etc. are simply zero in low-D. The 3-vector dot products and
+ * vector intermediates downstream (dp[3], Vel[3], Face_Area_Vec[3])
+ * remain 3-wide so the same flux/update math compiles for any NUMDIMS.
+ * Compile-time NUMDIMS branch -> zero overhead at NUMDIMS=3. */
+KOKKOS_INLINE_FUNCTION double cbe_basis_p_r(const double *row, int k) {
+    return (k < NUMDIMS) ? row[1 + k] : 0.0;
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_p_w(double *row, int k, double val) {
+    if(k < NUMDIMS) row[1 + k] = val;
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_p_a(double *row, int k, double val) {
+    if(k < NUMDIMS) row[1 + k] += val;
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_p_load_3(const double *row, double p3[3]) {
+    p3[0] = cbe_basis_p_r(row, 0);
+    p3[1] = cbe_basis_p_r(row, 1);
+    p3[2] = cbe_basis_p_r(row, 2);
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_p_store_3(double *row, const double p3[3]) {
+    cbe_basis_p_w(row, 0, p3[0]);
+    cbe_basis_p_w(row, 1, p3[1]);
+    cbe_basis_p_w(row, 2, p3[2]);
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_v_load_3(const double *row, double v3[3]) {
+    /* v = p/m for the basis. Returns zeros if m <= 0. */
+    const double m = row[0];
+    const double inv_m = (m > 0) ? 1.0 / m : 0.0;
+    v3[0] = cbe_basis_p_r(row, 0) * inv_m;
+    v3[1] = cbe_basis_p_r(row, 1) * inv_m;
+    v3[2] = cbe_basis_p_r(row, 2) * inv_m;
+}
+
+/* Symmetric stress-slot helpers (Phil 2026-06-02 — added now so the
+ * SECONDMOMENT path can be unfenced for arbitrary D later without
+ * rewriting the hot path). Layout per the existing convention:
+ *   1D NMOMENTS=3 : [m, p_x, T_xx]                                   -> NSTRESS=1
+ *   2D NMOMENTS=6 : [m, p_x, p_y, T_xx, T_yy, T_xy]                  -> NSTRESS=3
+ *   3D NMOMENTS=10: [m, p_x, p_y, p_z, T_xx, T_yy, T_zz, T_xy, T_xz, T_yz] -> NSTRESS=6
+ * Diagonals occupy 1+NUMDIMS..1+2*NUMDIMS-1; off-diagonals (upper triangle
+ * in lex order (a,b) with a<b) follow. cbe_T_idx returns the slot index
+ * for symmetric T_{a,b}; cbe_basis_T_r/_w guard the same way the
+ * momentum accessors do. SECONDMOMENT non-3D still fenced today; these
+ * helpers exist so the call sites that use them are unfence-safe. */
+#define CBE_NSTRESS (NUMDIMS * (NUMDIMS + 1) / 2)
+KOKKOS_INLINE_FUNCTION int cbe_T_idx(int a, int b) {
+    if(a > b) { int tmp = a; a = b; b = tmp; }
+    if(a == b) return 1 + NUMDIMS + a;
+    const int off = a * (2 * NUMDIMS - a - 1) / 2 + (b - a - 1);
+    return 1 + 2 * NUMDIMS + off;
+}
+KOKKOS_INLINE_FUNCTION double cbe_basis_T_r(const double *row, int a, int b) {
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    return row[cbe_T_idx(a, b)];
+#else
+    (void)row; (void)a; (void)b;
+    return 0.0;
+#endif
+}
+KOKKOS_INLINE_FUNCTION void cbe_basis_T_w(double *row, int a, int b, double val) {
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    row[cbe_T_idx(a, b)] = val;
+#else
+    (void)row; (void)a; (void)b; (void)val;
+#endif
+}
 #endif
 
 
@@ -73,8 +145,10 @@ double cbe_cost_v_only(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
     double inv_a = 1.0 / DMAX(moments_a[0], MIN_REAL_NUMBER);
     double inv_b = 1.0 / DMAX(moments_b[0], MIN_REAL_NUMBER);
     double c = 0;
+    /* 3-vector velocity diff; missing components (k>=NUMDIMS) are 0 via
+     * cbe_basis_p_r — same dimension-agnostic algebra as hydro. */
     for(int k=0; k<3; k++) {
-        double dv = moments_a[k+1] * inv_a - moments_b[k+1] * inv_b;
+        double dv = cbe_basis_p_r(moments_a, k) * inv_a - cbe_basis_p_r(moments_b, k) * inv_b;
         c += dv * dv;
     }
     return c;
@@ -135,9 +209,10 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
     double inv_b = 1.0 / DMAX(moments_b[0], MIN_REAL_NUMBER);
     double v_a[3], v_b[3];
     double c = 0;
+    /* 3-vector velocity diff; missing components zero-padded. */
     for(int k=0; k<3; k++) {
-        v_a[k] = moments_a[k+1] * inv_a;
-        v_b[k] = moments_b[k+1] * inv_b;
+        v_a[k] = cbe_basis_p_r(moments_a, k) * inv_a;
+        v_b[k] = cbe_basis_p_r(moments_b, k) * inv_b;
         double dv = v_a[k] - v_b[k];
         c += dv * dv;
     }
@@ -363,7 +438,10 @@ double cbe_face_normal_stress_speed_from_Qrow(
 {
     if(!(moments[0] > MIN_REAL_NUMBER)) return 0;
     const double inv_rho = 1.0 / moments[0];
-    const double v[3] = { moments[1]*inv_rho, moments[2]*inv_rho, moments[3]*inv_rho };
+    /* Always-3-vector velocity. Missing components zero-padded by the helper
+     * so 1D/2D builds use the same 3-vector algebra below; the SECONDMOMENT
+     * stress block stays 3D-only via the precompiler_logic.h fence. */
+    double v[3]; cbe_basis_v_load_3(moments, v);
     double nSn = 0;
 #if (CBE_INTEGRATOR_NMOMENTS >= 10)
     {
@@ -951,8 +1029,8 @@ void cbe_face_K_and_vn_from_Q(
      * definition matches what cbe_flux_hllc_vacuum and the residual use. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface[m][0] > MIN_REAL_NUMBER) {
-            double inv_Q0 = 1.0 / Qface[m][0];
-            v_alpha_n[m] = (Qface[m][1]*Ahat[0] + Qface[m][2]*Ahat[1] + Qface[m][3]*Ahat[2]) * inv_Q0;
+            double v_basis[3]; cbe_basis_v_load_3(Qface[m], v_basis);
+            v_alpha_n[m] = v_basis[0]*Ahat[0] + v_basis[1]*Ahat[1] + v_basis[2]*Ahat[2];
             K[m]         = Qface[m][0];
             c_x[m]       = cbe_face_normal_stress_speed_from_Qrow(Qface[m], Ahat);
         } else {
@@ -1024,7 +1102,10 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
 
     const double rho     = moments[0];
     const double inv_rho = 1.0 / rho;
-    const double v[3]    = { moments[1]*inv_rho, moments[2]*inv_rho, moments[3]*inv_rho };
+    /* Always-3-vector velocity. Missing components zero-padded so 1D/2D
+     * builds use the same 3-vector algebra; SECONDMOMENT stress block
+     * stays 3D-only via the precompiler_logic.h fence. */
+    double v[3]; cbe_basis_v_load_3(moments, v);
     const double v_n     = v[0]*n_hat[0]    + v[1]*n_hat[1]    + v[2]*n_hat[2];
     const double vF_n    = vface[0]*n_hat[0] + vface[1]*n_hat[1] + vface[2]*n_hat[2];
     const double u_out   = v_n - vF_n;
@@ -1078,9 +1159,13 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
     const double prefactor = (u_out >= c_x) ? rho : 0.25 * rho * (3.0 * u_out / c_x + 1.0);
     const double u_or_c    = (u_out >= c_x) ? u_out : c_x;
 
-    /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. */
+    /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. The flux row
+     * has only NUMDIMS momentum slots in low-D builds; cbe_basis_p_w silently
+     * drops writes to non-existent y/z slots. The S_n[k] math stays 3-vector
+     * so the rotation-invariant cold limit (S=0 → fluxes[k+1] = v[k]*F_m)
+     * collapses cleanly to the existing 1D code path with v_y=v_z=0. */
     for(int k=0; k<3; k++) {
-        fluxes[k+1] = v[k] * fluxes[0] + prefactor * A_norm * S_n[k];
+        cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + prefactor * A_norm * S_n[k]);
     }
 
     /* Stress: F_T_kl = R_kl * F_m + prefactor * |A| * (v_k S_n_l + S_n_k v_l).
@@ -1139,11 +1224,13 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
         pi.CBE_basis_moments[j][0] += nfac * (dt*pi.CBE_basis_moments_dt[j][0] - pi.CBE_basis_moments[j][0]*minv*dmoment[0]);
-        for(k=1;k<4;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k] - pi.CBE_basis_moments[j][0]*minv*dmoment[k]);}
+        /* Momentum slots: indices 1..NUMDIMS only. 1D NMOMENTS=2 has just
+         * slot [1]=p_x; 3D NMOMENTS=4/7/10 has [1..3]=p_x,p_y,p_z. */
+        for(k=1;k<=NUMDIMS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k] - pi.CBE_basis_moments[j][0]*minv*dmoment[k]);}
 #if (CBE_INTEGRATOR_NMOMENTS > 4)
-        /* dt-advance of stress slots, then diagonal lower clamp (valid for
-         * both 7-moment diagonal-only and 10-moment full 3D layouts). */
-        for(k=4;k<CBE_INTEGRATOR_NMOMENTS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k]);}
+        /* dt-advance of stress slots: indices 1+NUMDIMS..NMOMENTS-1.
+         * Currently only fires in 3D SECONDMOMENT (precompiler fence). */
+        for(k=1+NUMDIMS;k<CBE_INTEGRATOR_NMOMENTS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k]);}
         for(k=4;k<7;k++) {if(pi.CBE_basis_moments[j][k] < MIN_REAL_NUMBER) {pi.CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
 #if (CBE_INTEGRATOR_NMOMENTS >= 10)
         /* Off-diagonal Cauchy-Schwarz + determinant crossnorm + Wave-CBE
@@ -1195,13 +1282,14 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
             const double m_pi    = pi.CBE_basis_moments[j][0];
             double eigenvalue_floor = 0.0;
             if(m_pi > 0 && isfinite(m_pi)) {
-                const double inv_m = 1.0 / m_pi;
-                const double v[3] = { pi.CBE_basis_moments[j][1]*inv_m,
-                                      pi.CBE_basis_moments[j][2]*inv_m,
-                                      pi.CBE_basis_moments[j][3]*inv_m };
+                /* Always-3-vector velocity; missing components zero-padded.
+                 * This block is SECONDMOMENT-only (NMOMENTS>=10 outer gate)
+                 * → fenced 3D today, so v[1]/v[2] are real. The helper-based
+                 * load keeps the call site unfence-safe. */
+                double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
                 const double trace_S_central = (pi.CBE_basis_moments[j][4]
                                              +  pi.CBE_basis_moments[j][5]
-                                             +  pi.CBE_basis_moments[j][6]) * inv_m
+                                             +  pi.CBE_basis_moments[j][6]) / m_pi
                                              - (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
                 eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR
                                  * DMAX(trace_S_central, MIN_REAL_NUMBER);
@@ -1266,12 +1354,20 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
             dmom_tot[k] += pi.CBE_basis_moments_dt[j][k];
         }
     }
-    Vec3<double> dv0 = {m_inv * dmom_tot[1], m_inv * dmom_tot[2], m_inv * dmom_tot[3]};
+    /* Build dv0 as a 3-vector from dmom_tot's momentum slots [1..NUMDIMS].
+     * cbe_basis_p_r treats dmom_tot the same as a moment row (slot 0 mass,
+     * slots 1..NUMDIMS momentum), zero-padding missing axes. */
+    Vec3<double> dv0 = {
+        m_inv * cbe_basis_p_r(dmom_tot, 0),
+        m_inv * cbe_basis_p_r(dmom_tot, 1),
+        m_inv * cbe_basis_p_r(dmom_tot, 2)
+    };
     pi.GravAccel += dv0 / All.cf_a2inv;
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
         pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot[0]);
-        for(k=0;k<3;k++) {
+        /* Per-basis momentum subtraction on slots 1..NUMDIMS only. */
+        for(k=0;k<NUMDIMS;k++) {
             pi.CBE_basis_moments_dt[j][k+1] -= pi.CBE_basis_moments[j][0] * dv0[k];
         }
 #if (CBE_INTEGRATOR_NMOMENTS > 4)

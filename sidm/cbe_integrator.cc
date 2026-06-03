@@ -6,6 +6,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "cbe_integrator_functions.h"   /* cbe_basis_p_r / _w / _a NUMDIMS-aware
+                                          momentum-slot helpers used by
+                                          cbe_synthesize_cold_default. The
+                                          helpers expand to plain inline in
+                                          host TUs via the KOKKOS_INLINE_FUNCTION
+                                          fallback at the top of the header. */
 
 
 /*! \file cbe_integrator.cc
@@ -115,21 +121,29 @@ static void cbe_synthesize_cold_default(int i)
     double v_scale = (v0 > 1.0e-30) ? v0 : 1.0e-10;
     double S_floor = S_floor_rel * v_scale * v_scale;
 
-    /* Slot 0 -- dominant cold stream. */
+    /* Slot 0 -- dominant cold stream. Momentum + diagonal stress slot writes
+     * go through the NUMDIMS-aware helpers so 1D/2D builds don't OOB. The
+     * SECONDMOMENT off-diagonal slots are intrinsically D-dependent: 1D has
+     * none, 2D has 1 (xy at index 1+2*NUMDIMS), 3D has 3 (xy/xz/yz at 7/8/9).
+     * The SECONDMOMENT path is fenced at 3D in precompiler_logic.h until
+     * every stress-slot site is migrated through cbe_T_idx; the explicit
+     * 3D off-diagonal indices below are valid under the current fence. */
     {
         double m0 = (1.0 - eps) * P[i].Mass;
         P[i].CBE_basis_moments[0][0] = m0;
-        P[i].CBE_basis_moments[0][1] = m0 * Vel[0];
-        P[i].CBE_basis_moments[0][2] = m0 * Vel[1];
-        P[i].CBE_basis_moments[0][3] = m0 * Vel[2];
-#if (CBE_INTEGRATOR_NMOMENTS >= 7)
-        P[i].CBE_basis_moments[0][4] = m0 * (Vel[0]*Vel[0] + S_floor);
-        P[i].CBE_basis_moments[0][5] = m0 * (Vel[1]*Vel[1] + S_floor);
-        P[i].CBE_basis_moments[0][6] = m0 * (Vel[2]*Vel[2] + S_floor);
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
-        P[i].CBE_basis_moments[0][7] = m0 * Vel[0]*Vel[1];
-        P[i].CBE_basis_moments[0][8] = m0 * Vel[0]*Vel[2];
-        P[i].CBE_basis_moments[0][9] = m0 * Vel[1]*Vel[2];
+        for(int k = 0; k < NUMDIMS; k++) {
+            cbe_basis_p_w(P[i].CBE_basis_moments[0], k, m0 * Vel[k]);
+        }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        for(int k = 0; k < NUMDIMS; k++) {
+            P[i].CBE_basis_moments[0][1 + NUMDIMS + k] = m0 * (Vel[k]*Vel[k] + S_floor);
+        }
+#if (NUMDIMS == 2)
+        P[i].CBE_basis_moments[0][1 + 2*NUMDIMS] = m0 * Vel[0]*Vel[1];      /* xy */
+#elif (NUMDIMS == 3)
+        P[i].CBE_basis_moments[0][7] = m0 * Vel[0]*Vel[1];                  /* xy */
+        P[i].CBE_basis_moments[0][8] = m0 * Vel[0]*Vel[2];                  /* xz */
+        P[i].CBE_basis_moments[0][9] = m0 * Vel[1]*Vel[2];                  /* yz */
 #endif
 #endif
     }
@@ -144,14 +158,16 @@ static void cbe_synthesize_cold_default(int i)
             cbe_fibonacci_sphere_dir_rotated_to_vhat(j-1, N_placeholder, Vel, v0, dir);
             double vj[3] = {Vel[0] + dv*dir[0], Vel[1] + dv*dir[1], Vel[2] + dv*dir[2]};
             P[i].CBE_basis_moments[j][0] = m_each;
-            P[i].CBE_basis_moments[j][1] = m_each * vj[0];
-            P[i].CBE_basis_moments[j][2] = m_each * vj[1];
-            P[i].CBE_basis_moments[j][3] = m_each * vj[2];
-#if (CBE_INTEGRATOR_NMOMENTS >= 7)
-            P[i].CBE_basis_moments[j][4] = m_each * (vj[0]*vj[0] + S_floor);
-            P[i].CBE_basis_moments[j][5] = m_each * (vj[1]*vj[1] + S_floor);
-            P[i].CBE_basis_moments[j][6] = m_each * (vj[2]*vj[2] + S_floor);
-#if (CBE_INTEGRATOR_NMOMENTS >= 10)
+            for(int k = 0; k < NUMDIMS; k++) {
+                cbe_basis_p_w(P[i].CBE_basis_moments[j], k, m_each * vj[k]);
+            }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+            for(int k = 0; k < NUMDIMS; k++) {
+                P[i].CBE_basis_moments[j][1 + NUMDIMS + k] = m_each * (vj[k]*vj[k] + S_floor);
+            }
+#if (NUMDIMS == 2)
+            P[i].CBE_basis_moments[j][1 + 2*NUMDIMS] = m_each * vj[0]*vj[1];
+#elif (NUMDIMS == 3)
             P[i].CBE_basis_moments[j][7] = m_each * vj[0]*vj[1];
             P[i].CBE_basis_moments[j][8] = m_each * vj[0]*vj[2];
             P[i].CBE_basis_moments[j][9] = m_each * vj[1]*vj[2];
@@ -270,8 +286,13 @@ void do_cbe_initialization(void)
             }
         }
         if(P[i].Mass > 0) {
+            /* Momentum closure runs over slots 1..NUMDIMS only — slot 0 is
+             * mass; any higher slots are stress / SECONDMOMENT and are not
+             * part of the momentum closure. NUMDIMS bound replaces the
+             * prior unconditional [1..4) so 1D/2D builds don't OOB on
+             * non-existent momentum slots. */
             for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-                for(k = 1; k < 4; k++) {
+                for(k = 1; k <= NUMDIMS; k++) {
                     P[i].CBE_basis_moments[j][k] +=
                         P[i].CBE_basis_moments[j][0] *
                         (P[i].Vel[k-1] - mom_tot[k] / P[i].Mass);

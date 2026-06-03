@@ -298,12 +298,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         if(K_i[m] > 0 && v_alpha_n_i[m] - v_F_guess > 0) {
             double w = K_i[m]; v_wt_sum += w;
             double inv_Q0 = 1.0 / Qface_i[m][0];
-            for(int k=0; k<3; k++) vface_bulk[k] += w * Qface_i[m][k+1] * inv_Q0;
+            /* Always-3-vector momentum read via helper. 1D builds get k>=NUMDIMS=0.
+             * The downstream A_hat dot product picks up only v_x; vface_bulk[1..2]
+             * stay zero (consistent with A_hat[1..2]=0 in 1D). */
+            for(int k=0; k<3; k++) vface_bulk[k] += w * cbe_basis_p_r(Qface_i[m], k) * inv_Q0;
         }
         if(K_j[m] > 0 && v_alpha_n_j[m] - v_F_guess < 0) {
             double w = K_j[m]; v_wt_sum += w;
             double inv_Q0 = 1.0 / Qface_j[m][0];
-            for(int k=0; k<3; k++) vface_bulk[k] += w * Qface_j[m][k+1] * inv_Q0;
+            for(int k=0; k<3; k++) vface_bulk[k] += w * cbe_basis_p_r(Qface_j[m], k) * inv_Q0;
         }
     }
     double vbulk_dot_Ahat;

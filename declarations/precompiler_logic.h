@@ -1549,35 +1549,27 @@
 #error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
 #endif
 
-/* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
- * guardrail, codex 2026-05-25). The cbe_flux_hllc_vacuum /
- * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
- * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
- * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
- * off-diag Sxy/Sxz/Syz). NMOMENTS = 3 (1D) and NMOMENTS = 6 (2D) use
- * different index layouts -- silently mis-indexed by the same code,
- * which would corrupt fluxes without raising a compile error. The
- * hardcoded init at sidm/cbe_integrator.cc:62 and the Commit-3 pad
- * computation at sidm/cbe_integrator_flux_functions.h:100 inherit the
- * same assumption. Until dimension-aware moment-index helpers land
- * (deferred until/unless 1D or 2D production CBE is actually wanted),
- * fence non-3D second-moment CBE at compile time. */
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
+ *
+ * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at
+ * 3D because every momentum-slot access in sidm/cbe_integrator{.cc,
+ * _functions.h, _flux_functions.h} hard-coded [1]/[2]/[3] as p_x/p_y/p_z.
+ * Lifted 2026-06-02 to NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path
+ * once sidm/cbe_integrator_functions.h gained dimension-aware
+ * momentum-slot helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3,
+ * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
+ * sites were migrated through them.
+ *
+ * The SECONDMOMENT path stays 3D-only: the stress-block helpers
+ * (cbe_face_K_and_vn_from_Q, cbe_flux_hllc_vacuum, cbe_basis_row_*)
+ * still hard-code the 3D triangular layout [4]=Sxx,[5]=Syy,[6]=Szz,
+ * [7]=Sxy,[8]=Sxz,[9]=Syz. The CBE_NSTRESS = NUMDIMS*(NUMDIMS+1)/2 +
+ * cbe_T_idx(a,b) stress accessors are in place in
+ * cbe_integrator_functions.h for the eventual unfence — do not lift
+ * this fence without migrating every stress-slot call site through
+ * them. */
 #if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
 #if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
-#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
-#endif
-#endif
-/* C7 fixup (2026-05-30, codex): the 3D fence above only guards the
- * SECONDMOMENT case. The no-SECONDMOMENT path at line ~153 sets
- * CBE_INTEGRATOR_NMOMENTS = (BOX_SPATIAL_DIMENSION)+1 -> NMOMENTS=2 in
- * 1D, NMOMENTS=3 in 2D. C7's do_cbe_initialization assumes slots [1],
- * [2], [3] always exist (the conservation-renormalization pass writes
- * `for(k=1;k<4;...)` and the synthesis helper writes m*Vel[0..2] into
- * slots [1..3]); same OOB exists in the pre-C7 conservation pass and
- * the flux body's 3D-vector code. Fence ALL CBE modes at 3D until
- * dimension-aware moment-index helpers exist. */
-#if defined(CBE_INTEGRATOR)
-#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
-#error "CBE_INTEGRATOR currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The per-particle init synthesis + 2-pass conservation renormalization in sidm/cbe_integrator.cc and the flux body's vector ops in sidm/cbe_integrator_flux_functions.h all assume slots [1], [2], [3] are momentum components -- 1D (NMOMENTS=2) and 2D (NMOMENTS=3) would OOB-write to non-existent slots. Add dimension-aware moment-index helpers before unfencing."
+#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The stress-slot access pattern in sidm/cbe_integrator_functions.h hard-codes the 3D triangular layout [4]/[5]/[6]=diag, [7]/[8]/[9]=off-diag. The cbe_T_idx(a,b) + CBE_NSTRESS = NUMDIMS*(NUMDIMS+1)/2 helpers are in place; the fence stays until every stress-slot call site is migrated through them."
 #endif
 #endif
