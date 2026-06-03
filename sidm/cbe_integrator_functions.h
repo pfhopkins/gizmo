@@ -231,17 +231,34 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
-/* Adaptive free-slot row-fallback transform on an NBASIS x NBASIS cost
- * matrix (Wave-CBE Commit 6a, 2026-05-27). Implements the harness §2.4
- * free-slot principle: when source basis alpha has NO good velocity match
- * on the target side (row min exceeds the adaptive threshold tau =
- * median(C) per call), shrink that row's costs by
- *     target_masses[beta] / (source_masses[alpha] + target_masses[beta] + eps)
- * so empty / lightly-occupied target slots become cheaper destinations.
- * Reduces the perturbation-degrading "overwrite dominant stream" cost and
- * captures the harness Test 3.9 result (one-sided-theta + free_slot_w2
- * preserves the +2 perturbation +78% vs plain w2 or v_only and halves
- * KE drift).
+/* Free-slot row-fallback transform on an NBASIS x NBASIS cost matrix.
+ *
+ * Fix #3 from reference_cbe_method_fix_list.md (harness 2026-05-30):
+ *
+ * For every source basis alpha with nonfloor mass (rho_a[alpha] > eps_rho),
+ * apply the cost reweight
+ *     C[alpha][beta] *= target_masses[beta] / (source_masses[alpha]
+ *                                              + target_masses[beta] + eps_rho)
+ * where eps_rho = 1e-8 * (sum_source rho + sum_target rho) is a relative
+ * regularizer. The multiplicative prefactor naturally biases the argmin
+ * toward empty / lightly-occupied target slots only when no exact-match
+ * basis exists (its C_W^2[alpha,beta] ≈ 0 already dominates the argmin).
+ *
+ * The PRIOR median(C) gate (Wave-CBE Commit 6a) is REMOVED — the harness
+ * docstring catches it: row C[alpha] = [1,4,9,16] has median(C)=1 and the
+ * gate "1 > 1" is False, so the reweighting silently never fires on the
+ * perturbation IC. All three cost choices collapse to plain W^2 and the
+ * perturbation routes into the dominant +1 slot instead of the empty -2
+ * slot. Always-reweighting (gated only by source mass nonfloor) is the
+ * production form per python_harness/cbe1d/pairing.py:cost_free_slot_fallback.
+ *
+ * The source-mass eps_rho skip is ESSENTIAL: floor-mass sources have
+ * v_alpha = p_alpha / m_alpha dominated by FP noise; allowing them to
+ * drive routing decisions destabilizes pairing.
+ *
+ * fired_count_inout is NULLABLE. When non-null, increments by 1 per
+ * alpha-row that passed the source-mass gate and applied the reweight.
+ * Per-face increment bounded by 2*NBASIS (two cost matrices per face).
  *
  * Direction is asymmetric. Caller passes (source_masses, target_masses)
  * matching the cost-matrix BUILD direction. For an a->b matrix
@@ -250,25 +267,7 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
  *     target_masses[j] = Q_b[j][0]        // mass density of b-side basis j
  * The b->a direction (separately built C') requires its own free-slot
  * call with source = Q_b masses, target = Q_a masses. It is NOT a
- * transpose of this transform.
- *
- * fired_count_inout is NULLABLE. When non-null, increments by 1 per
- * alpha-row where the tau test triggered. Used at the flux call site
- * only (in C6c); gradient and BJ-limiter call sites pass NULL since
- * pre-pass matching shares the SSOT helper but is not a flux-pairing
- * decision. The diagnostic semantic: SUM over directional basis rows
- * for which the free-slot fallback transformed a cost-matrix row during
- * flux pairing. Each flux face evaluation builds TWO cost matrices
- * (a->b and b->a); each can fire on up to NBASIS rows, so per-face
- * increment is bounded by 2*NBASIS.
- *
- * tau is computed by insertion-sorting a flat copy of all NBASIS^2
- * entries on the stack (NBASIS <= 8 -> at most 64 doubles; no
- * allocations, no library calls, Kokkos-portable).
- *
- * Unused in C6a (no callers yet); SSOT pair-matching builder in C6b
- * routes to this via the CBE_PAIRING_USE_FREE_SLOT compile-time
- * selector (off in C6b temporary defaults, on in C6c final). */
+ * transpose of this transform. */
 KOKKOS_INLINE_FUNCTION
 void cbe_apply_free_slot_fallback(
     double C[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS],
@@ -276,35 +275,17 @@ void cbe_apply_free_slot_fallback(
     const double target_masses[CBE_INTEGRATOR_NBASIS],
     int *fired_count_inout)
 {
-    const int N  = CBE_INTEGRATOR_NBASIS;
-    const int NN = CBE_INTEGRATOR_NBASIS * CBE_INTEGRATOR_NBASIS;
-    double flat[CBE_INTEGRATOR_NBASIS * CBE_INTEGRATOR_NBASIS];
-    int idx = 0;
+    const int N = CBE_INTEGRATOR_NBASIS;
+    double sum_rho = 0.0;
+    for(int m=0; m<N; m++) { sum_rho += source_masses[m] + target_masses[m]; }
+    const double eps_rho = 1.0e-8 * sum_rho;
     for(int m=0; m<N; m++) {
-        for(int p=0; p<N; p++) flat[idx++] = C[m][p];
-    }
-    /* insertion sort -- stable, in-place, branch-friendly at NN<=64. */
-    for(int i=1; i<NN; i++) {
-        double x = flat[i];
-        int j = i;
-        while(j > 0 && flat[j-1] > x) { flat[j] = flat[j-1]; j--; }
-        flat[j] = x;
-    }
-    double tau = (NN & 1) ? flat[NN/2]
-                          : 0.5 * (flat[NN/2 - 1] + flat[NN/2]);
-
-    for(int m=0; m<N; m++) {
-        double row_min = MAX_REAL_NUMBER;
+        if(source_masses[m] <= eps_rho) continue;   /* floor-mass source: skip */
         for(int p=0; p<N; p++) {
-            if(C[m][p] < row_min) row_min = C[m][p];
+            const double denom = source_masses[m] + target_masses[p] + eps_rho;
+            C[m][p] *= target_masses[p] / denom;
         }
-        if(row_min > tau) {
-            for(int p=0; p<N; p++) {
-                double denom = source_masses[m] + target_masses[p] + MIN_REAL_NUMBER;
-                C[m][p] *= target_masses[p] / denom;
-            }
-            if(fired_count_inout) { (*fired_count_inout)++; }
-        }
+        if(fired_count_inout) { (*fired_count_inout)++; }
     }
 }
 
