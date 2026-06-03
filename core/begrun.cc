@@ -871,7 +871,7 @@ void open_outputfiles(void)
     if(!(FdTimings = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "balance.txt");
-    if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
     fprintf(FdBalance, "\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
     fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
@@ -995,7 +995,7 @@ void open_outputfiles(void)
 #if defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
   FILE *FdSinkSNDetails;
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SN_details.txt");
-  if(!(FdSinkSNDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  if(!(FdSinkSNDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
   else if(RestartFlag == 0) {
       fprintf(FdSinkSNDetails,"%s Sink Supernova/Explosion log-file [SINK_PARTICLES]. See User Guide for details. Columns represent: \n",prefix_char);
       fprintf(FdSinkSNDetails,"%s   (1) Simulation time [code units] \n",prefix_char);
@@ -3188,15 +3188,21 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
 int read_agetracerlist(char *fname)
 {
-    FILE *fd; int count,i=0; char buf[512];
+    FILE *fd; int count,i=0; char buf[512]; double age_bin;
     if(!(fd = fopen(fname, "r"))) {printf("can't read age tracer list in file '%s'\n", fname); return 1;}
     while(1)
     {
       if(fgets(buf, 500, fd) != buf) {break;}
-      count = sscanf(buf, " %lg", &All.AgeTracerTimeBins[i]);
+      count = sscanf(buf, " %lg", &age_bin);
       if(count == 1 || count == 2)
       {
-          if(i >= NUM_AGE_TRACERS+1) {PRINT_WARNING("Too many entries in age tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS); endrun(314);}
+          if(i >= NUM_AGE_TRACERS+1)
+          {
+              PRINT_WARNING("Too many entries in age tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS);
+              endrun(314);
+              break;
+          }
+          All.AgeTracerTimeBins[i] = age_bin;
           i++;
       }
     }
@@ -3215,7 +3221,7 @@ int read_agetracerlist(char *fname)
 int read_outputlist(char *fname)
 {
   FILE *fd;
-  int count, flag;
+  int count, flag; double output_time;
   char buf[512];
 
   if(!(fd = fopen(fname, "r")))
@@ -3231,7 +3237,7 @@ int read_outputlist(char *fname)
       if(fgets(buf, 500, fd) != buf)
 	break;
 
-      count = sscanf(buf, " %lg %d ", &All.OutputListTimes[All.OutputListLength], &flag);
+      count = sscanf(buf, " %lg %d ", &output_time, &flag);
 
       if(count == 1)
 	flag = 1;
@@ -3244,8 +3250,10 @@ int read_outputlist(char *fname)
 		printf("\ntoo many entries in output-list. You should increase MAXLEN_OUTPUTLIST=%d.\n",
 		       (int) MAXLEN_OUTPUTLIST);
 	      endrun(13);
+	      break;
 	    }
 
+	  All.OutputListTimes[All.OutputListLength] = output_time;
 	  All.OutputListFlag[All.OutputListLength] = flag;
 	  All.OutputListLength++;
 	}
