@@ -1852,7 +1852,7 @@ void check_dust_fields(int i, int update_process, struct particle_data *pp, stru
     }
 
     // metallic iron
-    elem_yields[10] += cell[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[3]]
+    elem_yields[10] += cell[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[3]];
 
     // metallic iron inclusions
 #if (GALSF_ISMDUSTCHEM_MODEL & 4) && !(GALSF_ISMDUSTCHEM_MODEL & 8)
