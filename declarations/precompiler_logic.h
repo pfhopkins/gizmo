@@ -1560,27 +1560,26 @@
  * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
  * sites were migrated through them.
  *
- * The SECONDMOMENT path stays 3D-only through commit 4a (2026-06-03).
+ * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
  * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
  * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
  * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
- * repair, postgravity dS) to access stress slots via cbe_T_idx /
+ * repair, postgravity dT block) to access stress slots via cbe_T_idx /
  * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
- * code is now dim-agnostic in shape. The 3D-only Cauchy-Schwarz + det-test
- * repair sub-block at sidm/cbe_integrator_functions.h is intentionally
- * gated #if (NUMDIMS == 3) and is slated for replacement by Fix #2b
- * conservative-shift repair (commit 5).
+ * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
+ * cbe_build_flux_frame_Q_from_stored_moments and replaced the postgravity
+ * dT->dS chain with the dT_abs -> dT_rel conversion that mirrors the
+ * momentum-side relative-frame convention landed at 89fb05cc. With both
+ * pieces in place, the SECONDMOMENT-on low-D code is frame-consistent;
+ * has passed the 1D uniform warm two-stream analytic gate (mass, basis
+ * means, central S, total M/p/E preserved to roundoff at commit time).
+ * Broader 1D/2D warm validation (density-wave, free-slot etc.) remains in
+ * the follow-up test matrix.
  *
- * The fence stays in 4a because warm physics correctness still requires
- * commit 4b: the relative-frame T_abs boost in
- * cbe_build_flux_frame_Q_from_stored_moments and the matching postgravity
- * dT_abs -> dT_rel conversion mirroring the momentum-side relative-frame
- * convention landed at 89fb05cc. Lifting the fence before 4b would compile
- * but produce frame-inconsistent stress face states. Commit 4b lifts the
- * fence as its final step, then warm 1D/2D regression vs exact analytic
- * runs. */
-#if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
-#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
-#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). Commit 4a (2026-06-03) migrated every stress-slot site to cbe_T_idx / cbe_basis_T_r/_w with NUMDIMS-bounded loops; the layout is dim-agnostic. The fence stays until commit 4b adds the relative-frame T_abs boost in cbe_build_flux_frame_Q_from_stored_moments and the postgravity dT_abs -> dT_rel conversion. Without 4b the unfenced 1D/2D path would compile but compute frame-inconsistent stress face states."
-#endif
-#endif
+ * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
+ * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)
+ * — that whole repair chain (diagonal floor + CS + det + SPD projection +
+ * split-largest) is slated for replacement by Fix #2b conservative-shift
+ * repair (commit 5). The active-dim SPD projection landed in 4a is what
+ * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
+ * reachable. */

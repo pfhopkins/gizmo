@@ -54,27 +54,69 @@ import h5py
 # IC construction
 # ---------------------------------------------------------------------------
 
-def n_moments_for_dim(dim: int) -> int:
-    """NMOMENTS with no CBE_INTEGRATOR_SECONDMOMENT: dim + 1."""
-    return dim + 1
+def n_stress_for_dim(dim: int) -> int:
+    """Number of independent symmetric-stress components: dim*(dim+1)/2."""
+    return dim * (dim + 1) // 2
 
 
-def basis_moment_row(mass: float, vel_xyz, dim: int) -> np.ndarray:
-    """One basis's [m, p_x(, p_y, p_z)] truncated to NMOMENTS=dim+1.
+def n_moments_for_dim(dim: int, secondmoment: bool = False) -> int:
+    """NMOMENTS with or without CBE_INTEGRATOR_SECONDMOMENT.
+       Cold: dim + 1 (mass + dim momentum slots).
+       SECONDMOMENT: dim + 1 + dim*(dim+1)/2.
+         1D -> 3, 2D -> 6, 3D -> 10.
+       Matches the GIZMO layout from sidm/cbe_integrator_functions.h
+       cbe_T_idx(a,b) = 1 + dim + a (diagonal a==b)
+                     OR 1 + 2*dim + off (upper triangle in lex order)."""
+    return dim + 1 + (n_stress_for_dim(dim) if secondmoment else 0)
 
-    vel_xyz is a length-3 velocity; only the first `dim` components are
-    stored as momentum slots (matching GIZMO's [m, p_x, p_y, p_z] ordering
-    truncated to dim+1)."""
-    nm = n_moments_for_dim(dim)
+
+def _stress_slot(a: int, b: int, dim: int) -> int:
+    """Stress-slot offset in a basis row matching cbe_T_idx(a,b). a<=b
+    expected (caller symmetrizes); returns dim+1+a for diagonal,
+    1+2*dim+offset for upper-triangle off-diagonal."""
+    if a > b:
+        a, b = b, a
+    if a == b:
+        return 1 + dim + a
+    # off-diagonal upper triangle (a,b) with a<b: lex-order linear index
+    off = a * (2 * dim - a - 1) // 2 + (b - a - 1)
+    return 1 + 2 * dim + off
+
+
+def basis_moment_row(mass: float, vel_rel_xyz, dim: int,
+                     sigma: float = 0.0) -> np.ndarray:
+    """One basis's [m, p_x(,p_y,p_z) (,T_xx,...,T_xy,...)] row in the
+    storage convention. vel_rel_xyz is the RELATIVE-frame basis velocity
+    (already with bulk subtracted by the caller / build_vlasov_moments).
+
+    Cold path (sigma=0): NMOMENTS = dim+1, slots [m, p_x,...,p_dim].
+
+    SECONDMOMENT path (sigma>0): NMOMENTS = dim+1+dim*(dim+1)/2; stress
+    slots store the RELATIVE-frame raw second moment
+        T_rel_ab = m * (v_rel_a * v_rel_b + sigma² * delta_ab)
+    matching the
+       p_rel = m * (v - V)
+       T_rel = m * <(v - V) (v - V)>
+    convention. Isotropic dispersion sigma per basis (the simplest warm
+    seed; per-component / anisotropic stress is a future extension)."""
+    secondmoment = (sigma > 0.0)
+    nm = n_moments_for_dim(dim, secondmoment=secondmoment)
     row = np.zeros(nm)
     row[0] = mass
     for k in range(dim):
-        row[1 + k] = mass * vel_xyz[k]
+        row[1 + k] = mass * vel_rel_xyz[k]
+    if secondmoment:
+        sigma2 = sigma * sigma
+        for a in range(dim):
+            row[_stress_slot(a, a, dim)] = mass * (vel_rel_xyz[a] * vel_rel_xyz[a] + sigma2)
+            for b in range(a + 1, dim):
+                row[_stress_slot(a, b, dim)] = mass * vel_rel_xyz[a] * vel_rel_xyz[b]
     return row
 
 
 def build_vlasov_moments(per_particle_bases, dim: int,
-                         vel_bulk_per_particle=None) -> np.ndarray:
+                         vel_bulk_per_particle=None,
+                         sigma: float = 0.0) -> np.ndarray:
     """per_particle_bases: list (len N) of lists of (mass, vel_xyz) tuples,
     one tuple per basis (all particles must have the same NBASIS).
 
@@ -85,10 +127,16 @@ def build_vlasov_moments(per_particle_bases, dim: int,
     the absolute-frame momentum m*v_basis is stored — kept for testing /
     invariant checks; production tests should pass `bulk_velocity(...)`.
 
+    sigma: optional isotropic per-basis dispersion seed (warm IC). 0 = cold
+    layout (NMOMENTS=dim+1); >0 = SECONDMOMENT layout (NMOMENTS=dim+1+n_stress).
+    Stress slots store T_rel_ab = m*(v_rel_a*v_rel_b + sigma²*delta_ab) per
+    basis, matching the relative-frame storage convention.
+
     Returns (N, NBASIS*NMOMENTS) basis-major flat array."""
     N = len(per_particle_bases)
     nbasis = len(per_particle_bases[0])
-    nm = n_moments_for_dim(dim)
+    secondmoment = (sigma > 0.0)
+    nm = n_moments_for_dim(dim, secondmoment=secondmoment)
     out = np.zeros((N, nbasis * nm))
     use_bulk = vel_bulk_per_particle is not None
     for i, bases in enumerate(per_particle_bases):
@@ -96,7 +144,7 @@ def build_vlasov_moments(per_particle_bases, dim: int,
         vbulk_i = np.asarray(vel_bulk_per_particle[i]) if use_bulk else np.zeros(3)
         for b, (m, v) in enumerate(bases):
             v_rel = np.asarray(v, dtype=float) - vbulk_i
-            out[i, nm * b:nm * (b + 1)] = basis_moment_row(m, v_rel, dim)
+            out[i, nm * b:nm * (b + 1)] = basis_moment_row(m, v_rel, dim, sigma=sigma)
     return out
 
 
@@ -117,7 +165,7 @@ def bulk_velocity(per_particle_bases) -> np.ndarray:
 
 
 def write_cbe_ic(fname, pos, per_particle_bases, dim, box_size,
-                 box_long=(1.0, 1.0, 1.0)):
+                 box_long=(1.0, 1.0, 1.0), sigma: float = 0.0):
     """Write a CBE test IC.
 
     pos: (N,3) coordinates (for 1D set y=z=0; GIZMO wraps only the active
@@ -126,6 +174,9 @@ def write_cbe_ic(fname, pos, per_particle_bases, dim, box_size,
          physical extent is BoxSize*box_long per axis).
     per_particle_bases: list of per-basis (mass, vel_xyz) — see
          build_vlasov_moments.
+    sigma: optional isotropic per-basis dispersion seed (warm IC). 0 = cold
+         layout (NMOMENTS=dim+1); >0 = SECONDMOMENT layout with isotropic
+         relative-frame stress T_rel_aa = m*(v_rel_a^2 + sigma^2).
     """
     pos = np.asarray(pos, dtype=float)
     N = pos.shape[0]
@@ -134,7 +185,8 @@ def write_cbe_ic(fname, pos, per_particle_bases, dim, box_size,
     # RELATIVE-FRAME STORAGE: pass per-particle bulk so each basis momentum
     # slot is m_basis*(v_basis - v_bulk) — Σ_basis basis_p_stored = 0.
     vmoments = build_vlasov_moments(per_particle_bases, dim,
-                                    vel_bulk_per_particle=vel)
+                                    vel_bulk_per_particle=vel,
+                                    sigma=sigma)
     ids = np.arange(1, N + 1, dtype=np.uint32)
 
     with h5py.File(fname, "w") as F:
@@ -165,9 +217,11 @@ def write_cbe_ic(fname, pos, per_particle_bases, dim, box_size,
         g.create_dataset("VlasovMoments", data=vmoments.astype(np.float64))
 
     nbasis = len(per_particle_bases[0])
-    nm = n_moments_for_dim(dim)
+    secondmoment = (sigma > 0.0)
+    nm = n_moments_for_dim(dim, secondmoment=secondmoment)
     print(f"Wrote {fname}: N={N} Type=1, dim={dim}, NBASIS={nbasis}, "
-          f"NMOMENTS={nm}, VlasovMoments shape ({N},{nbasis*nm}), "
+          f"NMOMENTS={nm}{' (SECONDMOMENT, sigma=%g)' % sigma if secondmoment else ''}, "
+          f"VlasovMoments shape ({N},{nbasis*nm}), "
           f"BoxSize={box_size}, box_long={box_long}, Mtot={masses.sum():.6g}")
     return fname
 

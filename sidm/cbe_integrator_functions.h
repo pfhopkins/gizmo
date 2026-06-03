@@ -867,12 +867,51 @@ void cbe_build_flux_frame_Q_from_stored_moments(
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
             Q_out[m][k] = U[m][k] * inv_V * cf_a3inv;
         }
-        /* Velocity boost on the momentum slots [1..NUMDIMS]. Commit 4a: was
-         * hardcoded k=1..3 (silently treated T_xx as momentum in 1D/2D
-         * SECONDMOMENT builds where momentum occupies only [1..NUMDIMS] and
-         * the next slot is the stress block). cbe_basis_p_a is a no-op for
-         * a >= NUMDIMS so this is also a defensive guard against any future
-         * caller that hands in a row without the active-only convention. */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* Commit 4b (2026-06-03) — relative-frame stress boost. Storage
+         * convention from commit 89fb05cc:
+         *    p_rel = m * (v_phys - V)
+         *    T_rel = m * <(v_phys - V) (v_phys - V)>
+         * where V is the mesh-generating-point velocity. The flux solver
+         * consumes raw absolute-frame T_abs, related by
+         *    T_abs = T_rel + V (x) p_rel + p_rel (x) V + m * V (x) V
+         *
+         * V here is the SAME Vel_code[a]*inv_a used by the momentum boost
+         * below — the FLUX-frame velocity scaling matches the existing
+         * momentum-slot convention. p_rel comes from Q_out[m][1..NUMDIMS]
+         * BEFORE the momentum boost runs (captured here). The stress boost
+         * MUST precede the momentum boost: it reads p_rel from the still-
+         * relative-frame momentum slots. */
+        {
+            const double rho = Q_out[m][0];
+            double V_act[3]    = {0,0,0};
+            double p_rel_act[3] = {0,0,0};
+            for(int a=0; a<NUMDIMS; a++) {
+                V_act[a]    = Vel_code[a] * inv_a;
+                p_rel_act[a] = cbe_basis_p_r(Q_out[m], a);   /* pre-boost */
+            }
+            for(int a=0; a<NUMDIMS; a++) {
+                /* Diagonal: T_abs_aa = T_rel_aa + 2*V_a*p_rel_a + rho*V_a*V_a. */
+                cbe_basis_T_w(Q_out[m], a, a,
+                    cbe_basis_T_r(Q_out[m], a, a)
+                    + 2.0 * V_act[a] * p_rel_act[a]
+                    + rho * V_act[a] * V_act[a]);
+                for(int b=a+1; b<NUMDIMS; b++) {
+                    /* Off-diagonal: T_abs_ab = T_rel_ab + V_a*p_rel_b
+                     *                        + V_b*p_rel_a + rho*V_a*V_b. */
+                    cbe_basis_T_w(Q_out[m], a, b,
+                        cbe_basis_T_r(Q_out[m], a, b)
+                        + V_act[a] * p_rel_act[b]
+                        + V_act[b] * p_rel_act[a]
+                        + rho * V_act[a] * V_act[b]);
+                }
+            }
+        }
+#endif
+        /* Velocity boost on the momentum slots [1..NUMDIMS]. cbe_basis_p_a
+         * is a no-op for a >= NUMDIMS so the active-only contract holds for
+         * any NUMDIMS. Must run AFTER the stress boost above (which reads
+         * the still-relative-frame momentum slots). */
         for(int a=0; a<NUMDIMS; a++) {
             cbe_basis_p_a(Q_out[m], a, Q_out[m][0] * Vel_code[a] * inv_a);
         }
@@ -1623,10 +1662,29 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
     pi.GravAccel += a_cbe / All.cf_a2inv;
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
-        /* Capture RAW per-basis dmdt BEFORE the mass closure modifies it;
-         * the per-basis -V*dmdt_raw frame-projection below requires the
-         * pre-closure rate. */
+        /* Capture RAW per-basis flux rates BEFORE any in-place mutation
+         * (mass closure / momentum / stress conversions all read these). */
         const double dmdt_raw_alpha = pi.CBE_basis_moments_dt[j][0];
+        double dp_abs_act[3] = {0,0,0};
+        double p_rel_act[3]  = {0,0,0};
+        for(int a=0;a<NUMDIMS;a++) {
+            dp_abs_act[a] = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
+            p_rel_act[a]  = cbe_basis_p_r(pi.CBE_basis_moments[j],    a);
+        }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* Capture absolute-frame stress rate for the active (a<=b)<NUMDIMS
+         * block. The stress conversion below reads these before writing
+         * back via cbe_basis_T_w. */
+        double dT_abs_act[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+        for(int a=0;a<NUMDIMS;a++) {
+            dT_abs_act[a][a] = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
+            for(int b=a+1;b<NUMDIMS;b++) {
+                const double dT_ab = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
+                dT_abs_act[a][b] = dT_ab;
+                dT_abs_act[b][a] = dT_ab;
+            }
+        }
+#endif
         /* Mass closure: enforce Σ_α dmdt_α = 0 exactly (safety net;
          * upstream MFM should already deliver Σdmdt ≈ 0 to machine eps). */
         pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot[0]);
@@ -1643,45 +1701,56 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
                                             +  pi.CBE_basis_moments[j][0] * a_cbe[k];
         }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* dT -> dS frame-conversion on the active stress block. The existing
-         * absolute-frame formula
-         *     dS_ab = dT_ab - m_inv * (dp_a * p_b + p_a * dp_b)
-         *                   + m_inv^2 * dm * p_a * p_b
-         * is dim-agnostic by structure; commit 4a loops over (a<=b)<NUMDIMS
-         * via the stress-slot helpers and the existing momentum-slot helpers,
-         * dropping the hardcoded 3D [4..9] / [1..3] indices. Inactive slots
-         * are not touched.
+        /* Commit 4b (2026-06-03) — relative-frame stress-rate conversion.
          *
-         * Note (commit 4a): this is layout-only migration. The relative-frame
-         * dT_abs -> dT_rel conversion (with the additional -V*dp_abs - p_rel*a
-         * + dmdt_raw*V*V boost matching the momentum-side relative-frame
-         * convention) lands in commit 4b alongside the corresponding T_abs
-         * boost in cbe_build_flux_frame_Q_from_stored_moments. */
-        {
-            const double dm   = pi.CBE_basis_moments_dt[j][0];
-            const double m2_inv = m_inv * m_inv;
-            const bool   dm_pos = (dm > 0);
-            for(int a=0;a<NUMDIMS;a++) {
-                const double p_a   = cbe_basis_p_r(pi.CBE_basis_moments[j],    a);
-                const double dp_a  = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
-                /* Diagonal a==b first (positivity clamp uses dm sign). */
-                {
-                    const double dT_aa = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
-                    double dS_aa = dT_aa
-                                 - m_inv * (dp_a * p_a + p_a * dp_a)
-                                 + m2_inv * dm * p_a * p_a;
-                    if(dm_pos && dS_aa < 0) dS_aa = 0;
-                    cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, a, dS_aa);
-                }
-                for(int b=a+1;b<NUMDIMS;b++) {
-                    const double p_b   = cbe_basis_p_r(pi.CBE_basis_moments[j],    b);
-                    const double dp_b  = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], b);
-                    const double dT_ab = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
-                    const double dS_ab = dT_ab
-                                       - m_inv * (dp_a * p_b + p_a * dp_b)
-                                       + m2_inv * dm * p_a * p_b;
-                    cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, b, dS_ab);
-                }
+         * Storage convention (89fb05cc):
+         *    T_rel = m * <(v_phys - V) (v_phys - V)>
+         *    T_abs = T_rel + V (x) p_rel + p_rel (x) V + m * V (x) V
+         * Differentiating in time and substituting the already-landed
+         * relative-frame momentum convention dp_rel = dp_abs - V*dmdt_raw - m*a_cbe,
+         * the m*V*a cross terms cancel and the residual V*V*dmdt has factor
+         * +1 (NOT -2). Result:
+         *    dT_rel_ab = dT_abs_ab
+         *              - V_a * dp_abs_b - V_b * dp_abs_a
+         *              - a_a * p_rel_b  - a_b * p_rel_a
+         *              + dmdt_raw * V_a * V_b
+         *
+         * V here is pi.Vel[k] DIRECTLY — same V as the momentum conversion
+         * above (NOT pi.Vel/cf_atime; the flux-frame Q boost in
+         * cbe_build_flux_frame_Q_from_stored_moments uses a different
+         * Vel_code*inv_a convention because the velocity scaling there
+         * matches the cosmological scaling of momentum slots there. This
+         * function's V mirrors this function's momentum-side convention.)
+         *
+         * dp_abs, dT_abs, p_rel are captured pre-mutation above; this block
+         * writes back via cbe_basis_T_w so inactive slots are untouched.
+         * Realizability is NOT enforced here — that belongs in the drift-
+         * kick repair / projection layer. The pre-4b "diagonal dS >= 0"
+         * positivity clamp is REMOVED (Phil + codex: positivity is a
+         * realizability concern, not a frame-conversion concern). */
+        for(int a=0;a<NUMDIMS;a++) {
+            const double V_a    = pi.Vel[a];
+            const double dp_a   = dp_abs_act[a];
+            const double prel_a = p_rel_act[a];
+            const double acbe_a = a_cbe[a];
+            /* Diagonal. */
+            {
+                const double dT_rel_aa = dT_abs_act[a][a]
+                    - 2.0 * V_a * dp_a
+                    - 2.0 * acbe_a * prel_a
+                    + dmdt_raw_alpha * V_a * V_a;
+                cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, a, dT_rel_aa);
+            }
+            for(int b=a+1;b<NUMDIMS;b++) {
+                const double V_b    = pi.Vel[b];
+                const double dp_b   = dp_abs_act[b];
+                const double prel_b = p_rel_act[b];
+                const double acbe_b = a_cbe[b];
+                const double dT_rel_ab = dT_abs_act[a][b]
+                    - V_a * dp_b - V_b * dp_a
+                    - acbe_a * prel_b - acbe_b * prel_a
+                    + dmdt_raw_alpha * V_a * V_b;
+                cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, b, dT_rel_ab);
             }
         }
 #endif

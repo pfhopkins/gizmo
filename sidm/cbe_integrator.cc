@@ -246,27 +246,16 @@ void do_cbe_initialization(void)
             cbe_synthesize_cold_default(i);
         }
 
-        /* Dimension-aware moment zeroing (preserve the existing 1D/2D
-         * patterns from the pre-C7 init). For NUMDIMS=3 these are
-         * no-ops. */
-#if (NUMDIMS==1)
-        for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-            for(k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                if((k != 0) && (k != 1) && (k != 4)) {
-                    P[i].CBE_basis_moments[j][k] = 0;
-                }
-            }
-        }
-#endif
-#if (NUMDIMS==2)
-        for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-            for(k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                if((k == 3) || (k == 6) || (k == 8) || (k == 9)) {
-                    P[i].CBE_basis_moments[j][k] = 0;
-                }
-            }
-        }
-#endif
+        /* Commit 4b (2026-06-03): the prior dim-aware "moment zeroing"
+         * blocks for NUMDIMS==1/2 hardcoded the OLD 3D-only slot indices
+         * (keep k=0,1,4 in 1D; zero k=3,6,8,9 in 2D) which silently
+         * stomped on legitimate stress data once the 4b unfence made
+         * SECONDMOMENT reachable in low-D (1D T_xx lives at slot 2,
+         * 2D T_xx at slot 3, T_xy at slot 5 per cbe_T_idx). The blocks
+         * are also fully redundant now that CBE_INTEGRATOR_NMOMENTS is
+         * dim-aware (precompiler_logic.h:142-154): the array literally
+         * has exactly the active slots in every (NUMDIMS, SECONDMOMENT)
+         * combination, so there is nothing to "trim." Removed. */
 
         /* Conservation renormalization -- existing two-pass pattern,
          * applies to BOTH loaded and synthesized paths. For an exactly-
