@@ -141,11 +141,12 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 }
 
 /* ---------------------------------------------------------------------------
- * Reviewed hard-abort — the INTENDED SSOT hard-abort home in GIZMO. NOTE: as
- * of Stage 1a this is NOT yet the sole MPI_Abort call site; the legacy
- * endrun/terminate macros and the mesh-transport naked aborts still abort
- * directly until they are converted in Stage 1c/1d. Once converted,
- * `grep MPI_Abort` must return only this function body.
+ * Reviewed emergency HOLD — the SSOT last-resort termination home in GIZMO.
+ * As of 2026-06-04 the DEFAULT path no longer calls MPI_Abort (MPI_Abort wedges
+ * GPU nodes on Vista -> SLURM CG-stuck -> reboots). `grep MPI_Abort` now finds
+ * MPI_Abort here ONLY inside the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG
+ * debug branch. The function is still named gizmo_hard_abort_reviewed pending a
+ * separate mechanical rename to gizmo_emergency_hold_reviewed.
  *
  * Use ONLY for the rare audited cases where a graceful bad-stop cannot reach
  * a collective poll (mid-protocol MPI transport corruption; residual incidental
@@ -156,27 +157,71 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * which get caller-side collective preflight; and NOT the myfree* invariant
  * paths, which ARE bad-stop + immediate local return (void, safe to drain to the
  * next poll).
- * Best-effort damage reduction before aborting: print+flush the diagnostic and
- * fence in-flight device work, which reduces but does NOT eliminate the Vista
- * CG-stuck wedge risk inherent to MPI_Abort. Prefer
- * gizmo_request_controlled_stop() everywhere it is remotely possible.
- * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design.
+ * Default behavior: print+flush an actionable diagnostic (incl. `scancel`
+ * instruction), best-effort device fence, then a controlled host sleep/hold loop
+ * with NO further MPI calls -- leaving every rank in a scancel-killable state
+ * instead of an MPI_Abort node-wedge. This is a last-resort Vista GPU quarantine,
+ * NOT a reference-code pattern (AthenaK print+exit; SPH-EXA/Shamrock exceptions;
+ * none sleep) and NOT the target: always prefer converting the CALLING site to a
+ * graceful gizmo_request_controlled_stop() + phase-boundary poll. Env knobs:
+ * GIZMO_EMERGENCY_HOLD_USE_STD_EXIT (clean exit, Vista de-wedge test),
+ * GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE, GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG.
+ * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design /
+ * STATE_2026-06-04_stage4_pass_a §9a.
  * ------------------------------------------------------------------------- */
 [[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func)
 {
     char buf[MAX_PATH_BUFFERSIZE_TOUSE];
     snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE,
-             "HARD ABORT (reviewed) on task=%d, function '%s()', file '%s', "
+             "EMERGENCY HOLD (reviewed, NO MPI_Abort) on task=%d, function '%s()', file '%s', "
              "line %d: code %d: %s\n",
              ThisTask, func ? func : "(?)", file ? file : "(?)", line, code,
              reason ? reason : "(no reason given)");
     fflush(stdout);
     printf("%s", buf);
+    printf("  This rank cannot drain to an all-rank poll; the run is INTENTIONALLY HALTED to\n"
+           "  avoid an MPI_Abort GPU-node wedge. Release the allocation with:  scancel $SLURM_JOB_ID\n");
     fflush(stdout);
-    gizmo_kokkos_fence();   /* drain in-flight device work before the abort */
-    MPI_Abort(MPI_COMM_WORLD, code);
-    exit(code ? code : 1);  /* defensive: MPI_Abort must not return; never fall through */
+
+    /* Best-effort device drain so we halt in a cleanly-killable host state. Env-skippable in
+     * case a broken device makes the fence itself hang. */
+    if(getenv("GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE") == NULL) { gizmo_kokkos_fence(); }
+
+    /* TEST MODE (Vista de-wedge experiment, default OFF): clean libc exit, no MPI_Abort -- this
+     * is AthenaK's standard per-site fatal pattern (print + std::exit(EXIT_FAILURE)). If a Vista
+     * test shows single-rank exit releases the node cleanly, this can replace the hold below. */
+    if(getenv("GIZMO_EMERGENCY_HOLD_USE_STD_EXIT") != NULL) {
+        printf("  [GIZMO_EMERGENCY_HOLD_USE_STD_EXIT] exiting via exit(EXIT_FAILURE)\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+
+    /* DEBUG ONLY, explicitly UNSAFE (default OFF): the old MPI_Abort path. Known to wedge GPU
+     * nodes on Vista (SLURM CG-stuck). Use only for local crash/core-dump debugging. */
+    if(getenv("GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG") != NULL) {
+        printf("  [GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG] calling MPI_Abort (UNSAFE on GPU nodes)\n");
+        fflush(stdout);
+        MPI_Abort(MPI_COMM_WORLD, code);
+        exit(code ? code : 1);  /* defensive: MPI_Abort must not return */
+    }
+
+    /* DEFAULT: controlled host hold. NO further MPI calls (MPI may itself be the corrupt
+     * subsystem here). Peers block at their next collective (MPI_Wait -- killable); a single
+     * `scancel $SLURM_JOB_ID` then tears the whole job down cleanly, WITHOUT the MPI_Abort
+     * node-wedge. Sparse heartbeat so this reads as an intentional hold, not a silent stall.
+     *
+     * THIS IS NOT NORMAL FATAL-EXIT DESIGN and NOT a reference-code pattern (AthenaK uses
+     * print+exit, SPH-EXA/Shamrock use exceptions; none sleep). It is a last-resort Vista GPU
+     * quarantine for sites not yet proven to reach a clean controlled-stop drain. The target is
+     * always to convert the CALLING site to graceful gizmo_request_controlled_stop + the
+     * phase-boundary poll. See OPEN_endrun_audit_memo / STATE_2026-06-04_stage4_pass_a §9a. */
+    for(long long held_min = 5; ; held_min += 5) {
+        sleep(300);
+        printf("  [EMERGENCY HOLD ~%lld min] task=%d code=%d at %s:%d -- scancel $SLURM_JOB_ID to release\n",
+               held_min, ThisTask, code, file ? file : "(?)", line);
+        fflush(stdout);
+    }
 }
 
 
