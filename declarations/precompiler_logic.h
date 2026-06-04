@@ -1567,14 +1567,18 @@
  * repair, postgravity dT block) to access stress slots via cbe_T_idx /
  * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
  * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
- * cbe_build_flux_frame_Q_from_stored_moments and replaced the postgravity
- * dT->dS chain with the dT_abs -> dT_rel conversion that mirrors the
- * momentum-side relative-frame convention landed at 89fb05cc. With both
- * pieces in place, the SECONDMOMENT-on low-D code is frame-consistent;
- * has passed the 1D uniform warm two-stream analytic gate (mass, basis
- * means, central S, total M/p/E preserved to roundoff at commit time).
- * Broader 1D/2D warm validation (density-wave, free-slot etc.) remains in
- * the follow-up test matrix.
+ * cbe_build_flux_frame_Q_from_stored_moments so the flux solver sees
+ * absolute-frame Q. The frame conversion on the storage side has since
+ * been moved (codex 2026-06-04) from a continuous-time differential
+ * postgravity formula into a finite absolute-update round-trip inside
+ * do_cbe_drift_kick_kernel (see SSOT helpers cbe_relative_row_to_absolute
+ * / cbe_absolute_to_relative_row); postgravity is now reduced to a
+ * mass-closure safety net, and pi.Vel is updated directly from the
+ * post-update mass-weighted-mean basis velocity rather than through a
+ * GravAccel injection. With these pieces in place, the SECONDMOMENT-on
+ * low-D code passes the 1D uniform warm two-stream and the warm
+ * density-wave analytic gates (mass, central S, total M/p/E preserved
+ * to roundoff).
  *
  * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
  * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)

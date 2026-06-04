@@ -681,10 +681,10 @@ double cbe_face_normal_stress_speed_from_Qrow(
     /* Always-3-vector velocity. Missing components zero-padded by the helper.
      * Stress block runs only under SECONDMOMENT and loops over the active
      * NUMDIMS x NUMDIMS block via cbe_basis_T_load_active_scaled. Commit 4a
-     * migrated the layout to be dim-agnostic so the fence at
-     * precompiler_logic.h can be lifted in commit 4b once the relative-frame
-     * T_abs boost + dT_abs -> dT_rel conversion land; today the fence still
-     * pins SECONDMOMENT to NUMDIMS=3. */
+     * migrated the layout to be dim-agnostic; the SECONDMOMENT D!=3 fence
+     * was lifted in commit 4b and the frame-conversion bookkeeping was
+     * moved (codex 2026-06-04) into the drift-kick absolute round-trip via
+     * cbe_relative_row_to_absolute / cbe_absolute_to_relative_row. */
     double v[3]; cbe_basis_v_load_3(moments, v);
     double nSn = 0;
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
@@ -826,6 +826,89 @@ double cbe_face_solve_v_F_normal(
         else                  { lo = mid; f_lo = f_mid; }
     }
     return 0.5 * (lo + hi);
+}
+
+
+/* SSOT relative <-> absolute moment transforms (codex 2026-06-04, finite
+ * absolute-update round-trip in cbe_drift_kick).
+ *
+ *   ABSOLUTE-frame moments of basis b:
+ *     m_abs    = m_b
+ *     p_abs[a] = m_b * <v_a>_b           = p_rel[a] + m_b * V[a]
+ *     T_abs[a,b] = m_b * <v_a v_b>_b     = T_rel[a,b] + V[a] p_rel[b] + p_rel[a] V[b] + m_b V[a] V[b]
+ *
+ *   RELATIVE-frame storage matches the inverse:
+ *     p_rel[a]   = p_abs[a]   - m_b * V[a]
+ *     T_rel[a,b] = T_abs[a,b] - V[a] p_rel[a,b] - p_rel[a] V[b] - m_b V[a] V[b]   (uses new p_rel)
+ *
+ * These two helpers are the SSOT used by the new cbe_drift_kick absolute
+ * round-trip and by any standalone test code (unit-checked algebra). The row
+ * layout is the same in both frames; only the [1..NUMDIMS] and [T_idx] slot
+ * VALUES differ. Operations are NUMDIMS-aware and gate the stress block on
+ * SECONDMOMENT. */
+KOKKOS_INLINE_FUNCTION
+void cbe_relative_row_to_absolute(
+    const double row_rel[CBE_INTEGRATOR_NMOMENTS],
+    const double V[3],
+    double *m_abs_out,
+    double p_abs_out[3],
+    double T_abs_out[3][3])
+{
+    const double m_b = row_rel[0];
+    *m_abs_out = m_b;
+    /* Read RELATIVE momentum slots; populate the active dims of p_abs. */
+    double p_rel_a[3] = {0,0,0};
+    for(int a=0;a<NUMDIMS;a++) p_rel_a[a] = cbe_basis_p_r(row_rel, a);
+    for(int a=0;a<3;a++) p_abs_out[a] = 0.0;
+    for(int a=0;a<NUMDIMS;a++) p_abs_out[a] = p_rel_a[a] + m_b * V[a];
+    /* T_abs = T_rel + V*p_rel + p_rel*V + m*V*V on active block; zero outside. */
+    for(int a=0;a<3;a++) for(int b=0;b<3;b++) T_abs_out[a][b] = 0.0;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0;a<NUMDIMS;a++) {
+        T_abs_out[a][a] = cbe_basis_T_r(row_rel, a, a)
+                        + 2.0 * V[a] * p_rel_a[a]
+                        + m_b * V[a] * V[a];
+        for(int b=a+1;b<NUMDIMS;b++) {
+            const double T_ab = cbe_basis_T_r(row_rel, a, b)
+                              + V[a] * p_rel_a[b] + V[b] * p_rel_a[a]
+                              + m_b * V[a] * V[b];
+            T_abs_out[a][b] = T_ab; T_abs_out[b][a] = T_ab;
+        }
+    }
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION
+void cbe_absolute_to_relative_row(
+    double m_abs,
+    const double p_abs_in[3],
+    const double T_abs_in[3][3],
+    const double V[3],
+    double row_rel_out[CBE_INTEGRATOR_NMOMENTS])
+{
+    row_rel_out[0] = m_abs;
+    /* Compute NEW p_rel first; T_rel update uses NEW p_rel below. */
+    double p_rel_new_a[3] = {0,0,0};
+    for(int a=0;a<NUMDIMS;a++) {
+        p_rel_new_a[a] = p_abs_in[a] - m_abs * V[a];
+        cbe_basis_p_w(row_rel_out, a, p_rel_new_a[a]);
+    }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0;a<NUMDIMS;a++) {
+        const double T_rel_aa = T_abs_in[a][a]
+                              - 2.0 * V[a] * p_rel_new_a[a]
+                              - m_abs * V[a] * V[a];
+        cbe_basis_T_w(row_rel_out, a, a, T_rel_aa);
+        for(int b=a+1;b<NUMDIMS;b++) {
+            const double T_rel_ab = T_abs_in[a][b]
+                                  - V[a] * p_rel_new_a[b] - V[b] * p_rel_new_a[a]
+                                  - m_abs * V[a] * V[b];
+            cbe_basis_T_w(row_rel_out, a, b, T_rel_ab);
+        }
+    }
+#else
+    (void)T_abs_in;
+#endif
 }
 
 
@@ -1483,29 +1566,111 @@ KOKKOS_INLINE_FUNCTION
 static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
                                      double *dT_out)
 {
+    /* Codex 2026-06-04 finite absolute-update round-trip.
+     *
+     * Per particle, per step:
+     *   1. Read RELATIVE storage in current pi.Vel frame (V_old).
+     *   2. Convert each basis row to ABSOLUTE (m, p_abs, T_abs) via the
+     *      SSOT cbe_relative_row_to_absolute helper.
+     *   3. Apply dt * dt_accumulator IN ABSOLUTE FRAME (the flux deposited
+     *      the rates there; postgrav now leaves them in absolute except for
+     *      a mass-closure safety net).
+     *   4. Derive V_new from updated mass-weighted-mean basis velocity:
+     *         V_new[k] = Σ_b p_abs_new_b[k] / Σ_b m_new_b
+     *      This makes Σ p_rel = 0 exact by construction after step 5 and
+     *      eliminates the need to inject a_cbe into pi.GravAccel.
+     *   5. Convert ABSOLUTE → RELATIVE storage in V_new frame via the SSOT
+     *      cbe_absolute_to_relative_row helper.
+     *   6. Set pi.Vel = V_new (CBE-induced bulk velocity is now derived,
+     *      NOT routed through GravAccel; gravity kicks are independent).
+     *   7. SPD projection on now-frame-consistent relative storage.
+     *
+     * The nfac rate-limit (capping per-basis |dm|/m at 0.75) is preserved
+     * from the legacy operator as a robustness safeguard. The legacy
+     * mass + momentum closure corrections (per-basis subtraction of
+     * m_b/M_total · dmom_tot[k]) are subsumed by step 4: deriving V_new
+     * from the updated MMV gives Σ p_rel = 0 by construction; mass closure
+     * is already enforced upstream by postgrav.
+     *
+     * dT_out (nullable) accumulates the trace-delta of the SPD projection
+     * across all bases (for cbe_diagnostics.txt col-8). dP from this kernel
+     * is identically zero (SPD touches only stress slots). */
     double dT_local = 0.0;
-    int j, k;
-    double moment[CBE_INTEGRATOR_NMOMENTS]={0}, dmoment[CBE_INTEGRATOR_NMOMENTS]={0}, minv=1./pi.Mass;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
-        { moment[k] += pi.CBE_basis_moments[j][k]; dmoment[k] += dt*pi.CBE_basis_moments_dt[j][k]; }
+    int j, k;   /* legacy loop counters still referenced by the 3D chain
+                 * and the split-largest block below */
+
+    /* Step 0 (preserved): nfac rate-limit on per-basis mass change. */
+    double dmass_tot = 0;
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) dmass_tot += dt * pi.CBE_basis_moments_dt[j][0];
+    const double minv = (pi.Mass > 0) ? 1.0 / pi.Mass : 0.0;
     double biggest_dm = 1.e10;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        double q = (dt*pi.CBE_basis_moments_dt[j][0] - pi.CBE_basis_moments[j][0]*minv*dmoment[0]) / (pi.CBE_basis_moments[j][0] * (1.+minv*dmoment[0]));
-        if(!isnan(q)) {if(q < biggest_dm) {biggest_dm=q;}}
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        const double m_b = pi.CBE_basis_moments[j][0];
+        if(!(m_b > 0)) continue;
+        const double q = (dt*pi.CBE_basis_moments_dt[j][0] - m_b*minv*dmass_tot)
+                       / (m_b * (1.0 + minv*dmass_tot));
+        if(!isnan(q) && q < biggest_dm) biggest_dm = q;
     }
-    double nfac = 1, threshold_dm = -0.75;
-    if(biggest_dm < threshold_dm) {nfac = threshold_dm/biggest_dm;}
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        pi.CBE_basis_moments[j][0] += nfac * (dt*pi.CBE_basis_moments_dt[j][0] - pi.CBE_basis_moments[j][0]*minv*dmoment[0]);
-        /* Momentum slots: indices 1..NUMDIMS only. 1D NMOMENTS=2 has just
-         * slot [1]=p_x; 3D NMOMENTS=4/7/10 has [1..3]=p_x,p_y,p_z. */
-        for(k=1;k<=NUMDIMS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k] - pi.CBE_basis_moments[j][0]*minv*dmoment[k]);}
+    double nfac = 1.0;
+    if(biggest_dm < -0.75) nfac = -0.75 / biggest_dm;
+
+    /* Step 1+2: read relative storage and convert each basis to absolute
+     * using V_old = current pi.Vel. */
+    const double V_old[3] = { pi.Vel[0], pi.Vel[1], pi.Vel[2] };
+    double m_b_arr[CBE_INTEGRATOR_NBASIS];
+    double p_abs_arr[CBE_INTEGRATOR_NBASIS][3];
+    double T_abs_arr[CBE_INTEGRATOR_NBASIS][3][3];
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_relative_row_to_absolute(pi.CBE_basis_moments[j], V_old,
+                                     &m_b_arr[j], p_abs_arr[j], T_abs_arr[j]);
+    }
+
+    /* Step 3: apply nfac-limited absolute-frame update. dt_accumulator is
+     * in absolute frame post-postgrav (which now does only mass closure). */
+    double m_new_total = 0;
+    double p_abs_new_total[3] = {0,0,0};
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        m_b_arr[j] += nfac * dt * pi.CBE_basis_moments_dt[j][0];
+        m_new_total += m_b_arr[j];
+        for(int a=0;a<NUMDIMS;a++) {
+            p_abs_arr[j][a] += nfac * dt * cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
+            p_abs_new_total[a] += p_abs_arr[j][a];
+        }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* dt-advance of stress slots: indices 1+NUMDIMS..NMOMENTS-1. */
-        for(k=1+NUMDIMS;k<CBE_INTEGRATOR_NMOMENTS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k]);}
+        for(int a=0;a<NUMDIMS;a++) {
+            T_abs_arr[j][a][a] += nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
+            for(int b=a+1;b<NUMDIMS;b++) {
+                const double dT_ab = nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
+                T_abs_arr[j][a][b] += dT_ab; T_abs_arr[j][b][a] += dT_ab;
+            }
+        }
+#endif
+    }
+
+    /* Step 4: derive V_new from new mass-weighted-mean basis velocity. */
+    double V_new[3] = {0,0,0};
+    if(m_new_total > 0) {
+        for(int a=0;a<NUMDIMS;a++) V_new[a] = p_abs_new_total[a] / m_new_total;
+    } else {
+        for(int a=0;a<3;a++) V_new[a] = V_old[a];   /* defensive — m≤0 cell */
+    }
+
+    /* Step 5: convert each basis back to relative storage in V_new frame
+     * via SSOT helper. By construction Σ p_rel = 0 to machine eps. */
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_absolute_to_relative_row(m_b_arr[j], p_abs_arr[j], T_abs_arr[j],
+                                     V_new, pi.CBE_basis_moments[j]);
+    }
+
+    /* Step 6: pi.Vel <- V_new (CBE-induced bulk velocity, derived not
+     * GravAccel-injected). Gravity kicks against pi.GravAccel remain
+     * independent and apply only EXTERNAL gravitational acceleration. */
+    for(int a=0;a<NUMDIMS;a++) pi.Vel[a] = V_new[a];
+
+    /* Step 7: SPD projection + legacy stress safety chain on now-frame-
+     * consistent relative storage. */
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
         /* Active-diagonal lower clamp. */
         for(int a=0;a<NUMDIMS;a++) {
             const double Taa = cbe_basis_T_r(pi.CBE_basis_moments[j], a, a);
@@ -1607,153 +1772,55 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
 }
 
 /* GPU-callable per-particle post-gravity finalization for the CBE integrator.
- * Mirrors do_postgravity_cbe_calcs() (originally in cbe_integrator.cc) but
- * takes an explicit particle ref so it runs in both CPU and GPU contexts.
+ * Codex 2026-06-04: this routine is now minimal — it ONLY enforces basis-
+ * mass closure (Σ_α dm_α/dt = 0 to FP) as a safety net. CBE bulk velocity
+ * is NOT injected into pi.GravAccel anymore; the absolute round-trip in
+ * do_cbe_drift_kick_kernel handles frame conversion and derives V_new from
+ * the post-update mass-weighted-mean basis velocity.
  *
- * Moment ordering: 0, x, y, z, xx, yy, zz, xy, xz, yz
+ * Moment ordering (unchanged): 0, x, y, z, xx, yy, zz, xy, xz, yz.
  *
  * Operations (pure i-side):
- *   - Sum dmom_tot across basis functions.
- *   - Fold dmom_tot[1..3] / Mass into pi.GravAccel (cosmological-unit shift).
- *   - Subtract that residual back out of pi.CBE_basis_moments_dt so the net
- *     momentum flux across basis functions is zero to FP precision.
- *   - For NMOMENTS > 4, shift the second-moment derivatives from dT to dS
- *     (subtract the v.v outer-product contribution) and clamp diagonal
- *     components non-negative when dm[0] > 0.
+ *   - Sum dmom_tot[0] = Σ_α dm_α/dt across bases.
+ *   - Subtract that residual from each basis's dm_α/dt weighted by m_α/M
+ *     so the cell-summed mass rate is exactly zero (upstream MFM should
+ *     deliver this to FP already; this is the safety net).
+ *   - Leave all other dt-accumulator slots (momentum, stress) untouched —
+ *     they stay in absolute frame for the drift-kick round-trip to consume.
  */
 KOKKOS_INLINE_FUNCTION
 static void do_cbe_postgravity_kernel(struct particle_data& pi)
 {
-    int j, k;
-    double dmom_tot[CBE_INTEGRATOR_NMOMENTS] = {0};
-    double m_inv = 1. / pi.Mass;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {
-            dmom_tot[k] += pi.CBE_basis_moments_dt[j][k];
-        }
+    /* Codex 2026-06-04 rewrite. The OLD postgrav (a) injected a_cbe into
+     * pi.GravAccel — routing CBE bulk velocity through the gravity kick —
+     * and (b) converted dt-accumulator's per-basis dp_abs/dT_abs to relative
+     * frame using a continuous-time differential formula. Both were
+     * structural bugs: (a) double-counted CBE bulk velocity (see the
+     * 2026-06-04 SPIKE A/B), and (b) lacked the O(dt²) finite-step terms
+     * needed for V-changing-during-step accuracy.
+     *
+     * The new design moves the frame conversion into a finite absolute
+     * round-trip inside do_cbe_drift_kick_kernel (see SSOT helpers
+     * cbe_relative_row_to_absolute / cbe_absolute_to_relative_row above).
+     * The flux already deposits dt-accumulator in absolute frame; postgrav
+     * leaves those rates alone. CBE-induced bulk velocity is now derived
+     * from the post-update mass-weighted-mean basis velocity inside the
+     * drift-kick operator and written directly to pi.Vel. pi.GravAccel
+     * carries ONLY external (real) gravitational acceleration.
+     *
+     * The only postgrav job left is mass-closure: enforce Σ_α dm_α/dt = 0
+     * exactly as a safety net (upstream MFM should already deliver this
+     * to machine eps). This is frame-invariant and is identical in absolute
+     * and relative formulations. */
+    double dmom_tot_mass = 0;
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        dmom_tot_mass += pi.CBE_basis_moments_dt[j][0];
     }
-    /* CBE relative-frame postgravity (storage convention: basis moments are
-     * stored relative to the mesh-generating-point velocity P.Vel — i.e.
-     *    basis_p_stored[α] = m_α * (v_phys[α] − P.Vel)
-     *    v_phys[α]         = basis_p_stored[α]/m_α + P.Vel.
-     * Total physical accumulators from the per-basis flux pass are stored in
-     * dmom_tot:
-     *    dmom_tot[0]   = Σ_α dm_α/dt           (= 0 by MFM mass closure)
-     *    dmom_tot[k+1] = Σ_α dp_abs_α/dt       (absolute-frame momentum rate;
-     *                                           the flux solver works in
-     *                                           absolute frame and the sum
-     *                                           is the bulk momentum rate
-     *                                           in absolute frame).
-     * The bulk acceleration of the mesh-generating point in absolute frame:
-     *    a_cbe[k] = ( Σ dp_abs/dt[k+1] − P.Vel[k] * Σ dm/dt ) / M
-     * The −V·Σdmdt term is the projection of the COM acceleration onto the
-     * mass-weighted relative-frame storage (would vanish if Σdmdt = 0 exactly,
-     * but we include it for safety on residual MFM non-exactness). */
-    Vec3<double> a_cbe = {
-        m_inv * (cbe_basis_p_r(dmom_tot, 0) - pi.Vel[0] * dmom_tot[0]),
-        m_inv * (cbe_basis_p_r(dmom_tot, 1) - pi.Vel[1] * dmom_tot[0]),
-        m_inv * (cbe_basis_p_r(dmom_tot, 2) - pi.Vel[2] * dmom_tot[0])
-    };
-    /* Inject the CBE bulk acceleration into P.GravAccel so the regular
-     * half-step velocity kick advances P.Vel by a_cbe*dt. This is NOT
-     * self-gravity (SELFGRAVITY_OFF leaves this channel zero from gravtree);
-     * it is the mesh-generating-point acceleration from CBE flux-sum
-     * momentum and is the relative-convention path for advancing the COM. */
-    pi.GravAccel += a_cbe / All.cf_a2inv;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        /* Capture RAW per-basis flux rates BEFORE any in-place mutation
-         * (mass closure / momentum / stress conversions all read these). */
-        const double dmdt_raw_alpha = pi.CBE_basis_moments_dt[j][0];
-        double dp_abs_act[3] = {0,0,0};
-        double p_rel_act[3]  = {0,0,0};
-        for(int a=0;a<NUMDIMS;a++) {
-            dp_abs_act[a] = cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
-            p_rel_act[a]  = cbe_basis_p_r(pi.CBE_basis_moments[j],    a);
+    if(pi.Mass > 0) {
+        const double m_inv = 1.0 / pi.Mass;
+        for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+            pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot_mass);
         }
-#if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* Capture absolute-frame stress rate for the active (a<=b)<NUMDIMS
-         * block. The stress conversion below reads these before writing
-         * back via cbe_basis_T_w. */
-        double dT_abs_act[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
-        for(int a=0;a<NUMDIMS;a++) {
-            dT_abs_act[a][a] = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
-            for(int b=a+1;b<NUMDIMS;b++) {
-                const double dT_ab = cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
-                dT_abs_act[a][b] = dT_ab;
-                dT_abs_act[b][a] = dT_ab;
-            }
-        }
-#endif
-        /* Mass closure: enforce Σ_α dmdt_α = 0 exactly (safety net;
-         * upstream MFM should already deliver Σdmdt ≈ 0 to machine eps). */
-        pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot[0]);
-        /* Per-basis relative-frame momentum conversion. The absolute-frame
-         * per-basis momentum rate from the flux pass projects onto the
-         * relative-frame stored quantity via
-         *    dpdt_rel[α][k] = dpdt_abs[α][k] − P.Vel[k] * dmdt_raw[α] − m_α * a_cbe[k].
-         * The −V*dmdt_raw term handles the frame-conversion of momentum
-         * carried by mass flux at nonzero bulk velocity; the −m*a_cbe term
-         * subtracts the COM-acceleration share so the stored rate is
-         * per-basis deviation about the bulk. */
-        for(k=0;k<NUMDIMS;k++) {
-            pi.CBE_basis_moments_dt[j][k+1] -= pi.Vel[k] * dmdt_raw_alpha
-                                            +  pi.CBE_basis_moments[j][0] * a_cbe[k];
-        }
-#if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* Commit 4b (2026-06-03) — relative-frame stress-rate conversion.
-         *
-         * Storage convention (89fb05cc):
-         *    T_rel = m * <(v_phys - V) (v_phys - V)>
-         *    T_abs = T_rel + V (x) p_rel + p_rel (x) V + m * V (x) V
-         * Differentiating in time and substituting the already-landed
-         * relative-frame momentum convention dp_rel = dp_abs - V*dmdt_raw - m*a_cbe,
-         * the m*V*a cross terms cancel and the residual V*V*dmdt has factor
-         * +1 (NOT -2). Result:
-         *    dT_rel_ab = dT_abs_ab
-         *              - V_a * dp_abs_b - V_b * dp_abs_a
-         *              - a_a * p_rel_b  - a_b * p_rel_a
-         *              + dmdt_raw * V_a * V_b
-         *
-         * V here is pi.Vel[k] DIRECTLY — same V as the momentum conversion
-         * above (NOT pi.Vel/cf_atime; the flux-frame Q boost in
-         * cbe_build_flux_frame_Q_from_stored_moments uses a different
-         * Vel_code*inv_a convention because the velocity scaling there
-         * matches the cosmological scaling of momentum slots there. This
-         * function's V mirrors this function's momentum-side convention.)
-         *
-         * dp_abs, dT_abs, p_rel are captured pre-mutation above; this block
-         * writes back via cbe_basis_T_w so inactive slots are untouched.
-         * Realizability is NOT enforced here — that belongs in the drift-
-         * kick repair / projection layer. The pre-4b "diagonal dS >= 0"
-         * positivity clamp is REMOVED (Phil + codex: positivity is a
-         * realizability concern, not a frame-conversion concern). */
-        for(int a=0;a<NUMDIMS;a++) {
-            const double V_a    = pi.Vel[a];
-            const double dp_a   = dp_abs_act[a];
-            const double prel_a = p_rel_act[a];
-            const double acbe_a = a_cbe[a];
-            /* Diagonal. */
-            {
-                const double dT_rel_aa = dT_abs_act[a][a]
-                    - 2.0 * V_a * dp_a
-                    - 2.0 * acbe_a * prel_a
-                    + dmdt_raw_alpha * V_a * V_a;
-                cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, a, dT_rel_aa);
-            }
-            for(int b=a+1;b<NUMDIMS;b++) {
-                const double V_b    = pi.Vel[b];
-                const double dp_b   = dp_abs_act[b];
-                const double prel_b = p_rel_act[b];
-                const double acbe_b = a_cbe[b];
-                const double dT_rel_ab = dT_abs_act[a][b]
-                    - V_a * dp_b - V_b * dp_a
-                    - acbe_a * prel_b - acbe_b * prel_a
-                    + dmdt_raw_alpha * V_a * V_b;
-                cbe_basis_T_w(pi.CBE_basis_moments_dt[j], a, b, dT_rel_ab);
-            }
-        }
-#endif
     }
 }
 
