@@ -225,7 +225,7 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
      * of the build kernels expect a populated SoA; the kernels write before
      * any reader. */
     free_arrays_();
-    if(!alloc_arrays_(min_nodes)) {endrun(913101);}
+    if(!alloc_arrays_(min_nodes)) {endrun(913101); soa_capacity_ = 0; soa_valid_ = 0; return;}  /* soft bad-stop: leave SoA invalid (soa() returns NULL; callers NULL-check); drains at next poll */
     soa_capacity_ = min_nodes;
     soa_valid_    = 1;
 }
@@ -270,7 +270,7 @@ extern "C" void gpu_nextnode_backup_suns(int n)
     if(MaxForeignNodes > 0) {cap += MaxForeignNodes;}
     if(soa_capacity_ < cap || !soa_.suns_backup) {
         free_arrays_();
-        if(!alloc_arrays_(cap)) {endrun(913401);}
+        if(!alloc_arrays_(cap)) {endrun(913401); soa_capacity_ = 0; soa_valid_ = 0; return;}  /* soft bad-stop: leave SoA invalid before the suns_backup seed reads NULL; drains at next poll */
         soa_capacity_ = cap;
         soa_valid_ = 1;   /* SoA is populated end-to-end by the build kernels;
                            * no AoS-seed needed.  Keep valid so acquire() fast-paths. */

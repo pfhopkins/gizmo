@@ -1618,6 +1618,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
     if(gpu_force_drift_nodes(ti_curr_host) != 0) {
         endrun(929702);
+        return 1;   /* soft bad-stop: skip walk on un-drifted nodes (idx_host not yet alloc'd); drains at next poll */
     }
     double t_grv_drift_nodes = my_second();
 
@@ -1658,6 +1659,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(!P_dev || !soa || (need_cellp && !CellP_dev)) {
         printf("gpu_gravtree_walk_primary: failed to acquire arena or tree SoA\n");
         endrun(913200);
+        myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
+        return 1;
     }
 
     /* ------------------------------------------------------------------ *
@@ -1674,13 +1677,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
     {
         long sz = (long)NumPart * N_RT_FREQ_BINS * sizeof(MyFloat);
         d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-        if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202);}
+        if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202); myfree(idx_host); return 1;}
         memset(d_src_lum, 0, sz);
 #ifdef CHIMES_STELLAR_FLUXES
         long szc = (long)NumPart * CHIMES_LOCAL_UV_NBINS * sizeof(double);
         d_src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
         d_src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
-        if(!d_src_lum_G0 || !d_src_lum_ion) {printf("gpu_gravtree_walk_primary: CHIMES lum alloc failed\n"); endrun(913203);}
+        if(!d_src_lum_G0 || !d_src_lum_ion) {printf("gpu_gravtree_walk_primary: CHIMES lum alloc failed\n"); endrun(913203); myfree(idx_host); return 1;}
         memset(d_src_lum_G0,  0, szc);
         memset(d_src_lum_ion, 0, szc);
 #endif
@@ -1726,7 +1729,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         long sz_ang  = (long)NumPart * sizeof(Vec3<MyFloat>);
         d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
         d_bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_ang);
-        if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210);}
+        if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210); myfree(idx_host); return 1;}
         memset(d_bh_lum,   0, sz_lum);
         memset(d_bh_angle, 0, sz_ang);
         for(int p = 0; p < NumPart; p++) {
@@ -1754,7 +1757,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     {
         long sz = (long)NumPart * sizeof(MyFloat);
         d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-        if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211);}
+        if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211); myfree(idx_host); return 1;}
         memset(d_cr_inject, 0, sz);
         if(All.Time > All.TimeBegin) {
             double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
@@ -1783,6 +1786,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot || !d_foreign) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
+        myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
+        return 1;
     }
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));
@@ -1800,12 +1805,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * the CUDA kernel can read it from device code. */
     float *d_st  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
     float *d_sp  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    if(!d_st || !d_sp) {printf("gpu_gravtree_walk_primary: shortrange table alloc failed\n"); endrun(913205);}
+    if(!d_st || !d_sp) {printf("gpu_gravtree_walk_primary: shortrange table alloc failed\n"); endrun(913205); myfree(idx_host); return 1;}
     memcpy(d_st, shortrange_table,           GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
     memcpy(d_sp, shortrange_table_potential, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     float *d_stid = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    if(!d_stid) {printf("gpu_gravtree_walk_primary: shortrange tidal table alloc failed\n"); endrun(913206);}
+    if(!d_stid) {printf("gpu_gravtree_walk_primary: shortrange tidal table alloc failed\n"); endrun(913206); myfree(idx_host); return 1;}
     memcpy(d_stid, shortrange_table_tidal, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #endif
 #endif
@@ -2089,9 +2094,9 @@ static MyFloat *g_d_potcorr  = NULL;
 static double   g_ewald_fac_intp = 0.0;
 static int      g_ewald_tables_ready = 0;
 
-static void gpu_ewald_tables_acquire(void)
+static int gpu_ewald_tables_acquire(void)
 {
-    if(g_ewald_tables_ready) return;
+    if(g_ewald_tables_ready) return 0;
     const MyFloat *fx, *fy, *fz, *fp;
     double fi;
     gizmo_get_ewald_tables(&fx, &fy, &fz, &fp, &fi);
@@ -2104,6 +2109,7 @@ static void gpu_ewald_tables_acquire(void)
     if(!g_d_fcorrx || !g_d_fcorry || !g_d_fcorrz || !g_d_potcorr) {
         printf("gpu_ewald_tables_acquire: kokkos_malloc failed\n");
         endrun(914101);
+        return 1;   /* soft bad-stop: caller skips the Ewald walk on not-ready tables */
     }
     memcpy(g_d_fcorrx,  fx, sz);
     memcpy(g_d_fcorry,  fy, sz);
@@ -2111,6 +2117,7 @@ static void gpu_ewald_tables_acquire(void)
     memcpy(g_d_potcorr, fp, sz);
     g_ewald_fac_intp = fi;
     g_ewald_tables_ready = 1;
+    return 0;
 }
 
 /* Device-side Ewald walk for a single target. Returns 1 on success (acc
@@ -2279,7 +2286,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {return 0;}
 
-    gpu_ewald_tables_acquire();
+    if(gpu_ewald_tables_acquire() != 0) {return 1;}   /* soft bad-stop: tables not ready, skip walk (idx_host not yet alloc'd); drains at next poll */
 
     int *idx_host = (int *) mymalloc("gpu_ewald_idx", num_active_total * sizeof(int));
     int num_active = 0;
@@ -2297,7 +2304,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     int *d_idx    = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
-    if(!d_idx || !d_failed || !d_acc) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102);}
+    if(!d_idx || !d_failed || !d_acc) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102); myfree(idx_host); return 1;}
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));
 

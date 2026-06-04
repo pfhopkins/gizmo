@@ -326,7 +326,7 @@ static void topnode_resum_node_(int no_abs,
      * Mirrors the force_treeupdate_pseudos loop (forcetree.cc:1292-1360). */
     int p = soa->nextnode[no_k];   /* first child (absolute index) */
     for(int j = 0; j < 8; j++) {
-        if(p < MaxPart || p >= MaxPart + MaxNodes_) {endrun(6767);}
+        if(p < MaxPart || p >= MaxPart + MaxNodes_) {endrun(6767); return;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
         int pk = p - MaxPart;
 
         /* Recurse if this child is also an internal topnode. */

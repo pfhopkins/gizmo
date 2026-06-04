@@ -48,7 +48,7 @@ static double *drift_table_dev_ = NULL;   /* SharedSpace, length DRIFT_TABLE_LEN
 static double  drift_table_logTimeBegin_ = 0.0;
 static double  drift_table_logTimeMax_   = 0.0;
 
-static void drift_table_refresh_(void)
+static int drift_table_refresh_(void)
 {
     if(!drift_table_dev_) {
         drift_table_dev_ = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
@@ -56,11 +56,13 @@ static void drift_table_refresh_(void)
         if(!drift_table_dev_) {
             printf("gpu_force_drift: drift_table_dev_ alloc failed\n");
             endrun(929701);
+            return 1;   /* soft bad-stop: caller skips the drift kernel; drains at next poll */
         }
     }
     for(int i = 0; i < DRIFT_TABLE_LENGTH; i++) {drift_table_dev_[i] = DriftTable[i];}
     drift_table_logTimeBegin_ = log(All.TimeBegin);
     drift_table_logTimeMax_   = log(All.TimeMax);
+    return 0;
 }
 
 /* --- inline drift-factor helper, GPU-callable ---------------------------- */
@@ -106,7 +108,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     /* Refresh DriftTable mirror unconditionally (cheap; 8 KB).  Recomputes
      * logTimeBegin / logTimeMax from current All.* in case TimeMax was bumped
      * by a runtime restart. */
-    drift_table_refresh_();
+    if(drift_table_refresh_() != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch on NULL drift table */
 
     int      MaxPart        = All.MaxPart;
     int      n_local_nodes  = Numnodestree;
@@ -121,7 +123,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * dilation_dev[kk] -- no GPU-side host-only field access required. */
     double *dilation_dev = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
                                 (size_t)n_nodes * sizeof(double));
-    if(!dilation_dev) {printf("gpu_force_drift_nodes: dilation_dev alloc failed\n"); endrun(929702);}
+    if(!dilation_dev) {printf("gpu_force_drift_nodes: dilation_dev alloc failed\n"); endrun(929702); return 1;}   /* soft bad-stop: skip the dilation omp loop on NULL; drains at next poll */
 #pragma omp parallel for schedule(static)
     for(int kk = 0; kk < n_nodes; kk++) {
         int no_kk;
