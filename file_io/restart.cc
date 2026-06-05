@@ -51,7 +51,7 @@ void restart(int modus)
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf_bak[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf_mv[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     double save_PartAllocFactor;
     int nprocgroup, primaryTask, groupTask;
-    struct global_data_all_processes all_task0;
+    struct global_data_all_processes all_task0 = {};   /* zero-init so the required groupTask==0 Bcast is safe even if rank 0 failed its header read */
     int nmulti = MULTIPLEDOMAINS, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
     
 
@@ -139,6 +139,13 @@ void restart(int modus)
     {
       if(ThisTask == (primaryTask + groupTask))	/* ok, it's this processor's turn */
 	{
+	  /* Graceful per-rank restart-IO faults. read_status != 0 means this rank's restart
+	   * payload cannot be safely read/written; we set a soft bad-stop, skip the rest of THIS
+	   * rank's local file IO (goto finish_turn), still execute the required groupTask==0
+	   * Bcast, and drain at the per-turn poll below. No peer P2P in a turn, so no rank is
+	   * stranded. (NOTE: a truncated/corrupt mid-read still routes through my_fread's own
+	   * hold at io.cc:5392 (778) until the io.cc pass converts it.) */
+	  int restart_status = 0;
 	  if(modus)
 	    {
 	      if(!(fd = fopen(buf, "r")))
@@ -146,7 +153,8 @@ void restart(int modus)
 		  if(!(fd = fopen(buf_bak, "r")))
 		    {
 		      printf("Restart file '%s' nor '%s' found.\n", buf, buf_bak);
-		      gizmo_emergency_hold_reviewed(7870, "TEMP_HARD_CANDIDATE_IO: this rank's restart file (nor backup) found, mid per-rank groupTask read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		      fflush(stdout);
+		      endrun(7870); restart_status = 7870;   /* soft: this rank's restart file (nor backup) found */
 		    }
 		}
 	    }
@@ -155,23 +163,27 @@ void restart(int modus)
 	      if(!(fd = fopen(buf, "w")))
 		{
 		  printf("Restart file '%s' cannot be opened.\n", buf);
-		  gizmo_emergency_hold_reviewed(7878, "TEMP_HARD_CANDIDATE_IO: cannot open this rank's restart file for write, mid per-rank groupTask turn (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  fflush(stdout);
+		  endrun(7878); restart_status = 7878;   /* soft: cannot open this rank's restart file for write */
 		}
 	    }
 
 
 	  save_PartAllocFactor = All.PartAllocFactor;
 
-	  /* common data  */
-	  byten(&All, sizeof(struct global_data_all_processes), modus);
+	  /* common data (skip if the file failed to open -- fd is NULL) */
+	  if(!restart_status)
+	    {
+	      byten(&All, sizeof(struct global_data_all_processes), modus);
+	      if(ThisTask == 0 && modus > 0) {all_task0 = All;}
+	    }
 
-	  if(ThisTask == 0 && modus > 0)
-	    all_task0 = All;
-
-	  if(modus > 0 && groupTask == 0)	/* read */
+	  if(modus > 0 && groupTask == 0)	/* read -- required Bcast: must fire on every participant even on failure */
 	    {
 	      MPI_Bcast(&all_task0, sizeof(struct global_data_all_processes), MPI_BYTE, 0, MPI_COMM_WORLD);
 	    }
+
+	  if(restart_status) {goto finish_turn;}   /* file open failed: skip the local payload, drain at the per-turn poll */
 
 
 	  if(modus)		/* read */
@@ -199,14 +211,16 @@ void restart(int modus)
 		{
 		  printf("The restart file on task=%d is not consistent with the one on task=0\n", ThisTask);
 		  fflush(stdout);
-		  gizmo_emergency_hold_reviewed(16, "TEMP_HARD_CANDIDATE_IO: restart file inconsistent with task-0 (per-rank, before in()/byten reads; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  /* soft: inconsistent restart. This is an EXIT case -- skip the rest of the local
+		   * payload (allocate_memory + reads on inconsistent sizes could OOM / overflow)
+		   * and drain at the per-turn poll. */
+		  endrun(16); restart_status = 16; goto finish_turn;
 		}
 
-	      /* allocate_memory() is subset/turn-called here (inside the per-rank
-	       * groupTask turn), so it holds NO MPI_COMM_WORLD collective and routes
-	       * OOM through the reviewed TEMPORARY hard path (see allocate.cc). No
-	       * poll here for the same deadlock reason -- the all-rank setup
-	       * bad-stops were already drained at the pre-loop poll above. */
+	      /* allocate_memory() is subset/turn-called here (inside the per-rank groupTask turn),
+	       * so it holds NO MPI_COMM_WORLD collective (see allocate.cc); its own OOM path is the
+	       * allocator-family graceful re-review. The all-rank setup bad-stops already drained at
+	       * the pre-loop poll above; per-rank restart faults drain at the per-turn poll below. */
 	      allocate_memory();
 	    }
 
@@ -215,7 +229,9 @@ void restart(int modus)
 	    {
 	      printf("it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", NumPart / (((double) All.TotNumPart) / NTask));
 	      printf("fatal error\n");
-	      gizmo_emergency_hold_reviewed(22, "TEMP_HARD_CANDIDATE_IO: PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+	      fflush(stdout);
+	      /* soft: would overflow P[] in the byten(&P[0],...) below. Skip the payload, drain at the poll. */
+	      endrun(22); restart_status = 22; goto finish_turn;
 	    }
 
 	  if(modus)		/* read */
@@ -234,7 +250,9 @@ void restart(int modus)
 		{
 		  printf("GAS: it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", N_gas / (((double) All.TotN_gas) / NTask));
 		  printf("fatal error\n");
-		  gizmo_emergency_hold_reviewed(222, "TEMP_HARD_CANDIDATE_IO: GAS PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  fflush(stdout);
+		  /* soft: would overflow CellP[] in the byten(&CellP[0],...) below. Skip the payload, drain at the poll. */
+		  endrun(222); restart_status = 222; goto finish_turn;
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
@@ -332,7 +350,9 @@ void restart(int modus)
 		  printf
 		    ("Tree storage: it seems you have reduced(!) 'PartAllocFactor' below the value needed to load the restart file (task=%d). "
 		     "Numnodestree=%d  MaxNodes=%d\n", ThisTask, Numnodestree, MaxNodes);
-		  gizmo_emergency_hold_reviewed(221, "TEMP_HARD_CANDIDATE_IO: tree storage PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  fflush(stdout);
+		  /* soft: would overflow Nodes_base in the byten(...) below. Skip the payload, drain at the poll. */
+		  endrun(221); restart_status = 221; goto finish_turn;
 		}
 
 	      byten(Nodes_base, Numnodestree * sizeof(struct NODE), modus);
@@ -355,7 +375,8 @@ void restart(int modus)
 	      byten(&DomainFac, sizeof(double), modus);
 	    }
 
-	  fclose(fd);
+	finish_turn:
+	  if(fd) {fclose(fd);}   /* fd is NULL on the 7870/7878 open-failure path */
 	}
       else			/* wait inside the group */
 	{
@@ -365,7 +386,10 @@ void restart(int modus)
 	    }
 	}
 
-      MPI_Barrier(MPI_COMM_WORLD);
+      /* All-rank drain replaces the per-turn barrier (one collective, same sync): a per-rank
+       * restart-IO fault set a soft bad-stop above; collect it here and finalize cleanly BEFORE
+       * the next turn or domain_Decomposition() below runs on junk state. No MPI_Abort. */
+      gizmo_exit_bad_stop_if_requested("restart:groupTask_turn");
     }
 
 
