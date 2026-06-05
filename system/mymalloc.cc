@@ -84,19 +84,27 @@ void mymalloc_init(void)
   HighMarkBytes = 0;
 }
 
-/* Caller-side collective preflight for large SYMMETRIC arena allocations (e.g.
- * allocate.cc). Returns 1 iff `bytes` fits in this rank's arena AND every other
- * rank's arena; else 0 on ALL ranks. MUST be called only where all ranks
- * participate (it does an Allreduce) -- NEVER inside the generic mymalloc path,
- * which runs in non-collective contexts. On a 0 return the caller bad-stops +
- * skips the allocation, draining gracefully instead of MPI_Abort-ing deep in
- * the allocator on the production-OOM path. */
+/* LOCAL arena capacity check (NO MPI). Returns 1 iff `bytes` fits in THIS rank's
+ * arena (FreeBytes) AND `nblocks` more blocks fit in the fixed block table
+ * (MAXBLOCKS) -- a request can fit by bytes yet still exhaust the block table,
+ * which would route the real mymalloc onto the emergency-hold path. Safe in ANY
+ * context, including subset/turn (no collective): it is the building block for
+ * caller-side OOM preflight. On a 0 return the caller bad-stops + skips the
+ * allocation, draining gracefully instead of holding deep in the allocator. */
+int gizmo_alloc_fits_this_rank(size_t bytes, int nblocks)
+{
+  int local_short = ((nblocks < 0) || (bytes > FreeBytes) || (Nblocks + (unsigned int)nblocks > MAXBLOCKS)) ? 1 : 0;
+  return local_short ? 0 : 1;
+}
+
+/* COLLECTIVE preflight for large SYMMETRIC arena allocations. Returns 1 iff the
+ * request fits on THIS rank AND every other rank; else 0 on ALL ranks (one
+ * Allreduce over the local check). MUST be called only where all ranks
+ * participate -- NEVER inside the generic mymalloc path, nor a subset/turn
+ * context (use gizmo_alloc_fits_this_rank there). */
 int gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks)
 {
-  /* Check BOTH arena byte capacity (FreeBytes) AND block-table capacity
-   * (MAXBLOCKS) -- a request can fit by bytes yet still exhaust the fixed block
-   * table, which would route the real mymalloc onto the TEMP-hard path. */
-  int local_short = ((nblocks < 0) || (bytes > FreeBytes) || (Nblocks + (unsigned int)nblocks > MAXBLOCKS)) ? 1 : 0, any_short = 0;
+  int local_short = gizmo_alloc_fits_this_rank(bytes, nblocks) ? 0 : 1, any_short = 0;
   MPI_Allreduce(&local_short, &any_short, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
   return any_short ? 0 : 1;
 }

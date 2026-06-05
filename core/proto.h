@@ -461,7 +461,7 @@ void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
-int allocate_memory(int do_collective_preflight);   /* do_collective_preflight=1 ONLY at an all-rank caller (read_ic setup phase): arena preflight + soft bad-stop on OOM, caller polls. =0 at subset/turn callers (restart): emergency-hold floor, no collective. Returns 0 ok / 1 OOM. */
+int allocate_memory(int do_collective_preflight);   /* Never holds on OOM: requests a soft controlled-stop and returns nonzero; caller drains at its poll. do_collective_preflight selects the arena preflight's fit-check: =1 all-rank (read_ic, one Allreduce); =0 LOCAL only (restart subset/turn, no MPI). Returns 0 ok / 812 arena-OOM / 1 UVM-STL-OOM. */
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
@@ -812,6 +812,7 @@ int         gizmo_poll_controlled_stop(void);   /* collect + return global code;
 void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
+int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
 [[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,

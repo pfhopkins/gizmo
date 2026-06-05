@@ -44,42 +44,41 @@ int allocate_memory(int do_collective_preflight)
 
   NTaskTimesThreads = maxThreads * NTask;
 
-  /* COLLECTIVE-SYMMETRY (codex 2026-06-04): allocate_memory() is reached from TWO
-   * kinds of caller, distinguished by do_collective_preflight:
-   *  (a) =1 -- an ALL-RANK setup phase (read_ic, right after find_files() broadcasts
-   *      file-0's header to EVERY rank, so the global counts are known symmetrically).
-   *      Here a collective arena preflight is safe, and a UVM/STL failure sets a SOFT
-   *      bad-stop that the caller's immediately-following all-rank poll reconciles
-   *      BEFORE any P/CellP is dereferenced. This is the graceful OOM path.
-   *  (b) =0 -- a SUBSET/turn caller (restart.cc groupTask turn). It MUST NOT enter any
-   *      MPI_COMM_WORLD collective here (peers are parked at a barrier -> deadlock), so
-   *      arena OOM keeps the mymalloc emergency-hold floor and a UVM/STL failure keeps
-   *      the local emergency-hold floor. (restart's own all-rank preflight is a tracked
-   *      follow-up; until then this path is the Class-2 floor.) */
+  /* GRACEFUL-OOM (codex 2026-06-04): allocate_memory() never emergency-holds on a
+   * capacity failure -- it requests a SOFT controlled-stop and RETURNS a nonzero code;
+   * the caller drains it at its own all-rank poll. do_collective_preflight only selects
+   * the arena preflight's fit-check:
+   *  =1 -- ALL-RANK setup phase (read_ic, after find_files() broadcasts the header to
+   *        every rank): collective check (one Allreduce); a UVM/STL failure's soft
+   *        bad-stop is reconciled at the caller's poll BEFORE any P/CellP deref.
+   *  =0 -- SUBSET/turn caller (restart.cc groupTask turn): LOCAL check only (no MPI ->
+   *        no deadlock against peers parked at a barrier); the soft bad-stop drains at
+   *        restart's existing per-turn poll, with the failing rank skipping its payload
+   *        reads (goto finish_turn). */
 
-  if(do_collective_preflight)
-    {
-      /* All-rank arena (mymalloc) preflight. MUST mirror the arena allocations below:
-       * Exportflag/Exportindex/Exportnodecount (NTaskTimesThreads ints each, x3),
-       * Send/Recv count/offset (NTask ints each, x4), ProcessedFlag (MaxPart uchar),
-       * and (CHIMES) ChimesGasVars. The UVM particle arrays (P/CellP) and the STL
-       * timebin vectors are NOT in the mymalloc arena and cannot be capacity-checked
-       * ahead of kokkos_malloc/std::vector -- they use attempt-then-soft-bad-stop +
-       * the caller's poll instead (see the failure handler at the end). */
-      size_t arena_need = (size_t) 3 * gizmo_mymalloc_rounded_size(NTaskTimesThreads * sizeof(int))
-                        + (size_t) 4 * gizmo_mymalloc_rounded_size(NTask * sizeof(int))
-                        + gizmo_mymalloc_rounded_size(All.MaxPart * sizeof(unsigned char));
-      int arena_blocks = 8;
+  /* Arena (mymalloc) preflight -- BEFORE any mymalloc / metadata mutation. MUST mirror
+   * the arena allocations below: Exportflag/Exportindex/Exportnodecount (NTaskTimesThreads
+   * ints each, x3), Send/Recv count/offset (NTask ints each, x4), ProcessedFlag (MaxPart
+   * uchar), and (CHIMES) ChimesGasVars. The UVM particle arrays (P/CellP) and the STL
+   * timebin vectors are NOT in the mymalloc arena and cannot be capacity-checked ahead of
+   * kokkos_malloc/std::vector -- they use attempt-then-soft-bad-stop (see the handler below). */
+  {
+    size_t arena_need = (size_t) 3 * gizmo_mymalloc_rounded_size(NTaskTimesThreads * sizeof(int))
+                      + (size_t) 4 * gizmo_mymalloc_rounded_size(NTask * sizeof(int))
+                      + gizmo_mymalloc_rounded_size(All.MaxPart * sizeof(unsigned char));
+    int arena_blocks = 8;
 #ifdef CHIMES
-      arena_need += gizmo_mymalloc_rounded_size(All.MaxPartGas * sizeof(struct gasVariables));
-      arena_blocks += 1;
+    arena_need += gizmo_mymalloc_rounded_size(All.MaxPartGas * sizeof(struct gasVariables));
+    arena_blocks += 1;
 #endif
-      if(!gizmo_alloc_fits_all_ranks(arena_need, arena_blocks))
-        {
-          gizmo_request_controlled_stop(812, "allocate_memory: particle-storage arena preflight won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
-          return 1;
-        }
-    }
+    int arena_fits = do_collective_preflight ? gizmo_alloc_fits_all_ranks(arena_need, arena_blocks)
+                                             : gizmo_alloc_fits_this_rank(arena_need, arena_blocks);
+    if(!arena_fits)
+      {
+        gizmo_request_controlled_stop(812, "allocate_memory: particle-storage arena preflight failed (insufficient FreeBytes/MAXBLOCKS)", __FILE__, __LINE__, __FUNCTION__);
+        return 812;
+      }
+  }
 
   Exportflag = (int *) mymalloc("Exportflag", NTaskTimesThreads * sizeof(int));
   Exportindex = (int *) mymalloc("Exportindex", NTaskTimesThreads * sizeof(int));
@@ -95,12 +94,10 @@ int allocate_memory(int do_collective_preflight)
 
   /* ---- Non-arena allocations (UVM particle arrays + STL timebin vectors) use
    * attempt-then-check (they return NULL / throw, unlike the arena path). Accumulate
-   * ONE local failure flag across all of them; the failure handler at the end routes
-   * it by caller context (soft bad-stop + caller poll under do_collective_preflight,
-   * else the emergency-hold floor -- see the note at the top). Once the flag is set,
-   * later optional allocations are skipped. Nothing between here and that handler
-   * dereferences P/CellP, so the all-rank caller's poll runs first on the soft path.
-   * An uncaught std::bad_alloc is also barred. */
+   * ONE local failure flag across all of them; the failure handler at the end requests a
+   * soft bad-stop + returns (the caller drains). Once the flag is set, later optional
+   * allocations are skipped. Nothing between here and that handler dereferences P/CellP,
+   * so the caller's poll runs first. An uncaught std::bad_alloc is also barred. */
   int alloc_fail_local = 0;
 
   try {
@@ -128,10 +125,9 @@ int allocate_memory(int do_collective_preflight)
       else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
 #ifdef CHIMES
-      /* ChimesGasVars is an arena block (counted in the do_collective_preflight arena
-       * estimate above). Only allocate when the UVM allocs above succeeded on THIS rank,
-       * so we never mymalloc on an already-failing path; the failure handler below then
-       * routes the bad-stop (soft+caller-poll under preflight, else emergency-hold). */
+      /* ChimesGasVars is an arena block (counted in the arena preflight above). Only allocate
+       * when the UVM allocs above succeeded on THIS rank, so we never mymalloc on an
+       * already-failing path; the failure handler below requests the soft bad-stop. */
       if(!alloc_fail_local)
 	{
 	  ChimesGasVars = (struct gasVariables *) mymalloc("gasVars", bytes = All.MaxPartGas * sizeof(struct gasVariables));
@@ -141,21 +137,15 @@ int allocate_memory(int do_collective_preflight)
 #endif
     }
 
-  /* UVM/STL allocation failure handler. */
+  /* UVM/STL allocation failure handler -- SOFT bad-stop + return for BOTH callers (no
+   * emergency-hold, no MPI here). The caller owns the drain: read_ic's all-rank poll, or
+   * restart's per-turn poll after it skips this rank's payload reads (goto finish_turn).
+   * In every case the poll runs BEFORE any P/CellP is dereferenced, so the NULL arrays
+   * here are never read. This is the graceful OOM exit. */
   if(alloc_fail_local)
     {
-      if(do_collective_preflight)
-        {
-          /* All-rank setup phase: SOFT bad-stop only. The caller's immediately-following
-           * all-rank poll (Allreduce) reconciles this rank's (asymmetric) failure with its
-           * peers and finalizes cleanly -- and it runs BEFORE any P/CellP is dereferenced,
-           * so the NULL arrays here are never read. This is the graceful OOM exit. */
-          gizmo_request_controlled_stop(1, "allocate_memory: UVM/STL particle allocation failed (all-rank setup phase; drains at caller poll)", __FILE__, __LINE__, __FUNCTION__);
-          return 1;
-        }
-      /* Subset/turn caller (restart): no symmetric poll reachable here -> emergency-hold
-       * floor (Class-2; scancel-killable, no MPI_Abort). Tracked: restart all-rank preflight. */
-      gizmo_emergency_hold_reviewed(1, "TEMP_HARD_CANDIDATE_OOM: UVM/STL particle allocation failed (allocate_memory subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_request_controlled_stop(1, "allocate_memory: UVM/STL particle allocation failed (drains at caller poll)", __FILE__, __LINE__, __FUNCTION__);
+      return 1;
     }
 
   return 0;

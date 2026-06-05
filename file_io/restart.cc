@@ -217,11 +217,16 @@ void restart(int modus)
 		  endrun(16); restart_status = 16; goto finish_turn;
 		}
 
-	      /* allocate_memory(0): subset/turn caller (per-rank groupTask turn) -> NO collective
-	       * (peers parked at a barrier; an Allreduce here would deadlock). OOM keeps the
-	       * emergency-hold floor inside allocate_memory. The restart all-rank preflight phase
-	       * (mirroring read_ic's, after the groupTask-0 all_task0 Bcast) is a tracked follow-up. */
-	      (void) allocate_memory(0);
+	      /* allocate_memory(0): subset/turn caller (per-rank groupTask turn) -> LOCAL-only
+	       * preflight inside, NO collective (peers parked at a barrier; an Allreduce here would
+	       * deadlock). On an arena (local-preflight) or UVM/STL OOM it requests a soft bad-stop
+	       * and returns nonzero WITHOUT holding; we skip this rank's payload reads (goto
+	       * finish_turn) and drain at the per-turn poll below. No duplicate endrun -- the
+	       * controlled-stop is already requested with a descriptive reason inside allocate_memory. */
+	      {
+		int alloc_status = allocate_memory(0);
+		if(alloc_status) {restart_status = alloc_status; goto finish_turn;}
+	      }
 	    }
 
 	  in(&NumPart, modus);
