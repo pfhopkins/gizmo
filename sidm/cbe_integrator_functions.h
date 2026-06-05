@@ -30,11 +30,23 @@
 static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_drift_kick");
 
 /* Wave-CBE Commit 5 (2026-05-26) — SPD repair eigenvalue floor, relative to
- * trace. Applied identically in cell-state drift-kick repair and face-state
- * Q-clamp via cbe_spd_repair_S3x3. 1e-12 is a small relative floor (well
- * below the intended stress scale, but large enough to deterministically
- * exclude strictly-zero / negative eigenvalues from downstream consumers). */
+ * trace. Applied identically in face-state Q-clamp and the Fix #2b
+ * conservative cell-state repair (both via the SSOT helper
+ * cbe_basis_row_project_central_stress_to_PSD). 1e-12 is a small relative
+ * floor (well below the intended stress scale, but large enough to
+ * deterministically exclude strictly-zero / negative eigenvalues from
+ * downstream consumers). */
 static constexpr double CBE_SPD_RELATIVE_FLOOR = 1.0e-12;
+
+/* Wave-CBE Fix #2b (2026-06-04) tunings for the conservative cell-state
+ * realizability repair. EPS_M_ABS / EPS_M_REL: empty-slot mass threshold
+ * (m_thresh = max(EPS_M_ABS, EPS_M_REL * M_cell / NBASIS)). EPS_CONS:
+ * FP-scale residual acceptance bound (residual norm <= EPS_CONS * cell_scale
+ * after donation -> accept as roundoff; larger -> deterministic conservative
+ * fallback in Step 7). */
+static constexpr double CBE_REPAIR_EPS_M_ABS = 1.0e-30;
+static constexpr double CBE_REPAIR_EPS_M_REL = 1.0e-12;
+static constexpr double CBE_REPAIR_EPS_CONS  = 1.0e-12;
 
 /* Dimension-aware momentum-slot accessors (2026-06-02). Stored basis-moment
  * row layout is row[0] = mass, row[1..NUMDIMS] = p_x..p_{NUMDIMS-1}, and
@@ -1057,7 +1069,7 @@ bool cbe_sym3x3_all_principal_minors_nonneg(const double M[3][3], double eps_tol
  *  with T_kl = m * R_kl already, so M = T_kl * m - p p^T as written.)
  *
  * Consumers: cone limiter (strict, eps_tol = 0); Fix #2b cell repair
- * (FP-scale, eps_tol = CBE_REPAIR_EPS_TOL). */
+ * (FP-scale, eps_tol = CBE_REPAIR_EPS_M_REL). */
 KOKKOS_INLINE_FUNCTION
 bool cbe_basis_row_is_realizable(
     const double Q_row[CBE_INTEGRATOR_NMOMENTS], double eps_tol)
@@ -1281,33 +1293,6 @@ bool cbe_basis_row_project_central_stress_to_PSD(
     if(dT_out) *dT_out = 0;
     return false;
 #endif
-}
-
-
-/* COMPAT SHIM (Fix #2a): preserves the OLD pre-2a behavior of
- * cbe_spd_repair_S3x3 for any latent caller not surfaced by the 2a grep.
- * The two known callers (cbe_clamp_face_Q + do_cbe_drift_kick_kernel)
- * are migrated to cbe_basis_row_project_central_stress_to_PSD in 2a.
- * Fix #2b deletes this shim after verifying no other callers remain.
- *
- * Old behavior preserved: trace_before <= 0 (with finite entries) falls
- * to isotropic MIN_REAL_NUMBER * I — this differs from the new core,
- * which projects to PSD via Jacobi. The shim path retains the original
- * fallback for byte-compatibility with any caller depending on it. */
-KOKKOS_INLINE_FUNCTION
-bool cbe_spd_repair_S3x3(double S[6], double *dT_out)
-{
-    double trace_before = S[0] + S[1] + S[2];
-    bool all_finite = true;
-    for(int q = 0; q < 6; q++) { if(!isfinite(S[q])) { all_finite = false; break; } }
-    if(!all_finite || !isfinite(trace_before) || trace_before <= 0) {
-        S[0] = MIN_REAL_NUMBER; S[1] = MIN_REAL_NUMBER; S[2] = MIN_REAL_NUMBER;
-        S[3] = 0.0; S[4] = 0.0; S[5] = 0.0;
-        if(dT_out) *dT_out = 3.0 * MIN_REAL_NUMBER;
-        return true;
-    }
-    double trace_pos = DMAX(trace_before, MIN_REAL_NUMBER);
-    return cbe_project_central_S_to_PSD(S, CBE_SPD_RELATIVE_FLOOR * trace_pos, dT_out);
 }
 
 
@@ -1549,19 +1534,446 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
+/* Wave-CBE Fix #2b (2026-06-04): conservative cell-state realizability repair.
+ *
+ * Single SSOT operator that replaces the legacy in-place chain (active-
+ * diagonal floor + 3D Cauchy-Schwarz off-diag + det crossnorm + SPD
+ * projection + stochastic split-largest) inside do_cbe_drift_kick_kernel.
+ * Operates on RELATIVE-FRAME storage (the canonical pi.CBE_basis_moments
+ * layout post the 2026-06-04 absolute round-trip).
+ *
+ * Conservation contract (preserved to roundoff except where explicitly
+ * lossy-with-bounded-magnitude):
+ *   Sum_b m_b               preserved via donation arithmetic
+ *   Sum_b p_rel_b[a]        preserved (active a)
+ *   Sum_b T_rel_b[a,b]      preserved (active a <= b, FULL active tensor)
+ *   each row leaves realizable: m_b > 0 AND central S PSD in active dims
+ *   no stochastic perturbations
+ *   no global abort
+ *
+ * Residual sign convention (used throughout Step 5+):
+ *   residual = target_cell_sum_BEFORE_repair - cell_sum_AFTER_local_repairs
+ *   donor   += residual_share   =>   cell_sum_after == target_cell_sum
+ *
+ * Step outline:
+ *   0  guard NaN/Inf, M0 <= 0 -> no-op return (upstream NaN bug class).
+ *   1  snapshot target cell invariants (M0, P0, T0); V_bulk = P0/M0.
+ *   2  identify empty bases (m_b < m_thresh).
+ *   3  reset empties to comoving-inert in RELATIVE storage:
+ *        m = m_thresh; p_rel = 0; T_rel = 0.
+ *      (Codex: do NOT write m*V_bulk into stored slots; storage is
+ *      relative-frame. An inert basis comoving with the cell bulk has
+ *      p_rel = 0 and T_rel = 0 by definition.)
+ *      Special case: if ALL bases are empty, skip reset entirely
+ *      (Phil: would over-mass by NBASIS * m_thresh - M0).
+ *   4  row-local PSD projection on non-empty bases. NOT cell-conservative;
+ *      trace-deltas flow into Step 5 residual.
+ *   5  compute residual vs Step 1 target; precompute cell scales.
+ *   6  donate residual:
+ *        (a) single-donor most-massive realizable; if donor stays
+ *            realizable -> done.
+ *        (b) multi-donor weighted by m_b at f=1; if all realizable -> done.
+ *        (c) continuous bisection on f in [0,1] for the largest realizable
+ *            multi-donor fraction; apply at f_lo; unabsorbed = (1-f_lo)*res.
+ *   7  bounded acceptance + deterministic mass-positive proportional fallback:
+ *        if |unabsorbed| <= EPS_CONS * cell_scale -> accept FP-scale loss
+ *        else distribute the FULL unabsorbed residual proportionally over
+ *          all bases by current mass fraction (w_b = m_b / M_cur, where
+ *          M_cur = Sum m_b at Step 7 entry = M_new + f_eff*res_M). Adds
+ *          exactly unab_M to the cell sum -> Sum m_b restored to M0
+ *          (similarly for p_rel and T_rel). Mass positivity guaranteed
+ *          since m_b_new = m_b * M0 / M_cur > 0 whenever M0 > 0 (Step 0
+ *          guard) and M_cur > 0 (all m_b > 0 after Step 6).
+ *   8  defensive final realizability sweep. Any non-realizable row after
+ *      Step 7 gets row-local PSD projection (preserves m_b and p_b; touches
+ *      stress only). Trace-delta bounded by NBASIS * CBE_SPD_RELATIVE_FLOOR *
+ *      max_trace_central_S; FP-scale on smooth inputs (empirical).
+ *
+ * dT_out (nullable): accumulates Sum trace-delta from all PSD projections
+ * (Step 4 + Step 8). Same contract as the prior legacy chain so downstream
+ * cbe_diagnostics col-8 semantics carry through. */
+KOKKOS_INLINE_FUNCTION
+static void cbe_repair_cell_conservative_basis_states(
+    struct particle_data& pi,
+    double *dT_out)
+{
+    double dT_local = 0.0;
+
+    /* ----- Step 0: input guard. ----- */
+    {
+        bool any_nonfinite = false;
+        double M0_probe = 0.0;
+        for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                if(!isfinite(pi.CBE_basis_moments[j][k])) { any_nonfinite = true; break; }
+            }
+            if(any_nonfinite) break;
+            M0_probe += pi.CBE_basis_moments[j][0];
+        }
+        if(any_nonfinite || !(M0_probe > 0)) {
+            if(dT_out) *dT_out = 0.0;
+            return;
+        }
+    }
+
+    /* ----- Step 1: snapshot target cell invariants. ----- */
+    double M0 = 0.0;
+    double P0[3] = {0.0, 0.0, 0.0};
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        M0 += pi.CBE_basis_moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P0[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+    }
+    const double V_bulk[3] = { P0[0] / M0, P0[1] / M0, P0[2] / M0 };
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double T0[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        for(int a = 0; a < NUMDIMS; a++) {
+            for(int b = a; b < NUMDIMS; b++) {
+                T0[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+            }
+        }
+    }
+#endif
+
+    /* ----- Step 2: identify empties. ----- */
+    const double m_thresh = DMAX(CBE_REPAIR_EPS_M_ABS,
+                                  CBE_REPAIR_EPS_M_REL * M0 / (double)CBE_INTEGRATOR_NBASIS);
+    bool is_empty[CBE_INTEGRATOR_NBASIS];
+    int empty_count = 0;
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        is_empty[j] = (pi.CBE_basis_moments[j][0] < m_thresh);
+        if(is_empty[j]) empty_count++;
+    }
+
+    /* ----- Step 3: reset empties to comoving-inert RELATIVE storage.
+     * Inert basis comoving with V_bulk in absolute frame -> relative
+     * storage: m = m_thresh, p_rel = 0, T_rel = 0. The cell-sum changes
+     * caused by these assignments flow into Step 5 residual. Special-case:
+     * if every basis is empty, skip reset (Phil: NBASIS*m_thresh > M0
+     * over-masses the cell). ----- */
+    if(empty_count > 0 && empty_count < CBE_INTEGRATOR_NBASIS) {
+        for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+            if(!is_empty[j]) continue;
+            pi.CBE_basis_moments[j][0] = m_thresh;
+            for(int a = 0; a < NUMDIMS; a++) cbe_basis_p_w(pi.CBE_basis_moments[j], a, 0.0);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+            for(int a = 0; a < NUMDIMS; a++) {
+                for(int b = a; b < NUMDIMS; b++) {
+                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b, 0.0);
+                }
+            }
+#endif
+        }
+    }
+
+    /* ----- Step 4: row-local PSD projection on the (non-empty) goods.
+     * Projection is NOT cell-conservative; the trace-deltas it introduces
+     * flow into the Step 5 residual which the donor mechanism absorbs. */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        if(is_empty[j]) continue;
+        const double m_b = pi.CBE_basis_moments[j][0];
+        if(!(m_b > 0)) continue;
+        double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
+        double v_dot_v = 0.0;
+        for(int a = 0; a < NUMDIMS; a++) v_dot_v += v[a] * v[a];
+        const double trace_R_active  = cbe_basis_T_trace_active(
+            pi.CBE_basis_moments[j], 1.0 / m_b);
+        const double trace_S_central = trace_R_active - v_dot_v;
+        const double trace_S_pos     = DMAX(trace_S_central, MIN_REAL_NUMBER);
+        const double eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR * trace_S_pos;
+        double dT_basis = 0.0;
+        (void)cbe_basis_row_project_central_stress_to_PSD(
+            pi.CBE_basis_moments[j], eigenvalue_floor, &dT_basis);
+        dT_local += dT_basis;
+    }
+#endif
+
+    /* ----- Step 5: residual = target - current_after_local_repairs.
+     * Donor application later: donor += residual_share -> cell_sum
+     * returns to target. ----- */
+    double M_new = 0.0;
+    double P_new[3] = {0.0, 0.0, 0.0};
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        M_new += pi.CBE_basis_moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P_new[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+    }
+    double res_M    = M0 - M_new;
+    double res_P[3] = { P0[0] - P_new[0], P0[1] - P_new[1], P0[2] - P_new[2] };
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double T_new[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        for(int a = 0; a < NUMDIMS; a++) {
+            for(int b = a; b < NUMDIMS; b++) {
+                T_new[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+            }
+        }
+    }
+    double res_T[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    for(int a = 0; a < NUMDIMS; a++) {
+        for(int b = a; b < NUMDIMS; b++) {
+            res_T[a][b] = T0[a][b] - T_new[a][b];
+        }
+    }
+#endif
+
+    /* Cell scales for FP-bounded acceptance test in Step 7. */
+    double V_bulk_norm = 0.0;
+    for(int a = 0; a < NUMDIMS; a++) V_bulk_norm += V_bulk[a] * V_bulk[a];
+    V_bulk_norm = sqrt(V_bulk_norm);
+    double max_abs_P0 = 0.0;
+    for(int a = 0; a < NUMDIMS; a++) {
+        const double ap = fabs(P0[a]); if(ap > max_abs_P0) max_abs_P0 = ap;
+    }
+    const double cell_scale_M = M0;
+    const double cell_scale_P = DMAX(M0 * V_bulk_norm, max_abs_P0);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double max_abs_T0 = 0.0;
+    for(int a = 0; a < NUMDIMS; a++) {
+        for(int b = a; b < NUMDIMS; b++) {
+            const double at = fabs(T0[a][b]); if(at > max_abs_T0) max_abs_T0 = at;
+        }
+    }
+    const double cell_scale_T = DMAX(M0 * V_bulk_norm * V_bulk_norm, max_abs_T0);
+#endif
+
+    /* ----- Step 6: donate residual.
+     * (a) single-donor most-massive realizable
+     * (b) multi-donor weighted by m_b at f=1
+     * (c) continuous bisection on f in [0,1] ----- */
+    bool   is_candidate[CBE_INTEGRATOR_NBASIS];
+    double cand_m[CBE_INTEGRATOR_NBASIS];
+    double cand_m_sum = 0.0;
+    int    sd_idx = -1; double sd_m = -1.0;
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        is_candidate[j] = cbe_basis_row_is_realizable(
+            pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL);
+        cand_m[j]   = is_candidate[j] ? pi.CBE_basis_moments[j][0] : 0.0;
+        cand_m_sum += cand_m[j];
+        if(is_candidate[j] && pi.CBE_basis_moments[j][0] > sd_m) {
+            sd_m = pi.CBE_basis_moments[j][0]; sd_idx = j;
+        }
+    }
+
+    /* saved[]: per-row pre-donation state for revert / bisection restore. */
+    double saved[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) saved[j][k] = pi.CBE_basis_moments[j][k];
+    }
+
+    bool single_ok = false;
+    if(sd_idx >= 0 && cand_m_sum > 0) {
+        pi.CBE_basis_moments[sd_idx][0] += res_M;
+        for(int a = 0; a < NUMDIMS; a++)
+            cbe_basis_p_a(pi.CBE_basis_moments[sd_idx], a, res_P[a]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        for(int a = 0; a < NUMDIMS; a++) {
+            for(int b = a; b < NUMDIMS; b++) {
+                cbe_basis_T_w(pi.CBE_basis_moments[sd_idx], a, b,
+                    cbe_basis_T_r(pi.CBE_basis_moments[sd_idx], a, b) + res_T[a][b]);
+            }
+        }
+#endif
+        single_ok = cbe_basis_row_is_realizable(
+            pi.CBE_basis_moments[sd_idx], CBE_REPAIR_EPS_M_REL);
+        if(!single_ok) {
+            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
+                pi.CBE_basis_moments[sd_idx][k] = saved[sd_idx][k];
+        }
+    }
+
+    double f_eff = single_ok ? 1.0 : 0.0;
+
+    if(!single_ok && cand_m_sum > 0) {
+        /* Bisection bracket: f_lo always realizable (start at 0),
+         * f_hi might not be. Initial probe at f=1. */
+        double f_lo = 0.0, f_hi = 1.0;
+
+        /* apply_at_f(f): restore all candidate rows from saved[], then add
+         * (cand_m[j] / cand_m_sum) * f * residual to each candidate. */
+        for(int probe = 0; probe < 2 + 40; probe++) {
+            double f_try;
+            if(probe == 0)      f_try = 1.0;
+            else if(probe == 1) { /* if f=1 worked, stop */
+                if(f_lo > 0.0) break;
+                f_try = 0.5;
+            } else {
+                f_try = 0.5 * (f_lo + f_hi);
+                if((f_hi - f_lo) < 1e-14) break;
+            }
+            /* Restore candidates. */
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+                if(!is_candidate[j]) continue;
+                for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
+                    pi.CBE_basis_moments[j][k] = saved[j][k];
+            }
+            /* Apply weighted share at f_try. */
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+                if(!is_candidate[j]) continue;
+                const double w = cand_m[j] / cand_m_sum;
+                pi.CBE_basis_moments[j][0] += w * f_try * res_M;
+                for(int a = 0; a < NUMDIMS; a++)
+                    cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_try * res_P[a]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+                for(int a = 0; a < NUMDIMS; a++) {
+                    for(int b = a; b < NUMDIMS; b++) {
+                        cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
+                            cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_try * res_T[a][b]);
+                    }
+                }
+#endif
+            }
+            /* Check realizability of all candidates. */
+            bool all_ok = true;
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+                if(!is_candidate[j]) continue;
+                if(!cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL)) {
+                    all_ok = false; break;
+                }
+            }
+            if(all_ok) {
+                f_lo = f_try;
+                if(f_try >= 1.0 - 1e-15) break;
+            } else {
+                f_hi = f_try;
+            }
+        }
+        /* Final: ensure state reflects f_lo (the largest realizable f). */
+        for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+            if(!is_candidate[j]) continue;
+            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
+                pi.CBE_basis_moments[j][k] = saved[j][k];
+            const double w = cand_m[j] / cand_m_sum;
+            pi.CBE_basis_moments[j][0] += w * f_lo * res_M;
+            for(int a = 0; a < NUMDIMS; a++)
+                cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_lo * res_P[a]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+            for(int a = 0; a < NUMDIMS; a++) {
+                for(int b = a; b < NUMDIMS; b++) {
+                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
+                        cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_lo * res_T[a][b]);
+                }
+            }
+#endif
+        }
+        f_eff = f_lo;
+    }
+
+    /* ----- Step 7: bounded acceptance + deterministic conservative fallback. */
+    if(f_eff < 1.0 - 1e-15) {
+        const double unabs_f = 1.0 - f_eff;
+        const double unab_M    = unabs_f * res_M;
+        const double unab_P[3] = { unabs_f*res_P[0], unabs_f*res_P[1], unabs_f*res_P[2] };
+        double abs_unab_P = 0.0;
+        for(int a = 0; a < NUMDIMS; a++) abs_unab_P += fabs(unab_P[a]);
+        double abs_unab_T = 0.0;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        double unab_T[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+        for(int a = 0; a < NUMDIMS; a++) {
+            for(int b = a; b < NUMDIMS; b++) {
+                unab_T[a][b] = unabs_f * res_T[a][b];
+                abs_unab_T  += fabs(unab_T[a][b]);
+            }
+        }
+#endif
+        const bool M_fp = (fabs(unab_M) <= CBE_REPAIR_EPS_CONS * cell_scale_M);
+        const bool P_fp = (abs_unab_P  <= CBE_REPAIR_EPS_CONS * cell_scale_P);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        const bool T_fp = (abs_unab_T  <= CBE_REPAIR_EPS_CONS * cell_scale_T);
+#else
+        const bool T_fp = true;
+#endif
+        if(!(M_fp && P_fp && T_fp)) {
+            /* Deterministic mass-positive proportional fallback (codex blocker
+             * fix 2026-06-04). Replaces the prior "concentrate the FULL
+             * unabsorbed residual on a single donor" path which (a) could
+             * leave m_donor <= 0 for large negative unab_M, and (b) silently
+             * relied on a row-local PSD projection of unbounded magnitude to
+             * clean up T.
+             *
+             * Codex round-2 correction (2026-06-04): the denominator must be
+             * the CURRENT cell mass sum (post-Step-6 donation at f_eff), NOT
+             * M_new (the pre-donation sum). At Step 7 entry the cell holds
+             *   M_cur = M_new + f_eff * res_M
+             * so applying (m_b / M_cur) * unab_M gives Sum w_j = 1 exactly
+             * and the proportional distribution adds exactly unab_M to the
+             * cell sum -> M_after = M_cur + unab_M = M_new + res_M = M0,
+             * the target. Using M_new (the pre-donation sum) instead would
+             * scale the donation by M_cur/M_new and break conservation when
+             * f_eff > 0.
+             *
+             * Proportional distribution per-row:
+             *   m_b   += (m_b / M_cur) * unab_M
+             *   p_b   += (m_b / M_cur) * unab_P
+             *   T_b   += (m_b / M_cur) * unab_T
+             * preserves Sum m_b, Sum p_b, Sum T_b EXACTLY. Mass positivity:
+             *   m_b_new = m_b * (M_cur + unab_M) / M_cur = m_b * M0 / M_cur
+             * is positive whenever M0 > 0 (Step 0 guard) AND M_cur > 0
+             * (Step 6 produces all candidate m_b > 0 by realizability, and
+             * Step 3 reset gives empties m_b = m_thresh > 0). Per-row
+             * realizability after proportional shift is NOT guaranteed -- the
+             * defensive Step 8 sweep below row-locally projects to PSD if
+             * needed. Step 8 projection touches only stress slots (preserves
+             * m_b and p_b row-locally); trace-delta is bounded by
+             *   NBASIS * CBE_SPD_RELATIVE_FLOOR * max_row_trace_central_S
+             * and is FP-scale on smooth inputs (verified empirically by the
+             * cold/warm Mac smoke; a non-FP magnitude signals upstream
+             * pathological cell state surfaced via the dT_out path). */
+            double M_cur = 0.0;
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) M_cur += pi.CBE_basis_moments[j][0];
+            if(M_cur > 0) {
+                for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+                    const double w_j = pi.CBE_basis_moments[j][0] / M_cur;
+                    pi.CBE_basis_moments[j][0] += w_j * unab_M;
+                    for(int a = 0; a < NUMDIMS; a++)
+                        cbe_basis_p_a(pi.CBE_basis_moments[j], a, w_j * unab_P[a]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+                    for(int a = 0; a < NUMDIMS; a++) {
+                        for(int b = a; b < NUMDIMS; b++) {
+                            cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
+                                cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w_j * unab_T[a][b]);
+                        }
+                    }
+#endif
+                }
+            }
+            (void)abs_unab_P; (void)abs_unab_T;   /* used only in fp-test above */
+        }
+    }
+
+    /* ----- Step 8: defensive final realizability sweep. Should not fire
+     * post Step 7 (donor was already projected). Row-local PSD projection
+     * preserves m_b individually; trace-delta accumulated into dT_local. */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+        if(cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL))
+            continue;
+        const double m_b = pi.CBE_basis_moments[j][0];
+        if(!(m_b > 0)) continue;
+        double dT_last = 0.0;
+        (void)cbe_basis_row_project_central_stress_to_PSD(
+            pi.CBE_basis_moments[j], 0.0, &dT_last);
+        dT_local += dT_last;
+    }
+#endif
+
+    if(dT_out) *dT_out = dT_local;
+}
+
+
 /* GPU-callable per-particle drift-kick update for the CBE integrator.
  * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
  * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
- * get_random_number() replaced by counter-based gpu_rng (same statistics,
- * deterministic per particle-ID + timestep + loop-domain salt).
  *
- * Wave-CBE Commit 5 (2026-05-26): the legacy if(2==2) 1D-collapse
- * stopgap is replaced by symmetric 3x3 SPD projection (cbe_spd_repair_S3x3)
- * applied AFTER the existing diagonal/Cauchy-Schwarz/determinant repair
- * chain. *dT_out (nullable) receives the sum over basis components of
- * trace_after - trace_before (>= 0 by construction); caller passes nullptr
- * to skip diagnostic bookkeeping. dP is identically 0 from this kernel
- * (SPD repair only touches stress slots [4..9]). */
+ * Wave-CBE Fix #2b (2026-06-04): the legacy in-place realizability chain
+ * (active-diagonal floor + 3D Cauchy-Schwarz off-diag + det crossnorm +
+ * SPD projection + stochastic split-largest) is replaced by a single call
+ * to cbe_repair_cell_conservative_basis_states. The 2026-06-04 absolute
+ * round-trip (nfac + frame conversion + V_new derivation) is unchanged.
+ *
+ * *dT_out (nullable) receives the sum-over-bases trace-delta from PSD
+ * projections inside the repair helper; caller passes nullptr to skip
+ * diagnostic bookkeeping. dP is identically 0 from this kernel. */
 KOKKOS_INLINE_FUNCTION
 static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
                                      double *dT_out)
@@ -1583,7 +1995,8 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      *      cbe_absolute_to_relative_row helper.
      *   6. Set pi.Vel = V_new (CBE-induced bulk velocity is now derived,
      *      NOT routed through GravAccel; gravity kicks are independent).
-     *   7. SPD projection on now-frame-consistent relative storage.
+     *   7. Conservative cell-state realizability repair via SSOT helper
+     *      cbe_repair_cell_conservative_basis_states (Fix #2b, 2026-06-04).
      *
      * The nfac rate-limit (capping per-basis |dm|/m at 0.75) is preserved
      * from the legacy operator as a robustness safeguard. The legacy
@@ -1592,13 +2005,10 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      * from the updated MMV gives Σ p_rel = 0 by construction; mass closure
      * is already enforced upstream by postgrav.
      *
-     * dT_out (nullable) accumulates the trace-delta of the SPD projection
-     * across all bases (for cbe_diagnostics.txt col-8). dP from this kernel
-     * is identically zero (SPD touches only stress slots). */
-    double dT_local = 0.0;
-    int j, k;   /* legacy loop counters still referenced by the 3D chain
-                 * and the split-largest block below */
-
+     * dT_out (nullable) accumulates the sum-over-bases trace-delta from
+     * PSD projections inside the Step 7 repair helper (for
+     * cbe_diagnostics.txt col-8). dP from this kernel is identically zero
+     * (repair preserves Σ p_rel and projection only touches stress slots). */
     /* Step 0 (preserved): nfac rate-limit on per-basis mass change. */
     double dmass_tot = 0;
     for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) dmass_tot += dt * pi.CBE_basis_moments_dt[j][0];
@@ -1667,108 +2077,12 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      * independent and apply only EXTERNAL gravitational acceleration. */
     for(int a=0;a<NUMDIMS;a++) pi.Vel[a] = V_new[a];
 
-    /* Step 7: SPD projection + legacy stress safety chain on now-frame-
-     * consistent relative storage. */
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-#if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* Active-diagonal lower clamp. */
-        for(int a=0;a<NUMDIMS;a++) {
-            const double Taa = cbe_basis_T_r(pi.CBE_basis_moments[j], a, a);
-            if(Taa < MIN_REAL_NUMBER) cbe_basis_T_w(pi.CBE_basis_moments[j], a, a, MIN_REAL_NUMBER);
-        }
-#if (NUMDIMS == 3)
-        /* Off-diagonal Cauchy-Schwarz + determinant crossnorm chain (3D only).
-         * 2D Cauchy-Schwarz on T_xy is in principle meaningful but this whole
-         * repair chain (diagonal floor + CS clamp + det test + SPD projection
-         * + split-largest) is slated for deletion in commit 5 (Fix #2b
-         * conservative-shift repair), so 4a leaves the 3D-only chain shape
-         * intact and lets the active-dim SPD projection below handle
-         * realizability in low-D. */
-        double eps_tmp = 1.e-8;
-        double xyMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][5]) * (1.-eps_tmp);
-        double xzMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][6]) * (1.-eps_tmp);
-        double yzMax = sqrt(pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][6]) * (1.-eps_tmp);
-        if(pi.CBE_basis_moments[j][7] > xyMax) {pi.CBE_basis_moments[j][7] = xyMax;}
-        if(pi.CBE_basis_moments[j][8] > xzMax) {pi.CBE_basis_moments[j][8] = xzMax;}
-        if(pi.CBE_basis_moments[j][9] > yzMax) {pi.CBE_basis_moments[j][9] = yzMax;}
-        if(pi.CBE_basis_moments[j][7] < -xyMax) {pi.CBE_basis_moments[j][7] = -xyMax;}
-        if(pi.CBE_basis_moments[j][8] < -xzMax) {pi.CBE_basis_moments[j][8] = -xzMax;}
-        if(pi.CBE_basis_moments[j][9] < -yzMax) {pi.CBE_basis_moments[j][9] = -yzMax;}
-        double crossnorm = 1;
-        double detSMatrix_Diag = pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][6];
-        double detSMatrix_Cross = 2.*pi.CBE_basis_moments[j][7]*pi.CBE_basis_moments[j][8]*pi.CBE_basis_moments[j][9]
-            - (  pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][9]*pi.CBE_basis_moments[j][9]
-               + pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][8]*pi.CBE_basis_moments[j][8]
-               + pi.CBE_basis_moments[j][6]*pi.CBE_basis_moments[j][7]*pi.CBE_basis_moments[j][7] );
-        if(detSMatrix_Diag <= 0) {
-            crossnorm=0; for(k=4;k<7;k++) {if(pi.CBE_basis_moments[j][k]<MIN_REAL_NUMBER) {pi.CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
-        } else if(detSMatrix_Diag + detSMatrix_Cross <= 0) {
-            crossnorm = (-detSMatrix_Diag * (1.-eps_tmp)) / detSMatrix_Cross;
-        }
-        if(crossnorm < 1) {for(k=7;k<10;k++) {pi.CBE_basis_moments[j][k] *= crossnorm;}}
-#endif
-        /* Wave-CBE Commit 5 (2026-05-26): SPD projection on the central
-         * stress block. Migrated to active-dim helper in commit 4a so the
-         * projection's eigenvalue floor + Jacobi rotation only operate on
-         * the active NUMDIMS-block (no fake inactive-dim floor contributing
-         * to dT_out).
-         *
-         * Wave-CBE Fix #2a (2026-05-30): raw-row wrapper, raw <-> central
-         * units bug fix preserved.
-         *
-         * Note Fix #2b will replace this entire chain (diagonal floor +
-         * Cauchy-Schwarz + det crossnorm + this SPD projection + the
-         * split-largest below) with a conservative repair operator. */
-        {
-            const double m_pi    = pi.CBE_basis_moments[j][0];
-            double eigenvalue_floor = 0.0;
-            if(m_pi > 0 && isfinite(m_pi)) {
-                /* Active-dim trace of central S = trace_R_active - v_active . v_active. */
-                double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
-                double v_dot_v = 0.0;
-                for(int a=0;a<NUMDIMS;a++) v_dot_v += v[a]*v[a];
-                const double trace_R_active  = cbe_basis_T_trace_active(
-                    pi.CBE_basis_moments[j], 1.0 / m_pi);
-                const double trace_S_central = trace_R_active - v_dot_v;
-                eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR
-                                 * DMAX(trace_S_central, MIN_REAL_NUMBER);
-            }
-            if(dT_out) {
-                double dT_basis = 0.0;
-                (void)cbe_basis_row_project_central_stress_to_PSD(
-                    pi.CBE_basis_moments[j], eigenvalue_floor, &dT_basis);
-                dT_local += dT_basis;
-            } else {
-                (void)cbe_basis_row_project_central_stress_to_PSD(
-                    pi.CBE_basis_moments[j], eigenvalue_floor, nullptr);
-            }
-        }
-#endif
-    }
-    /* split the largest basis into the smallest when one becomes degenerate */
-    double mmax=-1, mmin=1.e10*pi.Mass; int jmin=-1,jmax=-1;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    { double m=pi.CBE_basis_moments[j][0]; if(m<mmin){mmin=m;jmin=j;} if(m>mmax){mmax=m;jmax=j;} }
-    if((mmin < 1.e-5 * mmax) && (jmin >= 0) && (jmax >= 0) && (All.Time > All.TimeBegin))
-    {
-        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
-        {
-            double dq = 0.5*pi.CBE_basis_moments[jmax][k];
-            /* Random per-component perturbation on MOMENTUM slots only
-             * (k=1..NUMDIMS). Commit 4a: was hardcoded k>0 && k<4, which
-             * silently perturbed T_xx in 1D SECONDMOMENT (slot 2) and T_xx
-             * in 2D SECONDMOMENT (slot 3) as if it were a momentum
-             * component. */
-            if(k >= 1 && k <= NUMDIMS) {
-                uint64_t key = (uint64_t)pi.ID ^ ((uint64_t)jmax*65537ULL) ^ ((uint64_t)k*131071ULL);
-                uint64_t counter = ((uint64_t)All.Ti_Current << 32) ^ CBE_DRIFT_KICK_RNG_SALT;
-                dq *= 1. + 0.001*(gizmo_gpu_rand_double(key, counter) - 0.5);
-            }
-            pi.CBE_basis_moments[jmax][k] -= dq;
-            pi.CBE_basis_moments[jmin][k] += dq;
-        }
-    }
-    if(dT_out) *dT_out = dT_local;
+    /* Step 7: conservative cell-state realizability repair (Fix #2b).
+     * Replaces the legacy in-place chain (active-diagonal floor + 3D
+     * Cauchy-Schwarz off-diag + det crossnorm + SPD projection +
+     * stochastic split-largest) with the single SSOT helper defined
+     * above. Operates on the now-frame-consistent relative storage. */
+    cbe_repair_cell_conservative_basis_states(pi, dT_out);
 }
 
 /* GPU-callable per-particle post-gravity finalization for the CBE integrator.
