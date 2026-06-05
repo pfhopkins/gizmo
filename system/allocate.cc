@@ -51,11 +51,13 @@ void allocate_memory(void)
    * therefore contain NO MPI_COMM_WORLD collective: an Allreduce here would
    * deadlock against the peers parked at that barrier. An earlier draft added a
    * collective arena preflight at this point; it has been REMOVED. Arena
-   * (mymalloc) OOM now routes through mymalloc's own reviewed TEMPORARY hard
-   * path, and the UVM/STL failure below routes through a local reviewed hard
-   * path. NEITHER is acceptable as permanent -- gizmo_emergency_hold_reviewed is
-   * mitigation (print/flush/fence before MPI_Abort), not a guarantee against the
-   * Vista CG wedge. TEMP follow-up: a real graceful allocator needs a separate
+   * (mymalloc) OOM now routes through mymalloc's own emergency-hold path, and
+   * the UVM/STL failure below routes through a local emergency-hold path.
+   * NEITHER is the target -- gizmo_emergency_hold_reviewed is the SSOT last-resort
+   * (print/flush/fence, then a scancel-killable host hold; NO MPI_Abort in the
+   * default path as of 2026-06-04 `15153b17`): a safe floor, but Class-2, not
+   * graceful. TEMP follow-up (named allocator Pass-B workstream): a real graceful
+   * allocator needs a separate
    * all-rank "compute sizes/header -> allocate arrays" phase run BEFORE the
    * per-file/per-rank IO, where a collective preflight is symmetric. */
 
@@ -75,10 +77,10 @@ void allocate_memory(void)
    * NULL / throw, unlike the arena path). Accumulate ONE local failure flag
    * across all of them. Because allocate_memory() is subset/turn-called (see
    * note above), this failure is NOT checked by an MPI collective -- it routes
-   * to the single reviewed TEMPORARY hard path (TEMP_HARD_CANDIDATE_OOM) at the
+   * to the single emergency-hold path (TEMP_HARD_CANDIDATE_OOM, Class-2) at the
    * end (an earlier draft used a combined Allreduce here; removed -- it would
    * deadlock). Once the flag is set, later optional allocations are skipped
-   * (surgical; we are going to hard-abort anyway). Nothing between here and the
+   * (surgical; we are going to emergency-hold anyway). Nothing between here and the
    * final check dereferences P/CellP. An uncaught std::bad_alloc is also barred. */
   int alloc_fail_local = 0;
 

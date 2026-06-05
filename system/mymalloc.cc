@@ -385,8 +385,8 @@ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, 
   /* NOTE: unlike myfree* (void), a myrealloc* invariant violation can't safely
    * bad-stop+return: the caller would treat the returned pointer as a
    * successfully-resized buffer and write past the old size. Until the two real
-   * callers (domain.cc, mpi_util.cc) are guarded, route to the reviewed hard
-   * path. */
+   * callers (domain.cc, mpi_util.cc) are guarded, route to the emergency-hold
+   * path (Class-2; the caller-guard is the named allocator Pass-B workstream). */
   if(Nblocks == 0)
     gizmo_emergency_hold_reviewed(76879, "myrealloc: Nblocks==0 -- TEMP_HARD_CANDIDATE_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
 
