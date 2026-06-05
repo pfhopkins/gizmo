@@ -374,6 +374,13 @@ extern ALIGN(32) struct particle_data
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];      /* time-derivative of moments per basis function */
+    double CBE_basis_out_rate_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];     /* outgoing-only piece of the flux-rate per basis per slot
+                                                                                       * (mirrors CBE_basis_moments_dt's i-side deposit sign:
+                                                                                       *  stored NEGATIVE since the deposit is `-= flux[k]`).
+                                                                                       *  Aggregate-outflow limiter (commit 2) reads
+                                                                                       *  -CBE_basis_out_rate_dt[a][0] to get positive mass-out
+                                                                                       *  rate per basis. Populated but UNREAD in commit 1
+                                                                                       *  (infrastructure only; behavior unchanged). */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     /* Persistent gradient of Q = U/V (flux-frame moments), per basis, per
      * moment slot, per spatial direction. Refreshed for AGSForce-active

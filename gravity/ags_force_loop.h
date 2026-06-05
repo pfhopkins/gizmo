@@ -169,6 +169,7 @@ struct AgsForceOut {
 #if defined(CBE_INTEGRATOR)
     double AGS_vsig;              /* MAX-reduced */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double CBE_basis_out_rate_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];   /* outgoing-only piece (commit 1 infra; SUM-reduced) */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
     /* Wave-CBE Commit 3 root-found v_F diagnostic counters. Per-pair
      * updates in sidm/cbe_integrator_flux_functions.h; merged in

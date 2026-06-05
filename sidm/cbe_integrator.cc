@@ -201,7 +201,8 @@ void do_cbe_initialization(void)
          * them before each force pass. */
         for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             for(k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                P[i].CBE_basis_moments_dt[j][k] = 0;
+                P[i].CBE_basis_moments_dt[j][k]  = 0;
+                P[i].CBE_basis_out_rate_dt[j][k] = 0;
             }
         }
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)

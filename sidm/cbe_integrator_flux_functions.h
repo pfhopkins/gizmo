@@ -411,6 +411,10 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
+            /* (Outflow-ledger scatter lives in commit 2 alongside the
+             * aggregate limiter that consumes it -- mirroring `-= flux[k]`
+             * here would shift FP summation order in moments_dt without any
+             * downstream consumer in commit 1, violating receipts-unchanged.) */
             vsig = DMAX(vsig, fabs(flux_vsig_i));
         }
         if(K_j[m] > 0) {

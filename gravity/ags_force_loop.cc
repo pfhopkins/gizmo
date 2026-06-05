@@ -168,7 +168,8 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     if(accum.AGS_vsig > P[i].AGS_vsig) P[i].AGS_vsig = accum.AGS_vsig;
     for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
         for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-            P[i].CBE_basis_moments_dt[k1][k2] += accum.CBE_basis_moments_dt[k1][k2];
+            P[i].CBE_basis_moments_dt[k1][k2]  += accum.CBE_basis_moments_dt[k1][k2];
+            P[i].CBE_basis_out_rate_dt[k1][k2] += accum.CBE_basis_out_rate_dt[k1][k2];
         }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
@@ -215,7 +216,8 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
     ACCUM_MAX(AGS_vsig)
     for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
         for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-            local_accum.CBE_basis_moments_dt[k1][k2] += peer_accum.CBE_basis_moments_dt[k1][k2];
+            local_accum.CBE_basis_moments_dt[k1][k2]  += peer_accum.CBE_basis_moments_dt[k1][k2];
+            local_accum.CBE_basis_out_rate_dt[k1][k2] += peer_accum.CBE_basis_out_rate_dt[k1][k2];
         }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
@@ -292,6 +294,9 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
             max_rel = std::fmax(max_rel,
                                  rel((double)local.CBE_basis_moments_dt[k1][k2],
                                      (double)oracle.CBE_basis_moments_dt[k1][k2]));
+            max_rel = std::fmax(max_rel,
+                                 rel((double)local.CBE_basis_out_rate_dt[k1][k2],
+                                     (double)oracle.CBE_basis_out_rate_dt[k1][k2]));
         }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
@@ -466,7 +471,8 @@ void AGSForce_calc(void)
             P[ii].AGS_vsig = 0;
             for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
                 for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-                    P[ii].CBE_basis_moments_dt[k1][k2] = 0;
+                    P[ii].CBE_basis_moments_dt[k1][k2]  = 0;
+                    P[ii].CBE_basis_out_rate_dt[k1][k2] = 0;
                 }
             }
 #endif
