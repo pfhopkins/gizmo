@@ -53,7 +53,7 @@ void allocate_memory(void)
    * collective arena preflight at this point; it has been REMOVED. Arena
    * (mymalloc) OOM now routes through mymalloc's own reviewed TEMPORARY hard
    * path, and the UVM/STL failure below routes through a local reviewed hard
-   * path. NEITHER is acceptable as permanent -- gizmo_hard_abort_reviewed is
+   * path. NEITHER is acceptable as permanent -- gizmo_emergency_hold_reviewed is
    * mitigation (print/flush/fence before MPI_Abort), not a guarantee against the
    * Vista CG wedge. TEMP follow-up: a real graceful allocator needs a separate
    * all-rank "compute sizes/header -> allocate arrays" phase run BEFORE the
@@ -126,7 +126,7 @@ void allocate_memory(void)
    * Vista receipt + the all-rank-allocation-phase follow-up. */
   if(alloc_fail_local)
     {
-      gizmo_hard_abort_reviewed(1, "TEMP_HARD_CANDIDATE_OOM: UVM/STL particle allocation failed (allocate_memory subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_emergency_hold_reviewed(1, "TEMP_HARD_CANDIDATE_OOM: UVM/STL particle allocation failed (allocate_memory subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
 

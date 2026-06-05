@@ -146,7 +146,7 @@ void restart(int modus)
 		  if(!(fd = fopen(buf_bak, "r")))
 		    {
 		      printf("Restart file '%s' nor '%s' found.\n", buf, buf_bak);
-		      gizmo_hard_abort_reviewed(7870, "TEMP_HARD_CANDIDATE_IO: this rank's restart file (nor backup) found, mid per-rank groupTask read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		      gizmo_emergency_hold_reviewed(7870, "TEMP_HARD_CANDIDATE_IO: this rank's restart file (nor backup) found, mid per-rank groupTask read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		    }
 		}
 	    }
@@ -155,7 +155,7 @@ void restart(int modus)
 	      if(!(fd = fopen(buf, "w")))
 		{
 		  printf("Restart file '%s' cannot be opened.\n", buf);
-		  gizmo_hard_abort_reviewed(7878, "TEMP_HARD_CANDIDATE_IO: cannot open this rank's restart file for write, mid per-rank groupTask turn (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  gizmo_emergency_hold_reviewed(7878, "TEMP_HARD_CANDIDATE_IO: cannot open this rank's restart file for write, mid per-rank groupTask turn (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	    }
 
@@ -199,7 +199,7 @@ void restart(int modus)
 		{
 		  printf("The restart file on task=%d is not consistent with the one on task=0\n", ThisTask);
 		  fflush(stdout);
-		  gizmo_hard_abort_reviewed(16, "TEMP_HARD_CANDIDATE_IO: restart file inconsistent with task-0 (per-rank, before in()/byten reads; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  gizmo_emergency_hold_reviewed(16, "TEMP_HARD_CANDIDATE_IO: restart file inconsistent with task-0 (per-rank, before in()/byten reads; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 
 	      /* allocate_memory() is subset/turn-called here (inside the per-rank
@@ -215,7 +215,7 @@ void restart(int modus)
 	    {
 	      printf("it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", NumPart / (((double) All.TotNumPart) / NTask));
 	      printf("fatal error\n");
-	      gizmo_hard_abort_reviewed(22, "TEMP_HARD_CANDIDATE_IO: PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+	      gizmo_emergency_hold_reviewed(22, "TEMP_HARD_CANDIDATE_IO: PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	    }
 
 	  if(modus)		/* read */
@@ -234,7 +234,7 @@ void restart(int modus)
 		{
 		  printf("GAS: it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", N_gas / (((double) All.TotN_gas) / NTask));
 		  printf("fatal error\n");
-		  gizmo_hard_abort_reviewed(222, "TEMP_HARD_CANDIDATE_IO: GAS PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  gizmo_emergency_hold_reviewed(222, "TEMP_HARD_CANDIDATE_IO: GAS PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
@@ -332,7 +332,7 @@ void restart(int modus)
 		  printf
 		    ("Tree storage: it seems you have reduced(!) 'PartAllocFactor' below the value needed to load the restart file (task=%d). "
 		     "Numnodestree=%d  MaxNodes=%d\n", ThisTask, Numnodestree, MaxNodes);
-		  gizmo_hard_abort_reviewed(221, "TEMP_HARD_CANDIDATE_IO: tree storage PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+		  gizmo_emergency_hold_reviewed(221, "TEMP_HARD_CANDIDATE_IO: tree storage PartAllocFactor reduced below restart requirement, mid per-rank read (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 		}
 
 	      byten(Nodes_base, Numnodestree * sizeof(struct NODE), modus);

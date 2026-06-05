@@ -786,9 +786,12 @@ void run(void);
  * failed object, mutating a table/global with the invalid value, or
  * launching invalid device work (else add a tiny local return/break).
  *
- * gizmo_hard_abort_reviewed() is the INTENDED SSOT hard-abort home (not yet
- * the sole MPI_Abort site until Stage 1c/1d convert the legacy macros + mesh
- * naked aborts). Use ONLY for the rare audited cases where no collective poll
+ * gizmo_emergency_hold_reviewed() is the SSOT last-resort termination home. As of
+ * 2026-06-04 its DEFAULT path no longer calls MPI_Abort (print + best-effort fence
+ * + controlled scancel-killable host hold; MPI_Abort only behind the env-gated
+ * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG). It is a Vista GPU quarantine, NOT the
+ * target -- prefer converting the caller to graceful controlled-stop + poll.
+ * Use ONLY for the rare audited cases where no collective poll
  * is reachable: mid-protocol MPI transport corruption, and residual incidental
  * allocator capacity failures with no preflight coverage. NOTE on allocation:
  * this is NOT a blanket "allocation failure = hard-abort" rule — large
@@ -811,7 +814,7 @@ int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
-[[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
 void savepositions(int num);
 double my_second(void);
@@ -1057,5 +1060,5 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
-void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (reviewed hard-abort path) */
+void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (emergency-hold path) */
 void gizmo_gpu_sync_all(void);

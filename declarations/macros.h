@@ -147,18 +147,20 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    [Stage 1d flip 2026-06-03] */
 void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
-[[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
 
-/* terminate -> reviewed internal-invariant hard path (NOT soft). Its call sites
-   are internal-invariant asserts inside MPI-collective code (parallel sort,
-   mpi_util, fof, tree/drift, prediction); a returning soft bad-stop there would
-   manufacture a subset/turn deadlock. Routes to the SSOT reviewed hard abort
-   (the sole sanctioned MPI_Abort site, in core/run.cc). [Stage 1d flip 2026-06-03] */
+/* terminate -> reviewed internal-invariant emergency-hold path (NOT soft). Its
+   call sites are internal-invariant asserts inside MPI-collective code (parallel
+   sort, mpi_util, fof, tree/drift, prediction); a returning soft bad-stop there
+   would manufacture a subset/turn deadlock. Routes to the SSOT
+   gizmo_emergency_hold_reviewed (core/run.cc) whose DEFAULT path is a
+   scancel-killable hold, NOT MPI_Abort (which is now env-gated debug-only).
+   [Stage 1d flip 2026-06-03; SSOT no-MPI_Abort 2026-06-04 `15153b17`] */
 #define terminate(x) do { \
     char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; \
     snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'", ThisTask, __FUNCTION__, __FILE__, __LINE__, (x)); \
-    gizmo_hard_abort_reviewed(1, termbuf, __FILE__, __LINE__, __FUNCTION__); \
+    gizmo_emergency_hold_reviewed(1, termbuf, __FILE__, __LINE__, __FUNCTION__); \
 } while(0)
 
 /* ---- GPU portability layer ----

@@ -1602,7 +1602,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         "(qi=%d). Transport corruption?\n",
                         rank, Spec::loop_name, env.origin_rank, p, qi);
                 fflush(stderr);
-                gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
             }
             peer_actives.push_back(env.active);
             peer_provenance.push_back({p, qi, env.origin_slot, env.origin_rank});
@@ -1796,7 +1796,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                     rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                             fflush(stderr);
-                            gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                            gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                         }
                         const int slot = re.origin_slot;
                         if (slot < 0 || slot >= N) {
@@ -1804,7 +1804,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "dual reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                     rank, Spec::loop_name, slot, N, p);
                             fflush(stderr);
-                            gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                            gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                         }
                         Spec::merge_accum(accums_out[slot], re.accum_prod);
                         Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
@@ -1851,7 +1851,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                 rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                         fflush(stderr);
-                        gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                        gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                     }
                     const int slot = re.origin_slot;
                     if(slot < 0 || slot >= N) {
@@ -1859,7 +1859,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                 rank, Spec::loop_name, slot, N, p);
                         fflush(stderr);
-                        gizmo_hard_abort_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                        gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
                     }
                     Spec::merge_accum(accums_out[slot], re.accum);
                 }
@@ -2130,23 +2130,23 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
          * d_accums[aa] to args.active_list[aa]). Fail loud always. */
         const nlr_external_csr *ec = args.external_csr;
         if(Spec::sidx_cache_kind != SidxCacheKind::GasOnly) {
-            gizmo_hard_abort_reviewed(7300, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR contract violation (requires GasOnly cache); soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR injection requires GasOnly cache */
+            gizmo_emergency_hold_reviewed(7300, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR contract violation (requires GasOnly cache); soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR injection requires GasOnly cache */
         }
         if(ec->num_active != N) {
-            gizmo_hard_abort_reviewed(7301, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR num_active mismatch; soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR num_active mismatch with args */
+            gizmo_emergency_hold_reviewed(7301, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR num_active mismatch; soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR num_active mismatch with args */
         }
-        if(!ec->active_indices) gizmo_hard_abort_reviewed(7302, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null active_indices; soft continuation would deref null at 2144", __FILE__, __LINE__, __FUNCTION__);
-        if(!ec->offsets)        gizmo_hard_abort_reviewed(7303, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null offsets; soft continuation would deref null offsets", __FILE__, __LINE__, __FUNCTION__);
-        if(ec->total_pairs < 0) gizmo_hard_abort_reviewed(7304, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR negative total_pairs", __FILE__, __LINE__, __FUNCTION__);
-        if(ec->total_pairs > 0 && !ec->neighbors) gizmo_hard_abort_reviewed(7305, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null neighbors with total_pairs>0", __FILE__, __LINE__, __FUNCTION__);
-        if(N > 0 && ec->offsets[0] != 0)           gizmo_hard_abort_reviewed(7306, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[0]!=0", __FILE__, __LINE__, __FUNCTION__);
-        if(N > 0 && ec->offsets[N] != ec->total_pairs) gizmo_hard_abort_reviewed(7307, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[N]!=total_pairs", __FILE__, __LINE__, __FUNCTION__);
+        if(!ec->active_indices) gizmo_emergency_hold_reviewed(7302, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null active_indices; soft continuation would deref null at 2144", __FILE__, __LINE__, __FUNCTION__);
+        if(!ec->offsets)        gizmo_emergency_hold_reviewed(7303, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null offsets; soft continuation would deref null offsets", __FILE__, __LINE__, __FUNCTION__);
+        if(ec->total_pairs < 0) gizmo_emergency_hold_reviewed(7304, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR negative total_pairs", __FILE__, __LINE__, __FUNCTION__);
+        if(ec->total_pairs > 0 && !ec->neighbors) gizmo_emergency_hold_reviewed(7305, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null neighbors with total_pairs>0", __FILE__, __LINE__, __FUNCTION__);
+        if(N > 0 && ec->offsets[0] != 0)           gizmo_emergency_hold_reviewed(7306, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[0]!=0", __FILE__, __LINE__, __FUNCTION__);
+        if(N > 0 && ec->offsets[N] != ec->total_pairs) gizmo_emergency_hold_reviewed(7307, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[N]!=total_pairs", __FILE__, __LINE__, __FUNCTION__);
         /* Row order MUST match args.active_list elementwise — otherwise
          * the kernel accumulates for ec->active_indices[aa] but the host
          * writeback re-applies d_accums[aa] to args.active_list[aa]. */
         for(int aa = 0; aa < N; aa++) {
-            if(ec->active_indices[aa] != args.active_list[aa]) gizmo_hard_abort_reviewed(7308, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR row order != active_list (would mis-apply writeback)", __FILE__, __LINE__, __FUNCTION__);
-            if(ec->offsets[aa+1] < ec->offsets[aa])            gizmo_hard_abort_reviewed(7309, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR non-monotonic offsets", __FILE__, __LINE__, __FUNCTION__);
+            if(ec->active_indices[aa] != args.active_list[aa]) gizmo_emergency_hold_reviewed(7308, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR row order != active_list (would mis-apply writeback)", __FILE__, __LINE__, __FUNCTION__);
+            if(ec->offsets[aa+1] < ec->offsets[aa])            gizmo_emergency_hold_reviewed(7309, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR non-monotonic offsets", __FILE__, __LINE__, __FUNCTION__);
         }
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         nlr_stage_external_csr_into_gnl(ec, &gnl);
@@ -2710,7 +2710,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                     (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                     s_np0, NumPart);
             fflush(stderr);
-            gizmo_hard_abort_reviewed(81036, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(81036, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
 
@@ -3019,7 +3019,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_b()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_hard_abort_reviewed(81209, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode B); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(81209, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode B); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
     }
 
     ctx.P         = args.P;
@@ -3051,7 +3051,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_hard_abort_reviewed(81210, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode A); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(81210, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode A); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
     }
     /* Arena must already have been acquired (codex 2c.2 strict lifecycle). */
     if (!arena_acquired) {
@@ -3062,7 +3062,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_hard_abort_reviewed(81211, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-A ctx init before arena acquired; soft continuation binds ctx.P to an unacquired arena (bad device launch)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(81211, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-A ctx init before arena acquired; soft continuation binds ctx.P to an unacquired arena (bad device launch)", __FILE__, __LINE__, __FUNCTION__);
     }
 
     /* Bind to arena-resident P_gpu / CellP_gpu. Use the driver's
@@ -3090,7 +3090,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_hard_abort_reviewed(81212, "TEMP_HARD_CANDIDATE_INTERNAL: arena already acquired (single-acquire-per-call contract violated)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(81212, "TEMP_HARD_CANDIDATE_INTERNAL: arena already acquired (single-acquire-per-call contract violated)", __FILE__, __LINE__, __FUNCTION__);
     }
 
     /* === (1) Imported-ghost prep ONCE per call (codex 2c.2-fix + 2c.3 step 9) ===
@@ -4284,7 +4284,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                      * offending rank reaches here while peers proceed into the
                      * ghost-exchange collectives, so a return would deadlock.
                      * Internal partition-invariant violation; reviewed hard. */
-                    gizmo_hard_abort_reviewed(81215, "TEMP_HARD_CANDIDATE_INTERNAL: duplicate particle index across subgroups (asymmetric local check; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                    gizmo_emergency_hold_reviewed(81215, "TEMP_HARD_CANDIDATE_INTERNAL: duplicate particle index across subgroups (asymmetric local check; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
                 }
             }
         }
@@ -4327,7 +4327,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 Spec::loop_name, (int)path);
             fflush(stderr);
         }
-        gizmo_hard_abort_reviewed(81208, "TEMP_HARD_CANDIDATE_INTERNAL: unhandled dispatch path; soft continuation would init ctx_oracle on a bad path", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(81208, "TEMP_HARD_CANDIDATE_INTERNAL: unhandled dispatch path; soft continuation would init ctx_oracle on a bad path", __FILE__, __LINE__, __FUNCTION__);
     }
 
     /* ===== Independent ctx_oracle init (step 2c.4) =====
@@ -4566,7 +4566,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                             Spec::loop_name, sg, drv.iter_index);
                         fflush(stderr);
                     }
-                    gizmo_hard_abort_reviewed(81202, "TEMP_HARD_CANDIDATE_INTERNAL: Brute_Oracle as production path; soft continuation runs after_iter on stale accum (bad mutation + writeback)", __FILE__, __LINE__, __FUNCTION__);
+                    gizmo_emergency_hold_reviewed(81202, "TEMP_HARD_CANDIDATE_INTERNAL: Brute_Oracle as production path; soft continuation runs after_iter on stale accum (bad mutation + writeback)", __FILE__, __LINE__, __FUNCTION__);
                     break;
             }
         }
@@ -4635,7 +4635,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                                 drv.iter_index, sg, slot, i);
                             fflush(stderr);
                         }
-                        gizmo_hard_abort_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
+                        gizmo_emergency_hold_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
                 }
             }
             drv.active_set_size[sg]     = write_idx;
@@ -4686,7 +4686,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                                     drv.iter_index, sg, slot, i);
                                 fflush(stderr);
                             }
-                            gizmo_hard_abort_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
+                            gizmo_emergency_hold_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
                     }
                 }
                 drv.active_set_oracle_size[sg] = write_idx_o;
@@ -4956,7 +4956,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                 s_np0, NumPart);
             fflush(stderr);
-            gizmo_hard_abort_reviewed(81213, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B iterative tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(81213, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B iterative tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
     /* Driver destructor frees per-subgroup UVM allocations on scope exit. */

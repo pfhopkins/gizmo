@@ -1910,7 +1910,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
         break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(213, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(213, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 
@@ -2258,7 +2258,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(214, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(214, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 
@@ -2558,7 +2558,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(215, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(215, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
     return values;
@@ -2801,11 +2801,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(216, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(216, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 
-    gizmo_hard_abort_reviewed(212, "TEMP_HARD_CANDIDATE_IO: unreachable end of get_particles_in_block (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+    gizmo_emergency_hold_reviewed(212, "TEMP_HARD_CANDIDATE_IO: unreachable end of get_particles_in_block (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
     return 0;
 }
 
@@ -3922,7 +3922,7 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(217, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(217, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 }
@@ -4362,7 +4362,7 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             strcpy(buf, "DynamicErrorDefault");
             break;
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(218, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(218, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 }
@@ -4504,7 +4504,7 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(!(fd = fopen(fname, "w")))
             {
                 printf("can't open file `%s' for writing snapshot.\n", fname);
-                gizmo_hard_abort_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open snapshot file for writing (per-rank writer; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_emergency_hold_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open snapshot file for writing (per-rank writer; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
             }
 
             if(All.SnapFormat == 2)
@@ -5366,7 +5366,7 @@ size_t my_fwrite(void *ptr, size_t size, size_t nmemb, FILE * stream)
         {
             printf("I/O error (fwrite) on task=%d has occured: %s\n", ThisTask, strerror(errno));
             fflush(stdout);
-            gizmo_hard_abort_reviewed(777, "TEMP_HARD_CANDIDATE_IO: my_fwrite I/O error (per-rank, deep in write loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(777, "TEMP_HARD_CANDIDATE_IO: my_fwrite I/O error (per-rank, deep in write loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
     else {nwritten = 0;}
@@ -5389,7 +5389,7 @@ size_t my_fread(void *ptr, size_t size, size_t nmemb, FILE * stream)
         if(feof(stream)) {printf("I/O error (fread) on task=%d has occured: end of file\n", ThisTask);}
             else {printf("I/O error (fread) on task=%d has occured: %s\n", ThisTask, strerror(errno));}
         fflush(stdout);
-        gizmo_hard_abort_reviewed(778, "TEMP_HARD_CANDIDATE_IO: my_fread I/O error (per-rank, deep in read loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(778, "TEMP_HARD_CANDIDATE_IO: my_fread I/O error (per-rank, deep in read loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
     return nread;
 }

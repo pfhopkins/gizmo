@@ -705,7 +705,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_LASTENTRY:
-            gizmo_hard_abort_reviewed(220, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY in empty_read_buffer (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(220, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY in empty_read_buffer (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
             break;
     }
 }
@@ -743,7 +743,7 @@ void read_file(char *fname, int readTask, int lastTask)
             if(!(fd = fopen(fname, "r")))
             {
                 printf("can't open file `%s' for reading initial conditions.\n", fname);
-                gizmo_hard_abort_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open IC file on readTask (mid-P2P read; peers blocked in MPI_Recv -- no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_emergency_hold_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open IC file on readTask (mid-P2P read; peers blocked in MPI_Recv -- no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
             }
 
 
@@ -764,7 +764,7 @@ void read_file(char *fname, int readTask, int lastTask)
             {
                 printf("incorrect header format\n");
                 fflush(stdout);
-                gizmo_hard_abort_reviewed(890, "TEMP_HARD_CANDIDATE_IO: incorrect IC header format on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_emergency_hold_reviewed(890, "TEMP_HARD_CANDIDATE_IO: incorrect IC header format on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
                 /* Probable error is wrong size of fill[] in header file. Needs to be 256 bytes in total. */
             }
         }
@@ -801,13 +801,13 @@ void read_file(char *fname, int readTask, int lastTask)
     if(header.flag_doubleprecision == 0)
     {
         if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);}
-        gizmo_hard_abort_reviewed(11, "TEMP_HARD_CANDIDATE_IO: IC single-precision but compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(11, "TEMP_HARD_CANDIDATE_IO: IC single-precision but compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
     }
 #else
     if(header.flag_doubleprecision)
     {
         if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);}
-        gizmo_hard_abort_reviewed(10, "TEMP_HARD_CANDIDATE_IO: IC double-precision but not compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(10, "TEMP_HARD_CANDIDATE_IO: IC double-precision but not compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
     }
 #endif
     /* NOTE: no bad-stop poll here. read_file() runs on a SUBSET of ranks per
@@ -861,7 +861,7 @@ void read_file(char *fname, int readTask, int lastTask)
         if(!(CommBuffer = mymalloc("CommBuffer", bytes)))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
-            gizmo_hard_abort_reviewed(2, "TEMP_HARD_CANDIDATE_OOM: CommBuffer allocation failed (read_file subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(2, "TEMP_HARD_CANDIDATE_OOM: CommBuffer allocation failed (read_file subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
 
         if(RestartFlag >= 2)
@@ -918,7 +918,7 @@ void read_file(char *fname, int readTask, int lastTask)
             {
                 printf("Not enough space on task=%d for gas/fluid cells (space for %d, need at least %lld)\n", ThisTask, All.MaxPartGas, N_gas + n_for_this_task);
                 fflush(stdout);
-                gizmo_hard_abort_reviewed(172, "TEMP_HARD_CANDIDATE_IO: not enough space for gas cells on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_emergency_hold_reviewed(172, "TEMP_HARD_CANDIDATE_IO: not enough space for gas cells on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
             }
         }
 
@@ -929,7 +929,7 @@ void read_file(char *fname, int readTask, int lastTask)
     {
         printf("Not enough space on task=%d (space for %d, need at least %lld)\n", ThisTask, All.MaxPart, NumPart + nall);
         fflush(stdout);
-        gizmo_hard_abort_reviewed(173, "TEMP_HARD_CANDIDATE_IO: not enough space on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(173, "TEMP_HARD_CANDIDATE_IO: not enough space on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
     memmove(&P[N_gas + nall], &P[N_gas], (NumPart - N_gas) * sizeof(struct particle_data));
@@ -1147,7 +1147,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                 if(NumPart + n_for_this_task > All.MaxPart)
                                 {
                                     printf("too many particles. %d %lld %d\n", NumPart, n_for_this_task, All.MaxPart);
-                                    gizmo_hard_abort_reviewed(1313, "TEMP_HARD_CANDIDATE_IO: too many particles mid per-type P2P distribution loop (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                                    gizmo_emergency_hold_reviewed(1313, "TEMP_HARD_CANDIDATE_IO: too many particles mid per-type P2P distribution loop (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
                                 }
 
 
@@ -1241,7 +1241,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                                      "If the IC is HDF5-compressed, the linked HDF5 library is likely "
                                                      "missing the required filter (e.g. deflate); aborting rather than "
                                                      "continuing with uninitialized particle data.", buf, type);
-                                            gizmo_hard_abort_reviewed(1888, ic_read_errmsg, __FILE__, __LINE__, __FUNCTION__); /* TEMP_HARD_CANDIDATE_IO: H5Dread fail on readTask before MPI_Ssend; peers blocked in MPI_Recv */
+                                            gizmo_emergency_hold_reviewed(1888, ic_read_errmsg, __FILE__, __LINE__, __FUNCTION__); /* TEMP_HARD_CANDIDATE_IO: H5Dread fail on readTask before MPI_Ssend; peers blocked in MPI_Recv */
                                           }
                                         H5Tclose(hdf5_datatype);
                                         H5Sclose(hdf5_dataspace_in_memory);
@@ -1286,7 +1286,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                 printf("Task=%d   blocknr=%d  blksize1=%d  blksize2=%d\n", ThisTask, bnr, blksize1, blksize2);
                                 if(blocknr == IO_ID) {printf("Possible mismatch of 32bit and 64bit ID's in IC file and GIZMO compilation !\n");}
                                 fflush(stdout);
-                                gizmo_hard_abort_reviewed(1889, "TEMP_HARD_CANDIDATE_IO: block-size mismatch on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                                gizmo_emergency_hold_reviewed(1889, "TEMP_HARD_CANDIDATE_IO: block-size mismatch on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
                             }
                         }
                 }
@@ -1551,7 +1551,7 @@ void find_block(char *label, FILE * fd)
         if(blksize != 8)
         {
             printf("Incorrect Format (blksize=%llu)!\n", (unsigned long long)blksize);
-            gizmo_hard_abort_reviewed(1891, "TEMP_HARD_CANDIDATE_IO: incorrect block format in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_emergency_hold_reviewed(1891, "TEMP_HARD_CANDIDATE_IO: incorrect block format in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
         else
         {
@@ -1573,6 +1573,6 @@ void find_block(char *label, FILE * fd)
     {
         printf("Block '%c%c%c%c' not found !\n", label[0], label[1], label[2], label[3]);
         fflush(stdout);
-        gizmo_hard_abort_reviewed(1890, "TEMP_HARD_CANDIDATE_IO: block not found in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(1890, "TEMP_HARD_CANDIDATE_IO: block not found in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 }

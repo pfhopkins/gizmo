@@ -510,7 +510,7 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
         printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
                new_cap, sizeof(struct LETNodeWire),
                (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
-        gizmo_hard_abort_reviewed(90000060, "TEMP_HARD_CANDIDATE_OOM: LET wire-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914010)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(90000060, "TEMP_HARD_CANDIDATE_OOM: LET wire-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914010)", __FILE__, __LINE__, __FUNCTION__);
     }
     *buf = nb;
     *capacity = new_cap;
@@ -525,7 +525,7 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     if(!nb)
     {
         printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
-        gizmo_hard_abort_reviewed(90000061, "TEMP_HARD_CANDIDATE_OOM: LET header-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914011)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(90000061, "TEMP_HARD_CANDIDATE_OOM: LET header-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914011)", __FILE__, __LINE__, __FUNCTION__);
     }
     *buf = nb;
     *capacity = new_cap;
@@ -980,7 +980,7 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
                    "is documented in handoff_step13_phase9_locked.md but not implemented.)\n",
                    Numforeignnodes, recv_count_total, MaxForeignNodes, All.LETAllocFactor);
         }
-        gizmo_hard_abort_reviewed(90000062, "TEMP_HARD_CANDIDATE_OOM: LET unpack overflow (Numforeignnodes+recv > MaxForeignNodes); continuing OOB-writes foreign-node arrays and corrupts the tree walk (no safe drain); original endrun(914020)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_emergency_hold_reviewed(90000062, "TEMP_HARD_CANDIDATE_OOM: LET unpack overflow (Numforeignnodes+recv > MaxForeignNodes); continuing OOB-writes foreign-node arrays and corrupts the tree walk (no safe drain); original endrun(914020)", __FILE__, __LINE__, __FUNCTION__);
     }
 
     int node_off = 0;     /* running offset into recv_buf (per-sender) */
@@ -1241,7 +1241,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             printf("LET finalize FATAL: foreign topleaf t=%d owner=%d has out-of-range "
                    "DomainNodeIndex=%d (local node range [%d,%d)).\n",
                    t, DomainTask[t], no, All.MaxPart, All.MaxPart + MaxNodes);
-            fflush(stdout); gizmo_hard_abort_reviewed(90000063, "TEMP_HARD_CANDIDATE_INTERNAL: foreign topleaf DomainNodeIndex out of local node range; next line derefs Nodes[no] (invalid LET, bad deref before poll); original endrun(914050)", __FILE__, __LINE__, __FUNCTION__);
+            fflush(stdout); gizmo_emergency_hold_reviewed(90000063, "TEMP_HARD_CANDIDATE_INTERNAL: foreign topleaf DomainNodeIndex out of local node range; next line derefs Nodes[no] (invalid LET, bad deref before poll); original endrun(914050)", __FILE__, __LINE__, __FUNCTION__);
         }
         const long long nn = Nodes[no].u.d.nextnode;
         if(nn < pseudo_lo || nn >= pseudo_hi) continue;  /* already redirected */
@@ -1265,7 +1265,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
                    "the LET must be complete. (rank=%d)\n",
                    t, DomainTask[t], no, (int)nn, mass, npart, (double)Nodes[no].len,
                    Nodes[no].u.d.sibling, ThisTask);
-            fflush(stdout); gizmo_hard_abort_reviewed(90000064, "TEMP_HARD_CANDIDATE_INTERNAL: non-empty foreign topleaf left unredirected; GPU gravity walk would read incomplete LET state (no safe drain); original endrun(914051)", __FILE__, __LINE__, __FUNCTION__);
+            fflush(stdout); gizmo_emergency_hold_reviewed(90000064, "TEMP_HARD_CANDIDATE_INTERNAL: non-empty foreign topleaf left unredirected; GPU gravity walk would read incomplete LET state (no safe drain); original endrun(914051)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
     if(n_patched > 0 && gizmo_verbose_diag()) {

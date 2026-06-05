@@ -145,8 +145,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * As of 2026-06-04 the DEFAULT path no longer calls MPI_Abort (MPI_Abort wedges
  * GPU nodes on Vista -> SLURM CG-stuck -> reboots). `grep MPI_Abort` now finds
  * MPI_Abort here ONLY inside the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG
- * debug branch. The function is still named gizmo_hard_abort_reviewed pending a
- * separate mechanical rename to gizmo_emergency_hold_reviewed.
+ * debug branch.
  *
  * Use ONLY for the rare audited cases where a graceful bad-stop cannot reach
  * a collective poll (mid-protocol MPI transport corruption; residual incidental
@@ -169,7 +168,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design /
  * STATE_2026-06-04_stage4_pass_a §9a.
  * ------------------------------------------------------------------------- */
-[[noreturn]] void gizmo_hard_abort_reviewed(int code, const char *reason,
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func)
 {
     char buf[MAX_PATH_BUFFERSIZE_TOUSE];
