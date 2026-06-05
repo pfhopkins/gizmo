@@ -387,25 +387,22 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * pairing split (gradient + limiter match on Q_cell; flux matches on
      * Q_face), both via the same SSOT cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
-    /* Fix #4 + AGS_vsig gating (codex 2026-06-03): call HLLC for every
-     * K>0 basis (no external θ gate). HLLC returns zero flux for inactive
-     * branches (u_out ≤ −c_x/3) and the participation gate is implicit.
-     * AGS_vsig is gated by NONZERO FLUX rather than by gate-active — a
-     * zero-flux F=0 vacuum branch must NOT contribute to vsig (would
-     * otherwise pollute the CFL with spurious wave speed from a no-flux
-     * participation).
-     *
-     * Mass-rate flux[0] is the universal indicator of nonzero flux: the
-     * HLLC vacuum F=0 branch returns exactly zero for ALL of mass,
-     * momentum, and stress slots (see cbe_flux_hllc_vacuum's F=0 branch
-     * in cbe_integrator_functions.h). The active F0/F1 branches both
-     * have F_m = rho * (u_out or (rho/4)(3 u/c + 1) c) — strictly
-     * nonzero for finite rho and u_out > -c_x/3. So fabs(flux[0]) > 0
-     * is sufficient AND necessary to identify a participating basis.
-     * Should the flux semantics ever change to allow zero F_m with
-     * nonzero F_p / F_T (e.g., a future Gaussian-flux Fix #12 variant
-     * with sub-noise mass rate but resolved momentum carrier), revisit
-     * this gate to check all flux slots. */
+    /* Fix #4 + AGS_vsig gating (codex 2026-06-04 Fix #10): call HLLC for every
+     * K>0 basis (no external θ gate). HLLC returns zero mass-flux for the
+     * vacuum branch (u_out ≤ −c_x/3); the participation gate is implicit
+     * in the FLUX (no mass/momentum/stress crosses the face from a no-
+     * outflow basis at this step). HOWEVER for the SIGNAL-SPEED estimate
+     * that drives AGS_vsig and dt_cour, every rho-active basis contributes
+     * its |u_out| + c_x regardless of which HLLC branch it sits in. The
+     * prior `fabs(flux[0]) > 0` gate was too restrictive (codex/Claude
+     * 2026-06-04 Fix #10 probe Case C demonstrated that a high-S scratch
+     * basis sitting in F=0 on one side, with no comparable basis on the
+     * matched j-side at the same raw index, would silently miss a 37x
+     * contribution to vsig — exactly Phil's "never exclude scratch S from
+     * the CBE signal speed" failure mode). The kinematic |u_out| + c_x
+     * IS a real causality constraint on the next-step timestep: the basis
+     * can rotate into F0/F1 during the next step. Only truly inactive
+     * K==0 / rho-clamped rows are excluded. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const int i_m = matching_basis_i_for_basis_in_j[m];
         if(K_i[m] > 0) {
@@ -414,9 +411,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
-            if(fabs(flux[0]) > 0.0) {
-                vsig = DMAX(vsig, fabs(flux_vsig_i));
-            }
+            vsig = DMAX(vsig, fabs(flux_vsig_i));
         }
         if(K_j[m] > 0) {
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
@@ -424,9 +419,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
             }
-            if(fabs(flux[0]) > 0.0) {
-                vsig = DMAX(vsig, fabs(flux_vsig_j));
-            }
+            vsig = DMAX(vsig, fabs(flux_vsig_j));
         }
     }
     vsig /= Face_Area_Norm * All.cf_atime;
