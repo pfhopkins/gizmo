@@ -1327,6 +1327,19 @@ void cbe_clamp_face_Q(
     long long *rho_clamp_count,
     long long *S_clamp_count)
 {
+#if defined(CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD) && defined(CBE_INTEGRATOR_SECONDMOMENT)
+    /* Fix #9 strict post-clamp face-state realizability guard. Default OFF;
+     * enabled by adding CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD to Config.sh.
+     * Only meaningful under SECONDMOMENT -- without stress storage,
+     * realizability reduces to mass-positivity which the rho>MIN_REAL_NUMBER
+     * branch already enforces. Surfaces post-clamp non-realizability that
+     * survives the rho-zero branch + the eigenvalue-floor projection --
+     * with the cone limiter (Fix #6) upstream this should NEVER fire at
+     * non-roundoff amplitude. printf-only + once-per-call latch (the print
+     * is device-safe; fflush/endrun are intentionally NOT used here per
+     * codex 2026-06-04 and feedback_code_facts #10). */
+    bool printed_failure = false;
+#endif
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface[m][0] <= MIN_REAL_NUMBER) {
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) Qface[m][k] = 0.0;
@@ -1352,6 +1365,29 @@ void cbe_clamp_face_Q(
                                                             &dT_dump)
                && S_clamp_count) {
                 (*S_clamp_count)++;
+            }
+        }
+#endif
+#if defined(CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD) && defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* Two-tier tolerant check on rho-active rows (rho-clamped rows were
+         * zeroed above and trivially pass). Strict eps=0 then tolerant eps=
+         * CBE_REPAIR_EPS_M_REL. Only fail-of-both is reported (filters FP
+         * eigenvalue noise). */
+        if(!printed_failure && Qface[m][0] > MIN_REAL_NUMBER) {
+            if(!cbe_basis_row_is_realizable(Qface[m], /*eps_tol=*/ 0.0)
+               && !cbe_basis_row_is_realizable(Qface[m], CBE_REPAIR_EPS_M_REL)) {
+                const double m_face_g = Qface[m][0];
+                const double inv_m_g  = 1.0 / m_face_g;
+                double v_g[3]; cbe_basis_v_load_3(Qface[m], v_g);
+                double v_dot_v_g = 0.0;
+                for(int a=0; a<NUMDIMS; a++) v_dot_v_g += v_g[a]*v_g[a];
+                const double trR_g  = cbe_basis_T_trace_active(Qface[m], inv_m_g);
+                const double trSc_g = trR_g - v_dot_v_g;
+                /* Device-safe printf; no fflush/endrun (host-only fns) here. */
+                printf("[CBE strict face guard (Fix #9)] post-clamp non-realizable: "
+                       "basis=%d m=%.3e trace_S_central=%.3e v.v=%.3e\n",
+                       m, m_face_g, trSc_g, v_dot_v_g);
+                printed_failure = true;
             }
         }
 #endif
