@@ -137,7 +137,10 @@ void savepositions(int num)
             {
                 write_file(buf, primaryTask, lastTask);
             }
-            MPI_Barrier(MPI_COMM_WORLD);
+            /* All-rank per-turn boundary: a write_file fault (failed open / I/O error) set a soft bad-stop on the
+             * writeTask; this poll (Allreduce = barrier-equivalent sync) collects it and finalizes cleanly before
+             * the next turn, in place of the closing MPI_Barrier. */
+            gizmo_exit_bad_stop_if_requested("io:write_file_turn");
         }
 
         myfree(CommBuffer);
@@ -1910,7 +1913,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
         break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(213, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(213);   /* soft bad-stop: unreachable IO_LASTENTRY (internal: unknown iofield); buffer left unfilled, drains at write-turn poll */
             break;
     }
 
@@ -2258,7 +2261,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(214, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(214);   /* soft bad-stop: unreachable IO_LASTENTRY; nonzero sentinel so caller's bufsize/bytes does not divide by zero */
+            bytes_per_blockelement = 1;
             break;
     }
 
@@ -2558,7 +2562,8 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(215, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(215);   /* soft bad-stop: unreachable IO_LASTENTRY; nonzero sentinel so downstream sizing does not divide by zero */
+            values = 1;
             break;
     }
     return values;
@@ -2801,11 +2806,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(216, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
-            break;
+            endrun(216);   /* soft bad-stop: unreachable IO_LASTENTRY; return 0 (no particles in unknown block), drains at next poll */
+            return 0;
     }
 
-    gizmo_emergency_hold_reviewed(212, "TEMP_HARD_CANDIDATE_IO: unreachable end of get_particles_in_block (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+    endrun(212);   /* soft bad-stop: unreachable end of get_particles_in_block (internal: unknown iofield) */
     return 0;
 }
 
@@ -3922,7 +3927,7 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(217, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(217);   /* soft bad-stop: unreachable IO_LASTENTRY (internal: unknown iofield) */
             break;
     }
 }
@@ -4362,7 +4367,7 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             strcpy(buf, "DynamicErrorDefault");
             break;
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(218, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(218);   /* soft bad-stop: unreachable IO_LASTENTRY (internal: unknown iofield); buf already "default" */
             break;
     }
 }
@@ -4392,6 +4397,10 @@ void write_file(char *fname, int writeTask, int lastTask)
     int blksize;
     MPI_Status status;
     FILE *fd = 0;
+    int write_status = 0;   /* soft bad-stop flag for this (writeTask-local) file write; on a failed open we skip the
+                             * fd/my_fwrite calls but KEEP participating in every MPI_Recv from peers (the send/recv
+                             * choreography is particle-count-driven, not open-status-driven, so peers never deadlock).
+                             * The bad-stop drains at the savepositions per-turn poll. */
 
     hid_t hdf5_file = 0, hdf5_grp[6], hdf5_headergrp = 0, hdf5_dataspace_memory;
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_file = 0, hdf5_dataset = 0;
@@ -4504,23 +4513,26 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(!(fd = fopen(fname, "w")))
             {
                 printf("can't open file `%s' for writing snapshot.\n", fname);
-                gizmo_emergency_hold_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open snapshot file for writing (per-rank writer; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                endrun(123); write_status = 123;   /* soft: cannot open snapshot file; skip local fd writes below, drain at the savepositions per-turn poll */
             }
 
-            if(All.SnapFormat == 2)
+            if(!write_status)
             {
-                blksize = sizeof(int) + 4 * sizeof(char);
+                if(All.SnapFormat == 2)
+                {
+                    blksize = sizeof(int) + 4 * sizeof(char);
+                    SKIP;
+                    my_fwrite((void *) "HEAD", sizeof(char), 4, fd);
+                    nextblock = sizeof(header) + 2 * sizeof(int);
+                    my_fwrite(&nextblock, sizeof(int), 1, fd);
+                    SKIP;
+                }
+
+                blksize = sizeof(header);
                 SKIP;
-                my_fwrite((void *) "HEAD", sizeof(char), 4, fd);
-                nextblock = sizeof(header) + 2 * sizeof(int);
-                my_fwrite(&nextblock, sizeof(int), 1, fd);
+                my_fwrite(&header, sizeof(header), 1, fd);
                 SKIP;
             }
-
-            blksize = sizeof(header);
-            SKIP;
-            my_fwrite(&header, sizeof(header), 1, fd);
-            SKIP;
         }
     }
 
@@ -4608,7 +4620,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                     printf("writing block %d (%s)...\n", bnr, buf);
                 }
 
-                if(ThisTask == writeTask)
+                if(ThisTask == writeTask && !write_status)
                 {
 
                     if(All.SnapFormat == 1 || All.SnapFormat == 2)
@@ -4747,7 +4759,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_memory);
 
                                     }
-                                    else
+                                    else if(!write_status)   /* binary write skipped on failed open; the MPI_Recv above still ran so peers do not deadlock */
                                     {
                                         my_fwrite(CommBuffer, bytes_per_blockelement, pc, fd);
                                     }
@@ -4771,7 +4783,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                     }
                 }
 
-                if(ThisTask == writeTask)
+                if(ThisTask == writeTask && !write_status)
                 {
                     if(All.SnapFormat == 1 || All.SnapFormat == 2)
                     {
@@ -4799,7 +4811,7 @@ void write_file(char *fname, int writeTask, int lastTask)
         }
         else
         {
-            fclose(fd);
+            if(!write_status) {fclose(fd);}   /* fd is NULL on a failed open; do not fclose(NULL) */
         }
     }
 }
@@ -5366,7 +5378,7 @@ size_t my_fwrite(void *ptr, size_t size, size_t nmemb, FILE * stream)
         {
             printf("I/O error (fwrite) on task=%d has occured: %s\n", ThisTask, strerror(errno));
             fflush(stdout);
-            gizmo_emergency_hold_reviewed(777, "TEMP_HARD_CANDIDATE_IO: my_fwrite I/O error (per-rank, deep in write loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            endrun(777);   /* soft bad-stop: my_fwrite I/O error; return the actual short count and drain at the next caller poll. */
         }
     }
     else {nwritten = 0;}
@@ -5389,7 +5401,7 @@ size_t my_fread(void *ptr, size_t size, size_t nmemb, FILE * stream)
         if(feof(stream)) {printf("I/O error (fread) on task=%d has occured: end of file\n", ThisTask);}
             else {printf("I/O error (fread) on task=%d has occured: %s\n", ThisTask, strerror(errno));}
         fflush(stdout);
-        gizmo_emergency_hold_reviewed(778, "TEMP_HARD_CANDIDATE_IO: my_fread I/O error (per-rank, deep in read loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        endrun(778);   /* soft bad-stop: my_fread I/O error; return the actual short count (reads <= requested into a caller-sized buffer, no OOB), drain at the read-turn poll. Caller-side partial-read guard is a tracked follow-up. */
     }
     return nread;
 }
