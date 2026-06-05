@@ -632,7 +632,7 @@ static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t 
             return (double)P[j].KernelRadius;
         }
         double h = P[j].KernelRadius;
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
         if(P[j].Type == 0 && j < N_gas) {
             if((double)CellP[j].KernelRadiusDM > h) h = CellP[j].KernelRadiusDM;
         }
@@ -1267,7 +1267,7 @@ static double gx_eff_h(int j, unsigned int supply_mask)
         return (double)P[j].KernelRadius;
     }
     double h = (double)P[j].KernelRadius;
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
     if(P[j].Type == 0 && j < N_gas) {
         if((double)CellP[j].KernelRadiusDM > h) h = CellP[j].KernelRadiusDM;
     }
@@ -1954,7 +1954,7 @@ int ghost_exchange_needs_redo(void)
         int t = p / tile_target;
         if(t >= ntiles) t = ntiles - 1;
         double hi = P[i].KernelRadius;
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
         if(P[i].Type == 0 && i < N_gas) {
             if((double)CellP[i].KernelRadiusDM > hi) hi = CellP[i].KernelRadiusDM;
         }

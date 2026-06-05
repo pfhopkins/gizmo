@@ -51,7 +51,7 @@ void restart(int modus)
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf_bak[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf_mv[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     double save_PartAllocFactor;
     int nprocgroup, primaryTask, groupTask;
-    struct global_data_all_processes all_task0;
+    struct global_data_all_processes all_task0 = {};   /* zero-init so the required groupTask==0 Bcast is safe even if rank 0 failed its header read */
     int nmulti = MULTIPLEDOMAINS, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
     
 
@@ -93,13 +93,17 @@ void restart(int modus)
             if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 0))
             {
                 printf("Fatal error. Full set of restart files ('%s' or '%s') not found - check the restarts are uncorrupted and your MPI process number has not changed.\n", buf, buf_bak);
-                endrun(7871);
             }
             if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 1))
             {
                 printf("Default restartfiles ('%s') not found - they are incomplete or corrupted [number of files matching MPI process number not found. But apparently valid set of backup restartfiles ('%s') found. Attempting to use those.\n", buf, buf_bak);
             }
         }
+        /* All-rank bad-stop: every rank ran the file-existence scan above, so
+         * (regular==0 && backup==0) is identical on all ranks. endrun lives
+         * OUTSIDE the rank-0 printf so the flip turns it into a symmetric
+         * bad-stop; the poll before the per-rank file-IO loop drains it. */
+        if((regular_restarts_are_valid == 0) && (backup_restarts_are_valid == 0)) { endrun(7871); }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     
@@ -110,10 +114,10 @@ void restart(int modus)
     
     if((NTask < All.NumFilesWrittenInParallel))
     {
-        printf("Fatal error.\nNumber of processors must be greater than or equal to `NumFilesWrittenInParallel'.\n");
-        endrun(2131);
+        if(ThisTask == 0) {printf("Fatal error.\nNumber of processors must be greater than or equal to `NumFilesWrittenInParallel'.\n");}
+        endrun(2131);   /* symmetric (NTask + All identical on all ranks) -> all-rank bad-stop */
     }
-    
+
     nprocgroup = NTask / All.NumFilesWrittenInParallel;
     
     if((NTask % All.NumFilesWrittenInParallel))
@@ -123,10 +127,25 @@ void restart(int modus)
 
   primaryTask = (ThisTask / nprocgroup) * nprocgroup;
 
+  /* Bad-stop poll BEFORE the per-rank restart file-IO loop. Drains the two
+   * symmetric setup bad-stops above (7871 missing restart set, 2131 NTask <
+   * NumFilesWrittenInParallel) after the Stage-1d flip. All ranks reach here
+   * (the MPI_Barrier above is unconditional); the intervening code is pure
+   * arithmetic, so this is the first collective-symmetric drain point before
+   * any restart data is touched. */
+  if(gizmo_poll_controlled_stop()) return;
+
   for(groupTask = 0; groupTask < nprocgroup; groupTask++)
     {
       if(ThisTask == (primaryTask + groupTask))	/* ok, it's this processor's turn */
 	{
+	  /* Graceful per-rank restart-IO faults. read_status != 0 means this rank's restart
+	   * payload cannot be safely read/written; we set a soft bad-stop, skip the rest of THIS
+	   * rank's local file IO (goto finish_turn), still execute the required groupTask==0
+	   * Bcast, and drain at the per-turn poll below. No peer P2P in a turn, so no rank is
+	   * stranded. (NOTE: a truncated/corrupt mid-read still routes through my_fread's own
+	   * hold at io.cc:5392 (778) until the io.cc pass converts it.) */
+	  int restart_status = 0;
 	  if(modus)
 	    {
 	      if(!(fd = fopen(buf, "r")))
@@ -134,7 +153,8 @@ void restart(int modus)
 		  if(!(fd = fopen(buf_bak, "r")))
 		    {
 		      printf("Restart file '%s' nor '%s' found.\n", buf, buf_bak);
-		      endrun(7870);
+		      fflush(stdout);
+		      endrun(7870); restart_status = 7870;   /* soft: this rank's restart file (nor backup) found */
 		    }
 		}
 	    }
@@ -143,23 +163,27 @@ void restart(int modus)
 	      if(!(fd = fopen(buf, "w")))
 		{
 		  printf("Restart file '%s' cannot be opened.\n", buf);
-		  endrun(7878);
+		  fflush(stdout);
+		  endrun(7878); restart_status = 7878;   /* soft: cannot open this rank's restart file for write */
 		}
 	    }
 
 
 	  save_PartAllocFactor = All.PartAllocFactor;
 
-	  /* common data  */
-	  byten(&All, sizeof(struct global_data_all_processes), modus);
+	  /* common data (skip if the file failed to open -- fd is NULL) */
+	  if(!restart_status)
+	    {
+	      byten(&All, sizeof(struct global_data_all_processes), modus);
+	      if(ThisTask == 0 && modus > 0) {all_task0 = All;}
+	    }
 
-	  if(ThisTask == 0 && modus > 0)
-	    all_task0 = All;
-
-	  if(modus > 0 && groupTask == 0)	/* read */
+	  if(modus > 0 && groupTask == 0)	/* read -- required Bcast: must fire on every participant even on failure */
 	    {
 	      MPI_Bcast(&all_task0, sizeof(struct global_data_all_processes), MPI_BYTE, 0, MPI_COMM_WORLD);
 	    }
+
+	  if(restart_status) {goto finish_turn;}   /* file open failed: skip the local payload, drain at the per-turn poll */
 
 
 	  if(modus)		/* read */
@@ -187,10 +211,22 @@ void restart(int modus)
 		{
 		  printf("The restart file on task=%d is not consistent with the one on task=0\n", ThisTask);
 		  fflush(stdout);
-		  endrun(16);
+		  /* soft: inconsistent restart. This is an EXIT case -- skip the rest of the local
+		   * payload (allocate_memory + reads on inconsistent sizes could OOM / overflow)
+		   * and drain at the per-turn poll. */
+		  endrun(16); restart_status = 16; goto finish_turn;
 		}
 
-	      allocate_memory();
+	      /* allocate_memory(0): subset/turn caller (per-rank groupTask turn) -> LOCAL-only
+	       * preflight inside, NO collective (peers parked at a barrier; an Allreduce here would
+	       * deadlock). On an arena (local-preflight) or UVM/STL OOM it requests a soft bad-stop
+	       * and returns nonzero WITHOUT holding; we skip this rank's payload reads (goto
+	       * finish_turn) and drain at the per-turn poll below. No duplicate endrun -- the
+	       * controlled-stop is already requested with a descriptive reason inside allocate_memory. */
+	      {
+		int alloc_status = allocate_memory(0);
+		if(alloc_status) {restart_status = alloc_status; goto finish_turn;}
+	      }
 	    }
 
 	  in(&NumPart, modus);
@@ -198,7 +234,9 @@ void restart(int modus)
 	    {
 	      printf("it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", NumPart / (((double) All.TotNumPart) / NTask));
 	      printf("fatal error\n");
-	      endrun(22);
+	      fflush(stdout);
+	      /* soft: would overflow P[] in the byten(&P[0],...) below. Skip the payload, drain at the poll. */
+	      endrun(22); restart_status = 22; goto finish_turn;
 	    }
 
 	  if(modus)		/* read */
@@ -217,7 +255,9 @@ void restart(int modus)
 		{
 		  printf("GAS: it seems you have reduced(!) 'PartAllocFactor' below the value of %g needed to load the restart file.\n", N_gas / (((double) All.TotN_gas) / NTask));
 		  printf("fatal error\n");
-		  endrun(222);
+		  fflush(stdout);
+		  /* soft: would overflow CellP[] in the byten(&CellP[0],...) below. Skip the payload, drain at the poll. */
+		  endrun(222); restart_status = 222; goto finish_turn;
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
@@ -315,7 +355,9 @@ void restart(int modus)
 		  printf
 		    ("Tree storage: it seems you have reduced(!) 'PartAllocFactor' below the value needed to load the restart file (task=%d). "
 		     "Numnodestree=%d  MaxNodes=%d\n", ThisTask, Numnodestree, MaxNodes);
-		  endrun(221);
+		  fflush(stdout);
+		  /* soft: would overflow Nodes_base in the byten(...) below. Skip the payload, drain at the poll. */
+		  endrun(221); restart_status = 221; goto finish_turn;
 		}
 
 	      byten(Nodes_base, Numnodestree * sizeof(struct NODE), modus);
@@ -338,7 +380,8 @@ void restart(int modus)
 	      byten(&DomainFac, sizeof(double), modus);
 	    }
 
-	  fclose(fd);
+	finish_turn:
+	  if(fd) {fclose(fd);}   /* fd is NULL on the 7870/7878 open-failure path */
 	}
       else			/* wait inside the group */
 	{
@@ -348,7 +391,10 @@ void restart(int modus)
 	    }
 	}
 
-      MPI_Barrier(MPI_COMM_WORLD);
+      /* All-rank drain replaces the per-turn barrier (one collective, same sync): a per-rank
+       * restart-IO fault set a soft bad-stop above; collect it here and finalize cleanly BEFORE
+       * the next turn or domain_Decomposition() below runs on junk state. No MPI_Abort. */
+      gizmo_exit_bad_stop_if_requested("restart:groupTask_turn");
     }
 
 

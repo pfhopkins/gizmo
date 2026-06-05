@@ -472,7 +472,7 @@ int compare_densities_for_sort(const void *a, const void *b)
 /* simple recursive function to efficiently find index in arbitrarily spaced bin-list */
 int binarySearch(const double * arr, const double x, const int l, const int r, const int total)
 {
-  if(r<l){ endrun(7777);}
+  if(r<l){ gizmo_emergency_hold_reviewed(7777, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(7777) -- parallel_sort r<l invariant (mid-collective sort; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
   const int w     = r-l;
   const int mid   = l + w/2;
   if(w <= 1) {

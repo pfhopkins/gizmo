@@ -29,8 +29,7 @@
 #include "../system/gpu_particles_arena.h"          /* gpu_particles_arena_invalidate */
 #include "dm_dispersion_loop.h"
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 
 void disp_density(void)
 {
@@ -112,5 +111,4 @@ void disp_density(void)
     }
 }
 
-#endif /* GALSF_SUBGRID_WIND_SCALING==2 */
-#endif /* GALSF_SUBGRID_WINDS */
+#endif /* DM_DISPERSION_LOOP_ACTIVE */

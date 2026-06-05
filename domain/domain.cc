@@ -388,7 +388,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #if (NUMDIMS < 3)
         topnode_limit = 100000; /* 1D/2D problems need many more top nodes because the 3D Peano-Hilbert decomposition wastes refinement on degenerate dimensions */
 #endif
-        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); endrun(781);}
+        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); gizmo_emergency_hold_reviewed(90000010, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(781) -- TopNodeAllocFactor runaway (mid domain-decomp; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
       }
     }
     while(retsum);
@@ -398,7 +398,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     PRINT_STATUS(" ..domain decomposition done. (took %g sec)", timediff(t0, t1));
     CPU_Step[CPU_DOMAIN] += measure_time();
 
-    for(i = 0; i < NumPart; i++) {if(P[i].Type > 5 || P[i].Type < 0) {printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type); endrun(111111);}}
+    for(i = 0; i < NumPart; i++) {if(P[i].Type > 5 || P[i].Type < 0) {printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type); gizmo_emergency_hold_reviewed(90000011, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(111111) -- invalid P[i].Type post-decomp (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}}
 
 #ifdef SUBFIND
     if(GrNr < 0)			/* we don't do it when SUBFIND is executed for a certain group */
@@ -602,7 +602,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     do
     {
         exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
-        if(exchange_limit <= 0) {endrun(1223);}
+        if(exchange_limit <= 0) {gizmo_emergency_hold_reviewed(90000012, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition_light (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
         ret = domain_countToGo(exchange_limit);
         domain_exchange();
     }
@@ -682,7 +682,7 @@ void domain_free_trick(void)
       domain_allocated_flag = 0;
     }
   else
-    {endrun(131231);}
+    {gizmo_emergency_hold_reviewed(90000013, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(131231) -- domain_free_trick called when not allocated (invariant; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
 }
 
 void domain_allocate_trick(void)
@@ -925,7 +925,7 @@ int domain_decompose(void)
         if(exchange_limit <= 0)
         {
             printf("task=%d: exchange_limit=%d\n", ThisTask, (int) exchange_limit);
-            endrun(1223);
+            gizmo_emergency_hold_reviewed(90000014, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
         }
 
         /* determine for each cpu how many particles have to be shifted to other cpus */
@@ -1278,11 +1278,11 @@ void domain_exchange(void)
   if(NumPart > All.MaxPart)
     {
       printf("Task=%d NumPart=%d All.MaxPart=%d\n", ThisTask, NumPart, All.MaxPart);
-      endrun(787878);
+      gizmo_emergency_hold_reviewed(90000015, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787878) -- NumPart>MaxPart after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     }
 
   if(N_gas > All.MaxPartGas)
-    endrun(787879);
+    gizmo_emergency_hold_reviewed(90000016, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787879) -- N_gas>MaxPartGas after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 
 
   myfree(keyBuf);
@@ -1885,7 +1885,7 @@ int domain_countToGo(size_t nlimit)
     }
 
     package = (sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey));
-    if(package >= nlimit) {endrun(212);}
+    if(package >= nlimit) {gizmo_emergency_hold_reviewed(90000017, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(212) -- package>=nlimit in domain_countToGo (mid-exchange-sizing; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
 
     for(n = 0; n < NumPart && package < nlimit; n++)
     {
@@ -2026,7 +2026,7 @@ int domain_countToGo(size_t nlimit)
                 }
                 flagsum += flag;
                 
-                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout); endrun(1013);}}
+                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} gizmo_emergency_hold_reviewed(90000018, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1013) -- domain exchange failed to converge (mid-collective Bcast loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
                 MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
                 MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
             }
@@ -2210,7 +2210,7 @@ int domain_recursively_combine_topTree(int start, int ncpu)
     {
       domainkey_top_left = start;
       domainkey_top_right = start + nleft;
-      if(domainkey_top_left == domainkey_top_right) {endrun(123);}
+      if(domainkey_top_left == domainkey_top_right) {gizmo_emergency_hold_reviewed(90000019, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(123) -- degenerate top-tree key split (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
 
       if(ThisTask == domainkey_top_left || ThisTask == domainkey_top_right)
 	{
@@ -2396,7 +2396,7 @@ int domain_determineTopTree(void)
 
 #ifdef SUBFIND
   if(GrNr >= 0 && count != NumPartGroup)
-    endrun(1222);
+    gizmo_emergency_hold_reviewed(90000020, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(1222) -- count!=NumPartGroup in determineTopTree (SUBFIND invariant; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 #endif
 
   mysort_domain(mp, count, sizeof(struct peano_hilbert_data));
@@ -2536,7 +2536,7 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  if(NTopleaves < multipledomains * NTask) {endrun(112);}
+  if(NTopleaves < multipledomains * NTask) {gizmo_emergency_hold_reviewed(90000021, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(112) -- NTopleaves < multipledomains*NTask (mid determineTopTree; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
 
   return 0;
 }
@@ -2848,7 +2848,7 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	      NTopnodes += 8;
 	    }
 	  else
-	    endrun(88);
+	    gizmo_emergency_hold_reviewed(90000022, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(88) -- out of TopNodes in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	}
 
       sub = treeA[noA].Daughter + (treeB[noB].StartKey - treeA[noA].StartKey) / (treeA[noA].Size >> 3);
@@ -2874,7 +2874,7 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	}
     }
   else
-    endrun(89);
+    gizmo_emergency_hold_reviewed(90000023, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(89) -- unexpected node size in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 }
 
 

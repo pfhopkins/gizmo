@@ -273,6 +273,13 @@ void find_timesteps(void)
 
     process_wake_ups();
 
+    /* Controlled-stop collective. Belongs at the end of find_timesteps
+     * because every rank reaches this point exactly once per sync-point,
+     * after its full active-particle timestep loop has drained. No MPI
+     * inside get_timestep() — ranks complete that loop at different
+     * cumulative counts so any per-particle collective would deadlock. */
+    gizmo_collect_controlled_stop();
+
     CPU_Step[CPU_FIND_TIMESTEPS] += measure_time();
 }
 
@@ -1129,7 +1136,19 @@ integertime get_timestep(int p,		/*!< particle index */
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-        if(P[p].Mass > 0) {endrun(888);}
+        /* Wave-CBE 2026-05-28: replaced endrun(888) with a CONTROLLED
+         * stop request. Routing dt-floor through MPI_Abort (what
+         * endrun(non-zero) does) bypasses Kokkos / CUDA-aware-MPI
+         * cleanup and has correlated with Vista jobs stuck in SLURM CG
+         * state. find_timesteps() collects the request at its end via
+         * MPI_Allreduce; run() handles the global stop after the
+         * find_timesteps call. NO MPI here -- this is inside a
+         * per-particle loop where rank counts will differ. */
+        if(P[p].Mass > 0) {
+            gizmo_request_controlled_stop(888,
+                "STOP_WHEN_BELOW_MINTIMESTEP: timestep < MinSizeTimestep",
+                __FILE__, __LINE__, __FUNCTION__);
+        }
 #endif
         dt = All.MinSizeTimestep;
     }

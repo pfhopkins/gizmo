@@ -139,18 +139,18 @@ struct precomputed_t {
 #endif
 };
 
-static void precompute_alloc_(precomputed_t& pre, int N)
+static int precompute_alloc_(precomputed_t& pre, int N)
 {
 #ifdef RT_USE_GRAVTREE
     long sz = (long)N * N_RT_FREQ_BINS * sizeof(MyFloat);
     pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-    if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301);}
+    if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301); return 1;}
     memset(pre.src_lum, 0, sz);
 #ifdef CHIMES_STELLAR_FLUXES
     long szc = (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double);
     pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
     pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
-    if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302);}
+    if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302); return 1;}
     memset(pre.src_lum_G0,  0, szc);
     memset(pre.src_lum_ion, 0, szc);
 #endif
@@ -183,7 +183,7 @@ static void precompute_alloc_(precomputed_t& pre, int N)
     long sz_ang  = (long)N * sizeof(Vec3<MyFloat>);
     pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
     pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_ang);
-    if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303);}
+    if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); return 1;}
     memset(pre.bh_lum,   0, sz_lum);
     memset(pre.bh_angle, 0, sz_ang);
     for(int p = 0; p < N; p++) {
@@ -202,13 +202,14 @@ static void precompute_alloc_(precomputed_t& pre, int N)
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     long sz_cr = (long)N * sizeof(MyFloat);
     pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_cr);
-    if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304);}
+    if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); return 1;}
     memset(pre.cr_inject, 0, sz_cr);
     for(int p = 0; p < N; p++) {
         if(P[p].Type != 0 || P[p].Mass <= 0) {continue;}
         pre.cr_inject[p] = (MyFloat) cr_get_source_injection_rate(p, P, CellP);
     }
 #endif
+    return 0;
 }
 
 static void precompute_free_(precomputed_t& pre)
@@ -237,7 +238,7 @@ static void precompute_free_(precomputed_t& pre)
 static int *father_mirror_alloc_(int N)
 {
     int *fmirror = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(int));
-    if(!fmirror) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305);}
+    if(!fmirror) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); return NULL;}
     for(int i = 0; i < N; i++) {fmirror[i] = Father[i];}
     return fmirror;
 }
@@ -629,8 +630,9 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     if(!soa) {printf("gpu_moment_refresh: SoA null\n"); return 1;}
 
     precomputed_t pre = {};
-    precompute_alloc_(pre, N);
+    if(precompute_alloc_(pre, N) != 0) {precompute_free_(pre); return 1;}   /* soft bad-stop: no kernel launch on NULL precompute buffers; caller (forcetree) drains at next poll */
     int *fmirror = father_mirror_alloc_(N);
+    if(!fmirror) {precompute_free_(pre); return 1;}   /* soft bad-stop: no kernel launch on NULL Father mirror */
 
     /* ---------------- 2. device-local scratch (Phase 6.7.0) ------------ */
     /* Bundled into mr_scratch_t so the per-payload helpers (zero /

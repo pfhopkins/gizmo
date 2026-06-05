@@ -250,7 +250,7 @@ mode_b_exchange_replies(
                     "peer says %d, state says %d. Protocol broken.\n",
                     ThisTask, p, peer_will_send[p], state.sent_counts[p]);
             fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 1);
+            gizmo_emergency_hold_reviewed(1, "mode_b_p2p_transport: reply-count protocol mismatch (mid-protocol)", __FILE__, __LINE__, __FUNCTION__);
         }
     }
 

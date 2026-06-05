@@ -152,6 +152,38 @@
 #else
 #define CBE_INTEGRATOR_NMOMENTS ((BOX_SPATIAL_DIMENSION)+1)
 #endif
+/* Wave-CBE Commit 6b pairing selectors. Temporary defaults are
+ * CBE_COST_V_ONLY + USE_FREE_SLOT=0 so the SSOT pair-matching helper
+ * reproduces the pre-C6b open-coded path byte-for-byte. C6c flips both
+ * to the harness §4.4 production defaults (CBE_COST_TRACE_W2 + free-slot
+ * on). CBE_PAIRING_ASSIGN is a sentinel; greedy (= one-sided-nearest) is
+ * the only assignment exposed in C6 per harness §4.1 + Phil. */
+#define CBE_COST_V_ONLY     0
+#define CBE_COST_TRACE_W2   1
+#define CBE_ASSIGN_GREEDY   0
+#ifndef CBE_PAIRING_COST
+#define CBE_PAIRING_COST            CBE_COST_TRACE_W2 /* harness §4.4 production default (flipped in C6c from C6b temp CBE_COST_V_ONLY) */
+#endif
+#ifndef CBE_PAIRING_USE_FREE_SLOT
+#define CBE_PAIRING_USE_FREE_SLOT   1                 /* harness §4.4 production default (flipped in C6c from C6b temp 0) */
+#endif
+#ifndef CBE_PAIRING_ASSIGN
+#define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
+#endif
+/* Loud guards against silently-ignored selector values. cbe_build_pair_
+ * matching dispatches on CBE_PAIRING_COST via a single #if/#else and on
+ * CBE_PAIRING_USE_FREE_SLOT via #if; any unsupported value silently
+ * falls through to legacy behavior, which is the same fake-selector
+ * footgun the ASSIGN guard prevents. Fail the build loud instead. */
+#if (CBE_PAIRING_COST != CBE_COST_V_ONLY) && (CBE_PAIRING_COST != CBE_COST_TRACE_W2)
+#error "CBE_PAIRING_COST must be CBE_COST_V_ONLY or CBE_COST_TRACE_W2. cbe_build_pair_matching's #if/#else dispatch silently falls back to cbe_cost_v_only for any unsupported value; set the selector to one of the supported sentinels or wire the new cost into the helper."
+#endif
+#if (CBE_PAIRING_USE_FREE_SLOT != 0) && (CBE_PAIRING_USE_FREE_SLOT != 1)
+#error "CBE_PAIRING_USE_FREE_SLOT must be 0 or 1. cbe_build_pair_matching's #if-only dispatch silently treats any non-1 value as 0; set the selector explicitly."
+#endif
+#if (CBE_PAIRING_ASSIGN != CBE_ASSIGN_GREEDY)
+#error "CBE_PAIRING_ASSIGN currently supports only CBE_ASSIGN_GREEDY in C6. Hungarian (or other) assignment is not wired through cbe_build_pair_matching; the SSOT helper would silently use greedy. Either set the selector to CBE_ASSIGN_GREEDY or wire the additional assignment first."
+#endif
 #endif
 
 #if defined(GRAIN_COLLISIONS)
@@ -1518,5 +1550,35 @@
 
 
 #ifdef CBE_INTEGRATOR_WITHGRADIENTS
-#error "CBE_INTEGRATOR_WITHGRADIENTS is not implemented: the CBE gradient module is incomplete (the CBE_basis_moments_Gradients field in declarations/particle_data.h has no element type, so this option cannot compile), and the dm_fuzzy DMGrad gradient loop does not populate the CBE moment gradients. This option is scope-fenced off until the CBE gradient loop is intentionally ported. See OPEN_3d_dm_fuzzy_design.md sec 7."
+#ifndef CBE_INTEGRATOR
+#error "CBE_INTEGRATOR_WITHGRADIENTS requires CBE_INTEGRATOR."
+#endif
+/* CBE_INTEGRATOR_SECONDMOMENT 3D fence is enforced separately below; not
+ * duplicated here. */
+#endif
+
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(CBE_INTEGRATOR)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires CBE_INTEGRATOR."
+#endif
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
+#endif
+
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
+ * guardrail, codex 2026-05-25). The do_cbe_flux_computation /
+ * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
+ * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
+ * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
+ * off-diag Sxy/Sxz/Syz). NMOMENTS = 3 (1D) and NMOMENTS = 6 (2D) use
+ * different index layouts -- silently mis-indexed by the same code,
+ * which would corrupt fluxes without raising a compile error. The
+ * hardcoded init at sidm/cbe_integrator.cc:62 and the Commit-3 pad
+ * computation at sidm/cbe_integrator_flux_functions.h:100 inherit the
+ * same assumption. Until dimension-aware moment-index helpers land
+ * (deferred until/unless 1D or 2D production CBE is actually wanted),
+ * fence non-3D second-moment CBE at compile time. */
+#if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
+#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
+#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
+#endif
 #endif

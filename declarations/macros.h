@@ -139,7 +139,29 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 /*  Utility functions used for printing status, warning, endruns */
 /*****************************************************************/
 
-#define terminate(x) {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, 1); exit(0);}
+/* SSOT termination entry points (defined in core/run.cc). Forward-declared HERE,
+   alongside the terminate/endrun macros that call them, so the symbols travel
+   with the macros: every TU that can expand terminate()/endrun() in host code
+   sees these declarations, even GPU TUs that include only allvars.h (and thus
+   macros.h) but not core/proto.h. Plain C++ linkage matches core/proto.h.
+   [Stage 1d flip 2026-06-03] */
+void        gizmo_request_controlled_stop(int code, const char *reason,
+                                          const char *file, int line, const char *func);
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+                                            const char *file, int line, const char *func);
+
+/* terminate -> reviewed internal-invariant emergency-hold path (NOT soft). Its
+   call sites are internal-invariant asserts inside MPI-collective code (parallel
+   sort, mpi_util, fof, tree/drift, prediction); a returning soft bad-stop there
+   would manufacture a subset/turn deadlock. Routes to the SSOT
+   gizmo_emergency_hold_reviewed (core/run.cc) whose DEFAULT path is a
+   scancel-killable hold, NOT MPI_Abort (which is now env-gated debug-only).
+   [Stage 1d flip 2026-06-03; SSOT no-MPI_Abort 2026-06-04 `15153b17`] */
+#define terminate(x) do { \
+    char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; \
+    snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'", ThisTask, __FUNCTION__, __FILE__, __LINE__, (x)); \
+    gizmo_emergency_hold_reviewed(1, termbuf, __FILE__, __LINE__, __FUNCTION__); \
+} while(0)
 
 /* ---- GPU portability layer ----
    GIZMO_GPU_COMPILER: true when compiled by any GPU device compiler (nvcc, hipcc).
@@ -215,7 +237,21 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
     } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)
 #else
-#define endrun(x) {if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}}
+/* Host endrun: endrun(0) = clean finalize (unchanged); endrun(nonzero) = soft
+   bad-stop request (NO MPI call) -> first-set-wins flag drained by the next
+   all-rank controlled-stop poll, which unwinds to a clean finalize. Evaluate x
+   exactly once. The device branch above (__CUDA_ARCH__/__HIP_DEVICE_COMPILE__)
+   is untouched. [Stage 1d flip 2026-06-03] */
+#define endrun(x) do { \
+    int gizmo_endrun_code = (x); \
+    if(gizmo_endrun_code == 0) { MPI_Finalize(); exit(0); } \
+    else { \
+        char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; \
+        snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d", ThisTask, __FUNCTION__, __FILE__, __LINE__, gizmo_endrun_code); \
+        fflush(stdout); printf("%s\n", termbuf); fflush(stdout); \
+        gizmo_request_controlled_stop(gizmo_endrun_code, termbuf, __FILE__, __LINE__, __FUNCTION__); \
+    } \
+} while(0)
 #define PRINT_WARNING(...) {char termbuf1[MAX_PATH_BUFFERSIZE_TOUSE], termbuf2[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf1, MAX_PATH_BUFFERSIZE_TOUSE, "WARNING issued on task=%d, function %s(), file %s, line %d", ThisTask, __FUNCTION__, __FILE__, __LINE__); snprintf(termbuf2, MAX_PATH_BUFFERSIZE_TOUSE, __VA_ARGS__); fflush(stdout); printf("%s: %s\n", termbuf1, termbuf2); fflush(stdout);}
 #endif
 #ifndef OUTPUT_ADDITIONAL_RUNINFO

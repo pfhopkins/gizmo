@@ -97,10 +97,18 @@ extern "C" void gpu_force_update_tree(void)
     /* Stage 1: drift all stale nodes to Ti_Current (reuse Phase 7.a kernel).
      * Codex 2026-05-12: out-of-line host accessor; see
      * feedback_all_dev_trap_host_side.md. */
-    if(gpu_force_drift_nodes(gizmo_host_ti_current()) != 0) { endrun(929703); }
+    /* Soft bad-stop on node-drift failure: flag it, then route through the
+     * existing num_active<=0 -> finish_mpi path. This keeps the failing rank on
+     * the SAME all-rank force_finish_kick_nodes() Allgatherv as its peers
+     * (collective-symmetric, no deadlock), skips the update kernel on stale/
+     * un-drifted node state, and drains at the next phase-boundary poll -- with
+     * NO MPI_Abort. (A direct `goto finish_mpi` from here is ill-formed: it would
+     * jump over the t_fut_drift_nodes initialization, which finish_mpi uses.) */
+    const bool drift_ok = (gpu_force_drift_nodes(gizmo_host_ti_current()) == 0);
+    if(!drift_ok) { endrun(929703); }
     double t_fut_drift_nodes = my_second();
 
-    const int num_active = (int)ActiveParticleList.size();
+    const int num_active = drift_ok ? (int)ActiveParticleList.size() : 0;
     if(num_active <= 0) {
         DomainNumChanged = 0;
         goto finish_mpi;

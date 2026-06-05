@@ -45,10 +45,19 @@
 /* ----------------------------------------------------------------------------
  * cbe_drift_kick_evaluate_gpu — first/second half-step CBE drift-kick.
  *
- * Kernel: do_cbe_drift_kick_kernel(pi, dt).
+ * Kernel: do_cbe_drift_kick_kernel(pi, dt, dT_out).
  * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] only.
  * Reads: All.Time, All.TimeBegin, All.Ti_Current (via the kernel's basis-
  *        resplit branch); All-mirror handles the device read.
+ *
+ * Wave-CBE Commit 5 (2026-05-26): the kernel now returns a per-particle
+ * SPD-repair trace increment (sum over basis of trace_after - trace_before)
+ * via *dT_out. Compact per-active scratch dT_scratch[a] is host-summed and
+ * forwarded to cbe_step_diagnostics_observe_repair (col-7/8). The whole
+ * accumulator path is guarded on OUTPUT_ADDITIONAL_RUNINFO ||
+ * CBE_INTEGRATOR_OUTPUT_MOREINFO so production builds pay zero overhead
+ * (kernel gets nullptr; repair still happens, only the diagnostic
+ * bookkeeping disappears). dP is identically 0 (SPD touches only stress).
  * --------------------------------------------------------------------------*/
 void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
                                  const int *active_indices, int num_active,
@@ -61,11 +70,33 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
         /* Tiny-N OMP path: pure host calls, no arena, no Kokkos. Each
          * active index writes its own particle (unique by construction). */
         PRINT_STATUS("  CBE drift-kick (OMP): %d active", num_active);
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+        double *dT_scratch = (double *) malloc(num_active * sizeof(double));
+        if(!dT_scratch) {
+            fprintf(stderr, "[task %d] cbe_drift_kick_evaluate_gpu: malloc(%zu) failed for dT_scratch (num_active=%d)\n",
+                    ThisTask, (size_t)(num_active * sizeof(double)), num_active);
+            endrun(91501);
+        }
+#else
+        double *dT_scratch = nullptr;
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-        for(int a = 0; a < num_active; a++)
-            do_cbe_drift_kick_kernel(P_host[active_indices[a]], dt_host[a]);
+        for(int a = 0; a < num_active; a++) {
+            double dT_local = 0.0;
+            do_cbe_drift_kick_kernel(P_host[active_indices[a]], dt_host[a],
+                                     dT_scratch ? &dT_local : (double*)nullptr);
+            if(dT_scratch) dT_scratch[a] = dT_local;
+        }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+        {
+            double dT_sum = 0.0;
+            for(int a = 0; a < num_active; a++) dT_sum += dT_scratch[a];
+            cbe_step_diagnostics_observe_repair(/* dP */ 0.0, dT_sum);
+            free(dT_scratch);
+        }
+#endif
         return;
     }
 
@@ -75,6 +106,11 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
     int    *d_active = (int *)    Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     double *d_dt     = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    double *dT_scratch = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+#else
+    double *dT_scratch = nullptr;
+#endif
     for(int a = 0; a < num_active; a++) compact_P[a] = P_host[active_indices[a]];
     memcpy(d_active, active_indices, num_active * sizeof(int));
     memcpy(d_dt,     dt_host,        num_active * sizeof(double));
@@ -83,10 +119,16 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     {
         struct particle_data *kp = compact_P;
         double *kdt = d_dt;
+        double *kdT = dT_scratch;
         gizmo_gpu_kernel_launch("cbe_drift_kick", num_active, KOKKOS_LAMBDA(int a) {
-            do_cbe_drift_kick_kernel(kp[a], kdt[a]);
+            double dT_local = 0.0;
+            do_cbe_drift_kick_kernel(kp[a], kdt[a],
+                                     kdT ? &dT_local : (double*)nullptr);
+            if(kdT) kdT[a] = dT_local;
         });
     }
+    /* gizmo_gpu_kernel_launch fences before returning (the narrow scatter
+     * below already relies on this); host reads of dT_scratch[a] follow. */
 
     /* Narrow scatter: only CBE_basis_moments is touched by the kernel. */
     for(int a = 0; a < num_active; a++) {
@@ -96,6 +138,14 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
                 P_host[ii].CBE_basis_moments[m][k] = compact_P[a].CBE_basis_moments[m][k];
     }
 
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    {
+        double dT_sum = 0.0;
+        for(int a = 0; a < num_active; a++) dT_sum += dT_scratch[a];
+        cbe_step_diagnostics_observe_repair(/* dP */ 0.0, dT_sum);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dT_scratch);
+    }
+#endif
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_dt);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);

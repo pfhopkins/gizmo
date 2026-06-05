@@ -156,10 +156,33 @@ int main(int argc, char **argv)
 
   begrun();			/* set-up run  */
 
-  run();			/* main simulation loop */
+  /* Bad-stop poll after setup (Vista no-MPI_Abort policy). If begrun() flagged
+   * an unrecoverable bad stop (bad params / missing table / IO setup failure),
+   * every rank collected it here; skip the run loop and fall through to the
+   * clean gizmo_kokkos_finalize() + MPI_Finalize() shutdown. This is a
+   * top-level global point all ranks reach, so the collect is symmetric. */
+  gizmo_collect_controlled_stop();
+  if(gizmo_controlled_stop_code() == 0)
+    {
+      run();			/* main simulation loop */
+    }
+  else if(ThisTask == 0)
+    {
+      const char *r = gizmo_controlled_stop_local_reason();
+      printf("Bad-stop during setup (code=%d): %s. Skipping run loop; "
+             "finalizing cleanly.\n", gizmo_controlled_stop_code(),
+             r ? r : "(reason set on other rank only)");
+      fflush(stdout);
+    }
+
+  /* A bad stop (here or inside run()) exits nonzero AFTER a clean finalize.
+   * The full original code/reason are printed above / by the run loop; the
+   * process status is a small fixed nonzero (large codes aren't portable as
+   * exit statuses). Node still releases cleanly: MPI_Finalize, not MPI_Abort. */
+  int badstop_exit = (gizmo_controlled_stop_code() != 0) ? 1 : 0;
 
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
   MPI_Finalize();		/* clean up & finalize MPI */
 
-  return 0;
+  return badstop_exit;
 }

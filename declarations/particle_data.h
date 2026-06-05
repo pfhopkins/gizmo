@@ -374,8 +374,15 @@ extern ALIGN(32) struct particle_data
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];      /* time-derivative of moments per basis function */
-#ifdef CBE_INTEGRATOR_WITHGRADIENTS
-    CBE_basis_moments_Gradients[CBE_INTEGRATOR_NBASIS][3]; /* gradients of the scalar weight of each basis function */
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* Persistent gradient of Q = U/V (flux-frame moments), per basis, per
+     * moment slot, per spatial direction. Refreshed for AGSForce-active
+     * particles each call by CBEGrad_gradient_calc() (sidm/cbe_integrator_gradients.cc);
+     * inactive particles retain their previous-step gradient (hydro semantics).
+     * Ghost-transported naturally with P[] via the standard ghost import
+     * machinery — no custom Alltoallv. Consumed in the CBE flux body
+     * (sidm/cbe_integrator_flux_functions.h) for MFM-style face reconstruction. */
+    double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS][3];
 #endif
 #endif
 

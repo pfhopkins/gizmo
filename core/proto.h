@@ -368,7 +368,7 @@ void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
 long get_particles_in_block(enum iofields blocknr, int *typelist);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
-void read_file(char *fname, int readTask, int lastTask);
+int read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
 
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
@@ -461,7 +461,7 @@ void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
-void allocate_memory(void);
+int allocate_memory(int do_collective_preflight);   /* Never holds on OOM: requests a soft controlled-stop and returns nonzero; caller drains at its poll. do_collective_preflight selects the arena preflight's fit-check: =1 all-rank (read_ic, one Allreduce); =0 LOCAL only (restart subset/turn, no MPI). Returns 0 ok / 812 arena-OOM / 1 UVM-STL-OOM. */
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
@@ -666,11 +666,13 @@ void radiation_pressure_winds_consolidated(void);
 #if defined(SINK_PARTICLES)
 #endif
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 void disp_setup_smoothinglengths(void);
 void disp_density(void);
 #endif
+
+#ifdef DM_HEATING
+void apply_dm_heating(void);
 #endif
 
 
@@ -766,6 +768,54 @@ void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
 void run(void);
+/* Controlled-stop / bad-stop machinery (Wave-CBE 2026-05-28; generalized
+ * 2026-06-02 for the Vista no-MPI_Abort policy — see OPEN_endrun_audit_memo).
+ *
+ * Vista policy: a bad stop is the DEFAULT termination. The flagging rank
+ * records the stop (no MPI / no alloc / no Kokkos here, so it is safe inside
+ * per-particle loops and device-dispatcher callers), keeps draining to the
+ * next collective poll, and the run exits through main()'s normal
+ * gizmo_kokkos_finalize() + MPI_Finalize() shutdown — NOT MPI_Abort, which
+ * wedges Vista GH200 nodes in SLURM CG.
+ *
+ * Use where (a) all ranks reach a collective poll in the same collective
+ * order regardless of which rank flagged (collective symmetry — a
+ * short-circuit that skips a collective peers still call DEADLOCKS), AND
+ * (b) the flagging rank can drain to that poll without dereferencing the
+ * failed object, mutating a table/global with the invalid value, or
+ * launching invalid device work (else add a tiny local return/break).
+ *
+ * gizmo_emergency_hold_reviewed() is the SSOT last-resort termination home. As of
+ * 2026-06-04 its DEFAULT path no longer calls MPI_Abort (print + best-effort fence
+ * + controlled scancel-killable host hold; MPI_Abort only behind the env-gated
+ * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG). It is a Vista GPU quarantine, NOT the
+ * target -- prefer converting the caller to graceful controlled-stop + poll.
+ * Use ONLY for the rare audited cases where no collective poll
+ * is reachable: mid-protocol MPI transport corruption, and residual incidental
+ * allocator capacity failures with no preflight coverage. NOTE on allocation:
+ * this is NOT a blanket "allocation failure = hard-abort" rule — large
+ * symmetric allocations get caller-side collective preflight (graceful);
+ * myfree* invariant paths are bad-stop + immediate local return (void, safe to
+ * drain to the next poll); but myrealloc* invariant paths are temporary
+ * reviewed hard candidates until their two callers (domain.cc, mpi_util.cc) are
+ * guarded — a bad-stop+return there would hand the caller a falsely "resized"
+ * buffer. Only the residual incidental capacity failures + myrealloc* invariants
+ * are TEMP hard candidates. Everything else uses the bad-stop request.
+ *
+ * The "_local_reason" accessor is honest: ranks that did not flag
+ * return NULL. Run-loop printers should NULL-check. */
+void        gizmo_request_controlled_stop(int code, const char *reason,
+                                          const char *file, int line, const char *func);
+void        gizmo_collect_controlled_stop(void);
+int         gizmo_poll_controlled_stop(void);   /* collect + return global code; for top-level poll points */
+void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
+int         gizmo_controlled_stop_code(void);
+const char *gizmo_controlled_stop_local_reason(void);
+int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
+int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
+size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+                                            const char *file, int line, const char *func);
 void savepositions(int num);
 double my_second(void);
 void set_softenings(void);
@@ -877,7 +927,7 @@ void rt_write_chemistry_stats(void);
 double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell);
 
 
-void find_block(char *label,FILE *fd);
+int find_block(char *label,FILE *fd);
 
 
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
@@ -952,6 +1002,34 @@ void do_cbe_initialization(void);
    live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
    entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
    (sidm/sidm_gpu_decls.h). */
+/* Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
+ * 2026-05-24). Counters defined in sidm/cbe_integrator.cc; populated by
+ * later commits; emitted to FdCbeDiagnostics (cbe_diagnostics.txt) when
+ * the CBE_INTEGRATOR_OUTPUT_MOREINFO gate is set (or under the broader
+ * OUTPUT_ADDITIONAL_RUNINFO gate). Gated entirely so production runs can
+ * purge the diagnostic subsystem by disabling the flag. */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+void cbe_step_diagnostics_reset(void);
+void cbe_step_diagnostics_emit(void);
+void cbe_step_diagnostics_observe_face(double face_residual_max,
+                                        double face_residual_sum,
+                                        long long bracket_fail_count);
+void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
+                                         long long S_clamp_count);
+void cbe_step_diagnostics_observe_repair(double dP, double dT);
+void cbe_step_diagnostics_observe_pairing_free_slot(long long count);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+void cbe_step_diagnostics_observe_grad_nonfinite(long long count);
+#endif
+#endif
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+/* CBE persistent gradient pre-force pass — parallel to DMGrad_gradient_calc.
+ * Called from core/accel.cc compute_additional_forces_for_all_particles().
+ * Refreshes P[i].Gradients_CBE_basis_moments for AGSForce-active i (two
+ * passes: raw LSQ + pairwise BJ-style limiter); inactive particles retain
+ * prior gradient (hydro semantics). */
+void CBEGrad_gradient_calc(void);
+#endif
 #endif
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
@@ -982,4 +1060,5 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
+void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (emergency-hold path) */
 void gizmo_gpu_sync_all(void);

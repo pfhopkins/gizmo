@@ -77,9 +77,9 @@ void gravity_tree(void)
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
         rearrange_particle_sequence();
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
+        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done.");
@@ -231,7 +231,7 @@ void gravity_tree(void)
             if(Nexport > 0) {
                 printf("Phase 9.4 LET export retirement: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
                 fflush(stdout);
-                endrun(914040);
+                gizmo_emergency_hold_reviewed(914040, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(914040) -- LET export-retirement invariant (mid tree force; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
             }
 
             /* Phase 9.4: export-back loop is retired under GPU offload, so the arena

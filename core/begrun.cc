@@ -70,19 +70,38 @@ void begrun(void)
   if (ThisTask == 0)
     {
       printf("ERROR: CHIMES_TURB_DIFF_IONS requires TURB_DIFF_METALS, but this is missing. Aborting.\n");
-      endrun(6572);
     }
+  endrun(6572);
 #endif // !(TURB_DIFF_METALS)
 #ifndef TURB_DIFF_METALS_LOWORDER
   if (ThisTask == 0)
     {
       printf("ERROR: CHIMES_TURB_DIFF_IONS requires TURB_DIFF_METALS_LOWORDER, but this is missing. Aborting.\n");
-      endrun(6573);
     }
+  endrun(6573);
 #endif // !(TURB_DIFF_METALS_LOWORDER)
 #endif // CHIMES_TURB_DIFF_IONS
 
+#if defined(CHIMES_TURB_DIFF_IONS) && \
+    (!defined(TURB_DIFF_METALS) || !defined(TURB_DIFF_METALS_LOWORDER))
+  /* Bad-stop poll for the CHIMES_TURB_DIFF_IONS config checks above, which run
+   * BEFORE read_parameter_file() (so the post-read poll below cannot catch
+   * them). After the Stage-1d macro flip those all-rank endrun()s become
+   * bad-stop requests; this drains them to main()'s post-begrun finalize
+   * before any parameter is consumed. No-op until the flip. Gated on exactly
+   * the invalid compile combinations where those early bad-stops can fire, so
+   * valid configs (including valid CHIMES builds) stay byte-identical. */
+  if(gizmo_poll_controlled_stop()) return;
+#endif
+
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+
+  /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
+   * uses all-rank endrun -> bad-stop request after the Stage-1d macro flip.
+   * Catch it here, before any setup consumes invalid parameters; the return
+   * drains to main()'s post-begrun finalize. No-op until the flip activates
+   * those bad-stops. */
+  if(gizmo_poll_controlled_stop()) return;
 
   /* Ensure the HDF5 deflate (gzip) filter is available before any IC /
    * snapshot read — registers a zlib-backed replacement only if the linked
@@ -91,6 +110,11 @@ void begrun(void)
   gizmo_register_hdf5_deflate_filter();
 
   mymalloc_init();
+
+  /* Bad-stop poll: the Base arena allocation (collective-guarded inside
+   * mymalloc_init) may have failed on >=1 rank. Catch before anything touches
+   * the arena; return drains to main()'s post-begrun finalize. */
+  if(gizmo_poll_controlled_stop()) return;
 
 #ifdef GR_TABULATED_COSMOLOGY
 #ifdef GR_TABULATED_COSMOLOGY_W
@@ -641,6 +665,52 @@ void set_units(void)
 #endif
 
 
+#ifdef DM_HEATING
+    /* CGS → code unit conversions, and parameter sanity validation. The
+     * heating rate is dE/dt/m_gas; the dimensional analysis (see
+     * OPEN_dm_heating_design.md) gives:
+     *   <sigma v>/m_chi:  cm^3 s^-1 g^-1 → code (L^3/T/M):  × UNIT_MASS · UNIT_TIME / UNIT_LENGTH^3
+     *   Gamma:            s^-1          → code (1/T):       × UNIT_TIME */
+    {
+        const double sv_factor = UNIT_MASS_IN_CGS * UNIT_TIME_IN_CGS
+                               / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+        All.DM_AnnihilationSigmaV_over_mChi *= sv_factor;
+        All.DM_DecayRate                    *= UNIT_TIME_IN_CGS;
+
+        /* Validation: hard-abort on physically impossible inputs. */
+        if(All.DM_AnnihilationSigmaV_over_mChi < 0) {
+            if(ThisTask == 0) printf("ERROR: DM_AnnihilationSigmaV_over_mChi = %g < 0. Must be non-negative.\n", All.DM_AnnihilationSigmaV_over_mChi);
+            endrun(91302);
+        }
+        if(All.DM_DecayRate < 0) {
+            if(ThisTask == 0) printf("ERROR: DM_DecayRate = %g < 0. Must be non-negative.\n", All.DM_DecayRate);
+            endrun(91302);
+        }
+        if(All.DM_AnnihilationHeatingFraction < 0 || All.DM_AnnihilationHeatingFraction > 1) {
+            if(ThisTask == 0) printf("ERROR: DM_AnnihilationHeatingFraction = %g out of [0,1].\n", All.DM_AnnihilationHeatingFraction);
+            endrun(91302);
+        }
+        if(All.DM_DecayHeatingFraction < 0 || All.DM_DecayHeatingFraction > 1) {
+            if(ThisTask == 0) printf("ERROR: DM_DecayHeatingFraction = %g out of [0,1].\n", All.DM_DecayHeatingFraction);
+            endrun(91302);
+        }
+
+        if(ThisTask == 0) {
+            const int ann_on = (All.DM_AnnihilationSigmaV_over_mChi > 0) && (All.DM_AnnihilationHeatingFraction > 0);
+            const int dec_on = (All.DM_DecayRate > 0) && (All.DM_DecayHeatingFraction > 0);
+            if(!ann_on && !dec_on) {
+                printf("DM_HEATING active but all rate parameters are zero — module is inert.\n"
+                       "  Set DM_AnnihilationSigmaV_over_mChi (cm^3/s/g) + DM_AnnihilationHeatingFraction (~1) for annihilation,\n"
+                       "  or DM_DecayRate (s^-1) + DM_DecayHeatingFraction (~1) for decay.\n");
+            } else {
+                printf("DM_HEATING: annihilation %s, decay %s.\n",
+                       ann_on ? "ENABLED" : "off", dec_on ? "ENABLED" : "off");
+            }
+        }
+    }
+#endif
+
+
 #if defined(CONDUCTION_SPITZER) || defined(VISCOSITY_BRAGINSKII)
     /* Note: Because we replace \nabla(T) in the conduction equation with \nabla(u), our conduction coefficient is not the usual kappa, but
      * rather kappa*(gamma-1)*mu/kB. We therefore need to multiply with another factor of (meanweight_ion / k_B * (gamma-1)) */
@@ -771,11 +841,37 @@ void open_outputfiles(void)
     if(!(FdInfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "energy.txt");
     if(!(FdEnergy = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+#if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
+    /* CBE per-output-interval diagnostic counters log (Wave-CBE Commit 2,
+     * 2026-05-24). Counters populated by Wave-CBE Commits 3 (root-found
+     * v_F), 4 (gradient/reconstruction), 5 (SPD repair); columns
+     * documented in the header line written below. Separate file rather
+     * than tagged lines in energy.txt to keep energy.txt fixed-column. */
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "cbe_diagnostics.txt");
+    if(!(FdCbeDiagnostics = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    else if(RestartFlag == 0 && ThisTask == 0) {
+        fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations (Commit 3 populates; 0 otherwise)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations (Commit 3); note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4 Phase 1 populates)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 5 SPD repair populates; 0 in Commits 3/4)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+#else
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+#endif
+    }
+#endif
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "timings.txt");
     if(!(FdTimings = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "balance.txt");
-    if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
     fprintf(FdBalance, "\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
     fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
@@ -899,7 +995,7 @@ void open_outputfiles(void)
 #if defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
   FILE *FdSinkSNDetails;
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SN_details.txt");
-  if(!(FdSinkSNDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  if(!(FdSinkSNDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
   else if(RestartFlag == 0) {
       fprintf(FdSinkSNDetails,"%s Sink Supernova/Explosion log-file [SINK_PARTICLES]. See User Guide for details. Columns represent: \n",prefix_char);
       fprintf(FdSinkSNDetails,"%s   (1) Simulation time [code units] \n",prefix_char);
@@ -1529,6 +1625,24 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.DM_InteractionVelocityScale;
         id[nt++] = REAL;
 #endif
+#endif
+
+#ifdef DM_HEATING
+        strcpy(tag[nt], "DM_AnnihilationSigmaV_over_mChi");
+        addr[nt] = &All.DM_AnnihilationSigmaV_over_mChi;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_AnnihilationHeatingFraction");
+        addr[nt] = &All.DM_AnnihilationHeatingFraction;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_DecayRate");
+        addr[nt] = &All.DM_DecayRate;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "DM_DecayHeatingFraction");
+        addr[nt] = &All.DM_DecayHeatingFraction;
+        id[nt++] = REAL;
 #endif
 
 
@@ -2743,6 +2857,12 @@ void read_parameter_file(char *fname)
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
 #endif
+#ifdef DM_HEATING
+                if(strcmp("DM_AnnihilationSigmaV_over_mChi",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (annihilation channel disabled) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_AnnihilationHeatingFraction",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (no annihilation heating) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_DecayRate",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (decay channel disabled) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("DM_DecayHeatingFraction",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (no decay heating) \n",tag[i],alternate_tag[i]); continue;}
+#endif
 #ifdef NUCLEAR_NETWORK
                 if(strcmp("NuclearNetworkDataFile",tag[i])==0) {strcpy((char *)addr[i], ""); continue;} /* empty = built-in aprox13, no external data needed */
                 if(strcmp("NuclearBurningFloor_T",tag[i])==0) {*((double *)addr[i])=1.0e8; continue;} /* default: 10^8 K */
@@ -2935,87 +3055,87 @@ void read_parameter_file(char *fname)
     }
     if((All.ErrTolIntAccuracy<=0)||(All.ErrTolIntAccuracy>0.05))
     {
-        if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);
     }
     if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {
-        if(ThisTask==0) {printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n");} endrun(1);
     }
     if((All.CourantFac<=0)||(All.CourantFac>0.5))
     {
-        if(ThisTask==0) {printf("CourantFac must be >0 and <0.5 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("CourantFac must be >0 and <0.5 to ensure stability \n");} endrun(1);
     }
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {
-        if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n");} endrun(1);
     }
     if(All.LETAllocFactor <= 0)
     {
-        if(ThisTask==0) {printf("LETAllocFactor must be >0 in GPU builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n"); endrun(1);}
+        if(ThisTask==0) {printf("LETAllocFactor must be >0 in GPU builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n");} endrun(1);
     }
     if((All.MaxRMSDisplacementFac<=0)||(All.MaxRMSDisplacementFac>0.25))
     {
-        if(ThisTask==0) {printf("MaxRMSDisplacementFac must be >0 and <0.25 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("MaxRMSDisplacementFac must be >0 and <0.25 to ensure stability \n");} endrun(1);
     }
 #ifdef HYDRO_SPH
     if((All.ArtBulkViscConst<=0.5)||(All.ArtBulkViscConst>=2.0))
     {
-        if(ThisTask==0) {printf("ArtBulkViscConst must be >0.5 and <2 to ensure stability \n"); endrun(1);}
+        if(ThisTask==0) {printf("ArtBulkViscConst must be >0.5 and <2 to ensure stability \n");} endrun(1);
     }
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
     if((All.ArtCondConstant<=0)||(All.ArtCondConstant>0.5))
     {
-        if(ThisTask==0) {printf("For SPH-mode runs, ArtCondConstant must be >0 and <0.5"); endrun(1);}
+        if(ThisTask==0) {printf("For SPH-mode runs, ArtCondConstant must be >0 and <0.5");} endrun(1);
     }
 #endif
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
     if((All.ViscosityAMin<=0.025)||(All.ViscosityAMin>=All.ViscosityAMax)||(All.ViscosityAMin>1.0))
     {
-        if(ThisTask==0) {printf("For SPH-mode runs, ViscosityAMin must be >0.025 (stability) and <MIN(1,ViscosityAMax)"); endrun(1);}
+        if(ThisTask==0) {printf("For SPH-mode runs, ViscosityAMin must be >0.025 (stability) and <MIN(1,ViscosityAMax)");} endrun(1);
     }
     if((All.ViscosityAMax<1))
     {
-        if(ThisTask==0) {printf("For SPH-mode runs, ViscosityAMax must be >1"); endrun(1);}
+        if(ThisTask==0) {printf("For SPH-mode runs, ViscosityAMax must be >1");} endrun(1);
     }
 #endif
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
     if((All.ArtMagDispConst<1)||(All.ArtMagDispConst>2))
     {
-        if(ThisTask==0) {printf("For SPH-mode runs, ArtificialResistivityMax must be >1 and <2"); endrun(1);}
+        if(ThisTask==0) {printf("For SPH-mode runs, ArtificialResistivityMax must be >1 and <2");} endrun(1);
     }
 #endif
 #endif
 #ifdef DIVBCLEANING_DEDNER
     if((All.DivBcleanParabolicSigma<0.1)||(All.DivBcleanParabolicSigma>1))
     {
-        if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleaningParabolicSigma must be >0.1 and <1"); endrun(1);}
+        if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleaningParabolicSigma must be >0.1 and <1");} endrun(1);
     }
     if((All.DivBcleanHyperbolicSigma<0.5)||(All.DivBcleanHyperbolicSigma>2))
     {
-        if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleanHyperbolicSigma must be >0.5 and <2"); endrun(1);}
+        if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleanHyperbolicSigma must be >0.5 and <2");} endrun(1);
     }
 #endif
     if((All.MaxNumNgbDeviation<=0)||(All.MaxNumNgbDeviation>0.1*All.DesNumNgb))
     {
-        if(ThisTask==0) {printf("MaxNumNgbDeviation must be >0 and <0.1*DesNumNgb \n"); endrun(1);}
+        if(ThisTask==0) {printf("MaxNumNgbDeviation must be >0 and <0.1*DesNumNgb \n");} endrun(1);
     }
     if(!isnan(All.DesNumNgb))
     {
         if((All.DesNumNgb<KERNEL_NMIN)||(All.DesNumNgb>KERNEL_NMAX))
         {
-            if(ThisTask==0) {printf("For the kernel chosen, proper sampling and stability requires DesNumNgb must be >%d and <%d \n",KERNEL_NMIN,KERNEL_NMAX); endrun(1);}
+            if(ThisTask==0) {printf("For the kernel chosen, proper sampling and stability requires DesNumNgb must be >%d and <%d \n",KERNEL_NMIN,KERNEL_NMAX);} endrun(1);
         }
     }
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     if((All.AGS_MaxNumNgbDeviation<=0)||(All.AGS_MaxNumNgbDeviation>0.1*All.AGS_DesNumNgb))
     {
-        if(ThisTask==0) {printf("AGS_MaxNumNgbDeviation must be >0 and <0.1*AGS_DesNumNgb \n"); endrun(1);}
+        if(ThisTask==0) {printf("AGS_MaxNumNgbDeviation must be >0 and <0.1*AGS_DesNumNgb \n");} endrun(1);
     }
     if(!isnan(All.AGS_DesNumNgb))
     {
         if((All.AGS_DesNumNgb<KERNEL_NMIN)||(All.AGS_DesNumNgb>KERNEL_NMAX))
         {
-            if(ThisTask==0) {printf("For the kernel chosen, proper sampling and stability requires AGS_DesNumNgb must be >%d and <%d \n",KERNEL_NMIN,KERNEL_NMAX); endrun(1);}
+            if(ThisTask==0) {printf("For the kernel chosen, proper sampling and stability requires AGS_DesNumNgb must be >%d and <%d \n",KERNEL_NMIN,KERNEL_NMAX);} endrun(1);
         }
 
     }
@@ -3026,12 +3146,12 @@ void read_parameter_file(char *fname)
 
     if(All.NumFilesWrittenInParallel != (1 << pnum))
     {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be a power of 2\n"); endrun(1);}
+        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be a power of 2\n");} endrun(1);
     }
 
     if(All.NumFilesWrittenInParallel > NTask)
     {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be smaller than number of processors\n"); endrun(1);}
+        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be smaller than number of processors\n");} endrun(1);
     }
 
 #if defined(BOX_LONG_X) ||  defined(BOX_LONG_Y) || defined(BOX_LONG_Z)
@@ -3040,15 +3160,15 @@ void read_parameter_file(char *fname)
     {
         printf("Code was compiled with BOX_LONG_X/Y/Z and either BOX_PERIODIC or PMGRID, but not with SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC.\n");
         printf("The gravitational solver does not allow stretched-periodic boxes (cubic-box periodic or non-periodic gravity required).\n");
-        endrun(1);
     }
+    endrun(1);
 #endif
 #endif
 
 
 #ifdef GR_TABULATED_COSMOLOGY_W
 #ifndef GR_TABULATED_COSMOLOGY
-    if(ThisTask == 0) {fprintf(stdout, "Code was compiled with GR_TABULATED_COSMOLOGY_W, but not with GR_TABULATED_COSMOLOGY; this is not allowed.\n"); endrun(1);}
+    if(ThisTask == 0) {fprintf(stdout, "Code was compiled with GR_TABULATED_COSMOLOGY_W, but not with GR_TABULATED_COSMOLOGY; this is not allowed.\n");} endrun(1);
 #endif
 #endif
 
@@ -3068,15 +3188,21 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
 int read_agetracerlist(char *fname)
 {
-    FILE *fd; int count,i=0; char buf[512];
+    FILE *fd; int count,i=0; char buf[512]; double age_bin;
     if(!(fd = fopen(fname, "r"))) {printf("can't read age tracer list in file '%s'\n", fname); return 1;}
     while(1)
     {
       if(fgets(buf, 500, fd) != buf) {break;}
-      count = sscanf(buf, " %lg", &All.AgeTracerTimeBins[i]);
+      count = sscanf(buf, " %lg", &age_bin);
       if(count == 1 || count == 2)
       {
-          if(i >= NUM_AGE_TRACERS+1) {PRINT_WARNING("Too many entries in age tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS); endrun(314);}
+          if(i >= NUM_AGE_TRACERS+1)
+          {
+              PRINT_WARNING("Too many entries in age tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS);
+              endrun(314);
+              break;
+          }
+          All.AgeTracerTimeBins[i] = age_bin;
           i++;
       }
     }
@@ -3095,7 +3221,7 @@ int read_agetracerlist(char *fname)
 int read_outputlist(char *fname)
 {
   FILE *fd;
-  int count, flag;
+  int count, flag; double output_time;
   char buf[512];
 
   if(!(fd = fopen(fname, "r")))
@@ -3111,7 +3237,7 @@ int read_outputlist(char *fname)
       if(fgets(buf, 500, fd) != buf)
 	break;
 
-      count = sscanf(buf, " %lg %d ", &All.OutputListTimes[All.OutputListLength], &flag);
+      count = sscanf(buf, " %lg %d ", &output_time, &flag);
 
       if(count == 1)
 	flag = 1;
@@ -3124,8 +3250,10 @@ int read_outputlist(char *fname)
 		printf("\ntoo many entries in output-list. You should increase MAXLEN_OUTPUTLIST=%d.\n",
 		       (int) MAXLEN_OUTPUTLIST);
 	      endrun(13);
+	      break;
 	    }
 
+	  All.OutputListTimes[All.OutputListLength] = output_time;
 	  All.OutputListFlag[All.OutputListLength] = flag;
 	  All.OutputListLength++;
 	}

@@ -844,10 +844,8 @@ void init(void)
     do_cbe_initialization();
 #endif
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
     if(RestartFlag != 3 && RestartFlag != 5) {disp_setup_smoothinglengths();}
-#endif
 #endif
 
 #if defined GALSF_SFR_IMF_VARIATION
@@ -1314,8 +1312,7 @@ void ags_setup_smoothinglengths(void)
 #endif // AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 
 
-#if defined(GALSF_SUBGRID_WINDS)
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 void disp_setup_smoothinglengths(void)
 {
     int i, no, p;
@@ -1341,7 +1338,6 @@ void disp_setup_smoothinglengths(void)
     if(ThisTask == 0) {printf("computing DM Vel_disp around gas particles.\n");}
     disp_density();
 }
-#endif
 #endif
 
 

@@ -35,6 +35,12 @@ void do_cbe_initialization(void)
     for(i=0;i<NumPart;i++)
     {
         for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {P[i].CBE_basis_moments_dt[j][k]=0;}} // no time derivatives //
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        /* Zero-init persistent gradient storage. Particles not yet visited
+         * by CBEGrad_gradient_calc must read 0 (first-order Q_face = Q
+         * fallback at the flux body, hydro convention). */
+        for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {for(int d=0;d<3;d++) {P[i].Gradients_CBE_basis_moments[j][k][d]=0;}}}
+#endif
         double v2=0, v0=0;
         v2 = P[i].Vel.norm_sq();
         if(v2>0) {v0=sqrt(v2);} else {v0=1.e-10;}
@@ -87,6 +93,192 @@ if(j > 1)
     }
     return;
 }
+
+
+/* ---------------------------------------------------------------------------
+ * Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
+ * 2026-05-24). Gated by CBE_INTEGRATOR_OUTPUT_MOREINFO (or the broader
+ * OUTPUT_ADDITIONAL_RUNINFO) so production runs can purge the entire
+ * diagnostic subsystem by disabling the flag.
+ *
+ * Host-side per-rank counters accumulated by future Wave-CBE commits
+ * (3 = root-found v_F, 4 = gradient/reconstruction, 5 = SPD repair), then
+ * MPI-reduced and emitted to FdCbeDiagnostics (cbe_diagnostics.txt; opened
+ * in core/begrun.cc under the same gate). Reset at each emit so the values
+ * represent the accumulated total since the previous output.
+ *
+ * Aggregation path note: per-pair updates from inside AGSForce/GPU
+ * kernels must go through the existing AgsForceOut accumulator / merge /
+ * writeback pattern, not via direct writes to these globals. The pair-loop
+ * infrastructure runs reductions onto per-particle out-structs which get
+ * merged onto host particles in the post-loop step; the CBE counter
+ * updates will hook there. This commit only defines the host-side
+ * holding/reduce/emit scaffold; counters stay at zero until populated.
+ *
+ * No call site is added in this commit (Commit 3 will add the hook from
+ * energy_statistics or equivalent once the counter writes are real). The
+ * file is opened (with a column-header comment) but stays header-only.
+ * --------------------------------------------------------------------------- */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+struct cbe_step_accumulators {
+    /* Populated by Wave-CBE Commit 3 (root-found v_F). NOTE: aggregated
+     * over per-pair evaluations (AGSForce visits an i-j pair once when i
+     * is active; geometric faces with both endpoints active contribute
+     * twice). residual_max is the worst single evaluation; residual_sum
+     * is the sum across all pair evaluations on this rank in the
+     * interval. */
+    double face_mass_flux_residual_max;   /* max |sum_basis F_m * A| over pair evaluations */
+    double face_mass_flux_residual_sum;   /* sum |sum_basis F_m * A| over pair evaluations */
+    long long bracket_fail_count;         /* root-find bracket-widening failures */
+    /* Populated by Wave-CBE Commit 4 (gradient/reconstruction): */
+    long long recon_rho_clamp_count;      /* Q-face rho < eps clamps */
+    long long recon_S_clamp_count;        /* Q-face Sxx < 0 clamps */
+    /* Populated by Wave-CBE Commit 5 (SPD repair): */
+    double repair_dP_sum;                 /* sum |dP| introduced by repair */
+    double repair_dT_sum;                 /* sum |dT| introduced by repair */
+    /* Populated by Wave-CBE Commit 6c (pairing free-slot fallback): SUM
+     * over directional basis rows for which the cbe_apply_free_slot_
+     * fallback transform fired during flux pairing. Independent of
+     * WITHGRADIENTS — emitted as the appended last column of
+     * cbe_diagnostics.txt (col-9 in WITHGRADIENTS-off 9-col format;
+     * col-10 in WITHGRADIENTS-on 10-col format). 0 in builds with
+     * CBE_PAIRING_USE_FREE_SLOT=0 (compile-time selector). */
+    long long pairing_free_slot_count;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    /* Populated by Wave-CBE Commit 4 Phase 2 #5 (face reconstruction):
+     * counts non-finite grad·dp events observed per pair in the flux body.
+     * Defense-in-depth; Tikhonov regularization in the LSQ pass should
+     * keep grads finite under normal physics. Emitted as col-9 of
+     * cbe_diagnostics.txt only when WITHGRADIENTS is on; WITHGRADIENTS-off
+     * builds emit the original 8-col Phase-1 format. */
+    long long grad_nonfinite_count;
+#endif
+};
+static struct cbe_step_accumulators CbeStepAccum;
+
+
+void cbe_step_diagnostics_reset(void)
+{
+    CbeStepAccum.face_mass_flux_residual_max = 0;
+    CbeStepAccum.face_mass_flux_residual_sum = 0;
+    CbeStepAccum.bracket_fail_count          = 0;
+    CbeStepAccum.recon_rho_clamp_count       = 0;
+    CbeStepAccum.recon_S_clamp_count         = 0;
+    CbeStepAccum.repair_dP_sum               = 0;
+    CbeStepAccum.repair_dT_sum               = 0;
+    CbeStepAccum.pairing_free_slot_count     = 0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    CbeStepAccum.grad_nonfinite_count        = 0;
+#endif
+}
+
+
+/* Wave-CBE Commit 3 observer: called once per active particle from
+ * AgsForceSpec::apply_active_writeback with that particle's merged
+ * AgsForceOut.cbe_face_residual_* and cbe_bracket_fail_count. Per-rank
+ * step-local aggregation; MPI reduction happens in cbe_step_diagnostics_emit. */
+void cbe_step_diagnostics_observe_face(double face_residual_max,
+                                        double face_residual_sum,
+                                        long long bracket_fail_count)
+{
+    if(face_residual_max > CbeStepAccum.face_mass_flux_residual_max) {
+        CbeStepAccum.face_mass_flux_residual_max = face_residual_max;
+    }
+    CbeStepAccum.face_mass_flux_residual_sum += face_residual_sum;
+    CbeStepAccum.bracket_fail_count          += bracket_fail_count;
+}
+
+
+/* Wave-CBE Commit 4 + Commit 5 observer: per-active particle's merged
+ * AgsForceOut.cbe_recon_rho_clamp_count + cbe_recon_S_clamp_count from
+ * cbe_clamp_face_Q in the flux body. rho-clamp populated by Commit 4
+ * Phase 1; S-clamp populated by Commit 5 face-state SPD repair. */
+void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
+                                         long long S_clamp_count)
+{
+    CbeStepAccum.recon_rho_clamp_count += rho_clamp_count;
+    CbeStepAccum.recon_S_clamp_count   += S_clamp_count;
+}
+
+
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+/* Wave-CBE Commit 4 Phase 2 #5 observer: per-active particle's merged
+ * AgsForceOut.cbe_grad_nonfinite_count from the flux body's per-pair tally
+ * of non-finite grad·dp events. */
+void cbe_step_diagnostics_observe_grad_nonfinite(long long count)
+{
+    CbeStepAccum.grad_nonfinite_count += count;
+}
+#endif
+
+
+/* Wave-CBE Commit 5 observer (2026-05-26): cell-state SPD-repair drift
+ * accumulators from do_cbe_drift_kick_kernel (Site A). Called once per
+ * cbe_drift_kick_evaluate_gpu invocation with the host-summed dT_scratch
+ * (deterministic sum order; no device atomics).
+ *
+ * dP is always 0.0 from Site A (SPD repair touches only stress slots
+ * [4..9], not momentum [1..3]). Kept as a parameter so any future repair
+ * site that touches momentum can plumb in without an API change. Phil's
+ * directive: dP=0 is a useful invariant for the diagnostic. */
+void cbe_step_diagnostics_observe_repair(double dP, double dT)
+{
+    CbeStepAccum.repair_dP_sum += dP;
+    CbeStepAccum.repair_dT_sum += dT;
+}
+
+
+/* Wave-CBE Commit 6c observer: per-active particle's merged
+ * AgsForceOut.cbe_pairing_free_slot_count from the flux body's per-pair
+ * tally of free-slot fallback firings. Independent of WITHGRADIENTS;
+ * appended as the last column of cbe_diagnostics.txt. */
+void cbe_step_diagnostics_observe_pairing_free_slot(long long count)
+{
+    CbeStepAccum.pairing_free_slot_count += count;
+}
+
+
+void cbe_step_diagnostics_emit(void)
+{
+    double rmax_local = CbeStepAccum.face_mass_flux_residual_max;
+    double rsum_local = CbeStepAccum.face_mass_flux_residual_sum;
+    long long brk_local = CbeStepAccum.bracket_fail_count;
+    long long rc_local  = CbeStepAccum.recon_rho_clamp_count;
+    long long sc_local  = CbeStepAccum.recon_S_clamp_count;
+    double dP_local = CbeStepAccum.repair_dP_sum;
+    double dT_local = CbeStepAccum.repair_dT_sum;
+    double rmax, rsum, dP, dT;
+    long long brk, rc, sc;
+    MPI_Reduce(&rmax_local, &rmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&rsum_local, &rsum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&brk_local,  &brk,  1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&rc_local,   &rc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&sc_local,   &sc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&dP_local,   &dP,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&dT_local,   &dT,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    long long fs_local = CbeStepAccum.pairing_free_slot_count, fs;
+    MPI_Reduce(&fs_local, &fs, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    long long gnf_local = CbeStepAccum.grad_nonfinite_count, gnf;
+    MPI_Reduce(&gnf_local, &gnf, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
+    if(ThisTask == 0 && FdCbeDiagnostics != NULL) {
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        /* 10-col extended format under WITHGRADIENTS. col-9 stays as
+         * cbe_grad_nonfinite_count (Commit 4 Phase 2 #5); col-10 is the
+         * new cbe_pairing_free_slot_count (Commit 6c). */
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld %lld\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT, gnf, fs);
+#else
+        /* 9-col format. cols 1-8 unchanged from Phase-1; col-9 is the
+         * new cbe_pairing_free_slot_count (Commit 6c). */
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT, fs);
+#endif
+        fflush(FdCbeDiagnostics);
+    }
+}
+#endif
 
 
 #endif

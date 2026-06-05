@@ -1,10 +1,15 @@
+% =============================================================================
+% WARNING: the DM_HEATING rate parameters set below are intentionally
+% aggressive/unphysical to make heating obvious in this 5 Myr smoke test.
+% Do NOT use these values for production science runs.
+% =============================================================================
 % Isolated disk galaxy — DM velocity dispersion (dm_dispersion / disp_density) test
 % Config: GALSF_EFFECTIVE_EQS + GALSF_SUBGRID_WINDS + GALSF_SUBGRID_WIND_SCALING=2
 % Uses isodisk ICs (reuses isodisk_ics.hdf5).  disp_density() must be called at
 % least once so that DM_VelDisp is populated before the first wind kick.
 %
 InitCondFile                       isodisk_dmdispersion_ics
-OutputDir                          output
+OutputDir                          output_dmheating_both
 TimeMax                            0.005
 BoxSize                            200
 TimeBetSnapshot                    0.002
@@ -72,3 +77,9 @@ VariableWindSpecMomentum 5000.
 % DM_AnnihilationHeatingFraction  0   % f_h^ann in [0,1]
 % DM_DecayRate                    0   % Gamma in s^-1
 % DM_DecayHeatingFraction         0   % f_h^dec in [0,1]
+
+%---- BOTH channels active (Config_dm_heating.sh / Config_dm_heating_with_winds.sh) — verifies additivity
+DM_AnnihilationSigmaV_over_mChi 1.0
+DM_AnnihilationHeatingFraction  1.0
+DM_DecayRate                    1.0e-20
+DM_DecayHeatingFraction         1.0

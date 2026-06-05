@@ -1741,7 +1741,7 @@ void ReadMultiSpeciesTables(int iT)
     fname=GetMultiSpeciesFilename(iT,0);
     if(ThisTask == 0) printf(" ..opening Cooling Table %s \n",fname);
     if(!(fdcool = fopen(fname, "r"))) {
-        printf(" Cannot read species cooling table in file `%s'\n", fname); endrun(456);}
+        printf(" Cannot read species cooling table in file `%s'\n", fname); endrun(456); return;}
     for(i=0;i<kspecies;i++) {
         for(j=0;j<i_nH;j++) {
             for(k=0;k<i_Temp;k++) {
@@ -1765,7 +1765,7 @@ void ReadMultiSpeciesTables(int iT)
         fname=GetMultiSpeciesFilename(iT+1,0);
         if(ThisTask == 0) printf(" ..opening (z+) Cooling Table %s \n",fname);
         if(!(fdcool = fopen(fname, "r"))) {
-            printf(" Cannot read species 1 cooling table in file `%s'\n", fname); endrun(456);}
+            printf(" Cannot read species 1 cooling table in file `%s'\n", fname); endrun(456); return;}
         for(i=0;i<kspecies;i++) {
             for(j=0;j<i_nH;j++) {
                 for(k=0;k<i_Temp;k++) {
@@ -1819,7 +1819,7 @@ static int nheattab;		/* length of table */
 void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456);}
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
     for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
     fclose(fdcool);
@@ -2920,6 +2920,11 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
 #endif
 }
 void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
+/* Best-effort drain of in-flight device work. Used by the reviewed hard-abort
+ * path (core/run.cc) to quiesce the GPU before MPI_Abort, reducing (not
+ * eliminating) the Vista CG-stuck wedge risk. Guarded so it is safe to call
+ * before Kokkos init or after finalize. */
+void gizmo_kokkos_fence(void) { if(Kokkos::is_initialized() && !Kokkos::is_finalized()) { Kokkos::fence(); } }
 
 /* Central registry of per-TU AllDeviceMirror addresses.
  * Each GPU TU's gpu_all_mirror.h include instantiates a private

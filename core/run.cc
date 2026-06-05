@@ -66,6 +66,164 @@ static void rt_step_checksum(const char *label) {
 }
 #endif
 
+/* --------------------------------------------------------------------------
+ * Controlled-stop / bad-stop helper (Wave-CBE 2026-05-28; generalized
+ * 2026-06-02 for the Vista no-MPI_Abort policy). See core/proto.h for the
+ * contract. First-set wins; we do not clear the local code after collection.
+ * The diagnostic is COPIED into owned static storage (callers may pass stack
+ * buffers, e.g. terminate(buf)), so there is no lifetime requirement on the
+ * caller's reason string.
+ * -------------------------------------------------------------------------- */
+static int  ControlledStop_LocalCode  = 0;
+static int  ControlledStop_GlobalCode = 0;
+/* Owned static storage for the first-set local diagnostic. We COPY here rather
+ * than store the caller's pointer: callers may pass stack buffers (e.g. the
+ * terminate(buf) macro), so a stored const char* would dangle. */
+static char ControlledStop_LocalDiag[MAX_PATH_BUFFERSIZE_TOUSE] = {0};
+
+void gizmo_request_controlled_stop(int code, const char *reason,
+                                   const char *file, int line, const char *func)
+{
+    /* No MPI, no allocation, no Kokkos calls — safe inside per-particle
+     * loops or device-dispatcher callers. First-set-wins; copy the diagnostic
+     * into owned storage immediately (subsequent bad-state flow may clobber
+     * the caller's buffer or fail before global polling). */
+    if(ControlledStop_LocalCode == 0) {
+        ControlledStop_LocalCode = code;
+        snprintf(ControlledStop_LocalDiag, MAX_PATH_BUFFERSIZE_TOUSE,
+                 "%s (%s()/%s/line %d)",
+                 reason ? reason : "(no reason given)",
+                 func ? func : "(?)", file ? file : "(?)", line);
+    }
+}
+
+void gizmo_collect_controlled_stop(void)
+{
+    int local = ControlledStop_LocalCode, global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    ControlledStop_GlobalCode = global;
+}
+
+int         gizmo_controlled_stop_code(void)         { return ControlledStop_GlobalCode; }
+const char *gizmo_controlled_stop_local_reason(void) { return (ControlledStop_LocalCode != 0) ? ControlledStop_LocalDiag : NULL; }
+
+/* Collective poll helper: run the Allreduce and return the global stop code.
+ * Use ONLY at top-level control-flow points every rank reaches (e.g. early in
+ * begrun after each setup phase, or the run-loop boundaries) so a flagging
+ * rank's request is propagated and the caller can return/break to the clean
+ * gizmo_kokkos_finalize() + MPI_Finalize() shutdown. */
+int gizmo_poll_controlled_stop(void) { gizmo_collect_controlled_stop(); return gizmo_controlled_stop_code(); }
+
+/* Stage 2 (Wave no-MPI_Abort): graceful drain at an existing collective phase
+ * boundary. Call ONLY on the unconditional all-rank path -- in place of, or
+ * immediately after, an existing MPI_Barrier / collective -- so every rank
+ * reaches it in the same collective order. gizmo_collect_controlled_stop() is
+ * itself an Allreduce(MAX); it synchronizes all ranks exactly like a barrier, so
+ * used as a drop-in barrier replacement it adds the bad-stop poll WITHOUT adding
+ * a collective. If ANY rank requested a bad stop earlier in the phase, every
+ * rank prints a receipt and unwinds via the clean shutdown (kokkos finalize +
+ * MPI_Finalize + nonzero exit) -- never MPI_Abort. No-op return otherwise. */
+void gizmo_exit_bad_stop_if_requested(const char *poll_site)
+{
+    gizmo_collect_controlled_stop();
+    if(gizmo_controlled_stop_code() == 0) { return; }
+    if(ThisTask == 0) {
+        const char *r = gizmo_controlled_stop_local_reason();
+        printf("Graceful bad-stop drained at phase boundary '%s' (code=%d): %s. "
+               "Finalizing cleanly (no MPI_Abort).\n",
+               poll_site ? poll_site : "(?)", gizmo_controlled_stop_code(),
+               r ? r : "(reason set on other rank only)");
+        fflush(stdout);
+    }
+    gizmo_kokkos_finalize();  /* must precede MPI_Finalize */
+    MPI_Finalize();
+    exit(1);                  /* small fixed nonzero; full code/reason printed above */
+}
+
+/* ---------------------------------------------------------------------------
+ * Reviewed emergency HOLD — the SSOT last-resort termination home in GIZMO.
+ * As of 2026-06-04 the DEFAULT path no longer calls MPI_Abort (MPI_Abort wedges
+ * GPU nodes on Vista -> SLURM CG-stuck -> reboots). `grep MPI_Abort` now finds
+ * MPI_Abort here ONLY inside the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG
+ * debug branch.
+ *
+ * Use ONLY for the rare audited cases where a graceful bad-stop cannot reach
+ * a collective poll (mid-protocol MPI transport corruption; residual incidental
+ * allocator capacity failure that has no preflight coverage; and the myrealloc*
+ * invariant paths, which are TEMP_HARD_CANDIDATE_ALLOCATOR_INVARIANT until their
+ * callers in domain.cc / mpi_util.cc are guarded — a bad-stop+return there would
+ * hand the caller a falsely "resized" buffer). NOT large symmetric allocations,
+ * which get caller-side collective preflight; and NOT the myfree* invariant
+ * paths, which ARE bad-stop + immediate local return (void, safe to drain to the
+ * next poll).
+ * Default behavior: print+flush an actionable diagnostic (incl. `scancel`
+ * instruction), best-effort device fence, then a controlled host sleep/hold loop
+ * with NO further MPI calls -- leaving every rank in a scancel-killable state
+ * instead of an MPI_Abort node-wedge. This is a last-resort Vista GPU quarantine,
+ * NOT a reference-code pattern (AthenaK print+exit; SPH-EXA/Shamrock exceptions;
+ * none sleep) and NOT the target: always prefer converting the CALLING site to a
+ * graceful gizmo_request_controlled_stop() + phase-boundary poll. Env knobs:
+ * GIZMO_EMERGENCY_HOLD_USE_STD_EXIT (clean exit, Vista de-wedge test),
+ * GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE, GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG.
+ * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design /
+ * STATE_2026-06-04_stage4_pass_a §9a.
+ * ------------------------------------------------------------------------- */
+[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+                                            const char *file, int line, const char *func)
+{
+    char buf[MAX_PATH_BUFFERSIZE_TOUSE];
+    snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE,
+             "EMERGENCY HOLD (reviewed, NO MPI_Abort) on task=%d, function '%s()', file '%s', "
+             "line %d: code %d: %s\n",
+             ThisTask, func ? func : "(?)", file ? file : "(?)", line, code,
+             reason ? reason : "(no reason given)");
+    fflush(stdout);
+    printf("%s", buf);
+    printf("  This rank cannot drain to an all-rank poll; the run is INTENTIONALLY HALTED to\n"
+           "  avoid an MPI_Abort GPU-node wedge. Release the allocation with:  scancel $SLURM_JOB_ID\n");
+    fflush(stdout);
+
+    /* Best-effort device drain so we halt in a cleanly-killable host state. Env-skippable in
+     * case a broken device makes the fence itself hang. */
+    if(getenv("GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE") == NULL) { gizmo_kokkos_fence(); }
+
+    /* TEST MODE (Vista de-wedge experiment, default OFF): clean libc exit, no MPI_Abort -- this
+     * is AthenaK's standard per-site fatal pattern (print + std::exit(EXIT_FAILURE)). If a Vista
+     * test shows single-rank exit releases the node cleanly, this can replace the hold below. */
+    if(getenv("GIZMO_EMERGENCY_HOLD_USE_STD_EXIT") != NULL) {
+        printf("  [GIZMO_EMERGENCY_HOLD_USE_STD_EXIT] exiting via exit(EXIT_FAILURE)\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+
+    /* DEBUG ONLY, explicitly UNSAFE (default OFF): the old MPI_Abort path. Known to wedge GPU
+     * nodes on Vista (SLURM CG-stuck). Use only for local crash/core-dump debugging. */
+    if(getenv("GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG") != NULL) {
+        printf("  [GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG] calling MPI_Abort (UNSAFE on GPU nodes)\n");
+        fflush(stdout);
+        MPI_Abort(MPI_COMM_WORLD, code);
+        exit(code ? code : 1);  /* defensive: MPI_Abort must not return */
+    }
+
+    /* DEFAULT: controlled host hold. NO further MPI calls (MPI may itself be the corrupt
+     * subsystem here). Peers block at their next collective (MPI_Wait -- killable); a single
+     * `scancel $SLURM_JOB_ID` then tears the whole job down cleanly, WITHOUT the MPI_Abort
+     * node-wedge. Sparse heartbeat so this reads as an intentional hold, not a silent stall.
+     *
+     * THIS IS NOT NORMAL FATAL-EXIT DESIGN and NOT a reference-code pattern (AthenaK uses
+     * print+exit, SPH-EXA/Shamrock use exceptions; none sleep). It is a last-resort Vista GPU
+     * quarantine for sites not yet proven to reach a clean controlled-stop drain. The target is
+     * always to convert the CALLING site to graceful gizmo_request_controlled_stop + the
+     * phase-boundary poll. See OPEN_endrun_audit_memo / STATE_2026-06-04_stage4_pass_a §9a. */
+    for(long long held_min = 5; ; held_min += 5) {
+        sleep(300);
+        printf("  [EMERGENCY HOLD ~%lld min] task=%d code=%d at %s:%d -- scancel $SLURM_JOB_ID to release\n",
+               held_min, ThisTask, code, file ? file : "(?)", line);
+        fflush(stdout);
+    }
+}
+
+
 /*! This routine contains the main simulation loop that iterates over
  * single timesteps. The loop terminates when the cpu-time limit is
  * reached, when a `stop' file is found in the output directory, or
@@ -107,6 +265,32 @@ void run(void)
         }
 
         STEP_PHASE_TIME("find_timesteps", find_timesteps());		/* find-timesteps */
+
+        /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
+         * just ran gizmo_collect_controlled_stop() on every rank; if any
+         * rank flagged a controlled-stop request earlier in the step
+         * (currently only the STOP_WHEN_BELOW_MINTIMESTEP path in
+         * get_timestep), all ranks now see the global code. Print +
+         * break to main(), which runs gizmo_kokkos_finalize() +
+         * MPI_Finalize() cleanly. NO restart written here: this is an
+         * error condition (unphysical timestep), and writing a restart
+         * at the error point would lock the user into the bad state +
+         * clobber the prior good periodic restart. Recover from the
+         * periodic restart files at run.cc:322 instead. */
+        if(gizmo_controlled_stop_code() != 0) {
+            if(ThisTask == 0) {
+                const char *r = gizmo_controlled_stop_local_reason();
+                printf("Controlled stop (code=%d): %s. Leaving run loop at "
+                       "sync-point %lld, Time=%g. No restart written at the "
+                       "error point -- recover from an earlier periodic "
+                       "restart.\n",
+                       gizmo_controlled_stop_code(),
+                       r ? r : "(reason set on other rank only)",
+                       (long long)All.NumCurrentTiStep, All.Time);
+                fflush(stdout);
+            }
+            break;
+        }
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
@@ -210,8 +394,7 @@ void run(void)
 
         STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
 #ifdef PMGRID
         //if(All.Ti_Current == All.PM_Ti_endstep && get_random_number(1+All.Ti_Current) < 0.05) // compute the DM velocity dispersion around gas particles every 20 PM steps, should be sufficient ? not ideal for many applications, in fact, now only acts on active //
@@ -223,7 +406,6 @@ void run(void)
             disp_density();
         }
 #endif
-#endif
 
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
@@ -234,6 +416,9 @@ void run(void)
 #endif
 
         STEP_PHASE_TIME("compute_hydro", compute_hydro_densities_and_forces());	/* densities, gradients, & hydro-accels for synchronous particles */
+#ifdef DM_HEATING
+        STEP_PHASE_TIME("dm_heating", apply_dm_heating());  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
+#endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
@@ -389,7 +574,7 @@ void calculate_non_standard_physics(void)
         }}
 #endif
 #endif
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_sinks"); CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif
 
@@ -460,7 +645,7 @@ void calculate_non_standard_physics(void)
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
 #endif
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -495,7 +680,7 @@ void calculate_non_standard_physics(void)
         }
 #endif
     }
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -519,20 +704,20 @@ void calculate_non_standard_physics(void)
 
 #ifdef NUCLEAR_NETWORK
     nuclear_parent_routine(); // nuclear burning (operator-split, before cooling; fixup is done inside on compact arrays) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 #ifdef DISK_BETA_COOL
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #ifdef PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
@@ -544,7 +729,7 @@ void calculate_non_standard_physics(void)
 #endif
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -569,6 +754,13 @@ void compute_statistics(void)
          * on TimeBetStatistics so this doesn't fire every step. */
         gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
+#if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
+        /* Wave-CBE Commit 3: emit per-output-interval CBE diagnostic line and
+         * reset the per-rank accumulators. Co-located with energy_statistics
+         * cadence so the cbe_diagnostics.txt line number matches energy.txt. */
+        cbe_step_diagnostics_emit();
+        cbe_step_diagnostics_reset();
+#endif
         All.TimeLastStatistics += All.TimeBetStatistics;
     }
 }
@@ -636,7 +828,7 @@ void find_next_sync_point_and_drift(void)
         set_cosmo_factors_for_current_time();
 
         move_particles(All.Ti_nextoutput);
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_drift"); CPU_Step[CPU_DRIFT] += measure_time();
 
         /* Phase 10.6: potential is computed by the unified gravity tree walk
          * (gravtree.cc with EVALPOTENTIAL).  COMPUTE_POTENTIAL_ENERGY and
