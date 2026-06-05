@@ -139,30 +139,78 @@ double get_particle_volume_ags(int j) { return get_particle_volume_ags_P(j, P); 
  Subroutine here exists to calculate the MFM-like effective faces for purposes of face-interaction evaluation
  -------------------------------------------------------------------------- */
 
-/* routine to invert the NV_T matrix after neighbor pass */
-double do_cbe_nvt_inversion_for_faces(int i)
+/* Invert the accumulated raw moment matrix into the symmetric, fully-populated
+ * face operator used by the CBE/dm_fuzzy face construction and the DMGrad
+ * gradient estimator. Single source of truth for AGS face NV_T inversion;
+ * mirrors the hydro density path (hydro/density_loop.cc:508-561) including the
+ * diagonal-loading preconditioning loop.
+ *
+ * Inputs : sym6 = upper-triangle raw moment components {00,01,02,11,12,22}
+ *          h    = AGS kernel size (AGS_KernelRadius), used to normalize the
+ *                 matrix into dimensionless units so the regularization scale
+ *                 matches the matrix scale (it divides out of the result).
+ * Output : Tinv_out = full 3x3 inverse of the raw moment matrix.
+ * Returns: cn_expansion (neighbor-expansion signal), cn_final + status (diag).
+ *
+ * Robustness (codex 2026-06: blocker): matrix_invert_ndims() returns Tinv=0 and
+ * ConditionNumber=1 for an exactly-singular matrix (Mat3::invert sets inv=0 on
+ * det==0). So acceptance CANNOT key off the condition number alone — we also
+ * require a finite, non-zero inverse, and we report a large cn_expansion for
+ * the singular case so the neighbor iteration expands (a singular matrix needs
+ * MORE neighbors, the opposite of what CN=1 would imply). */
+AgsNvtInversion ags_invert_nvt_for_faces(const double sym6[6], double h, double Tinv_out[3][3])
 {
-    /* initialize the matrix to be inverted */
-    MyDouble NV_T[3][3], Tinv[3][3]; int j,k; for(j=0;j<3;j++) {for(k=0;k<3;k++) {NV_T[j][k]=P[i].NV_T[j][k];}}
-    /* want to work in dimensionless units for defining certain quantities robustly, so normalize out the units */
-    double dimensional_NV_T_normalizer = pow( P[i].KernelRadius , 2-NUMDIMS ); /* this has the same dimensions as NV_T here */
-    for(j=0;j<3;j++) {for(k=0;k<3;k++) {NV_T[j][k] /= dimensional_NV_T_normalizer;}} /* now NV_T should be dimensionless */
-    /* Also, we want to be able to calculate the condition number of the matrix to be inverted, since
-        this will tell us how robust our procedure is (and let us know if we need to improve the conditioning) */
-    double ConditionNumber=0, ConditionNumber_threshold = 10. * CONDITION_NUMBER_DANGER; /* set a threshold condition number - above this we will 'pre-condition' the matrix for better behavior */
-    double trace_initial = NV_T[0][0] + NV_T[1][1] + NV_T[2][2]; /* initial trace of this symmetric, positive-definite matrix; used below as a characteristic value for adding the identity */
-    double conditioning_term_to_add = 1.05 * (trace_initial / NUMDIMS) / ConditionNumber_threshold; /* this will be added as a test value if the code does not reach the desired condition number */
-    /* now enter an iterative loop to arrive at a -well-conditioned- inversion to use */
-    while(1)
+    AgsNvtInversion result; result.cn_expansion = 1.0; result.cn_final = 1.0; result.status = 0;
+    const double ConditionNumber_threshold = 10. * CONDITION_NUMBER_DANGER;
+
+    /* Normalize to dimensionless units (divides out of the final inverse). */
+    double dimensional_NV_T_normalizer = pow(h, 2 - NUMDIMS);
+    double inv_norm = ((dimensional_NV_T_normalizer != 0) && !isnan(dimensional_NV_T_normalizer))
+                      ? 1.0 / dimensional_NV_T_normalizer : 1.0;
+    MyDouble NV_T[3][3], Tinv[3][3];
+    NV_T[0][0] = sym6[0]*inv_norm; NV_T[0][1] = sym6[1]*inv_norm; NV_T[0][2] = sym6[2]*inv_norm;
+    NV_T[1][0] = sym6[1]*inv_norm; NV_T[1][1] = sym6[3]*inv_norm; NV_T[1][2] = sym6[4]*inv_norm;
+    NV_T[2][0] = sym6[2]*inv_norm; NV_T[2][1] = sym6[4]*inv_norm; NV_T[2][2] = sym6[5]*inv_norm;
+
+    double trace_initial = NV_T[0][0] + NV_T[1][1] + NV_T[2][2];
+    /* Absolute floor on the trace so the conditioning step makes progress even
+     * for a (near-)zero raw matrix (no usable neighbors). */
+    double trace_for_cond = DMAX(trace_initial, MIN_REAL_NUMBER);
+    double conditioning_term_to_add = 1.05 * (trace_for_cond / NUMDIMS) / ConditionNumber_threshold;
+    if(!(conditioning_term_to_add > 0)) {conditioning_term_to_add = MIN_REAL_NUMBER;}
+
+    const int MAXIT = 50; int ok = 0, regularized = 0; int j,k;
+    for(int it = 0; it < MAXIT; it++)
     {
-        /* initialize the matrix this will go into */
-        ConditionNumber = matrix_invert_ndims(NV_T, Tinv); // compute the matrix inverse, and return the condition number
-        if(ConditionNumber < ConditionNumber_threshold) {break;} // end loop if we have reached target conditioning for the matrix
-        for(j=0;j<NUMDIMS;j++) {NV_T[j][j] += conditioning_term_to_add;} /* add the conditioning term which should make the matrix better-conditioned for subsequent use: this is a normalization times the identity matrix in the relevant number of dimensions */
-        conditioning_term_to_add *= 1.2; /* multiply the conditioning term so it will grow and eventually satisfy our criteria */
-    } // end of loop broken when condition number is sufficiently small
-    for(j=0;j<3;j++) {for(k=0;k<3;k++) {P[i].NV_T[j][k] = Tinv[j][k] / dimensional_NV_T_normalizer;}} // now P[i].NV_T holds the inverted matrix elements //
-    return ConditionNumber;
+        double ConditionNumber = matrix_invert_ndims(NV_T, Tinv);
+        double frob_inv = 0; int finite_inv = 1;
+        for(j=0;j<3;j++) {for(k=0;k<3;k++) {double e = Tinv[j][k]; if(!isfinite(e)) {finite_inv = 0;} frob_inv += e*e;}}
+        int inversion_ok = finite_inv && (frob_inv > 0) && isfinite(ConditionNumber);
+        if(it == 0) {result.cn_expansion = inversion_ok ? ConditionNumber : ConditionNumber_threshold;}
+        if(inversion_ok && (ConditionNumber < ConditionNumber_threshold)) {
+            result.cn_final = ConditionNumber;
+            result.status = regularized ? 1 : 0;
+            ok = 1;
+            break;
+        }
+        regularized = 1;
+        for(j=0;j<NUMDIMS;j++) {NV_T[j][j] += conditioning_term_to_add;}
+        conditioning_term_to_add *= 1.2;
+        if(!(conditioning_term_to_add > 0) || !isfinite(conditioning_term_to_add)) {conditioning_term_to_add = MIN_REAL_NUMBER;}
+    }
+    /* Un-normalize: stored = Tinv / normalizer = inverse of the raw moment
+     * matrix. matrix_invert_ndims returns the FULL inverse, so all 9 entries
+     * are populated (no upper-triangular-only state). */
+    for(j=0;j<3;j++) {for(k=0;k<3;k++) {Tinv_out[j][k] = Tinv[j][k] * inv_norm;}}
+    if(!ok)
+    {
+        result.status = 2; result.cn_final = result.cn_expansion;
+        PRINT_WARNING("AGS NV_T inversion could not be conditioned after %d diagonal-load steps "
+                      "(raw trace=%g); storing best-effort regularized inverse. The CBE/DMGrad "
+                      "faces for this particle are degraded -- check its neighbor count.",
+                      MAXIT, trace_initial);
+    }
+    return result;
 }
 
 #endif
@@ -192,7 +240,7 @@ int AGSForce_isactive(int i)
 /* AGSForce_calc() lives in gravity/ags_force_loop.cc (Wave 3 close-out port).
  * Moved out of this TU to keep ags_rkern.cc host-only (carries unrelated
  * host helpers AGSForce_isactive, ags_gravity_kernel_shared_BITFLAG,
- * ags_return_minsoft/maxsoft, do_cbe_nvt_inversion_for_faces); see
+ * ags_return_minsoft/maxsoft, ags_invert_nvt_for_faces); see
  * reference_runner_port_checklist.md §5. */
 
 

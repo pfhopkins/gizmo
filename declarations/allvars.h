@@ -327,6 +327,18 @@ extern FILE *FdSinkFormationDetails;
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)) && defined(CBE_INTEGRATOR)
 extern FILE *FdCbeDiagnostics;
 #endif
+#ifdef CBE_INTEGRATOR
+/* C7 (2026-05-30): per-particle-type presence flag for the VlasovMoments
+ * IC dataset. Set in read_ic.cc inside the `if(hdf5_dataset >= 0)` block
+ * on successful H5Dread; consumed by do_cbe_initialization in sidm/
+ * cbe_integrator.cc to choose between "trust loaded moments" vs
+ * "synthesize cold default" per particle. Per-type (NOT a single global)
+ * because VlasovMoments lives under /PartTypeX/ in the HDF5 layout — a
+ * mixed cosmological IC can carry it for DM (Type=1) and not for gas
+ * (Type=0) or stars (Type=4). Single-flag would corrupt absent-type
+ * particles. Reset to {0,0,0,0,0,0} at the top of read_ic() each call. */
+extern int CBE_Moments_LoadedFromIC_PType[6];
+#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
 #ifdef SINK_OUTPUT_MOREINFO

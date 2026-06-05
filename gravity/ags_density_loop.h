@@ -98,9 +98,9 @@ struct AgsDensityAccumData {
     double Particle_DivVel;
     double AGS_vsig_max;
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    /* Upper triangle of the 3x3 NV_T accumulator. Lower triangle stays
-     * zero (legacy memset pattern). do_cbe_nvt_inversion_for_faces in the
-     * caller re-symmetrises before invert. */
+    /* Upper triangle of the raw 3x3 NV_T moment accumulator. after_iter
+     * symmetrises + inverts these into the full face operator P[i].NV_T via
+     * ags_invert_nvt_for_faces (the lower triangle is implied symmetric). */
     double NV_T_00;
     double NV_T_01;
     double NV_T_02;
@@ -128,6 +128,11 @@ struct AgsDensityIterScratch {
     double AGS_Prev;
     int    set_to_maxrkern;
     int    set_to_minrkern;
+    /* Monotonic per-call max condition number of the AGS face NV_T inversion.
+     * Zero-memset at iter 0 by the runner; a high value at any iteration
+     * ratchets the desired neighbor count up (never down) so the search
+     * expands to improve conditioning without oscillating. AGS_FACE only. */
+    double condition_number_max;
 };
 
 /* DeviceContext extension. Single sticky call-scope flag for "any wakeup

@@ -46,7 +46,11 @@
  * cbe_drift_kick_evaluate_gpu — first/second half-step CBE drift-kick.
  *
  * Kernel: do_cbe_drift_kick_kernel(pi, dt, dT_out).
- * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] only.
+ * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] AND pi.Vel[0..2]. The
+ *        absolute-update round-trip (codex 2026-06-04) derives V_new from
+ *        the post-update mass-weighted-mean basis velocity and writes it
+ *        back to pi.Vel directly. The GPU narrow scatter therefore must
+ *        copy BOTH fields back from compact_P.
  * Reads: All.Time, All.TimeBegin, All.Ti_Current (via the kernel's basis-
  *        resplit branch); All-mirror handles the device read.
  *
@@ -130,12 +134,15 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     /* gizmo_gpu_kernel_launch fences before returning (the narrow scatter
      * below already relies on this); host reads of dT_scratch[a] follow. */
 
-    /* Narrow scatter: only CBE_basis_moments is touched by the kernel. */
+    /* Narrow scatter: kernel writes CBE_basis_moments AND pi.Vel (the
+     * latter from the absolute-update round-trip's V_new = MMV derivation,
+     * codex 2026-06-04). Both must be scattered back to P_host. */
     for(int a = 0; a < num_active; a++) {
         int ii = active_indices[a];
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
                 P_host[ii].CBE_basis_moments[m][k] = compact_P[a].CBE_basis_moments[m][k];
+        for(int k = 0; k < 3; k++) P_host[ii].Vel[k] = compact_P[a].Vel[k];
     }
 
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
@@ -156,8 +163,12 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
  * cbe_postgravity_evaluate_gpu — per-active post-AGSForce finalization.
  *
  * Kernel: do_cbe_postgravity_kernel(pi).
- * Writes: pi.GravAccel, pi.CBE_basis_moments_dt[NBASIS][NMOMENTS].
- * Reads: All.cf_a2inv (via All-mirror on device).
+ * Writes: pi.CBE_basis_moments_dt[basis][0] only (mass-closure safety net;
+ *         codex 2026-06-04). The CBE bulk-velocity injection into
+ *         pi.GravAccel is GONE in the post-2026-06-04 design — bulk V is
+ *         now derived from the post-update mass-weighted-mean basis
+ *         velocity inside the drift-kick absolute round-trip.
+ * Reads: pi.Mass, pi.CBE_basis_moments_dt[basis][0], pi.CBE_basis_moments[basis][0].
  *
  * Called with active_indices = ActiveParticleList.data(),
  * num_active = ActiveParticleList.size() (no extra gating — matches the
@@ -192,13 +203,13 @@ void cbe_postgravity_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
-    /* Narrow scatter: GravAccel and CBE_basis_moments_dt only. */
+    /* Narrow scatter: kernel writes only the mass slot of the dt-accumulator
+     * (closure-enforcing subtraction). Scatter that slot back; pi.GravAccel
+     * is NOT touched anymore in the post-2026-06-04 design. */
     for(int a = 0; a < num_active; a++) {
         int ii = active_indices[a];
-        P_host[ii].GravAccel = compact_P[a].GravAccel;
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
-            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                P_host[ii].CBE_basis_moments_dt[m][k] = compact_P[a].CBE_basis_moments_dt[m][k];
+            P_host[ii].CBE_basis_moments_dt[m][0] = compact_P[a].CBE_basis_moments_dt[m][0];
     }
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);

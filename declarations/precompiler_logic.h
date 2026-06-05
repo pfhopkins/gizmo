@@ -1564,21 +1564,41 @@
 #error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
 #endif
 
-/* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
- * guardrail, codex 2026-05-25). The do_cbe_flux_computation /
- * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
- * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
- * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
- * off-diag Sxy/Sxz/Syz). NMOMENTS = 3 (1D) and NMOMENTS = 6 (2D) use
- * different index layouts -- silently mis-indexed by the same code,
- * which would corrupt fluxes without raising a compile error. The
- * hardcoded init at sidm/cbe_integrator.cc:62 and the Commit-3 pad
- * computation at sidm/cbe_integrator_flux_functions.h:100 inherit the
- * same assumption. Until dimension-aware moment-index helpers land
- * (deferred until/unless 1D or 2D production CBE is actually wanted),
- * fence non-3D second-moment CBE at compile time. */
-#if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
-#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
-#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
-#endif
-#endif
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
+ *
+ * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at
+ * 3D because every momentum-slot access in sidm/cbe_integrator{.cc,
+ * _functions.h, _flux_functions.h} hard-coded [1]/[2]/[3] as p_x/p_y/p_z.
+ * Lifted 2026-06-02 to NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path
+ * once sidm/cbe_integrator_functions.h gained dimension-aware
+ * momentum-slot helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3,
+ * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
+ * sites were migrated through them.
+ *
+ * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
+ * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
+ * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
+ * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
+ * repair, postgravity dT block) to access stress slots via cbe_T_idx /
+ * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
+ * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
+ * cbe_build_flux_frame_Q_from_stored_moments so the flux solver sees
+ * absolute-frame Q. The frame conversion on the storage side has since
+ * been moved (codex 2026-06-04) from a continuous-time differential
+ * postgravity formula into a finite absolute-update round-trip inside
+ * do_cbe_drift_kick_kernel (see SSOT helpers cbe_relative_row_to_absolute
+ * / cbe_absolute_to_relative_row); postgravity is now reduced to a
+ * mass-closure safety net, and pi.Vel is updated directly from the
+ * post-update mass-weighted-mean basis velocity rather than through a
+ * GravAccel injection. With these pieces in place, the SECONDMOMENT-on
+ * low-D code passes the 1D uniform warm two-stream and the warm
+ * density-wave analytic gates (mass, central S, total M/p/E preserved
+ * to roundoff).
+ *
+ * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
+ * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)
+ * — that whole repair chain (diagonal floor + CS + det + SPD projection +
+ * split-largest) is slated for replacement by Fix #2b conservative-shift
+ * repair (commit 5). The active-dim SPD projection landed in 4a is what
+ * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
+ * reachable. */

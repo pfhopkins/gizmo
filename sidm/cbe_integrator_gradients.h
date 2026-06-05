@@ -107,10 +107,21 @@ struct CBEGradLocalIn {
 
 /* Per-active accumulator. Both passes share one POD:
  *   pass 0 (LSQ):  M (3x3, sum-merge) + B[m][k][d] (sum-merge); phi stays 1.0
- *   pass 1 (BJ-style): phi[m][k] (min-merge, NaN-aware); M, B stay 0
+ *   pass 1 (row-scalar BJ + cone): phi[m][k] (min-merge, NaN-aware);
+ *          M, B stay 0
  * merge_accum unconditionally sums M+B AND mins phi — the unused-pass
  * fields are neutral elements (0 for sum, 1 for min) so the per-pass
  * branch isn't needed in merge_accum.
+ *
+ * Semantically post Wave-CBE Commit 10 (Fix #6 cone limiter) pass 1 is
+ * ROW-SCALAR: a single phi per basis row m is produced per neighbor,
+ * and the same value is written to every k in row m. The per-(m,k)
+ * storage layout is preserved for ABI stability; after min-merge over
+ * neighbors all k in a given row therefore carry the same value, and
+ * the per-active writeback rescales the whole row coupled (m, p, T)
+ * by that scalar. Mixing different phi across k in a row would move
+ * the reconstructed state off the line segment the cone predicate
+ * validated and could reintroduce non-realizability.
  *
  * MUST be a POD; zero_accum sets M=0, B=0, phi=1.0 explicitly. */
 struct CBEGradOut {
@@ -206,14 +217,15 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Same selector
-     * dispatch / cost policy as the flux body, so gradient/limiter matching
-     * stays method-consistent with flux matching. Exact pair identity is
-     * NOT guaranteed: gradient pre-pass uses cell-centered Q_i / Q_j here,
-     * while flux uses face-reconstructed Qface_i / Qface_j, so the cost
-     * matrices can differ pair-by-pair even at identical selectors.
-     * Single-direction (a->b only); the fired-count counter is NULL
-     * because pre-pass matching is not a flux-pairing decision. */
+    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Uses the same
+     * cost function and assignment rule as the limiter pass and the flux
+     * body. By design the gradient pre-pass matches on cell-center Q_i /
+     * Q_j (Q_face does not exist yet -- it is the output of this and the
+     * limiter pass) while the flux body matches on face-reconstructed
+     * Qface_i / Qface_j; the per-pair pair identities can therefore
+     * differ between the two states, but the matching function itself is
+     * shared. This is the architected Q-cell/Q-face split, not a pending
+     * fix. Single-direction (a->b only); fired-count counter is NULL. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
@@ -264,6 +276,81 @@ static double cbe_bj_phi_pair(double dQ, double predicted)
     if(ratio > 1.0) return 1.0;
     return ratio;
 }
+
+
+/* ----------------------------------------------------------------------------
+ * Realizability predicate for one basis row at trial phi (Wave-CBE
+ * Commit 10, Fix #6). Constructs Q_face = Q_cell_row + phi * g_row and
+ * calls the SSOT realizability predicate cbe_basis_row_is_realizable
+ * (defined in sidm/cbe_integrator_functions.h, moved there in Fix #2a
+ * 2026-05-30 so cell repair + face clamp + cone limiter share one
+ * definition). Strict eps_tol = 0 preserves the original Commit-10
+ * strict-PSD semantics.
+ *
+ * The cone-limiter realizability set { Q : m > 0, m*T - p p^T PSD } is
+ * convex (Schur-complement), so bisection on this predicate converges
+ * to the largest realizable phi in [0, phi_BJ_upper] — see comment at
+ * cbe_cone_phi_row below.
+ * ---------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+static bool cbe_row_realizable_at_phi(
+    const double Q_cell_row[CBE_INTEGRATOR_NMOMENTS],
+    const double g_row[CBE_INTEGRATOR_NMOMENTS],
+    double phi)
+{
+    double Q_face[CBE_INTEGRATOR_NMOMENTS];
+    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+        Q_face[k] = Q_cell_row[k] + phi * g_row[k];
+    }
+    return cbe_basis_row_is_realizable(Q_face, /*eps_tol=*/ 0.0);
+}
+
+
+/* ----------------------------------------------------------------------------
+ * Row-scalar realizability cone limiter (Wave-CBE Commit 10, Fix #6).
+ *
+ * The CBE per-basis realizable set { Q : m > 0, m*T - p(x)p PSD } is
+ * convex: by the Schur-complement form, m > 0 AND m*T - p(x)p PSD is
+ * equivalent to the block matrix [[T, p], [p^T, m]] being PSD, the
+ * intersection of a convex cone with the {m > 0} half-space. Its
+ * intersection with the line Q(phi) = Q_cell + phi * g is therefore
+ * an interval containing phi = 0 whenever the cell-center row is
+ * realizable. Bisection on the predicate cbe_row_realizable_at_phi
+ * keeps the largest known-realizable phi as lo; the returned phi is
+ * always provably realizable. No monotonicity per individual principal
+ * minor is claimed -- the predicate is bisected directly.
+ *
+ * Defensive: if the cell-center row is itself non-realizable (should
+ * not occur post drift-kick repair; if it does, that is a cell-state
+ * repair bug, not cone limiter behavior), return 0. Device-safe.
+ *
+ * S_floor = 0 default. Bracket upper bound is the row-scalar BJ phi
+ * for this pair (min over k of per-(m,k) BJ phi); the cone only ever
+ * tightens that bound. Scale-aware termination with tol_rel = 1e-14
+ * matches the v_F root-find precision; 60-iter cap is plenty for the
+ * bracket widths in play.
+ * ---------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+static double cbe_cone_phi_row(
+    const double Q_cell_row[CBE_INTEGRATOR_NMOMENTS],
+    const double g_row[CBE_INTEGRATOR_NMOMENTS],
+    double phi_BJ_upper)
+{
+    if(!(phi_BJ_upper > 0)) return 0;
+    if(!cbe_row_realizable_at_phi(Q_cell_row, g_row, 0.0)) return 0;
+    if(cbe_row_realizable_at_phi(Q_cell_row, g_row, phi_BJ_upper)) return phi_BJ_upper;
+    double lo = 0;
+    double hi = phi_BJ_upper;
+    for(int it = 0; it < 60; it++) {
+        const double scale = DMAX(fabs(lo), fabs(hi));
+        if((hi - lo) <= 1e-14 + 1e-14 * scale) break;
+        const double mid = 0.5 * (lo + hi);
+        if(cbe_row_realizable_at_phi(Q_cell_row, g_row, mid)) lo = mid;
+        else                                                  hi = mid;
+    }
+    return lo;
+}
+
 
 /* Pass-1 pair body — pairwise BJ-style conservative limiter. Reads
  * active.local.Gradients_CBE_basis_moments (by-value snapshot from
@@ -332,28 +419,49 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
 
     /* Basis matching via SSOT helper (Wave-CBE Commit 6b) — same selector
      * dispatch / cost policy as the LSQ pre-pass and the flux body, so
-     * limiter matching stays method-consistent. Exact pair identity vs
-     * the flux is not guaranteed (limiter uses cell-centered Q_i / Q_j;
-     * flux uses face-reconstructed Qface_i / Qface_j). Single-direction;
-     * counter NULL (not a flux-pairing decision). */
+     * limiter matching uses the same cost function and assignment rule
+     * across all consumers. The matched pair from this Q_cell-state call
+     * can differ from the flux body's Q_face-state call by design: the
+     * gradient/limiter cannot match on Q_face since Q_face is the output
+     * of this pass, and the flux must match on the state it actually
+     * consumes. Both use the same SSOT helper with the same selectors.
+     * Single-direction; counter NULL (not a flux-pairing decision). */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
                             /*free_slot_fired_count_inout=*/NULL);
 
-    /* Per (m, k): predicted delta from Q_i to Q_face on i's side =
-     *   grad_i[m][k] . face_offset_i, face_offset_i = -psi_i * dp.
-     * → predicted = -psi_i * (grad_i[m][k] . dp). */
+    /* Pass 1 per-pair limiter — row-scalar phi with cone tightening
+     * (Wave-CBE Commit 10, Fix #6). For each basis row m:
+     *   1. Compute the existing per-(m, k) BJ phi from cbe_bj_phi_pair.
+     *   2. Build g_row[k] = -psi_i * (grad_i[m][k] . dp), the predicted
+     *      face delta per k for the same face offset the flux body uses.
+     *   3. Row-scalar BJ phi = min_k phi_BJ[k] is the cone bracket upper
+     *      bound; the cone bisection only ever tightens it.
+     *   4. cbe_cone_phi_row bisects on the realizability predicate
+     *      (mass > 0 AND central stress PSD per the Schur-complement
+     *      convexity argument) over [0, phi_BJ_row]. Returns the largest
+     *      known-realizable phi.
+     *   5. The same scalar phi_row_pair is written to every k in row m.
+     *      Mixing per-k phi after the cone validated a single-phi point
+     *      would move Q_face off the line segment the predicate
+     *      validated and could reintroduce non-realizability. */
     for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
         const int n = matched_j_for_i[m];
+        double g_row[CBE_INTEGRATOR_NMOMENTS];
+        double phi_BJ_row_pair = 1.0;
         for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
             const double gdotdp = L.Gradients_CBE_basis_moments[m][k][0]*dp[0]
                                 + L.Gradients_CBE_basis_moments[m][k][1]*dp[1]
                                 + L.Gradients_CBE_basis_moments[m][k][2]*dp[2];
-            const double predicted = -psi_i * gdotdp;
+            g_row[k] = -psi_i * gdotdp;
             const double dQ        = Q_j[n][k] - Q_i[m][k];
-            const double phi_ij    = cbe_bj_phi_pair(dQ, predicted);
-            if(phi_ij < accum.phi[m][k]) accum.phi[m][k] = phi_ij;
+            const double phi_ij_BJ = cbe_bj_phi_pair(dQ, g_row[k]);
+            if(phi_ij_BJ < phi_BJ_row_pair) phi_BJ_row_pair = phi_ij_BJ;
+        }
+        const double phi_row_pair = cbe_cone_phi_row(Q_i[m], g_row, phi_BJ_row_pair);
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+            if(phi_row_pair < accum.phi[m][k]) accum.phi[m][k] = phi_row_pair;
         }
     }
     (void)j;
