@@ -111,6 +111,7 @@
 
 #define TAG_MPI_GENERIC_COM_BUFFER_A 103
 #define TAG_MPI_GENERIC_COM_BUFFER_B 104
+#define TAG_IC_STATUS               105      /*!< read_ic: participant-only (readTask..lastTask) bad-stop status reconcile, no MPI_COMM_WORLD */
 
 /* Mode B tiny-N P2P transport — reserved tag block, distinct from all
  * other GIZMO collectives/exchanges. Base is well above existing 104 so

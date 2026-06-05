@@ -368,7 +368,7 @@ void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
 long get_particles_in_block(enum iofields blocknr, int *typelist);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
-void read_file(char *fname, int readTask, int lastTask);
+int read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
 
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
@@ -927,7 +927,7 @@ void rt_write_chemistry_stats(void);
 double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell);
 
 
-void find_block(char *label,FILE *fd);
+int find_block(char *label,FILE *fd);
 
 
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)

@@ -59,8 +59,12 @@ void read_ic(char *fname)
 
         for(gr = 0; gr < ngroups; gr++)
         {
-            if(ThisTask == (groupTaskIterator + gr)) {read_file(buf, ThisTask, ThisTask);}	/* ok, it's this processor's turn */
-            MPI_Barrier(MPI_COMM_WORLD);
+            if(ThisTask == (groupTaskIterator + gr)) {(void)read_file(buf, ThisTask, ThisTask);}	/* ok, it's this processor's turn */
+            /* All-rank drain replaces the post-turn barrier (one collective, same sync): an IC
+             * read failure on the turn's rank set a soft bad-stop inside read_file(); collect it
+             * here and finalize cleanly BEFORE read_ic continues into myfree(CommBuffer)/mass-init/
+             * P[] loops on junk state. No MPI_Abort, node releases. */
+            gizmo_exit_bad_stop_if_requested("read_ic:read_file_turn");
         }
         rest_files -= NTask;
     }
@@ -89,8 +93,8 @@ void read_ic(char *fname)
 
         for(gr = 0; gr < ngroups; gr++)
         {
-            if((filenr / All.NumFilesWrittenInParallel) == gr) {read_file(buf, primaryTask, lastTask);}	/* ok, it's this processor's turn */
-            MPI_Barrier(MPI_COMM_WORLD);
+            if((filenr / All.NumFilesWrittenInParallel) == gr) {(void)read_file(buf, primaryTask, lastTask);}	/* ok, it's this processor's turn */
+            gizmo_exit_bad_stop_if_requested("read_ic:read_file_turn");
         }
     }
 
@@ -163,7 +167,7 @@ void read_ic(char *fname)
     }
 
     for(i = 0; i < N_gas; i++) {CellP[i].InternalEnergyPred = CellP[i].InternalEnergy = DMAX(All.MinEgySpec, CellP[i].InternalEnergy);}
-    MPI_Barrier(MPI_COMM_WORLD);
+    gizmo_exit_bad_stop_if_requested("read_ic:done");   /* final all-rank drain (replaces the closing barrier) */
     if(ThisTask == 0) {printf("Reading done. Total number of particles :  %d%09d\n\n", (int) (All.TotNumPart / 1000000000), (int) (All.TotNumPart % 1000000000)); fflush(stdout);}
 
     CPU_Step[CPU_SNAPSHOT] += measure_time();
@@ -705,18 +709,56 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_LASTENTRY:
-            gizmo_emergency_hold_reviewed(220, "TEMP_HARD_CANDIDATE_IO: unreachable IO_LASTENTRY in empty_read_buffer (internal: unknown iofield)", __FILE__, __LINE__, __FUNCTION__);
+            /* Internal "can't happen": unknown iofield. Pure-local void function (no MPI),
+             * and every rank unpacking a given block hits the identical iofield, so a soft
+             * bad-stop here is collective-symmetric and drains at the read_ic turn poll. */
+            endrun(220);
             break;
     }
 }
 
 
 
-/*! This function reads a snapshot file and distributes the data it contains
- *  to tasks 'readTask' to 'lastTask'.
- */
-void read_file(char *fname, int readTask, int lastTask)
+/*! Participant-only bad-stop status reconcile for read_file(). Point-to-point over the
+ *  participating ranks ONLY (readTask..lastTask, TAG_IC_STATUS) -- deliberately NOT an
+ *  MPI_COMM_WORLD collective: read_file() is dispatched on a SUBSET of ranks per driver
+ *  turn (peers outside the group sit at the post-turn read_ic poll), so a COMM_WORLD
+ *  reduce here would deadlock. readTask gathers each participant's local status,
+ *  OR-combines (first nonzero wins), and scatters the combined status back. Returns the
+ *  combined status on every participant (0 == all clear). Lets a per-rank IC failure
+ *  become an all-participant graceful return BEFORE any header-derived allocation/use. */
+static int read_file_sync_status(int readTask, int lastTask, int local_status)
 {
+    if(lastTask <= readTask) {return local_status;}   /* single participant (per-rank own-file): no peers waiting */
+    MPI_Status mpistat;
+    int combined = local_status;
+    if(ThisTask == readTask)
+    {
+        int task, peer_status;
+        for(task = readTask + 1; task <= lastTask; task++)
+        {
+            MPI_Recv(&peer_status, 1, MPI_INT, task, TAG_IC_STATUS, MPI_COMM_WORLD, &mpistat);
+            if(peer_status != 0 && combined == 0) {combined = peer_status;}
+        }
+        for(task = readTask + 1; task <= lastTask; task++) {MPI_Ssend(&combined, 1, MPI_INT, task, TAG_IC_STATUS, MPI_COMM_WORLD);}
+    }
+    else
+    {
+        MPI_Ssend(&local_status, 1, MPI_INT, readTask, TAG_IC_STATUS, MPI_COMM_WORLD);
+        MPI_Recv(&combined, 1, MPI_INT, readTask, TAG_IC_STATUS, MPI_COMM_WORLD, &mpistat);
+    }
+    return combined;
+}
+
+
+/*! This function reads a snapshot file and distributes the data it contains
+ *  to tasks 'readTask' to 'lastTask'. Returns 0 on success, or a nonzero IC-error
+ *  code on failure (a soft bad-stop is also requested; the caller's per-turn poll
+ *  drains it to a clean finalize -- no MPI_Abort, the node releases).
+ */
+int read_file(char *fname, int readTask, int lastTask)
+{
+    int read_status = 0;   /* soft bad-stop accumulator; reconciled among participants below */
     size_t blockmaxlen;
     long long i, n_in_file, n_for_this_task, ntask, pc, offset = 0, task, nall, nread, nstart, npart;
     int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6];
@@ -743,29 +785,31 @@ void read_file(char *fname, int readTask, int lastTask)
             if(!(fd = fopen(fname, "r")))
             {
                 printf("can't open file `%s' for reading initial conditions.\n", fname);
-                gizmo_emergency_hold_reviewed(123, "TEMP_HARD_CANDIDATE_IO: cannot open IC file on readTask (mid-P2P read; peers blocked in MPI_Recv -- no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                read_status = 123;   /* soft: cannot open IC file (common user error). Reconciled at Checkpoint A. */
             }
 
-
-            if(All.ICFormat == 2)
+            if(fd)   /* only touch the file if it opened -- a NULL-fd my_fread would segfault before the reconcile */
             {
+                if(All.ICFormat == 2)
+                {
+                    SKIP;
+                    my_fread(&label, sizeof(char), 4, fd);
+                    my_fread(&nextblock, sizeof(int), 1, fd);
+                    printf("Reading header => '%c%c%c%c' (%d byte)\n", label[0], label[1], label[2], label[3], nextblock);
+                    SKIP2;
+                }
+
                 SKIP;
-                my_fread(&label, sizeof(char), 4, fd);
-                my_fread(&nextblock, sizeof(int), 1, fd);
-                printf("Reading header => '%c%c%c%c' (%d byte)\n", label[0], label[1], label[2], label[3], nextblock);
+                my_fread(&header, sizeof(header), 1, fd);
                 SKIP2;
-            }
 
-            SKIP;
-            my_fread(&header, sizeof(header), 1, fd);
-            SKIP2;
-
-            if(blksize1 != 256 || blksize2 != 256)
-            {
-                printf("incorrect header format\n");
-                fflush(stdout);
-                gizmo_emergency_hold_reviewed(890, "TEMP_HARD_CANDIDATE_IO: incorrect IC header format on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
-                /* Probable error is wrong size of fill[] in header file. Needs to be 256 bytes in total. */
+                if(blksize1 != 256 || blksize2 != 256)
+                {
+                    printf("incorrect header format\n");
+                    fflush(stdout);
+                    read_status = 890;   /* soft: bad IC header format. Reconciled at Checkpoint A. */
+                    /* Probable error is wrong size of fill[] in header file. Needs to be 256 bytes in total. */
+                }
             }
         }
 
@@ -797,24 +841,32 @@ void read_file(char *fname, int readTask, int lastTask)
         MPI_Recv(&header, sizeof(header), MPI_BYTE, readTask, TAG_HEADER, MPI_COMM_WORLD, &status);
     }
 
+    /* CHECKPOINT A: reconcile header open/parse status among the participants BEFORE any
+     * header-derived logic (precision check, TotNumPart, allocate_memory, CommBuffer). The
+     * readTask may have failed fopen/format and already Ssent a junk header to its peers; all
+     * participants must bail together here, before touching that junk. (readTask..lastTask
+     * P2P only -- not a COMM_WORLD collective.) The per-turn read_ic poll then finalizes. */
+    read_status = read_file_sync_status(readTask, lastTask, read_status);
+    if(read_status) {endrun(read_status); return read_status;}
+
 #ifdef INPUT_IN_DOUBLEPRECISION
     if(header.flag_doubleprecision == 0)
     {
         if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);}
-        gizmo_emergency_hold_reviewed(11, "TEMP_HARD_CANDIDATE_IO: IC single-precision but compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
+        /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
+        endrun(11); return 11;
     }
 #else
     if(header.flag_doubleprecision)
     {
         if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);}
-        gizmo_emergency_hold_reviewed(10, "TEMP_HARD_CANDIDATE_IO: IC double-precision but not compiled INPUT_IN_DOUBLEPRECISION (read_file is subset/turn-called -> no MPI_COMM_WORLD poll possible here)", __FILE__, __LINE__, __FUNCTION__);
+        /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
+        endrun(10); return 10;
     }
 #endif
-    /* NOTE: no bad-stop poll here. read_file() runs on a SUBSET of ranks per
-     * driver-loop round (read_ic: read_file(ThisTask,ThisTask) / one group per
-     * round, peers at the MPI_Barrier), so an MPI_COMM_WORLD poll/Allreduce in
-     * this function would deadlock. The precision-mismatch failures above
-     * therefore route through the reviewed TEMPORARY hard path. */
+    /* Precision mismatch (above) is collective-symmetric: every participant sees the same
+     * header.flag_doubleprecision and the same compile flag, so all return together -- no
+     * peer is stranded, and the per-turn read_ic poll finalizes cleanly (no MPI_Abort). */
 
     if(All.TotNumPart == 0)
     {
@@ -850,10 +902,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #endif
 
 
-        /* allocate_memory() is subset/turn-called from read_file(), so it holds
-         * NO MPI_COMM_WORLD collective (see allocate.cc) and routes OOM through
-         * the reviewed TEMPORARY hard path. No poll/preflight here for the same
-         * deadlock reason. */
+        /* allocate_memory() is subset/turn-called from read_file(), so it holds NO
+         * MPI_COMM_WORLD collective (see allocate.cc); its own OOM path is part of the
+         * allocator-family graceful re-review, separate from these read_ic sites. */
         allocate_memory();
 
         size_t MyBufferSize = All.BufferSize;
@@ -861,7 +912,7 @@ void read_file(char *fname, int readTask, int lastTask)
         if(!(CommBuffer = mymalloc("CommBuffer", bytes)))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
-            gizmo_emergency_hold_reviewed(2, "TEMP_HARD_CANDIDATE_OOM: CommBuffer allocation failed (read_file subset/turn-called; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            read_status = 2;   /* soft: CommBuffer OOM. CommBuffer stays NULL but is not used before Checkpoint B returns. */
         }
 
         if(RestartFlag >= 2)
@@ -918,7 +969,7 @@ void read_file(char *fname, int readTask, int lastTask)
             {
                 printf("Not enough space on task=%d for gas/fluid cells (space for %d, need at least %lld)\n", ThisTask, All.MaxPartGas, N_gas + n_for_this_task);
                 fflush(stdout);
-                gizmo_emergency_hold_reviewed(172, "TEMP_HARD_CANDIDATE_IO: not enough space for gas cells on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                read_status = 172;   /* soft: insufficient gas space (low PartAllocFactor). Reconciled at Checkpoint B before memmove. */
             }
         }
 
@@ -929,8 +980,15 @@ void read_file(char *fname, int readTask, int lastTask)
     {
         printf("Not enough space on task=%d (space for %d, need at least %lld)\n", ThisTask, All.MaxPart, NumPart + nall);
         fflush(stdout);
-        gizmo_emergency_hold_reviewed(173, "TEMP_HARD_CANDIDATE_IO: not enough space on this task (per-rank, before memmove + P2P loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        read_status = 173;   /* soft: insufficient particle space (low PartAllocFactor). Reconciled at Checkpoint B before memmove. */
     }
+
+    /* CHECKPOINT B: reconcile capacity/CommBuffer/space status among participants BEFORE the
+     * memmove and the per-block P2P loop. A returning rank with bad `nall` must not memmove
+     * (would corrupt P[]); and a rank that bailed must not be left out of the block-loop
+     * Ssend/Recv. (readTask..lastTask P2P only -- not a COMM_WORLD collective.) */
+    read_status = read_file_sync_status(readTask, lastTask, read_status);
+    if(read_status) {endrun(read_status); return read_status;}
 
     memmove(&P[N_gas + nall], &P[N_gas], (NumPart - N_gas) * sizeof(struct particle_data));
     nstart = N_gas;
@@ -1111,10 +1169,16 @@ void read_file(char *fname, int readTask, int lastTask)
                         if(All.ICFormat == 2)
                         {
                             get_Tab_IO_Label(blocknr, label);
-                            find_block(label, fd);
+                            int fb_status = find_block(label, fd);   /* 0 ok; nonzero = bad format / block absent */
+                            /* soft: keep the block loop running (readTask keeps Ssending stale/junk, peers keep
+                             * Recv-ing) so no peer is stranded; drains at the per-turn read_ic poll. */
+                            if(fb_status) {if(read_status == 0) {endrun(fb_status);} read_status = fb_status;}
                         }
 
-                        if(All.ICFormat == 1 || All.ICFormat == 2) {
+                        /* read_status != 0 here means find_block failed -> fd is at EOF / a bad
+                         * position; do NOT touch the stream (the SKIP/my_fread below would hit the
+                         * my_fread EOF hold). The block's data is zeroed instead (do-while below). */
+                        if((All.ICFormat == 1 || All.ICFormat == 2) && read_status == 0) {
                             SKIP;
                             if (blksize1 == 0) { /* workaround for MUSIC ICs */
                               SKIP2;
@@ -1147,7 +1211,11 @@ void read_file(char *fname, int readTask, int lastTask)
                                 if(NumPart + n_for_this_task > All.MaxPart)
                                 {
                                     printf("too many particles. %d %lld %d\n", NumPart, n_for_this_task, All.MaxPart);
-                                    gizmo_emergency_hold_reviewed(1313, "TEMP_HARD_CANDIDATE_IO: too many particles mid per-type P2P distribution loop (no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                                    /* soft: per-rank overflow mid-distribution. Keep the Ssend/Recv loop running (so no
+                                     * peer is stranded); the out-of-bounds empty_read_buffer write below is skipped while
+                                     * read_status is set. Drains at the per-turn read_ic poll. */
+                                    if(read_status == 0) {endrun(1313);}
+                                    read_status = 1313;
                                 }
 
 
@@ -1160,8 +1228,18 @@ void read_file(char *fname, int readTask, int lastTask)
                                 {
                                     if(All.ICFormat == 1 || All.ICFormat == 2)
                                     {
+                                        if(read_status == 0)
+                                        {
                                             my_fread(CommBuffer, bytes_per_blockelement, pc, fd);
                                             nread += pc;
+                                        }
+                                        else
+                                        {
+                                            /* stream position invalid (find_block/earlier read failed): do NOT touch fd
+                                             * (would hit the my_fread EOF hold). Zero the buffer; the Ssend below still
+                                             * delivers defined data so no peer is stranded. Drains at the per-turn poll. */
+                                            memset(CommBuffer, 0, bytes_per_blockelement * pc);
+                                        }
                                     }
 
 
@@ -1235,13 +1313,17 @@ void read_file(char *fname, int readTask, int lastTask)
 
                                         if(H5Dread(hdf5_dataset, hdf5_datatype, hdf5_dataspace_in_memory, hdf5_dataspace_in_file, H5P_DEFAULT, CommBuffer) < 0)
                                           {
-                                            char ic_read_errmsg[512];
-                                            snprintf(ic_read_errmsg, sizeof(ic_read_errmsg),
-                                                     "read_ic: H5Dread FAILED for dataset '%s' (particle type %d). "
-                                                     "If the IC is HDF5-compressed, the linked HDF5 library is likely "
-                                                     "missing the required filter (e.g. deflate); aborting rather than "
-                                                     "continuing with uninitialized particle data.", buf, type);
-                                            gizmo_emergency_hold_reviewed(1888, ic_read_errmsg, __FILE__, __LINE__, __FUNCTION__); /* TEMP_HARD_CANDIDATE_IO: H5Dread fail on readTask before MPI_Ssend; peers blocked in MPI_Recv */
+                                            printf("read_ic: H5Dread FAILED for dataset '%s' (particle type %d). "
+                                                   "If the IC is HDF5-compressed, the linked HDF5 library is likely "
+                                                   "missing the required filter (e.g. deflate). Stopping gracefully "
+                                                   "rather than continuing with uninitialized particle data.\n", buf, type);
+                                            fflush(stdout);
+                                            /* soft: zero the buffer so the Ssend below delivers defined zeros (peers don't
+                                             * hang on their Recv), set the bad-stop, finish the block loop, drain at the
+                                             * per-turn read_ic poll. Same shape as the optional-dataset-absent path below. */
+                                            memset(CommBuffer, 0, bytes_per_blockelement * pc);
+                                            if(read_status == 0) {endrun(1888);}
+                                            read_status = 1888;
                                           }
                                         H5Tclose(hdf5_datatype);
                                         H5Sclose(hdf5_dataspace_in_memory);
@@ -1262,7 +1344,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
                                 if(ThisTask != readTask && task == ThisTask && pc > 0) {MPI_Recv(CommBuffer, bytes_per_blockelement * pc, MPI_BYTE, readTask, TAG_PDATA, MPI_COMM_WORLD, &status);}
 
-                                if(ThisTask == task)
+                                if(ThisTask == task && read_status == 0)   /* skip the P[] write if this rank overflowed (read_status set); Recv above still completed the Ssend */
                                 {
                                     empty_read_buffer(blocknr, nstart + offset, pc, type);
                                     offset += pc;
@@ -1277,7 +1359,10 @@ void read_file(char *fname, int readTask, int lastTask)
 
                 if(ThisTask == readTask)
                 {
-                        if(All.ICFormat == 1 || All.ICFormat == 2)
+                        /* read_status guard: if the stream is already bad (find_block/earlier read failed)
+                         * skip the trailing SKIP2 -- it would hit the my_fread EOF hold and the blksize
+                         * mismatch check is meaningless on an invalid position. */
+                        if((All.ICFormat == 1 || All.ICFormat == 2) && read_status == 0)
                         {
                             SKIP2;
                             if(blksize1 != blksize2)
@@ -1286,7 +1371,11 @@ void read_file(char *fname, int readTask, int lastTask)
                                 printf("Task=%d   blocknr=%d  blksize1=%d  blksize2=%d\n", ThisTask, bnr, blksize1, blksize2);
                                 if(blocknr == IO_ID) {printf("Possible mismatch of 32bit and 64bit ID's in IC file and GIZMO compilation !\n");}
                                 fflush(stdout);
-                                gizmo_emergency_hold_reviewed(1889, "TEMP_HARD_CANDIDATE_IO: block-size mismatch on readTask (mid-P2P read; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                                /* soft: corrupt/misaligned binary block. This block's P2P already completed; keep the
+                                 * outer block loop running (readTask keeps Ssending, peers keep Recv-ing) so no peer is
+                                 * stranded; drains at the per-turn read_ic poll. */
+                                if(read_status == 0) {endrun(1889);}
+                                read_status = 1889;
                             }
                         }
                 }
@@ -1315,6 +1404,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
     }
 
+    return read_status;   /* 0 on success; any block-loop soft bad-stop was already requested and drains at the per-turn read_ic poll */
 }
 
 
@@ -1536,7 +1626,10 @@ void read_header_attributes_in_hdf5(char *fname)
 /*-------- returns length of block found, -------------------------------------*/
 /*-------- the file fd points to starting point of block ----------------------*/
 /*-----------------------------------------------------------------------------*/
-void find_block(char *label, FILE * fd)
+/*! Returns 0 if the labelled block is located; nonzero IC-error code otherwise. The caller
+ *  (read_file, readTask only) turns a nonzero return into a soft bad-stop and keeps the block
+ *  loop running so peers are not stranded -- drains at the per-turn read_ic poll. */
+int find_block(char *label, FILE * fd)
 {
     unsigned int blocksize = 0, blksize;
     char blocklabel[5] = { "    " };
@@ -1551,7 +1644,8 @@ void find_block(char *label, FILE * fd)
         if(blksize != 8)
         {
             printf("Incorrect Format (blksize=%llu)!\n", (unsigned long long)blksize);
-            gizmo_emergency_hold_reviewed(1891, "TEMP_HARD_CANDIDATE_IO: incorrect block format in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            fflush(stdout);
+            return 1891;   /* soft: incorrect block format */
         }
         else
         {
@@ -1573,6 +1667,7 @@ void find_block(char *label, FILE * fd)
     {
         printf("Block '%c%c%c%c' not found !\n", label[0], label[1], label[2], label[3]);
         fflush(stdout);
-        gizmo_emergency_hold_reviewed(1890, "TEMP_HARD_CANDIDATE_IO: block not found in find_block (readTask-only file scan; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        return 1890;   /* soft: labelled block not found */
     }
+    return 0;   /* block located */
 }
