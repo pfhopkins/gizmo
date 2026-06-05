@@ -411,10 +411,20 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
-            /* (Outflow-ledger scatter lives in commit 2 alongside the
-             * aggregate limiter that consumes it -- mirroring `-= flux[k]`
-             * here would shift FP summation order in moments_dt without any
-             * downstream consumer in commit 1, violating receipts-unchanged.) */
+            /* Outflow ledger (commit 2 of the aggregate-limiter pair; commit 1
+             * a529fefb declared the field). HLLC mass-flux is unconditionally
+             * >= 0 for finite rho > 0 (cbe_hllc_mass_flux_per_unit_area at
+             * functions.h:735 -- F0 branch rho*u with u>=c>=0; F1 branch
+             * 0.25*rho*(3u+c) with 3u+c>0 in the F1 interval; F=0 branch
+             * explicit zero). Mirroring the loss-side `-= flux[k]` deposit
+             * therefore records actual outgoing flux as a negative ledger
+             * value; the aggregate-limiter helper reads
+             * -CBE_basis_out_rate_dt[a][0] to recover positive mass-out rate.
+             * The j-side `+=` deposit below is INCOMING to particle i's basis
+             * i_m (not outgoing from i) and is intentionally NOT mirrored. */
+            for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+                out.CBE_basis_out_rate_dt[m][k] -= flux[k];
+            }
             vsig = DMAX(vsig, fabs(flux_vsig_i));
         }
         if(K_j[m] > 0) {

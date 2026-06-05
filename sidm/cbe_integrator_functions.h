@@ -48,6 +48,37 @@ static constexpr double CBE_REPAIR_EPS_M_ABS = 1.0e-30;
 static constexpr double CBE_REPAIR_EPS_M_REL = 1.0e-12;
 static constexpr double CBE_REPAIR_EPS_CONS  = 1.0e-12;
 
+/* Aggregate per-basis outflow-budget limiter (commit 2 of the limiter pair).
+ * FRAC: per-basis outgoing-mass budget as fraction of m_a, capped per drift
+ * call. MIN_DONOR_MASS: floor below which a basis is ineligible as a donor
+ * AND as a capped-basis recipient of the (1-f)*excess "uncapped remainder"
+ * (treated as floor for both ends). 0.9 leaves headroom for the nfac threshold
+ * (-0.75) downstream + FP. */
+static constexpr double CBE_OUTFLOW_BUDGET_FRAC           = 0.9;
+static constexpr double CBE_OUTFLOW_BUDGET_MIN_DONOR_MASS = 1.0e-30;
+
+/* Per-basis outflow-budget limiter status codes (orthogonal to Fix #2b
+ * repair codes). 200+ for non-error outcomes; no hard-fails / endruns --
+ * donor-limited cases surface via the counter, not abort. */
+enum {
+    CBE_OUTBUDGET_OK              = 200,   /* nothing exceeded budget          */
+    CBE_OUTBUDGET_APPLIED         = 201,   /* at least one basis capped, donors clean */
+    CBE_OUTBUDGET_DONOR_LIMITED   = 202,   /* cap applied at fraction f<1; (1-f)*excess unredistributed */
+    CBE_OUTBUDGET_NO_DONOR        = 203    /* no eligible donor; this basis a uncapped */
+};
+
+/* POD diagnostic counters for the outflow-budget limiter. Allocated only
+ * when diagnostics are enabled (matching Fix #2b repair counts gating).
+ * NOT promoted to a cbe_diagnostics.txt column (codex 2026-06-04: no schema
+ * churn); accessible via the optional CBE_INTEGRATOR_OUTBUDGET_VERBOSE
+ * printf path or via debugger. */
+struct CbeOutflowBudgetDiag {
+    long long n_capped_bases;          /* SUM: bases that hit f_out cap (status APPLIED) */
+    long long n_donor_limited;         /* SUM: bisection capped fraction f < 1 (DONOR_LIMITED) */
+    long long n_donor_failures;        /* SUM: NO_DONOR + DONOR_LIMITED bookkeeping */
+    double    max_pre_out_frac_seen;   /* MAX: pre-cap dt*Udot_out[a][0]/m_a seen */
+};
+
 /* Dimension-aware momentum-slot accessors (2026-06-02). Stored basis-moment
  * row layout is row[0] = mass, row[1..NUMDIMS] = p_x..p_{NUMDIMS-1}, and
  * (under CBE_INTEGRATOR_SECONDMOMENT) row[1+NUMDIMS..NMOMENTS-1] = stress
@@ -1997,6 +2028,230 @@ static void cbe_repair_cell_conservative_basis_states(
 }
 
 
+/* Donor-trial helper for the aggregate outflow-budget limiter (commit 2).
+ * Tests whether ALL candidate donors stay row-local realizable when fraction
+ * f of the excess is redistributed from basis a. Extracted from a captured
+ * lambda inside cbe_apply_basis_outflow_budget per codex 2026-06-05 -- a
+ * KOKKOS_INLINE_FUNCTION at file scope is device-portable under CUDA/HIP
+ * where a captured C++ lambda inside another KOKKOS_INLINE_FUNCTION is a
+ * portability hazard.
+ *
+ * Inputs:
+ *   pi          particle (read-only access to moments + moments_dt + Vel)
+ *   dt          drift-kick step length
+ *   V_old[3]    canonical frame for the absolute-round-trip (== pi.Vel; EXACT
+ *               for row-local realizability by frame-invariance)
+ *   is_cand[]   per-basis candidate flag set by the limiter loop
+ *   cap_b[]     per-basis capacity weights (mass-floor-deducted)
+ *   C_sum       Sum of capacities (> 0 on entry, checked by caller)
+ *   excess[]    saved-outflow rates per moment slot (positive for slot 0)
+ *   f           trial fraction in [0, 1]
+ *
+ * Returns true iff every candidate donor's projected post-update state
+ * (existing rate + limiter correction * dt, frame-converted via V_old) is
+ * mass-positive AND row-local realizable. */
+KOKKOS_INLINE_FUNCTION
+static bool cbe_outbudget_trial_donors_realizable(
+    const struct particle_data& pi,
+    double dt,
+    const double V_old[3],
+    const bool   is_cand[CBE_INTEGRATOR_NBASIS],
+    const double cap_b[CBE_INTEGRATOR_NBASIS],
+    double C_sum,
+    const double excess[CBE_INTEGRATOR_NMOMENTS],
+    double f)
+{
+    for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++) {
+        if(!is_cand[b]) continue;
+        const double w_b = cap_b[b] / C_sum;
+        double m_b_abs;
+        double p_abs[3];
+        double T_abs[3][3];
+        cbe_relative_row_to_absolute(pi.CBE_basis_moments[b], V_old,
+                                      &m_b_abs, p_abs, T_abs);
+        double rate_corr[CBE_INTEGRATOR_NMOMENTS];
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+            rate_corr[k] = pi.CBE_basis_moments_dt[b][k] - w_b * f * excess[k];
+        }
+        m_b_abs += dt * rate_corr[0];
+        if(!(m_b_abs > 0)) return false;
+        for(int aa = 0; aa < NUMDIMS; aa++) {
+            p_abs[aa] += dt * cbe_basis_p_r(rate_corr, aa);
+        }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        for(int aa = 0; aa < NUMDIMS; aa++) {
+            T_abs[aa][aa] += dt * cbe_basis_T_r(rate_corr, aa, aa);
+            for(int bb = aa+1; bb < NUMDIMS; bb++) {
+                const double dT_ab = dt * cbe_basis_T_r(rate_corr, aa, bb);
+                T_abs[aa][bb] += dT_ab; T_abs[bb][aa] += dT_ab;
+            }
+        }
+#endif
+        double row_proj[CBE_INTEGRATOR_NMOMENTS];
+        cbe_absolute_to_relative_row(m_b_abs, p_abs, T_abs, V_old, row_proj);
+        if(!cbe_basis_row_is_realizable(row_proj, CBE_REPAIR_EPS_M_REL)) return false;
+    }
+    return true;
+}
+
+
+/* Aggregate per-basis outflow-budget limiter (commit 2 of the limiter pair,
+ * 2026-06-04; Phil + codex review). For each basis a whose dt*outflow_rate
+ * exceeds f_out * m_a, scale the outflow rates by c = f_out*m_a/dt/Udot_out0
+ * and redistribute the saved (1-c)*Udot_out among capacity-weighted donor
+ * bases (b != a). Cell-summed dt-accumulator is preserved exactly by
+ * construction (every excess[k] added to basis a is subtracted from donors
+ * weighted to sum to excess[k]).
+ *
+ * Inputs read:
+ *   pi.CBE_basis_moments[b][0]     current mass per basis
+ *   pi.CBE_basis_out_rate_dt[a][k] cumulative outgoing-only flux (stored
+ *                                  NEGATIVE; -ledger -> positive out rate)
+ *   pi.CBE_basis_moments_dt[b][k]  full net flux rate (existing) -- used by
+ *                                  the projected-donor realizability check
+ *                                  (codex 2026-06-04: donor check MUST
+ *                                  include donor's existing rate, not just
+ *                                  the limiter correction)
+ *   pi.Vel                         V_old for the frame round-trip
+ *
+ * Inputs modified:
+ *   pi.CBE_basis_moments_dt[][]    a += excess[k]; donors -= w_b * f * excess[k]
+ *
+ * Frame-consistency for the donor PSD check (codex 2026-06-04, EXACT not
+ * approximate): row-local realizability `M = m*T - p p^T PSD` is
+ * frame-invariant under affine velocity transforms when the absolute<->relative
+ * conversion uses the SAME V on both sides. Using V_old here is therefore
+ * the right choice -- not an approximation. The drift-kick will later use
+ * V_new = MMV from the post-update MMV; the V_new drift does not affect
+ * row-local realizability per the same invariance.
+ *
+ * Projected donor state INCLUDES donor's existing rate (codex 2026-06-04):
+ *   U_abs_proj[b] = U_abs_old[b] + dt * (CBE_basis_moments_dt[b] + apply_to_b)
+ * NOT just dt * apply_to_b. This catches the failure where a donor is
+ * current-state realizable but already near overdrain from its own flux
+ * and the limiter's added load tips it past the realizability edge.
+ *
+ * Bisection on f: if full donation (f=1) breaks any donor's projected
+ * realizability, bisect f down to the largest fraction that keeps all
+ * donors realizable. The (1-f)*excess REMAINDER is left uncapped on basis
+ * a's net rate (a loses more mass than dm_allowed would ideally permit but
+ * still less than uncapped); reported via diag->n_donor_limited. NO silent
+ * pretense that the cap fully protected basis a.
+ *
+ * Failure modes (printf/counter only -- NO endrun, NO new diagnostic
+ * columns):
+ *   NO_DONOR        : no eligible candidate basis (NBASIS=1 effective or
+ *                     all bases at floor). Basis a stays UNCAPPED.
+ *   DONOR_LIMITED   : bisection found f<1; partial cap applied + remainder
+ *                     uncapped. Counted.
+ *
+ * Diag is nullable. Returns max-severity status code observed.
+ *
+ * Per [feedback_never_originate_remote_hpc] and the parallel endrun work,
+ * this helper deliberately avoids any new endrun codes (Phil + codex
+ * 2026-06-04). */
+KOKKOS_INLINE_FUNCTION
+static int cbe_apply_basis_outflow_budget(
+    struct particle_data& pi,
+    double dt,
+    struct CbeOutflowBudgetDiag *diag)
+{
+    int status = CBE_OUTBUDGET_OK;
+    if(!(dt > 0)) return status;
+
+    const double V_old[3] = { pi.Vel[0], pi.Vel[1], pi.Vel[2] };
+    const double f_out    = CBE_OUTFLOW_BUDGET_FRAC;
+    const double m_floor  = CBE_OUTFLOW_BUDGET_MIN_DONOR_MASS;
+
+    /* Donor projected-realizability test is in the standalone
+     * cbe_outbudget_trial_donors_realizable helper above (file-scope
+     * KOKKOS_INLINE_FUNCTION; device-portable per codex 2026-06-05). */
+
+    for(int a = 0; a < CBE_INTEGRATOR_NBASIS; a++) {
+        const double m_a       = pi.CBE_basis_moments[a][0];
+        const double Udot_out0 = -pi.CBE_basis_out_rate_dt[a][0]; /* positive outflow rate */
+        if(!(m_a > 0) || !(Udot_out0 > 0) || !isfinite(m_a) || !isfinite(Udot_out0)) continue;
+
+        const double dm_out     = dt * Udot_out0;
+        const double dm_allowed = f_out * m_a;
+        const double pre_of     = dm_out / m_a;
+        if(diag && pre_of > diag->max_pre_out_frac_seen) diag->max_pre_out_frac_seen = pre_of;
+        if(dm_out <= dm_allowed) continue;   /* basis a within budget */
+
+        const double c = dm_allowed / dm_out;            /* c in (0, 1) */
+        const double one_minus_c = 1.0 - c;
+        double excess[CBE_INTEGRATOR_NMOMENTS];
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+            excess[k] = one_minus_c * (-pi.CBE_basis_out_rate_dt[a][k]);
+        }
+
+        /* Build candidate-donor set with capacity weights. Capacity is the
+         * conservative v1 form `max(0, m_b - m_floor)` -- documented as not
+         * mathematically optimal but the projected-state bisection below is
+         * the safety rail. */
+        bool   is_cand[CBE_INTEGRATOR_NBASIS];
+        double cap_b[CBE_INTEGRATOR_NBASIS];
+        double C_sum = 0.0;
+        for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++) {
+            is_cand[b] = false; cap_b[b] = 0.0;
+            if(b == a) continue;
+            const double m_b = pi.CBE_basis_moments[b][0];
+            if(!(m_b > m_floor) || !isfinite(m_b)) continue;
+            /* current-state quick filter; the real check is the projected one below */
+            if(!cbe_basis_row_is_realizable(pi.CBE_basis_moments[b], CBE_REPAIR_EPS_M_REL)) continue;
+            const double cap = m_b - m_floor;
+            if(!(cap > 0)) continue;
+            is_cand[b] = true; cap_b[b] = cap; C_sum += cap;
+        }
+        if(!(C_sum > 0)) {
+            if(diag) diag->n_donor_failures++;
+            status = (status > CBE_OUTBUDGET_NO_DONOR) ? status : CBE_OUTBUDGET_NO_DONOR;
+            continue;   /* basis a uncapped */
+        }
+
+        /* Find largest f in [0,1] with all donors projected-realizable. The
+         * trial helper is file-scope KOKKOS_INLINE_FUNCTION (above) for
+         * device portability. */
+        double f_lo;
+        if(cbe_outbudget_trial_donors_realizable(pi, dt, V_old, is_cand, cap_b, C_sum, excess, 1.0)) {
+            f_lo = 1.0;
+        } else {
+            f_lo = 0.0;
+            double f_hi = 1.0;
+            for(int iter = 0; iter < 40; iter++) {
+                const double f_mid = 0.5 * (f_lo + f_hi);
+                if(cbe_outbudget_trial_donors_realizable(pi, dt, V_old, is_cand, cap_b, C_sum, excess, f_mid))
+                    f_lo = f_mid;
+                else
+                    f_hi = f_mid;
+                if((f_hi - f_lo) < 1e-14) break;
+            }
+        }
+
+        /* Commit at f=f_lo. The (1-f_lo)*excess REMAINDER stays on basis a's
+         * net rate uncapped -- explicitly NOT a hidden full cap. */
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+            pi.CBE_basis_moments_dt[a][k] += f_lo * excess[k];
+            for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++) {
+                if(!is_cand[b]) continue;
+                const double w_b = cap_b[b] / C_sum;
+                pi.CBE_basis_moments_dt[b][k] -= w_b * f_lo * excess[k];
+            }
+        }
+
+        if(f_lo >= 1.0 - 1e-15) {
+            if(diag) diag->n_capped_bases++;
+            status = (status >= CBE_OUTBUDGET_APPLIED) ? status : CBE_OUTBUDGET_APPLIED;
+        } else {
+            if(diag) { diag->n_donor_limited++; diag->n_donor_failures++; }
+            status = (status > CBE_OUTBUDGET_DONOR_LIMITED) ? status : CBE_OUTBUDGET_DONOR_LIMITED;
+        }
+    }
+
+    return status;
+}
+
+
 /* GPU-callable per-particle drift-kick update for the CBE integrator.
  * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
  * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
@@ -2045,6 +2300,35 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      * PSD projections inside the Step 7 repair helper (for
      * cbe_diagnostics.txt col-8). dP from this kernel is identically zero
      * (repair preserves Σ p_rel and projection only touches stress slots). */
+
+    /* Aggregate outflow-budget limiter (commit 2, 2026-06-04 Phil + codex).
+     * Runs BEFORE nfac so subsequent steps operate on the capped rates.
+     * No-op on the cold/warm 1D smoke tests we validate against (basis
+     * outflows are well within f_out*m_a); fires only in the scratch-basis
+     * runaway regime it was designed for. */
+    {
+        struct CbeOutflowBudgetDiag obdiag_local{};
+        int obstatus = cbe_apply_basis_outflow_budget(pi, dt, &obdiag_local);
+#ifdef CBE_INTEGRATOR_OUTBUDGET_VERBOSE
+        /* Opt-in verbose smoke verification (codex 2026-06-04): default OFF.
+         * Enable by adding CBE_INTEGRATOR_OUTBUDGET_VERBOSE to Config.sh and
+         * grep stdout for "[CBE outbudget]" -- zero hits on clean smoke =
+         * limiter did not fire. Device-safe printf (no fflush/endrun). */
+        if(obdiag_local.n_capped_bases > 0 || obdiag_local.n_donor_limited > 0
+                                            || obdiag_local.n_donor_failures > 0) {
+            printf("[CBE outbudget] ID=%lld caps=%lld donor_lim=%lld donor_fail=%lld "
+                   "max_pre_out_frac=%.3e status=%d\n",
+                   (long long)pi.ID,
+                   (long long)obdiag_local.n_capped_bases,
+                   (long long)obdiag_local.n_donor_limited,
+                   (long long)obdiag_local.n_donor_failures,
+                   obdiag_local.max_pre_out_frac_seen, obstatus);
+        }
+#else
+        (void)obstatus;
+#endif
+    }
+
     /* Step 0 (preserved): nfac rate-limit on per-basis mass change. */
     double dmass_tot = 0;
     for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) dmass_tot += dt * pi.CBE_basis_moments_dt[j][0];
