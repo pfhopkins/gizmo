@@ -46,6 +46,72 @@ void read_ic(char *fname)
 
     num_files = find_files(fname);
 
+    /* ===== ALL-RANK particle-storage setup (graceful-OOM phase) =====
+     * find_files() above read file-0's header on rank 0 and MPI_Bcast it to EVERY rank, so
+     * the global particle counts are known symmetrically here -- the one point in the IC path
+     * where a collective preflight is safe (read_file() below is subset/turn-dispatched and
+     * cannot host one). Compute MaxPart, preflight+allocate the particle storage all-rank,
+     * then the read_file turns only read data into the pre-allocated arrays. (Moved out of
+     * read_file()'s former `if(All.TotNumPart==0)` block so allocate_memory() is never
+     * subset/turn-called from the IC path.) Normal-run behavior is unchanged: identical
+     * MaxPart, identical allocations, just hoisted ahead of the per-file turns. */
+    if(All.TotNumPart == 0)
+    {
+        /* find_files() above read file-0's header via the now-soft my_fread(), so a truncated/
+         * corrupt header may have set a bad-stop. Validate the input precision here too (the
+         * per-file copy of this check still runs inside read_file() for multi-file ICs), then
+         * drain BOTH before the header is used to size or allocate anything. */
+#ifdef INPUT_IN_DOUBLEPRECISION
+        if(!header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);} endrun(11);}
+#else
+        if(header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);} endrun(10);}
+#endif
+        gizmo_exit_bad_stop_if_requested("read_ic:header");   /* drains corrupt-header (soft my_fread) + precision mismatch, before any header-derived sizing/alloc */
+
+        if(header.num_files <= 1)
+            for(i = 0; i < 6; i++) { header.npartTotal[i] = header.npart[i]; header.npartTotalHighWord[i] = 0; }
+
+        All.TotN_gas = header.npartTotal[0] + (((long long) header.npartTotalHighWord[0]) << 32);
+        for(i = 0, All.TotNumPart = 0; i < 6; i++)
+        {
+            All.TotNumPart += header.npartTotal[i];
+            All.TotNumPart += (((long long) header.npartTotalHighWord[i]) << 32);
+        }
+        for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
+
+        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
+        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
+            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
+            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] arrays and need\n");
+            printf("  substantial headroom. Recommend PartAllocFactor >= 10 to avoid ghost overflow.\n");
+        }
+#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
+        All.MaxPartGas = All.MaxPart;
+#endif
+
+        /* All-rank preflight + allocate. allocate_memory(1) sets a SOFT bad-stop (not an
+         * emergency-hold) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena
+         * preflight (it is now in an all-rank phase). The poll below reconciles any of these
+         * across ranks and finalizes cleanly BEFORE any P/CellP/CommBuffer is dereferenced. */
+        (void) allocate_memory(1);
+
+        {
+            size_t cbuf_bytes = (size_t) All.BufferSize * 1024 * 1024;
+            if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(cbuf_bytes), 1))
+                gizmo_request_controlled_stop(2, "read_ic: CommBuffer arena preflight won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
+            else
+                CommBuffer = mymalloc("CommBuffer", cbuf_bytes);
+        }
+
+        if(RestartFlag >= 2)
+        {
+            All.Time = All.TimeBegin = header.time;
+            set_cosmo_factors_for_current_time();
+        }
+        gizmo_exit_bad_stop_if_requested("read_ic:alloc");   /* drains particle-storage + CommBuffer OOM, before any P/CellP/CommBuffer use */
+    }
+
     rest_files = num_files;
 
     while(rest_files > NTask)
@@ -766,7 +832,6 @@ int read_file(char *fname, int readTask, int lastTask)
     FILE *fd = 0;
     char label[4], buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     enum iofields blocknr;
-    size_t bytes;
 
 
     int rank, pcsum;
@@ -868,60 +933,12 @@ int read_file(char *fname, int readTask, int lastTask)
      * header.flag_doubleprecision and the same compile flag, so all return together -- no
      * peer is stranded, and the per-turn read_ic poll finalizes cleanly (no MPI_Abort). */
 
-    if(All.TotNumPart == 0)
-    {
-        if(header.num_files <= 1)
-            for(i = 0; i < 6; i++)
-            {
-                header.npartTotal[i] = header.npart[i];
-                header.npartTotalHighWord[i] = 0;
-            }
-
-        All.TotN_gas = header.npartTotal[0] + (((long long) header.npartTotalHighWord[0]) << 32);
-
-        for(i = 0, All.TotNumPart = 0; i < 6; i++)
-        {
-            All.TotNumPart += header.npartTotal[i];
-            All.TotNumPart += (((long long) header.npartTotalHighWord[i]) << 32);
-        }
-
-
-        for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
-
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
-        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
-            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
-            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] arrays and need\n");
-            printf("  substantial headroom. Recommend PartAllocFactor >= 10 to avoid ghost overflow.\n");
-        }
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-        All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
-        // (PFH: needed to revert the change -- i.e. INCLUDE the line above: commenting it out, while it improved memory useage, causes some instability in the domain decomposition for
-        //   sufficiently irregular trees. overall more stable behavior with the 'buffer', albeit at the expense of memory )
-#endif
-
-
-        /* allocate_memory() is subset/turn-called from read_file(), so it holds NO
-         * MPI_COMM_WORLD collective (see allocate.cc); its own OOM path is part of the
-         * allocator-family graceful re-review, separate from these read_ic sites. */
-        allocate_memory();
-
-        size_t MyBufferSize = All.BufferSize;
-        bytes = MyBufferSize * 1024 * 1024;
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes)))
-        {
-            printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
-            read_status = 2;   /* soft: CommBuffer OOM. CommBuffer stays NULL but is not used before Checkpoint B returns. */
-        }
-
-        if(RestartFlag >= 2)
-        {
-            All.Time = All.TimeBegin = header.time;
-            set_cosmo_factors_for_current_time();
-        }
-
-    }
+    /* NOTE: the global-count compute + MaxPart + allocate_memory() + CommBuffer + cosmo-factor
+     * setup that used to live here (gated on `All.TotNumPart==0`, i.e. the first read_file call)
+     * has been MOVED to the ALL-RANK setup phase in read_ic() right after find_files(), so the
+     * particle storage is preflighted+allocated collectively (graceful OOM) and allocate_memory()
+     * is never subset/turn-called from the IC path. By the time read_file() runs, All.TotNumPart
+     * is already set and P/CellP/CommBuffer are already allocated; read_file() only reads data. */
 
     if(ThisTask == readTask)
     {

@@ -461,7 +461,7 @@ void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
-void allocate_memory(void);
+int allocate_memory(int do_collective_preflight);   /* do_collective_preflight=1 ONLY at an all-rank caller (read_ic setup phase): arena preflight + soft bad-stop on OOM, caller polls. =0 at subset/turn callers (restart): emergency-hold floor, no collective. Returns 0 ok / 1 OOM. */
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);

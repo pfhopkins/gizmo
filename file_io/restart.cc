@@ -217,11 +217,11 @@ void restart(int modus)
 		  endrun(16); restart_status = 16; goto finish_turn;
 		}
 
-	      /* allocate_memory() is subset/turn-called here (inside the per-rank groupTask turn),
-	       * so it holds NO MPI_COMM_WORLD collective (see allocate.cc); its own OOM path is the
-	       * allocator-family graceful re-review. The all-rank setup bad-stops already drained at
-	       * the pre-loop poll above; per-rank restart faults drain at the per-turn poll below. */
-	      allocate_memory();
+	      /* allocate_memory(0): subset/turn caller (per-rank groupTask turn) -> NO collective
+	       * (peers parked at a barrier; an Allreduce here would deadlock). OOM keeps the
+	       * emergency-hold floor inside allocate_memory. The restart all-rank preflight phase
+	       * (mirroring read_ic's, after the groupTask-0 all_task0 Bcast) is a tracked follow-up. */
+	      (void) allocate_memory(0);
 	    }
 
 	  in(&NumPart, modus);
