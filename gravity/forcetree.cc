@@ -281,16 +281,20 @@ int force_treebuild(int npart, struct unbind_data *mp)
      *      consistent state.  topnode-range center/len was already
      *      pulled into SoA by gpu_nextnode_backup_suns inside
      *      force_treebuild_single. */
-    if(gpu_topology_finalize_father(Numnodestree)  != 0) {gizmo_emergency_hold_reviewed(90000065, "TEMP_HARD_CANDIDATE_INTERNAL: GPU finalize_father failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; a return would skip peer collectives (deadlock); original endrun(913320)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_topology_finalize_sibling(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000066, "TEMP_HARD_CANDIDATE_INTERNAL: GPU finalize_sibling failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; original endrun(913321)", __FILE__, __LINE__, __FUNCTION__);}
+    /* The GPU tree-finalize steps below are rank-local; on failure they set
+     * a soft bad-stop and fall through the matched, topology-driven pseudo/
+     * LET collectives, which drain at the gravtree:after_treebuild poll
+     * before the GPU gravity walk reads any moments. */
+    if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(90000065);}
+    if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(90000066);}
     /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
      * nodes.  On the CPU path FUNR does this work inline; on the GPU path
      * FUNR is retired (6.6) so the kernel takes its place.  Replaces a
      * host loop over Numnodestree -- the worst sparse-active scaling. */
-    if(gpu_node_reset_ephemeral(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000067, "TEMP_HARD_CANDIDATE_INTERNAL: GPU node_reset_ephemeral failed (rank-local); invalid tree state fed into pseudo/LET collectives + GPU walk; original endrun(913323)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_moment_refresh(-1) != 0) {gizmo_emergency_hold_reviewed(90000068, "TEMP_HARD_CANDIDATE_INTERNAL: GPU moment_refresh failed (rank-local); invalid node moments/device state fed into pseudo/LET collectives + GPU walk; original endrun(913311)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_nextnode_thread() != 0) {gizmo_emergency_hold_reviewed(90000069, "TEMP_HARD_CANDIDATE_INTERNAL: GPU nextnode_thread failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; original endrun(913312)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000070, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topology writeback_d_to_aos failed (rank-local); invalid AoS tree fed into pseudo/LET collectives + GPU walk; original endrun(913322)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
+    if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
+    if(gpu_nextnode_thread() != 0) {endrun(90000069);}
+    if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(90000070);}
     /* Mode B: GPU moment refresh writes scalar hmax but not per-type bands;
      * re-seed those host-side now. MUST run AFTER gpu_topology_writeback_d_to_aos
      * because force_refresh_hmax_per_type_host's Step 3 propagation walks via
@@ -300,7 +304,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     /* Phase 6.7a: set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
      * which still run on CPU in 6.7a). */
-    if(gpu_force_flag_localnodes() != 0) {gizmo_emergency_hold_reviewed(90000071, "TEMP_HARD_CANDIDATE_INTERNAL: GPU force_flag_localnodes failed (rank-local); invalid TOPLEVEL/DEPENDS bitflags fed into pseudo/LET collectives + GPU walk; original endrun(913340)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_force_flag_localnodes() != 0) {endrun(90000071);}
     /* Phase 10.3 (B): post the pseudo-data Iallgathervs first, then run the
      * LET MPI round concurrently, then wait/unpack pseudo-data and resum.
      * LET pack reads only LOCAL Nodes/Extnodes (which are already valid from
@@ -308,18 +312,18 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
     force_exchange_pseudodata_issue();
-    if(let_run_exchange() != 0)             {gizmo_emergency_hold_reviewed(90000072, "TEMP_HARD_CANDIDATE_INTERNAL: LET MPI exchange failed mid-collective; pseudodata_complete + GPU walk would proceed on a broken exchange (no safe drain); original endrun(913343)", __FILE__, __LINE__, __FUNCTION__);}
+    if(let_run_exchange() != 0)             {gizmo_emergency_hold_reviewed(90000072, "TEMP_HARD_CANDIDATE_INTERNAL: LET MPI exchange failed mid-collective; soft conversion deferred to the LET/let_pack status-propagation pass (this is the boundary into the LET machinery); original endrun(913343)", __FILE__, __LINE__, __FUNCTION__);}
     force_exchange_pseudodata_complete();
     /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
      * ancestor topnode moments directly in SoA.  SoA is authoritative after
      * this point — no mark_all_dirty needed. */
-    if(gpu_scatter_pseudo_to_soa() != 0)    {gizmo_emergency_hold_reviewed(90000073, "TEMP_HARD_CANDIDATE_INTERNAL: GPU scatter_pseudo_to_soa failed (rank-local); invalid foreign moments fed into topnode resum + GPU walk; original endrun(913341)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
     /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
      * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
      * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
      * and hard-fail on any non-empty unredirected one — before the GPU walk. */
     let_finalize_unredirected_foreign_topleaves();
-    if(gpu_topnode_moment_resum() != 0)     {gizmo_emergency_hold_reviewed(90000074, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topnode_moment_resum failed (rank-local); invalid tree moments handed to the GPU gravity walk (no safe drain); original endrun(913342)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
@@ -4132,16 +4136,19 @@ void force_refresh_node_moments(void)
             Extnodes[no].dp_dm = {};
 #endif
         }
-        if(gpu_moment_refresh(-1) != 0)          {gizmo_emergency_hold_reviewed(90000086, "TEMP_HARD_CANDIDATE_INTERNAL: GPU moment_refresh failed (rank-local) in pseudo-refresh; invalid moments fed into force_exchange_pseudodata collective + GPU walk; a return would skip the peer collective (deadlock); original endrun(913310)", __FILE__, __LINE__, __FUNCTION__);}
+        /* Rank-local GPU refresh steps: on failure set a soft bad-stop and
+         * fall through force_exchange_pseudodata (matched, topology-driven);
+         * the gravtree:after_refresh_moments poll drains before the walk. */
+        if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker
          * over-prunes (oracle mismatches). */
         force_refresh_hmax_per_type_host(Numnodestree);
-        if(gpu_force_flag_localnodes() != 0)     {gizmo_emergency_hold_reviewed(90000087, "TEMP_HARD_CANDIDATE_INTERNAL: GPU force_flag_localnodes failed (rank-local) in pseudo-refresh; invalid bitflags fed into force_exchange_pseudodata collective + GPU walk; original endrun(913340)", __FILE__, __LINE__, __FUNCTION__);}
+        if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         force_exchange_pseudodata();
-        if(gpu_scatter_pseudo_to_soa() != 0)     {gizmo_emergency_hold_reviewed(90000088, "TEMP_HARD_CANDIDATE_INTERNAL: GPU scatter_pseudo_to_soa failed (rank-local) in pseudo-refresh; invalid foreign moments fed into topnode resum + GPU walk; original endrun(913341)", __FILE__, __LINE__, __FUNCTION__);}
-        if(gpu_topnode_moment_resum() != 0)      {gizmo_emergency_hold_reviewed(90000089, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topnode_moment_resum failed (rank-local) in pseudo-refresh; invalid tree moments handed to the GPU gravity walk; original endrun(913342)", __FILE__, __LINE__, __FUNCTION__);}
+        if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
+        if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
     }
