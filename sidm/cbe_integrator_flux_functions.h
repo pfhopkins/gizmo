@@ -137,26 +137,71 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
          * (a) fall back to first-order Qface = Q rather than NaN the face
          * state, and (b) bump local_nonfinite_count by NBASIS*NMOMENTS so
          * the event is observable when diagnostics are enabled (a clean
-         * pair contributes 0; a denom-bad pair contributes the full row). */
+         * pair contributes 0; a denom-bad pair contributes the full row).
+         *
+         * Primitive-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
+         * face reconstruction now round-trips through primitives. Per basis m
+         * and per side X ∈ {i, j}:
+         *   if Q_X[m][0] > cbe_rho_active_floor():
+         *       prim_X = cbe_moments_to_primitives_row(Q_X[m])
+         *       prim_face[k] = prim_X[k] ∓ psi_X * (grad_X[m][k] · dp)
+         *       Qface_X[m]   = cbe_primitives_to_moments_row(prim_face)
+         *   else:
+         *       Qface_X[m]   = Q_X[m]                     // first-order MOMENT
+         * The scratch-row bypass avoids dividing by sub-floor density when
+         * deriving primitives (which would produce NaN/Inf or noisy
+         * v=p/ρ and S=T/ρ−vv); for that basis on that side the face state
+         * stays at cell-centered moments. Non-finite per-slot gi_dp/gj_dp
+         * is replaced by 0 and tallied; the round-trip then degrades to
+         * first-order primitive for that slot only, second-order on the
+         * other slots — strictly better than dropping the whole basis. */
         if(psi_i_denom > 0) {
             const double psi_i = kernel.h_j / psi_i_denom;
             const double psi_j = 1.0 - psi_i;
             const double dp[3] = { kernel.dp[0], kernel.dp[1], kernel.dp[2] };
+            const double rho_floor = cbe_rho_active_floor();
             for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
-                for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                    const double gi_dp = local.Gradients_CBE_basis_moments[m][k][0]*dp[0]
-                                       + local.Gradients_CBE_basis_moments[m][k][1]*dp[1]
-                                       + local.Gradients_CBE_basis_moments[m][k][2]*dp[2];
-                    const double gj_dp = P[j].Gradients_CBE_basis_moments[m][k][0]*dp[0]
-                                       + P[j].Gradients_CBE_basis_moments[m][k][1]*dp[1]
-                                       + P[j].Gradients_CBE_basis_moments[m][k][2]*dp[2];
-                    const bool   finite_i = isfinite(gi_dp);
-                    const bool   finite_j = isfinite(gj_dp);
-                    const double gi_safe  = finite_i ? gi_dp : 0.0;
-                    const double gj_safe  = finite_j ? gj_dp : 0.0;
-                    if(!finite_i || !finite_j) ++local_nonfinite_count;
-                    Qface_i[m][k] = Q_i[m][k] - psi_i * gi_safe;
-                    Qface_j[m][k] = Q_j[m][k] + psi_j * gj_safe;
+                /* i-side */
+                if(Q_i[m][0] > rho_floor) {
+                    double prim_i_row[CBE_INTEGRATOR_NMOMENTS];
+                    double prim_face_i[CBE_INTEGRATOR_NMOMENTS];
+                    cbe_moments_to_primitives_row(Q_i[m], prim_i_row);
+                    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                        const double gi_dp =
+                              local.Gradients_CBE_basis_moments[m][k][0]*dp[0]
+                            + local.Gradients_CBE_basis_moments[m][k][1]*dp[1]
+                            + local.Gradients_CBE_basis_moments[m][k][2]*dp[2];
+                        const bool   finite_i = isfinite(gi_dp);
+                        if(!finite_i) ++local_nonfinite_count;
+                        const double gi_safe  = finite_i ? gi_dp : 0.0;
+                        prim_face_i[k] = prim_i_row[k] - psi_i * gi_safe;
+                    }
+                    cbe_primitives_to_moments_row(prim_face_i, Qface_i[m]);
+                } else {
+                    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                        Qface_i[m][k] = Q_i[m][k];
+                    }
+                }
+                /* j-side */
+                if(Q_j[m][0] > rho_floor) {
+                    double prim_j_row[CBE_INTEGRATOR_NMOMENTS];
+                    double prim_face_j[CBE_INTEGRATOR_NMOMENTS];
+                    cbe_moments_to_primitives_row(Q_j[m], prim_j_row);
+                    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                        const double gj_dp =
+                              P[j].Gradients_CBE_basis_moments[m][k][0]*dp[0]
+                            + P[j].Gradients_CBE_basis_moments[m][k][1]*dp[1]
+                            + P[j].Gradients_CBE_basis_moments[m][k][2]*dp[2];
+                        const bool   finite_j = isfinite(gj_dp);
+                        if(!finite_j) ++local_nonfinite_count;
+                        const double gj_safe  = finite_j ? gj_dp : 0.0;
+                        prim_face_j[k] = prim_j_row[k] + psi_j * gj_safe;
+                    }
+                    cbe_primitives_to_moments_row(prim_face_j, Qface_j[m]);
+                } else {
+                    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                        Qface_j[m][k] = Q_j[m][k];
+                    }
                 }
             }
         } else {

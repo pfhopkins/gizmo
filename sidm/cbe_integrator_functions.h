@@ -1248,6 +1248,41 @@ bool cbe_basis_row_is_realizable(
 }
 
 
+/* Realizability test on a PRIMITIVE row (ρ, v_k, S_kl). Equivalent to the
+ * moment-row test cbe_basis_row_is_realizable via the identity
+ *     ρ·T − p·p = ρ²·S
+ * so checking ρ > floor + S PSD on primitives is exactly checking
+ * ρ > 0 + (m·T − p·p) PSD on moments — no cancellation between p² and ρ·T.
+ *
+ * Active dim: NMOMENTS=2 (cold) tests only ρ > floor. NMOMENTS=3 (1D
+ * SECONDMOMENT) tests ρ > floor AND S_xx >= 0. NMOMENTS=10 (3D) tests
+ * ρ > floor AND S_3x3 PSD via the active principal-minor chain.
+ *
+ * Used by the primitive-gradient swap's row-scalar cone limiter. The
+ * ρ-edge is strict `>` to match the existing active-density predicate
+ * cbe_clamp_face_Q uses (see cbe_rho_active_floor()). Distinct from
+ * cbe_basis_row_is_realizable which still operates on moment rows
+ * (drift-kick cell-state repair, free-slot bookkeeping). The stress
+ * block is loaded via cbe_basis_T_load_active using the same slot
+ * indexing as moment rows — the primitive slot layout was designed
+ * to match by construction (slot 1+NUMDIMS+... stores S_kl rather
+ * than T_kl, with identical (k,l) packing). */
+KOKKOS_INLINE_FUNCTION
+bool cbe_primitive_row_is_realizable(
+    const double prim_row[CBE_INTEGRATOR_NMOMENTS], double eps_tol)
+{
+    if(!(prim_row[0] > cbe_rho_active_floor()) || !isfinite(prim_row[0])) return false;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double S[3][3];
+    cbe_basis_T_load_active(prim_row, S);
+    if(!cbe_symNxN_active_principal_minors_nonneg(S, eps_tol)) return false;
+#else
+    (void)eps_tol;
+#endif
+    return true;
+}
+
+
 /* CORE: symmetric 3x3 PSD projection of a CENTRAL stress tensor. Operates
  * in-place on the 6-vector S = [Sxx, Syy, Szz, Sxy, Sxz, Syz] (NOT a raw
  * moment row — use cbe_basis_row_project_central_stress_to_PSD for that).
