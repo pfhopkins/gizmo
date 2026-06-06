@@ -57,6 +57,9 @@ struct ketju_mpi_particle {
     short int SinkSubType;
     double Spin[3];
 #endif
+#ifdef KETJU_PN_REMNANT_TAG
+    signed char RemnantType;   /* StellarRemnantType (-1 = alive) — for PN dispatch on Type 4 remnants */
+#endif
 };
 
 /* ============================================================
@@ -507,9 +510,20 @@ static int is_pn_particle(ketju_mpi_particle *p)
     if(p->Type == 5 && p->SinkSubType == 1) return 1; /* stellar-mass BH (promoted): PN */
 #endif
 #endif
+#ifdef KETJU_PN_REMNANT_TAG
+    /* Type 4 compact remnants (NS or BH variants only — exclude WD/PISN), tagged at SN time
+     * by GALSF_RESOLVEDISM_FB.  No need for sink/BH_PROMOTION machinery. */
+    if(p->Type == 4 && (p->RemnantType == REM_ECSN ||  /* electron-capture SN -> NS */
+                        p->RemnantType == REM_CCSN ||  /* core-collapse SN -> NS or BH */
+                        p->RemnantType == REM_FSN  ||  /* failed SN -> BH */
+                        p->RemnantType == REM_PPISN || /* pulsational PISN -> BH */
+                        p->RemnantType == REM_DBH))    /* direct BH */
+        return 1;
+#else
 #ifdef KETJU_PN_COMPACT_OBJECTS
-    /* Dead Type 4 compact object remnants (NS or BH, no BH_PROMOTION) */
+    /* Legacy path: any dead Type 4 remnant (NS or BH, but also WDs unless filtered upstream) */
     if(p->Type == 4 && p->is_dead_remnant) return 1;
+#endif
 #endif
     return 0;
 }
@@ -608,6 +622,9 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
 #ifdef SINK_PARTICLES
             local_centers[k].SinkSubType = (P[i].Type == 5) ? P[i].SinkSubType : -1;
             for(int j = 0; j < 3; j++) local_centers[k].Spin[j] = (P[i].Type == 5) ? P[i].KetjuSpin[j] : 0;
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+            local_centers[k].RemnantType = P[i].RemnantType;
 #endif
             k++;
         }
@@ -751,6 +768,9 @@ static void setup_integrator(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
         mp.SinkSubType = (P[idx].Type == 5) ? P[idx].SinkSubType : -1;
         for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+        mp.RemnantType = P[idx].RemnantType;
 #endif
         k++;
     }
@@ -932,6 +952,9 @@ static void setup_integrator_reuse(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
         mp.SinkSubType = (P[idx].Type == 5) ? P[idx].SinkSubType : -1;
         for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+        mp.RemnantType = P[idx].RemnantType;
 #endif
         k++;
     }

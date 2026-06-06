@@ -327,6 +327,9 @@ extern ALIGN(32) struct particle_data
 #if defined(SINK_PARTICLES)
     MyDouble KetjuSpin[3];     /* BH spin angular momentum vector S [length*mass*velocity units] */
 #endif
+#ifdef KETJU_PN_REMNANT_TAG
+    signed char RemnantType;   /* StellarRemnantType code; -1 = still a live star, set at SN time */
+#endif
 #endif
 
 #if defined(DM_SIDM)

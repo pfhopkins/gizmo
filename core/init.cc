@@ -314,6 +314,9 @@ void init(void)
 #ifdef SINK_PARTICLES
             for(int j = 0; j < 3; j++) P[i].KetjuSpin[j] = 0;
 #endif
+#ifdef KETJU_PN_REMNANT_TAG
+            P[i].RemnantType = -1;  /* unknown / still alive; FB stamps real value at SN time */
+#endif
 #endif
 #ifdef GALSF_FB_MECHANICAL
             int k; for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {P[i].Area_weighted_sum[k] = 0;}

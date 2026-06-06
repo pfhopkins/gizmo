@@ -724,6 +724,11 @@ void resolvedism_inject_fb_energy(void)
                 P[i].M_drawn_Ia = Mstar; /* store original mass for DTD probability */
             }
 #endif
+#ifdef KETJU_PN_REMNANT_TAG
+            /* Persistent tag of stellar death outcome so KETJU can flag compact remnants
+             * (NS, BH variants) as PN-eligible without needing Type 5 / sink promotion. */
+            P[i].RemnantType = (signed char) rem_type;
+#endif
 #ifdef GALSF_RESOLVEDISM_BH_PROMOTION
             /* BH-producing channels: promote to sink after ejecta injection */
             if(rem_type == REM_PPISN || rem_type == REM_FSN || rem_type == REM_DBH) {

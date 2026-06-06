@@ -1481,6 +1481,7 @@ enum iofields
   IO_RESOLVEDISM_METAL_ORIGIN,
   IO_KETJU_FINAL_VEL,
   IO_KETJU_SPIN,
+  IO_KETJU_REMNANT_TYPE,
   IO_SHOCKMACHNUM,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
