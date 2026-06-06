@@ -614,12 +614,34 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     /* exchange particles */
     int ret; size_t exchange_limit;
+    const size_t exchange_overhead = NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
+    const size_t exchange_min_package = sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey);
     do
     {
-        exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
-        if(exchange_limit <= 0) {gizmo_emergency_hold_reviewed(90000012, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition_light (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+        /* arena-capacity guard. FreeBytes is size_t, so the old `FreeBytes - overhead`
+         * underflowed (never <=0) when the arena was too small -- a dead check that let
+         * exchange-OOM fall through to the rank-divergent allocator. Guard explicitly and
+         * request a graceful symmetric stop (drained at the all-rank poll below). */
+        if(FreeBytes <= exchange_overhead + exchange_min_package) {
+            printf("task=%d: domain exchange arena exhausted (FreeBytes=%g MB)\n", ThisTask, FreeBytes / (1024.0 * 1024.0));
+            endrun(90000012);
+            exchange_limit = exchange_min_package;   /* avoid size_t underflow; poll below exits before use */
+        } else {
+            exchange_limit = FreeBytes - exchange_overhead;
+        }
         ret = domain_countToGo(exchange_limit);
+        /* predicted post-exchange occupancy from the toGo/toGet just computed -- guard
+         * BEFORE domain_exchange() receives into P[]/CellP[] so an overflow never overruns
+         * the arrays (per-rank condition, drained at the all-rank poll). */
+        {
+            int n; long long ng_out = 0, ng_in = 0, gas_out = 0, gas_in = 0;
+            for(n = 0; n < NTask; n++) {ng_out += toGo[n]; ng_in += toGet[n]; gas_out += toGoGas[n]; gas_in += toGetGas[n];}
+            if((long long)NumPart - ng_out + ng_in > All.MaxPart)    {endrun(90000015);}
+            if((long long)N_gas   - gas_out + gas_in > All.MaxPartGas) {endrun(90000016);}
+        }
+        gizmo_exit_bad_stop_if_requested("domain:exchange_capacity");
         domain_exchange();
+        gizmo_exit_bad_stop_if_requested("domain:exchange");
     }
     while(ret > 0);
 
@@ -932,15 +954,20 @@ int domain_decompose(void)
 
     int iter = 0, ret;
     size_t exchange_limit;
+    const size_t exchange_overhead = NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
+    const size_t exchange_min_package = sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey);
 
     do
     {
-        exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
-
-        if(exchange_limit <= 0)
-        {
-            printf("task=%d: exchange_limit=%d\n", ThisTask, (int) exchange_limit);
-            gizmo_emergency_hold_reviewed(90000014, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        /* arena-capacity guard (see domain_Decomposition_light): the old size_t
+         * `FreeBytes - overhead <= 0` underflowed and never fired. Guard explicitly and
+         * request a graceful symmetric stop, drained at the all-rank poll below. */
+        if(FreeBytes <= exchange_overhead + exchange_min_package) {
+            printf("task=%d: domain exchange arena exhausted (FreeBytes=%g MB)\n", ThisTask, FreeBytes / (1024.0 * 1024.0));
+            endrun(90000014);
+            exchange_limit = exchange_min_package;   /* avoid size_t underflow; poll below exits before use */
+        } else {
+            exchange_limit = FreeBytes - exchange_overhead;
         }
 
         /* determine for each cpu how many particles have to be shifted to other cpus */
@@ -952,7 +979,18 @@ int domain_decompose(void)
 
         PRINT_STATUS(" ..iter=%d exchange of %d%09d particles (ret=%d)", iter, (int) (sumtogo / 1000000000), (int) (sumtogo % 1000000000), ret);
 
+        /* predicted post-exchange occupancy -- guard BEFORE domain_exchange() receives
+         * into P[]/CellP[] so an overflow never overruns the arrays (drained at the poll). */
+        {
+            int n; long long ng_out = 0, ng_in = 0, gas_out = 0, gas_in = 0;
+            for(n = 0; n < NTask; n++) {ng_out += toGo[n]; ng_in += toGet[n]; gas_out += toGoGas[n]; gas_in += toGetGas[n];}
+            if((long long)NumPart - ng_out + ng_in > All.MaxPart)    {endrun(90000015);}
+            if((long long)N_gas   - gas_out + gas_in > All.MaxPartGas) {endrun(90000016);}
+        }
+        gizmo_exit_bad_stop_if_requested("domain:exchange_capacity");
+
         domain_exchange();
+        gizmo_exit_bad_stop_if_requested("domain:exchange");
 
         iter++;
     }
@@ -1290,14 +1328,17 @@ void domain_exchange(void)
   N_gas += count_get_gas;
 
 
+  /* Defensive post-exchange occupancy checks. The predictive caller guard
+   * (domain:exchange_capacity) already prevents reaching domain_exchange() with an
+   * overflow, so these should be unreachable; kept as soft belt-and-suspenders, drained
+   * at the caller's post-exchange poll. */
   if(NumPart > All.MaxPart)
     {
       printf("Task=%d NumPart=%d All.MaxPart=%d\n", ThisTask, NumPart, All.MaxPart);
-      gizmo_emergency_hold_reviewed(90000015, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787878) -- NumPart>MaxPart after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+      endrun(90000090);
     }
 
-  if(N_gas > All.MaxPartGas)
-    gizmo_emergency_hold_reviewed(90000016, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787879) -- N_gas>MaxPartGas after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+  if(N_gas > All.MaxPartGas) {endrun(90000091);}
 
 
   myfree(keyBuf);
@@ -1900,7 +1941,11 @@ int domain_countToGo(size_t nlimit)
     }
 
     package = (sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey));
-    if(package >= nlimit) {gizmo_emergency_hold_reviewed(90000017, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(212) -- package>=nlimit in domain_countToGo (mid-exchange-sizing; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+    /* cannot pack even one particle into the exchange budget. Soft bad-stop: the
+     * packing loop below no-ops (package>=nlimit => 0 iterations, toGo stays zero so the
+     * Alltoalls move nothing and stay matched) and the caller's exchange-capacity poll
+     * drains it. The caller's arena guard normally catches this first. */
+    if(package >= nlimit) {endrun(90000017);}
 
     for(n = 0; n < NumPart && package < nlimit; n++)
     {
