@@ -382,13 +382,25 @@ extern ALIGN(32) struct particle_data
                                                                                        *  rate per basis. Populated but UNREAD in commit 1
                                                                                        *  (infrastructure only; behavior unchanged). */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-    /* Persistent gradient of Q = U/V (flux-frame moments), per basis, per
-     * moment slot, per spatial direction. Refreshed for AGSForce-active
-     * particles each call by CBEGrad_gradient_calc() (sidm/cbe_integrator_gradients.cc);
-     * inactive particles retain their previous-step gradient (hydro semantics).
-     * Ghost-transported naturally with P[] via the standard ghost import
-     * machinery — no custom Alltoallv. Consumed in the CBE flux body
-     * (sidm/cbe_integrator_flux_functions.h) for MFM-style face reconstruction. */
+    /* Persistent gradient of PRIMITIVE flux-frame basis content (ρ, v_k,
+     * S_kl) — NOT of the moment row (m, p_k, T_kl) despite the field
+     * name. Slot layout matches the moment row exactly: slot 0 = ρ;
+     * slots 1..NUMDIMS = v_k; stress slots (cbe_T_idx packing) = S_kl.
+     * Per basis, per slot, per spatial direction. Field-name rename
+     * deferred (out of scope; touches scatter / IO / snapshot). See
+     * OPEN_cbe_primitive_grad_design.md §3 and the helpers
+     * cbe_moments_to_primitives_row / cbe_primitives_to_moments_row in
+     * sidm/cbe_integrator_functions.h.
+     *
+     * Refreshed for AGSForce-active particles each call by
+     * CBEGrad_gradient_calc() (sidm/cbe_integrator_gradients.cc);
+     * inactive particles retain their previous-step gradient (hydro
+     * semantics). Ghost-transported naturally with P[] via the standard
+     * ghost import machinery — no custom Alltoallv. Consumed in the CBE
+     * flux body (sidm/cbe_integrator_flux_functions.h) for MFM-style
+     * face reconstruction through the primitive round-trip with a
+     * first-order-moment bypass for scratch rows
+     * (ρ ≤ cbe_rho_active_floor()). */
     double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS][3];
 #endif
 #endif

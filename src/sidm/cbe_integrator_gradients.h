@@ -6,11 +6,26 @@
  * commits #1-#4 (CbeGradScratch + custom Alltoallv + raw UVM pointer in
  * DeviceContext) with the persistent-particle-field shape used by hydro
  * and DMGrad. Persistent storage holds the spatial gradients of the
- * reconstructed flux-frame basis moments Q = U/V (NOT the gradients of the
- * raw integrated U), per basis, per moment slot, per direction:
+ * reconstructed flux-frame basis content, per basis, per slot, per
+ * direction:
  *   double P[i].Gradients_CBE_basis_moments[NBASIS][NMOMENTS][3]
  * (declarations/particle_data.h, gated on CBE_INTEGRATOR_WITHGRADIENTS).
- * The flux body reconstructs Q_face = Q ± psi · (grad_Q · dp) using these.
+ *
+ * PRIMITIVE-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
+ * the field name `Gradients_CBE_basis_moments` is now STALE — the slots
+ * store gradients of PRIMITIVES (∂ρ, ∂v_k, ∂S_kl), not gradients of the
+ * moment row (m, p_k, T_kl). Slot indexing is identical to the moment
+ * row (slot 0 = ρ; slots 1..NUMDIMS = v_k; stress slots = S_kl via the
+ * existing cbe_T_idx packing). The field-name rename is out of scope
+ * (touches scatter / IO / snapshot); the stale name is documented in
+ * declarations/particle_data.h. Pass-0 LSQ accumulates primitive deltas,
+ * pass-1 limiter is COMPONENT-SEPARATED (Phil + codex 2026-06-06): ρ gets
+ * BJ + positivity (affects only φ_ρ); v_k gets scale-aware BJ only (no
+ * realizability role; affects only φ_v_k); the S block gets per-slot BJ
+ * + tensor PSD (single φ_S across all stress slots to preserve the PSD
+ * cone). The flux body reconstructs primitive face state then converts
+ * back to a moment row via cbe_primitives_to_moments_row before the
+ * HLLC vacuum solver consumes it.
  *
  * Standard GIZMO ghost import (gizmo_request_filtered_ghost_import_fresh)
  * carries the gradient field naturally as part of P[]. There is no scratch
@@ -34,9 +49,11 @@
  *             apply_active_writeback solves M^{-1}.B with Tikhonov-style
  *             ill-conditioning guard and writes
  *             P[i].Gradients_CBE_basis_moments.
- *   pass 1  — pairwise BJ-style conservative limiter (per-(m,k) phi from
- *             cbe_bj_phi_pair, min over matched neighbors); writeback
- *             rescales P[i].Gradients_CBE_basis_moments in place by phi.
+ *   pass 1  — component-separated primitive limiter (per-(m,k) phi from
+ *             cbe_bj_phi_pair_scaled + per-component realizability —
+ *             positivity for ρ, none for v, PSD for the S block; min over
+ *             matched neighbors); writeback rescales
+ *             P[i].Gradients_CBE_basis_moments in place by phi.
  *
  * "Pairwise BJ-style conservative limiter": a stricter per-pair matched-
  * basis local-extremum form, NOT the full global-stencil Barth-Jespersen
@@ -217,59 +234,94 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Uses the same
-     * cost function and assignment rule as the limiter pass and the flux
-     * body. By design the gradient pre-pass matches on cell-center Q_i /
-     * Q_j (Q_face does not exist yet -- it is the output of this and the
-     * limiter pass) while the flux body matches on face-reconstructed
-     * Qface_i / Qface_j; the per-pair pair identities can therefore
-     * differ between the two states, but the matching function itself is
-     * shared. This is the architected Q-cell/Q-face split, not a pending
-     * fix. Single-direction (a->b only); fired-count counter is NULL. */
+    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Matching API
+     * stays on Q (moment rows); the cost helpers cbe_cost_v_only and
+     * cbe_cost_trace_w2 derive primitive content internally (v = p/ρ;
+     * tr S = T/ρ − v²). Therefore the primitive-gradient swap does not
+     * require any matching-API change — only the LSQ delta computed
+     * below is now primitive. Same SSOT helper / selectors as the
+     * limiter pass and the flux body. Q-cell vs Q-face matching split
+     * is unchanged. Single-direction; fired-count NULL. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
                             /*free_slot_fired_count_inout=*/NULL);
 
-    /* B_i[m][k][e] += w * (Q_j_matched - Q_i)[m][k] * (x_j - x_i)[e]. With
-     * dp = x_i - x_j, (x_j - x_i)[e] = -dp[e]. */
+    /* Primitive-gradient swap: convert Q_i, Q_j to primitive rows once per
+     * basis. The LSQ delta below is on PRIMITIVE slots — the persistent
+     * P[i].Gradients_CBE_basis_moments field now stores primitive gradients
+     * (∂ρ, ∂v, ∂S) packed in the slot layout shared with the moment row
+     * (slot 0 = density, slots 1..NUMDIMS = v_k, stress slots = S_kl).
+     * See OPEN_cbe_primitive_grad_design.md / cbe_moments_to_primitives_row. */
+    double prim_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double prim_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+        cbe_moments_to_primitives_row(Q_i[m], prim_i[m]);
+        cbe_moments_to_primitives_row(Q_j[m], prim_j[m]);
+    }
+
+    /* B_i[m][k][e] += w * (prim_j_matched − prim_i)[m][k] * (x_j − x_i)[e].
+     * With dp = x_i − x_j, (x_j − x_i)[e] = −dp[e].
+     *
+     * Scratch-row skip (OPEN_cbe_primitive_grad_design.md §7): if cell i
+     * basis m has ρ_i,m ≤ cbe_rho_active_floor(), leave B[m][:][:] at zero
+     * for this pair. The pass-0 writeback then naturally produces a zero
+     * gradient row (M_inv·0 = 0) — first-order reconstruction for that
+     * basis at the cell. The cell's other (active) bases get second-order
+     * primitive reconstruction normally. */
+    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+        if(!(Q_i[m][0] > cbe_rho_active_floor())) continue;
         const int n = matched_j_for_i[m];
         for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-            const double dQ = Q_j[n][k] - Q_i[m][k];
-            const double w_dQ = w * dQ;
-            accum.B[m][k][0] += w_dQ * (-dp[0]);
-            accum.B[m][k][1] += w_dQ * (-dp[1]);
-            accum.B[m][k][2] += w_dQ * (-dp[2]);
+            const double dprim = prim_j[n][k] - prim_i[m][k];
+            const double w_dprim = w * dprim;
+            accum.B[m][k][0] += w_dprim * (-dp[0]);
+            accum.B[m][k][1] += w_dprim * (-dp[1]);
+            accum.B[m][k][2] += w_dprim * (-dp[2]);
         }
     }
     (void)j;
 }
 
 /* ----------------------------------------------------------------------------
- * Pass-1 helper: pairwise BJ-style phi. Bound the reconstructed delta
- * `predicted` so that Q_face = Q_i + predicted stays between Q_i and
- * Q_j_matched.
+ * Scale-aware pairwise BJ-style phi for the primitive-gradient limiter
+ * (Phil + codex 2026-06-06 — Phase 1b). Bounds the reconstructed delta
+ * `predicted` so that prim_face = prim_i + predicted stays between prim_i
+ * and prim_j_matched.
  *
- *   - non-finite anywhere       → 0.0
- *   - |predicted| <= tol        → 1.0  (no reconstruction; safe)
- *   - sign(predicted) != sign(dQ) → 0.0 (heads away from neighbor)
- *   - same sign, |pred| > |dQ|  → dQ/predicted          (∈ (0, 1))
- *   - same sign, |pred| <= |dQ| → 1.0                    (no overshoot)
+ * Why scale: the previous (Phase 1) helper used tol = |dQ| * 1e-14 +
+ * MIN_REAL_NUMBER. For primitive slots where dprim ≡ 0 exactly (uniform
+ * v in cold streams, uniform S in cold/warm-small IC) but predicted
+ * carries LSQ roundoff (~1e-15..1e-17), the test fell through to
+ * ratio = 0 / predicted = 0 and vetoed the row. The scale-aware tol uses
+ * the physical magnitude of the primitive quantity (or its R-row source
+ * for stress, since S = R - vv has FP-cancellation noise at the R scale):
  *
- * Combined: phi = clamp(dQ / predicted, 0, 1) when |predicted| > tol.
- * Caller takes min across (j, m, k).
+ *   ρ slot       :  scale = max(|ρ_i|, |ρ_j|, ρ_floor)
+ *   v_k slot     :  scale = max(|v_i,k|, |v_j,k|, sqrt(max(R_kk_i, R_kk_j, 0)))
+ *   S_kl slot    :  scale = max(|S_kl_i|, |S_kl_j|, |R_kl_i|, |R_kl_j|)
+ *                   with R_kl = T_kl / ρ
+ *
+ * Logic (codex 2026-06-06):
+ *   - non-finite anywhere               → 0.0
+ *   - |predicted| ≤ tol(scale)          → 1.0  (no meaningful predicted; no constraint)
+ *   - |dQ| ≤ tol(scale)                 → 0.0  (predicted heads away from equal neighbor)
+ *   - sign(predicted) ≠ sign(dQ)        → 0.0
+ *   - same sign, |pred| > |dQ|          → dQ/predicted  (∈ (0, 1))
+ *   - same sign, |pred| ≤ |dQ|          → 1.0
+ *
+ * Caller takes min across (j, m); the limiter body is COMPONENT-SEPARATED
+ * (Phil 2026-06-06): one phi per slot per basis, NOT a single row-scalar.
  * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
-static double cbe_bj_phi_pair(double dQ, double predicted)
+static double cbe_bj_phi_pair_scaled(double dQ, double predicted, double scale)
 {
-    if(!isfinite(dQ) || !isfinite(predicted)) return 0.0;
-    /* Scale-aware tolerance: if |predicted| is below the roundoff floor of
-     * |dQ| plus an absolute underflow guard, treat as "no reconstruction
-     * in this direction" → phi=1. Prevents spurious phi=0 from sign-noise
-     * when grad . dp comes in well below the neighbor-difference scale. */
-    const double tol = fabs(dQ) * 1e-14 + MIN_REAL_NUMBER;
+    if(!isfinite(dQ) || !isfinite(predicted) || !isfinite(scale)) return 0.0;
+    const double tol = fabs(scale) * 1e-14 + MIN_REAL_NUMBER;
+    /* Quiet-slot: predicted is below scale-relative roundoff → no constraint. */
     if(fabs(predicted) <= tol) return 1.0;
+    /* Real-signal predicted but neighbor doesn't differ at this scale → overshoot → 0. */
+    if(fabs(dQ) <= tol) return 0.0;
     const double ratio = dQ / predicted;
     if(!isfinite(ratio)) return 0.0;
     if(ratio < 0.0) return 0.0;
@@ -279,74 +331,40 @@ static double cbe_bj_phi_pair(double dQ, double predicted)
 
 
 /* ----------------------------------------------------------------------------
- * Realizability predicate for one basis row at trial phi (Wave-CBE
- * Commit 10, Fix #6). Constructs Q_face = Q_cell_row + phi * g_row and
- * calls the SSOT realizability predicate cbe_basis_row_is_realizable
- * (defined in sidm/cbe_integrator_functions.h, moved there in Fix #2a
- * 2026-05-30 so cell repair + face clamp + cone limiter share one
- * definition). Strict eps_tol = 0 preserves the original Commit-10
- * strict-PSD semantics.
- *
- * The cone-limiter realizability set { Q : m > 0, m*T - p p^T PSD } is
- * convex (Schur-complement), so bisection on this predicate converges
- * to the largest realizable phi in [0, phi_BJ_upper] — see comment at
- * cbe_cone_phi_row below.
+ * S-block PSD trial-φ predicate and bisection (3D stress block). The
+ * primitive-gradient limiter applies a single φ_S to the entire stress
+ * block to preserve PSD as a tensor (mixing per-slot φ on off-diagonals
+ * would move S_face off the PSD cone). 1D NMOMENTS=3 (scalar S_xx) gets
+ * a closed-form positivity bound in the pair body without these helpers.
  * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
-static bool cbe_row_realizable_at_phi(
-    const double Q_cell_row[CBE_INTEGRATOR_NMOMENTS],
-    const double g_row[CBE_INTEGRATOR_NMOMENTS],
-    double phi)
+static bool cbe_S_psd_at_phi(const double S_i[3][3],
+                              const double S_delta[3][3],
+                              double phi)
 {
-    double Q_face[CBE_INTEGRATOR_NMOMENTS];
-    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-        Q_face[k] = Q_cell_row[k] + phi * g_row[k];
-    }
-    return cbe_basis_row_is_realizable(Q_face, /*eps_tol=*/ 0.0);
+    double S_face[3][3];
+    for(int a = 0; a < 3; a++)
+        for(int b = 0; b < 3; b++)
+            S_face[a][b] = S_i[a][b] + phi * S_delta[a][b];
+    return cbe_symNxN_active_principal_minors_nonneg(S_face, /*eps_tol=*/ 0.0);
 }
 
-
-/* ----------------------------------------------------------------------------
- * Row-scalar realizability cone limiter (Wave-CBE Commit 10, Fix #6).
- *
- * The CBE per-basis realizable set { Q : m > 0, m*T - p(x)p PSD } is
- * convex: by the Schur-complement form, m > 0 AND m*T - p(x)p PSD is
- * equivalent to the block matrix [[T, p], [p^T, m]] being PSD, the
- * intersection of a convex cone with the {m > 0} half-space. Its
- * intersection with the line Q(phi) = Q_cell + phi * g is therefore
- * an interval containing phi = 0 whenever the cell-center row is
- * realizable. Bisection on the predicate cbe_row_realizable_at_phi
- * keeps the largest known-realizable phi as lo; the returned phi is
- * always provably realizable. No monotonicity per individual principal
- * minor is claimed -- the predicate is bisected directly.
- *
- * Defensive: if the cell-center row is itself non-realizable (should
- * not occur post drift-kick repair; if it does, that is a cell-state
- * repair bug, not cone limiter behavior), return 0. Device-safe.
- *
- * S_floor = 0 default. Bracket upper bound is the row-scalar BJ phi
- * for this pair (min over k of per-(m,k) BJ phi); the cone only ever
- * tightens that bound. Scale-aware termination with tol_rel = 1e-14
- * matches the v_F root-find precision; 60-iter cap is plenty for the
- * bracket widths in play.
- * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
-static double cbe_cone_phi_row(
-    const double Q_cell_row[CBE_INTEGRATOR_NMOMENTS],
-    const double g_row[CBE_INTEGRATOR_NMOMENTS],
-    double phi_BJ_upper)
+static double cbe_S_psd_phi_bisect(const double S_i[3][3],
+                                    const double S_delta[3][3],
+                                    double phi_upper)
 {
-    if(!(phi_BJ_upper > 0)) return 0;
-    if(!cbe_row_realizable_at_phi(Q_cell_row, g_row, 0.0)) return 0;
-    if(cbe_row_realizable_at_phi(Q_cell_row, g_row, phi_BJ_upper)) return phi_BJ_upper;
+    if(!(phi_upper > 0)) return 0;
+    if(!cbe_S_psd_at_phi(S_i, S_delta, 0.0)) return 0;
+    if(cbe_S_psd_at_phi(S_i, S_delta, phi_upper)) return phi_upper;
     double lo = 0;
-    double hi = phi_BJ_upper;
+    double hi = phi_upper;
     for(int it = 0; it < 60; it++) {
         const double scale = DMAX(fabs(lo), fabs(hi));
         if((hi - lo) <= 1e-14 + 1e-14 * scale) break;
         const double mid = 0.5 * (lo + hi);
-        if(cbe_row_realizable_at_phi(Q_cell_row, g_row, mid)) lo = mid;
-        else                                                  hi = mid;
+        if(cbe_S_psd_at_phi(S_i, S_delta, mid)) lo = mid;
+        else                                    hi = mid;
     }
     return lo;
 }
@@ -417,52 +435,178 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching via SSOT helper (Wave-CBE Commit 6b) — same selector
-     * dispatch / cost policy as the LSQ pre-pass and the flux body, so
-     * limiter matching uses the same cost function and assignment rule
-     * across all consumers. The matched pair from this Q_cell-state call
-     * can differ from the flux body's Q_face-state call by design: the
-     * gradient/limiter cannot match on Q_face since Q_face is the output
-     * of this pass, and the flux must match on the state it actually
-     * consumes. Both use the same SSOT helper with the same selectors.
-     * Single-direction; counter NULL (not a flux-pairing decision). */
+    /* Basis matching via SSOT helper. Same comment as the LSQ pair body:
+     * matching API stays on Q (moment rows); cost helpers derive
+     * primitive content internally, so the primitive-gradient swap does
+     * not require any matching-API change. Single-direction; counter NULL. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
                             /*free_slot_fired_count_inout=*/NULL);
 
-    /* Pass 1 per-pair limiter — row-scalar phi with cone tightening
-     * (Wave-CBE Commit 10, Fix #6). For each basis row m:
-     *   1. Compute the existing per-(m, k) BJ phi from cbe_bj_phi_pair.
-     *   2. Build g_row[k] = -psi_i * (grad_i[m][k] . dp), the predicted
-     *      face delta per k for the same face offset the flux body uses.
-     *   3. Row-scalar BJ phi = min_k phi_BJ[k] is the cone bracket upper
-     *      bound; the cone bisection only ever tightens it.
-     *   4. cbe_cone_phi_row bisects on the realizability predicate
-     *      (mass > 0 AND central stress PSD per the Schur-complement
-     *      convexity argument) over [0, phi_BJ_row]. Returns the largest
-     *      known-realizable phi.
-     *   5. The same scalar phi_row_pair is written to every k in row m.
-     *      Mixing per-k phi after the cone validated a single-phi point
-     *      would move Q_face off the line segment the predicate
-     *      validated and could reintroduce non-realizability. */
+    /* Primitive-gradient swap (Phase 1b — Phil + codex 2026-06-06):
+     * COMPONENT-SEPARATED limiter. The realizability constraint factorizes
+     * in primitive variables (ρ²·S ≥ 0) so density, velocity, and stress
+     * limiters are INDEPENDENT. The previous row-scalar shape was a
+     * leftover from the moment-row coupling — applying one phi to all
+     * slots let irrelevant roundoff in grad_v / grad_S veto grad_ρ.
+     *
+     * Per slot:
+     *   ρ slot:    BJ + positivity (ρ_face > ρ_floor) — affects accum.phi[m][0] only.
+     *   v_k slot:  BJ only, no realizability role — affects accum.phi[m][1..NDIM].
+     *   S block:   per-slot BJ + tensor PSD (single φ_S applied uniformly
+     *              across all stress slots to keep S_face on the PSD cone)
+     *              — affects accum.phi[m][1+NDIM..NMOMENTS-1].
+     *
+     * Scale-aware BJ tolerance uses physically meaningful scales (codex):
+     *   scale_ρ   = max(|ρ_i|, |ρ_j|, ρ_floor)
+     *   scale_v_k = max(|v_i,k|, |v_j,k|, sqrt(max(R_kk_i, R_kk_j, 0)))
+     *                with R_kk = T_kk / ρ
+     *   scale_S_kl = max(|S_kl_i|, |S_kl_j|, |R_kl_i|, |R_kl_j|)
+     * So cold/warm-small slots (uniform v, σ²-tiny S) don't fall through
+     * the BJ tol from LSQ roundoff noise — preserved as no-constraint
+     * (φ = 1) on those slots.
+     *
+     * Scratch-row skip: if cell i basis m has ρ_i,m ≤ floor (pass-0
+     * wrote zero gradient for this row), leave phi at neutral 1.0. */
+    const double rho_floor = cbe_rho_active_floor();
+    double prim_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double prim_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+        cbe_moments_to_primitives_row(Q_i[m], prim_i[m]);
+        cbe_moments_to_primitives_row(Q_j[m], prim_j[m]);
+    }
+
+    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
+        if(!(Q_i[m][0] > rho_floor)) continue;
         const int n = matched_j_for_i[m];
+
+        /* Per-slot predicted face delta from cell-i primitive gradient. */
         double g_row[CBE_INTEGRATOR_NMOMENTS];
-        double phi_BJ_row_pair = 1.0;
         for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
             const double gdotdp = L.Gradients_CBE_basis_moments[m][k][0]*dp[0]
                                 + L.Gradients_CBE_basis_moments[m][k][1]*dp[1]
                                 + L.Gradients_CBE_basis_moments[m][k][2]*dp[2];
             g_row[k] = -psi_i * gdotdp;
-            const double dQ        = Q_j[n][k] - Q_i[m][k];
-            const double phi_ij_BJ = cbe_bj_phi_pair(dQ, g_row[k]);
-            if(phi_ij_BJ < phi_BJ_row_pair) phi_BJ_row_pair = phi_ij_BJ;
         }
-        const double phi_row_pair = cbe_cone_phi_row(Q_i[m], g_row, phi_BJ_row_pair);
-        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-            if(phi_row_pair < accum.phi[m][k]) accum.phi[m][k] = phi_row_pair;
+
+        /* ----- ρ slot (k = 0): BJ + positivity ----- */
+        {
+            const double scale_rho =
+                DMAX(DMAX(fabs(prim_i[m][0]), fabs(prim_j[n][0])), rho_floor);
+            const double dprim     = prim_j[n][0] - prim_i[m][0];
+            double phi_rho = cbe_bj_phi_pair_scaled(dprim, g_row[0], scale_rho);
+            /* Positivity: ρ_face(φ) = ρ_i + φ · g_row[0] > ρ_floor.
+             * If g_row[0] ≥ 0, ρ_face only grows — no constraint.
+             * If g_row[0] < 0, max φ maintaining ρ_face > floor is
+             *   (ρ_i − floor) / |g_row[0]|. */
+            if(g_row[0] < 0) {
+                const double slack = prim_i[m][0] - rho_floor;
+                if(slack <= 0) {
+                    phi_rho = 0;
+                } else {
+                    const double phi_pos = slack / (-g_row[0]);
+                    if(phi_pos < phi_rho) phi_rho = phi_pos;
+                }
+            }
+            if(phi_rho < 0) phi_rho = 0;
+            if(phi_rho > 1) phi_rho = 1;
+            if(phi_rho < accum.phi[m][0]) accum.phi[m][0] = phi_rho;
         }
+
+        /* ----- v slots (k = 1 .. NUMDIMS): BJ only ----- */
+        for(int k = 1; k <= NUMDIMS && k < CBE_INTEGRATOR_NMOMENTS; k++) {
+            /* R_kk_i = T_kk_i / ρ_i for the v-scale. The T_kk slot is at
+             * cbe_T_idx(k-1, k-1) when SECONDMOMENT is on; otherwise the
+             * R-component falls back to 0 (no T data). */
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+            const int t_kk_idx = cbe_T_idx(k-1, k-1);
+            const double R_kk_i =
+                (prim_i[m][0] > rho_floor && t_kk_idx < CBE_INTEGRATOR_NMOMENTS)
+                    ? (Q_i[m][t_kk_idx] / prim_i[m][0]) : 0;
+            const double R_kk_j =
+                (prim_j[n][0] > rho_floor && t_kk_idx < CBE_INTEGRATOR_NMOMENTS)
+                    ? (Q_j[n][t_kk_idx] / prim_j[n][0]) : 0;
+            const double R_scale = sqrt(DMAX(DMAX(R_kk_i, R_kk_j), 0.0));
+#else
+            const double R_scale = 0.0;
+#endif
+            const double scale_v_k =
+                DMAX(DMAX(fabs(prim_i[m][k]), fabs(prim_j[n][k])), R_scale);
+            const double dprim = prim_j[n][k] - prim_i[m][k];
+            double phi_v = cbe_bj_phi_pair_scaled(dprim, g_row[k], scale_v_k);
+            if(phi_v < 0) phi_v = 0;
+            if(phi_v > 1) phi_v = 1;
+            if(phi_v < accum.phi[m][k]) accum.phi[m][k] = phi_v;
+        }
+
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        /* ----- S block (stress slots): per-slot BJ + tensor PSD ----- */
+        {
+            const int s_start = 1 + NUMDIMS;
+            const int s_end   = CBE_INTEGRATOR_NMOMENTS;
+
+            /* Per-slot BJ over stress block — find tightest (block-min) BJ φ. */
+            double phi_S_BJ_block = 1.0;
+            for(int k = s_start; k < s_end; k++) {
+                const double R_kl_i = (prim_i[m][0] > rho_floor) ? (Q_i[m][k] / prim_i[m][0]) : 0;
+                const double R_kl_j = (prim_j[n][0] > rho_floor) ? (Q_j[n][k] / prim_j[n][0]) : 0;
+                const double scale_S = DMAX(DMAX(fabs(prim_i[m][k]), fabs(prim_j[n][k])),
+                                            DMAX(fabs(R_kl_i),         fabs(R_kl_j)));
+                const double dprim = prim_j[n][k] - prim_i[m][k];
+                const double phi_BJ_kl = cbe_bj_phi_pair_scaled(dprim, g_row[k], scale_S);
+                if(phi_BJ_kl < phi_S_BJ_block) phi_S_BJ_block = phi_BJ_kl;
+            }
+
+            /* PSD: tighten φ_S so S_face = S_i + φ_S · S_delta stays PSD on
+             * the active NUMDIMS x NUMDIMS block. NMOMENTS=3 (1D) admits a
+             * closed-form positivity bound on the scalar S_xx; NMOMENTS=10
+             * (3D) requires bisection (off-diagonal coupling makes PSD a
+             * non-linear condition in φ). */
+            double phi_S;
+            if(CBE_INTEGRATOR_NMOMENTS == 3) {
+                /* 1D: scalar S_xx ≥ 0. Linear in φ → closed form. */
+                const double S_xx_i  = prim_i[m][s_start];
+                const double S_delta = g_row[s_start];
+                phi_S = phi_S_BJ_block;
+                if(S_delta < 0) {
+                    if(S_xx_i <= 0) {
+                        phi_S = 0;
+                    } else {
+                        const double phi_pos = S_xx_i / (-S_delta);
+                        if(phi_pos < phi_S) phi_S = phi_pos;
+                    }
+                }
+            } else {
+                /* 3D (or future NMOMENTS) — load active S_i, S_delta as 3×3
+                 * symmetric blocks and bisect on PSD. */
+                double S_i_mat[3][3], S_delta_mat[3][3];
+                cbe_basis_T_load_active(prim_i[m], S_i_mat);
+                for(int a = 0; a < 3; a++)
+                    for(int b = 0; b < 3; b++)
+                        S_delta_mat[a][b] = 0.0;
+                for(int a = 0; a < NUMDIMS; a++) {
+                    const int kk = cbe_T_idx(a, a);
+                    if(kk < CBE_INTEGRATOR_NMOMENTS) S_delta_mat[a][a] = g_row[kk];
+                    for(int b = a + 1; b < NUMDIMS; b++) {
+                        const int kab = cbe_T_idx(a, b);
+                        if(kab < CBE_INTEGRATOR_NMOMENTS) {
+                            S_delta_mat[a][b] = g_row[kab];
+                            S_delta_mat[b][a] = S_delta_mat[a][b];
+                        }
+                    }
+                }
+                phi_S = cbe_S_psd_phi_bisect(S_i_mat, S_delta_mat, phi_S_BJ_block);
+            }
+            if(phi_S < 0) phi_S = 0;
+            if(phi_S > 1) phi_S = 1;
+            /* Apply single φ_S to every stress slot in the row. Per-slot
+             * φ would move S_face off the PSD cone on off-diagonals. */
+            for(int k = s_start; k < s_end; k++) {
+                if(phi_S < accum.phi[m][k]) accum.phi[m][k] = phi_S;
+            }
+        }
+#endif  /* CBE_INTEGRATOR_SECONDMOMENT */
     }
     (void)j;
 }

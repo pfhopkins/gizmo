@@ -21,6 +21,14 @@
  * already-persistent field in place by phi[m][k] — it MUST NOT re-zero or
  * re-compute the field (codex guard, 2026-05-26).
  *
+ * Primitive-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
+ * the stored field now holds primitive gradients (∂ρ, ∂v, ∂S) rather than
+ * moment gradients (∂m, ∂p, ∂T), packed in the same slot layout. The
+ * writeback math is unchanged (M^{-1} · B, then per-(m,k) rescale by phi)
+ * — only the upstream LSQ accumulator B is now built from primitive
+ * deltas (see cbe_integrator_gradients.h pair bodies). The field name
+ * `Gradients_CBE_basis_moments` is now STALE; rename out of scope.
+ *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
 

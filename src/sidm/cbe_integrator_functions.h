@@ -230,6 +230,124 @@ KOKKOS_INLINE_FUNCTION double cbe_basis_T_trace_active(
 #endif
 }
 
+/* ===== Primitive (ρ, v, S) row helpers — primitive-gradient swap support =====
+ *
+ * The primitive-gradient swap will make the gradient writer and face
+ * reconstruction operate on primitive rows (ρ, v_k, S_kl) rather than moment
+ * rows (m, p_k, T_kl). These helpers convert between the two packings; the
+ * slot layout of the primitive row matches the existing moment-row packing
+ * exactly, slot-for-slot:
+ *   slot 0           : ρ (= m)
+ *   slots 1..NUMDIMS : v_k = p_k / ρ
+ *   stress slots     : S_kl = T_kl / ρ - v_k v_l         (SECONDMOMENT only)
+ * The stress slots are indexed by cbe_T_idx() exactly as in the moment row.
+ *
+ * Identity (codex 2026-06-06, load-bearing for the swap):
+ *     ρ · T_kl − p_k p_l ≡ ρ² · S_kl
+ * Moment-cone realizability (m·T − p·p ⪰ 0) is therefore exactly equivalent
+ * to primitive realizability (ρ ≥ ρ_floor, S ⪰ 0). The face limiter exploits
+ * this — see OPEN_cbe_primitive_grad_design.md §6.
+ *
+ * The persistent storage field is still spelled Gradients_CBE_basis_moments
+ * but holds primitive-gradient slots after the swap. The field-name rename
+ * is out of scope; see particle_data.h doc and OPEN_cbe_primitive_grad_design.md
+ * §3.
+ *
+ * Phase 0 (2026-06-06) ADDS THESE HELPERS but does NOT use them. No gradient
+ * writer / face reader / limiter behavior change in Phase 0. */
+
+/* Single SSOT for "is this row's density active enough to divide by?".
+ * Used at every primitive-derivation site (primitive conversion, scratch-row
+ * gradient gating, face-clamp consistency check). Matches the existing
+ * MIN_REAL_NUMBER threshold used by cbe_clamp_face_Q and the pair-matching
+ * cost helpers (cbe_cost_v_only, cbe_cost_trace_w2). Do NOT introduce a
+ * second density floor — grep this name to find every site that gates on
+ * "active enough to divide". */
+KOKKOS_INLINE_FUNCTION
+double cbe_rho_active_floor(void) { return MIN_REAL_NUMBER; }
+
+/* Moment row -> primitive row. Both arrays sized [CBE_INTEGRATOR_NMOMENTS]
+ * with the slot packing described above. Scratch rows (Q_row[0] below the
+ * active-density floor) get prim_row[0] = Q_row[0] (the raw density, preserved
+ * for downstream gating) and all v / S slots set to zero — the caller MUST
+ * NOT consume those slots without first re-checking the floor. The primitive
+ * conversion never divides by a sub-floor density; the explicit zeros prevent
+ * NaN/Inf from leaking into downstream consumers.
+ *
+ * Inactive dimensions (k >= NUMDIMS) are not packed into the row at all
+ * (NMOMENTS shrinks in low-D, matching the moment-row convention). The loop
+ * bounds use NUMDIMS so the compiler folds away the inactive iterations. */
+KOKKOS_INLINE_FUNCTION
+void cbe_moments_to_primitives_row(const double Q_row[CBE_INTEGRATOR_NMOMENTS],
+                                   double prim_row[CBE_INTEGRATOR_NMOMENTS])
+{
+    const double rho = Q_row[0];
+    prim_row[0] = rho;
+    /* Strict `>` matches the existing active-row predicate used by
+     * cbe_clamp_face_Q (Q_face[m][0] <= MIN_REAL_NUMBER -> inactive/clamped).
+     * SSOT consistency: same edge convention everywhere. */
+    const bool active = (rho > cbe_rho_active_floor());
+    const double inv_rho = active ? (1.0 / rho) : 0.0;
+
+    double v_tmp[3] = {0.0, 0.0, 0.0};
+    for(int k=0; k<NUMDIMS; k++) {
+        const double v_k = cbe_basis_p_r(Q_row, k) * inv_rho;
+        v_tmp[k] = v_k;
+        cbe_basis_p_w(prim_row, k, active ? v_k : 0.0);
+    }
+
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        const double T_aa = cbe_basis_T_r(Q_row, a, a);
+        const double S_aa = active ? (T_aa * inv_rho - v_tmp[a] * v_tmp[a]) : 0.0;
+        cbe_basis_T_w(prim_row, a, a, S_aa);
+        for(int b=a+1; b<NUMDIMS; b++) {
+            const double T_ab = cbe_basis_T_r(Q_row, a, b);
+            const double S_ab = active ? (T_ab * inv_rho - v_tmp[a] * v_tmp[b]) : 0.0;
+            cbe_basis_T_w(prim_row, a, b, S_ab);
+        }
+    }
+#endif
+}
+
+/* Primitive row -> moment row. Deterministic, no iteration. The inverse of
+ * cbe_moments_to_primitives_row at every site where the primitive row was
+ * built from a row with ρ > cbe_rho_active_floor(). At or below the floor
+ * the caller must NOT use this helper — see scratch-row handling in
+ * OPEN_cbe_primitive_grad_design.md §7 (face reconstruction stays first-
+ * order moment for sub-floor rows, bypassing the round-trip).
+ *
+ * Identity: applying primitives_to_moments after moments_to_primitives is
+ * algebraically exact for any row with ρ > floor. FP cancellation can still
+ * occur in the forward step (S = T/ρ − vv for cold or warm-small S); the
+ * inverse step just multiplies by ρ and adds vv back, so the round-trip
+ * recovers the original moment row only up to the cancellation error in S. */
+KOKKOS_INLINE_FUNCTION
+void cbe_primitives_to_moments_row(const double prim_row[CBE_INTEGRATOR_NMOMENTS],
+                                   double Q_row[CBE_INTEGRATOR_NMOMENTS])
+{
+    const double rho = prim_row[0];
+    Q_row[0] = rho;
+
+    double v_tmp[3] = {0.0, 0.0, 0.0};
+    for(int k=0; k<NUMDIMS; k++) {
+        const double v_k = cbe_basis_p_r(prim_row, k);
+        v_tmp[k] = v_k;
+        cbe_basis_p_w(Q_row, k, rho * v_k);
+    }
+
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    for(int a=0; a<NUMDIMS; a++) {
+        const double S_aa = cbe_basis_T_r(prim_row, a, a);
+        cbe_basis_T_w(Q_row, a, a, rho * (S_aa + v_tmp[a] * v_tmp[a]));
+        for(int b=a+1; b<NUMDIMS; b++) {
+            const double S_ab = cbe_basis_T_r(prim_row, a, b);
+            cbe_basis_T_w(Q_row, a, b, rho * (S_ab + v_tmp[a] * v_tmp[b]));
+        }
+    }
+#endif
+}
+
 /* Active-dim symmetric PSD test via principal minors of the upper-left
  * NUMDIMS x NUMDIMS block. Reduces to scalar nonnegativity in 1D, the
  * 2x2 Sylvester chain in 2D, and the full 3x3 chain in 3D. eps_tol is
@@ -1125,6 +1243,41 @@ bool cbe_basis_row_is_realizable(
         }
         if(!cbe_symNxN_active_principal_minors_nonneg(M, eps_tol)) return false;
     }
+#endif
+    return true;
+}
+
+
+/* Realizability test on a PRIMITIVE row (ρ, v_k, S_kl). Equivalent to the
+ * moment-row test cbe_basis_row_is_realizable via the identity
+ *     ρ·T − p·p = ρ²·S
+ * so checking ρ > floor + S PSD on primitives is exactly checking
+ * ρ > 0 + (m·T − p·p) PSD on moments — no cancellation between p² and ρ·T.
+ *
+ * Active dim: NMOMENTS=2 (cold) tests only ρ > floor. NMOMENTS=3 (1D
+ * SECONDMOMENT) tests ρ > floor AND S_xx >= 0. NMOMENTS=10 (3D) tests
+ * ρ > floor AND S_3x3 PSD via the active principal-minor chain.
+ *
+ * Used by the primitive-gradient swap's row-scalar cone limiter. The
+ * ρ-edge is strict `>` to match the existing active-density predicate
+ * cbe_clamp_face_Q uses (see cbe_rho_active_floor()). Distinct from
+ * cbe_basis_row_is_realizable which still operates on moment rows
+ * (drift-kick cell-state repair, free-slot bookkeeping). The stress
+ * block is loaded via cbe_basis_T_load_active using the same slot
+ * indexing as moment rows — the primitive slot layout was designed
+ * to match by construction (slot 1+NUMDIMS+... stores S_kl rather
+ * than T_kl, with identical (k,l) packing). */
+KOKKOS_INLINE_FUNCTION
+bool cbe_primitive_row_is_realizable(
+    const double prim_row[CBE_INTEGRATOR_NMOMENTS], double eps_tol)
+{
+    if(!(prim_row[0] > cbe_rho_active_floor()) || !isfinite(prim_row[0])) return false;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    double S[3][3];
+    cbe_basis_T_load_active(prim_row, S);
+    if(!cbe_symNxN_active_principal_minors_nonneg(S, eps_tol)) return false;
+#else
+    (void)eps_tol;
 #endif
     return true;
 }
