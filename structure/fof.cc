@@ -1870,6 +1870,7 @@ void read_fof(int num)
 
 
 
+      /* === GROUP-TAB distribution phase (rank 0 reads + sends; peers recv) === */
       if(ThisTask == 0)
 	{
 	  for(filenr = 0; filenr < ntask; filenr++)
@@ -1878,7 +1879,11 @@ void read_fof(int num)
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  gizmo_emergency_hold_reviewed(90000052, "TEMP_HARD_CANDIDATE_IO: original endrun(11831) -- cannot read group_tab file in fof readback (per-rank IO; no symmetric poll; 3 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
+		  endrun(11831);		/* rank-0 group_tab read fail: soft bad-stop */
+		  for(int t = 1; t < NTask; t++)	/* drain peers still in the GROUP recv loop with an abort sentinel (nsend<0) */
+		    if(ngroup_to_get[t] > 0)
+		      { int sentinel = -1; MPI_Send(&sentinel, 1, MPI_INT, t, TAG_N, MPI_COMM_WORLD); }
+		  break;			/* stop distributing; all ranks meet at the GROUP-phase poll below */
 		}
 
 	      printf("reading '%s'\n", fname);
@@ -1952,17 +1957,37 @@ void read_fof(int num)
 
 	      myfree(tmpGroup);
 	    }
+	}
+      else
+	{
+	  while(ngroup_to_get[ThisTask])
+	    {
+	      MPI_Recv(&nsend, 1, MPI_INT, 0, TAG_N, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	      if(nsend < 0) { endrun(11831); break; }	/* abort sentinel: rank 0 failed a group_tab read */
+	      MPI_Recv(&Group[ngroup_obtained[ThisTask]], nsend * sizeof(group_properties), MPI_BYTE,
+		       0, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+	      ngroup_to_get[ThisTask] -= nsend;
+	      ngroup_obtained[ThisTask] += nsend;
+	    }
+	}
+      /* all-rank drain BEFORE the ids phase: never enter the ids receive loop / touch partial catalog on a group_tab fault */
+      gizmo_exit_bad_stop_if_requested("fof:readback_group_phase");
 
-
-	      /**** now ids ****/
+      /* === GROUP-IDS distribution phase (rank 0 reads + sends; peers recv) === */
+      if(ThisTask == 0)
+	{
 	  for(filenr = 0; filenr < ntask; filenr++)
 	    {
 	      snprintf(fname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/groups_%03d/%s_%03d.%d", All.OutputDir, num, "group_ids", num, filenr);
 	      if(!(fd = fopen(fname, "r")))
 		{
 		  printf("can't read file `%s`\n", fname);
-		  gizmo_emergency_hold_reviewed(90000053, "TEMP_HARD_CANDIDATE_IO: original endrun(1184132) -- cannot read group_ids file in fof readback (per-rank IO; no symmetric poll; 2 sites share this code, disambiguate by file/line in print)", __FILE__, __LINE__, __FUNCTION__);
+		  endrun(1184132);		/* rank-0 group_ids read fail: soft bad-stop */
+		  for(int t = 1; t < NTask; t++)	/* drain peers still in the IDS recv loop with an abort sentinel (nsend<0) */
+		    if(nids_to_get[t] > 0)
+		      { int sentinel = -1; MPI_Send(&sentinel, 1, MPI_INT, t, TAG_HEADER, MPI_COMM_WORLD); }
+		  break;			/* stop distributing; all ranks meet at the IDS-phase poll below */
 		}
 	      my_fread(&ngroups, sizeof(int), 1, fd);
 	      my_fread(&TotNgroups, sizeof(int), 1, fd);
@@ -2018,19 +2043,10 @@ void read_fof(int num)
 	}
       else
 	{
-	  while(ngroup_to_get[ThisTask])
-	    {
-	      MPI_Recv(&nsend, 1, MPI_INT, 0, TAG_N, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	      MPI_Recv(&Group[ngroup_obtained[ThisTask]], nsend * sizeof(group_properties), MPI_BYTE,
-		       0, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-	      ngroup_to_get[ThisTask] -= nsend;
-	      ngroup_obtained[ThisTask] += nsend;
-	    }
-
 	  while(nids_to_get[ThisTask])
 	    {
 	      MPI_Recv(&nsend, 1, MPI_INT, 0, TAG_HEADER, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	      if(nsend < 0) { endrun(1184132); break; }	/* abort sentinel: rank 0 failed a group_ids read */
 	      MPI_Recv(&ID_list[nids_obtained[ThisTask]], nsend * sizeof(fof_id_list), MPI_BYTE,
 		       0, TAG_GASDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
@@ -2038,6 +2054,8 @@ void read_fof(int num)
 	      nids_obtained[ThisTask] += nsend;
 	    }
 	}
+      /* all-rank drain BEFORE any use of the (possibly partial) catalog in the common readback path below */
+      gizmo_exit_bad_stop_if_requested("fof:readback_ids_phase");
 
       myfree(nids_obtained);
       myfree(ngroup_obtained);
