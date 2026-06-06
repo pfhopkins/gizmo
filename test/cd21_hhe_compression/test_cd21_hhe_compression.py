@@ -41,7 +41,7 @@ def setup_table_and_ics(test_dir):
             )
         subprocess.run(
             [sys.executable,
-             join(test_dir, "..", "..", "python_src", "eos_tools", "cms_to_sesame.py"),
+             join(test_dir, "..", "..", "initial_conditions", "eos_tools", "cms_to_sesame.py"),
              "--input", native, "--output", sesame,
              "--y", "0.275", "--mat-id", "2721", "--nrho", "200"],
             check=True,

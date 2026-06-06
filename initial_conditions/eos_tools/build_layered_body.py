@@ -5,10 +5,10 @@ test/cd21_hhe_compression once validated.
 
 Example usage (Earth-like body):
 
-    from python_src.eos_tools.eos_dispatch import Material
-    from python_src.eos_tools.hse_solver   import Zone, solve_hse
-    from python_src.eos_tools.shell_placement import fibonacci_shells
-    from python_src.eos_tools.build_layered_body import write_hdf5
+    from initial_conditions.eos_tools.eos_dispatch import Material
+    from initial_conditions.eos_tools.hse_solver   import Zone, solve_hse
+    from initial_conditions.eos_tools.shell_placement import fibonacci_shells
+    from initial_conditions.eos_tools.build_layered_body import write_hdf5
 
     iron      = Material.tillotson("iron")
     forsterite= Material.tillotson("olivine")  # Tillotson olivine ~= forsterite

@@ -1984,7 +1984,7 @@ static void rank0_run_or_die(const char *cmd, const char *errmsg) {
 static void ensure_cooling_tables_exist(void) {
     if(ThisTask == 0) {
         if(!file_exists("TREECOOL")) {
-            std::string treecool_src = std::string(GIZMO_SOURCE_DIR) + "cooling/TREECOOL";
+            std::string treecool_src = std::string(GIZMO_SOURCE_DIR) + "../data/cooling/TREECOOL";
             printf(" *** WARNING: TREECOOL not found in run directory. Copying default from %s — make sure this is the table you want! ***\n", treecool_src.c_str());
             rank0_run_or_die(("cp '" + treecool_src + "' TREECOOL").c_str(), "Could not copy TREECOOL from source tree. Place it in the run directory manually.");
         }

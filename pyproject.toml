@@ -21,4 +21,4 @@ Homepage = "https://github.com/phopkins/gizmo"
 Issues = "https://github.com/phopkins/gizmo/issues"
 
 [tool.setuptools.packages.find]
-where = ["python_src"]
+where = ["test/harness"]
