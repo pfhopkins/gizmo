@@ -2127,26 +2127,42 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
          * external CSR injection is a sharp tool, contract violations
          * cause silent wrong-particle writeback (kernel stages for
          * external_csr->active_indices[aa] but writeback applies
-         * d_accums[aa] to args.active_list[aa]). Fail loud always. */
+         * d_accums[aa] to args.active_list[aa]). Detect loud always.
+         *
+         * On violation: soft bad-stop + release the arena and free radii_uvm
+         * (both acquired/staged above) + return, skipping the corrupt-CSR
+         * staging and the device walk. run_mode_a issues no MPI, so this
+         * return cannot desync a peer; the caller's next phase poll drains.
+         * else-if chain so a null pointer is never deref'd by a later check
+         * (offsets[0] read only once ec->offsets is confirmed non-null). */
         const nlr_external_csr *ec = args.external_csr;
-        if(Spec::sidx_cache_kind != SidxCacheKind::GasOnly) {
-            gizmo_emergency_hold_reviewed(7300, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR contract violation (requires GasOnly cache); soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR injection requires GasOnly cache */
+        const char *csr_err = nullptr;
+        int         csr_code = 0;
+        if(Spec::sidx_cache_kind != SidxCacheKind::GasOnly) { csr_err = "requires GasOnly cache"; csr_code = 7300; }
+        else if(ec->num_active != N)                        { csr_err = "num_active mismatch"; csr_code = 7301; }
+        else if(!ec->active_indices)                        { csr_err = "null active_indices"; csr_code = 7302; }
+        else if(!ec->offsets)                               { csr_err = "null offsets"; csr_code = 7303; }
+        else if(ec->total_pairs < 0)                        { csr_err = "negative total_pairs"; csr_code = 7304; }
+        else if(ec->total_pairs > 0 && !ec->neighbors)      { csr_err = "null neighbors with total_pairs>0"; csr_code = 7305; }
+        else if(N > 0 && ec->offsets[0] != 0)               { csr_err = "offsets[0]!=0"; csr_code = 7306; }
+        else if(N > 0 && ec->offsets[N] != ec->total_pairs) { csr_err = "offsets[N]!=total_pairs"; csr_code = 7307; }
+        else {
+            /* Row order MUST match args.active_list elementwise — otherwise
+             * the kernel accumulates for ec->active_indices[aa] but the host
+             * writeback re-applies d_accums[aa] to args.active_list[aa]. */
+            for(int aa = 0; aa < N; aa++) {
+                if(ec->active_indices[aa] != args.active_list[aa]) { csr_err = "row order != active_list"; csr_code = 7308; break; }
+                if(ec->offsets[aa+1] < ec->offsets[aa])            { csr_err = "non-monotonic offsets"; csr_code = 7309; break; }
+            }
         }
-        if(ec->num_active != N) {
-            gizmo_emergency_hold_reviewed(7301, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR num_active mismatch; soft continuation would stage corrupt CSR", __FILE__, __LINE__, __FUNCTION__);  /* External CSR num_active mismatch with args */
-        }
-        if(!ec->active_indices) gizmo_emergency_hold_reviewed(7302, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null active_indices; soft continuation would deref null at 2144", __FILE__, __LINE__, __FUNCTION__);
-        if(!ec->offsets)        gizmo_emergency_hold_reviewed(7303, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null offsets; soft continuation would deref null offsets", __FILE__, __LINE__, __FUNCTION__);
-        if(ec->total_pairs < 0) gizmo_emergency_hold_reviewed(7304, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR negative total_pairs", __FILE__, __LINE__, __FUNCTION__);
-        if(ec->total_pairs > 0 && !ec->neighbors) gizmo_emergency_hold_reviewed(7305, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR null neighbors with total_pairs>0", __FILE__, __LINE__, __FUNCTION__);
-        if(N > 0 && ec->offsets[0] != 0)           gizmo_emergency_hold_reviewed(7306, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[0]!=0", __FILE__, __LINE__, __FUNCTION__);
-        if(N > 0 && ec->offsets[N] != ec->total_pairs) gizmo_emergency_hold_reviewed(7307, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR offsets[N]!=total_pairs", __FILE__, __LINE__, __FUNCTION__);
-        /* Row order MUST match args.active_list elementwise — otherwise
-         * the kernel accumulates for ec->active_indices[aa] but the host
-         * writeback re-applies d_accums[aa] to args.active_list[aa]. */
-        for(int aa = 0; aa < N; aa++) {
-            if(ec->active_indices[aa] != args.active_list[aa]) gizmo_emergency_hold_reviewed(7308, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR row order != active_list (would mis-apply writeback)", __FILE__, __LINE__, __FUNCTION__);
-            if(ec->offsets[aa+1] < ec->offsets[aa])            gizmo_emergency_hold_reviewed(7309, "TEMP_HARD_CANDIDATE_INTERNAL: external-CSR non-monotonic offsets", __FILE__, __LINE__, __FUNCTION__);
+        if(csr_err != nullptr) {
+            fprintf(stderr, "[neighbor_loop_runner rank=%d caller=%s] external-CSR contract violation: %s\n",
+                    ThisTask, Spec::loop_name, csr_err);
+            fflush(stderr);
+            endrun(csr_code);
+            gpu_particles_arena_release();
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+            return;
         }
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         nlr_stage_external_csr_into_gnl(ec, &gnl);
@@ -3019,7 +3035,11 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_b()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_emergency_hold_reviewed(81209, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode B); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
+        /* Soft bad-stop + return: the valid first-init ctx is left intact
+         * (no re-population). This function issues no MPI, so the early
+         * return cannot desync a peer; drains at the next phase poll. */
+        endrun(81209);
+        return;
     }
 
     ctx.P         = args.P;
@@ -3051,7 +3071,11 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_emergency_hold_reviewed(81210, "TEMP_HARD_CANDIDATE_INTERNAL: NlrIterDriver ctx double-init (Mode A); soft continuation re-populates ctx, orphaning device resources", __FILE__, __LINE__, __FUNCTION__);
+        /* Soft bad-stop + return: the valid first-init ctx is left intact
+         * (no re-population). This function issues no MPI, so the early
+         * return cannot desync a peer; drains at the next phase poll. */
+        endrun(81210);
+        return;
     }
     /* Arena must already have been acquired (codex 2c.2 strict lifecycle). */
     if (!arena_acquired) {
@@ -4623,8 +4647,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                         drv.active_set_uvm[sg][write_idx++] = slot;
                         break;
                     default:
-                        /* Bad enum value — silent drop-as-converged would
-                         * mask a Spec bug. Hard abort with full context. */
+                        /* Unknown enum = Spec bug. Soft bad-stop + drop the
+                         * slot as converged (do not re-queue): the run still
+                         * stops at the next poll, but stays lockstep with
+                         * peers through this iteration's collectives. The
+                         * stderr above surfaces the bug — not masked. */
                         if (ThisTask == 0) {
                             fprintf(stderr,
                                 "[run_neighbor_loop_iterative<%s>] FATAL: Spec::after_iter "
@@ -4635,7 +4662,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                                 drv.iter_index, sg, slot, i);
                             fflush(stderr);
                         }
-                        gizmo_emergency_hold_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
+                        endrun(81206);
+                        break;
                 }
             }
             drv.active_set_size[sg]     = write_idx;
@@ -4686,7 +4714,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                                     drv.iter_index, sg, slot, i);
                                 fflush(stderr);
                             }
-                            gizmo_emergency_hold_reviewed(81206, "TEMP_HARD_CANDIDATE_INTERNAL: Spec::after_iter returned unknown IterStatus (Spec bug); soft drop-as-converged would mask it", __FILE__, __LINE__, __FUNCTION__);
+                            /* Unknown enum = Spec bug. Soft bad-stop + drop the
+                             * oracle slot as converged; stays lockstep, drains
+                             * at the next poll. stderr above surfaces it. */
+                            endrun(81206);
+                            break;
                     }
                 }
                 drv.active_set_oracle_size[sg] = write_idx_o;

@@ -262,6 +262,9 @@ int force_treebuild(int npart, struct unbind_data *mp)
             All.TreeAllocFactor *= 1.15;
             if(ThisTask == 0) {printf(" new value=%g\n", All.TreeAllocFactor);}
             force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            /* drain a tree-alloc UVM OOM before force_treebuild_single re-runs on a NULL-based
+             * tree. Symmetric: all ranks enter this block together (flag from Allreduce(MIN)). */
+            gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
         }
     }
     while(flag == -1);
@@ -281,16 +284,20 @@ int force_treebuild(int npart, struct unbind_data *mp)
      *      consistent state.  topnode-range center/len was already
      *      pulled into SoA by gpu_nextnode_backup_suns inside
      *      force_treebuild_single. */
-    if(gpu_topology_finalize_father(Numnodestree)  != 0) {gizmo_emergency_hold_reviewed(90000065, "TEMP_HARD_CANDIDATE_INTERNAL: GPU finalize_father failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; a return would skip peer collectives (deadlock); original endrun(913320)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_topology_finalize_sibling(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000066, "TEMP_HARD_CANDIDATE_INTERNAL: GPU finalize_sibling failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; original endrun(913321)", __FILE__, __LINE__, __FUNCTION__);}
+    /* The GPU tree-finalize steps below are rank-local; on failure they set
+     * a soft bad-stop and fall through the matched, topology-driven pseudo/
+     * LET collectives, which drain at the gravtree:after_treebuild poll
+     * before the GPU gravity walk reads any moments. */
+    if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(90000065);}
+    if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(90000066);}
     /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
      * nodes.  On the CPU path FUNR does this work inline; on the GPU path
      * FUNR is retired (6.6) so the kernel takes its place.  Replaces a
      * host loop over Numnodestree -- the worst sparse-active scaling. */
-    if(gpu_node_reset_ephemeral(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000067, "TEMP_HARD_CANDIDATE_INTERNAL: GPU node_reset_ephemeral failed (rank-local); invalid tree state fed into pseudo/LET collectives + GPU walk; original endrun(913323)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_moment_refresh(-1) != 0) {gizmo_emergency_hold_reviewed(90000068, "TEMP_HARD_CANDIDATE_INTERNAL: GPU moment_refresh failed (rank-local); invalid node moments/device state fed into pseudo/LET collectives + GPU walk; original endrun(913311)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_nextnode_thread() != 0) {gizmo_emergency_hold_reviewed(90000069, "TEMP_HARD_CANDIDATE_INTERNAL: GPU nextnode_thread failed (rank-local); invalid tree topology fed into pseudo/LET collectives + GPU walk; original endrun(913312)", __FILE__, __LINE__, __FUNCTION__);}
-    if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {gizmo_emergency_hold_reviewed(90000070, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topology writeback_d_to_aos failed (rank-local); invalid AoS tree fed into pseudo/LET collectives + GPU walk; original endrun(913322)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
+    if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
+    if(gpu_nextnode_thread() != 0) {endrun(90000069);}
+    if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(90000070);}
     /* Mode B: GPU moment refresh writes scalar hmax but not per-type bands;
      * re-seed those host-side now. MUST run AFTER gpu_topology_writeback_d_to_aos
      * because force_refresh_hmax_per_type_host's Step 3 propagation walks via
@@ -300,7 +307,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     /* Phase 6.7a: set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
      * which still run on CPU in 6.7a). */
-    if(gpu_force_flag_localnodes() != 0) {gizmo_emergency_hold_reviewed(90000071, "TEMP_HARD_CANDIDATE_INTERNAL: GPU force_flag_localnodes failed (rank-local); invalid TOPLEVEL/DEPENDS bitflags fed into pseudo/LET collectives + GPU walk; original endrun(913340)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_force_flag_localnodes() != 0) {endrun(90000071);}
     /* Phase 10.3 (B): post the pseudo-data Iallgathervs first, then run the
      * LET MPI round concurrently, then wait/unpack pseudo-data and resum.
      * LET pack reads only LOCAL Nodes/Extnodes (which are already valid from
@@ -308,18 +315,22 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
     force_exchange_pseudodata_issue();
-    if(let_run_exchange() != 0)             {gizmo_emergency_hold_reviewed(90000072, "TEMP_HARD_CANDIDATE_INTERNAL: LET MPI exchange failed mid-collective; pseudodata_complete + GPU walk would proceed on a broken exchange (no safe drain); original endrun(913343)", __FILE__, __LINE__, __FUNCTION__);}
+    /* LET exchange failed (pack OOM or unpack overflow, status-propagated): soft
+     * bad-stop but DO NOT return -- the pseudodata Iallgatherv posted at
+     * force_exchange_pseudodata_issue() above must still be completed below.
+     * Drains at gravtree:after_treebuild before the GPU gravity walk. */
+    if(let_run_exchange() != 0)             {endrun(90000072);}
     force_exchange_pseudodata_complete();
     /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
      * ancestor topnode moments directly in SoA.  SoA is authoritative after
      * this point — no mark_all_dirty needed. */
-    if(gpu_scatter_pseudo_to_soa() != 0)    {gizmo_emergency_hold_reviewed(90000073, "TEMP_HARD_CANDIDATE_INTERNAL: GPU scatter_pseudo_to_soa failed (rank-local); invalid foreign moments fed into topnode resum + GPU walk; original endrun(913341)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
     /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
      * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
      * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
      * and hard-fail on any non-empty unredirected one — before the GPU walk. */
     let_finalize_unredirected_foreign_topleaves();
-    if(gpu_topnode_moment_resum() != 0)     {gizmo_emergency_hold_reviewed(90000074, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topnode_moment_resum failed (rank-local); invalid tree moments handed to the GPU gravity walk (no safe drain); original endrun(913342)", __FILE__, __LINE__, __FUNCTION__);}
+    if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
@@ -1051,7 +1062,11 @@ static int  pseudo_n_requests_pending = 0;
 void force_exchange_pseudodata_issue(void)
 {
     int i, no, m;
-    if(DomainMoment_pending != NULL) {gizmo_emergency_hold_reviewed(90000075, "TEMP_HARD_CANDIDATE_INTERNAL: pseudodata issue() re-entrant (pending != NULL); continuing leaks the buffer and re-posts the Iallgatherv, corrupting the collective; original endrun(913401)", __FILE__, __LINE__, __FUNCTION__);} /* re-entrant call: bug */
+    /* Re-entrant issue() (a prior issue had no matching complete()): soft
+     * bad-stop + return BEFORE allocating/posting a second Iallgatherv, so the
+     * already-pending exchange is left intact for its complete(). No poll here
+     * (a nonblocking collective may be outstanding); drains at a later poll. */
+    if(DomainMoment_pending != NULL) {endrun(90000075); return;}
 
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -1386,7 +1401,11 @@ void force_treeupdate_pseudos(int no)
             if(Nodes[p].maxsoft > maxsoft) {maxsoft = Nodes[p].maxsoft;}
         }
         else
-            gizmo_emergency_hold_reviewed(90000077, "TEMP_HARD_CANDIDATE_INTERNAL: invalid node type during moment summation walk; continuing derefs Nodes[p].sibling on a corrupt node and produces invalid tree moments; original endrun(6767)", __FILE__, __LINE__, __FUNCTION__);        /* may not happen */
+        {   /* invalid node type: soft bad-stop + break before the corrupt
+             * Nodes[p].sibling deref below; drains at a gravtree poll */
+            endrun(90000077);
+            break;
+        }
 
         p = Nodes[p].u.d.sibling;
     }
@@ -1557,7 +1576,7 @@ void force_flag_localnodes(void)
         {
             no = DomainNodeIndex[i];
             
-            if(DomainTask[i] != ThisTask) {gizmo_emergency_hold_reviewed(90000078, "TEMP_HARD_CANDIDATE_INTERNAL: domain ownership invariant violated (DomainTask[i] != ThisTask in local-domain loop); continuing mismarks a foreign subtree's DEPENDS bitflags (invalid tree state); original endrun(131231231)", __FILE__, __LINE__, __FUNCTION__);}
+            if(DomainTask[i] != ThisTask) {endrun(90000078); continue;} /* soft bad-stop + skip the foreign entry instead of mismarking its DEPENDS bitflags; drains at a gravtree poll */
             
             while(no >= 0)
             {
@@ -1693,7 +1712,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef PMGRID
     int tabindex; double eff_dist, rcut, asmth, asmthfac, rcut2, dist; dist = 0; rcut = All.Rcut[0]; asmth = All.Asmth[0];
-    if(mode != 0 && mode != 1) {printf("%d %d %d %d %d\n", target, mode, *exportflag, *exportnodecount, *exportindex); gizmo_emergency_hold_reviewed(90000079, "TEMP_HARD_CANDIDATE_INTERNAL: force_treeevaluate called with mode not in {0,1}; continuing runs the walk with undefined export accounting, mismatching the export exchange; original endrun(444)", __FILE__, __LINE__, __FUNCTION__);}
+    /* Bad mode (not 0/1): soft bad-stop + return 0 (no export, walk done) — NOT
+     * -1, which means "buffer full, retry". Symmetric param check; drains at the
+     * export-loop poll. */
+    if(mode != 0 && mode != 1) {printf("%d %d %d %d %d\n", target, mode, *exportflag, *exportnodecount, *exportindex); endrun(90000079); return 0;}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass = 0;
@@ -3289,7 +3311,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                             if(*nexport >= All.BunchSize)
                             {
                                 *nexport = nexport_save;
-                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000080, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13002)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
+                                if(nexport_save == 0) {endrun(90000080);} /* BunchSize too small for even one particle: soft bad-stop, then return -1 below; the gravtree:tree_export_loop poll drains it instead of retrying with zero progress */
                                 for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
                                 for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
                                 return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
@@ -3548,7 +3570,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
                             if(*nexport >= All.BunchSize)
                             {
                                 *nexport = nexport_save;
-                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000081, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13001)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
+                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000081, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13001); SUBFIND-only path, deferred to the subfind sub-audit (its export loop is in structure/subfind, out of Stage-4 scope)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
                                 for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
                                 for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
                                 return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
@@ -3704,7 +3726,13 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000082, "TEMP_HARD_CANDIDATE_OOM: Nodes_base UVM alloc failed; continuing sets Nodes = NULL - MaxPart (wild pointer) deref'd across the tree machinery; original endrun(3)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Nodes = Nodes_base - MaxPart`
+         * so the wild alias is never formed; Nodes_base stays NULL for the caller's check.
+         * DomainNodeIndex + tree_allocated_flag are already set (partial allocation) -- safe
+         * not because nothing was allocated, but because the caller immediately polls (all-rank
+         * sites) or NULL-checks + skips payload (restart turn) before any tree use. */
+        endrun(90000082);
+        return;
     }
     bytes = (size_t) total_node_slots * sizeof(struct extNODE);
     Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
@@ -3712,7 +3740,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000083, "TEMP_HARD_CANDIDATE_OOM: Extnodes_base UVM alloc failed; continuing sets Extnodes = NULL - MaxPart (wild pointer) deref'd across the tree machinery; original endrun(3)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Extnodes = Extnodes_base - MaxPart`
+         * so the wild alias is never formed; Extnodes_base stays NULL for the caller's check. */
+        endrun(90000083);
+        return;
     }
     Nodes = Nodes_base - All.MaxPart;
     Extnodes = Extnodes_base - All.MaxPart;
@@ -3729,7 +3760,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("Failed to allocate %lld 'Nextnode' slots (%g MB) in SharedSpace\n",
                nextnode_slots, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000084, "TEMP_HARD_CANDIDATE_OOM: Nextnode UVM alloc failed; continuing aliases a NULL Nextnode and deref's it during the walk; original endrun(8267342)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE gpu_gravity_tree_alias_nextnode()
+         * so a NULL Nextnode is never registered; Nextnode stays NULL for the caller's check. */
+        endrun(90000084);
+        return;
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
     /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
@@ -3742,7 +3776,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
                maxpart, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000085, "TEMP_HARD_CANDIDATE_OOM: Father UVM alloc failed; continuing writes Father[i] through a NULL pointer; original endrun(438965237)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE any Father[i] write/use;
+         * Father stays NULL for the caller's check. */
+        endrun(90000085);
+        return;
     }
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)
@@ -4132,16 +4169,19 @@ void force_refresh_node_moments(void)
             Extnodes[no].dp_dm = {};
 #endif
         }
-        if(gpu_moment_refresh(-1) != 0)          {gizmo_emergency_hold_reviewed(90000086, "TEMP_HARD_CANDIDATE_INTERNAL: GPU moment_refresh failed (rank-local) in pseudo-refresh; invalid moments fed into force_exchange_pseudodata collective + GPU walk; a return would skip the peer collective (deadlock); original endrun(913310)", __FILE__, __LINE__, __FUNCTION__);}
+        /* Rank-local GPU refresh steps: on failure set a soft bad-stop and
+         * fall through force_exchange_pseudodata (matched, topology-driven);
+         * the gravtree:after_refresh_moments poll drains before the walk. */
+        if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker
          * over-prunes (oracle mismatches). */
         force_refresh_hmax_per_type_host(Numnodestree);
-        if(gpu_force_flag_localnodes() != 0)     {gizmo_emergency_hold_reviewed(90000087, "TEMP_HARD_CANDIDATE_INTERNAL: GPU force_flag_localnodes failed (rank-local) in pseudo-refresh; invalid bitflags fed into force_exchange_pseudodata collective + GPU walk; original endrun(913340)", __FILE__, __LINE__, __FUNCTION__);}
+        if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         force_exchange_pseudodata();
-        if(gpu_scatter_pseudo_to_soa() != 0)     {gizmo_emergency_hold_reviewed(90000088, "TEMP_HARD_CANDIDATE_INTERNAL: GPU scatter_pseudo_to_soa failed (rank-local) in pseudo-refresh; invalid foreign moments fed into topnode resum + GPU walk; original endrun(913341)", __FILE__, __LINE__, __FUNCTION__);}
-        if(gpu_topnode_moment_resum() != 0)      {gizmo_emergency_hold_reviewed(90000089, "TEMP_HARD_CANDIDATE_INTERNAL: GPU topnode_moment_resum failed (rank-local) in pseudo-refresh; invalid tree moments handed to the GPU gravity walk; original endrun(913342)", __FILE__, __LINE__, __FUNCTION__);}
+        if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
+        if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
     }

@@ -87,7 +87,7 @@ static struct peano_hilbert_data
 }
  *mp;
 
-static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
+static int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
 /*! Walk the top tree to find the leaf node for a given Peano-Hilbert key, using bitwise operations instead of 128-bit division */
@@ -388,7 +388,11 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #if (NUMDIMS < 3)
         topnode_limit = 100000; /* 1D/2D problems need many more top nodes because the 3D Peano-Hilbert decomposition wastes refinement on degenerate dimensions */
 #endif
-        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); gizmo_emergency_hold_reviewed(90000010, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(781) -- TopNodeAllocFactor runaway (mid domain-decomp; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+        /* Symmetric (follows MPI_Allreduce(&ret,&retsum); All.TopNodeAllocFactor
+         * grows identically on every rank). Key + domain are already freed above,
+         * so a break would use-after-free below -- soft bad-stop + an immediate
+         * all-rank poll drains here before any continuation on freed domain state. */
+        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); endrun(90000010); gizmo_exit_bad_stop_if_requested("domain:topnode_alloc_factor");}
       }
     }
     while(retsum);
@@ -398,7 +402,18 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     PRINT_STATUS(" ..domain decomposition done. (took %g sec)", timediff(t0, t1));
     CPU_Step[CPU_DOMAIN] += measure_time();
 
-    for(i = 0; i < NumPart; i++) {if(P[i].Type > 5 || P[i].Type < 0) {printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type); gizmo_emergency_hold_reviewed(90000011, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(111111) -- invalid P[i].Type post-decomp (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}}
+    /* Per-rank particle-type validation. A bad type must not continue into
+     * peano_hilbert_order / topnode compaction / tree alloc below, so soft
+     * bad-stop on the first offender and poll AFTER the loop -- all ranks call
+     * the poll (one domain-phase Allreduce on the clean path). */
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Type > 5 || P[i].Type < 0) {
+            printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type);
+            endrun(90000011);
+            break;
+        }
+    }
+    gizmo_exit_bad_stop_if_requested("domain:particle_type_check");
 
 #ifdef SUBFIND
     if(GrNr < 0)			/* we don't do it when SUBFIND is executed for a certain group */
@@ -422,6 +437,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   PRINT_STATUS(" ..freed %g MByte in top-level domain structure", (MaxTopNodes - NTopnodes) * sizeof(struct topnode_data) / (1024.0 * 1024.0));
   DomainTask = (int *) (TopNodes + NTopnodes);
   force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+  gizmo_exit_bad_stop_if_requested("domain:treeallocate"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
   reconstruct_timebins();
   gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
 }
@@ -599,12 +615,34 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     /* exchange particles */
     int ret; size_t exchange_limit;
+    const size_t exchange_overhead = NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
+    const size_t exchange_min_package = sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey);
     do
     {
-        exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
-        if(exchange_limit <= 0) {gizmo_emergency_hold_reviewed(90000012, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition_light (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+        /* arena-capacity guard. FreeBytes is size_t, so the old `FreeBytes - overhead`
+         * underflowed (never <=0) when the arena was too small -- a dead check that let
+         * exchange-OOM fall through to the rank-divergent allocator. Guard explicitly and
+         * request a graceful symmetric stop (drained at the all-rank poll below). */
+        if(FreeBytes <= exchange_overhead + exchange_min_package) {
+            printf("task=%d: domain exchange arena exhausted (FreeBytes=%g MB)\n", ThisTask, FreeBytes / (1024.0 * 1024.0));
+            endrun(90000012);
+            exchange_limit = exchange_min_package;   /* avoid size_t underflow; poll below exits before use */
+        } else {
+            exchange_limit = FreeBytes - exchange_overhead;
+        }
         ret = domain_countToGo(exchange_limit);
+        /* predicted post-exchange occupancy from the toGo/toGet just computed -- guard
+         * BEFORE domain_exchange() receives into P[]/CellP[] so an overflow never overruns
+         * the arrays (per-rank condition, drained at the all-rank poll). */
+        {
+            int n; long long ng_out = 0, ng_in = 0, gas_out = 0, gas_in = 0;
+            for(n = 0; n < NTask; n++) {ng_out += toGo[n]; ng_in += toGet[n]; gas_out += toGoGas[n]; gas_in += toGetGas[n];}
+            if((long long)NumPart - ng_out + ng_in > All.MaxPart)    {endrun(90000015);}
+            if((long long)N_gas   - gas_out + gas_in > All.MaxPartGas) {endrun(90000016);}
+        }
+        gizmo_exit_bad_stop_if_requested("domain:exchange_capacity");
         domain_exchange();
+        gizmo_exit_bad_stop_if_requested("domain:exchange");
     }
     while(ret > 0);
 
@@ -631,6 +669,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
     force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+    gizmo_exit_bad_stop_if_requested("domain:treeallocate_light"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
     reconstruct_timebins();
 }
 
@@ -682,7 +721,7 @@ void domain_free_trick(void)
       domain_allocated_flag = 0;
     }
   else
-    {gizmo_emergency_hold_reviewed(90000013, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(131231) -- domain_free_trick called when not allocated (invariant; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+    {endrun(90000013); return;} /* not allocated: soft bad-stop + return (void fn, MPI-free, symmetric invariant); drains at the next domain poll */
 }
 
 void domain_allocate_trick(void)
@@ -917,15 +956,20 @@ int domain_decompose(void)
 
     int iter = 0, ret;
     size_t exchange_limit;
+    const size_t exchange_overhead = NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
+    const size_t exchange_min_package = sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey);
 
     do
     {
-        exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
-
-        if(exchange_limit <= 0)
-        {
-            printf("task=%d: exchange_limit=%d\n", ThisTask, (int) exchange_limit);
-            gizmo_emergency_hold_reviewed(90000014, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1223) -- exchange_limit<=0 in domain_Decomposition (mid-exchange; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+        /* arena-capacity guard (see domain_Decomposition_light): the old size_t
+         * `FreeBytes - overhead <= 0` underflowed and never fired. Guard explicitly and
+         * request a graceful symmetric stop, drained at the all-rank poll below. */
+        if(FreeBytes <= exchange_overhead + exchange_min_package) {
+            printf("task=%d: domain exchange arena exhausted (FreeBytes=%g MB)\n", ThisTask, FreeBytes / (1024.0 * 1024.0));
+            endrun(90000014);
+            exchange_limit = exchange_min_package;   /* avoid size_t underflow; poll below exits before use */
+        } else {
+            exchange_limit = FreeBytes - exchange_overhead;
         }
 
         /* determine for each cpu how many particles have to be shifted to other cpus */
@@ -937,7 +981,18 @@ int domain_decompose(void)
 
         PRINT_STATUS(" ..iter=%d exchange of %d%09d particles (ret=%d)", iter, (int) (sumtogo / 1000000000), (int) (sumtogo % 1000000000), ret);
 
+        /* predicted post-exchange occupancy -- guard BEFORE domain_exchange() receives
+         * into P[]/CellP[] so an overflow never overruns the arrays (drained at the poll). */
+        {
+            int n; long long ng_out = 0, ng_in = 0, gas_out = 0, gas_in = 0;
+            for(n = 0; n < NTask; n++) {ng_out += toGo[n]; ng_in += toGet[n]; gas_out += toGoGas[n]; gas_in += toGetGas[n];}
+            if((long long)NumPart - ng_out + ng_in > All.MaxPart)    {endrun(90000015);}
+            if((long long)N_gas   - gas_out + gas_in > All.MaxPartGas) {endrun(90000016);}
+        }
+        gizmo_exit_bad_stop_if_requested("domain:exchange_capacity");
+
         domain_exchange();
+        gizmo_exit_bad_stop_if_requested("domain:exchange");
 
         iter++;
     }
@@ -1275,14 +1330,17 @@ void domain_exchange(void)
   N_gas += count_get_gas;
 
 
+  /* Defensive post-exchange occupancy checks. The predictive caller guard
+   * (domain:exchange_capacity) already prevents reaching domain_exchange() with an
+   * overflow, so these should be unreachable; kept as soft belt-and-suspenders, drained
+   * at the caller's post-exchange poll. */
   if(NumPart > All.MaxPart)
     {
       printf("Task=%d NumPart=%d All.MaxPart=%d\n", ThisTask, NumPart, All.MaxPart);
-      gizmo_emergency_hold_reviewed(90000015, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787878) -- NumPart>MaxPart after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+      endrun(90000090);
     }
 
-  if(N_gas > All.MaxPartGas)
-    gizmo_emergency_hold_reviewed(90000016, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(787879) -- N_gas>MaxPartGas after domain_exchange (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+  if(N_gas > All.MaxPartGas) {endrun(90000091);}
 
 
   myfree(keyBuf);
@@ -1885,7 +1943,11 @@ int domain_countToGo(size_t nlimit)
     }
 
     package = (sizeof(struct particle_data) + sizeof(struct gas_cell_data) + sizeof(peanokey));
-    if(package >= nlimit) {gizmo_emergency_hold_reviewed(90000017, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(212) -- package>=nlimit in domain_countToGo (mid-exchange-sizing; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+    /* cannot pack even one particle into the exchange budget. Soft bad-stop: the
+     * packing loop below no-ops (package>=nlimit => 0 iterations, toGo stays zero so the
+     * Alltoalls move nothing and stay matched) and the caller's exchange-capacity poll
+     * drains it. The caller's arena guard normally catches this first. */
+    if(package >= nlimit) {endrun(90000017);}
 
     for(n = 0; n < NumPart && package < nlimit; n++)
     {
@@ -2026,7 +2088,12 @@ int domain_countToGo(size_t nlimit)
                 }
                 flagsum += flag;
                 
-                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} gizmo_emergency_hold_reviewed(90000018, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1013) -- domain exchange failed to converge (mid-collective Bcast loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+                /* Symmetric: flagsum is driven only by MPI_Bcast/MPI_Allgather-
+                 * synchronized counters, so it is identical on every rank and this
+                 * branch fires on all ranks together. Soft bad-stop + an immediate
+                 * all-rank poll (error-branch only, no normal-path cost) drains here
+                 * instead of re-entering the inner do/while forever. */
+                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} endrun(90000018); gizmo_exit_bad_stop_if_requested("domain:countToGo_converge");}
                 MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
                 MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
             }
@@ -2210,7 +2277,11 @@ int domain_recursively_combine_topTree(int start, int ncpu)
     {
       domainkey_top_left = start;
       domainkey_top_right = start + nleft;
-      if(domainkey_top_left == domainkey_top_right) {gizmo_emergency_hold_reviewed(90000019, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(123) -- degenerate top-tree key split (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+      /* Symmetric (start/ncpu identical on every rank); impossible under correct
+       * logic (nleft=ncpu/2>=1 when ncpu>=2). Soft bad-stop + status-return BEFORE
+       * the guarded Sendrecv: all ranks return together (no deadlock) and errflag
+       * propagates to the MPI_Allreduce(&errflag,&errsum) -> TopNodeAllocFactor retry. */
+      if(domainkey_top_left == domainkey_top_right) {endrun(90000019); return errflag + 1;}
 
       if(ThisTask == domainkey_top_left || ThisTask == domainkey_top_right)
 	{
@@ -2312,7 +2383,7 @@ int domain_recursively_combine_topTree(int start, int ncpu)
 	    {
 	      if((NTopnodes + ntopnodes_import) <= MaxTopNodes)
 		{
-		  domain_insertnode(topNodes, topNodes_import, 0, 0);
+		  errflag += domain_insertnode(topNodes, topNodes_import, 0, 0);
 		}
 	      else
 		{
@@ -2473,7 +2544,7 @@ int domain_determineTopTree(void)
 		{
 		  if((NTopnodes + ntopnodes_import) <= MaxTopNodes)
 		    {
-		      domain_insertnode(topNodes, topNodes_import, 0, 0);
+		      errflag += domain_insertnode(topNodes, topNodes_import, 0, 0);
 		    }
 		  else
 		    {
@@ -2536,7 +2607,10 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  if(NTopleaves < multipledomains * NTask) {gizmo_emergency_hold_reviewed(90000021, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(112) -- NTopleaves < multipledomains*NTask (mid determineTopTree; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+  /* Symmetric (NTopleaves is identical on every rank after the replicated
+   * tree-combine + domain_sumCost). Soft bad-stop + status-return feeds the
+   * existing nonzero-return -> TopNodeAllocFactor retry path in domain_decompose. */
+  if(NTopleaves < multipledomains * NTask) {endrun(90000021); return 1;}
 
   return 0;
 }
@@ -2803,7 +2877,11 @@ void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count,
 }
 
 
-void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB)
+/* Pure local recursive combine of two replicated top-trees -- no MPI here, so it
+ * runs identically on every rank. Returns nonzero (status) on a capacity/invariant
+ * failure so the caller can fold it into errflag -> MPI_Allreduce(errsum) ->
+ * TopNodeAllocFactor retry instead of a hard abort. */
+int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB)
 {
   int j, sub;
   long long count, countA, countB;
@@ -2848,11 +2926,11 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	      NTopnodes += 8;
 	    }
 	  else
-	    gizmo_emergency_hold_reviewed(90000022, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(88) -- out of TopNodes in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+	    {endrun(90000022); return 1;} /* out of TopNodes: soft bad-stop + status-return (skips the Daughter<0 deref below); folds into caller errflag -> TopNodeAllocFactor retry */
 	}
 
       sub = treeA[noA].Daughter + (treeB[noB].StartKey - treeA[noA].StartKey) / (treeA[noA].Size >> 3);
-      domain_insertnode(treeA, treeB, sub, noB);
+      return domain_insertnode(treeA, treeB, sub, noB);
     }
   else if(treeB[noB].Size == treeA[noA].Size)
     {
@@ -2864,7 +2942,7 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	  for(j = 0; j < 8; j++)
 	    {
 	      sub = treeB[noB].Daughter + j;
-	      domain_insertnode(treeA, treeB, noA, sub);
+	      if(domain_insertnode(treeA, treeB, noA, sub)) {return 1;}
 	    }
 	}
       else
@@ -2874,7 +2952,9 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	}
     }
   else
-    gizmo_emergency_hold_reviewed(90000023, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(89) -- unexpected node size in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+    {endrun(90000023); return 1;} /* unexpected node size (symmetric invariant): soft bad-stop + status-return -> caller errflag -> TopNodeAllocFactor retry */
+
+  return 0;
 }
 
 
