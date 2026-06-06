@@ -312,7 +312,11 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
     force_exchange_pseudodata_issue();
-    if(let_run_exchange() != 0)             {gizmo_emergency_hold_reviewed(90000072, "TEMP_HARD_CANDIDATE_INTERNAL: LET MPI exchange failed mid-collective; soft conversion deferred to the LET/let_pack status-propagation pass (this is the boundary into the LET machinery); original endrun(913343)", __FILE__, __LINE__, __FUNCTION__);}
+    /* LET exchange failed (pack OOM or unpack overflow, status-propagated): soft
+     * bad-stop but DO NOT return -- the pseudodata Iallgatherv posted at
+     * force_exchange_pseudodata_issue() above must still be completed below.
+     * Drains at gravtree:after_treebuild before the GPU gravity walk. */
+    if(let_run_exchange() != 0)             {endrun(90000072);}
     force_exchange_pseudodata_complete();
     /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
      * ancestor topnode moments directly in SoA.  SoA is authoritative after

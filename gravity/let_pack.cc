@@ -499,6 +499,13 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
  * Buffer growth: amortized doubling.  Caller passes (buf, count, capacity);
  * pack functions grow buf in place via realloc.
  * ---------------------------------------------------------------------- */
+/* Set when a LET pack-buffer realloc fails. Reset at the top of
+ * let_run_exchange. On failure the packer bails (zeroing the failed rank's
+ * payload, no partial subtrees) and let_run_exchange returns nonzero so the
+ * caller soft-stops; the Alltoallv still runs (zero counts for failed ranks)
+ * before the drain, keeping the MPI choreography intact. */
+static int g_let_pack_oom = 0;
+
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
 {
     if(needed <= *capacity) return;
@@ -510,7 +517,8 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
         printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
                new_cap, sizeof(struct LETNodeWire),
                (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
-        gizmo_emergency_hold_reviewed(90000060, "TEMP_HARD_CANDIDATE_OOM: LET wire-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914010)", __FILE__, __LINE__, __FUNCTION__);
+        g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
+        return;
     }
     *buf = nb;
     *capacity = new_cap;
@@ -525,7 +533,8 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     if(!nb)
     {
         printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
-        gizmo_emergency_hold_reviewed(90000061, "TEMP_HARD_CANDIDATE_OOM: LET header-buffer realloc failed; *buf stays NULL and caller writes OOB mid-LET-exchange (no safe drain); original endrun(914011)", __FILE__, __LINE__, __FUNCTION__);
+        g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
+        return;
     }
     *buf = nb;
     *capacity = new_cap;
@@ -553,6 +562,7 @@ static void pack_recurse(int no, int sib_terminator,
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
     grow_wire_buf(buf, *count + 1, capacity);
+    if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
     int my_idx = (*count)++;
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
@@ -603,6 +613,7 @@ static void pack_recurse(int no, int sib_terminator,
         {
             /* Particle leaf -- synthesize */
             grow_wire_buf(buf, *count + 1, capacity);
+            if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
             child_wire_idx = (*count)++;
             let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
@@ -613,6 +624,7 @@ static void pack_recurse(int no, int sib_terminator,
             int child_sib = Nodes[child].u.d.sibling;
             child_wire_idx = *count;
             pack_recurse(child, child_sib, payload, subtree_root_topleaf_no, buf, count, capacity);
+            if(g_let_pack_oom) return;   /* recursion hit a realloc OOM: bail */
             /* If pack_recurse added zero entries (skipped), child_wire_idx == old count;
              * we need to detect that and not link. */
             if(*count == child_wire_idx) child_wire_idx = -1;  /* nothing added */
@@ -729,6 +741,7 @@ extern "C" int let_pack_for_rank(int R,
             {
                 /* Particle directly under topleaf -- synthesize leaf */
                 grow_wire_buf(out_buf, count + 1, out_capacity);
+                if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
                 child_wire_idx = count;
                 let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*out_buf)[count]);
                 count++;
@@ -739,6 +752,7 @@ extern "C" int let_pack_for_rank(int R,
                 int child_sib = Nodes[child].u.d.sibling;
                 child_wire_idx = count;
                 pack_recurse(child, child_sib, &all_ranks[R], topleaf_no, out_buf, &count, out_capacity);
+                if(g_let_pack_oom) goto pack_oom_bail;   /* recursion hit a realloc OOM: ship nothing for R */
                 if(count == child_wire_idx) child_wire_idx = -1;  /* pack_recurse added nothing */
                 next_child = child_sib;
             }
@@ -766,6 +780,7 @@ extern "C" int let_pack_for_rank(int R,
         if(subtree_count > 0)
         {
             grow_hdr_buf(out_hdr_buf, hdr_count + 1, out_hdr_capacity);
+            if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
             (*out_hdr_buf)[hdr_count].topleaf_idx = i;
             (*out_hdr_buf)[hdr_count].wire_offset = wire_offset_before;
             (*out_hdr_buf)[hdr_count].count       = subtree_count;
@@ -775,6 +790,13 @@ extern "C" int let_pack_for_rank(int R,
     }
     *out_hdr_count = hdr_count;
     return count;
+
+pack_oom_bail:
+    /* realloc failed mid-pack: ship a zero payload for this rank (not a partial
+     * subtree). let_run_exchange returns nonzero and the run drains after the
+     * pseudodata exchange completes. */
+    *out_hdr_count = 0;
+    return 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -883,8 +905,9 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
     double t_let_alltoallv = timediff(t_let_mpi, my_second());
 
     /* Install foreign tree contents while flat_recv / flat_hdr_recv are
-     * still alive on the mymalloc stack. */
-    let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
+     * still alive on the mymalloc stack. Capture the status so an unpack
+     * overflow propagates up to let_run_exchange. */
+    int unpack_status = let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
                             flat_hdr_recv, recv_hdr_counts, total_hdr_recv);
 
     /* Free everything in strict reverse-alloc order */
@@ -906,7 +929,7 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                t_let_total, t_let_alltoallv, total_send, total_recv, total_hdr_send, total_hdr_recv);
         fflush(stdout);
     }
-    return 0;
+    return unpack_status;
 }
 
 /* ----------------------------------------------------------------------
@@ -980,7 +1003,11 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
                    "is documented in handoff_step13_phase9_locked.md but not implemented.)\n",
                    Numforeignnodes, recv_count_total, MaxForeignNodes, All.LETAllocFactor);
         }
-        gizmo_emergency_hold_reviewed(90000062, "TEMP_HARD_CANDIDATE_OOM: LET unpack overflow (Numforeignnodes+recv > MaxForeignNodes); continuing OOB-writes foreign-node arrays and corrupts the tree walk (no safe drain); original endrun(914020)", __FILE__, __LINE__, __FUNCTION__);
+        /* Soft bad-stop + return nonzero: the Alltoallv has already matched, so
+         * this returns the error up to let_run_exchange without OOB-installing
+         * the foreign nodes. The caller soft-stops and drains. */
+        endrun(90000062);
+        return 1;
     }
 
     int node_off = 0;     /* running offset into recv_buf (per-sender) */
@@ -1112,6 +1139,8 @@ extern "C" int let_run_exchange(void)
      * gravity export fallback is retired there. */
     if(MaxForeignNodes <= 0) return 0;
 
+    g_let_pack_oom = 0;   /* fresh status for this exchange */
+
     /* let_synthesize_particle_leaf and let_compute_local_payload read
      * P/CellP and may transitively invoke RT/sink/CR helpers that mutate
      * cached fields in CellP.  Invalidate the GPU particles arena up front
@@ -1172,8 +1201,10 @@ extern "C" int let_run_exchange(void)
     }
 
     /* Exchange + install (let_exchange_nodes inlines let_unpack_and_install
-     * to keep mymalloc LIFO discipline correct). */
-    let_exchange_nodes(send_per_rank, send_count,
+     * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
+     * local pack OOM (failed ranks carry zero send counts) so the Alltoallv stays
+     * matched; the nonzero status drains via the caller after this returns. */
+    int exch_status = let_exchange_nodes(send_per_rank, send_count,
                        send_hdr_per_rank, send_hdr_count);
 
     /* Free per-rank send buffers (allocated via realloc, not mymalloc) */
@@ -1190,7 +1221,7 @@ extern "C" int let_run_exchange(void)
     myfree(all_payloads);
     myfree(all_active_bitmaps);
     myfree(my_active_bitmap);
-    return 0;
+    return (g_let_pack_oom || exch_status != 0) ? 1 : 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -1241,7 +1272,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             printf("LET finalize FATAL: foreign topleaf t=%d owner=%d has out-of-range "
                    "DomainNodeIndex=%d (local node range [%d,%d)).\n",
                    t, DomainTask[t], no, All.MaxPart, All.MaxPart + MaxNodes);
-            fflush(stdout); gizmo_emergency_hold_reviewed(90000063, "TEMP_HARD_CANDIDATE_INTERNAL: foreign topleaf DomainNodeIndex out of local node range; next line derefs Nodes[no] (invalid LET, bad deref before poll); original endrun(914050)", __FILE__, __LINE__, __FUNCTION__);
+            fflush(stdout); endrun(90000063); continue; /* soft bad-stop + skip this topleaf before the Nodes[no] deref; drains at gravtree:after_treebuild before the walk */
         }
         const long long nn = Nodes[no].u.d.nextnode;
         if(nn < pseudo_lo || nn >= pseudo_hi) continue;  /* already redirected */
@@ -1265,7 +1296,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
                    "the LET must be complete. (rank=%d)\n",
                    t, DomainTask[t], no, (int)nn, mass, npart, (double)Nodes[no].len,
                    Nodes[no].u.d.sibling, ThisTask);
-            fflush(stdout); gizmo_emergency_hold_reviewed(90000064, "TEMP_HARD_CANDIDATE_INTERNAL: non-empty foreign topleaf left unredirected; GPU gravity walk would read incomplete LET state (no safe drain); original endrun(914051)", __FILE__, __LINE__, __FUNCTION__);
+            fflush(stdout); endrun(90000064); continue; /* soft bad-stop: incomplete LET state drains at gravtree:after_treebuild before the GPU walk reads it */
         }
     }
     if(n_patched > 0 && gizmo_verbose_diag()) {
