@@ -87,7 +87,7 @@ static struct peano_hilbert_data
 }
  *mp;
 
-static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
+static int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
 /*! Walk the top tree to find the leaf node for a given Peano-Hilbert key, using bitwise operations instead of 128-bit division */
@@ -2041,7 +2041,12 @@ int domain_countToGo(size_t nlimit)
                 }
                 flagsum += flag;
                 
-                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} gizmo_emergency_hold_reviewed(90000018, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(1013) -- domain exchange failed to converge (mid-collective Bcast loop; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+                /* Symmetric: flagsum is driven only by MPI_Bcast/MPI_Allgather-
+                 * synchronized counters, so it is identical on every rank and this
+                 * branch fires on all ranks together. Soft bad-stop + an immediate
+                 * all-rank poll (error-branch only, no normal-path cost) drains here
+                 * instead of re-entering the inner do/while forever. */
+                if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} endrun(90000018); gizmo_exit_bad_stop_if_requested("domain:countToGo_converge");}
                 MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
                 MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
             }
@@ -2225,7 +2230,11 @@ int domain_recursively_combine_topTree(int start, int ncpu)
     {
       domainkey_top_left = start;
       domainkey_top_right = start + nleft;
-      if(domainkey_top_left == domainkey_top_right) {gizmo_emergency_hold_reviewed(90000019, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(123) -- degenerate top-tree key split (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+      /* Symmetric (start/ncpu identical on every rank); impossible under correct
+       * logic (nleft=ncpu/2>=1 when ncpu>=2). Soft bad-stop + status-return BEFORE
+       * the guarded Sendrecv: all ranks return together (no deadlock) and errflag
+       * propagates to the MPI_Allreduce(&errflag,&errsum) -> TopNodeAllocFactor retry. */
+      if(domainkey_top_left == domainkey_top_right) {endrun(90000019); return errflag + 1;}
 
       if(ThisTask == domainkey_top_left || ThisTask == domainkey_top_right)
 	{
@@ -2327,7 +2336,7 @@ int domain_recursively_combine_topTree(int start, int ncpu)
 	    {
 	      if((NTopnodes + ntopnodes_import) <= MaxTopNodes)
 		{
-		  domain_insertnode(topNodes, topNodes_import, 0, 0);
+		  errflag += domain_insertnode(topNodes, topNodes_import, 0, 0);
 		}
 	      else
 		{
@@ -2488,7 +2497,7 @@ int domain_determineTopTree(void)
 		{
 		  if((NTopnodes + ntopnodes_import) <= MaxTopNodes)
 		    {
-		      domain_insertnode(topNodes, topNodes_import, 0, 0);
+		      errflag += domain_insertnode(topNodes, topNodes_import, 0, 0);
 		    }
 		  else
 		    {
@@ -2551,7 +2560,10 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  if(NTopleaves < multipledomains * NTask) {gizmo_emergency_hold_reviewed(90000021, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(112) -- NTopleaves < multipledomains*NTask (mid determineTopTree; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+  /* Symmetric (NTopleaves is identical on every rank after the replicated
+   * tree-combine + domain_sumCost). Soft bad-stop + status-return feeds the
+   * existing nonzero-return -> TopNodeAllocFactor retry path in domain_decompose. */
+  if(NTopleaves < multipledomains * NTask) {endrun(90000021); return 1;}
 
   return 0;
 }
@@ -2818,7 +2830,11 @@ void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count,
 }
 
 
-void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB)
+/* Pure local recursive combine of two replicated top-trees -- no MPI here, so it
+ * runs identically on every rank. Returns nonzero (status) on a capacity/invariant
+ * failure so the caller can fold it into errflag -> MPI_Allreduce(errsum) ->
+ * TopNodeAllocFactor retry instead of a hard abort. */
+int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB)
 {
   int j, sub;
   long long count, countA, countB;
@@ -2863,11 +2879,11 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	      NTopnodes += 8;
 	    }
 	  else
-	    gizmo_emergency_hold_reviewed(90000022, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(88) -- out of TopNodes in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+	    {endrun(90000022); return 1;} /* out of TopNodes: soft bad-stop + status-return (skips the Daughter<0 deref below); folds into caller errflag -> TopNodeAllocFactor retry */
 	}
 
       sub = treeA[noA].Daughter + (treeB[noB].StartKey - treeA[noA].StartKey) / (treeA[noA].Size >> 3);
-      domain_insertnode(treeA, treeB, sub, noB);
+      return domain_insertnode(treeA, treeB, sub, noB);
     }
   else if(treeB[noB].Size == treeA[noA].Size)
     {
@@ -2879,7 +2895,7 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	  for(j = 0; j < 8; j++)
 	    {
 	      sub = treeB[noB].Daughter + j;
-	      domain_insertnode(treeA, treeB, noA, sub);
+	      if(domain_insertnode(treeA, treeB, noA, sub)) {return 1;}
 	    }
 	}
       else
@@ -2889,7 +2905,9 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 	}
     }
   else
-    gizmo_emergency_hold_reviewed(90000023, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(89) -- unexpected node size in domain_insertnode (mid tree-combine; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+    {endrun(90000023); return 1;} /* unexpected node size (symmetric invariant): soft bad-stop + status-return -> caller errflag -> TopNodeAllocFactor retry */
+
+  return 0;
 }
 
 
