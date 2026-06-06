@@ -1602,10 +1602,15 @@ static void mode_b_remote_evaluate_into_buffer(
                         "(qi=%d). Transport corruption?\n",
                         rank, Spec::loop_name, env.origin_rank, p, qi);
                 fflush(stderr);
-                gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                endrun(81220);
             }
+            /* Soft bad-stop on corruption but DO NOT skip: the reply array is sized by
+             * recv_counts[p], so omitting this qi would leave a default-initialized reply
+             * (bogus origin_rank=0 could be merged into slot 0 on the peer). Keep the entry
+             * with the transport-consistent origin rank p (== env.origin_rank when clean);
+             * the run drains at the next phase poll with reply choreography intact. */
             peer_actives.push_back(env.active);
-            peer_provenance.push_back({p, qi, env.origin_slot, env.origin_rank});
+            peer_provenance.push_back({p, qi, env.origin_slot, p});
         }
     }
 
@@ -1796,7 +1801,9 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                     rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                             fflush(stderr);
-                            gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                            /* reply exchange already completed; the merge is the only dangerous op.
+                             * Soft bad-stop + skip the corrupt reply; drains at the next phase poll. */
+                            endrun(81221); continue;
                         }
                         const int slot = re.origin_slot;
                         if (slot < 0 || slot >= N) {
@@ -1804,7 +1811,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                     "dual reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                     rank, Spec::loop_name, slot, N, p);
                             fflush(stderr);
-                            gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                            /* skip: continuing would merge into accums_out[slot] with slot OOB. */
+                            endrun(81222); continue;
                         }
                         Spec::merge_accum(accums_out[slot], re.accum_prod);
                         Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
@@ -1851,7 +1859,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "peer=%d qi=%d. Transport/peer-side corruption?\n",
                                 rank, Spec::loop_name, re.origin_rank, rank, p, qi);
                         fflush(stderr);
-                        gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                        /* reply exchange already completed; soft bad-stop + skip the corrupt reply. */
+                        endrun(81223); continue;
                     }
                     const int slot = re.origin_slot;
                     if(slot < 0 || slot >= N) {
@@ -1859,7 +1868,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                 "reply envelope slot %d out of range [0,%d) from peer %d.\n",
                                 rank, Spec::loop_name, slot, N, p);
                         fflush(stderr);
-                        gizmo_emergency_hold_reviewed(1, "neighbor_loop_runner: mid-protocol transport/reply corruption (see stderr above)", __FILE__, __LINE__, __FUNCTION__);
+                        /* skip: continuing would merge into accums_out[slot] with slot OOB. */
+                        endrun(81224); continue;
                     }
                     Spec::merge_accum(accums_out[slot], re.accum);
                 }
@@ -2726,7 +2736,10 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                     (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                     s_np0, NumPart);
             fflush(stderr);
-            gizmo_emergency_hold_reviewed(81036, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            /* one-shot self-check at runner end (no loop); local PHASE0 emit + return
+             * follow, no intervening collective -- soft bad-stop + fall through, drains
+             * at the next phase-boundary poll. */
+            endrun(81036);
         }
     }
 
@@ -4988,7 +5001,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
                 s_np0, NumPart);
             fflush(stderr);
-            gizmo_emergency_hold_reviewed(81213, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-B iterative tiny-N corridor invariant violated (possibly per-rank, mid-runner; no proven symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+            /* one-shot self-check at iter-runner end (no loop); function returns next,
+             * no intervening collective -- soft bad-stop + fall through, drains at the
+             * next phase-boundary poll. */
+            endrun(81213);
         }
     }
     /* Driver destructor frees per-subgroup UVM allocations on scope exit. */
