@@ -7,7 +7,7 @@ checks:
   3. central pressure within order-of-magnitude of Earth (~3.6e12 dyn/cm^2)
   4. particle placement produces equal-mass particles, no NaNs
 
-Run: python -m python_src.eos_tools.test_hse_earth
+Run: python -m initial_conditions.eos_tools.test_hse_earth
 """
 
 import numpy as np

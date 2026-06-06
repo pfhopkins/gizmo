@@ -69,7 +69,7 @@ _KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
 def _current_systype():
     """Read active SYSTYPE from Makefile.systype (first uncommented SYSTYPE=... line)."""
     try:
-        with open("Makefile.systype") as f:
+        with open("src/Makefile.systype") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("SYSTYPE=") and not line.startswith("#"):
@@ -86,19 +86,19 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    system("rm -f GIZMO test/*/GIZMO")
-    system(f"cp test/{test_name}/Config.sh .")
+    system("rm -f src/GIZMO test/*/GIZMO")
+    system(f"cp test/{test_name}/Config.sh src/")
     if num_openmp_threads > 0:
-        with open("Config.sh", "a") as f:
+        with open("src/Config.sh", "a") as f:
             f.write(f"\nOPENMP={num_openmp_threads}\n")
     if extra_config_flags:
-        with open("Config.sh", "a") as f:
+        with open("src/Config.sh", "a") as f:
             for flag in extra_config_flags:
                 f.write(f"\n{flag}\n")
     system("make clean && make -j8")
-    if not path.isfile("GIZMO"):
+    if not path.isfile("src/GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")
-    move("GIZMO", f"test/{test_name}/GIZMO")
+    move("src/GIZMO", f"test/{test_name}/GIZMO")
     system(f"chmod +x test/{test_name}/GIZMO")
 
 

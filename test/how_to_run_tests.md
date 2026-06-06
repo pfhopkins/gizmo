@@ -4,11 +4,11 @@
 
 Run `pip install .` from the gizmo code directory. This will install a python package `gizmo` in your python environment (optional step 0: set up a python virtual environment first if you don't want to mess with your regular environment). 
 
-The `gizmo` package includes the python code in `gizmo/python_src`. In addition to conveniently packaging some of the scripts included in `gizmo/scripts` for convenient use (e.g. `load_from_snapshot`), this package has a submodule `test` that implements various routines for downloading ICs, building gizmo, and running tests.
+The `gizmo` package is the test harness; its source lives in `test/harness/gizmo/`. Its `test` submodule implements the routines for downloading ICs, building GIZMO, and running tests. (Snapshot-analysis utilities such as `load_from_snapshot` now live in the top-level `analysis/` directory, and initial-condition builders in `initial_conditions/`.)
 
-## Step 2: specify your build environment in `Makefile.systype`
+## Step 2: specify your build environment in `src/Makefile.systype`
 
-If you are not working in an environment that works with the default build environment, uncomment the build environment you normally use in `Makefile.systype`, e.g. `SYSTYPE=MacBookCellar` should work for a typical macbook environment with openmpi, hdf5, and gsl installed with homebrew.
+If you are not working in an environment that works with the default build environment, uncomment the build environment you normally use in `src/Makefile.systype`, e.g. `SYSTYPE=MacBookCellar` should work for a typical macbook environment with openmpi, hdf5, and gsl installed with homebrew.
 
 ## Step 3: run pytest
 

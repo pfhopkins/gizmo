@@ -57,7 +57,8 @@ test/*/*.hdf5
 src/eos/helmholtz/helm_table.dat
 
 # Python build artifacts
-python_src/gizmo.egg-info/
+*.egg-info/
+.pytest_cache/
 __pycache__/
 *.pyc
 

@@ -1,8 +1,8 @@
-/* test_dirty_tracker.cc — semantic unit tests for mesh/gpu_dirty_tracker.{h,cc}.
+/* test_dirty_tracker.cc — semantic unit tests for src/mesh/gpu_dirty_tracker.{h,cc}.
  *
- * Build standalone (no Kokkos / no MPI / no allvars dependency):
- *   c++ -std=c++17 -O0 -g -I.. tools/test_dirty_tracker.cc \
- *       mesh/gpu_dirty_tracker.cc -o /tmp/test_dirty_tracker
+ * Build standalone (no Kokkos / no MPI / no allvars dependency), from the repo root:
+ *   c++ -std=c++17 -O0 -g dev/test_dirty_tracker.cc \
+ *       src/mesh/gpu_dirty_tracker.cc -o /tmp/test_dirty_tracker
  *
  * Tests cover the cases codex enumerated:
  *   1. overlapping cache ranges both receive marks
@@ -16,7 +16,7 @@
  *
  * Each test prints "PASS" or "FAIL: ..."; exit code is non-zero if any failed. */
 
-#include "../mesh/gpu_dirty_tracker.h"
+#include "../src/mesh/gpu_dirty_tracker.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
