@@ -10,7 +10,7 @@ Both the [public code](https://github.com/pfhopkins/gizmo-public) ([alternative 
 
 Basic Rules: 
 
-1. The reference for code methods, setup, use and citation policy is the User Guide, available as `gizmo_documentation.html` in the `scripts` folder as part of this repository, or via download [here](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/gizmo_documentation.html). Read it! The code is extensively documented. Important things you need to know before running are there. Most questions are already answered.  
+1. The reference for code methods, setup, use and citation policy is the User Guide, available as `gizmo_documentation.md` in the `docs` folder as part of this repository, or via download [here](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/gizmo_documentation.html). Read it! The code is extensively documented. Important things you need to know before running are there. Most questions are already answered.  
 
 2. Access to the development (private) code does **not** imply permission to use any modules identified as proprietary either in the User Guide or `Template_Config.sh` file (or elsewhere). The development code can only be used or distributed with explicit permission from the code authors. Many of the non-public modules are proprietary and developed by students for on-going research; it is not acceptable to use or share these routines without first obtaining the explicit permission of both the lead code author and author(s) of the relevant routines. If in doubt, ask. Anyone violating these terms will have code access immediately revoked.
 

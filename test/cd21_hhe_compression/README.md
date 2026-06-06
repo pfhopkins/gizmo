@@ -12,7 +12,7 @@ ANEOS dispatch (`EOS_ANEOS`) — no new C++ branch.
    `cd21_y0275.dat`.
 2. Convert to the SESAME format consumed by `eos/aneos.cc::aneos_read_table`:
    ```
-   python python_src/eos_tools/cms_to_sesame.py \
+   python initial_conditions/eos_tools/cms_to_sesame.py \
        --input  cd21_y0275.dat \
        --output cd21_y0275.sesame \
        --y 0.275 --mat-id 2721
@@ -37,7 +37,7 @@ ANEOS dispatch (`EOS_ANEOS`) — no new C++ branch.
 
 The converter has a synthetic ideal-gas round-trip:
 ```
-python python_src/eos_tools/cms_to_sesame.py --selftest
+python initial_conditions/eos_tools/cms_to_sesame.py --selftest
 ```
 Passes when P, u, cs round-trip to <1e-5 against the analytic ideal-gas
 solution.

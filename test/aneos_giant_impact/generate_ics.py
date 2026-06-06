@@ -23,13 +23,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from python_src.eos_tools.eos_dispatch import Material
-from python_src.eos_tools.hse_solver import Zone, solve_hse
-from python_src.eos_tools.shell_placement import (
+from initial_conditions.eos_tools.eos_dispatch import Material
+from initial_conditions.eos_tools.hse_solver import Zone, solve_hse
+from initial_conditions.eos_tools.shell_placement import (
     glass_relax, atmosphere_shell, merge_placements,
 )
-from python_src.eos_tools.sph_density import correct_u_for_sph_density
-from python_src.eos_tools.build_layered_body import write_hdf5, hse_diagnostics
+from initial_conditions.eos_tools.sph_density import correct_u_for_sph_density
+from initial_conditions.eos_tools.build_layered_body import write_hdf5, hse_diagnostics
 
 
 # Cv supplied as a fallback only — the SESAME u<->T conversion now bisects
