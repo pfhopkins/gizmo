@@ -388,7 +388,11 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #if (NUMDIMS < 3)
         topnode_limit = 100000; /* 1D/2D problems need many more top nodes because the 3D Peano-Hilbert decomposition wastes refinement on degenerate dimensions */
 #endif
-        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); gizmo_emergency_hold_reviewed(90000010, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(781) -- TopNodeAllocFactor runaway (mid domain-decomp; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+        /* Symmetric (follows MPI_Allreduce(&ret,&retsum); All.TopNodeAllocFactor
+         * grows identically on every rank). Key + domain are already freed above,
+         * so a break would use-after-free below -- soft bad-stop + an immediate
+         * all-rank poll drains here before any continuation on freed domain state. */
+        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); endrun(90000010); gizmo_exit_bad_stop_if_requested("domain:topnode_alloc_factor");}
       }
     }
     while(retsum);
@@ -398,7 +402,18 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     PRINT_STATUS(" ..domain decomposition done. (took %g sec)", timediff(t0, t1));
     CPU_Step[CPU_DOMAIN] += measure_time();
 
-    for(i = 0; i < NumPart; i++) {if(P[i].Type > 5 || P[i].Type < 0) {printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type); gizmo_emergency_hold_reviewed(90000011, "TEMP_HARD_CANDIDATE_MIDCOLLECTIVE: original endrun(111111) -- invalid P[i].Type post-decomp (per-rank; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}}
+    /* Per-rank particle-type validation. A bad type must not continue into
+     * peano_hilbert_order / topnode compaction / tree alloc below, so soft
+     * bad-stop on the first offender and poll AFTER the loop -- all ranks call
+     * the poll (one domain-phase Allreduce on the clean path). */
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Type > 5 || P[i].Type < 0) {
+            printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type);
+            endrun(90000011);
+            break;
+        }
+    }
+    gizmo_exit_bad_stop_if_requested("domain:particle_type_check");
 
 #ifdef SUBFIND
     if(GrNr < 0)			/* we don't do it when SUBFIND is executed for a certain group */
@@ -682,7 +697,7 @@ void domain_free_trick(void)
       domain_allocated_flag = 0;
     }
   else
-    {gizmo_emergency_hold_reviewed(90000013, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(131231) -- domain_free_trick called when not allocated (invariant; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+    {endrun(90000013); return;} /* not allocated: soft bad-stop + return (void fn, MPI-free, symmetric invariant); drains at the next domain poll */
 }
 
 void domain_allocate_trick(void)
