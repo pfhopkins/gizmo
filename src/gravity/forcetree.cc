@@ -262,6 +262,9 @@ int force_treebuild(int npart, struct unbind_data *mp)
             All.TreeAllocFactor *= 1.15;
             if(ThisTask == 0) {printf(" new value=%g\n", All.TreeAllocFactor);}
             force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            /* drain a tree-alloc UVM OOM before force_treebuild_single re-runs on a NULL-based
+             * tree. Symmetric: all ranks enter this block together (flag from Allreduce(MIN)). */
+            gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
         }
     }
     while(flag == -1);
@@ -3723,7 +3726,13 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000082, "TEMP_HARD_CANDIDATE_OOM: Nodes_base UVM alloc failed; continuing sets Nodes = NULL - MaxPart (wild pointer) deref'd across the tree machinery; original endrun(3)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Nodes = Nodes_base - MaxPart`
+         * so the wild alias is never formed; Nodes_base stays NULL for the caller's check.
+         * DomainNodeIndex + tree_allocated_flag are already set (partial allocation) -- safe
+         * not because nothing was allocated, but because the caller immediately polls (all-rank
+         * sites) or NULL-checks + skips payload (restart turn) before any tree use. */
+        endrun(90000082);
+        return;
     }
     bytes = (size_t) total_node_slots * sizeof(struct extNODE);
     Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
@@ -3731,7 +3740,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000083, "TEMP_HARD_CANDIDATE_OOM: Extnodes_base UVM alloc failed; continuing sets Extnodes = NULL - MaxPart (wild pointer) deref'd across the tree machinery; original endrun(3)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Extnodes = Extnodes_base - MaxPart`
+         * so the wild alias is never formed; Extnodes_base stays NULL for the caller's check. */
+        endrun(90000083);
+        return;
     }
     Nodes = Nodes_base - All.MaxPart;
     Extnodes = Extnodes_base - All.MaxPart;
@@ -3748,7 +3760,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("Failed to allocate %lld 'Nextnode' slots (%g MB) in SharedSpace\n",
                nextnode_slots, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000084, "TEMP_HARD_CANDIDATE_OOM: Nextnode UVM alloc failed; continuing aliases a NULL Nextnode and deref's it during the walk; original endrun(8267342)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE gpu_gravity_tree_alias_nextnode()
+         * so a NULL Nextnode is never registered; Nextnode stays NULL for the caller's check. */
+        endrun(90000084);
+        return;
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
     /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
@@ -3761,7 +3776,10 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
                maxpart, bytes / (1024.0 * 1024.0));
-        gizmo_emergency_hold_reviewed(90000085, "TEMP_HARD_CANDIDATE_OOM: Father UVM alloc failed; continuing writes Father[i] through a NULL pointer; original endrun(438965237)", __FILE__, __LINE__, __FUNCTION__);
+        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE any Father[i] write/use;
+         * Father stays NULL for the caller's check. */
+        endrun(90000085);
+        return;
     }
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)

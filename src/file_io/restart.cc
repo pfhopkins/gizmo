@@ -346,6 +346,10 @@ void restart(int modus)
 		{
 		  domain_allocate();
 		  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
+		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
+		   * drain at restart's existing all-rank poll. */
+		  if(!Nodes_base || !Extnodes_base || !Nextnode || !Father) {restart_status = 223; goto finish_turn;}
 		}
 
 	      in(&Numnodestree, modus);
