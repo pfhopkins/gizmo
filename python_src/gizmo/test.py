@@ -163,7 +163,7 @@ def get_cooling_tables(test_directory="."):
         system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
     treecool_dst = f"{test_directory}/TREECOOL"
     if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
-        system(f"cp cooling/TREECOOL {test_directory}")
+        system(f"cp data/cooling/TREECOOL {test_directory}")
 
 
 _BASELINE_STASH = "__output_baseline_stash__"

@@ -181,7 +181,7 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
     if not path.isdir("spcool_tables"):
         get_cooling_tables(".")
     if not isfile("TREECOOL"):
-        copy2("../../cooling/TREECOOL", "TREECOOL")
+        copy2("../../data/cooling/TREECOOL", "TREECOOL")
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"

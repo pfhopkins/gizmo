@@ -107,12 +107,12 @@ def run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags=
     # Download ICs and reference if not present
     _download_if_missing("fire_ics.hdf5")
     _download_if_missing("fire_exact.hdf5")
-    # Download cooling tables; get_cooling_tables tries cp cooling/TREECOOL
+    # Download cooling tables; get_cooling_tables tries cp data/cooling/TREECOOL
     # from cwd which won't work here, so copy TREECOOL manually
     if not path.isdir("spcool_tables"):
         get_cooling_tables(".")
     if not isfile("TREECOOL"):
-        copy2("../../cooling/TREECOOL", "TREECOOL")
+        copy2("../../data/cooling/TREECOOL", "TREECOOL")
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
