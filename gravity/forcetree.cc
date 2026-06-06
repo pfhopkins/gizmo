@@ -1055,7 +1055,11 @@ static int  pseudo_n_requests_pending = 0;
 void force_exchange_pseudodata_issue(void)
 {
     int i, no, m;
-    if(DomainMoment_pending != NULL) {gizmo_emergency_hold_reviewed(90000075, "TEMP_HARD_CANDIDATE_INTERNAL: pseudodata issue() re-entrant (pending != NULL); continuing leaks the buffer and re-posts the Iallgatherv, corrupting the collective; original endrun(913401)", __FILE__, __LINE__, __FUNCTION__);} /* re-entrant call: bug */
+    /* Re-entrant issue() (a prior issue had no matching complete()): soft
+     * bad-stop + return BEFORE allocating/posting a second Iallgatherv, so the
+     * already-pending exchange is left intact for its complete(). No poll here
+     * (a nonblocking collective may be outstanding); drains at a later poll. */
+    if(DomainMoment_pending != NULL) {endrun(90000075); return;}
 
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -1390,7 +1394,11 @@ void force_treeupdate_pseudos(int no)
             if(Nodes[p].maxsoft > maxsoft) {maxsoft = Nodes[p].maxsoft;}
         }
         else
-            gizmo_emergency_hold_reviewed(90000077, "TEMP_HARD_CANDIDATE_INTERNAL: invalid node type during moment summation walk; continuing derefs Nodes[p].sibling on a corrupt node and produces invalid tree moments; original endrun(6767)", __FILE__, __LINE__, __FUNCTION__);        /* may not happen */
+        {   /* invalid node type: soft bad-stop + break before the corrupt
+             * Nodes[p].sibling deref below; drains at a gravtree poll */
+            endrun(90000077);
+            break;
+        }
 
         p = Nodes[p].u.d.sibling;
     }
@@ -1561,7 +1569,7 @@ void force_flag_localnodes(void)
         {
             no = DomainNodeIndex[i];
             
-            if(DomainTask[i] != ThisTask) {gizmo_emergency_hold_reviewed(90000078, "TEMP_HARD_CANDIDATE_INTERNAL: domain ownership invariant violated (DomainTask[i] != ThisTask in local-domain loop); continuing mismarks a foreign subtree's DEPENDS bitflags (invalid tree state); original endrun(131231231)", __FILE__, __LINE__, __FUNCTION__);}
+            if(DomainTask[i] != ThisTask) {endrun(90000078); continue;} /* soft bad-stop + skip the foreign entry instead of mismarking its DEPENDS bitflags; drains at a gravtree poll */
             
             while(no >= 0)
             {
@@ -1697,7 +1705,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef PMGRID
     int tabindex; double eff_dist, rcut, asmth, asmthfac, rcut2, dist; dist = 0; rcut = All.Rcut[0]; asmth = All.Asmth[0];
-    if(mode != 0 && mode != 1) {printf("%d %d %d %d %d\n", target, mode, *exportflag, *exportnodecount, *exportindex); gizmo_emergency_hold_reviewed(90000079, "TEMP_HARD_CANDIDATE_INTERNAL: force_treeevaluate called with mode not in {0,1}; continuing runs the walk with undefined export accounting, mismatching the export exchange; original endrun(444)", __FILE__, __LINE__, __FUNCTION__);}
+    /* Bad mode (not 0/1): soft bad-stop + return 0 (no export, walk done) — NOT
+     * -1, which means "buffer full, retry". Symmetric param check; drains at the
+     * export-loop poll. */
+    if(mode != 0 && mode != 1) {printf("%d %d %d %d %d\n", target, mode, *exportflag, *exportnodecount, *exportindex); endrun(90000079); return 0;}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass = 0;
@@ -3293,7 +3304,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                             if(*nexport >= All.BunchSize)
                             {
                                 *nexport = nexport_save;
-                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000080, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13002)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
+                                if(nexport_save == 0) {endrun(90000080);} /* BunchSize too small for even one particle: soft bad-stop, then return -1 below; the gravtree:tree_export_loop poll drains it instead of retrying with zero progress */
                                 for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
                                 for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
                                 return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
@@ -3552,7 +3563,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
                             if(*nexport >= All.BunchSize)
                             {
                                 *nexport = nexport_save;
-                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000081, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13001)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
+                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000081, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13001); SUBFIND-only path, deferred to the subfind sub-audit (its export loop is in structure/subfind, out of Stage-4 scope)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
                                 for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
                                 for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
                                 return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
