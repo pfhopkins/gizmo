@@ -75,7 +75,8 @@ test/benchmark/step15/
 
 # Local handoff / agent memory / planning notes. Same rationale as .claude/:
 # meaningful only to the immediate working session, not part of the code.
-docs/
+# (The tracked user guide lives in docs/; only this scratch subdir is ignored.)
+docs/scratch/
 
 # Stray dev-scratch test notes (out-of-date WIP memos shipped from upstream
 # branches; not user-facing docs).
