@@ -149,6 +149,13 @@ extern ALIGN(32) struct particle_data
      * (Mej, Esne, p_ejecta, yields[k]) conserve exactly.  STARFORGE pattern
      * adapted from mechanical_fb.cc:282.  Zeroed before each weighting pass. */
     MyDouble FB_Area_weighted_sum;
+    /* Particle mass [Msun] snapshotted in resolvedism_determine_SNe() at the
+     * moment SNe_ThisTimeStep is set (death detection).  The FB walks later
+     * drain P[i].Mass down to ~rem_mass, so the bookkeeping loop in
+     * resolvedism_inject_fb_energy() must use this snapshot value to log the
+     * actual ejecta mass (M_at_SN_trigger - rem_mass) rather than the post-walk
+     * residual (~0).  Reset to -1 when bookkeeping is done. */
+    MyFloat M_at_SN_trigger;
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     MyFloat M_drawn_Ia;          /*!< original drawn mass for Type Ia DTD [Msun], >0 = WD eligible */

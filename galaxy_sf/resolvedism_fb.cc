@@ -214,6 +214,11 @@ void resolvedism_determine_SNe(void)
             P[i].SNe_ThisTimeStep = 1; /* SN: energy+mass+metals */
             n_sne_local++;
         }
+        /* Snapshot pre-walk mass for bookkeeping in resolvedism_inject_fb_energy().
+         * The FB walks below will drain P[i].Mass down to ~rem_mass, so a later
+         * read of P[i].Mass would give Mej~0.  This snapshot preserves the
+         * correct value for the FeedbackBudget log. */
+        P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR);
         /* NOTE: do NOT zero MstarSampleIMF here — particle2in needs it */
         sn_x[n_logged] = P[i].Pos[0];
         sn_y[n_logged] = P[i].Pos[1];
@@ -406,6 +411,7 @@ void resolvedism_determine_SNe(void)
             double rn = get_random_number(P[i].ID + 7 * ThisTask + 13 * All.NumCurrentTiStep);
             if(rn < P_Ia) {
                 P[i].SNe_ThisTimeStep = 4; /* Type Ia */
+                P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR);
                 n_ia_local++;
             }
         }
@@ -626,7 +632,9 @@ void resolvedism_inject_fb_energy(void)
          * because single-star sampling can leave the WD below 1.378 Msun after prior
          * wind/AGB phases.  Yields are rescaled by (actual / Chandrasekhar) ratio. */
         if(P[i].SNe_ThisTimeStep == 4) {
-            double M_WD = P[i].Mass * UNIT_MASS_IN_SOLAR; /* WD mass before disruption [Msun] */
+            /* Use pre-walk snapshot — P[i].Mass has already been drained by thermal walk */
+            double M_WD = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
+                                                     : P[i].Mass * UNIT_MASS_IN_SOLAR;
             double yield_rescale = M_WD / IA_EJECTA_MASS;
             n_events[4] += 1;
             M_injected[4] += M_WD;     /* actual injected mass (= WD mass) */
@@ -643,6 +651,7 @@ void resolvedism_inject_fb_energy(void)
              * a leak.  WD is effectively disrupted: star mass is whatever the
              * walk actually deposited to the gas neighbors (~0). */
             P[i].M_drawn_Ia = 0; /* no longer eligible */
+            P[i].M_at_SN_trigger = -1; /* reset bookkeeping snapshot */
             P[i].SNe_ThisTimeStep = -1;
             continue;
         }
@@ -658,7 +667,13 @@ void resolvedism_inject_fb_energy(void)
 #endif
 
         int channel = (P[i].SNe_ThisTimeStep == 2) ? 1 : 0; /* 0=SN, 1=AGB */
-        double M_star_old = P[i].Mass * UNIT_MASS_IN_SOLAR; /* pre-remnant mass [Msun] */
+        /* Use the pre-walk snapshot captured in resolvedism_determine_SNe().
+         * P[i].Mass has already been drained by the FB walks to ~rem_mass,
+         * so reading it here would log Mej~0.  Snapshot preserves the true
+         * pre-walk mass for accurate FeedbackBudget bookkeeping. Fall back to
+         * current P[i].Mass if snapshot is unavailable (legacy/IC case). */
+        double M_star_old = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
+                                                       : P[i].Mass * UNIT_MASS_IN_SOLAR;
 
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
         if(Mstar > 0) {
@@ -783,6 +798,7 @@ void resolvedism_inject_fb_energy(void)
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         P[i].Mstar = 0;
 #endif
+        P[i].M_at_SN_trigger = -1; /* reset bookkeeping snapshot */
         P[i].SNe_ThisTimeStep = -1;
     }
 
