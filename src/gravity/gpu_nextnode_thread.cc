@@ -58,6 +58,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
 
@@ -148,6 +149,7 @@ extern "C" int gpu_nextnode_thread(void)
         }
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("nx_thread", n);
 
     /* Phase 6.8e: Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
      * Phase 6.8f: internal-node Nodes[].u.d.nextnode writeback runs on the
@@ -157,6 +159,7 @@ extern "C" int gpu_nextnode_thread(void)
         Nodes_uvm[k].u.d.nextnode = nextnode_soa[k];
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("nx_writeback_aos", n);
 
     return 0;
 }

@@ -24,6 +24,7 @@
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 
 #include "sfc_tiles.h"
 #include "sfc_tiles_functions.h"
@@ -66,6 +67,7 @@ extern "C" void gpu_xval_readback_pv(const int *indices, int n,
         v_ti(k) = (long long)P_loc[j].Ti_current;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("xval_readback", n);
     for(int k = 0; k < n;   k++) { out_ti[k] = v_ti(k); }
     for(int k = 0; k < 9*n; k++) { out_pv[k] = v_pv(k); }
 }
@@ -494,6 +496,7 @@ static void sidx_refresh_compact_positions_device(gpu_spatial_index_t *idx)
         compact[i*4+2] = pos_buf[i*3+2];
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("compact_xyzh_pos_scatter", num_total);
 }
 
 /* Re-fit BVH from updated tile bboxes (structural rebuild — left/right links
@@ -706,6 +709,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
             compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
         });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("compact_xyzh_build", num_total);
     }
     double t_si4 = my_second(); /* DIAG: after compact array build */
 
@@ -1054,10 +1058,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
             });
             Kokkos::fence();
+            gizmo_gpu_check_last_error("compact_h_refresh_idx", n_dirty);
             Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_dirty);
         }
         t_refresh_launch_out = my_second();
         Kokkos::fence();
+        gizmo_gpu_check_last_error("compact_h_refresh", num_total);
         t_refresh_fence_out = my_second();
         HDBG("compact_h_refresh_done");
     }
@@ -1167,6 +1173,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         t_fused_launch_out = my_second();
         HDBG("fused_fence_start");
         Kokkos::fence();
+        gizmo_gpu_check_last_error("ngb_fused", num_active);
         HDBG("fused_fence_done");
 
         /* MICROBENCHMARK PROBE — fires once per process when GIZMO_NGB_MICROBENCH=1
@@ -1431,6 +1438,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         });
         t_compact_launch_out = my_second();
         Kokkos::fence();
+        gizmo_gpu_check_last_error("ngb_compact", num_active);
         HDBG("compact_kernel_done");
     }
     double t_nl3 = my_second(); /* DIAG: after compact pass */

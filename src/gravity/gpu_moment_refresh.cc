@@ -64,6 +64,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
@@ -801,6 +802,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     Kokkos::fence();
+    gizmo_gpu_check_last_error("mr_moment_refresh", n);
 
     /* ---------------- Bulk deep-copy scratch → SharedSpace SoA -------- */
     /* Wrap raw SoA pointers in unmanaged Views and deep_copy. */

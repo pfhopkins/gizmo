@@ -17,6 +17,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_topology_finalize.h"
 #include "forcetree.h"
@@ -69,6 +70,7 @@ extern "C" int gpu_topology_finalize_father(int n)
         Father_uvm[i] = -1;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_father_init", n);
 
     /* Main pass: one thread per internal node.  For each occupied child slot,
      * write that child's father back to this node (absolute index = MaxPart + k).
@@ -94,6 +96,7 @@ extern "C" int gpu_topology_finalize_father(int n)
         }
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_father_main", n);
 
     return 0;
 }
@@ -157,6 +160,7 @@ extern "C" int gpu_topology_finalize_sibling(int n)
         sibling_soa[k] = found;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_sibling_walk", n);
 
     return 0;
 }
@@ -185,6 +189,7 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
         Nodes_uvm[k].u.d.father  = father_soa[k];
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_writeback_d_to_aos", n);
     return 0;
 }
 
@@ -223,6 +228,7 @@ extern "C" int gpu_node_reset_ephemeral(int n)
 #endif
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("node_reset_ephemeral", n);
     return 0;
 }
 
