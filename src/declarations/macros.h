@@ -221,18 +221,24 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #define IMAX(a,b) ((a) > (b) ? (a) : (b))
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
+/* Device-side endrun records its code+line into a per-TU managed sentinel that
+   the host post-kernel error check consumes and routes to a graceful stop. */
+#include "gpu_device_error_sentinel.h"
+
 #if (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
 /* GPU-device endrun/PRINT_WARNING.  Device code cannot call MPI_Abort, but it
-   must not continue after a fatal physics/error path.  Print the source
-   location, then trap the kernel so the host post-kernel error check sees the
-   failure. */
+   must not continue after a fatal physics/error path.  Record the code+line in
+   the per-TU sentinel and print the source location, then trap the kernel so the
+   host post-kernel error check sees the failure and routes to controlled-stop. */
 #if defined(__CUDA_ARCH__)
 #define GIZMO_GPU_DEVICE_TRAP() asm volatile("trap;")
 #else
 #define GIZMO_GPU_DEVICE_TRAP() __builtin_trap()
 #endif
 #define endrun(x) do { \
-    printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
+    int gizmo_endrun_code = (x); \
+    printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, gizmo_endrun_code); \
+    gizmo_gpu_device_record_error(gizmo_endrun_code, __LINE__); \
     GIZMO_GPU_DEVICE_TRAP(); \
     } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)

@@ -23,33 +23,42 @@
 
 #ifdef GIZMO_GPU_COMPILER
 
+#include "gpu_device_error_sentinel.h"
+
+/* Forward-declared rather than pulling in proto.h (same approach gpu_all_mirror.h
+   uses for gizmo_gpu_sync_all). Host-side controlled-stop request: no MPI / alloc
+   / Kokkos, safe to call from a dispatcher's host context after the fence. */
+extern void gizmo_request_controlled_stop(int code, const char *reason,
+                                          const char *file, int line, const char *func);
+
+/* Post-kernel error check. Consumes any device-side endrun (recorded in the
+   per-TU sentinel before the device trap) AND any CUDA/HIP runtime error, then
+   routes a single graceful controlled-stop request -- the next all-rank poll
+   drains it to a clean finalize (no MPI_Abort). NOTE: this only runs if host
+   control returns after Kokkos::fence() following a trapped kernel; that
+   behavior is the Vista-CUDA runtime validation gate. */
 static inline void gizmo_gpu_check_last_error(const char *tag, int N, int batch_start = -1)
 {
+    int dev_code = 0, dev_line = 0;
+    int have_sentinel = gizmo_gpu_consume_device_error(&dev_code, &dev_line);
+    int have_rt_err = 0;
+    const char *rt_msg = "";
 #if defined(__CUDACC__)
     cudaError_t err = cudaGetLastError();
-    if(err != cudaSuccess) {
-        if(batch_start >= 0) {
-            printf("[GPU] %s error batch [%d..%d] N=%d: %s\n",
-                   tag, batch_start, batch_start + N - 1, N, cudaGetErrorString(err));
-        } else {
-            printf("[GPU] %s error N=%d: %s\n", tag, N, cudaGetErrorString(err));
-        }
-        fflush(stdout);
-    }
+    if(err != cudaSuccess) { have_rt_err = 1; rt_msg = cudaGetErrorString(err); }
 #elif defined(__HIPCC__)
     hipError_t err = hipGetLastError();
-    if(err != hipSuccess) {
-        if(batch_start >= 0) {
-            printf("[GPU] %s error batch [%d..%d] N=%d: %s\n",
-                   tag, batch_start, batch_start + N - 1, N, hipGetErrorString(err));
-        } else {
-            printf("[GPU] %s error N=%d: %s\n", tag, N, hipGetErrorString(err));
-        }
-        fflush(stdout);
-    }
-#else
-    (void)tag; (void)N; (void)batch_start;
+    if(err != hipSuccess) { have_rt_err = 1; rt_msg = hipGetErrorString(err); }
 #endif
+    if(have_sentinel || have_rt_err) {
+        char reason[512];
+        snprintf(reason, sizeof(reason),
+                 "GPU kernel '%s' device error (N=%d, batch_start=%d): runtime='%s' [device endrun code=%d line=%d]",
+                 tag, N, batch_start, rt_msg, dev_code, dev_line);
+        fflush(stdout); printf("[GPU] %s\n", reason); fflush(stdout);
+        int route_code = have_sentinel ? dev_code : 90009001;  /* generic GPU runtime error if no sentinel */
+        gizmo_request_controlled_stop(route_code, reason, __FILE__, __LINE__, "gizmo_gpu_check_last_error");
+    }
 }
 
 #else  /* !GIZMO_GPU_COMPILER */
