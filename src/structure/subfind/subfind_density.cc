@@ -57,6 +57,8 @@ void subfind_setup_smoothinglengths(int j)
   if(ThisTask == 0)
     printf("FOF_DENSITY_SPLIT_TYPES is not yet supported by the modern SUBFIND neighbor-list path.\n");
   endrun(990505);
+  /* unsupported configuration is identical on every rank: drain immediately (all-rank) */
+  gizmo_exit_bad_stop_if_requested("subfind_setup_smoothinglengths:fof_density_split_types_unsupported");
 #endif
   int i, no, p;
 
@@ -176,6 +178,8 @@ void subfind_save_densities(int num)
 	("Fatal error.\nNumber of processors must be a smaller or equal than `NumFilesWrittenInParallel'.\n");
       endrun(241931);
     }
+  /* this is a global configuration condition (identical on every rank): drain immediately (all-rank) */
+  gizmo_exit_bad_stop_if_requested("subfind_save_densities:numfiles_config");
 
   nprocgroup = NTask / All.NumFilesWrittenInParallel;
   if((NTask % All.NumFilesWrittenInParallel))
@@ -187,6 +191,9 @@ void subfind_save_densities(int num)
 	subfind_save_local_densities(num);
       MPI_Barrier(MPI_COMM_WORLD);	/* wait inside the group */
     }
+  /* a per-rank-turn IO failure (open) only sets the soft-stop flag on the active rank; all ranks have
+     completed their turns and barriers here, so drain at this all-rank boundary. */
+  gizmo_exit_bad_stop_if_requested("subfind_save_densities:density_io");
 
   myfree(KernelRadius_list);
 
@@ -205,6 +212,7 @@ void subfind_save_local_densities(int num)
     {
       printf("can't open file `%s`\n", fname);
       endrun(1183);
+      return;	/* per-rank IO: skip writes on open failure (avoids null fd use); drains at the post-turn poll */
     }
 
   my_fwrite(&Nrkern, sizeof(int), 1, fd);
