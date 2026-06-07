@@ -2467,7 +2467,7 @@ int domain_determineTopTree(void)
 
 #ifdef SUBFIND
   if(GrNr >= 0 && count != NumPartGroup)
-    gizmo_emergency_hold_reviewed(90000020, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(1222) -- count!=NumPartGroup in determineTopTree (SUBFIND invariant; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+    endrun(1222);   /* SUBFIND group-count invariant; soft stop drains at the caller's poll after domain_Decomposition (continuation here is bounded: mysort_domain uses count<=NumPart) */
 #endif
 
   mysort_domain(mp, count, sizeof(struct peano_hilbert_data));

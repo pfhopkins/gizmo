@@ -3584,7 +3584,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
                             if(*nexport >= All.BunchSize)
                             {
                                 *nexport = nexport_save;
-                                if(nexport_save == 0) {gizmo_emergency_hold_reviewed(90000081, "TEMP_HARD_CANDIDATE_OOM: export buffer (BunchSize) too small to process even a single particle; soft-continue returns -1 with zero progress -> infinite export-communication retry; original endrun(13001); SUBFIND-only path, deferred to the subfind sub-audit (its export loop is in structure/subfind, out of Stage-4 scope)", __FILE__, __LINE__, __FUNCTION__);} /* in this case, the buffer is too small to process even a single particle */
+                                if(nexport_save == 0) {endrun(13001);} /* buffer too small for even one particle; soft stop drains at subfind_potential_compute's all-rank round poll (the zero-progress -1 below would otherwise retry forever) */
                                 for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
                                 for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
                                 return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
