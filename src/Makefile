@@ -776,8 +776,9 @@ gravity/gpu_force_drift.o: gravity/gpu_force_drift.cc $(INCL) $(CONFIG) compile_
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 gravity/gpu_force_update.o: gravity/gpu_force_update.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-gravity/let_pack.o: gravity/let_pack.cc gravity/let_data.h $(INCL) $(CONFIG) compile_time_info.cc
-	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+## gravity/let_pack.o is CPU-only (no Kokkos): the $(OBJS) static-pattern rule
+## builds it with $(CXX). It must NOT have its own $(GPU_CC) rule (a duplicate
+## explicit recipe make would warn about and override anyway).
 declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 
