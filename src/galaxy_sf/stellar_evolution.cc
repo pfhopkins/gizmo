@@ -317,7 +317,7 @@ int get_age_tracer_bin(double age)
         else if(age >= All.AgeTracerBinEnd) {return too_old_flag;} /* do nothing here and continue [likely only in test problems] */
         else {index=(int) floor((log10(age)-binstart)/log_bin_dt);} /* find bin */
 #endif
-    if(index<0) {PRINT_WARNING("Age tracer binary search not working index=%d age=%f",index,age); endrun(8888);} // exit if invalid result
+    if(index<0) {PRINT_WARNING("Age tracer binary search not working index=%d age=%f",index,age); endrun(8888); return too_old_flag;} // soft-stop + skip-deposit sentinel: callers treat the negative too_old_flag as out-of-range, avoiding a negative-index yields[] write
     return index; // return valid bin
 }
 
@@ -1274,7 +1274,7 @@ double ps_radius_MS_in_solar(double m) {
 void single_star_SN_init_directions(void){
     /* routine to initialize the distribution of spawned wind particles during SNe. This is essentially a copy of the function rt_init_intensity_directions() in rt_utilities.c */
     int n_polar = SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT;
-    if(n_polar < 1) {printf("Number of SN ejecta particles is invalid (<1). Terminating.\n"); endrun(53463431);}
+    if(n_polar < 1) {printf("Number of SN ejecta particles is invalid (<1). Terminating.\n"); endrun(53463431); return;} // soft-stop + return: skip the invalid mu[n_polar] VLA (n_polar<1 is stack-UB) below
     double mu[n_polar]; int i,j,k,l,n=0,n_oct=n_polar*(n_polar+1)/2;
     double SN_Ejecta_Direction_tmp[n_oct][3];
     for(j=0;j<n_polar;j++) {mu[j] = sqrt( (j + 1./6.) / (n_polar - 1./2.) );}

@@ -60,6 +60,7 @@ void apply_dm_heating(void)
             printf("apply_dm_heating: non-finite input at i=%d (rho_dm=%g, rho_gas=%g, ThisTask=%d)\n",
                    i, rho_dm, rho_gas, ThisTask);
             endrun(91301);
+            continue; /* soft-stop + skip: avoid injecting NaN/Inf into CellP[i].DtInternalEnergy (the corruption this guard exists to prevent); local loop drains at next poll */
         }
 
         if (rho_gas <= 0 || rho_dm <= 0) continue;  /* no DM here, or unresolved gas */
