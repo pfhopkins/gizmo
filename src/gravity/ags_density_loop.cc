@@ -786,6 +786,11 @@ void ags_density(void)
             fflush(stderr);
         }
         endrun(81350);
+        /* All-rank symmetric guard (GIZMO_NLR_ORACLE is a job-wide env var), so drain
+         * immediately here rather than running a knowingly oracle-contaminated AGS solve
+         * to the next barrier. */
+        gizmo_exit_bad_stop_if_requested("ags_density:oracle_incompat");
+        return;
     }
 
     CPU_Step[CPU_MISC] += measure_time();
