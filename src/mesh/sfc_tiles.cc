@@ -282,9 +282,12 @@ static int search_neighbors_sfc(struct particle_data *P, int i, double h_i,
         {
             /* Internal node: push children onto stack */
             if(sp + 2 > TILE_BVH_STACK_SIZE) {
-                /* Stack overflow — fall back to processing both children inline.
-                   This shouldn't happen with STACK_SIZE=64 (supports 2^32 tiles). */
+                /* Stack overflow (shouldn't happen with STACK_SIZE=64, which
+                   supports 2^32 tiles). Skip this node's two children rather
+                   than pushing past the stack end; the rest of the traversal
+                   still runs and drains at the next poll. */
                 endrun(77701);
+                continue;
             }
             stack[sp++] = node->left;
             stack[sp++] = node->right;

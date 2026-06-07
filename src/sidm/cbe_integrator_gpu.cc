@@ -94,7 +94,7 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
             if(dT_scratch) dT_scratch[a] = dT_local;
         }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-        {
+        if(dT_scratch) {   /* skip the diagnostic sum/free if the scratch alloc soft-failed above (endrun 91501) */
             double dT_sum = 0.0;
             for(int a = 0; a < num_active; a++) dT_sum += dT_scratch[a];
             cbe_step_diagnostics_observe_repair(/* dP */ 0.0, dT_sum);
