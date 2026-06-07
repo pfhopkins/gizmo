@@ -94,6 +94,7 @@ void CBEGradSpec::apply_active_writeback(const neighbor_loop_args& args,
                 "(active_slot=%d, i=%d, NumPart=%d, rank=%d) — runner contract violation\n",
                 active_slot, i, NumPart, ThisTask);
         endrun(91420);
+        return;   /* soft stop: aux is NULL; returning avoids the aux->loop_iteration deref below */
     }
     if(i < 0 || i >= NumPart) {
         fprintf(stderr,
@@ -101,6 +102,7 @@ void CBEGradSpec::apply_active_writeback(const neighbor_loop_args& args,
                 "(active_slot=%d, rank=%d) — runner handed out-of-range active index\n",
                 i, NumPart, active_slot, ThisTask);
         endrun(91421);
+        return;   /* soft stop: i is out of range; returning avoids the args.P[i] OOB reference below */
     }
 
     struct particle_data& Pi = args.P[i];
