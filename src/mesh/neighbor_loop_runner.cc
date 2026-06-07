@@ -3099,7 +3099,10 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_emergency_hold_reviewed(81211, "TEMP_HARD_CANDIDATE_INTERNAL: Mode-A ctx init before arena acquired; soft continuation binds ctx.P to an unacquired arena (bad device launch)", __FILE__, __LINE__, __FUNCTION__);
+        /* Symmetric lifecycle-contract violation. Soft bad-stop + return WITHOUT binding
+         * ctx.P to an unacquired arena; the outer runner's nlr:iter_context_init poll
+         * drains all ranks before any device dispatch. */
+        endrun(81211); return;
     }
 
     /* Bind to arena-resident P_gpu / CellP_gpu. Use the driver's
@@ -3127,7 +3130,10 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                 Spec::loop_name);
             fflush(stderr);
         }
-        gizmo_emergency_hold_reviewed(81212, "TEMP_HARD_CANDIDATE_INTERNAL: arena already acquired (single-acquire-per-call contract violated)", __FILE__, __LINE__, __FUNCTION__);
+        /* Symmetric lifecycle-contract violation. Soft bad-stop + return WITHOUT a second
+         * acquire (the first acquire's state stays intact); the outer runner's
+         * nlr:iter_context_init poll drains all ranks before any device dispatch. */
+        endrun(81212); return;
     }
 
     /* === (1) Imported-ghost prep ONCE per call (codex 2c.2-fix + 2c.3 step 9) ===
@@ -4305,6 +4311,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 }
             }
             std::sort(seen.begin(), seen.end());
+            int local_dup = 0;
             for (size_t k = 1; k < seen.size(); k++) {
                 if (seen[k] == seen[k-1]) {
                     int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -4316,13 +4323,22 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                         "subgroup.\n",
                         rank, Spec::loop_name, seen[k]);
                     fflush(stderr);
-                    /* TEMP_HARD_CANDIDATE: LOCAL per-rank duplicate check (each
-                     * rank sorts its own seen[]) -> asymmetric; only the
-                     * offending rank reaches here while peers proceed into the
-                     * ghost-exchange collectives, so a return would deadlock.
-                     * Internal partition-invariant violation; reviewed hard. */
-                    gizmo_emergency_hold_reviewed(81215, "TEMP_HARD_CANDIDATE_INTERNAL: duplicate particle index across subgroups (asymmetric local check; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                    local_dup = 1;
+                    break;
                 }
+            }
+            /* The duplicate scan is per-rank/asymmetric, so reconcile collectively
+             * BEFORE the ghost-exchange/device dispatch: offending ranks soft bad-stop,
+             * every rank polls together and drains (no deadlock, no MPI_Abort). The
+             * audit block is symmetric -- all ranks enter on the env gate -- and Check-1
+             * above already uses Allreduce, so this added Allreduce is in-pattern. */
+            int any_dup = local_dup;
+            if (NTask > 1) {MPI_Allreduce(&local_dup, &any_dup, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);}
+            if (any_dup) {
+                if (local_dup) {endrun(81215);}
+                else {gizmo_request_controlled_stop(81215, "NLR_ITER duplicate particle index across subgroups (peer rank detected)", __FILE__, __LINE__, __FUNCTION__);}
+                gizmo_exit_bad_stop_if_requested("nlr:subgroup_duplicate");
+                return;
             }
         }
     }
@@ -4364,8 +4380,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 Spec::loop_name, (int)path);
             fflush(stderr);
         }
-        gizmo_emergency_hold_reviewed(81208, "TEMP_HARD_CANDIDATE_INTERNAL: unhandled dispatch path; soft continuation would init ctx_oracle on a bad path", __FILE__, __LINE__, __FUNCTION__);
+        /* path is Allreduce-symmetric (see dispatch above) -> all ranks hit this
+         * together; soft bad-stop + immediate poll (81203 precedent). */
+        endrun(81208); gizmo_exit_bad_stop_if_requested("nlr:unhandled_dispatch");
     }
+    /* Drain a soft bad-stop raised inside the path-specific init (Mode-A arena
+     * lifecycle 81211/81212 return early without binding ctx) BEFORE any oracle ctx
+     * init or device dispatch. All-rank: Mode-A path is symmetric. */
+    gizmo_exit_bad_stop_if_requested("nlr:iter_context_init");
 
     /* ===== Independent ctx_oracle init (step 2c.4) =====
      * Codex 2c.4-v2 P1 fix: ctx_oracle gets its OWN populate_device_context
@@ -4595,7 +4617,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     break;
                 case DispatchPath::Brute_Oracle:
                     /* Brute_Oracle is the oracle backend, NEVER selected as a
-                     * production path. Defense-in-depth abort. */
+                     * production path. Defense-in-depth. path + subgroups are symmetric
+                     * across ranks, so soft bad-stop + an immediate poll drains all ranks
+                     * here -- before after_iter could run on stale accum. */
                     if (ThisTask == 0) {
                         fprintf(stderr,
                             "[run_neighbor_loop_iterative<%s>] FATAL: Brute_Oracle "
@@ -4603,7 +4627,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                             Spec::loop_name, sg, drv.iter_index);
                         fflush(stderr);
                     }
-                    gizmo_emergency_hold_reviewed(81202, "TEMP_HARD_CANDIDATE_INTERNAL: Brute_Oracle as production path; soft continuation runs after_iter on stale accum (bad mutation + writeback)", __FILE__, __LINE__, __FUNCTION__);
+                    endrun(81202); gizmo_exit_bad_stop_if_requested("nlr:brute_oracle_production");
                     break;
             }
         }
