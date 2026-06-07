@@ -1169,6 +1169,11 @@ integertime get_timestep(int p,		/*!< particle index */
         printf("pm_force=(%g|%g|%g)\n", P[p].GravPM[0], P[p].GravPM[1], P[p].GravPM[2]);
 #endif
         fflush(stdout); endrun(818);
+        /* Soft-stop drains at the find_timesteps poll; until then, hand back a minimal
+         * in-bounds integer-timeline step (matches the non-STOP_WHEN_BELOW_MINTIMESTEP
+         * floor below) so the caller's get_timestep_bin() stays in range. This is a
+         * continuation sentinel for a dying run, NOT a recovered/physical timestep. */
+        ti_step = 2;
     }
 
     return ti_step;
