@@ -110,11 +110,22 @@ void pm_init_periodic(void)
 
   MPI_Allreduce(&fftsize, &maxfftsize, 1, MPI_TYPE_PTRDIFF, MPI_MAX, MPI_COMM_WORLD);
 
-  if(!(rhogrid = (fftw_real *) mymalloc("rhogrid", bytes = maxfftsize * sizeof(d_fftw_real))))
+  /* Caller-side collective OOM preflight (graceful, no MPI_Abort). pm_init_periodic is
+   * all-rank symmetric (maxfftsize is the Allreduce(MAX) above, identical on every rank),
+   * so check the arena fits on EVERY rank before the mymalloc + FFT-plan deref. On failure,
+   * request a soft controlled-stop and drain immediately at this all-rank PM-setup boundary. */
+  bytes = maxfftsize * sizeof(d_fftw_real);
+  if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(bytes), 1))
     {
-      printf("failed to allocate memory for `FFT-rhogrid' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90000001, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-rhogrid alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+      char pm_oom[512];
+      snprintf(pm_oom, sizeof(pm_oom),
+               "pm_init_periodic: FFT-rhogrid arena preflight failed (OOM): rhogrid=%g MB (rounded=%g MB), blocks=1",
+               bytes / (1024.0 * 1024.0), (double) gizmo_mymalloc_rounded_size(bytes) / (1024.0 * 1024.0));
+      gizmo_request_controlled_stop(90000001, pm_oom, __FILE__, __LINE__, __FUNCTION__);
+      gizmo_exit_bad_stop_if_requested("pm_init_periodic:rhogrid");
+      return;
     }
+  rhogrid = (fftw_real *) mymalloc("rhogrid", bytes);
   bytes_tot += bytes;
 
 
@@ -143,36 +154,59 @@ void pm_init_periodic_allocate(void)
   double bytes_tot = 0;
   size_t bytes;
 
+  /* Caller-side collective OOM preflight (graceful, no MPI_Abort). pm_init_periodic_allocate
+   * is all-rank symmetric (called from the inherently-collective pmforce_periodic FFT path),
+   * so check that the whole per-force PM arena fits the FreeBytes + block table on EVERY rank
+   * before any mymalloc. On failure, request a soft controlled-stop and drain immediately at
+   * this all-rank PM-setup boundary. ONE preflight subsumes the former per-site holds
+   * 90000002 (forcegrid), 90000003 (part), 90000004 (part_sortindex), 90000005 (tidal_workspace)
+   * -- avoids 4 extra collectives in the PM path; can be split later under code-uniquification. */
+  {
+    size_t b_forcegrid  = maxfftsize * sizeof(d_fftw_real);
+    size_t b_part       = (size_t) 8 * NumPart * sizeof(struct part_slab_data);
+    size_t b_sortindex  = (size_t) 8 * NumPart * sizeof(int);
+    size_t pm_arena_need = gizmo_mymalloc_rounded_size(b_forcegrid)
+                         + gizmo_mymalloc_rounded_size(b_part)
+                         + gizmo_mymalloc_rounded_size(b_sortindex);
+    int    pm_arena_blocks = 3;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    size_t b_tidal      = maxfftsize * sizeof(d_fftw_real);
+    pm_arena_need      += gizmo_mymalloc_rounded_size(b_tidal);
+    pm_arena_blocks    += 1;
+#endif
+    if(!gizmo_alloc_fits_all_ranks(pm_arena_need, pm_arena_blocks))
+      {
+        char pm_oom[512];
+        snprintf(pm_oom, sizeof(pm_oom),
+                 "pm_init_periodic_allocate: PM per-force arena preflight failed (OOM; subsumes 90000002-05): "
+                 "forcegrid=%g MB, part=%g MB, part_sortindex=%g MB"
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                 ", tidal_workspace=%g MB"
+#endif
+                 ", total rounded=%g MB, blocks=%d",
+                 b_forcegrid / (1024.0 * 1024.0), b_part / (1024.0 * 1024.0), b_sortindex / (1024.0 * 1024.0),
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                 b_tidal / (1024.0 * 1024.0),
+#endif
+                 (double) pm_arena_need / (1024.0 * 1024.0), pm_arena_blocks);
+        gizmo_request_controlled_stop(90000002, pm_oom, __FILE__, __LINE__, __FUNCTION__);
+        gizmo_exit_bad_stop_if_requested("pm_init_periodic_allocate");
+        return;
+      }
+  }
+
   /* allocate the memory to hold the FFT fields */
-
-  if(!(forcegrid = (fftw_real *) mymalloc("forcegrid", bytes = maxfftsize * sizeof(d_fftw_real))))
-    {
-      printf("failed to allocate memory for `FFT-forcegrid' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90000002, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-forcegrid alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
-    }
+  forcegrid = (fftw_real *) mymalloc("forcegrid", bytes = maxfftsize * sizeof(d_fftw_real));
   bytes_tot += bytes;
 
-  if(!
-     (part = (struct part_slab_data *) mymalloc("part", bytes = 8 * NumPart * sizeof(struct part_slab_data))))
-    {
-      printf("failed to allocate memory for `part' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90000003, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- PM 'part' alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
-    }
+  part = (struct part_slab_data *) mymalloc("part", bytes = 8 * NumPart * sizeof(struct part_slab_data));
   bytes_tot += bytes;
 
-  if(!(part_sortindex = (int *) mymalloc("part_sortindex", bytes = 8 * NumPart * sizeof(int))))
-    {
-      printf("failed to allocate memory for `part_sortindex' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90000004, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- PM 'part_sortindex' alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
-    }
+  part_sortindex = (int *) mymalloc("part_sortindex", bytes = 8 * NumPart * sizeof(int));
   bytes_tot += bytes;
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-  if(!(tidal_workspace = (fftw_real *) mymalloc("tidal_workspace", bytes = maxfftsize * sizeof(d_fftw_real))))
-    {
-      printf("failed to allocate memory for `FFT-tidal_workspace' (%g MB).\n", bytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90000005, "TEMP_HARD_CANDIDATE_OOM: original endrun(1) -- FFT-tidal_workspace alloc failed (mid-PM-setup, collective; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
-    }
+  tidal_workspace = (fftw_real *) mymalloc("tidal_workspace", bytes = maxfftsize * sizeof(d_fftw_real));
 #endif
   bytes_tot += bytes;
 
