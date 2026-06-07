@@ -8,7 +8,7 @@
  * Used by test/jutzi_crush_unit/test_jutzi_crush.py to bit-validate the C++
  * curve against the analytic Eq. 8 reference at sampled pressures. */
 #include <cstdio>
-#include "../../solids/jutzi_crush_curve.h"
+#include "../../src/solids/jutzi_crush_curve.h"
 int main() {
     double P, a0, Pe, Ps;
     while(std::scanf("%lf %lf %lf %lf", &P, &a0, &Pe, &Ps) == 4) {

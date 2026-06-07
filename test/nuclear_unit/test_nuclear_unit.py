@@ -8,20 +8,27 @@ module in isolation by linking against nuclear_physics.cc and nuclear.cc
 with the full GIZMO header infrastructure.
 """
 
+import os
 import subprocess
 import sys
-from os.path import dirname, abspath, join
+from os.path import dirname, abspath, exists, join
 
 
 def test_nuclear_unit():
     test_dir = dirname(abspath(__file__))
     root = join(test_dir, "..", "..")
+    src_dir = join(root, "src")
     src = join(test_dir, "test_nuclear.cc")
     exe = join(test_dir, "test_nuclear")
-    physics = join(root, "nuclear", "nuclear_physics.cc")
 
-    # Create GIZMO_config.h with required flags
-    config_path = join(root, "GIZMO_config.h")
+    # The nuclear network math is header-only (nuclear_physics_functions.h); the
+    # GIZMO headers pull GIZMO_config.h from src/.  Write a minimal config with
+    # the required flags, preserving any real (build-generated) one to restore.
+    config_path = join(src_dir, "GIZMO_config.h")
+    config_backup = config_path + ".nuclear_unit_bak"
+    had_config = exists(config_path)
+    if had_config:
+        os.replace(config_path, config_backup)
     with open(config_path, "w") as f:
         f.write("#define NUCLEAR_NETWORK\n")
         f.write("#define EOS_HELMHOLTZ\n")
@@ -35,7 +42,7 @@ def test_nuclear_unit():
                 "-DNUCLEAR_NETWORK", "-DEOS_HELMHOLTZ",
                 "-DNUCLEAR_NETWORK_NSE_TABLE",
                 "-I", root,
-                src, physics,
+                src,
                 "-o", exe, "-lm",
             ],
             capture_output=True, text=True,
@@ -56,6 +63,7 @@ def test_nuclear_unit():
         assert "FAILED:" not in result.stdout or "FAILED: 0" in result.stdout, \
             f"Some checks failed:\n{result.stdout}"
     finally:
-        import os
         if os.path.exists(config_path):
             os.remove(config_path)
+        if had_config:
+            os.replace(config_backup, config_path)

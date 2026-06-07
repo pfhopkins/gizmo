@@ -18,7 +18,7 @@ def test_aneos_unit():
     test_dir = dirname(abspath(__file__))
     src = join(test_dir, "test_aneos_unit.cc")
     exe = join(test_dir, "test_aneos_unit")
-    aneos_cc = join(test_dir, "..", "..", "eos", "aneos.cc")
+    aneos_cc = join(test_dir, "..", "..", "src", "eos", "aneos.cc")
 
     # Compile
     result = subprocess.run(

@@ -82,8 +82,8 @@ def test_ionneutral_drag(num_mpi_ranks, num_omp_threads):
 
     # Plot
     plt.figure()
-    plt.semilogy(times, np.abs(dvs),       "ko-", label="Δv (GIZMO)")
-    plt.semilogy(times, np.abs(dv_analytic), "r--", label="Δv₀ e^(-t/t_damp)")
+    plt.semilogy(times, np.abs(dvs),       "ko-", label=r"$\Delta v$ (GIZMO)")
+    plt.semilogy(times, np.abs(dv_analytic), "r--", label=r"$\Delta v_0\, e^{-t/t_{\rm damp}}$")
     plt.xlabel("t [code]"); plt.ylabel("|v_ion - v_neutral|")
     plt.legend()
     plt.savefig(f"test/{test_name}/dv_decay.png")

@@ -7,6 +7,7 @@
 CGS units; UnitLength=UnitMass=UnitVelocity=1.
 """
 
+import os
 import numpy as np
 import h5py
 
@@ -17,7 +18,10 @@ GRAIN_MASS = 0.02        # g  (~1.3x gas particle mass, 2x threshold=0.01g; prev
 GRAIN_SIZE = 0.01        # cm (grain radius)
 
 
-def make_ics(outfile="grain_promotion_ics.hdf5"):
+def make_ics(outfile=None):
+    if outfile is None:
+        outfile = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "grain_promotion_ics.hdf5")
     N_gas  = N_SIDE * N_SIDE
     dx     = BOX / N_SIDE
 

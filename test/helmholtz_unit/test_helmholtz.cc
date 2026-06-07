@@ -3,13 +3,13 @@
    and checks internal thermodynamic consistency (Maxwell relations).
 
    Compile (from test/helmholtz_unit/):
-     c++ -std=c++17 -O2 -DEOS_HELMHOLTZ -I../.. test_helmholtz.cc ../../eos/helmholtz/helmholtz.cc -o test_helmholtz
+     c++ -std=c++17 -O2 -DEOS_HELMHOLTZ -I../.. test_helmholtz.cc ../../src/eos/helmholtz/helmholtz.cc -o test_helmholtz
    Run:
-     ./test_helmholtz ../../eos/helmholtz/helm_table.dat
+     ./test_helmholtz ../../src/eos/helmholtz/helm_table.dat
 */
 
 #define EOS_HELMHOLTZ
-#include "../../eos/helmholtz/helmholtz.h"
+#include "../../src/eos/helmholtz/helmholtz.h"
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>

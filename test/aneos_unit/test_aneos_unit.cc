@@ -11,7 +11,7 @@
  *
  * Compile:
  *   mpicxx -std=c++17 -DEOS_ANEOS -DGIZMO_config_H -I../.. \
- *     test_aneos_unit.cc ../../eos/aneos.cc -o test_aneos_unit -lm
+ *     test_aneos_unit.cc ../../src/eos/aneos.cc -o test_aneos_unit -lm
  *
  * Run:
  *   ./test_aneos_unit
@@ -24,7 +24,7 @@
 
 #define EOS_ANEOS
 #define GIZMO_config_H
-#include "../../eos/aneos.h"
+#include "../../src/eos/aneos.h"
 
 /* ---- Test parameters ---- */
 static const double GAMMA = 5.0 / 3.0;

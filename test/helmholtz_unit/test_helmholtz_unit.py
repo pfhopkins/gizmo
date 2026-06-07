@@ -22,13 +22,13 @@ def test_helmholtz_unit():
     test_dir = dirname(abspath(__file__))
     src = join(test_dir, "test_helmholtz.cc")
     exe = join(test_dir, "test_helmholtz")
-    helm_cc = join(test_dir, "..", "..", "eos", "helmholtz", "helmholtz.cc")
-    table = join(test_dir, "..", "..", "eos", "helmholtz", "helm_table.dat")
+    helm_cc = join(test_dir, "..", "..", "src", "eos", "helmholtz", "helmholtz.cc")
+    table = join(test_dir, "..", "..", "src", "eos", "helmholtz", "helm_table.dat")
 
     if not isfile(table):
-        import pytest
-        pytest.skip("helm_table.dat not found — download from "
-                    "http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat")
+        from urllib.request import urlretrieve
+        urlretrieve("http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat",
+                    table)
 
     # Compile
     result = subprocess.run(

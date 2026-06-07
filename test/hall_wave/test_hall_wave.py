@@ -49,8 +49,8 @@ _PATCH_CODE = f"""\
 # Anchor line in eos.cc right after which the patch is inserted
 _ANCHOR = "#ifdef MHD_NON_IDEAL\n"
 
-EOS_FILE = "eos/eos.cc"
-EOS_BACKUP = "eos/eos.cc.hall_wave_backup"
+EOS_FILE = "src/eos/eos.cc"
+EOS_BACKUP = "src/eos/eos.cc.hall_wave_backup"
 
 # Reference snapshot for comparison (current known-good output at TimeMax=79)
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"

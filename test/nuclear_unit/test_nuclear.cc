@@ -3,11 +3,11 @@
    and energy conservation without running a full GIZMO simulation.
 
    Compiled by the pytest harness (test_nuclear_unit.py) which creates
-   GIZMO_config.h with the right flags and compiles against nuclear_physics.cc
-   and nuclear.cc using the full GIZMO header infrastructure.
+   GIZMO_config.h with the right flags and compiles against the header-only
+   nuclear_physics_functions.h using the full GIZMO header infrastructure.
 */
 
-#include "../../nuclear/nuclear.h"
+#include "../../src/nuclear/nuclear_physics_functions.h"
 #include <cstdio>
 #include <cmath>
 #include <cstring>
