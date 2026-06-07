@@ -73,6 +73,7 @@
 #EOS_TILLOTSON                  # Use Tillotson (1962) EOS (for solid/liquid+vapor bodies, impacts); custom EOS params can be specified or pre-computed materials used. see User Guide and Deng et al., arXiv:1711.04589
 #EOS_ANEOS                      # Use ANEOS/SESAME tabulated EOS (for planetary impacts/collisions); specify table file paths in parameterfile (AneosTable0, AneosTable1, etc.)
 #EOS_ELASTIC                    # treat fluid as elastic or plastic (or visco-elastic) material, obeying Hooke's law with full stress terms and von Mises yield model. custom EOS params can be specified or pre-computed materials used.
+#EOS_TYPES_DEFAULTGAS_AND_SOLIDS # for hybrid gas+solid setups (e.g. grain-fluid promotion): make CompositionType=0 Type-0 cells behave as the standard gas fluid instead of a Tillotson/ANEOS material (solid materials then use CompositionType>=1). auto-enabled by GRAIN_FLUID_PROMOTION.
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Nuclear Reaction Networks
 #NUCLEAR_NETWORK                 # top-level switch: enables nuclear burning and species tracking. requires EOS_HELMHOLTZ.
@@ -505,6 +506,7 @@
 #IO_SUBFIND_READFOF_FROMIC      # try read already existing FOF files associated with a run instead of recomputing them: not de-bugged
 #OUTPUT_TURB_DIFF_DYNAMIC_ERROR # save error terms from localized dynamic Smagorinsky model to snapshots
 #IO_MOLECFRAC_NOT_IN_ICFILE     # special flag needed if using certain molecular modules with restart flag=2 where molecular data was not in that snapshot, to tell code not to read it
+#IO_COMPOSITIONTYPE_NOT_IN_ICFILE # for EOS_TILLOTSON/EOS_ANEOS: do NOT read per-particle CompositionType from the initial-conditions file; instead initialize every Type-0 cell to slot 0 (gas under EOS_TYPES_DEFAULTGAS_AND_SOLIDS, else custom material-0). use when the IC has no CompositionType block and composition is set at runtime (e.g. grain promotion). auto-enabled by GRAIN_FLUID_PROMOTION. (restarts from snapshots still read composition.)
 #IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY=3  # keep an extra set of backup files that are IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY number of restarts old (allows for soft restarts from an older position)
 #IO_GRADUAL_SNAPSHOT_RESTART    # when restarting from a snapshot (flag=2) start every element on the shortest possible timestep - can reduce certain transient behaviors from the restart procedure
 #IO_SINKS_ONLY_SNAPSHOT_FREQUENCY=0 # determines the number of snapshots with reduced data (sinks only) per full snapshots (gas+sinks+other), e.g., setting this to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting this to 0 disables it. developed by DG.

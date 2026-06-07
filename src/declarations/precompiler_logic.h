@@ -1357,6 +1357,18 @@
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
 #endif
+/* Promotion runs treat every initial Type-0 cell as gas; solid bodies are created
+   dynamically (a promoted grain sets its own CompositionType). So slot-0 behaves
+   as gas, and per-particle CompositionType is NOT read from the initial-conditions
+   file. NOTE: a promotion IC carrying pre-existing solid CompositionType labels is
+   not supported -- those labels would be zeroed at startup. (On restart from a
+   snapshot the composition IS read, so promoted solids survive restarts.) */
+#ifndef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+#define EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+#endif
+#ifndef IO_COMPOSITIONTYPE_NOT_IN_ICFILE
+#define IO_COMPOSITIONTYPE_NOT_IN_ICFILE
+#endif
 #endif // GRAIN_FLUID_PROMOTION
 
 

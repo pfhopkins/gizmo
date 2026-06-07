@@ -1103,7 +1103,7 @@ int read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_NUCLEAR_COMPOSITION
                    && blocknr != IO_Z /* need to read Metallicity for nuclear species stored within it */
 #endif
-#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+#if (defined(EOS_TILLOTSON) || defined(EOS_ANEOS)) && !defined(IO_COMPOSITIONTYPE_NOT_IN_ICFILE)
                    && blocknr != IO_EOSCOMP
 #endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))

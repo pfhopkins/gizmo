@@ -585,8 +585,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             double aneos_T_guess = cell[i].Temperature;
             double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
             int aneos_phase;
-            aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
+            int aneos_ierr = aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
                           &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+            assert(!aneos_ierr); /* bad/unloaded table or inversion failure -- mirrors the Helmholtz path above */
             press      = aneos_P / UNIT_PRESSURE_IN_CGS;
             soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
             cell[i].Temperature = aneos_T_guess;

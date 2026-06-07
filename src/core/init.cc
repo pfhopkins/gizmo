@@ -634,7 +634,33 @@ void init(void)
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
-            CellP[i].CompositionType = MATERIAL_TILLOTSON_UNUSED; /* 0 = ideal gas; solid-body ICs set this to a named material */
+#ifdef IO_COMPOSITIONTYPE_NOT_IN_ICFILE
+            /* composition is not read from the IC: default every Type-0 cell to slot 0
+               (gas under EOS_TYPES_DEFAULTGAS_AND_SOLIDS, else the custom material-0).
+               Solids set their composition later (e.g. grain promotion). */
+            CellP[i].CompositionType = 0;
+#else
+            /* composition is read from the IC (read_ic.cc); preserve the per-particle
+               value but sanitize out-of-range/garbage so it can never index an invalid
+               EOS material slot. This is the single guarantee point that every cell
+               carries a valid CompositionType before any solid-EOS dispatch or
+               Tillotson_EOS_params[]/aneos table lookup. */
+            {
+                const int comp_max =
+#if defined(EOS_TILLOTSON) && defined(EOS_ANEOS)
+                    N_TILLOTSON_MATERIALS + All.AneosNumMaterials;
+#elif defined(EOS_ANEOS)
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+                    All.AneosNumMaterials + 1; /* slot 0 = gas; tables occupy 1..AneosNumMaterials */
+#else
+                    All.AneosNumMaterials;
+#endif
+#else
+                    N_TILLOTSON_MATERIALS;
+#endif
+                if(CellP[i].CompositionType < 0 || CellP[i].CompositionType >= comp_max) {CellP[i].CompositionType = 0;}
+            }
+#endif
 #endif
 #ifdef COOLING
 #ifndef CHIMES
