@@ -260,6 +260,45 @@ void pm_init_nonperiodic(void)
 
   MPI_Allreduce(&fftsize, &maxfftsize, 1, MPI_TYPE_PTRDIFF, MPI_MAX, MPI_COMM_WORLD);
 
+  /* Caller-side collective OOM preflight (graceful, no MPI_Abort) for the FFT buffers allocated
+   * below. fftsize/maxfftsize come from the collective fftw_mpi_local_size + Allreduce above, so
+   * this is an all-rank symmetric boundary: check the kernel/scalarfield/rhogrid arena fits on
+   * EVERY rank before the mymalloc + FFTW-plan deref. On failure, request a soft controlled-stop and
+   * drain immediately. Scope is only the FFT buffers that follow (slabs_per_task/first_slab_of_task
+   * above are tiny NTask arrays). The local if(!ptr) backstops below stay as belt-and-suspenders. */
+  {
+    size_t pm_kern_need   = 0;
+    int    pm_kern_blocks = 0;
+#if !defined(BOX_PERIODIC)
+    pm_kern_need   += gizmo_mymalloc_rounded_size(fftsize * sizeof(fftw_real));   /* kernel[0] */
+    pm_kern_blocks += 1;
+#ifdef DM_SCALARFIELD_SCREENING
+    pm_kern_need   += gizmo_mymalloc_rounded_size(fftsize * sizeof(fftw_real));   /* kernel_scalarfield[0] */
+    pm_kern_blocks += 1;
+#endif
+#endif
+#if defined(PM_PLACEHIGHRESREGION)
+    pm_kern_need   += gizmo_mymalloc_rounded_size(fftsize * sizeof(fftw_real));   /* kernel[1] */
+    pm_kern_blocks += 1;
+#ifdef DM_SCALARFIELD_SCREENING
+    pm_kern_need   += gizmo_mymalloc_rounded_size(fftsize * sizeof(fftw_real));   /* kernel_scalarfield[1] */
+    pm_kern_blocks += 1;
+#endif
+#endif
+    pm_kern_need   += gizmo_mymalloc_rounded_size(maxfftsize * sizeof(d_fftw_real)); /* rhogrid */
+    pm_kern_blocks += 1;
+    if(!gizmo_alloc_fits_all_ranks(pm_kern_need, pm_kern_blocks))
+      {
+        char pm_oom[512];
+        snprintf(pm_oom, sizeof(pm_oom),
+                 "pm_init_nonperiodic: FFT kernel/rhogrid arena preflight failed (OOM): total rounded=%g MB, blocks=%d",
+                 (double) pm_kern_need / (1024.0 * 1024.0), pm_kern_blocks);
+        gizmo_request_controlled_stop(90000092, pm_oom, __FILE__, __LINE__, __FUNCTION__);
+        gizmo_exit_bad_stop_if_requested("pm_init_nonperiodic:kernels");
+        return;
+      }
+  }
+
 
   /* now allocate memory to hold the FFT fields */
 
@@ -356,6 +395,45 @@ void pm_init_nonperiodic_allocate(void)
 {
   double bytes_tot = 0;
   size_t bytes;
+
+  /* Caller-side collective OOM preflight (graceful, no MPI_Abort), mirroring pm_init_periodic_allocate.
+   * Called from the inherently-collective pmforce_nonperiodic FFT path, so this is all-rank symmetric:
+   * check the whole per-force PM arena fits the FreeBytes + block table on EVERY rank before any
+   * mymalloc + FFTW-plan deref. On failure, request a soft controlled-stop and drain immediately. The
+   * local if(!ptr) backstops below stay as belt-and-suspenders. */
+  {
+    size_t b_forcegrid  = maxfftsize * sizeof(d_fftw_real);
+    size_t b_part       = (size_t) 8 * NumPart * sizeof(struct part_slab_data);
+    size_t b_sortindex  = (size_t) 8 * NumPart * sizeof(int);
+    size_t pm_arena_need = gizmo_mymalloc_rounded_size(b_forcegrid)
+                         + gizmo_mymalloc_rounded_size(b_part)
+                         + gizmo_mymalloc_rounded_size(b_sortindex);
+    int    pm_arena_blocks = 3;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    size_t b_tidal      = maxfftsize * sizeof(d_fftw_real);
+    pm_arena_need      += gizmo_mymalloc_rounded_size(b_tidal);
+    pm_arena_blocks    += 1;
+#endif
+    if(!gizmo_alloc_fits_all_ranks(pm_arena_need, pm_arena_blocks))
+      {
+        char pm_oom[512];
+        snprintf(pm_oom, sizeof(pm_oom),
+                 "pm_init_nonperiodic_allocate: PM per-force arena preflight failed (OOM): "
+                 "forcegrid=%g MB, part=%g MB, part_sortindex=%g MB"
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                 ", tidal_workspace=%g MB"
+#endif
+                 ", total rounded=%g MB, blocks=%d",
+                 b_forcegrid / (1024.0 * 1024.0), b_part / (1024.0 * 1024.0), b_sortindex / (1024.0 * 1024.0),
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                 b_tidal / (1024.0 * 1024.0),
+#endif
+                 (double) pm_arena_need / (1024.0 * 1024.0), pm_arena_blocks);
+        gizmo_request_controlled_stop(90000093, pm_oom, __FILE__, __LINE__, __FUNCTION__);
+        gizmo_exit_bad_stop_if_requested("pm_init_nonperiodic_allocate");
+        return;
+      }
+  }
 
   if(!(forcegrid = (fftw_real *) mymalloc("forcegrid", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
