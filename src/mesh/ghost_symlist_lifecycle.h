@@ -22,8 +22,7 @@ extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_t
 
 /* Forward declaration of the out-of-line host All accessor (defined in
  * core/predict.cc). Retained as a stylistic intent-tag for host-snapshot
- * reads — under 93897f62 the device-pass redirect is gated on
- * __CUDA_ARCH__, so bare All.* in host code is also correct. */
+ * reads — under 93897f62 the device-pass redirect is gated, so bare All.* in host code is also correct. */
 #ifdef __cplusplus
 extern "C" {
 #endif

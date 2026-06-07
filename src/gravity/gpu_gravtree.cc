@@ -1609,8 +1609,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * use the out-of-line host accessor `gizmo_host_ti_current()` (defined
      * in core/predict.cc). Retained as belt-and-suspenders documentation
      * of host-snapshot intent for this call site; under 93897f62 the
-     * device-pass redirect is gated on __CUDA_ARCH__ so direct host reads
-     * are also correct. */
+     * device-pass redirect is gated so direct host reads are also correct. */
     integertime ti_curr_host = gizmo_host_ti_current();
     move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
     double t_grv_mp = my_second();
