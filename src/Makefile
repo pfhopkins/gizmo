@@ -797,4 +797,10 @@ compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:
-	rm -f $(OBJS) $(GPU_OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	find . -name '*.o' -type f -delete
+	rm -f $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+## NOTE: nuke ALL object files generically (not just $(OBJS)/$(GPU_OBJS)/$(FOBJS)
+## for the active Config). The OBJS lists depend on the current Config.sh, so a
+## Config-scoped clean leaves stale .o behind when switching between Configs
+## (the Makefile has no header-dependency tracking) -- those then silently link
+## into a mixed/broken binary. A full .o sweep is always the intended policy.
