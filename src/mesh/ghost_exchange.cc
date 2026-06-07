@@ -1012,8 +1012,12 @@ static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t 
         printf("  (or increase the number of MPI ranks to reduce particles per rank)\n");
         printf("=======================================================================\n");
         fflush(stdout);
-        endrun(7701);
+        gizmo_request_controlled_stop(7701, "ghost_exchange: tile-overlap ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
     }
+    /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
+     * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
+     * collective pack/exchange. Every rank reaches this unconditionally. */
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity");
 
     /* ================================================================
        Step 5: Pack particles from tiles needed by each task.
@@ -1766,8 +1770,12 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
     if(NumPart + total_recv > All.MaxPart) {
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
-        endrun(7702);
+        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
     }
+    /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
+     * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
+     * collective pack/exchange. Every rank reaches this unconditionally. */
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity_rd");
 
     double t_step4 = timediff(t_step4_start, my_second());
     /* === Step 5: pack particle data + cell data + home_idx === */
