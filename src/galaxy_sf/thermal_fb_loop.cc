@@ -78,7 +78,7 @@ double ThermalFBSpec::search_radius(const neighbor_loop_args& args,
 /* thermal_fb_build_call_scalars — SSOT for the per-call cosmology + unit-
  * conversion struct. Routes `All.*` reads through nlr_host_all_ptr() as
  * stylistic intent-tagging for host-snapshot semantics (under 93897f62 the
- * device-pass redirect is gated on __CUDA_ARCH__, so bare host reads are
+ * device-pass redirect is gated so bare host reads are
  * also correct). The kernel reads NO `All.*` and NO `UNIT_*` macros — all
  * such reads route through scalars. SSOT — single owner is
  * Spec::populate_call_scalars. */

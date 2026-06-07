@@ -1172,7 +1172,7 @@ void rearrange_particle_sequence(void)
                 /* ok found a non-gas particle: */
                 for(j = j_next; j < NumPart; j++) /* loop from N_gas to Numpart, to find first labeled as gas */
                     if(P[j].Type == 0) break; /* break on that to record the j of interest */
-                if(j >= NumPart) endrun(181170); /* if that j is too large, exit with error */
+                if(j >= NumPart) { endrun(181170); continue; } /* no gas row left to swap: soft-stop and skip the OOB P[j] swap (local loop, drains at next poll) */
                 
                 if(j < NumPart-1) {j_next = j + 1;} else {j_next = NumPart - 1;}
                 psave = P[i]; /* otherwise, save the old pointer */

@@ -320,17 +320,23 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * force_exchange_pseudodata_issue() above must still be completed below.
      * Drains at gravtree:after_treebuild before the GPU gravity walk. */
     if(let_run_exchange() != 0)             {endrun(90000072);}
-    force_exchange_pseudodata_complete();
-    /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
-     * ancestor topnode moments directly in SoA.  SoA is authoritative after
-     * this point — no mark_all_dirty needed. */
-    if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
-    /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
-     * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
-     * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
-     * and hard-fail on any non-empty unredirected one — before the GPU walk. */
-    let_finalize_unredirected_foreign_topleaves();
-    if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
+    int pseudo_status = force_exchange_pseudodata_complete();
+    /* On an unmatched complete (soft bad-stop already set) skip the foreign-moment
+     * scatter/finalize/resum -- they would run on un-exchanged moments and
+     * let_finalize would emergency-hold on a non-empty unredirected foreign topleaf.
+     * Drains at gravtree:after_treebuild before the GPU gravity walk. */
+    if(!pseudo_status) {
+        /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
+         * ancestor topnode moments directly in SoA.  SoA is authoritative after
+         * this point — no mark_all_dirty needed. */
+        if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
+        /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
+         * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
+         * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
+         * and hard-fail on any non-empty unredirected one — before the GPU walk. */
+        let_finalize_unredirected_foreign_topleaves();
+        if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
+    }
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
@@ -1169,9 +1175,14 @@ void force_exchange_pseudodata_issue(void)
  *  unpacks the received topleaf moments into the AoS Nodes_base / Extnodes_base.
  *  GPU build path calls let_run_exchange() in between to overlap MPI; CPU and
  *  refresh paths call the sync wrapper force_exchange_pseudodata() below. */
-void force_exchange_pseudodata_complete(void)
+int force_exchange_pseudodata_complete(void)
 {
-    if(DomainMoment_pending == NULL) {gizmo_emergency_hold_reviewed(90000076, "TEMP_HARD_CANDIDATE_INTERNAL: pseudodata complete() unmatched (pending == NULL); continuing derefs NULL + Waitall on stale requests; original endrun(913402)", __FILE__, __LINE__, __FUNCTION__);} /* unmatched complete: bug */
+    /* Unmatched complete (pending==NULL = complete without a matching issue, or a
+     * double-complete): symmetric control-flow invariant. Soft bad-stop + status-return
+     * (1) so the caller skips the foreign-moment scatter/finalize/resum -- which would run
+     * on un-exchanged moments and could itself emergency-hold in let_finalize -- and
+     * drains at the next poll. */
+    if(DomainMoment_pending == NULL) {endrun(90000076); return 1;}
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
     MPI_Waitall(pseudo_n_requests_pending, pseudo_requests_pending, MPI_STATUSES_IGNORE);
@@ -1252,14 +1263,17 @@ void force_exchange_pseudodata_complete(void)
 
     myfree(DomainMoment);
     DomainMoment_pending = NULL;
+    return 0;
 }
 
 /*! Synchronous wrapper preserving the pre-Phase-10.3 API for the CPU and
- *  refresh code paths (which do not have a LET round to overlap with). */
-void force_exchange_pseudodata(void)
+ *  refresh code paths (which do not have a LET round to overlap with).
+ *  Returns the complete() status (nonzero = unmatched; caller skips dependent
+ *  pseudo-update work and drains at its poll). */
+int force_exchange_pseudodata(void)
 {
     force_exchange_pseudodata_issue();
-    force_exchange_pseudodata_complete();
+    return force_exchange_pseudodata_complete();
 }
 
 
@@ -4179,9 +4193,13 @@ void force_refresh_node_moments(void)
          * over-prunes (oracle mismatches). */
         force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
-        force_exchange_pseudodata();
-        if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
-        if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
+        int pseudo_status = force_exchange_pseudodata();
+        /* skip dependent pseudo-update on an unmatched complete (soft bad-stop set);
+         * drains at gravtree:after_refresh_moments. */
+        if(!pseudo_status) {
+            if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
+            if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
+        }
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
     }
@@ -4458,8 +4476,9 @@ void force_refresh_node_moments(void)
     }
 
     /* Step 5: sync pseudo-particle data across MPI ranks */
-    force_exchange_pseudodata();
-    force_treeupdate_pseudos(All.MaxPart);
+    int pseudo_status = force_exchange_pseudodata();
+    /* skip the dependent pseudo update on an unmatched complete; drains at the next poll. */
+    if(!pseudo_status) {force_treeupdate_pseudos(All.MaxPart);}
 
     /* CPU path (no GPU offload): no SoA mirror exists; no invalidate needed.
      * GPU path returned earlier and the GPU kernel writes back to AoS, with

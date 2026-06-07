@@ -594,12 +594,14 @@ static void apply_fn(void * /*vctx*/, const void *in) {
         fprintf(stderr, "mechfb apply_fn: s_ctx.home_buf is null on rank %d "
                         "(begin must populate it from Aux).\n", ThisTask);
         endrun(91031);
+        return; /* soft-stop + return: home_buf is NULL, the delta-add below would deref NULL */
     }
     if (w->home_index < 0 || w->home_index >= s_ctx.num_local_gas) {
         fprintf(stderr, "mechfb apply_fn: home_index=%d out of [0,%d) "
                         "on rank %d.\n",
                 w->home_index, s_ctx.num_local_gas, ThisTask);
         endrun(91032);
+        return; /* soft-stop + return: home_index is OOB, the delta-add below would write out of bounds */
     }
     mechfb_gas_delta_add(&s_ctx.home_buf[w->home_index], &w->delta);
 }

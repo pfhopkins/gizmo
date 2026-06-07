@@ -232,7 +232,11 @@ void gravity_tree(void)
             if(Nexport > 0) {
                 printf("Phase 9.4 LET export retirement: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
                 fflush(stdout);
-                gizmo_emergency_hold_reviewed(914040, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(914040) -- LET export-retirement invariant (mid tree force; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+                /* Graceful soft-stop: the export round-trip is retired, so we cannot service
+                 * these particles -- but the same loop iteration reaches the all-rank
+                 * MPI_Allreduce + gizmo_exit_bad_stop_if_requested poll below, which drains
+                 * this flag cleanly (no retry, no new collective). */
+                gizmo_request_controlled_stop(914040, "gravtree: Nexport>0 -- particles need foreign gravity not covered by LET (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
             }
 
             /* Phase 9.4: export-back loop is retired under GPU offload, so the arena

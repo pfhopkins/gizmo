@@ -721,6 +721,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     {
         printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart);
         fflush(stdout); endrun(8888);
+        return 0;   /* no space left: honor the no-split contract (return 0) instead of spawning past MaxPart */
     }
     double d_r = 0.25 * KERNEL_CORE_SIZE*P[i].KernelRadius; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
     double r2 = (P[dummy_cell_i_to_clone].Pos - P[i].Pos).norm_sq();

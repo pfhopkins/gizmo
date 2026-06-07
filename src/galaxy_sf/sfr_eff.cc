@@ -524,6 +524,7 @@ void star_formation_parent_routine(void)
                             PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
                             fflush(stdout);
                             endrun(8888);
+                            continue; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so continue can't desync the post-loop Allreduces; drains at the next poll. */
                         }
                         P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
                         ActiveParticleList.push_back(i_star);

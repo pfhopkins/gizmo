@@ -240,8 +240,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 /* Host endrun: endrun(0) = clean finalize (unchanged); endrun(nonzero) = soft
    bad-stop request (NO MPI call) -> first-set-wins flag drained by the next
    all-rank controlled-stop poll, which unwinds to a clean finalize. Evaluate x
-   exactly once. The device branch above (__CUDA_ARCH__/__HIP_DEVICE_COMPILE__)
-   is untouched. [Stage 1d flip 2026-06-03] */
+   exactly once.  */
 #define endrun(x) do { \
     int gizmo_endrun_code = (x); \
     if(gizmo_endrun_code == 0) { MPI_Finalize(); exit(0); } \

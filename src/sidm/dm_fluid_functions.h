@@ -27,8 +27,7 @@
  * constants (GAMMA_DEFAULT, PROTONMASS_CGS, BOLTZMANN_CGS, UNIT_*) plus
  * device-callable cell_data accessors (density_for_energy, InternalEnergyPred).
  * Lets eos_functions.h::set_eos_pressure_impl dispatch to it unconditionally
- * under HYDRO_MULTIFLUID_DM — no __CUDA_ARCH__ exclusion or
- * POST_COOLING_DEVICE_EOS_SUPPORTED disable needed for safety. */
+ * under HYDRO_MULTIFLUID_DM  */
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
 #endif

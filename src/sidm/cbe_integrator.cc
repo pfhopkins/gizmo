@@ -241,6 +241,11 @@ void do_cbe_initialization(void)
                        has_nonfinite, mom_tot_check, P[i].Mass);
                 fflush(stdout);
                 endrun(8889);
+                /* On a soft stop the moments are still malformed (NaN); skip the
+                 * conservation renorm + closure below so we don't rescale/propagate
+                 * the corrupt values. Loop-local (no MPI here), so continuing to the
+                 * next particle is collective-safe; the run drains at the next poll. */
+                continue;
             }
         } else {
             /* Absent: synthesize cold-DM default. */

@@ -105,6 +105,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                &ne_density, &metal_density) == 0) {
                 fprintf(stderr, "Error in solve_chemistry.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             
             // Assign variables back
@@ -143,6 +148,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                       &cooling_time) == 0) {
                 fprintf(stderr, "Error in calculate_cooling_time.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = cooling_time;
             break;
@@ -159,6 +169,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                      &temperature) == 0) {
                 fprintf(stderr, "Error in calculate_temperature.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = temperature;
             break;
@@ -175,6 +190,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                   &pressure) == 0) {
                 fprintf(stderr, "Error in calculate_temperature.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = pressure;
             break;
@@ -191,6 +211,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                &gamma) == 0) {
                 fprintf(stderr, "Error in calculate_gamma.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = gamma;
             break;
@@ -209,6 +234,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                      &metal_density) == 0){
                 fprintf(stderr, "Error in solve_chemistry_table.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu, temp; nH0_guess = DMAX(0,DMIN(1,1.-ne_guess/1.2));
             temp = convert_u_to_temp(energy, rho, target, &ne_guess, &nH0_guess, &nHp_guess, &nHe0_guess, &nHep_guess, &nHepp_guess, &mu); //need to update *ne_guess for tabular!!, this may be wrong
@@ -235,6 +265,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                             &cooling_time) == 0){
                 fprintf(stderr, "Error in calculate_cooling_time.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = cooling_time;
             break;
@@ -248,6 +283,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                            &temperature) == 0){
                 fprintf(stderr, "Error in calculate_temperature.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = temperature;
             break;
@@ -260,6 +300,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                                         &pressure) == 0){
                 fprintf(stderr, "Error in calculate_pressure.\n");
                 endrun(ENDRUNVAL);
+                /* Soft stop: the grackle call failed, so its output vars are
+                 * unchanged/uninitialized. Return a safe sentinel rather than
+                 * writing failed chemistry back to CellP or returning garbage;
+                 * drains at the next cooling-phase poll. */
+                return (mode == 0) ? u_old : 0.0;
             }
             returnval = pressure;
             break;
@@ -291,11 +336,11 @@ void InitGrackle(void)
     
     // Second, create a chemistry object for parameters and rate data.
 #if (COOL_GRACKLE_APIVERSION < 2)
-    if (set_default_chemistry_parameters() == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL);}
+    if (set_default_chemistry_parameters() == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:set_default_params"); return;}
 #else
     chemistry_data *my_grackle_data;
     my_grackle_data = new chemistry_data;
-    if (set_default_chemistry_parameters(my_grackle_data) == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL);}
+    if (set_default_chemistry_parameters(my_grackle_data) == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:set_default_params"); return;}
 #endif
     // Third, set parameter values for chemistry & cooling
     int three_body_rate=0, metal_cooling=0, h2_on_dust=0, photoelectric_heating=0, cmb_temperature_floor=1, UVbackground=1, Compton_xray_heating=1, cie_cooling=0, h2_optical_depth_approximation=0, LWbackground_intensity=0, LWbackground_sawtooth_suppression=0, use_grackle=1, with_radiative_cooling=1, primordial_chemistry=0, dust_chemistry=0, H2_self_shielding=1, self_shielding_method=3; double photoelectric_heating_rate=8.5e-26, Gamma_touse=5./3.; dust_chemistry=0;
@@ -380,9 +425,9 @@ void InitGrackle(void)
     
     // Finally, initialize the chemistry object.
 #if (COOL_GRACKLE_APIVERSION < 2)
-    if (initialize_chemistry_data(&All.GrackleUnits, a_value) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL);}
+    if (initialize_chemistry_data(&All.GrackleUnits, a_value) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:init_chem_data"); return;}
 #else
-    if (initialize_chemistry_data(&All.GrackleUnits) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL);}
+    if (initialize_chemistry_data(&All.GrackleUnits) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:init_chem_data"); return;}
 #endif
     if(ThisTask == 0) {printf("Grackle Initialized\n");}
 }

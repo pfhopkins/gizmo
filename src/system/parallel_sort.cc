@@ -472,7 +472,19 @@ int compare_densities_for_sort(const void *a, const void *b)
 /* simple recursive function to efficiently find index in arbitrarily spaced bin-list */
 int binarySearch(const double * arr, const double x, const int l, const int r, const int total)
 {
-  if(r<l){ gizmo_emergency_hold_reviewed(7777, "TEMP_HARD_CANDIDATE_INTERNAL: original endrun(7777) -- parallel_sort r<l invariant (mid-collective sort; no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);}
+  if(r<l){
+    /* Graceful soft-stop: leaf helper, no MPI. The only caller (get_age_tracer_bin)
+     * reads bins[index] AND bins[index+1] before its own bad-index guard, so return a
+     * valid BIN index in [0, total-2] (never an array-edge or negative index) to keep
+     * every downstream read/write in bounds; the run drains at the next phase-boundary
+     * poll. */
+    gizmo_request_controlled_stop(7777, "binarySearch: r<l invariant (age-tracer bin search overshoot)", __FILE__, __LINE__, __FUNCTION__);
+    if(total < 2) {return 0;}
+    int safe = l;
+    if(safe < 0) {safe = 0;}
+    if(safe > total - 2) {safe = total - 2;}
+    return safe;
+  }
   const int w     = r-l;
   const int mid   = l + w/2;
   if(w <= 1) {

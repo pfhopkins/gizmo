@@ -929,7 +929,7 @@ void rt_set_simple_inits(int RestartFlag)
 void rt_init_intensity_directions(void)
 {
     int n_polar = RT_LOCALRAYGRID;
-    if(n_polar < 1) {printf("Number of rays is invalid (<1). Terminating.\n"); fflush(stdout); endrun(5346343);}
+    if(n_polar < 1) {printf("Number of rays is invalid (<1). Terminating.\n"); fflush(stdout); endrun(5346343); return;} // soft-stop + return: skip the invalid mu[n_polar] VLA (n_polar<1 is stack-UB) below
 
     double mu[n_polar]; int i,j,k,l,n=0,n_oct=n_polar*(n_polar+1)/2;
     double Rad_Intensity_Direction_tmp[n_oct][3];

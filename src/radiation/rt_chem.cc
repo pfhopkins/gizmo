@@ -162,8 +162,8 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
 void rt_get_sigma(void)
 {
     /* rt_get_sigma writes initialization fields to host All. Under 93897f62
-       the device-pass redirect (`#define All AllDeviceMirror`) is gated on
-       __CUDA_ARCH__, so on the host pass `All` already resolves to the host
+       the device-pass redirect (`#define All AllDeviceMirror`) is gated, 
+       so on the host pass `All` already resolves to the host
        extern. The push_macro/undef block below is now defensive-only
        (belt-and-suspenders), retained to document host-write intent. */
 #pragma push_macro("All")

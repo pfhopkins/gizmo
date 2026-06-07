@@ -429,21 +429,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #ifdef GIZMO_TRACK_ELECTRON_STATE
         ne_battery_save = ne;
 #endif
-
-#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
-        #ifdef GIZMO_DEBUG_RT_COOLING
-        /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
-        {
-            static int eos_diag_n = 0;
-            if(eos_diag_n < 30 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {
-                printf("[EOS_DIAG] ID=%llu call=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
-                    (unsigned long long)pp[i].ID, eos_diag_n, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
-                fflush(stdout);
-            }
-            eos_diag_n++;
-        }
-        #endif /* GIZMO_DEBUG_RT_COOLING */
-#endif /* !device */
     }
 #else
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
