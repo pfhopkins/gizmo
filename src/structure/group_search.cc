@@ -339,6 +339,9 @@ void group_search_import_particles_around_points(int import_type_mask, const std
       fflush(stdout);
       endrun(990512);
     }
+  /* size invariant is per-rank; all ranks reach this collective entry, so drain here before the
+     tile build/allgather below (do not assume the mismatch is symmetric). */
+  gizmo_exit_bad_stop_if_requested("group_search_import_particles_around_points:size_mismatch");
   if(NTask <= 1) return;
 
   std::vector<int> import_indices;
@@ -493,6 +496,7 @@ void group_search_build_cross_type_nl(std::vector<particle_data> &particles, int
                  i, (int)particles.size(), a, ThisTask);
           fflush(stdout);
           endrun(990510);
+          offsets[a + 1] = neighbors.size(); continue;	/* invalid source row: zero neighbors, keep offsets monotonic (local fn, no MPI) */
         }
       double h2 = radii[a] * radii[a];
       for(int64_t n = nl->offsets[a]; n < nl->offsets[a + 1]; n++)
