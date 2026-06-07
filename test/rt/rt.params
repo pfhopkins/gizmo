@@ -13,7 +13,7 @@
 %
 InitCondFile                       rt_ics
 OutputDir                          output
-TimeMax                            10
+TimeMax                            4
 BoxSize                            0.5
 TimeBetSnapshot                    1
 MaxSizeTimestep                    0.1

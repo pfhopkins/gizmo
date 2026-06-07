@@ -51,7 +51,7 @@ def test_rt(num_mpi_ranks, num_omp_threads):
 
     # Plot final density using Meshoid slice interpolation
     # BoxSize=0.5, BOX_LONG_X=1, BOX_LONG_Y=2 -> box is 0.5 x 1.0
-    M = Meshoid(pos_f, boxsize=0.5)
+    M = Meshoid(pos_f, boxsize=1.0)
     rho_slice = M.Slice(rho_f, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=0)
     fig, ax = plt.subplots(figsize=(4, 8))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 0.5, 0, 1.0])
@@ -68,9 +68,9 @@ def test_rt(num_mpi_ranks, num_omp_threads):
 
     # RT instability should develop - the interface should mix, so the
     # density should have intermediate values that weren't present initially
-    rho_median0 = np.median(rho0)
+    rho_mean0 = np.sum(mass0)/0.5 # mean density is mass / 2d boxsize
     # Count particles near the median density (within 20% of median)
-    near_median0 = np.sum(np.abs(rho0 - rho_median0) < 0.2 * rho_median0)
-    near_median_f = np.sum(np.abs(rho_f - rho_median0) < 0.2 * rho_median0)
+    near_median0 = np.sum(np.abs(rho0 - rho_mean0) < 0.2 * rho_mean0)
+    near_median_f = np.sum(np.abs(rho_f - rho_mean0) < 0.2 * rho_mean0)
     # There should be MORE particles near the median density after mixing
     assert near_median_f > near_median0, "No evidence of RT mixing"

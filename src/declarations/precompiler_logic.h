@@ -861,18 +861,6 @@
 #endif
 #endif
 
-/* GRAVITY_TESTPROBLEM_RT used as a numeric acceleration value in
- * gravity/analytic_gravity.h:41 — `P[i].GravAccel[0] -= (GRAVITY_TESTPROBLEM_RT)`.
- * If user enables the flag without a value (e.g. test/rt/Config.sh just has
- * "GRAVITY_TESTPROBLEM_RT"), default to 0.5 (standard Rayleigh-Taylor
- * acceleration in code units). User-set numeric values are preserved.
- * Phase D fix 2026-05-21 config 121. */
-#if defined(GRAVITY_TESTPROBLEM_RT)
-#if !CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(GRAVITY_TESTPROBLEM_RT)
-#undef GRAVITY_TESTPROBLEM_RT
-#define GRAVITY_TESTPROBLEM_RT 0.5
-#endif
-#endif
 
 
 #if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) || defined(HYDRO_MULTIFLUID_IONNEUTRAL)
