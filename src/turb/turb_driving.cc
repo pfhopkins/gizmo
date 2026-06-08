@@ -128,7 +128,10 @@ void init_turb(void)
                     }
                     else
                     {
-                        terminate("unknown spectral form");
+                        if(ThisTask == 0) {printf("unknown spectral form (TurbDriving_Global_DrivingSpectrumKey=%d)\n", All.TurbDriving_Global_DrivingSpectrumKey); fflush(stdout);}
+                        endrun(90001012);
+                        gizmo_exit_bad_stop_if_requested("turb_driving:unknown_spectrum");  /* symmetric config: all ranks poll together and finalize before ampl is used */
+                        ampl = 0;   /* defensive: keep ampl defined if the poll ever returns */
                     }
                     
                     StAmpl[StNModes] = ampl;
