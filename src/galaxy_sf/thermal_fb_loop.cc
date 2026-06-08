@@ -220,7 +220,22 @@ void thermal_fb_local_fill(int i,
     loc->Pos          = P_host[i].Pos;
     loc->Vel          = P_host[i].Vel;
     loc->KernelRadius = P_host[i].KernelRadius;
-    loc->wt_sum       = P_host[i].DensityAroundParticle;
+    /* Number-weighted (mass-invariant) kernel sum Sum_j W_j, reconstructed from
+     * the stored NumNgb and KernelRadius. The density loop stores
+     *   NumNgb = ( (Sum_j W_j) * VOLUME_NORM_COEFF_FOR_NDIMS * h^NDIMS )^(1/NDIMS)
+     * (density_loop.cc), so Sum_j W_j = NumNgb^NDIMS / (coeff * h^NDIMS). Ejecta
+     * are split by W_j / Sum_k W_k (number-weighted, not mass-weighted): unlike
+     * the gas mass density, Sum W_j does not change as the deposits grow Pj.Mass
+     * during the loop, so the per-source split fractions sum to 1 by construction
+     * and the coupled mass can never exceed Msne. */
+    {
+        double krad = (double)P_host[i].KernelRadius;
+        double nn   = (double)P_host[i].NumNgb;
+        loc->wt_sum = (krad > 0 && nn > 0)
+            ? (MyFloat)(pow(nn, (double)NUMDIMS)
+                        / (VOLUME_NORM_COEFF_FOR_NDIMS * pow(krad, (double)NUMDIMS)))
+            : 0;
+    }
     loc->TimeBin      = P_host[i].TimeBin;  /* source TimeBin for receiver wakeup-mark */
 
     struct addFB_evaluate_data_in_ fb;

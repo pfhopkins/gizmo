@@ -96,7 +96,8 @@ struct ThermalFBLocalIn {
     Vec3<MyDouble> Pos;
     Vec3<MyDouble> Vel;
     MyFloat KernelRadius;
-    MyFloat wt_sum;       /* P[i].DensityAroundParticle */
+    MyFloat wt_sum;       /* Sum_j W_j (number-weighted kernel sum), reconstructed
+                           * from NumNgb + KernelRadius; mass-invariant normalizer */
     MyFloat Msne;         /* ejecta mass */
     MyFloat Esne;         /* ejecta kinetic energy = 0.5*Msne*v_ej^2 */
     MyFloat kernel_zero;  /* kernel_main(0.0, 1.0, 1.0, ...) at u=0 */
@@ -180,8 +181,10 @@ static void thermal_fb_pair_kernel(
 
     double rho_j_0 = (double)Cj.Density;
 
-    /* Kernel-weighted fraction of this neighbor's claim on the ejecta. */
-    wk = Mass_j * wk / (double)local.wt_sum;
+    /* Number-weighted fraction of this neighbor's claim on the ejecta:
+     * W_j / Sum_k W_k. Mass-invariant, so robust to the gas-mass growth the
+     * deposits cause during the loop (local.wt_sum holds Sum_k W_k). */
+    wk = wk / (double)local.wt_sum;
 
     /* Mass injected into j. */
     double dM = wk * (double)local.Msne;
@@ -273,41 +276,15 @@ struct ThermalFBSpec {
     static constexpr bool           uses_ghost_writeback      = true;
     static constexpr bool           uses_ghost_write_detector = true;
 
-    /* Oracle compare tolerance for AccumData (M_coupled).
-     *
-     * Set generously (1e-3) — NOT a precision bound but an algorithmic-order-
-     * dependence bound. The thermal_fb pair kernel reads Pj.Mass at the top
-     * of every (active, neighbor) call AND atomically increments Pj.Mass with
-     * dM at the end. In production, source N's pair-kernel sees Pj.Mass after
-     * sources 1..N-1 have already mutated it; in the oracle dry-run, j-side
-     * writes are suppressed and every source sees the original Pj.Mass.
-     * Result: per-source M_coupled is order-dependent, and oracle vs
-     * production diverge monotonically with active_slot index (residual grows
-     * ~linearly with how many prior sources have hit a shared neighbor).
-     *
-     * Empirically — Phil's t=0 simultaneous-SNe stress test (InitStellarAge
-     * tuned so all valid stars fire at once) — max residual is ~1e-4 across
-     * 24 slots. 1e-3 sits an order of magnitude above that, treating the
-     * oracle as an "algorithmic parity" gate rather than a bit-precision gate
-     * (per codex review 2026-05-15).
-     *
-     * **This is physics-correct, NOT a deferred bug.** Phil 2026-05-21
-     * decision: scatter-feedback loops (thermal SNe, mechanical SNe, etc.)
-     * describe sequential physical events. Source N's mass loss / metal
-     * enrichment / energy injection genuinely changes the gas state that
-     * source N+1's deposit acts on; the order dependence is a property of
-     * the physics, not a numerics artifact. A "snapshot Pj.Mass / Cj.Density
-     * / Cj.InternalEnergy / Pj.Metallicity[*] + delta-accumulate +
-     * post-loop apply" redesign would erase the physical compounding and
-     * produce results that DON'T match the physical scenario the algorithm
-     * is meant to represent — that redesign is REJECTED, do not implement.
-     * The oracle tolerance is the right model: it confirms "algorithmic
-     * parity" (same arithmetic, same inputs) without demanding bit-precision
-     * against a counterfactual snapshot model. See
-     * gpu_bench_new/archive/OPEN_thermalfb_kernel_order_dependence_followup.md
-     * for the full discussion + the rationale behind rejecting the
-     * snapshot redesign. The same reasoning applies to mechanical_fb. */
-    static constexpr double accum_tolerance = 1e-3;
+    /* Oracle compare tolerance for AccumData (M_coupled). The ejecta are split
+     * by the number-weighted kernel fraction W_j / Sum_k W_k, which depends only
+     * on neighbor geometry and the source kernel radius — NOT on the gas mass
+     * the deposits mutate during the loop. So each source couples exactly
+     * M_coupled = Msne regardless of source order, and the oracle dry-run (which
+     * only suppresses the j-side writes, not the i-side M_coupled accumulation)
+     * computes the identical value. A tight bound applies; the only residual is
+     * floating-point summation order across CSR / Mode-B partial sums. */
+    static constexpr double accum_tolerance = 1e-10;
 
     /* Type aliases. */
     using CallScalars    = ThermalFBCallScalars;
