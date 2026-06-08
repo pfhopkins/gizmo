@@ -21,8 +21,7 @@
 #ifndef GRAIN_PHYSICS_LOOP_H
 #define GRAIN_PHYSICS_LOOP_H
 
-/* Kokkos_Core before allvars.h — allvars pulls macros.h which #defines
- * terminate(...), mangling std::terminate in Kokkos_Core. */
+/* Kokkos_Core before allvars.h (its macros may conflict with stdlib names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

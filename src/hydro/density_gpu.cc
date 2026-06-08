@@ -18,8 +18,8 @@
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-/* Standard and Kokkos headers BEFORE global_data_all_struct.h
- * (macros.h #define terminate(x) conflicts with std::terminate in <exception>) */
+/* Standard and Kokkos headers before global_data_all_struct.h
+ * (its macros may conflict with stdlib names). */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -22,9 +22,7 @@
 #ifndef DM_FUZZY_LOOP_H
 #define DM_FUZZY_LOOP_H
 
-/* Kokkos_Core before allvars.h — allvars pulls macros.h which #defines
- * terminate(...), mangling std::terminate in Kokkos_Core. Same as
- * difffilter_loop.h / dm_dispersion_loop.h. */
+/* Kokkos_Core before allvars.h (its macros may conflict with stdlib names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

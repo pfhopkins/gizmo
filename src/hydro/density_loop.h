@@ -37,9 +37,7 @@
 #ifndef DENSITY_LOOP_H
 #define DENSITY_LOOP_H
 
-/* Kokkos_Core MUST come before allvars.h. Same pattern as sink_feed_loop.h /
- * ags_density_loop.h: allvars.h pulls in declarations/macros.h which
- * #defines `terminate(...)`, mangling `std::terminate()` inside Kokkos_Core. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

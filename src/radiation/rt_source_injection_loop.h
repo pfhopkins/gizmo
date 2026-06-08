@@ -34,9 +34,7 @@
 #ifndef RT_SOURCE_INJECTION_LOOP_H
 #define RT_SOURCE_INJECTION_LOOP_H
 
-/* Kokkos_Core must precede declarations/allvars.h (allvars pulls in macros.h
- * which defines `terminate(...)`; that macro would mangle std::terminate
- * pulled in transitively by Kokkos_Core.hpp). Same ordering as thermal_fb_loop.h. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"   /* per-TU AllDeviceMirror; safe in host pass too */

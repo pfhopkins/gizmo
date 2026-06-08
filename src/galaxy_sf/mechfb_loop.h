@@ -19,11 +19,8 @@
 
 #include <vector>
 
-/* Kokkos_Core.hpp MUST precede declarations/allvars.h (pulled in transitively
- * by mechanical_fb_functions.h below): allvars.h pulls declarations/macros.h
- * which #defines `terminate(...)`, mangling std::terminate inside Kokkos
- * transitive <exception> include if it comes first. Same convention as
- * sinks/sink_feed_loop.h / sink_swk_loop.h. */
+/* Kokkos_Core.hpp must precede allvars.h (pulled in transitively by
+ * mechanical_fb_functions.h below); its macros may conflict with stdlib names. */
 #include <Kokkos_Core.hpp>
 
 #include "../mesh/neighbor_loop_runner.h"
