@@ -488,15 +488,40 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
 
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+    /* Particles using the adaptive kernel radius need a kernel-size signal-speed
+       timestep. Which TYPES require it depends on the active physics, so collect
+       the OR of all module triggers, then apply the single AGS Courant criterion.
+       Gate on AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE (the SSOT for AGS_KernelRadius/
+       AGS_vsig existence), NOT on ADAPTIVE_GRAVSOFT_FORALL alone -- that flag is
+       only one of several triggers (SIDM / fuzzy / CBE also need this limiter). */
+    int need_agscfl = 0;
+#if defined(CBE_INTEGRATOR)
+    int need_cbe_agscfl = 0;
+#endif
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
-    /* make sure smoothing length of non-gas particles doesn't change too much in one timestep */
-    if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0))
+    if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0)) {need_agscfl = 1;}
+#endif
+#ifdef DM_SIDM
+    if((1 << P[p].Type) & (DM_SIDM)) {need_agscfl = 1;}
+#endif
+#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
+    if(P[p].Type == 1)
     {
+        need_agscfl = 1;
+#if defined(CBE_INTEGRATOR)
+        need_cbe_agscfl = 1; /* CBE-moment-flux particle: gets the stricter factor below */
+#endif
+    }
+#endif
+    if(need_agscfl)
+    {
+        /* make sure smoothing length of non-gas particles doesn't change too much in one timestep */
         double dt_divv = 0.1 / (MIN_REAL_NUMBER + All.cf_a2inv*fabs(P[p].Particle_DivVel)); // with new integration accuracy in gravtree, we may not need to be super-conservative here. old code used pre-factor 0.25 here, see if we can get away with the larger value which is standard for gas below
         if(dt_divv < dt) {dt = dt_divv;}
         double dt_cour = 2. * All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig); // can be generous here, really the signal velocity isn't that important in the collisionless case, but it is important with some of the physics above //
 #if defined(CBE_INTEGRATOR)
-        dt_cour *= 0.25; // need a much stricter criterion here, to account for fluxes de-stabilizing the method //
+        if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
 #endif
         if(dt_cour < dt) {dt = dt_cour;}
     }
