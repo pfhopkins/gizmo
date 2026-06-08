@@ -2184,7 +2184,8 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                            (int)nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                            &gnl, sidx,
                            1.0, radii_uvm, NULL, Spec::loop_name,
-                           nlr_spec_symmetric_j_radius_scale<Spec>());
+                           nlr_spec_symmetric_j_radius_scale<Spec>(),
+                           Spec::radius_policy);
     }
 
     /* UVM-allocate ActiveData[] and AccumData[] arrays. */
@@ -2661,7 +2662,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                                                    args.active_list,
                                                    args.num_active,
                                                    radii.data(),
-                                                   args.ghost_safety_factor);
+                                                   args.ghost_safety_factor,
+                                                   Spec::radius_policy,
+                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
         /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
          * the runner's data view; only paths that imported ghosts read this
          * extended view (Mode B paths use the original args via copy). */
@@ -3170,7 +3173,9 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                                                    (union_n > 0) ? union_actives.data() : nullptr,
                                                    union_n,
                                                    (union_n > 0) ? union_radii_oversized.data() : nullptr,
-                                                   args.ghost_safety_factor);
+                                                   args.ghost_safety_factor,
+                                                   Spec::radius_policy,
+                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
         ghost_import_done = true;
 
         /* Refresh effective_args from globals (ghost import grew NumPart and
@@ -3312,7 +3317,9 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
                                                    (union_n > 0) ? union_actives.data() : nullptr,
                                                    union_n,
                                                    (union_n > 0) ? union_radii_oversized.data() : nullptr,
-                                                   args.ghost_safety_factor);
+                                                   args.ghost_safety_factor,
+                                                   Spec::radius_policy,
+                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
         ghost_import_done = true;
     }
 
@@ -3545,7 +3552,8 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                            (int)sgr.j_type_bitmask,
                            &drv.mode_a_cached_gnl[sg], sidx,
                            1.0, radii_oversized_uvm, NULL, Spec::loop_name,
-                           nlr_spec_symmetric_j_radius_scale<Spec>());
+                           nlr_spec_symmetric_j_radius_scale<Spec>(),
+                           Spec::radius_policy);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oversized_uvm);
 
         /* Allocate csr_offset_lookup + csr_buffered_h sized to subgroup max.

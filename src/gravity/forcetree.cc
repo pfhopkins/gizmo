@@ -9,6 +9,7 @@
 #include "../mesh/kernel.h"
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
+#include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
@@ -208,6 +209,26 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  *  Caller-restriction: must run AFTER gpu_moment_refresh has populated
  *  Father[] / Nodes[].u.d.father, since Step 3 walks via father chain.
  */
+/* Conservative per-particle radius (node-prune upper bound) for
+ * Extnodes[no].hmax_per_type[Type] band seeding. See forcetree.h docstring.
+ * Used by every site that grows or seeds a per-type band:
+ * force_refresh_hmax_per_type_host, force_update_node_recursive,
+ * force_refresh_node_moments, force_update_hmax (forcetree_update.cc),
+ * force_add_element_to_tree.
+ *
+ * SSOT: routes through nlr_particle_symmetric_radius_capped — no
+ * AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE branch here.  MODE_B_RADIUS_ALL_SOURCES
+ * is the conservative union (KernelRadius / AGS_KernelRadius / ForceSoftening
+ * across all types).  Capping at All.MaxKernelRadius applies to kernel radii
+ * only; ForceSoftening is uncapped so the band dominates the leaf-policy reach
+ * even when FS > All.MaxKernelRadius (codex 2026-06-07). */
+double force_hmax_per_type_particle_radius(int i)
+{
+    return nlr_particle_symmetric_radius_capped(P[i],
+                                                MODE_B_RADIUS_ALL_SOURCES,
+                                                (double)All.MaxKernelRadius);
+}
+
 static void force_refresh_hmax_per_type_host(int Numnodestree)
 {
     /* Step 1: zero per-type bands in all internal nodes. */
@@ -215,22 +236,15 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
     }
     /* Step 2: leaf seed — Father[i] only (per-particle to its immediate
-     * parent), in the same form as the existing dynamic-update CPU path. */
+     * parent), conservative across every leaf-policy-selectable source. */
     for(int i = 0; i < NumPart; i++) {
         int no = Father[i];
         if(no < 0) continue;
         struct particle_data *pa = &P[i];
         if(pa->Mass <= 0) continue;
-        if(pa->Type == 0) {
-            double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
-            if(htmp > Extnodes[no].hmax_per_type[0]) Extnodes[no].hmax_per_type[0] = (MyFloat)htmp;
-        }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        else if((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL) {
-            double htmp = DMIN(All.MaxKernelRadius, P[i].AGS_KernelRadius);
-            if(htmp > Extnodes[no].hmax_per_type[pa->Type]) Extnodes[no].hmax_per_type[pa->Type] = (MyFloat)htmp;
-        }
-#endif
+        double htmp = force_hmax_per_type_particle_radius(i);
+        int t = (int)pa->Type;
+        if(htmp > Extnodes[no].hmax_per_type[t]) Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;
     }
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives
@@ -828,22 +842,20 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
                     if(pa->Type == 0)
                     {
-                        double htmp = DMIN(All.MaxKernelRadius, P[p].KernelRadius);
-                        if(htmp > hmax) {hmax = htmp;}
-                        if(htmp > hmax_per_type[0]) {hmax_per_type[0] = htmp;}
+                        double htmp_kr = DMIN(All.MaxKernelRadius, P[p].KernelRadius);
+                        if(htmp_kr > hmax) {hmax = htmp_kr;}
                         divVel = P[p].Particle_DivVel;
                         if(divVel > divVmax) {divVmax = divVel;}
                     }
-                    /* Mode B per-type seed for non-gas: AGS opt-in via bitmask. Scalar
-                     * `hmax` is intentionally NOT touched here; force_update_hmax()
-                     * folds non-gas AGS into the legacy scalar after density. */
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    if(pa->Type != 0 && ((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL))
+                    /* Mode B per-type seed: conservative across every leaf-policy-
+                     * selectable source via force_hmax_per_type_particle_radius.
+                     * Scalar `hmax` retains legacy gas-only-at-build semantics;
+                     * force_update_hmax() folds AGS into it later. */
                     {
-                        double htmp = DMIN(All.MaxKernelRadius, P[p].AGS_KernelRadius);
-                        if(htmp > hmax_per_type[pa->Type]) {hmax_per_type[pa->Type] = htmp;}
+                        double htmp_band = force_hmax_per_type_particle_radius(p);
+                        int t = (int)pa->Type;
+                        if(htmp_band > hmax_per_type[t]) {hmax_per_type[t] = htmp_band;}
                     }
-#endif
 
                     for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax) {vmax = v;}}
                     
@@ -1632,18 +1644,11 @@ void force_add_element_to_tree(int iparent, int ichild)
     Extnodes[father].hmax = new_hmax;
     /* Mode B per-type incremental update — only the band corresponding to
      * iparent's type. Other bands unchanged (correct: this insertion adds
-     * one particle, only its type's band can grow). */
+     * one particle, only its type's band can grow). Conservative across every
+     * leaf-policy-selectable source via the shared helper. */
     {
         int ptype = (int)P[iparent].Type;
-        double htmp = 0.0;
-        if(ptype == 0) {
-            htmp = DMIN(P[iparent].KernelRadius, All.MaxKernelRadius);
-        }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        else if((1 << ptype) & ADAPTIVE_GRAVSOFT_FORALL) {
-            htmp = DMIN(P[iparent].AGS_KernelRadius, All.MaxKernelRadius);
-        }
-#endif
+        double htmp = force_hmax_per_type_particle_radius(iparent);
         if(htmp > Extnodes[father].hmax_per_type[ptype]) {
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
@@ -4294,18 +4299,17 @@ void force_refresh_node_moments(void)
 
         if(pa->Type == 0)
         {
-            double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
-            if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
-            if(htmp > Extnodes[no].hmax_per_type[0]) {Extnodes[no].hmax_per_type[0] = htmp;}
+            double htmp_kr = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
+            if(htmp_kr > Extnodes[no].hmax) {Extnodes[no].hmax = htmp_kr;}
             if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
         }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        if(pa->Type != 0 && ((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL))
+        /* Mode B per-type seed: conservative across every leaf-policy-selectable
+         * radius source; covers gas + non-gas uniformly via the helper. */
         {
-            double htmp = DMIN(All.MaxKernelRadius, P[i].AGS_KernelRadius);
-            if(htmp > Extnodes[no].hmax_per_type[pa->Type]) {Extnodes[no].hmax_per_type[pa->Type] = htmp;}
+            double htmp_band = force_hmax_per_type_particle_radius(i);
+            int t = (int)pa->Type;
+            if(htmp_band > Extnodes[no].hmax_per_type[t]) {Extnodes[no].hmax_per_type[t] = htmp_band;}
         }
-#endif
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}

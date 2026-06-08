@@ -255,7 +255,10 @@ struct GrainRTGasSpec {
     /* GRAIN_PTYPES: neither GasOnly (tbm=1) nor AllTypes (tbm=0x3f);
      * do not use a typed cache. */
     static constexpr unsigned int           neighbor_type_mask = GRAIN_PTYPES;
-    static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* grain_rt_gas pair physics: h_to_use = P[j].KernelRadius for non-gas grain
+     * particles (see grain_physics_functions.h:214).  Symmetric search reach
+     * needs NONGAS_KERNEL; gas excluded by mask. */
+    static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_NONGAS_KERNEL;
 
     static constexpr WritePattern  write_pattern             = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind sidx_cache_kind           = SidxCacheKind::None;

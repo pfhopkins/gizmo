@@ -510,13 +510,29 @@ struct SinkFeedSpec {
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* sink_feed pair physics: explicit symmetric filter uses
+     * heff_j = DMAX(P[j].KernelRadius, P[j].ForceSoftening) and rejects only
+     * r2 >= h_i2 && r2 >= heff_j^2 (sink_feed_loop.h:22-25, 42).  Policy must
+     * include NONGAS_KERNEL **and** FORCE_SOFTENING for the cached compact_xyzh
+     * h_j to dominate that effective reach. */
+    static constexpr mode_b_radius_policy_t  radius_policy      =
+        MODE_B_RADIUS_GAS_KERNEL | MODE_B_RADIUS_NONGAS_KERNEL | MODE_B_RADIUS_FORCE_SOFTENING;
 
     /* WritePattern describes runner-managed AccumData reduction;
      * uses_ghost_writeback is the orthogonal axis governing direct j-side
      * writes to P[j]/CellP[j]. See runner.h. */
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
-    static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
+    /* SidxCacheKind::None: sink_feed's radius_policy includes FORCE_SOFTENING,
+     * and P[j].ForceSoftening is recomputed each step by
+     * compute_all_force_softening() without registering dirty indices in the
+     * existing KernelRadius dirty tracker.  Reusing a cached AllTypes SIDX
+     * across calls would read stale compact_xyzh[j*4+3] values → silent
+     * neighbor-set drift.  Forcing a per-call rebuild is bounded (sink_feed
+     * fires a handful of times per step) and keeps cache correctness aligned
+     * with physics.  If perf data later motivates caching, add
+     * gizmo_mark_force_softening_dirty_* plumbing at the softening-recompute
+     * site — do NOT broaden the policy to fit a cache (codex 2026-06-07). */
+    static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
     static constexpr double accum_tolerance = 1e-10;
 

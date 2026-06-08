@@ -13,6 +13,7 @@
 #define GHOST_EXCHANGE_SPEC_H
 
 #include "neighbor_list.h"   /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
+#include "nlr_radius_policy.h"  /* mode_b_radius_policy_t + MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES */
 
 /* Type bitmask values matching P[].Type encoding. Bit k set ⇔ Type k included.
  * Keep these names literal: Type 0 is usually cells/fluids, Type 5 is often
@@ -53,6 +54,26 @@ struct ghost_exchange_spec_t {
     int                  n_queries;
     const double       (*query_pos)[3];
     const double        *query_h;
+
+    /* SSOT supply-side per-particle reach contract (Phil + codex 2026-06-07).
+     * Mirrors what local Mode A's gpu_ngb_list_build uses for the same Spec
+     * so the local CSR and the ghost-import candidate set are computed from
+     * the IDENTICAL per-particle h_j formula on every rank.  Without this,
+     * runner-driven imports under non-default Specs would silently disagree
+     * with the local walk → rank-dependent neighbor selection → invalid
+     * multi-rank physics.
+     *
+     * Spec::radius_policy is a compile-time constexpr; identical on every
+     * rank.  j_radius_scale comes from nlr_spec_symmetric_j_radius_scale<Spec>()
+     * — also a per-Spec/global value, identical across ranks at the call.
+     *
+     * Legacy non-runner callers MUST pass MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES
+     * + 1.0 explicitly; this preserves their pre-policy behavior byte-for-byte
+     * (raw P[j].KernelRadius * safety_factor).  The struct provides no
+     * defaults so the compiler enforces explicit-thread at every call site
+     * (codex 2026-06-07: "No LEGACY fallback in runner-driven paths"). */
+    mode_b_radius_policy_t  radius_policy;
+    double                  j_radius_scale;
 };
 
 #endif /* GHOST_EXCHANGE_SPEC_H */

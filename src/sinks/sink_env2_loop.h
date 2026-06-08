@@ -146,7 +146,12 @@ struct SinkEnv2Spec {
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* sink_env2 pair physics: pair body requires P[j].KernelRadius > 0 and
+     * accumulates Mstar_in_Kernel without an internal r > h_j gate, so the
+     * symmetric reach must admit j with r < P[j].KernelRadius for non-gas too.
+     * See sink_env2_loop.h:100. */
+    static constexpr mode_b_radius_policy_t  radius_policy      =
+        MODE_B_RADIUS_GAS_KERNEL | MODE_B_RADIUS_NONGAS_KERNEL;
 
     /* WritePattern + uses_ghost_writeback are orthogonal axes. sink_env2
      * is pure i-side (no j-writes); writeback bundle is empty. The

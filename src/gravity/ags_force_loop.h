@@ -376,7 +376,12 @@ struct AgsForceSpec {
      * h_j > h_i and r > h_i (the symmetric search semantic). */
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = 0xFFFFFFFFu;  /* per-subgroup override */
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* AGS-force pair physics: h_j reach is P[j].AGS_KernelRadius for every type
+     * (gas and non-gas).  Symmetric filter at ags_force_loop.h:296,304 reads
+     * kernel.h_j = Pj.AGS_KernelRadius and rejects only r > max(h_i, h_j).
+     * See OPEN_radius_policy_runner_design.md audit table for the cite. */
+    static constexpr mode_b_radius_policy_t  radius_policy      =
+        MODE_B_RADIUS_GAS_AGS | MODE_B_RADIUS_NONGAS_AGS;
 
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
     /* Multi-bm subgroups — same rationale as ags_density: a step-persistent

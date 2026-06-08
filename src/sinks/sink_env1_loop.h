@@ -314,7 +314,11 @@ struct SinkEnv1Spec {
     /* (2) Search policy. */
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* sink_env1 pair physics: h_j reach is P[j].KernelRadius for gas AND non-gas
+     * (pair body uses DMAX(h_i, P[j].KernelRadius) per sink_env1_loop.h:185,274).
+     * Restores legacy KernelRadius-for-all-types symmetric reach. */
+    static constexpr mode_b_radius_policy_t  radius_policy      =
+        MODE_B_RADIUS_GAS_KERNEL | MODE_B_RADIUS_NONGAS_KERNEL;
 
     /* (3) Writeback policy. */
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;

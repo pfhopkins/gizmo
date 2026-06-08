@@ -976,12 +976,37 @@ extern struct extNODE
 				   gas-only at tree build, AGS-aware after force_update_hmax
 				   in ADAPTIVE_GRAVSOFT_FORALL builds. Read by legacy
 				   gravity / GPU SoA / LET pack code. */
-  /* Mode B per-type kernel-radius bands. Invariant:
-   *   hmax_per_type[0]      = max(P[j].KernelRadius)        over Type==0  in subtree (gas-only)
-   *   hmax_per_type[t > 0]  = max(P[j].AGS_KernelRadius)    over Type==t  in subtree IFF
-   *                            ((1 << t) & ADAPTIVE_GRAVSOFT_FORALL); else 0
-   * Used by Mode B SYMMETRIC walker pruning under a radius_policy that maps
-   * type -> which band to consider. ONEWAY walks never read this field.
+  /* Mode B per-type kernel-radius bands.  Invariant (every type t):
+   *   hmax_per_type[t] = max over Type==t in subtree of
+   *                       force_hmax_per_type_particle_radius(j)
+   *                    = max( DMIN(All.MaxKernelRadius,
+   *                                max(P[j].KernelRadius,
+   *                                    P[j].AGS_KernelRadius if AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)),
+   *                           P[j].ForceSoftening )
+   *
+   * Kernel-like radii (KernelRadius / AGS_KernelRadius) are capped at
+   * All.MaxKernelRadius per legacy invariant (those fields can blow up under
+   * iterative search).  ForceSoftening is NOT capped — the leaf policy may
+   * admit pairs via FS reach (sink_feed's binary-merge filter), so the node
+   * band must dominate FS unconditionally.
+   *
+   * The band is a conservative UPPER BOUND across every leaf-policy-selectable
+   * radius source for that type — so Mode B SYMMETRIC tree-prune can use
+   * max_{t in mask} hmax_per_type[t] regardless of which Spec's radius_policy
+   * is calling.  The exact policy filter sits at the leaf predicate
+   * (mode_b_neighbor_symmetric_radius -> nlr_symmetric_radius_from_fields);
+   * over-opening at the node level is safe (extra candidates filter at leaf),
+   * under-opening would be a correctness bug.
+   *
+   * Drift behavior: per-type bands inflate UPWARD only during force_drift_node
+   * (and gpu_force_drift's UVM equivalent).  Downward decay is suppressed
+   * because the band includes static-ish sources (ForceSoftening) that don't
+   * shrink under drift; force_update_hmax() re-seeds bands per particle each
+   * call, and a transiently-large band only over-opens (safe).  Scalar `hmax`
+   * keeps its legacy bidirectional decay — its semantics are unchanged.
+   *
+   * ONEWAY walks never read this field.
+   *
    * NOTE: cross-rank DomainMoment exchange of these bands is NOT YET WIRED
    * (Stage 3 deferred). At single-rank, host-only Mode B walker uses these
    * directly. Multi-rank Mode B SYMMETRIC walks must NOT rely on per-type

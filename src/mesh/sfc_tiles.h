@@ -16,6 +16,7 @@
 #define SFC_TILES_H
 
 #include "neighbor_list.h"
+#include "nlr_radius_policy.h"  /* mode_b_radius_policy_t + MODE_B_RADIUS_* + SSOT wrappers */
 
 #define TILE_TARGET_SIZE 64  /* particles per tile (tunable) */
 #define TILE_BVH_STACK_SIZE 64  /* traversal stack depth (log2(ntiles) + margin) */
@@ -78,11 +79,27 @@ int build_tile_bvh(sfc_tile_t *tiles, int ntiles, tile_bvh_node_t **bvh_out);
  * pool_indices_out: allocated array of particle indices in SFC order (pool only)
  * tiles_out: allocated array of tiles
  * num_pool_out: number of particles in the pool
+ *
+ * radius_policy: per-particle radius source for tile->hmax / tile->hmax_by_type[]
+ * aggregation, applied via nlr_particle_symmetric_radius.  Default
+ * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES = byte-equivalent to the pre-policy code
+ * paths (raw P[j].KernelRadius for every type) — used by ghost_exchange and any
+ * other non-runner caller.  Runner Mode A passes Spec::radius_policy from
+ * gpu_spatial_index_build so cached tile bands reflect that Spec's pair reach.
  */
+/* scale_factor multiplies the SSOT per-particle reach before aggregation, so
+ * tile->hmax / tile->hmax_by_type[] and any leaf-side compact h built from the
+ * same source see IDENTICAL supply-side reach.  Used by ghost_exchange to bake
+ * j_radius_scale * safety_factor into the cached bands (and the matching leaf
+ * compact h) under the SAME contract — closes the band-vs-leaf scale gap that
+ * would otherwise let the BVH prune away pairs the leaf would have accepted
+ * (codex 2026-06-07 correction #3).  Default 1.0 preserves existing callers. */
 int build_sfc_tiles(struct particle_data *P, int num_total,
                     int type_bitmask, int target_tile_size,
                     sfc_tile_t **tiles_out, int **pool_indices_out,
-                    int *num_pool_out);
+                    int *num_pool_out,
+                    mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
+                    double scale_factor = 1.0);
 
 void free_sfc_tiles(sfc_tile_t *tiles, int *pool_indices);
 

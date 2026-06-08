@@ -22,26 +22,12 @@
 #include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
 
-/* Public helper: per-j symmetric radius under policy. See header. */
+/* Public helper: per-j symmetric radius under policy. Delegates to the SSOT
+ * per-particle wrapper in nlr_radius_policy.h, which owns the
+ * AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE compile-flag gate. */
 double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy)
 {
-    /* Gas: KernelRadius represents finite-volume cell extent. Always
-     * physically meaningful for gas. */
-    if(P[j].Type == 0) {
-        if(policy & MODE_B_RADIUS_GAS_KERNEL) return (double)P[j].KernelRadius;
-        return 0.0;
-    }
-    /* Non-gas: P[j].KernelRadius is NOT physical extent (it's stale-IC or
-     * the density-search radius for THIS particle's gas neighbors, not
-     * its own physical kernel). For SYMMETRIC pair searches the correct
-     * source is AGS_KernelRadius, used only by AGS/SIDM/grain physics. */
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(policy & MODE_B_RADIUS_AGS_FOR_NONGAS) {
-        return (double)P[j].AGS_KernelRadius;
-    }
-#endif
-    /* Default for non-gas: 0 → SYMMETRIC degenerates to ONEWAY for this j. */
-    return 0.0;
+    return nlr_particle_symmetric_radius(P[j], policy);
 }
 
 /* Predicate: does P[j] satisfy the query (pos, h_q) under search_mode? */
@@ -109,12 +95,17 @@ static inline int sphere_aabb_overlap(const double pos[3],
     return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
 }
 
-/* Mode B SYMMETRIC effective radius for an internal node, given a type-mask
- * (which types the caller is searching for) and a radius policy (which
- * particle radius source is meaningful per type — see mode_b_neighbor_
- * symmetric_radius). Returns max over types-in-mask of the relevant
- * Extnodes[no].hmax_per_type[t] band, multiplied by a slack factor.
- * Returns 0 if no type contributes (collapses SYMMETRIC pruning to ONEWAY).
+/* Mode B SYMMETRIC effective radius for an internal node. Returns
+ *   max over types-in-mask of Extnodes[no].hmax_per_type[t]
+ * inflated by a slack factor. Per the invariant in allvars.h, each band is
+ * already a conservative upper bound across every leaf-policy-selectable
+ * radius source for that type — so node-prune does not need to know the
+ * caller's radius_policy. Leaf-level predicate (mode_b_neighbor_symmetric_radius)
+ * applies the exact policy. Over-opening here is safe (extra candidates
+ * filter at the leaf); under-opening would be a correctness bug.
+ *
+ * Returns 0 if no requested type has a populated band (degenerates to ONEWAY
+ * pruning, which is still correct given the leaf-level filter).
  *
  * Slack rationale (matches mesh/gpu_neighbor_list.cc:SIDX_H_SLACK = 0.5):
  * between force_update_hmax() refreshes, per-particle KernelRadius can
@@ -126,31 +117,15 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * correctness bug. Same convention as GPU NGL's BVH tile-overlap test. */
 static inline double mode_b_node_symmetric_radius(int no,
                                                   unsigned int type_mask,
-                                                  mode_b_radius_policy_t policy,
                                                   double j_radius_scale)
 {
     static constexpr double H_SLACK = 0.5;  /* matches SIDX_H_SLACK */
     double rmax = 0.0;
-    /* Type 0 (gas): always contributes if requested AND policy includes
-     * the gas-kernel source (default for sink_env1 / density-style callers). */
-    if((type_mask & (1u << 0)) && (policy & MODE_B_RADIUS_GAS_KERNEL)) {
-        double v = (double)Extnodes[no].hmax_per_type[0];
+    for(int t = 0; t < 6; t++) {
+        if(!(type_mask & (1u << t))) continue;
+        double v = (double)Extnodes[no].hmax_per_type[t];
         if(v > rmax) rmax = v;
     }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    /* Non-gas types (1..5): contribute only if the caller requests them in
-     * the type_mask AND the policy permits AGS as the radius source AND
-     * the type is in ADAPTIVE_GRAVSOFT_FORALL bitmask (so the band was
-     * actually populated at tree-build time). */
-    if(policy & MODE_B_RADIUS_AGS_FOR_NONGAS) {
-        for(int t = 1; t < 6; t++) {
-            if(!(type_mask & (1u << t))) continue;
-            if(!((1 << t) & ADAPTIVE_GRAVSOFT_FORALL)) continue;
-            double v = (double)Extnodes[no].hmax_per_type[t];
-            if(v > rmax) rmax = v;
-        }
-    }
-#endif
     return rmax * (1.0 + H_SLACK) * j_radius_scale;
 }
 
@@ -212,8 +187,10 @@ void mode_b_local_neighbor_walk(const double pos[3],
             if(oneway) {
                 R_eff = h_q;
             } else {
-                /* SYMMETRIC: R_eff = max(h_q, per-type hmax under policy/mask) */
-                double node_h = mode_b_node_symmetric_radius(no, type_mask, radius_policy, j_radius_scale);
+                /* SYMMETRIC: R_eff = max(h_q, per-type hmax under mask).
+                 * Bands are conservative across every radius_policy source
+                 * for their type — node-prune is policy-independent. */
+                double node_h = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
                 R_eff = (node_h > h_q) ? node_h : h_q;
             }
             int do_open = sphere_aabb_overlap(pos, nop, R_eff);

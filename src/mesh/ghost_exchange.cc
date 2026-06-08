@@ -119,11 +119,46 @@ struct ghost_local_tree_cache_t {
     sfc_tile_t *tiles;            /* [ntiles] malloc */
     int *pool;                     /* [num_pool] malloc */
     tile_bvh_node_t *bvh;          /* [bvh_nnodes] malloc */
-    float *compact_xyzh;           /* [num_pool*4] malloc, h * safety_factor baked in */
+    float *compact_xyzh;           /* [num_pool*4] malloc; h field = supply-side policy * j_scale * safety baked in */
     int *pool_types;               /* [num_pool] malloc */
     int *j_to_pool;                /* [NumPart_when_built] malloc, j -> pool_pos or -1 */
+    /* SSOT supply-side reach contract (codex 2026-06-07).  These four fields,
+     * together with the (NumPart, safety, eligible_pool_mask) triple above,
+     * form the cache-key invariant: any mismatch on any of them forces a full
+     * rebuild (NOT a refit).  Ti and the needs_refit dirty bit continue to
+     * trigger glt_cache_refit_from_particles() instead of a rebuild — Ti is
+     * NOT a rebuild key (codex correction #1: rebuilding every step would
+     * be exactly the work explosion this design is supposed to prevent). */
+    mode_b_radius_policy_t radius_policy_when_built;
+    double j_radius_scale_when_built;
 };
-static struct ghost_local_tree_cache_t g_glt_cache = {0,-1,-1,0.0,GHOST_TYPE_ALL,0,0,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL};
+static struct ghost_local_tree_cache_t g_glt_cache = {0,-1,-1,0.0,GHOST_TYPE_ALL,0,0,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL,
+                                                      MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
+
+/* gx_policy_scaled_h — SSOT supply-side reach inside ghost_exchange.cc.
+ *
+ * Single helper used at every site that writes a per-particle supply h into
+ * the ghost local-tree cache: fresh build (compact + tile bands via
+ * build_sfc_tiles' scale_factor pathway), refit (glt_recompute_tile_), and
+ * any future site that needs the supply-side reach.  The output is identical
+ * to what build_sfc_tiles aggregates internally when called with
+ *   (radius_policy, scale_factor = j_radius_scale * safety_factor)
+ * so leaf compact h and BVH band hmax see the exact same supply-side reach
+ * for every particle — closing the leaf-vs-band scale gap that would
+ * otherwise let the BVH prune pairs the leaf would have accepted
+ * (codex 2026-06-07 correction #3).
+ *
+ * Compile-flag gating on AGS_KernelRadius lives in nlr_radius_policy.h's
+ * wrapper; never replicate the `#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE`
+ * inside this TU. */
+static inline double gx_policy_scaled_h(int j,
+                                        mode_b_radius_policy_t radius_policy,
+                                        double j_radius_scale,
+                                        double safety_factor)
+{
+    return nlr_particle_symmetric_radius(P[j], radius_policy)
+           * j_radius_scale * safety_factor;
+}
 
 /* Bucket 3 narrow-refit machinery. Mirrors gpu_neighbor_list.cc's g_dirty_list
  * pattern for the GPU compact_xyzh refresh — same call sites populate both, but
@@ -170,6 +205,8 @@ static void glt_cache_free(void)
     g_glt_cache.Ti_when_built = -1;
     g_glt_cache.safety_factor_when_built = 0.0;
     g_glt_cache.eligible_type_mask_when_built = GHOST_TYPE_ALL;
+    g_glt_cache.radius_policy_when_built = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES;
+    g_glt_cache.j_radius_scale_when_built = 1.0;
     g_glt_cache.needs_refit = 0;
     g_glt_cache.ntiles = 0;
     g_glt_cache.num_pool = 0;
@@ -267,15 +304,26 @@ static inline void glt_recompute_tile_(int t)
     int p0 = tile->first;
     int j0 = g_glt_cache.pool[p0];
     for(int k = 0; k < 3; k++) tile->lo[k] = tile->hi[k] = P[j0].Pos[k];
+    /* SSOT supply-side reach pulled from the cache's stored policy/scale
+     * (codex 2026-06-07).  For runner-driven imports this carries the
+     * Spec's radius_policy + nlr_spec_symmetric_j_radius_scale<Spec>();
+     * for legacy ghost_exchange wrappers it carries
+     * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES + 1.0 → byte-equivalent to the
+     * pre-policy code that read P[j].KernelRadius * safety_factor.
+     * Leaf compact_xyzh[p*4+3] and tile band hmax_by_type[] use the
+     * IDENTICAL gx_policy_scaled_h output → no leaf-vs-band scale gap. */
+    const mode_b_radius_policy_t policy = g_glt_cache.radius_policy_when_built;
+    const double j_scale = g_glt_cache.j_radius_scale_when_built;
+    const double safety  = g_glt_cache.safety_factor_when_built;
     for(int s = 0; s < tile->count; s++) {
         int p = tile->first + s;
         int j = g_glt_cache.pool[p];
         int pt = (int)P[j].Type;
-        double h = (double)P[j].KernelRadius;
+        double h = gx_policy_scaled_h(j, policy, j_scale, safety);
         g_glt_cache.compact_xyzh[p*4+0] = (float)P[j].Pos[0];
         g_glt_cache.compact_xyzh[p*4+1] = (float)P[j].Pos[1];
         g_glt_cache.compact_xyzh[p*4+2] = (float)P[j].Pos[2];
-        g_glt_cache.compact_xyzh[p*4+3] = (float)(h * g_glt_cache.safety_factor_when_built);
+        g_glt_cache.compact_xyzh[p*4+3] = (float)h;
         g_glt_cache.pool_types[p] = pt;
         for(int k = 0; k < 3; k++) {
             if(P[j].Pos[k] < tile->lo[k]) tile->lo[k] = P[j].Pos[k];
@@ -445,7 +493,7 @@ static inline int ghost_type_passes(int ptype, unsigned int mask) { return (mask
 static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
 static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
 static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
-static double gx_eff_h(int j, unsigned int supply_mask);
+static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
 /* Env gate: GIZMO_GHOST_REQUEST_DRIVEN=1 selects the per-active query-driven
  * exchange (Phase 2 design). Default 0 retains the legacy tile-overlap path
@@ -1261,25 +1309,16 @@ struct gx_query_t {
     int    _pad;
 };
 
-/* effective_ghost_radius re-implemented as a free function for cross-path reuse
- * (tile_overlap_impl has its own captured-lambda copy; this is for the
- * request-driven path + waste diagnostic). */
-static double gx_eff_h(int j, unsigned int supply_mask)
+/* Per-particle supply-side reach for the [GX_WASTE] diagnostic.  Policy-aware
+ * (codex 2026-06-07): under the SSOT supply contract, the diagnostic must
+ * report the SAME reach the request-driven impl actually used — otherwise it
+ * silently lies about whether ghost imports are oversized.  Returns 0 when
+ * j's type is outside the spec's supply_type_mask. */
+static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec)
 {
-    if(supply_mask != GHOST_TYPE_ALL) {
-        if(!ghost_type_passes((int)P[j].Type, supply_mask)) return 0.0;
-        return (double)P[j].KernelRadius;
-    }
-    double h = (double)P[j].KernelRadius;
-#ifdef DM_DISPERSION_LOOP_ACTIVE
-    if(P[j].Type == 0 && j < N_gas) {
-        if((double)CellP[j].KernelRadiusDM > h) h = CellP[j].KernelRadiusDM;
-    }
-#endif
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if((double)P[j].AGS_KernelRadius > h) h = P[j].AGS_KernelRadius;
-#endif
-    return h;
+    if(!ghost_type_passes((int)P[j].Type, spec->supply_type_mask)) return 0.0;
+    return gx_policy_scaled_h(j, spec->radius_policy,
+                              spec->j_radius_scale, spec->safety_factor);
 }
 
 /* Print [GX_WASTE] for any ghost_exchange path. Walks (sampled) local actives
@@ -1290,7 +1329,6 @@ static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_ca
     if(!gizmo_verbose_diag()) return;
     if(total_recv <= 0 || NumPart_before_ghost <= 0) return;
     const unsigned int request_mask = spec->request_type_mask;
-    const unsigned int supply_mask  = spec->supply_type_mask;
     const int  search_mode = spec->search_mode;
     const long long PAIRS_BUDGET = 10000000LL;
     int sample_cap = (int)(PAIRS_BUDGET / (long long)total_recv);
@@ -1317,7 +1355,14 @@ static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_ca
     char *used_symm   = (char *) calloc(total_recv, sizeof(char));
     for(int aa = 0; aa < n_active_sample; aa++) {
         int i = active_indices[aa];
-        double h_i = gx_eff_h(i, supply_mask);
+        /* Request-side h_i: under SSOT contract the QUERY radius comes from
+         * Spec::search_radius (= active_radii[a] * safety) on the runner path.
+         * For the diagnostic we don't have direct per-active access to that
+         * vector, so we approximate with the same supply-side gx_eff_h reach
+         * — accurate when search_radius matches the policy reach (the typical
+         * case for the Specs that use this diagnostic). Bounded error for the
+         * waste percentage; not used for any correctness gate. */
+        double h_i = gx_eff_h(i, spec);
         double h2_i = h_i * h_i;
         double px = P[i].Pos[0], py = P[i].Pos[1], pz = P[i].Pos[2];
         for(int g = 0; g < total_recv; g++) {
@@ -1333,7 +1378,7 @@ static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_ca
             pairs_tested++;
             if(!used_oneway[g] && r2 < h2_i) used_oneway[g] = 1;
             if(!used_symm[g]) {
-                double h_j = gx_eff_h(gi, supply_mask);
+                double h_j = gx_eff_h(gi, spec);
                 double h2_max = (h2_i > h_j*h_j) ? h2_i : h_j*h_j;
                 if(r2 < h2_max) used_symm[g] = 1;
             }
@@ -1598,10 +1643,15 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
     int *h_pool_types = NULL;
     int from_cache = 0;
     unsigned int desired_pool_mask = (ghost_exchange_eligible_type_mask() | supply_mask) & GHOST_TYPE_ALL;
+    /* Cache-key invariant (codex 2026-06-07): {NumPart, safety, supply-pool
+     * coverage, radius_policy, j_radius_scale}.  Ti and dirty bits drive REFIT
+     * (glt_cache_refit_from_particles), NOT rebuild — see below. */
     int cache_match = (g_glt_cache.valid
                        && g_glt_cache.NumPart_when_built == NumPart
                        && g_glt_cache.safety_factor_when_built == safety_factor
-                       && ((g_glt_cache.eligible_type_mask_when_built & desired_pool_mask) == desired_pool_mask));
+                       && ((g_glt_cache.eligible_type_mask_when_built & desired_pool_mask) == desired_pool_mask)
+                       && g_glt_cache.radius_policy_when_built == spec->radius_policy
+                       && g_glt_cache.j_radius_scale_when_built == spec->j_radius_scale);
     if(cache_match) {
         h_tiles        = g_glt_cache.tiles;
         h_pool         = g_glt_cache.pool;
@@ -1628,8 +1678,16 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
         sfc_tile_t *tmp_tiles = NULL;
         int *tmp_pool = NULL;
         int tmp_num_pool = 0;
+        /* Tile bands and leaf compact h are computed from the IDENTICAL
+         * supply-side reach: nlr_particle_symmetric_radius(P[j], spec->radius_policy)
+         * * spec->j_radius_scale * safety_factor.  build_sfc_tiles bakes the
+         * scale into tile->hmax / tile->hmax_by_type[]; the loop below bakes it
+         * into c_compact[p*4+3] via gx_policy_scaled_h.  No leaf-vs-band scale
+         * gap, no BVH-prune-misses-pairs failure mode. */
         int tmp_ntiles = build_sfc_tiles(P, NumPart, (int)desired_pool_mask, TILE_TARGET_SIZE,
-                                         &tmp_tiles, &tmp_pool, &tmp_num_pool);
+                                         &tmp_tiles, &tmp_pool, &tmp_num_pool,
+                                         spec->radius_policy,
+                                         spec->j_radius_scale * safety_factor);
         tile_bvh_node_t *tmp_bvh = NULL;
         int tmp_bvh_nnodes = build_tile_bvh(tmp_tiles, tmp_ntiles, &tmp_bvh);
         int tmp_bvh_root = tmp_bvh_nnodes - 1;
@@ -1658,7 +1716,12 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
             c_compact[p*4+0] = (float)P[j].Pos[0];
             c_compact[p*4+1] = (float)P[j].Pos[1];
             c_compact[p*4+2] = (float)P[j].Pos[2];
-            c_compact[p*4+3] = (float)((double)P[j].KernelRadius * safety_factor);
+            /* SSOT: leaf compact h uses the SAME formula as build_sfc_tiles'
+             * per-particle aggregation above (= gx_policy_scaled_h).  Result:
+             * leaf h_j == tile band band's contribution from this particle. */
+            c_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
+                                                        spec->j_radius_scale,
+                                                        safety_factor);
             c_types[p] = (int)P[j].Type;
             if(j >= 0 && j < NumPart) c_jtop[j] = p;
         }
@@ -1682,6 +1745,8 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
         g_glt_cache.NumPart_when_built = NumPart;
         g_glt_cache.Ti_when_built = All.Ti_Current;
         g_glt_cache.safety_factor_when_built = safety_factor;
+        g_glt_cache.radius_policy_when_built = spec->radius_policy;
+        g_glt_cache.j_radius_scale_when_built = spec->j_radius_scale;
         /* Fresh build seeded compact_xyzh from current P[]; any pre-existing
          * dirty marks are obsolete.  Next refresh decides full vs narrow from
          * marks accumulated AFTER this point. */
@@ -1906,20 +1971,31 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
 }
 
 /* Public wrappers — each fills a spec, calls the single _impl. New callers
- * add a wrapper line; do not duplicate logic. */
+ * add a wrapper line; do not duplicate logic.
+ *
+ * radius_policy + j_radius_scale on the spec are part of the SSOT supply-side
+ * contract (codex 2026-06-07).  Legacy non-runner wrappers explicitly pass
+ * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES + 1.0 to preserve their pre-policy
+ * behavior byte-for-byte (raw P[j].KernelRadius * safety_factor as the
+ * supply-side reach).  Runner Mode A passes Spec::radius_policy +
+ * nlr_spec_symmetric_j_radius_scale<Spec>() via gizmo_request_filtered_ghost_import_fresh
+ * — see ghost_symlist_lifecycle.h. */
 void ghost_exchange(double safety_factor)
 {
-    struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types", -1, NULL, NULL};
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types", -1, NULL, NULL,
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro(double safety_factor)
 {
-    struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_SYMMETRIC, safety_factor, "hydro_symmetric", -1, NULL, NULL};
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_SYMMETRIC, safety_factor, "hydro_symmetric", -1, NULL, NULL,
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro_oneway(double safety_factor)
 {
-    struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway", -1, NULL, NULL};
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway", -1, NULL, NULL,
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 

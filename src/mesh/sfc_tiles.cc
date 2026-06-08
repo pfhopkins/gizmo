@@ -24,7 +24,9 @@
 int build_sfc_tiles(struct particle_data *P, int num_total,
                     int type_bitmask, int target_tile_size,
                     sfc_tile_t **tiles_out, int **pool_indices_out,
-                    int *num_pool_out)
+                    int *num_pool_out,
+                    mode_b_radius_policy_t radius_policy,
+                    double scale_factor)
 {
     /* Step 1: Build pool index array (particles matching type/mass filter, in P[] order).
        Since P[] is already SFC-sorted, pool_indices preserves SFC order. */
@@ -68,17 +70,22 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
             continue;
         }
 
-        /* Initialize bbox from first particle */
+        /* Initialize bbox from first particle. tile->hmax aggregates the
+         * SSOT per-particle reach under radius_policy, scaled by scale_factor
+         * (default 1.0 → bare per-policy reach for Mode A; ghost_exchange
+         * passes j_radius_scale * safety_factor here to keep BVH bands and
+         * leaf compact h on the same supply-side reach). */
         int j0 = pool[start];
         tiles[t].lo[0] = tiles[t].hi[0] = P[j0].Pos[0];
         tiles[t].lo[1] = tiles[t].hi[1] = P[j0].Pos[1];
         tiles[t].lo[2] = tiles[t].hi[2] = P[j0].Pos[2];
-        if(P[j0].KernelRadius > tiles[t].hmax) tiles[t].hmax = P[j0].KernelRadius;
         {
+            double h0 = nlr_particle_symmetric_radius(P[j0], radius_policy) * scale_factor;
+            if(h0 > tiles[t].hmax) tiles[t].hmax = h0;
             int t0 = (int)P[j0].Type;
             if(t0 >= 0 && t0 < TILE_NUM_PTYPES &&
-               P[j0].KernelRadius > tiles[t].hmax_by_type[t0])
-                tiles[t].hmax_by_type[t0] = P[j0].KernelRadius;
+               h0 > tiles[t].hmax_by_type[t0])
+                tiles[t].hmax_by_type[t0] = h0;
         }
 
         /* Expand bbox with remaining particles */
@@ -91,11 +98,12 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
                 if(P[j].Pos[k] < tiles[t].lo[k]) tiles[t].lo[k] = P[j].Pos[k];
                 if(P[j].Pos[k] > tiles[t].hi[k]) tiles[t].hi[k] = P[j].Pos[k];
             }
-            if(P[j].KernelRadius > tiles[t].hmax) tiles[t].hmax = P[j].KernelRadius;
+            double hj = nlr_particle_symmetric_radius(P[j], radius_policy) * scale_factor;
+            if(hj > tiles[t].hmax) tiles[t].hmax = hj;
             int tj = (int)P[j].Type;
             if(tj >= 0 && tj < TILE_NUM_PTYPES &&
-               P[j].KernelRadius > tiles[t].hmax_by_type[tj])
-                tiles[t].hmax_by_type[tj] = P[j].KernelRadius;
+               hj > tiles[t].hmax_by_type[tj])
+                tiles[t].hmax_by_type[tj] = hj;
         }
     }
 

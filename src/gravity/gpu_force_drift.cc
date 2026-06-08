@@ -246,19 +246,20 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
             if(Extnodes_uvm[no].hmax > 0) {
                 Extnodes_uvm[no].hmax = (MyFloat)((double)Extnodes_uvm[no].hmax * decay_fac);
             }
-            /* Mode B per-type bands: same conservative single-divVmax decay
-             * as scalar, applied here on the GPU because this kernel advances
-             * Nodes[no].Ti_current to ti_target, which causes the host-side
-             * force_drift_node (with its Stage-2 per-type decay) to early-
-             * return on subsequent visits. Without this loop, per-type bands
-             * would stay frozen at their last seeded value while scalar
-             * decays — under-pruning in expansion regions (positive
-             * divVmax → scalar grows, per-type stale-low → walker R_eff
-             * underestimates → missed neighbors). UVM access; no SoA mirror
-             * needed (Mode B walker reads Extnodes directly). */
-            for(int t = 0; t < 6; t++) {
-                if(Extnodes_uvm[no].hmax_per_type[t] > 0) {
-                    Extnodes_uvm[no].hmax_per_type[t] = (MyFloat)((double)Extnodes_uvm[no].hmax_per_type[t] * decay_fac);
+            /* Mode B per-type bands: upward-only inflate (codex 2026-06-07).
+             * Bands include static-ish sources (P[j].ForceSoftening) that
+             * don't shrink under drift, so decaying below the actual FS value
+             * would under-bound the node-prune. force_update_hmax() re-grows
+             * bands per-particle each call; we just must not shrink them
+             * here. Scalar `hmax` keeps its legacy bidirectional decay above.
+             * Without this guard, expansion regions (positive divVmax) still
+             * track via the upward branch — fixing the previous "frozen
+             * stale-low" concern documented in the prior comment. */
+            if(decay_fac > 1.0) {
+                for(int t = 0; t < 6; t++) {
+                    if(Extnodes_uvm[no].hmax_per_type[t] > 0) {
+                        Extnodes_uvm[no].hmax_per_type[t] = (MyFloat)((double)Extnodes_uvm[no].hmax_per_type[t] * decay_fac);
+                    }
                 }
             }
         }

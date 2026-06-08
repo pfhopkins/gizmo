@@ -61,7 +61,16 @@ int    force_getcost_single(void);
 int    force_getcost_quadru(void);
 void   force_resetcost(void);
 void   force_setupnonrecursive(int no);
-void   force_treeallocate(int maxnodes, int maxpart);  
+void   force_treeallocate(int maxnodes, int maxpart);
+/* Conservative per-particle radius used to seed Extnodes[no].hmax_per_type[Type]
+ * bands. Mode B SYMMETRIC tree-prune reads these bands as an upper bound on
+ * any leaf-policy-selectable reach for that type, so the band must dominate
+ * every per-particle radius source a Spec's radius_policy can pick at the
+ * leaf (P[i].KernelRadius, P[i].AGS_KernelRadius when defined, P[i].ForceSoftening).
+ * Leaf-level Mode B predicate / Mode A compact_xyzh still apply the exact policy;
+ * over-opening here is correct (extra candidates filter at leaf). Capped at
+ * All.MaxKernelRadius to match the legacy band semantics. */
+double force_hmax_per_type_particle_radius(int i);
 int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
