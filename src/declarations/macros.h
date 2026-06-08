@@ -150,19 +150,6 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 [[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
 
-/* terminate -> reviewed internal-invariant emergency-hold path (NOT soft). Its
-   call sites are internal-invariant asserts inside MPI-collective code (parallel
-   sort, mpi_util, fof, tree/drift, prediction); a returning soft bad-stop there
-   would manufacture a subset/turn deadlock. Routes to the SSOT
-   gizmo_emergency_hold_reviewed (core/run.cc) whose DEFAULT path is a
-   scancel-killable hold, NOT MPI_Abort (which is now env-gated debug-only).
-   [Stage 1d flip 2026-06-03; SSOT no-MPI_Abort 2026-06-04 `15153b17`] */
-#define terminate(x) do { \
-    char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; \
-    snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'", ThisTask, __FUNCTION__, __FILE__, __LINE__, (x)); \
-    gizmo_emergency_hold_reviewed(1, termbuf, __FILE__, __LINE__, __FUNCTION__); \
-} while(0)
-
 /* ---- GPU portability layer ----
    GIZMO_GPU_COMPILER: true when compiled by any GPU device compiler (nvcc, hipcc).
    Primary definition is in global_data_all_struct.h (earliest universal header).
