@@ -840,10 +840,9 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
                 }
             } else {
                 if (scratch.right == 0 && scratch.left == 0) {
-                    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-                    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE,
-                             "DensitySpec::after_iter: Right==0 && Left==0 && KernelRadius=%g\n", new_h);
-                    terminate(buf);
+                    printf("DensitySpec::after_iter: Right==0 && Left==0 && KernelRadius=%g (task=%d i=%d)\n", new_h, ThisTask, i); fflush(stdout);
+                    endrun(90001009);
+                    return IterResult{IterStatus::Converged, (double)new_h};   /* graceful: bad-stop set; stop iterating this active with the last finite radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
                 }
 
                 if (scratch.right == 0 && scratch.left > 0) {

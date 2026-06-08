@@ -251,11 +251,9 @@ IterResult DMDispersionSpec::after_iter(const AfterIterContext<DMDispersionSpec>
     } else {
         /* One-sided bracket (legacy lines 155-172) */
         if (scratch.Right == 0 && scratch.Left == 0) {
-            char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE,
-                "DMDispersionSpec::after_iter: Right==0 && Left==0 && "
-                "KernelRadiusDM=%g\n", new_h);
-            terminate(buf);
+            printf("DMDispersionSpec::after_iter: Right==0 && Left==0 && KernelRadiusDM=%g (task=%d)\n", new_h, ThisTask); fflush(stdout);
+            endrun(90001011);
+            return IterResult{IterStatus::Converged, new_h};   /* graceful: bad-stop set; stop iterating this active with the last valid DM-dispersion radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
         }
         double fac;
         if (scratch.Right == 0 && scratch.Left > 0) {

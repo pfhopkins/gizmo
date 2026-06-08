@@ -567,11 +567,9 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
                 new_h = pow(new_h * scratch.Left * scratch.Right, 1.0/3.0);
             }
         } else if(scratch.Right == 0 && scratch.Left == 0) {
-            char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(buf, sizeof(buf),
-                     "AGS: Right==0 && Left==0 && P[%d].AGS_KernelRadius=%g\n",
-                     i, current_h);
-            terminate(buf);
+            printf("AGS: Right==0 && Left==0 && P[%d].AGS_KernelRadius=%g (task=%d)\n", i, current_h, ThisTask); fflush(stdout);
+            endrun(90001010);
+            return IterResult{IterStatus::Converged, current_h};   /* graceful: bad-stop set; stop iterating this active with the last valid AGS radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
         } else if(scratch.Right == 0 && scratch.Left > 0) {
             /* No upper bound — geometric extrapolation (rkern.cc:336-364). */
             double fac_lim;
