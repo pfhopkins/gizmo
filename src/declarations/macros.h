@@ -140,28 +140,14 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 /*****************************************************************/
 
 /* SSOT termination entry points (defined in core/run.cc). Forward-declared HERE,
-   alongside the terminate/endrun macros that call them, so the symbols travel
-   with the macros: every TU that can expand terminate()/endrun() in host code
-   sees these declarations, even GPU TUs that include only allvars.h (and thus
-   macros.h) but not core/proto.h. Plain C++ linkage matches core/proto.h.
-   [Stage 1d flip 2026-06-03] */
+   alongside the endrun macro that calls them, so the symbols travel with the
+   macro: every TU that can expand endrun() in host code sees these declarations,
+   even GPU TUs that include only allvars.h (and thus macros.h) but not
+   core/proto.h. Plain C++ linkage matches core/proto.h. */
 void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
 [[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
-
-/* terminate -> reviewed internal-invariant emergency-hold path (NOT soft). Its
-   call sites are internal-invariant asserts inside MPI-collective code (parallel
-   sort, mpi_util, fof, tree/drift, prediction); a returning soft bad-stop there
-   would manufacture a subset/turn deadlock. Routes to the SSOT
-   gizmo_emergency_hold_reviewed (core/run.cc) whose DEFAULT path is a
-   scancel-killable hold, NOT MPI_Abort (which is now env-gated debug-only).
-   [Stage 1d flip 2026-06-03; SSOT no-MPI_Abort 2026-06-04 `15153b17`] */
-#define terminate(x) do { \
-    char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; \
-    snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'", ThisTask, __FUNCTION__, __FILE__, __LINE__, (x)); \
-    gizmo_emergency_hold_reviewed(1, termbuf, __FILE__, __LINE__, __FUNCTION__); \
-} while(0)
 
 /* ---- GPU portability layer ----
    GIZMO_GPU_COMPILER: true when compiled by any GPU device compiler (nvcc, hipcc).
@@ -221,18 +207,24 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #define IMAX(a,b) ((a) > (b) ? (a) : (b))
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
+/* Device-side endrun records its code+line into a per-TU managed sentinel that
+   the host post-kernel error check consumes and routes to a graceful stop. */
+#include "gpu_device_error_sentinel.h"
+
 #if (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
 /* GPU-device endrun/PRINT_WARNING.  Device code cannot call MPI_Abort, but it
-   must not continue after a fatal physics/error path.  Print the source
-   location, then trap the kernel so the host post-kernel error check sees the
-   failure. */
+   must not continue after a fatal physics/error path.  Record the code+line in
+   the per-TU sentinel and print the source location, then trap the kernel so the
+   host post-kernel error check sees the failure and routes to controlled-stop. */
 #if defined(__CUDA_ARCH__)
 #define GIZMO_GPU_DEVICE_TRAP() asm volatile("trap;")
 #else
 #define GIZMO_GPU_DEVICE_TRAP() __builtin_trap()
 #endif
 #define endrun(x) do { \
-    printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
+    int gizmo_endrun_code = (x); \
+    printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, gizmo_endrun_code); \
+    gizmo_gpu_device_record_error(gizmo_endrun_code, __LINE__); \
     GIZMO_GPU_DEVICE_TRAP(); \
     } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)

@@ -75,6 +75,7 @@ static void subfind_so_accumulate_particle(const int gr, const particle_data &pj
           printf("SUBFIND modern SO missing gas cell payload for group=%d task=%d\n", gr, ThisTask);
           fflush(stdout);
           endrun(13012);
+          return;	/* missing cell payload: skip this particle (avoids null dereference); drains downstream */
         }
       double temp_keV = 6.14e-16 * (cell->InternalEnergy / UNIT_SPECEGY_IN_CGS);
       out->gas_mass += pj.Mass;
@@ -261,6 +262,7 @@ static void subfind_density_other_props_loop_modern(void)
                   printf("failed to converge in modern SUBFIND SO radius iteration\n");
                   fflush(stdout);
                   endrun(1155);
+                  break;	/* MAXITER: ntot is symmetric (from sumup_large_ints), so all ranks break together to the barrier below; avoids an infinite loop */
                 }
             }
         }

@@ -16,6 +16,7 @@
  * eagerly-parsed templates referencing it. Matches density_gpu.cc include order. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 
 
@@ -292,5 +293,6 @@ extern "C" void gpu_nextnode_backup_suns(int n)
         len_soa[k]    = Nodes_uvm[k].len;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("seed_topnode_geom", n);
 }
 

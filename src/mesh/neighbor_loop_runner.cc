@@ -4459,16 +4459,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             }
         }
 
-        /* Phase 4.B.0 v4.3 step 0 — partition-by-subgroup debug assertion
-         * (OPEN_3d_agsdensity_design.md §5a). Gated under DEBUG or the
-         * dedicated env-macro so production builds carry zero overhead.
-         * Calls the path-correct ctx accessor via Spec::active_subgroup_key
-         * for every active in every globally-active subgroup; mismatch with
-         * the iter-0 recorded j_type_bitmask = terminate(). Host-side check
-         * before per-iter dispatch. */
+        /* Partition-by-subgroup debug assertion (DEBUG / GIZMO_NLR_ASSERT_PARTITION
+         * only; zero production overhead). Checks each active's active_subgroup_key
+         * against the iter-0 j_type_bitmask; a mismatch routes to the graceful
+         * controlled stop below. Host-side, before per-iter dispatch. */
 #if defined(DEBUG) || defined(GIZMO_NLR_ASSERT_PARTITION)
         if constexpr (nlr_spec_actives_partition_by_subgroup_v<Spec>) {
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
+            int local_partition_bad = 0;
+            for (int sg = 0; sg < args.num_subgroups && !local_partition_bad; sg++) {
                 /* Skip globally-converged subgroups (iter > 0 only). */
                 if (drv.iter_index > 0 && drv.global_active_per_sg[sg] <= 0) continue;
                 const int n_compacted = drv.active_set_size[sg];
@@ -4479,19 +4477,29 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     const int i    = sgr.active_indices[slot];
                     const int key  = Spec::active_subgroup_key(drv.ctx, i, drv.cs);
                     if (static_cast<unsigned int>(key) != expect) {
-                        char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-                        snprintf(buf, sizeof(buf),
-                            "[run_neighbor_loop_iterative<%s>] FATAL: Spec contract "
-                            "violation: actives_partition_by_subgroup key drift. "
-                            "sg=%d iter=%d slot=%d i=%d expected_bm=%u got_key=%d. "
-                            "active_subgroup_key MUST be a pure function of "
-                            "state that does not change across iterations. See "
-                            "OPEN_3d_agsdensity_design.md §5a.\n",
-                            Spec::loop_name, sg, drv.iter_index, slot, i,
-                            expect, key);
-                        terminate(buf);
+                        printf("[run_neighbor_loop_iterative<%s>] FATAL: Spec contract "
+                               "violation: actives_partition_by_subgroup key drift. "
+                               "sg=%d iter=%d slot=%d i=%d expected_bm=%u got_key=%d. "
+                               "active_subgroup_key MUST be a pure function of "
+                               "state that does not change across iterations. See "
+                               "OPEN_3d_agsdensity_design.md §5a.\n",
+                               Spec::loop_name, sg, drv.iter_index, slot, i,
+                               expect, key); fflush(stdout);
+                        local_partition_bad = 1;
+                        break;
                     }
                 }
+            }
+            /* Debug-only: collectivize the per-rank assertion result so all ranks
+             * reach the controlled stop together BEFORE the per-iter dispatch
+             * collectives below (a lone asserting rank would otherwise desync). */
+            int global_partition_bad = local_partition_bad;
+            if (NTask > 1) {
+                MPI_Allreduce(&local_partition_bad, &global_partition_bad, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            }
+            if (global_partition_bad) {
+                endrun(90001020);
+                gizmo_exit_bad_stop_if_requested("nlr:partition_key_drift");
             }
         }
 #endif

@@ -89,13 +89,15 @@ void reconstruct_timebins(void)
         NumForceUpdate++;
         if(i >= NumPart)
         {
-            printf("Bummer i=%d\n", i);
-            terminate("inconsistent list");
+            printf("inconsistent active list: i=%d >= NumPart=%d (task=%d)\n", i, NumPart, ThisTask); fflush(stdout);
+            endrun(90001003);
+            break;   /* graceful: stop scanning the bad list; all ranks still reach sumup_large_ints below, then drain at the next phase poll */
         }
     }
     
     sumup_large_ints(1, &NumForceUpdate, &glob_sum);
     GlobNumForceUpdate = glob_sum;
+    gizmo_exit_bad_stop_if_requested("predict:reconstruct_timebins_active_list");  /* drain a bad active-list (line ~93) before callers use GlobNumForceUpdate; collective-safe (every call reaches sumup_large_ints above) */
 }
 
 
@@ -107,8 +109,9 @@ void drift_particle(int i, integertime time1)
     int j __attribute__((unused)); double dt_drift; integertime time0 = P[i].Ti_current;
     if(time1 < time0)
     {
-        printf("i=%d time0=%lld time1=%lld\n", i, (long long)time0, (long long)time1);
-        terminate("no prediction into past allowed");
+        printf("no prediction into past allowed: i=%d time0=%lld time1=%lld (task=%d)\n", i, (long long)time0, (long long)time1, ThisTask); fflush(stdout);
+        endrun(90001004);
+        return;   /* graceful: skip the drift; bad-stop drains at the next phase poll */
     }
     if(time1 == time0) {return;}
     

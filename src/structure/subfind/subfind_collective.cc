@@ -94,7 +94,7 @@ void subfind_unbind_independent_ones(int count_cand)
         while(P[i].submark < candidates[k].nsub)
         {
             i++;
-            if(i >= NumPart) {endrun(13213);}
+            if(i >= NumPart) {endrun(13213); goto unbind_done;}   /* exhausted particles: stop (no collective here; drains at the caller's barrier) */
         }
         if(P[i].submark >= 0 && P[i].submark < HIGHBIT)
         {
@@ -103,7 +103,7 @@ void subfind_unbind_independent_ones(int count_cand)
             if(nsubs != candidates[k].nsub)
             {
                 printf("TASK=%d i=%d k=%d nsubs=%d candidates[k].nsub=%d\n", ThisTask, i, k, nsubs, candidates[k].nsub);
-                endrun(13199);
+                endrun(13199); continue;   /* candidate/submark mismatch: skip this candidate; drains at the caller's barrier */
             }
             
             while(i < NumPart)
@@ -135,6 +135,7 @@ void subfind_unbind_independent_ones(int count_cand)
             else {candidates[k].bound_length = 0;}
         }
     }
+unbind_done:
     myfree(ud);
     myfree(R2list);
 }
@@ -155,16 +156,22 @@ void subfind_process_group_collectively(int num)
     if(ThisTask == ((GrNr - 1) % NTask))
     {
         for(grindex = 0; grindex < Ngroups; grindex++) {if(Group[grindex].GrNr == GrNr) {break;}}
-        if(grindex >= Ngroups) {endrun(8);}
-        totgrouplen2 = Group[grindex].Len;
+        if(grindex >= Ngroups) {endrun(8); totgrouplen2 = -1;}   /* sentinel: the symmetric mismatch poll below drains it */
+        else {totgrouplen2 = Group[grindex].Len;}
     }
-    
+
     MPI_Bcast(&totgrouplen2, 1, MPI_INT, (GrNr - 1) % NTask, MPI_COMM_WORLD);
     if(totgrouplen1 != totgrouplen2) {endrun(9);}            /* inconsistency */
+    /* totgrouplen1 (Allreduce) and totgrouplen2 (Bcast) are identical on every rank, so this is
+       symmetric: drain here before the collective domain decomposition that follows. */
+    gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:grouplen_mismatch");
     /* distribute this halo among the processors */
     t0 = my_second();
     domain_free_trick();
     domain_Decomposition(1, 0, 0);
+    /* drain a soft stop from the domain top-tree group-count invariant before any downstream SUBFIND
+       use of the (possibly bad) domain/top-tree state. */
+    gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:post_domain_decomposition");
     t1 = my_second();
     if(ThisTask == 0) {printf("domain_Decomposition() took %g sec  (presently allocated=%g MB)\n", timediff(t0, t1), AllocatedBytes / (1024.0 * 1024.0));}
     
@@ -292,7 +299,10 @@ void subfind_process_group_collectively(int num)
         myfree(offset);
         myfree(countlist);
         if(ThisTask == 0) {myfree(tmp_candidates);}
-        
+        /* the rank-0 nesting-count invariant (8812313) is now soft; rank 0 still joins the Scatterv
+           above, so drain here (all-rank) before candidates[].parent is consumed below. */
+        gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:candidate_nesting_sort");
+
         for(i = 0, count_leaves = 0, max_loc_length = 0; i < count_cand; i++)
         if(candidates[i].parent == 0)
         {
@@ -360,15 +370,16 @@ void subfind_process_group_collectively(int num)
                     {
                         for(i = 0, p = candidates[k].head; i < candidates[k].len; i++)
                         {
-                            subfind_distlinklist_mark_particle(p, TaskID, nsubs);
-                            if(p < 0)
+                            if(p < 0)   /* check BEFORE issuing a request keyed on p */
                             {
                                 printf("Bummer i=%d \n", i);
-                                endrun(128);
+                                endrun(128); goto mark_walk_done;   /* corrupt link: stop walking; still send polling-done so workers exit */
                             }
+                            subfind_distlinklist_mark_particle(p, TaskID, nsubs);
                             p = subfind_distlinklist_get_next(p);
                         }
-                        
+
+                    mark_walk_done:
                         /* now tell the others to stop polling */
                         for(i = 0; i < NTask; i++) {if(i != ThisTask) {MPI_Send(&i, 1, MPI_INT, i, TAG_POLLING_DONE, MPI_COMM_WORLD);}}
                     }
@@ -458,14 +469,15 @@ void subfind_process_group_collectively(int num)
                 {
                     for(i = 0, p = candidates[k].head; i < candidates[k].len; i++)
                     {
-                        subfind_distlinklist_add_particle(p);
-                        if(p < 0)
+                        if(p < 0)   /* check BEFORE issuing a request keyed on p */
                         {
                             printf("Bummer i=%d \n", i);
-                            endrun(123);
+                            endrun(123); goto add_walk_done;   /* corrupt link: stop walking; still send polling-done so workers exit */
                         }
+                        subfind_distlinklist_add_particle(p);
                         p = subfind_distlinklist_get_next(p);
                     }
+                add_walk_done:
                     /* now tell the others to stop polling */
                     for(i = 0; i < NTask; i++) {if(i != ThisTask) {MPI_Send(&i, 1, MPI_INT, i, TAG_POLLING_DONE, MPI_COMM_WORLD);}}
                 }
@@ -559,6 +571,9 @@ void subfind_process_group_collectively(int num)
     myfree(offset);
     myfree(countlist);
     if(ThisTask == 0) {myfree(tmp_candidates);}
+    /* the rank-0 parent-ranking invariant (1212313) is now soft; rank 0 still joins the Scatterv
+       above, so drain here (all-rank) before candidates[].parent is consumed below. */
+    gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:parent_rank_sort");
     t1 = my_second();
     if(ThisTask == 0) {printf("determination of parent subhalo took %g sec (presently allocated %g MB)\n", timediff(t0, t1), AllocatedBytes / (1024.0 * 1024.0));}
     
@@ -612,9 +627,10 @@ void subfind_process_group_collectively(int num)
                 /* we have filled into ud the binding energy and the particle ID return */
                 if(((GrNr - 1) % NTask) == ThisTask)
                 {
-                    if(Nsubgroups >= MaxNsubgroups) {endrun(899);}
+                    if(Nsubgroups >= MaxNsubgroups) {endrun(899);}   /* table full: skip recording (avoids OOB SubGroup[] write); drains downstream */
+                    else {
                     if(subnr == 0) {for(j = 0; j < 3; j++) {Group[grindex].Pos[j] = SubPos[j];}}
-                    
+
                     SubGroup[Nsubgroups].Len = len;
                     if(subnr == 0) {SubGroup[Nsubgroups].Offset = Group[grindex].Offset;}
                     else {SubGroup[Nsubgroups].Offset = SubGroup[Nsubgroups - 1].Offset + SubGroup[Nsubgroups - 1].Len;}
@@ -633,6 +649,7 @@ void subfind_process_group_collectively(int num)
                     SubGroup[Nsubgroups].Spin = SubSpin;
                     for(j = 0; j < 6; j++) {SubGroup[Nsubgroups].MassTab[j] = SubMassTab[j];}
                     Nsubgroups++;
+                    }
                 }
                 /* Let's now assign the subgroup number */
                 for(i = 0; i < LocalLen; i++) {P[ud[i].index].SubNr = subnr;}
@@ -655,6 +672,9 @@ void subfind_process_group_collectively(int num)
     domain_allocate_trick();
     qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_origindex);    /* reorder them such that the gas particles match again */
     for(i = 0; i < NumPart; i++) {if(P[i].origindex != i) {endrun(7777);}}
+    /* per-rank reorder-integrity check is now soft; the loop completes on every rank, so drain here
+       (all-rank) before returning to the driver's next collective group iteration. */
+    gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:origindex_reorder");
 }
 
 
@@ -700,9 +720,9 @@ void subfind_col_find_candidates(int totgrouplen)
                             printf("We have a problem!  head=%d/%d for k=%d on task=%d\n",
                                    (int) (head >> 32), (int) head, k, ThisTask);
                             fflush(stdout);
-                            endrun(13123);
+                            endrun(13123); goto candidate_walk_done;   /* corrupt link: stop walking; polling-done is sent below */
                         }
-                        
+
                         retcode = subfind_distlinklist_get_tail_set_tail_increaselen(head, &tail, sd[k].index);
                         
                         if(!(retcode & 1))
@@ -728,9 +748,9 @@ void subfind_col_find_candidates(int totgrouplen)
                                    (int) (head >> 32), (int) head,
                                    (int) (head_attach >> 32), (int) head_attach, k, ThisTask);
                             fflush(stdout);
-                            endrun(13123);
+                            endrun(13123); goto candidate_walk_done;   /* corrupt link: stop walking; polling-done is sent below */
                         }
-                        
+
                         if(head != head_attach)
                         {
                             subfind_distlinklist_get_tailandlen(head, &tail, &len);
@@ -791,13 +811,14 @@ void subfind_col_find_candidates(int totgrouplen)
             }
             
             fflush(stdout);
-            
+
+        candidate_walk_done:
             /* now tell the others to stop polling */
             for(k = 0; k < NTask; k++)
             if(k != ThisTask)
                 MPI_Send(&k, 1, MPI_INT, k, TAG_POLLING_DONE, MPI_COMM_WORLD);
         }
-        
+
         MPI_Barrier(MPI_COMM_WORLD);
         tt1 = my_second();
         if(ThisTask == 0)
@@ -998,7 +1019,7 @@ int subfind_col_unbind(struct unbind_data *d, int num, int *num_non_gas)
 	      }
 
 	  if(mincpu < 0)
-	    endrun(112);
+	    {endrun(112); gizmo_exit_bad_stop_if_requested("subfind_col_unbind:mincpu_potential"); return num;}   /* symmetric: every rank computed the same mincpu from the Allgather'd potlist */
 
 	  myfree(potlist);
 
@@ -1296,14 +1317,14 @@ void subfind_poll_for_requests(void)
 	  break;
 	case TAG_ADD_PARTICLE:
 	  MPI_Recv(&index, 1, MPI_INT, source, tag, MPI_COMM_WORLD, &status);
-	  if(Tail[index] < 0)	/* consider only particles not already in substructures */
+	  if(index < 0 || index >= NumPartGroup)	/* bounds check BEFORE Tail[index]; keep polling so the protocol stays in sync */
+	    {
+	      printf("What: index=%d NumPartGroup=%d\n", index, NumPartGroup);
+	      endrun(199);
+	    }
+	  else if(Tail[index] < 0)	/* consider only particles not already in substructures */
 	    {
 	      ud[LocalLen].index = index;
-	      if(index >= NumPartGroup)
-		{
-		  printf("What: index=%d NumPartGroup=%d\n", index, NumPartGroup);
-		  endrun(199);
-		}
 	      LocalLen++;
 	    }
 	  break;
@@ -1313,14 +1334,21 @@ void subfind_poll_for_requests(void)
 	  target = ibuf[1];
 	  submark = ibuf[2];
 
-	  if(P[index].submark != HIGHBIT)
+	  if(index < 0 || index >= NumPart)	/* bounds check BEFORE P[index]; keep polling so the protocol stays in sync */
+	    {
+	      printf("TasK=%d bad index=%d NumPart=%d\n", ThisTask, index, NumPart);
+	      endrun(132);
+	    }
+	  else if(P[index].submark != HIGHBIT)
 	    {
 	      printf("TasK=%d i=%d P[i].submark=%d?\n", ThisTask, index, P[index].submark);
 	      endrun(132);
 	    }
-
-	  P[index].targettask = target;
-	  P[index].submark = submark;
+	  else
+	    {
+	      P[index].targettask = target;
+	      P[index].submark = submark;
+	    }
 	  break;
 	case TAG_ADDBOUND:
 	  MPI_Recv(ibuf, 2, MPI_INT, source, TAG_ADDBOUND, MPI_COMM_WORLD, &status);
@@ -1361,7 +1389,18 @@ void subfind_poll_for_requests(void)
 	  break;
 
 	default:
-	  endrun(1213);
+	  /* unexpected tag: the message is already pending (probed, not received). Drain it so the
+	     point-to-point protocol stays matched, flag the soft stop, and keep polling until
+	     TAG_POLLING_DONE; MPI_Get_count on MPI_BYTE always yields a usable byte count. */
+	  {
+	    int discard_nbytes = 0;
+	    MPI_Get_count(&status, MPI_BYTE, &discard_nbytes);
+	    if(discard_nbytes < 0) {discard_nbytes = 0;}
+	    char *discard_buf = (char *) mymalloc("subfind_poll_discard", (discard_nbytes > 0 ? discard_nbytes : 1));
+	    MPI_Recv(discard_buf, discard_nbytes, MPI_BYTE, source, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    myfree(discard_buf);
+	    endrun(1213);
+	  }
 	  break;
 	}
 
@@ -1459,15 +1498,14 @@ void subfind_distlinklist_add_particle(long long index)
 
   if(ThisTask == task)
     {
-      if(Tail[i] < 0)		/* consider only particles not already in substructures */
+      if(i < 0 || i >= NumPartGroup)	/* bounds check BEFORE Tail[i]; active walk continues and still sends polling-done */
+	{
+	  printf("What: index=%d NumPartGroup=%d\n", i, NumPartGroup);
+	  endrun(299);
+	}
+      else if(Tail[i] < 0)		/* consider only particles not already in substructures */
 	{
 	  ud[LocalLen].index = i;
-	  if(i >= NumPartGroup)
-	    {
-	      printf("What: index=%d NumPartGroup=%d\n", i, NumPartGroup);
-	      endrun(299);
-	    }
-
 	  LocalLen++;
 	}
     }
@@ -1486,14 +1524,21 @@ void subfind_distlinklist_mark_particle(long long index, int target, int submark
 
   if(ThisTask == task)
     {
-      if(P[i].submark != HIGHBIT)
+      if(i < 0 || i >= NumPart)	/* bounds check BEFORE P[i]; active walk continues and still sends polling-done */
+	{
+	  printf("Tas=%d bad i=%d NumPart=%d\n", ThisTask, i, NumPart);
+	  endrun(131);
+	}
+      else if(P[i].submark != HIGHBIT)
 	{
 	  printf("Tas=%d i=%d P[i].submark=%d?\n", ThisTask, i, P[i].submark);
 	  endrun(131);
 	}
-
-      P[i].targettask = target;
-      P[i].submark = submark;
+      else
+	{
+	  P[i].targettask = target;
+	  P[i].submark = submark;
+	}
     }
   else
     {

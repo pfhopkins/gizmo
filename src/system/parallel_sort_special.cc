@@ -102,7 +102,7 @@ void parallel_sort_special_P_GrNr_ID(void)
     }
 
   if(Nimport != NumPart)
-    terminate("Nimport != NumPart");
+    gizmo_emergency_hold_reviewed(90002010, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort_special Nimport!=NumPart after Alltoall, before Sendrecv", __FILE__, __LINE__, __FUNCTION__);
 
 
   struct particle_data *pbuf;

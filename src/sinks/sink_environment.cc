@@ -6,10 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-/* Kokkos_Core.hpp MUST precede allvars.h: macros.h #defines `terminate(...)`
- * which would mangle std::terminate inside Kokkos's transitive <exception>
- * include. Required because sink_env1_loop.h emits Kokkos::atomic_min
- * inline under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. */
+/* Kokkos_Core.hpp must precede allvars.h (its macros may conflict with stdlib
+ * names); sink_env1_loop.h emits inline Kokkos here. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"

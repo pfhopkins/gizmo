@@ -474,6 +474,8 @@ void powerspec_turb(int filenr)
   tend = my_second();
   
   PRINT_STATUS("end turbulent power spectra  took %g seconds", timediff(tstart, tend));
+
+  gizmo_exit_bad_stop_if_requested("powerspec_turb:save_io");  /* drain a rank-0 powerspec_turb_save() file-open failure; all ranks reach here */
 }
 
 
@@ -592,11 +594,10 @@ void powerspec_turb_collect(void)
 void powerspec_turb_save(char *fname, double *disp)
 {
   FILE *fd;
-  char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
   int i;
   if(ThisTask == 0)
     {
-      if(!(fd = fopen(fname, "w"))) {snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "can't open file `%s`\n", fname); terminate(buf);}
+      if(!(fd = fopen(fname, "w"))) {printf("can't open file `%s`\n", fname); fflush(stdout); endrun(90001014); return;}  /* rank-0 only; bad-stop drained by the all-rank poll at the end of powerspec_turb() */
       fprintf(fd, "%.16g\n", All.Time);
       i = TURB_DRIVING_SPECTRUMGRID;
       fprintf(fd, "%d\n", i);
@@ -928,7 +929,12 @@ double powerspec_turb_obtain_fields(void)
             if(ntot > 0) {
                 iter_count++;
                 if(iter_count > 0 && ThisTask == 0) PRINT_STATUS("powespec_vel nearest iteration %d: need to repeat for %lld particles", iter_count, ntot);
-                if(iter_count > max_iter) terminate("failed to converge");
+                if(iter_count > max_iter)
+                {
+                    printf("powerspec_turb_obtain_fields: failed to converge (iter_count=%d > max_iter=%d, task=%d)\n", iter_count, max_iter, ThisTask); fflush(stdout);
+                    endrun(90001013);
+                    break;   /* graceful: stop the nearest-cell retry; ntot is symmetric (sumup_longs) so all ranks break together; drained at the poll after the myfrees below */
+                }
             }
         } while(ntot > 0);
 
@@ -937,6 +943,8 @@ double powerspec_turb_obtain_fields(void)
 
   myfree(powerspec_turb_nearest_rkern);
   myfree(powerspec_turb_nearest_distance);
+
+  gizmo_exit_bad_stop_if_requested("powerspec_turb_obtain_fields:nonconverged");  /* drain a symmetric nearest-cell non-convergence (all ranks broke together) */
 
     if(ThisTask == 0) {printf("done finding velocity field\n");}
 

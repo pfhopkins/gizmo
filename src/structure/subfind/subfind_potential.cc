@@ -78,6 +78,9 @@ void subfind_potential_compute(int num, struct unbind_data *d, int phase, double
         for(j = 0; j < nimport; j++) {subfind_force_treeevaluate_potential(j, 1, &dummy, &dummy);}
         if(i >= num) {ndone_flag = 1;} else {ndone_flag = 0;}
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        /* all ranks have finished this round's query/import exchange and no peer is waiting in the
+           result exchange yet: drain a too-small-export-buffer soft stop here instead of retrying forever. */
+        gizmo_exit_bad_stop_if_requested("subfind_potential_compute:export_buffer");
         /* get the result */
         for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
         {

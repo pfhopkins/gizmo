@@ -26,6 +26,7 @@
 #include "../core/proto.h"
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
+#include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
 #include "forcetree.h"
@@ -1860,6 +1861,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         }
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
     double t_grv_post_kernel = my_second();
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
@@ -2334,6 +2336,7 @@ extern "C" int gpu_ewald_walk_primary(void)
         else   {d_failed[a] = 1;}
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("gpu_ewald_walk_primary", num_active);
 
     int nsucceeded = 0;
     for(int a = 0; a < num_active; a++) {

@@ -42,6 +42,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
@@ -206,6 +207,7 @@ extern "C" void gpu_force_update_tree(void)
                 }
             });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("gpu_force_kick", num_active);
         double t_fut_kernel_done = my_second();
         gizmo_step_phase_record("fut_kernel", timediff(t_fut_drift_nodes, t_fut_kernel_done));
 

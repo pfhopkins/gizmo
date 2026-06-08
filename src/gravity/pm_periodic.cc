@@ -2977,6 +2977,8 @@ void powerspec(int flag, int *typeflag)
 
   tend = my_second();
   PRINT_STATUS("end power spectrum. (step=%d) took %g seconds", flag, timediff(tstart, tend));
+
+  gizmo_exit_bad_stop_if_requested("powerspec:save_io");  /* drain a rank-0 powerspec_save() file-open failure; all ranks reach here regardless of flag */
 }
 
 double PowerSpec_Efstathiou(double k)
@@ -3043,7 +3045,7 @@ void powerspec_save(void)
       if(!(fd = fopen(power_spec_fname, "w")))
 	{
 	  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "can't open file `%s`\n", power_spec_fname);
-	  terminate(buf);
+	  printf("%s", buf); fflush(stdout); endrun(90001015); return;   /* rank-0 only; bad-stop drained by the all-rank poll at the end of powerspec() */
 	}
 
       for(flag = 0; flag < 2; flag++)

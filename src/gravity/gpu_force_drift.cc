@@ -32,6 +32,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
@@ -294,6 +295,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #endif
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("gpu_force_drift_nodes", n_nodes);
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
 #endif

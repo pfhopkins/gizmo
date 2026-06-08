@@ -58,6 +58,7 @@ static void subfind_modern_select_neighbors(const group_search_import_pool_t &po
              source_index, (int)pool.particles.size(), list_pos, ThisTask);
       fflush(stdout);
       endrun(990508);
+      return;	/* invalid source index: return with empty selection (avoids out-of-bounds pool access); drains downstream */
     }
   double h = pool.particles[source_index].DM_KernelRadius;
   double h2 = h * h;
@@ -70,6 +71,7 @@ static void subfind_modern_select_neighbors(const group_search_import_pool_t &po
                  j, (int)pool.particles.size(), list_pos, n, nl.offsets[list_pos + 1], ThisTask);
           fflush(stdout);
           endrun(990509);
+          continue;	/* invalid neighbor index: skip it (avoids out-of-bounds pool access); drains downstream */
         }
       const particle_data &pj = pool.particles[j];
       if(pj.Mass <= 0) continue;
@@ -198,6 +200,7 @@ void subfind_density_modern(int j_in)
           printf("modern SUBFIND density failed to converge\n");
           fflush(stdout);
           endrun(990506);
+          break;	/* MAXITER: ntot is symmetric (from sumup_large_ints), all ranks break together; avoids an infinite loop */
         }
     }
   while(ntot > 0);
@@ -276,6 +279,7 @@ void subfind_find_linkngb_modern(void)
           printf("modern SUBFIND find_linkngb failed to converge\n");
           fflush(stdout);
           endrun(990507);
+          break;	/* MAXITER: ntot is symmetric (from sumup_large_ints), all ranks break together; avoids an infinite loop */
         }
     }
   while(ntot > 0);

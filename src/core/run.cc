@@ -67,18 +67,16 @@ static void rt_step_checksum(const char *label) {
 #endif
 
 /* --------------------------------------------------------------------------
- * Controlled-stop / bad-stop helper (Wave-CBE 2026-05-28; generalized
- * 2026-06-02 for the Vista no-MPI_Abort policy). See core/proto.h for the
- * contract. First-set wins; we do not clear the local code after collection.
+ * Controlled-stop / bad-stop helper (no-MPI_Abort policy). See core/proto.h for
+ * the contract. First-set wins; the local code is not cleared after collection.
  * The diagnostic is COPIED into owned static storage (callers may pass stack
- * buffers, e.g. terminate(buf)), so there is no lifetime requirement on the
- * caller's reason string.
+ * buffers), so there is no lifetime requirement on the caller's reason string.
  * -------------------------------------------------------------------------- */
 static int  ControlledStop_LocalCode  = 0;
 static int  ControlledStop_GlobalCode = 0;
 /* Owned static storage for the first-set local diagnostic. We COPY here rather
- * than store the caller's pointer: callers may pass stack buffers (e.g. the
- * terminate(buf) macro), so a stored const char* would dangle. */
+ * than store the caller's pointer: callers may pass stack buffers, so a stored
+ * const char* would dangle. */
 static char ControlledStop_LocalDiag[MAX_PATH_BUFFERSIZE_TOUSE] = {0};
 
 void gizmo_request_controlled_stop(int code, const char *reason,
@@ -141,32 +139,23 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 }
 
 /* ---------------------------------------------------------------------------
- * Reviewed emergency HOLD — the SSOT last-resort termination home in GIZMO.
- * As of 2026-06-04 the DEFAULT path no longer calls MPI_Abort (MPI_Abort wedges
- * GPU nodes on Vista -> SLURM CG-stuck -> reboots). `grep MPI_Abort` now finds
- * MPI_Abort here ONLY inside the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG
- * debug branch.
+ * Reviewed emergency HOLD — SSOT last-resort termination. The DEFAULT path does
+ * NOT call MPI_Abort (it wedges GPU nodes -> SLURM CG-stuck); MPI_Abort survives
+ * only behind the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG branch.
  *
- * Use ONLY for the rare audited cases where a graceful bad-stop cannot reach
- * a collective poll (mid-protocol MPI transport corruption; residual incidental
- * allocator capacity failure that has no preflight coverage; and the myrealloc*
- * invariant paths, which are TEMP_HARD_CANDIDATE_ALLOCATOR_INVARIANT until their
- * callers in domain.cc / mpi_util.cc are guarded — a bad-stop+return there would
- * hand the caller a falsely "resized" buffer). NOT large symmetric allocations,
- * which get caller-side collective preflight; and NOT the myfree* invariant
- * paths, which ARE bad-stop + immediate local return (void, safe to drain to the
- * next poll).
- * Default behavior: print+flush an actionable diagnostic (incl. `scancel`
- * instruction), best-effort device fence, then a controlled host sleep/hold loop
- * with NO further MPI calls -- leaving every rank in a scancel-killable state
- * instead of an MPI_Abort node-wedge. This is a last-resort Vista GPU quarantine,
- * NOT a reference-code pattern (AthenaK print+exit; SPH-EXA/Shamrock exceptions;
- * none sleep) and NOT the target: always prefer converting the CALLING site to a
- * graceful gizmo_request_controlled_stop() + phase-boundary poll. Env knobs:
- * GIZMO_EMERGENCY_HOLD_USE_STD_EXIT (clean exit, Vista de-wedge test),
- * GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE, GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG.
- * See OPEN_endrun_audit_memo / OPEN_vista_no_mpi_abort_design /
- * STATE_2026-06-04_stage4_pass_a §9a.
+ * Use ONLY where a graceful bad-stop cannot reach a collective poll: mid-protocol
+ * MPI transport corruption; residual allocator capacity floors with no preflight;
+ * and myrealloc* invariants (a bad-stop+return would hand back a falsely-resized
+ * buffer until the domain.cc / mpi_util.cc callers are guarded). NOT large
+ * symmetric allocations (caller-side preflight) and NOT myfree* invariants
+ * (bad-stop + local return, safe to drain).
+ *
+ * Default: print an actionable diagnostic (incl. `scancel`), best-effort device
+ * fence, then a controlled host hold with no further MPI -- every rank stays
+ * scancel-killable instead of MPI_Abort-wedging. Always prefer converting the
+ * CALLING site to gizmo_request_controlled_stop() + a phase-boundary poll. Env:
+ * GIZMO_EMERGENCY_HOLD_USE_STD_EXIT, GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE,
+ * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG.
  * ------------------------------------------------------------------------- */
 [[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func)
@@ -885,7 +874,11 @@ void find_next_sync_point_and_drift(void)
     {
       Flag_FullStep = 1;
       if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin)
-	terminate("Something is wrong with the time bins.\n");
+	{
+	  if(ThisTask == 0) {printf("Something is wrong with the time bins (HighestActiveTimeBin=%d != HighestOccupiedTimeBin=%d)\n", All.HighestActiveTimeBin, All.HighestOccupiedTimeBin); fflush(stdout);}
+	  endrun(90001001);
+	  gizmo_exit_bad_stop_if_requested("run:timebins_inconsistent");  /* symmetric (post-Allreduce bins): all ranks poll together */
+	}
     }
   else
     Flag_FullStep = 0;

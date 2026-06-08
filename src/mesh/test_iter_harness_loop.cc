@@ -18,10 +18,8 @@
  * negative tests (max-iter abort, audit mangling, Mode A + oracle stub).
  */
 
-/* Kokkos_Core MUST come BEFORE declarations/allvars.h (sinks/sink_feed_loop.h
- * pattern): allvars.h pulls in macros.h which #defines `terminate(...)`,
- * conflicting with std::terminate() in <exception> that Kokkos_Core transitively
- * includes. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <mpi.h>            /* MPI_Datatype used in declarations/typedefs.h via gpu_all_mirror.h's transitive include */
 #include <Kokkos_Core.hpp>
 

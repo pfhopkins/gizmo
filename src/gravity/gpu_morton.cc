@@ -25,6 +25,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
@@ -104,6 +105,7 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
         keys[i] = gpu_morton_encode128(ix, iy, iz);
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("morton_encode_global", npart);
     return 0;
 }
 
@@ -140,6 +142,7 @@ extern "C" int gpu_morton_sort_indices(int count, int *indices_inout)
         vals_work(j) = idx;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("morton_sort_gather", count);
 
     /* Comparator overload of sort_by_key: lexicographic on (hi, lo).
      * Falls back from radix to merge-sort on the CUDA backend (still
@@ -151,6 +154,7 @@ extern "C" int gpu_morton_sort_indices(int count, int *indices_inout)
         indices_inout[j] = vals_work(j);
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("morton_sort_scatter", count);
     return 0;
 }
 

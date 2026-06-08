@@ -1,7 +1,5 @@
-/* Standard and Kokkos headers must come BEFORE global_data_all_struct.h.
- * macros.h (included by global_data_all_struct.h) defines #define terminate(x) {...}
- * which conflicts with std::terminate declared in <exception>.  Including Kokkos/stdlib
- * first ensures <exception> is processed before the macro is defined. */
+/* Standard and Kokkos headers must precede global_data_all_struct.h
+ * (its macros may conflict with stdlib names). */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,7 +126,10 @@ void init_turb(void)
                     }
                     else
                     {
-                        terminate("unknown spectral form");
+                        if(ThisTask == 0) {printf("unknown spectral form (TurbDriving_Global_DrivingSpectrumKey=%d)\n", All.TurbDriving_Global_DrivingSpectrumKey); fflush(stdout);}
+                        endrun(90001012);
+                        gizmo_exit_bad_stop_if_requested("turb_driving:unknown_spectrum");  /* symmetric config: all ranks poll together and finalize before ampl is used */
+                        ampl = 0;   /* defensive: keep ampl defined if the poll ever returns */
                     }
                     
                     StAmpl[StNModes] = ampl;

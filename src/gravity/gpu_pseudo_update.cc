@@ -17,6 +17,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
@@ -97,6 +98,7 @@ extern "C" int gpu_force_flag_localnodes(void)
         }
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("flag_toplevel", n_leaves);
 
     /* Pass 2: BITFLAG_INTERNAL_TOPLEVEL — walk from *parent* of each
      * DomainNodeIndex[i] to root.  Marks all strict ancestors of topleaves
@@ -114,6 +116,7 @@ extern "C" int gpu_force_flag_localnodes(void)
         }
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("flag_internal_toplevel", n_leaves);
 
     /* Pass 3: BITFLAG_DEPENDS_ON_LOCAL_ELEMENT — walk from each topleaf
      * owned by ThisTask to root. */
@@ -128,6 +131,7 @@ extern "C" int gpu_force_flag_localnodes(void)
             }
         });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("flag_depends_local", n_local);
     }
 
     /* AoS writeback: mirror bitflags_soa[0..NTopnodes) → Nodes[].u.d.bitflags.

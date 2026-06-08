@@ -147,7 +147,11 @@ void gravity_tree(void)
                 }
             }
             if(TakeLevel < 0 && All.HighestOccupiedTimeBin - All.HighestActiveTimeBin < GRAVCOSTLEVELS)	/* we should have space */
-                {terminate("TakeLevel < 0, even though we should have a slot");}
+                {
+                    if(ThisTask == 0) {printf("TakeLevel < 0, even though we should have a slot\n"); fflush(stdout);}
+                    endrun(90001008);
+                    gizmo_exit_bad_stop_if_requested("gravtree:takelevel_no_slot");  /* symmetric (global LevelToTimeBin + bins): all ranks poll together */
+                }
         }
     }
     else

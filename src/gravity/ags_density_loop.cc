@@ -15,8 +15,8 @@
  *     also syncs P[i].AGS_KernelRadius every iter per codex round-8)
  *   - after_iter_global (iter > 10 print only — design v0.4.3 §6)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
- *   - set_oracle_brute_pass HARD-STUB (terminate-on-true; AGS validation
- *     used two-binary parity, not in-runner oracle — codex round-7)
+ *   - set_oracle_brute_pass HARD-STUB (controlled stop on true; AGS validation
+ *     used two-binary parity, not in-runner oracle)
  *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
  *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
@@ -171,11 +171,12 @@ void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
 void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
 {
     if(on) {
-        terminate("AgsDensitySpec::set_oracle_brute_pass: oracle is "
-                  "hard-stubbed for AGS — after_iter mutates P[i] which "
-                  "contaminates brute-pass pair_kernel reads, so the "
-                  "in-runner oracle is unavailable for AgsDensitySpec. "
-                  "See OPEN_3d_agsdensity_design.md §3a / §7.");
+        printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
+               "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
+               "the in-runner oracle is unavailable for AgsDensitySpec). "
+               "See OPEN_3d_agsdensity_design.md §3a / §7.\n"); fflush(stdout);
+        endrun(90001019);
+        gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
     }
 }
 
@@ -567,11 +568,9 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
                 new_h = pow(new_h * scratch.Left * scratch.Right, 1.0/3.0);
             }
         } else if(scratch.Right == 0 && scratch.Left == 0) {
-            char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(buf, sizeof(buf),
-                     "AGS: Right==0 && Left==0 && P[%d].AGS_KernelRadius=%g\n",
-                     i, current_h);
-            terminate(buf);
+            printf("AGS: Right==0 && Left==0 && P[%d].AGS_KernelRadius=%g (task=%d)\n", i, current_h, ThisTask); fflush(stdout);
+            endrun(90001010);
+            return IterResult{IterStatus::Converged, current_h};   /* graceful: bad-stop set; stop iterating this active with the last valid AGS radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
         } else if(scratch.Right == 0 && scratch.Left > 0) {
             /* No upper bound — geometric extrapolation (rkern.cc:336-364). */
             double fac_lim;
@@ -694,7 +693,7 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  *
  * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1. For
  * AgsDensitySpec the oracle path is HARD-STUBBED (set_oracle_brute_pass
- * terminates on true; caller endruns on GIZMO_NLR_ORACLE=1). This
+ * controlled-stops on true; caller endruns on GIZMO_NLR_ORACLE=1). This
  * compare_accum implementation therefore exists to satisfy the runner's
  * Spec contract but is unreachable under correct caller-gating. The body
  * is kept identical to the sink_feed pattern in case the caller-side

@@ -135,6 +135,9 @@ void subfind_distribute_particles(int mode)
 
 
   if(NumPart - nexport + nimport > All.MaxPart) {PRINT_WARNING("on task=%d the maximum particle number All.MaxPart=%d is reached (NumPart=%d togo=%ld toget=%ld)",ThisTask, All.MaxPart, NumPart, nexport, nimport); endrun(8765);}
+  /* capacity overflow is per-rank (asymmetric); all ranks reach this point after the Alltoall above,
+     so poll here (collective) and drain before the Sendrecv that would otherwise write past P[]. */
+  gizmo_exit_bad_stop_if_requested("subfind_distribute_particles:maxpart_preflight");
 
   partBuf = (struct particle_data *) mymalloc("partBuf", nexport * sizeof(struct particle_data));
 
@@ -275,6 +278,10 @@ void subfind_exchange(void)
 	     N_gas, count_get_gas, count_togo_gas, N_gas + count_get_gas - count_togo_gas, All.MaxPartGas);
       endrun(712187879);
     }
+  /* both capacity checks above are per-rank (asymmetric); all ranks reach this point after the
+     Alltoall, so poll here (collective) and drain before the Sendrecv loop that would otherwise
+     write past P[]/CellP[]. */
+  gizmo_exit_bad_stop_if_requested("subfind_exchange:maxpart_preflight");
 
   partBuf = (struct particle_data *) mymalloc("partBuf", count_togo * sizeof(struct particle_data));
   gasBuf = (struct gas_cell_data *) mymalloc("gasBuf", count_togo_gas * sizeof(struct gas_cell_data));

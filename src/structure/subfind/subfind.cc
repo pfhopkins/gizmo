@@ -58,6 +58,8 @@ void subfind(int num)
   if(ThisTask == 0)
     printf("FOF_DENSITY_SPLIT_TYPES is not yet supported by the modern SUBFIND neighbor-list path.\n");
   endrun(990505);
+  /* unsupported configuration is identical on every rank: drain immediately (all-rank) */
+  gizmo_exit_bad_stop_if_requested("subfind:fof_density_split_types_unsupported");
 #endif
   double t0, t1, tstart, tend;
   int i, gr, nlocid, offset, limit, ncount, ntotingrouplocal, nminingrouplocal, nmaxingrouplocal;
@@ -309,6 +311,9 @@ void subfind(int num)
 	  printf("i=%d %d task=%d type=%d\n", i, P[i].GrNr, ThisTask, P[i].Type);
 	  endrun(87);
 	}
+  /* misplaced-particle check is per-rank (asymmetric), but the loop runs to completion on every
+     rank, so drain here (all-rank) before the collective group processing below. */
+  gizmo_exit_bad_stop_if_requested("subfind:small_group_placement");
 
   /* lets estimate the maximum number of substructures we need to store on the local CPU */
   for(i = 0, nlocid = 0; i < Ngroups; i++)
@@ -568,6 +573,8 @@ void subfind_save_final(int num)
 	("Fatal error.\nNumber of processors must be a smaller or equal than `NumFilesWrittenInParallel'.\n");
       endrun(241931);
     }
+  /* this is a global configuration condition (identical on every rank): drain immediately (all-rank) */
+  gizmo_exit_bad_stop_if_requested("subfind_save_final:numfiles_config");
 
   t0 = my_second();
 
@@ -581,6 +588,9 @@ void subfind_save_final(int num)
 	subfind_save_local_catalogue(num);
       MPI_Barrier(MPI_COMM_WORLD);	/* wait inside the group */
     }
+  /* a per-rank-turn IO failure (open/alloc) only sets the soft-stop flag on the active rank; all ranks
+     have completed their turns and barriers here, so drain at this all-rank boundary. */
+  gizmo_exit_bad_stop_if_requested("subfind_save_final:catalogue_io");
 
   t1 = my_second();
 
@@ -1119,6 +1129,7 @@ void subfind_save_local_catalogue(int num)
 	{
 	  printf("can't open file `%s`\n", buf);
 	  endrun(1183);
+	  return;	/* per-rank IO: skip writes on open failure (avoids null fd use); drains at the post-turn poll */
 	}
     }
 
@@ -1187,6 +1198,7 @@ void subfind_save_local_catalogue(int num)
 	{
 	  printf("failed to allocate memory for `InfoBlock' (%g MB).\n", bytes / (1024.0 * 1024.0));
 	  endrun(2);
+	  fclose(fd); return;	/* per-rank IO: skip writes on alloc failure; drains at the post-turn poll */
 	}
 
       int n_info;
@@ -1367,6 +1379,7 @@ void subfind_save_local_catalogue(int num)
 	    {
 	      printf("failed to allocate memory for `IOBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
 	      endrun(2);
+	      break;	/* per-rank IO: stop writing blocks on alloc failure; file is closed below; drains at the post-turn poll */
 	    }
 
 	  fp = (MyOutputFloat *) IOBuffer;

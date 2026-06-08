@@ -196,7 +196,7 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 	  if(iter > 800 + 3*NTask && Local_ThisTask == 0)
 	    {
 	      printf("iter=%d: ranks_not_found=%d  Local_NTask=%d\n", iter, ranks_not_found, Local_NTask); fflush(stdout);
-	      if(iter > 900 + 3*NTask) terminate("can't find the split points. That's odd");
+	      if(iter > 900 + 3*NTask) gizmo_emergency_hold_reviewed(90002005, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort split-point search non-convergence (mid-exchange, no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
 	    }
 	}
       while(ranks_not_found);
@@ -251,7 +251,7 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 	}
 
       if(nimport != nmemb)
-	terminate("nimport != nmemb");
+	gizmo_emergency_hold_reviewed(90002006, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort nimport!=nmemb after Alltoall, before Sendrecv", __FILE__, __LINE__, __FUNCTION__);
 
       char *basetmp = (char *) mymalloc("basetmp", nmemb * size);
 
@@ -266,7 +266,7 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 	    {
 	      if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
 		{
-          if(Send_count[recvTask] > TRANSFER_SIZE_LIMIT || Recv_count[recvTask] > TRANSFER_SIZE_LIMIT) {terminate("we are above TRANSFER_SIZE_LIMIT");}
+          if(Send_count[recvTask] > TRANSFER_SIZE_LIMIT || Recv_count[recvTask] > TRANSFER_SIZE_LIMIT) {gizmo_emergency_hold_reviewed(90002007, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort count > TRANSFER_SIZE_LIMIT (mid-Sendrecv)", __FILE__, __LINE__, __FUNCTION__);}
 		  MPI_Sendrecv((char *) base + Send_offset[recvTask] * size,
 			       Send_count[recvTask] * size, MPI_BYTE,
 			       recvTask, TAG_TRANSFER,
@@ -317,7 +317,7 @@ static void get_local_rank(char *element,	/* element of which we want the rank *
 			   int (*compar) (const void *, const void *))	/* user-specified  comparison function */
 {
   if(right < left)
-    terminate("right < left");
+    gizmo_emergency_hold_reviewed(90002008, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort get_local_rank right<left invariant", __FILE__, __LINE__, __FUNCTION__);
 
   if(left == 0 && right == (int)(nmemb + 1))
     {
@@ -385,7 +385,7 @@ static void get_local_rank(char *element,	/* element of which we want the rank *
 		      if(mid != left)
 			{
 			  printf("-->left=%lld  right=%lld\n", left, right);
-			  terminate("can't be");
+			  gizmo_emergency_hold_reviewed(90002009, "REVIEWED_HARD_MID_PROTOCOL: parallel_sort get_local_rank binary-search invariant", __FILE__, __LINE__, __FUNCTION__);
 			}
 		      *loc = left;
 		      break;

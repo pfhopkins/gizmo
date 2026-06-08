@@ -21,6 +21,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
@@ -113,6 +114,7 @@ extern "C" int gpu_topology_build_data_path(int npart)
         tcur[t] = 0;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_zero_counts", ntl);
 
     /* Kernel 1: per-particle Peano + Morton key compute, TopNodes walk to
      * topleaf id, write Morton key + topleaf id, increment bucket count. */
@@ -137,6 +139,7 @@ extern "C" int gpu_topology_build_data_path(int npart)
         Kokkos::atomic_fetch_add(&tcnt[leaf], 1);
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
 
     /* Kernel 2: exclusive prefix scan to compute topleaf_start[]. */
     Kokkos::parallel_scan("topo_scan", ntl,
@@ -153,6 +156,7 @@ extern "C" int gpu_topology_build_data_path(int npart)
         tsta[ntl] = total;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_scan_sentinel", 1);
 
     /* Kernel 3: scatter -- each particle takes its slot in its topleaf's
      * range via atomic_fetch_add into tcur[]. */
@@ -162,6 +166,7 @@ extern "C" int gpu_topology_build_data_path(int npart)
         sidx[tsta[leaf] + slot] = i;
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_scatter", npart);
 
     /* Kernel 4 (per-topleaf sort): host loop over topleaves, dispatching
      * one Morton sort per range.  NTopleaves is typically O(100); each
@@ -283,6 +288,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         else {Kokkos::atomic_fetch_max(fail, 1);}
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_bfs_init", ntl);
 
     if(*fail) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
@@ -394,6 +400,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
             }
         });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_bfs_level", curr_size);
 
         /* Swap worklists. */
         Kokkos::View<BfsItem*, MemSpace> tmp = wl_curr; wl_curr = wl_next; wl_next = tmp;
@@ -450,6 +457,7 @@ extern "C" int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx
         Nodes_uvm[k].center    = soa_center[k];
     });
     Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_writeback_to_aos", range);
     return 0;
 }
 

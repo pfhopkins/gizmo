@@ -23,6 +23,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_error_check.h"
 #include "../mesh/kernel.h"                    /* kernel_main / kernel_hinv referenced inline by mechanical_fb_functions.h */
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/ghost_writeback.h"
@@ -620,6 +621,7 @@ static void cleanup_fn(void * /*vctx*/) {
             mechfb_gas_delta_zero(&d[g]);
         });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("mechfb_d_gas_iter_zero_cleanup", n);
     }
     s_ctx.num_ghosts = 0;
 }
@@ -737,6 +739,7 @@ void MechFBSpec::reset_per_iter_device_context(
             mechfb_writeback_detail::mechfb_gas_delta_zero(&d[g]);
         });
         Kokkos::fence();
+        gizmo_gpu_check_last_error("mechfb_d_gas_iter_zero", num_ghosts_now);
     }
     ctx.d_gas_iter    = aux->d_gas_iter;       /* mirror: ctx is non-owning */
     ctx.n_ghost_alloc = aux->n_ghost_alloc;

@@ -94,7 +94,7 @@ void subfind_find_nearesttwo_modern(void);
 int subfind_nearesttwo_evaluate(int target, int mode, int *nexport, int *nsend_local);
 int subfind_process_group_serial(int gr, int offset);
 int subfind_unbind(struct unbind_data *ud, int len, int *len_non_gas);
-void subfind_determine_sub_halo_properties(struct unbind_data *ud, int num, double *mass,
+int subfind_determine_sub_halo_properties(struct unbind_data *ud, int num, double *mass,
 					   Vec3<double> *pos, Vec3<double> *vel, Vec3<double> *cm, double *veldisp,
 					   double *vmax, double *vmaxrad, Vec3<double> *spin, MyIDType *mostboundid,
                                            double *halfmassrad, double *mass_tab);

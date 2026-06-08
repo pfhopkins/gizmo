@@ -1624,7 +1624,10 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 	}
     }
   if(start != nimport)
-    terminate("start != nimport");
+    {  /* rank-local: groups_to_export may carry junk mass payload. Keep the matched Alltoallv below; drain at the poll after datatype cleanup, before any HostHaloMass write. */
+      printf("fof_assign_HostHaloMass: start != nimport (start=%d nimport=%lld task=%d)\n", start, (long long)nimport, ThisTask); fflush(stdout);
+      endrun(90001016);
+    }
 
   /* send group masses to requesting tasks */
   MPI_Alltoallv(groups_to_export, Recv_count, Recv_offset, mpi_groups_mass_MinID,
@@ -1633,21 +1636,33 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
   myfree(groups_to_export);
   MPI_Type_free(&mpi_groups_mass_MinID);
 
+  gizmo_exit_bad_stop_if_requested("fof_assign_HostHaloMass:start_nimport");  /* drain the start!=nimport bad-stop after the matched Alltoallv, before any HostHaloMass write */
+
   qsort(required_groups, NgroupsExt, sizeof(struct group_mass_MinID), compare_group_mass_ID);
 
     for(i = 0; i < N_gas; i++) {if(P[i].Type==0) {CellP[i].HostHaloMass = 0;}}
 
   for(i = 0, start = 0; i < NgroupsExt; i++)
     {
+      int bad_group = 0;
       while(FOF_PList[start].MinID < required_groups[i].MinID)
 	{
 	  start++;
 	  if(start >= NumPart)
-	    terminate("start >= NumPart");
+	    {  /* OOB guard before FOF_PList[start] deref */
+	      printf("fof_assign_HostHaloMass: start >= NumPart (start=%d NumPart=%d task=%d)\n", start, NumPart, ThisTask); fflush(stdout);
+	      endrun(90001017);
+	      bad_group = 1; break;
+	    }
 	}
+      if(bad_group) break;   /* halting: exit the group loop (no collective inside) rather than re-enter the while with start==NumPart (OOB) */
 
       if(FOF_PList[start].MinID != required_groups[i].MinID)
-	terminate("FOF_PList[start].MinID != required_groups[i].MinID");
+	{  /* group not found: skip before the per-cell HostHaloMass writes */
+	  printf("fof_assign_HostHaloMass: FOF_PList[start].MinID != required (i=%d start=%d task=%d)\n", i, start, ThisTask); fflush(stdout);
+	  endrun(90001018);
+	  continue;
+	}
 
       for(lenloc = 0; start + lenloc < NumPart;)
 	if(FOF_PList[start + lenloc].MinID == required_groups[i].MinID)
@@ -1662,6 +1677,8 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 
       start += lenloc;
     }
+
+  gizmo_exit_bad_stop_if_requested("fof_assign_HostHaloMass:group_scan");  /* drain a start>=NumPart / MinID-mismatch bad-stop before HostHaloMass is consumed downstream */
 
   myfree(required_groups);
 

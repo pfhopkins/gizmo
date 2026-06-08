@@ -19,10 +19,8 @@
 #ifndef GRADIENTS_LOOP_H
 #define GRADIENTS_LOOP_H
 
-/* Kokkos_Core.hpp MUST precede declarations/allvars.h: allvars.h pulls in
- * declarations/macros.h which #defines `terminate(...)`; that macro mangles
- * std::terminate inside Kokkos transitive <exception> include if allvars.h
- * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
+/* Kokkos_Core.hpp must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"

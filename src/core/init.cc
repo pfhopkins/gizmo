@@ -127,9 +127,10 @@ void init(void)
             char *underscore = strrchr(All.InitCondFile, '_');
             if(!underscore)
             {
-                char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-                snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "Your input file '%s' lacks an underscore. Cannot infer next snapshot number.\n", All.InitCondFile);
-                terminate(buf);
+                if(ThisTask == 0) {printf("Your input file '%s' lacks an underscore. Cannot infer next snapshot number.\n", All.InitCondFile); fflush(stdout);}
+                endrun(90001002);
+                gizmo_exit_bad_stop_if_requested("init:initcondfile_no_underscore");  /* symmetric (all ranks read same InitCondFile) */
+                return;   /* defensive: do not continue with an un-inferred SnapshotFileCount */
             }
             else {All.SnapshotFileCount = atoi(underscore + 1) + 1;}
         }

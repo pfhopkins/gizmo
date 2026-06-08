@@ -1,7 +1,5 @@
-/* Standard and Kokkos headers must come BEFORE global_data_all_struct.h.
- * macros.h (included by global_data_all_struct.h) defines #define terminate(x) {...}
- * which conflicts with std::terminate declared in <exception>.  Including Kokkos/stdlib
- * first ensures <exception> is processed before the macro is defined. */
+/* Standard and Kokkos headers must precede global_data_all_struct.h
+ * (its macros may conflict with stdlib names). */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>

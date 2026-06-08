@@ -57,6 +57,7 @@ int subfind_process_group_serial(int gr, int Offs)
 	{
 	  printf("don't find a particle for groupnr=%d\n", Group[gr].GrNr);
 	  endrun(312);
+	  return Offs;	/* soft-stop drains at the barrier after the serial loop; skip this broken group */
 	}
     }
 
@@ -71,6 +72,7 @@ int subfind_process_group_serial(int gr, int Offs)
 	    ("task=%d, gr=%d: don't have the number of particles for GrNr=%d group-len=%d found=%d before=%d\n",
 	     ThisTask, gr, Group[gr].GrNr, N, P[Offs + i].GrNr, P[Offs - 1].GrNr);
 	  endrun(312);
+	  return Offs;	/* soft-stop drains at the barrier after the serial loop; skip this broken group */
 	}
     }
 
@@ -335,16 +337,17 @@ int subfind_process_group_serial(int gr, int Offs)
 	}
 
       if(count != len)
-	endrun(12);
+	{endrun(12); continue;}	/* invalid candidate bookkeeping: skip (avoids passing uninitialized ud[] entries downstream) */
 
 
-      subfind_determine_sub_halo_properties(ud, len, &SubMass,
+      if(subfind_determine_sub_halo_properties(ud, len, &SubMass,
 					    &SubPos, &SubVel, &SubCM, &SubVelDisp, &SubVmax,
 					    &SubVmaxRad, &SubSpin, &SubMostBoundID, &SubHalfMass,
-					    &SubMassTab[0]);
+					    &SubMassTab[0]))
+	{continue;}	/* no usable members: skip recording this subgroup (outputs are unset) */
 
       if(Nsubgroups >= MaxNsubgroups)
-	endrun(899);
+	{endrun(899); break;}	/* SubGroup[] full: stop adding (avoids out-of-bounds write); drains at the barrier after the serial loop */
 
       if(subnr == 0)
 	{
@@ -590,7 +593,9 @@ int subfind_compare_grp_particles(const void *a, const void *b)
   return 0;
 }
 
-void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, double *totmass,
+/* returns 0 on success; returns 1 if the group has no usable members (outputs left
+   unset) so the caller skips recording a bogus subgroup on a dying run */
+int subfind_determine_sub_halo_properties(struct unbind_data *d, int num, double *totmass,
 					   Vec3<double> *pos, Vec3<double> *vel, Vec3<double> *cm, double *veldisp,
 					   double *vmax, double *vmaxrad, Vec3<double> *spin,
 					   MyIDType * mostboundid, double *halfmassrad, double *mass_tab)
@@ -649,7 +654,7 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
     }
 
   if(minindex == -1)
-    endrun(875412);
+    {endrun(875412); return 1;}	/* empty member set: signal caller to skip (avoids P[-1] dereference + recording a bogus subgroup); drains downstream */
 
   pos_v = P[minindex].Pos;
   *pos = pos_v;
@@ -672,7 +677,7 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
     }
 
   if(minindex == -1)
-    endrun(875413);
+    {endrun(875413); return 1;}	/* no bound particle found: signal caller to skip (avoids P[-1] dereference + recording a bogus subgroup); drains downstream */
 
   *mostboundid = P[minindex].ID;
 
@@ -794,6 +799,7 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
   else
     { *veldisp = *halfmassrad = *vmax = *vmaxrad = 0; *spin = {}; }
 
+  return 0;
 }
 
 
@@ -877,6 +883,11 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
     {
       printf("ta=%d num=%d\n", ThisTask, num);
       endrun(121);
+      /* mincpu is derived identically on every rank from the Allgather'd potlist, so this
+         condition is symmetric: all ranks reach the poll together (the subsequent Bcast root
+         would be invalid). */
+      gizmo_exit_bad_stop_if_requested("subfind_col_determine_sub_halo_properties:mincpu_potential");
+      return;	/* defensive: the poll exits on a flagged stop; never reach the Bcast with an invalid root */
     }
 
   if(ThisTask == mincpu)
@@ -917,8 +928,8 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
   if(ThisTask == mincpu)
     {
       if(minindex == -1)	/* This is to cover the quasi impossible case that one cpu have had only gas */
-	endrun(875417);		/* particles and the potential in the simulation was larger than 1e30 !      */
-      mbid = P[minindex].ID;
+	{endrun(875417); mbid = 0;}	/* particles and the potential was > 1e30: use sentinel, still join the Bcast below; drains downstream */
+      else {mbid = P[minindex].ID;}
     }
 
   MPI_Bcast(&mbid, sizeof(mbid), MPI_BYTE, mincpu, MPI_COMM_WORLD);
@@ -1083,7 +1094,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
   for(i = num_use - 1, max = 0, maxrad = 0; i + offset > 5 && i >= 0; i--)
     {
       if(loc_rr_list[i].r <= 0)
-	endrun(124523);
+	{endrun(124523); continue;}	/* non-positive radius: skip (avoids divide-by-zero); still reaches the Allreduce below */
       if(loc_rr_list[i].mass / loc_rr_list[i].r > max)
 	{
 	  max = loc_rr_list[i].mass / loc_rr_list[i].r;

@@ -39,7 +39,7 @@ void subfind_loctree_findExtent(int npart, struct unbind_data *mp)
       if(mp)
 	i = mp[k].index;
       else
-	endrun(1121);
+	{endrun(1121); return;}	/* null member list: stop (avoids using an uninitialized index); drains downstream */
 
       for(j = 0; j < 3; j++)
 	{
@@ -97,7 +97,7 @@ int subfind_loctree_treebuild(int npart, struct unbind_data *mp)
   /* insert all particles */
   for(k = 0; k < npart; k++)
     {
-      if(mp) {i = mp[k].index;} else {endrun(211);}
+      if(mp) {i = mp[k].index;} else {endrun(211); break;}	/* null member list: stop inserting (avoids uninitialized index); drains downstream */
       th = All.MaxPart;
 
       while(1)
@@ -172,6 +172,7 @@ int subfind_loctree_treebuild(int npart, struct unbind_data *mp)
               printf("maximum number %d of tree-nodes reached.\n", MaxNodes);
               printf("for particle %d  %g %g %g\n", i, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
               endrun(1);
+              k = npart; break;	/* node table full: stop inserting (avoids out-of-bounds node writes); finish moments on the partial tree, drains downstream */
           }
       }
 	}
