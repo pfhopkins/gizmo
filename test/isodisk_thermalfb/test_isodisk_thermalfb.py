@@ -74,13 +74,24 @@ def test_isodisk_thermalfb(num_mpi_ranks, num_omp_threads):
 
     # Basic sanity: gas mass conservation (thermal_fb deposits ejecta mass)
     with h5py.File(f"test/{TEST_NAME}/{TEST_NAME}_ics.hdf5", "r") as F:
+        m0_dm = float(F["PartType1/Masses"][:].sum()) if "PartType1" in F else 0.0
         m0_gas  = float(F["PartType0/Masses"][:].sum()) if "PartType0" in F else 0.0
         m0_star = float(F["PartType4/Masses"][:].sum()) if "PartType4" in F else 0.0
-        total_m0 = m0_gas + m0_star
+        m0_star2 = float(F["PartType2/Masses"][:].sum()) if "PartType2" in F else 0.0
+        m0_star3 = float(F["PartType3/Masses"][:].sum()) if "PartType3" in F else 0.0
+        m0_bh = float(F["PartType5/Masses"][:].sum()) if "PartType5" in F else 0.0
+        total_m0 = m0_gas + m0_star + m0_bh + m0_star2 + m0_star3
     with h5py.File(snaps[-1], "r") as F:
+        mf_dm = float(F["PartType1/Masses"][:].sum()) if "PartType1" in F else 0.0
         mf_gas  = float(F["PartType0/Masses"][:].sum()) if "PartType0" in F else 0.0
         mf_star = float(F["PartType4/Masses"][:].sum()) if "PartType4" in F else 0.0
-        total_mf = mf_gas + mf_star
+        mf_star2 = float(F["PartType2/Masses"][:].sum()) if "PartType2" in F else 0.0
+        mf_star3 = float(F["PartType3/Masses"][:].sum()) if "PartType3" in F else 0.0
+        mf_bh = float(F["PartType5/Masses"][:].sum()) if "PartType5" in F else 0.0
+        total_mf = mf_gas + mf_star + mf_bh + mf_star2 + mf_star3
+
+    print(m0_gas, m0_star, m0_star2, m0_star3, m0_bh, m0_dm)
+    print(mf_gas, mf_star,mf_star2, mf_star3,  mf_bh, mf_dm)
 
     mass_err = abs(total_mf - total_m0) / (total_m0 + 1e-30)
-    assert mass_err < 1e-3, f"Gas+star total mass not conserved: {mass_err:.6f}"
+    assert mass_err < 1e-3, f"Gas+star+BH total mass not conserved: {mass_err:.6f}"

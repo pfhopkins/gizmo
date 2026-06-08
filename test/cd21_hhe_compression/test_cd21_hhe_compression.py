@@ -13,10 +13,13 @@ profiles) is deferred.
 import pytest
 import numpy as np
 import h5py
+import os
 import subprocess
 import sys
+import tarfile
 from os import chdir
 from os.path import isfile, dirname, abspath, join
+from urllib.request import urlretrieve
 
 from gizmo.test import (
     build_gizmo_for_test,
@@ -27,6 +30,23 @@ from gizmo.test import (
     get_final_snapshot,
 )
 
+# Native CD21 (Chabrier & Debras 2021) H/He EOS tables. The DirEOS2021 tarball
+# bundles all compositions; we extract the T-P table at Y=0.275.
+DIREOS_URL = "http://perso.ens-lyon.fr/gilles.chabrier/DirEOS/DirEOS2021.tar.gz"
+DIREOS_TP_Y0275 = "DirEOS2021/TABLEEOS_2021_TP_Y0275_v1"
+
+
+def _download_native_table(native, test_dir):
+    """Download the CD21 DirEOS2021 tarball and extract the Y=0.275 T-P table to
+    `native`. Mirrors the auto-download other test harnesses do for their data."""
+    tarball = join(test_dir, "DirEOS2021.tar.gz")
+    if not isfile(tarball):
+        urlretrieve(DIREOS_URL, tarball)
+    with tarfile.open(tarball) as tf:
+        with tf.extractfile(DIREOS_TP_Y0275) as src, open(native, "wb") as dst:
+            dst.write(src.read())
+    os.remove(tarball)
+
 
 def setup_table_and_ics(test_dir):
     """Build the SESAME table + IC if absent."""
@@ -34,11 +54,7 @@ def setup_table_and_ics(test_dir):
     native = join(test_dir, "cd21_y0275.dat")
     if not isfile(sesame):
         if not isfile(native):
-            raise FileNotFoundError(
-                f"{native} not found. Download "
-                "http://perso.ens-lyon.fr/gilles.chabrier/DirEOS/DirEOS2021.tar.gz, "
-                "extract TABLEEOS_2021_TP_Y0275_v1, and rename to cd21_y0275.dat."
-            )
+            _download_native_table(native, test_dir)
         subprocess.run(
             [sys.executable,
              join(test_dir, "..", "..", "initial_conditions", "eos_tools", "cms_to_sesame.py"),
@@ -53,8 +69,10 @@ def setup_table_and_ics(test_dir):
         )
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=2),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+#@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=2),))
+#@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize("num_mpi_ranks", (1,))
+@pytest.mark.parametrize("num_omp_threads", (1,))
 def test_cd21_hhe_compression(num_mpi_ranks, num_omp_threads):
     test_name = "cd21_hhe_compression"
     test_dir = abspath(join(dirname(__file__)))

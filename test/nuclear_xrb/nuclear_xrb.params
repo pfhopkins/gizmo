@@ -22,7 +22,7 @@ CourantFac                         0.2
 ErrTolIntAccuracy                  0.02
 
 % EOS
-EosTable                           ../../eos/helmholtz/helm_table.dat
+EosTable                           ../../src/eos/helmholtz/helm_table.dat
 
 % nuclear network
 NuclearBurningFloor_T              5.0e8

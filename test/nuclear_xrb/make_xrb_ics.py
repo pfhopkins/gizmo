@@ -22,7 +22,7 @@ import urllib.request
 
 def ensure_helm_table():
     """Download helm_table.dat to the EOS directory if not already present."""
-    table_path = os.path.join(os.path.dirname(__file__), "..", "..", "eos", "helmholtz", "helm_table.dat")
+    table_path = os.path.join(os.path.dirname(__file__), "..", "..", "src", "eos", "helmholtz", "helm_table.dat")
     if not os.path.exists(table_path):
         url = "http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat"
         print(f"Downloading {url}...")

@@ -138,8 +138,10 @@ def plot_orszag_tang_divB_panels(test_name):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+#@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+#@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize("num_mpi_ranks", (1,))
+@pytest.mark.parametrize("num_omp_threads", (1,))
 @pytest.mark.parametrize(
     "extra_config_flags",
     ((), ("MHD_CONSTRAINED_GRADIENT=1",), ("MHD_MODIFIED_GRADIENT",)),

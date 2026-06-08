@@ -9,7 +9,7 @@
 %
 InitCondFile                       ring_collision_ics
 OutputDir                          output
-TimeMax                            100
+TimeMax                            200
 TimeBetSnapshot                    25
 MaxSizeTimestep                    0.1
 DesNumNgb                          32
