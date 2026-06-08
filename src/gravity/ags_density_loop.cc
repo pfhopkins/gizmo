@@ -171,11 +171,12 @@ void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
 void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
 {
     if(on) {
-        terminate("AgsDensitySpec::set_oracle_brute_pass: oracle is "
-                  "hard-stubbed for AGS — after_iter mutates P[i] which "
-                  "contaminates brute-pass pair_kernel reads, so the "
-                  "in-runner oracle is unavailable for AgsDensitySpec. "
-                  "See OPEN_3d_agsdensity_design.md §3a / §7.");
+        printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
+               "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
+               "the in-runner oracle is unavailable for AgsDensitySpec). "
+               "See OPEN_3d_agsdensity_design.md §3a / §7.\n"); fflush(stdout);
+        endrun(90001019);
+        gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
     }
 }
 
