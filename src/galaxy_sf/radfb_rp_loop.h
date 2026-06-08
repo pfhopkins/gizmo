@@ -29,11 +29,8 @@
 #ifndef RADFB_RP_LOOP_H
 #define RADFB_RP_LOOP_H
 
-/* Kokkos_Core MUST precede declarations/allvars.h — allvars pulls in
- * macros.h which defines `terminate(...)`, which mangles
- * `std::terminate()` references that Kokkos_Core.hpp transitively
- * includes via <exception>. Same ordering pattern as
- * thermal_fb_loop.h / sink_feed_loop.h. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

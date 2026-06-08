@@ -1,5 +1,5 @@
-/* Standard/Kokkos headers before global_data_all_struct.h to avoid #define terminate
- * colliding with std::terminate in <exception> (same issue as cooling.cc). */
+/* Standard/Kokkos headers before global_data_all_struct.h (its macros may
+ * conflict with stdlib names). */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>

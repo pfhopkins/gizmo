@@ -140,11 +140,10 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 /*****************************************************************/
 
 /* SSOT termination entry points (defined in core/run.cc). Forward-declared HERE,
-   alongside the terminate/endrun macros that call them, so the symbols travel
-   with the macros: every TU that can expand terminate()/endrun() in host code
-   sees these declarations, even GPU TUs that include only allvars.h (and thus
-   macros.h) but not core/proto.h. Plain C++ linkage matches core/proto.h.
-   [Stage 1d flip 2026-06-03] */
+   alongside the endrun macro that calls them, so the symbols travel with the
+   macro: every TU that can expand endrun() in host code sees these declarations,
+   even GPU TUs that include only allvars.h (and thus macros.h) but not
+   core/proto.h. Plain C++ linkage matches core/proto.h. */
 void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
 [[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,

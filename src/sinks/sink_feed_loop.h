@@ -20,11 +20,8 @@
 #ifndef SINK_FEED_LOOP_H
 #define SINK_FEED_LOOP_H
 
-/* Kokkos_Core MUST come BEFORE declarations/allvars.h. allvars.h pulls in
- * declarations/macros.h which #defines `terminate(...)`; that macro mangles
- * the C++ stdlib `<exception>` header's `std::terminate()` declaration that
- * Kokkos_Core.hpp transitively pulls in. Same pattern as the GPU TUs
- * (sinks/sink_environment_gpu.cc, hydro/density_gpu.cc, etc.). */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

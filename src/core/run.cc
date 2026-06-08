@@ -67,18 +67,16 @@ static void rt_step_checksum(const char *label) {
 #endif
 
 /* --------------------------------------------------------------------------
- * Controlled-stop / bad-stop helper (Wave-CBE 2026-05-28; generalized
- * 2026-06-02 for the Vista no-MPI_Abort policy). See core/proto.h for the
- * contract. First-set wins; we do not clear the local code after collection.
+ * Controlled-stop / bad-stop helper (no-MPI_Abort policy). See core/proto.h for
+ * the contract. First-set wins; the local code is not cleared after collection.
  * The diagnostic is COPIED into owned static storage (callers may pass stack
- * buffers, e.g. terminate(buf)), so there is no lifetime requirement on the
- * caller's reason string.
+ * buffers), so there is no lifetime requirement on the caller's reason string.
  * -------------------------------------------------------------------------- */
 static int  ControlledStop_LocalCode  = 0;
 static int  ControlledStop_GlobalCode = 0;
 /* Owned static storage for the first-set local diagnostic. We COPY here rather
- * than store the caller's pointer: callers may pass stack buffers (e.g. the
- * terminate(buf) macro), so a stored const char* would dangle. */
+ * than store the caller's pointer: callers may pass stack buffers, so a stored
+ * const char* would dangle. */
 static char ControlledStop_LocalDiag[MAX_PATH_BUFFERSIZE_TOUSE] = {0};
 
 void gizmo_request_controlled_stop(int code, const char *reason,

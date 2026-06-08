@@ -12,9 +12,8 @@
 #ifndef DM_DISPERSION_LOOP_H
 #define DM_DISPERSION_LOOP_H
 
-/* Kokkos_Core MUST come before allvars.h — same pattern as density_loop.h:
- * allvars.h pulls declarations/macros.h which #defines `terminate(...)`,
- * mangling std::terminate() inside Kokkos_Core. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

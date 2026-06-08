@@ -3,12 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-/* Kokkos_Core MUST precede declarations/allvars.h: allvars pulls in
- * declarations/macros.h which #defines `terminate(...)`; that macro mangles
- * the std::terminate decl pulled in via Kokkos_Core.hpp's transitive
- * <exception> include. Same pattern as sinks/sink_feed.cc / sink_feed_loop.h
- * and our other GPU TUs. Made unconditional rather than gated on
- * GALSF_FB_THERMAL so the include order is uniform in both Config branches. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). Unconditional so the include order is uniform across Config branches. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"

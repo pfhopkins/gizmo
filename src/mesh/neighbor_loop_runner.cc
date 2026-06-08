@@ -4459,13 +4459,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             }
         }
 
-        /* Phase 4.B.0 v4.3 step 0 — partition-by-subgroup debug assertion
-         * (OPEN_3d_agsdensity_design.md §5a). Gated under DEBUG or the
-         * dedicated env-macro so production builds carry zero overhead.
-         * Calls the path-correct ctx accessor via Spec::active_subgroup_key
-         * for every active in every globally-active subgroup; mismatch with
-         * the iter-0 recorded j_type_bitmask = terminate(). Host-side check
-         * before per-iter dispatch. */
+        /* Partition-by-subgroup debug assertion (DEBUG / GIZMO_NLR_ASSERT_PARTITION
+         * only; zero production overhead). Checks each active's active_subgroup_key
+         * against the iter-0 j_type_bitmask; a mismatch routes to the graceful
+         * controlled stop below. Host-side, before per-iter dispatch. */
 #if defined(DEBUG) || defined(GIZMO_NLR_ASSERT_PARTITION)
         if constexpr (nlr_spec_actives_partition_by_subgroup_v<Spec>) {
             int local_partition_bad = 0;

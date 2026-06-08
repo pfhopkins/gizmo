@@ -1,10 +1,8 @@
 /*! \file sink_feed.c
 *  \brief This is where particles are marked for gas accretion.
 */
-/* Stdlib + Kokkos MUST come before any project header (allvars.h pulls
- * macros.h which #defines `terminate(...)` and would mangle the C++
- * <exception> declarations Kokkos transitively pulls in). Same pattern
- * as sinks/sink_environment_gpu.cc and mesh/neighbor_loop_runner.cc. */
+/* Stdlib + Kokkos must precede any project header (allvars.h macros may
+ * conflict with stdlib names). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>

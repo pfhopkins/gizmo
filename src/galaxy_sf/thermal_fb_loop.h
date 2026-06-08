@@ -15,10 +15,8 @@
 #ifndef THERMAL_FB_LOOP_H
 #define THERMAL_FB_LOOP_H
 
-/* Kokkos_Core must precede declarations/allvars.h (allvars pulls in macros.h
- * which defines `terminate(...)`; that macro mangles the C++ stdlib
- * `<exception>` header's `std::terminate` declaration that Kokkos_Core.hpp
- * transitively pulls in). Same ordering as sink_feed_loop.h. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

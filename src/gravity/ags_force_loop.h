@@ -34,9 +34,8 @@
 #ifndef AGS_FORCE_LOOP_H
 #define AGS_FORCE_LOOP_H
 
-/* Kokkos_Core MUST come BEFORE declarations/allvars.h (allvars.h pulls
- * declarations/macros.h which #defines `terminate(...)`, mangling Kokkos's
- * transitive include of std::terminate). Same convention as ags_density_loop.h. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"

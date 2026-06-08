@@ -30,9 +30,8 @@
 #ifndef AGS_DENSITY_LOOP_H
 #define AGS_DENSITY_LOOP_H
 
-/* Kokkos_Core MUST come before allvars.h. Same pattern as sink_feed_loop.h:
- * allvars.h pulls in declarations/macros.h which #defines `terminate(...)`,
- * which mangles `std::terminate()` references inside Kokkos_Core. */
+/* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib
+ * names). */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
@@ -467,8 +466,8 @@ struct AgsDensitySpec {
      * Decision tree must match legacy bit-for-bit so the runner's per-iter
      * assertion compares against `subgroups[sg].j_type_bitmask` (built by
      * the caller using the same legacy helper at iter-0). Any drift here
-     * is the runner-asserted "actives_partition_by_subgroup violation"
-     * terminate(). */
+     * triggers the runner's "actives_partition_by_subgroup violation"
+     * controlled stop. */
     KOKKOS_INLINE_FUNCTION
     static int active_subgroup_key(const DeviceContext& ctx,
                                     int                  i,

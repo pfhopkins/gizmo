@@ -22,11 +22,8 @@
 #ifndef SINK_ENV1_LOOP_H
 #define SINK_ENV1_LOOP_H
 
-/* Kokkos_Core.hpp MUST precede allvars.h: macros.h #defines `terminate(...)`
- * which would mangle std::terminate inside Kokkos's transitive <exception>
- * include. The inline pair body below emits Kokkos::atomic_min under
- * SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. Mirrors
- * sink_feed_loop.h / sink_swk_loop.h. */
+/* Kokkos_Core.hpp must precede allvars.h (its macros may conflict with stdlib
+ * names); the inline pair body below emits Kokkos::atomic_min. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 

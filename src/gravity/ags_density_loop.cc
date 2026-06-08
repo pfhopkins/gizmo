@@ -15,8 +15,8 @@
  *     also syncs P[i].AGS_KernelRadius every iter per codex round-8)
  *   - after_iter_global (iter > 10 print only — design v0.4.3 §6)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
- *   - set_oracle_brute_pass HARD-STUB (terminate-on-true; AGS validation
- *     used two-binary parity, not in-runner oracle — codex round-7)
+ *   - set_oracle_brute_pass HARD-STUB (controlled stop on true; AGS validation
+ *     used two-binary parity, not in-runner oracle)
  *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
  *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
@@ -693,7 +693,7 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  *
  * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1. For
  * AgsDensitySpec the oracle path is HARD-STUBBED (set_oracle_brute_pass
- * terminates on true; caller endruns on GIZMO_NLR_ORACLE=1). This
+ * controlled-stops on true; caller endruns on GIZMO_NLR_ORACLE=1). This
  * compare_accum implementation therefore exists to satisfy the runner's
  * Spec contract but is unreachable under correct caller-gating. The body
  * is kept identical to the sink_feed pattern in case the caller-side
