@@ -885,7 +885,11 @@ void find_next_sync_point_and_drift(void)
     {
       Flag_FullStep = 1;
       if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin)
-	terminate("Something is wrong with the time bins.\n");
+	{
+	  if(ThisTask == 0) {printf("Something is wrong with the time bins (HighestActiveTimeBin=%d != HighestOccupiedTimeBin=%d)\n", All.HighestActiveTimeBin, All.HighestOccupiedTimeBin); fflush(stdout);}
+	  endrun(90001001);
+	  gizmo_exit_bad_stop_if_requested("run:timebins_inconsistent");  /* symmetric (post-Allreduce bins): all ranks poll together */
+	}
     }
   else
     Flag_FullStep = 0;

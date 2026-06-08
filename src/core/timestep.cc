@@ -151,7 +151,8 @@ void find_timesteps(void)
 
         if((TIMEBASE - All.Ti_Current) < ti_step)	/* check that we don't run beyond the end */
         {
-            terminate("we are beyond the end of the timeline");	/* should not happen */
+            printf("we are beyond the end of the timeline (task=%d) -- clamping ti_step and requesting controlled stop\n", ThisTask); fflush(stdout);	/* should not happen */
+            endrun(90001005);	/* graceful bad-stop; the clamp below keeps ti_step finite; drains at the find_timesteps poll (no per-particle collective) */
             ti_step = TIMEBASE - All.Ti_Current;
             ti_min = TIMEBASE;
             while(ti_min > ti_step) {ti_min >>= 1;}
@@ -1294,7 +1295,11 @@ int get_timestep_bin(integertime ti_step)
         return 0;
 
     if(ti_step == 1)
-        terminate("time-step of integer size 1 not allowed\n");
+    {
+        printf("time-step of integer size 1 not allowed (task=%d)\n", ThisTask); fflush(stdout);
+        endrun(90001006);
+        return 0;   /* graceful: bad-stop set; return bin 0 (the loop below yields 0 for ti_step==1); drains at the find_timesteps poll */
+    }
 
     while(ti_step)
     {
