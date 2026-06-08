@@ -26,7 +26,6 @@
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 
-
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
     added here. The split routine should also be the template for spawning new gas particles (collisionless particles are spawned
@@ -1200,8 +1199,10 @@ void rearrange_particle_sequence(void)
     count_elim = 0;
     count_gaselim = 0;
     count_sink_elim = 0;
-    /* loop over entire block looking for things with zero mass, which need to be eliminated */
-    for(i = 0; i < NumPart; i++)
+    /* loop over entire block looking for things with zero mass, which need to be eliminated.
+       compact against local counters, then publish NumPart/N_gas once after the loop. */
+    int numpart_local = NumPart, ngas_local = N_gas;
+    for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
@@ -1212,42 +1213,43 @@ void rearrange_particle_sequence(void)
             {
                 TimeBinCountGas[P[i].TimeBin]--;
 
-                P[i] = P[N_gas - 1];
-                CellP[i] = CellP[N_gas - 1];
+                P[i] = P[ngas_local - 1];
+                CellP[i] = CellP[ngas_local - 1];
 #ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, N_gas-1);
+                swap_treewalk_pointers(i, ngas_local-1);
 #endif
                 /* swap with properties of last gas particle (i-- below will force a check of this so its ok) */
 #ifdef CHIMES
                 free_gas_abundances_memory(&(ChimesGasVars[i]), &ChimesGlobalVars);
-                ChimesGasVars[i] = ChimesGasVars[N_gas - 1];
-                ChimesGasVars[N_gas - 1].abundances = NULL; ChimesGasVars[N_gas - 1].isotropic_photon_density = NULL; ChimesGasVars[N_gas - 1].G0_parameter = NULL; ChimesGasVars[N_gas - 1].H2_dissocJ = NULL;
+                ChimesGasVars[i] = ChimesGasVars[ngas_local - 1];
+                ChimesGasVars[ngas_local - 1].abundances = NULL; ChimesGasVars[ngas_local - 1].isotropic_photon_density = NULL; ChimesGasVars[ngas_local - 1].G0_parameter = NULL; ChimesGasVars[ngas_local - 1].H2_dissocJ = NULL;
 #endif
 
-                P[N_gas - 1] = P[NumPart - 1]; /* redirect the final gas pointer to go to the final particle (BH) */
+                P[ngas_local - 1] = P[numpart_local - 1]; /* redirect the final gas pointer to go to the final particle (BH) */
 #ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(N_gas - 1, NumPart-1);
-                remove_particle_from_treewalk(NumPart - 1);
+                swap_treewalk_pointers(ngas_local - 1, numpart_local-1);
+                remove_particle_from_treewalk(numpart_local - 1);
 #endif
-                N_gas--; /* shorten the total N_gas count */
+                ngas_local--; /* shorten the total N_gas count */
                 count_gaselim++; /* record that a BH was eliminated */
             }
             else
             {
                 if(P[i].Type == 5) {count_sink_elim++;} /* record elimination if BH */
-                P[i] = P[NumPart - 1]; /* re-directs pointer for this particle to pointer at final particle -- so we
+                P[i] = P[numpart_local - 1]; /* re-directs pointer for this particle to pointer at final particle -- so we
                                         swap the two; note that ordering -does not- matter among the non-fluid/gas cells
                                         so its fine if this mixes up the list ordering of different particle types */
 #ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, NumPart - 1);
-                remove_particle_from_treewalk(NumPart - 1);
+                swap_treewalk_pointers(i, numpart_local - 1);
+                remove_particle_from_treewalk(numpart_local - 1);
 #endif
             }
 
-            NumPart--;
+            numpart_local--;
             i--;
             count_elim++;
         }
+    NumPart = numpart_local; N_gas = ngas_local; /* publish compacted counts once */
 
     MPI_Allreduce(&count_elim, &tot_elim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&count_gaselim, &tot_gaselim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
