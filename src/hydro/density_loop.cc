@@ -481,7 +481,7 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
         DrkernNgbFactor_eff = 0;
         Particle_DivVel_eff = 0;
     }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
     if (ags_density_isactive(i) && (args.P[i].Type > 0)) {
         Particle_DivVel_eff = 0;
     }
@@ -979,7 +979,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
         } else {
             NumNgb_eff = DrkernNgbFactor_eff = Particle_DivVel_eff = 0;
         }
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
         if (ags_density_isactive(i) && (P[i].Type > 0)) {
             Particle_DivVel_eff = 0;
         }

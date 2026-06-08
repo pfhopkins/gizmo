@@ -279,8 +279,10 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
         if(TimeBin_j < 0) TimeBin_j = -TimeBin_j - 1;
         if(vsig > accum.AGS_vsig_max) accum.AGS_vsig_max = vsig;
 
-#if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-        /* Wakeup test (legacy ags_density_gpu.cc:165-179).
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
+        /* Wakeup test (legacy ags_density_gpu.cc:165-179). Gated on the AGS
+         * kernel-radius SSOT so SIDM/fuzzy/CBE (which all use AGS_vsig for
+         * their timestep) are covered, not just ADAPTIVE_GRAVSOFT_FORALL.
          *
          * volatile retained from legacy: nvc++ folds the predicate to the
          * initial value otherwise (per legacy comment). */
