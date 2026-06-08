@@ -230,7 +230,7 @@ void force_drift_node(int no, integertime time1)
       if(Extnodes[no].Ti_lastkicked != Nodes[no].Ti_current)
 	{
 	  printf("Task=%d Extnodes[no].Ti_lastkicked=%lld  Nodes[no].Ti_current=%lld\n",ThisTask, (long long)Extnodes[no].Ti_lastkicked, (long long)Nodes[no].Ti_current);
-	  terminate("inconsistency in drift node");
+	  printf("inconsistency in drift node\n"); fflush(stdout); endrun(90001007); return;   /* graceful: skip node drift; bad-stop drains at the next gravity-walk poll */
 	}
 
       if(Nodes[no].u.d.mass) {fac = 1 / Nodes[no].u.d.mass;} else {fac = 0;}
