@@ -108,9 +108,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     double rem_mass = stellar_remnant_mass(logM, logZ);
 
     switch(rem_type) {
-        case REM_PISN:  in->Esne = 1.0e52 / UNIT_ENERGY_IN_CGS; rem_mass = 0; break;
+        case REM_PISN:  in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; rem_mass = 0; break; /* uniform 1e51 (was 1e52) */
         case REM_PPISN: in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
-        case REM_ECSN:  in->Esne = 5.0e50 / UNIT_ENERGY_IN_CGS; break;
+        case REM_ECSN:  in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break; /* uniform 1e51 (was 5e50) */
         case REM_FSN:
         case REM_DBH:   in->Esne = 0; break; /* no explosion energy */
         case REM_CCSN:

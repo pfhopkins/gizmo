@@ -713,9 +713,8 @@ void resolvedism_inject_fb_energy(void)
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
             Z_injected[channel] += Z_ej;
-            if(channel == 0) { /* SN: has energy */
-                double Esne_erg = 1.0e51;
-                if(rem_type == REM_PISN) Esne_erg = 1.0e52;
+            if(channel == 0) { /* SN: has energy. Uniform 1e51 for explosive remnants; 0 for FSN/DBH (no explosion). */
+                double Esne_erg = (rem_type == REM_FSN || rem_type == REM_DBH) ? 0.0 : 1.0e51;
                 E_injected[channel] += Esne_erg;
             }
 
@@ -727,7 +726,8 @@ void resolvedism_inject_fb_energy(void)
              * trading exact-remnant-mass for exact-budget-closure on the injection. */
             if(channel == 0) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
-                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type, (rem_type==REM_PISN)?1.0e52:1.0e51);
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type,
+                    (rem_type==REM_FSN||rem_type==REM_DBH)?0.0:1.0e51);
             } else {
                 printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
