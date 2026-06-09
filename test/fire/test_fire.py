@@ -35,12 +35,16 @@ REFERENCE_FILE = "test/fire/fire_exact.hdf5"
 def get_particle_masses(snapshot):
     """Return dict of total mass per particle type."""
     masses = {}
+    number = {}
     with h5py.File(snapshot, "r") as F:
         for grp in F.keys():
             if grp.startswith("PartType"):
                 pt = int(grp.replace("PartType", ""))
-                masses[pt] = float(F[grp]["Masses"][:].sum())
-    return masses
+                ## need to sum in float64 or roundoff can trigger failure below
+                m = F[grp]["Masses"][:].astype(np.float64) 
+                masses[pt] = np.float64(m.sum())
+                number[pt] = np.round(float((F[grp]["Masses"][:]*0.+1.).sum()))
+    return masses, number
 
 
 def get_gas_density_temperature(snapshot):
@@ -145,17 +149,21 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     # Get initial and final masses
     initial_snap = f"test/{test_name}/fire_ics.hdf5"
-    m_init = get_particle_masses(initial_snap)
-    m_final = get_particle_masses(final_snap)
+    m_init,n_init = get_particle_masses(initial_snap)
+    m_final,n_final = get_particle_masses(final_snap)
 
     print("Particle type masses:")
     type_names = {0: "Gas", 1: "DM", 2: "DM-LowRes", 4: "Stars", 5: "BH"}
     for pt in sorted(set(list(m_init.keys()) + list(m_final.keys()))):
         mi = m_init.get(pt, 0)
         mf = m_final.get(pt, 0)
+        ni = n_init.get(pt, 0)
+        nf = n_final.get(pt, 0)
         name = type_names.get(pt, f"Type{pt}")
         print(f"  {name} (Type {pt}): initial={mi:.6g}, final={mf:.6g}, "
               f"delta={mf - mi:.6g}")
+        print(f"  {name} (Type {pt}): initialN={ni:.6g}, finalN={nf:.6g}, "
+              f"delta={nf - ni:.6g}")
 
     # Dark matter mass must be exactly conserved
     assert m_init[1] == pytest.approx(m_final[1], rel=1e-10), \
@@ -171,7 +179,7 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     # Compare against reference solution
     if path.isfile(REFERENCE_FILE):
-        m_ref = get_particle_masses(REFERENCE_FILE)
+        m_ref,n_ref = get_particle_masses(REFERENCE_FILE)
         for pt in (0, 4, 5):
             if pt in m_ref and pt in m_final:
                 name = type_names.get(pt, f"Type{pt}")
