@@ -402,13 +402,13 @@ void resolvedism_photoionize(void)
                 if(max_r > 0 && PISearchRadius[i] >= max_r) {continue;} /* hit cap, stop expanding */
                 PISearchRadius[i] *= 1.1; /* expand by 10% */
                 if(max_r > 0 && PISearchRadius[i] > max_r) PISearchRadius[i] = max_r;
-                /* Re-initialize per-pixel budget and front radii for re-run with larger search radius */
-                double S_ly = compute_single_star_S_ly(i);
-                double S_pix = (S_ly > 0) ? S_ly / HEALPIX_NPIX : 0;
-                for(k = 0; k < HEALPIX_NPIX; k++) {
-                    PIPixelBudget[i * HEALPIX_NPIX + k] = S_pix;
-                    PIFrontRadius[i * HEALPIX_NPIX + k] = 0;
-                }
+                /* DO NOT reset PIPixelBudget: carry forward the remaining budget. The previous
+                 * iteration spent some budget on cells inside the old search radius; the next
+                 * iteration must use the leftover (= PIPixelBudget[i*NPIX+k] from out2particle)
+                 * for cells in the expanded radius. Resetting to full S_pix would let the star
+                 * walk past its own Ionized=2 cells (skipped at no cost in evaluate) and ionize
+                 * additional cells beyond — effectively giving it double budget per iteration.
+                 * PIFrontRadius is monotonic via the max() in out2particle, so leave it alone. */
                 incomplete_local++;
             }
         }
