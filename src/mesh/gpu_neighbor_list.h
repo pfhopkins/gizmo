@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include "sfc_tiles.h"
+#include "nlr_radius_policy.h"  /* mode_b_radius_policy_t + MODE_B_RADIUS_* + SSOT wrappers */
 
 /* GPU-resident neighbor list: CSR arrays.
    offsets: SharedSpace (host writes offsets[num_active]=total after scan).
@@ -76,6 +77,14 @@ struct gpu_spatial_index_t {
      * to abort on Type=1 particles. gpu_ngb_list_build now hard-aborts on
      * mismatch instead of silently mis-walking. Default -1 = "no build yet". */
     int cache_tbm = -1;
+    /* Radius-policy the cached compact_xyzh / tile-hmax bands were built under.
+     * Mirrors cache_tbm semantics: gpu_ngb_list_build HARD-ABORTS if the
+     * caller's Spec radius_policy differs from this cached value (cached
+     * per-particle compact_xyzh[j*4+3] reflects the build-time policy's per-j
+     * reach, so a mismatched caller would see wrong leaf-h_j and miss valid
+     * pairs).  Default MODE_B_RADIUS_DEFAULT matches the policy hydro Specs
+     * use; runner Mode A passes Spec::radius_policy explicitly. */
+    mode_b_radius_policy_t cache_radius_policy = MODE_B_RADIUS_DEFAULT;
     /* Host-side persistent copies kept alive across drifts to support
      * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
      * are recomputed in place from current particle positions, the BVH
@@ -107,10 +116,19 @@ struct gpu_spatial_index_t {
 
 /* Build spatial index (tiles + BVH) on CPU, copy to SharedSpace.
    P_shared must be in SharedSpace (managed memory).
-   caller_label: short tag printed in DIAG_SIDX so we can attribute rebuilds. */
+   caller_label: short tag printed in DIAG_SIDX so we can attribute rebuilds.
+   radius_policy: per-particle reach used to seed tile->hmax[_by_type] and the
+   per-particle compact_xyzh[j*4+3] field — runner Mode A passes
+   Spec::radius_policy; non-runner callers (merge_split / radfb_local / twopoint /
+   turb_powerspectra / legacy symlist) inherit the default MODE_B_RADIUS_DEFAULT
+   so they share the gas-only step-persistent SIDX (gpu_step_sidx_ptr) that
+   runner-driven hydro Specs build under the same MODE_B_RADIUS_DEFAULT.
+   ghost_exchange does NOT route through this function — it calls
+   build_sfc_tiles directly with its own LEGACY default in sfc_tiles.h. */
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              int type_bitmask, gpu_spatial_index_t *idx,
-                             const char *caller_label = "?");
+                             const char *caller_label = "?",
+                             mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_DEFAULT);
 
 /* Free spatial index SharedSpace memory. */
 void gpu_spatial_index_free(gpu_spatial_index_t *idx);
@@ -272,7 +290,20 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                          * symmetric max(fac*h_i, fac*h_j). Applied at query time;
                          * cached compact_xyzh / SIDX hmax stay keyed on raw radii.
                          * See OPEN_3d_difffilter_design.md §3. */
-                        double j_kernel_radius_scale = 1.0);
+                        double j_kernel_radius_scale = 1.0,
+                        /* radius_policy: Spec::radius_policy from the runner;
+                         * controls per-particle reach used to (re)populate
+                         * compact_xyzh[j*4+3] and gates cache reuse via
+                         * cached_idx->cache_radius_policy HARD-ABORT.  Default
+                         * MODE_B_RADIUS_DEFAULT (= GAS_KERNEL) matches the
+                         * policy hydro Specs use, so non-runner callers
+                         * (merge_split / radfb_local / twopoint / turb_powerspectra
+                         * / legacy symlist) sharing the gas-only step-persistent
+                         * SIDX do not trip the cache_radius_policy HARD-ABORT.
+                         * Multi-type non-runner callers (twopoint with 0xFF)
+                         * pass cached_idx=NULL → build local SIDX → policy
+                         * doesn't matter for caching. */
+                        mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_DEFAULT);
 
 /* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
    belong to the cached spatial index (use gpu_spatial_index_free for those). */

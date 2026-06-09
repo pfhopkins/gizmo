@@ -333,6 +333,9 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
                 (probe_num_active > 0) ? active_idx : nullptr,
                 probe_num_active,
                 (probe_num_active > 0) ? probe_radii : nullptr,
+                1.0,
+                /* Synthetic harness — legacy KernelRadius-for-all-types reach + scale 1.0. */
+                MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
                 1.0);
 
             int local_remote_ghosts = 0;

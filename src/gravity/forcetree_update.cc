@@ -275,12 +275,20 @@ void force_drift_node(int no, integertime time1)
 #endif
 
     if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}
-    /* Mode B per-type bands: same conservative single-divVmax decay. */
+    /* Mode B per-type bands: upward-only inflate (codex 2026-06-07). The bands
+     * include static-ish sources like P[j].ForceSoftening (per
+     * force_hmax_per_type_particle_radius), so decaying the band below the
+     * actual FS value would under-bound the node-prune. force_update_hmax()
+     * re-grows the bands per-particle each call; we just must not shrink
+     * them under drift. (Scalar `hmax` retains its legacy bidirectional decay
+     * — its semantics are unchanged.) */
     {
         double decay_fac = exp(DMAX(-1., DMIN(1., Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));
-        for(int t = 0; t < 6; t++) {
-            if(Extnodes[no].hmax_per_type[t] > 0) {
-                Extnodes[no].hmax_per_type[t] *= (MyFloat)decay_fac;
+        if(decay_fac > 1.0) {
+            for(int t = 0; t < 6; t++) {
+                if(Extnodes[no].hmax_per_type[t] > 0) {
+                    Extnodes[no].hmax_per_type[t] *= (MyFloat)decay_fac;
+                }
             }
         }
     }
@@ -308,14 +316,15 @@ void force_update_hmax(void)
   DomainNumChanged = 0;
   DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
 
-  /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe) */
+  /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe).
+   * Mode B per-type bands now cover every type's leaf-policy-selectable radius
+   * (gas via KernelRadius+ForceSoftening; non-gas adds AGS_KernelRadius when defined),
+   * so non-gas particles must reach this update path in every build, not only
+   * ADAPTIVE_GRAVSOFT_FORALL ones. Scalar Extnodes[no].hmax retains its legacy
+   * semantics; it is only grown for the AGS-tracked path below. */
   for (int i : ActiveParticleList)
   {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
       {
         no = Father[i];
         while(no >= 0)
@@ -326,55 +335,57 @@ void force_update_hmax(void)
         }
       }
   }
-  /* Phase 2: update hmax/divVmax with atomics (parallel) */
+  /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
 #pragma omp parallel for schedule(dynamic)
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
     int i = ActiveParticleList[idx];
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
       {
         int no = Father[i];
         double divVel = P[i].Particle_DivVel;
 
-        /* Mode B per-type contribution. Gas: always P[i].KernelRadius into band[0].
-         * Non-gas under ADAPTIVE_GRAVSOFT_FORALL bitmask: P[i].AGS_KernelRadius
-         * into band[Type]. Otherwise no per-type contribution from this i. */
-        int per_type_band = -1;
-        double per_type_htmp = 0.0;
-        if(P[i].Type == 0) {
-            per_type_band = 0;
-            per_type_htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
-        }
+        /* Mode B per-type band: conservative across every leaf-policy-selectable
+         * source. Helper covers KernelRadius / ForceSoftening / AGS_KernelRadius
+         * (when defined) uniformly per type. */
+        int per_type_band = (int)P[i].Type;
+        double per_type_htmp = force_hmax_per_type_particle_radius(i);
+
+        /* Scalar `hmax`/`divVmax` eligibility (legacy semantics, codex 2026-06-07):
+         * non-AGS-FORALL builds → gas only; AGS-FORALL builds → any Mass>0 type.
+         * Non-eligible particles still update per-type bands above, but MUST NOT
+         * leak their divVel / KernelRadius into the scalar band (which feeds
+         * downstream cross-rank exchange and legacy walkers). */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        else if((1 << P[i].Type) & ADAPTIVE_GRAVSOFT_FORALL) {
-            per_type_band = (int)P[i].Type;
-            per_type_htmp = DMIN(P[i].AGS_KernelRadius, All.MaxKernelRadius);
-        }
+        const int scalar_eligible = 1;
+#else
+        const int scalar_eligible = (P[i].Type == 0);
 #endif
 
         while(no >= 0)
         {
+            /* Scalar `hmax` source: legacy gas-KR or AGS-KR per ADAPTIVE_GRAVSOFT_FORALL. */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
             double kernrad_temp = P[i].AGS_KernelRadius;
             if(P[i].Type == 0) {kernrad_temp = P[i].KernelRadius;}
             double htmp = DMIN(kernrad_temp, All.MaxKernelRadius);
 #else
-            double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
+            double htmp = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0.0;
 #endif
             int per_type_grew = 0;
-            if(per_type_band >= 0 && per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {
+            if(per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {
                 atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
                 per_type_grew = 1;
             }
-            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax || per_type_grew)
+            int scalar_grew = 0;
+            if(scalar_eligible && (htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax))
             {
                 atomic_max_double(&Extnodes[no].hmax, htmp);
                 atomic_max_double(&Extnodes[no].divVmax, divVel);
-
+                scalar_grew = 1;
+            }
+            if(scalar_grew || per_type_grew)
+            {
                 if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
                 {
                     #pragma omp critical(DomainListAppendHmax)

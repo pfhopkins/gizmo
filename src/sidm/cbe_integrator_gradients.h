@@ -634,7 +634,11 @@ struct CBEGradSpec {
      * (ags_gravity_kernel_shared_BITFLAG). Conservative default avoids the
      * footgun of "missed override → all types become neighbors". */
     static constexpr unsigned int            neighbor_type_mask = (1u << 1);  /* DM */
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* CBE-grad pair physics: h_j reach is P[j].AGS_KernelRadius for non-gas (DM)
+     * — second symmetric pair body at line 399 reads h_j = Pj.AGS_KernelRadius
+     * and filters via r > max(h_i, h_j) at line 408.  Gas excluded by
+     * neighbor_type_mask. See OPEN_radius_policy_runner_design.md audit table. */
+    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_NONGAS_AGS;
 
     static constexpr WritePattern   write_pattern             = WritePattern::ActiveReduceOnly;
     /* SidxCacheKind::None: the per-call DM/SIDM mask varies per bm — same

@@ -559,6 +559,8 @@ void init(void)
         P[i].AGS_zeta = 0;
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
         if(1 & ADAPTIVE_GRAVSOFT_FORALL) {P[i].AGS_KernelRadius = P[i].KernelRadius;} else {P[i].AGS_KernelRadius = All.ForceSoftening[P[i].Type];}
+#elif defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
+        P[i].AGS_KernelRadius = All.ForceSoftening[P[i].Type]; /* deterministic init for CBE/SIDM/fuzzy without adaptive gravsoft; AGS density loop refines before first use */
 #endif
 #endif
 

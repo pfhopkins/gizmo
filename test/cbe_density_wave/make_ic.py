@@ -137,7 +137,9 @@ BOX = 1.0
 N        = int(sys.argv[1]) if len(sys.argv) > 1 else 64
 eps      = float(sys.argv[2]) if len(sys.argv) > 2 else 0.2
 v_stream = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
-sigma    = float(sys.argv[4]) if len(sys.argv) > 4 else 0.0
+# Per-basis velocity dispersion.  Default > 0 => SECONDMOMENT (S = sigma^2),
+# the production grad+SM mode.  Pass 0 for a cold dev IC.
+sigma    = float(sys.argv[4]) if len(sys.argv) > 4 else 0.1
 
 
 def inverse_cdf_positions(N, eps, box):
@@ -166,10 +168,8 @@ def main():
             (0.5 * m_cell, [+v_stream, 0.0, 0.0]),
             (0.5 * m_cell, [-v_stream, 0.0, 0.0]),
         ])
-    if sigma > 0.0:
-        out = os.path.join(HERE, "cbe_density_wave_warm_ics.hdf5")
-    else:
-        out = os.path.join(HERE, "cbe_density_wave_ics.hdf5")
+    # Canonical IC name (harness + tapir convention); production default is warm.
+    out = os.path.join(HERE, "cbe_density_wave_ics.hdf5")
     write_cbe_ic(out, pos, per_particle_bases, DIM, BOX, sigma=sigma)
 
 

@@ -413,6 +413,9 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     const double *orig_extent = idx->h_tile_orig_max_extent;
     float *pos_buf = idx->h_pos_buf;
     double max_ratio = 0.0;
+    /* SSOT per-particle reach under the cached policy (LEGACY for non-runner
+     * callers → byte-equivalent to legacy P[j].KernelRadius aggregation). */
+    const mode_b_radius_policy_t policy_capture = idx->cache_radius_policy;
     /* Codex 2026-05-12: out-of-line host accessor; see
      * feedback_all_dev_trap_host_side.md. Host-side drift-factor input. */
     integertime time1 = gizmo_host_ti_current();
@@ -429,7 +432,17 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         double lo0 = x0, hi0 = x0;
         double lo1 = y0, hi1 = y0;
         double lo2 = z0, hi2 = z0;
-        double hmax = P_shared[j0].KernelRadius;
+        double hmax = nlr_particle_symmetric_radius(P_shared[j0], policy_capture);
+        /* Per-type bands recomputed alongside scalar hmax (codex 2026-06-07
+         * correction #2): under the new invariant the bands are policy-aware
+         * and would otherwise stay frozen at build-time values, contradicting
+         * the conservative-upper-bound rule.  Restart from 0 and aggregate
+         * from current particles. */
+        double hbt[TILE_NUM_PTYPES] = {0};
+        {
+            int t0 = (int)P_shared[j0].Type;
+            if(t0 >= 0 && t0 < TILE_NUM_PTYPES && hmax > hbt[t0]) hbt[t0] = hmax;
+        }
         if(pos_buf) { pos_buf[j0*3+0] = (float)x0; pos_buf[j0*3+1] = (float)y0; pos_buf[j0*3+2] = (float)z0; }
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
@@ -440,14 +453,17 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
             if(x < lo0) lo0 = x; else if(x > hi0) hi0 = x;
             if(y < lo1) lo1 = y; else if(y > hi1) hi1 = y;
             if(z < lo2) lo2 = z; else if(z > hi2) hi2 = z;
-            double h = P_shared[j].KernelRadius;
+            double h = nlr_particle_symmetric_radius(P_shared[j], policy_capture);
             if(h > hmax) hmax = h;
+            int tj = (int)P_shared[j].Type;
+            if(tj >= 0 && tj < TILE_NUM_PTYPES && h > hbt[tj]) hbt[tj] = h;
             if(pos_buf) { pos_buf[j*3+0] = (float)x; pos_buf[j*3+1] = (float)y; pos_buf[j*3+2] = (float)z; }
         }
         tile->lo[0] = lo0; tile->hi[0] = hi0;
         tile->lo[1] = lo1; tile->hi[1] = hi1;
         tile->lo[2] = lo2; tile->hi[2] = hi2;
         tile->hmax = hmax;
+        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tile->hmax_by_type[tt] = hbt[tt];
 
         if(orig_extent && orig_extent[t] > 0) {
             double ext = hi0 - lo0;
@@ -622,7 +638,8 @@ void gpu_step_sidx_invalidate_full(void)
 
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              int type_bitmask, gpu_spatial_index_t *idx,
-                             const char *caller_label)
+                             const char *caller_label,
+                             mode_b_radius_policy_t radius_policy)
 {
     /* Capture periodicity parameters */
     idx->periodic_flags[0] = TILE_PERIODIC_X;
@@ -652,7 +669,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     int *h_pool;
     int num_pool;
     int ntiles = build_sfc_tiles(P_shared, num_total, type_bitmask, TILE_TARGET_SIZE,
-                                 &h_tiles, &h_pool, &num_pool);
+                                 &h_tiles, &h_pool, &num_pool, radius_policy);
     idx->ntiles = ntiles;
     double t_si1 = my_second(); /* DIAG: after build_sfc_tiles */
 
@@ -702,11 +719,15 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     {
         float *compact = idx->d_compact_xyzh;
         float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* lazy-drift slack: see SIDX_H_SLACK comment */
+        const mode_b_radius_policy_t policy_capture = radius_policy;
         Kokkos::parallel_for("compact_xyzh_build", num_total, KOKKOS_LAMBDA(int i) {
             compact[i*4+0] = (float)P_shared[i].Pos[0];
             compact[i*4+1] = (float)P_shared[i].Pos[1];
             compact[i*4+2] = (float)P_shared[i].Pos[2];
-            compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
+            /* SSOT per-particle reach under policy_capture — see nlr_radius_policy.h.
+             * LEGACY default policy recovers raw P[j].KernelRadius for every type. */
+            double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
+            compact[i*4+3] = (float)(h_j * (double)h_inflate);
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("compact_xyzh_build", num_total);
@@ -765,6 +786,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
     idx->num_total = num_total;
     idx->cache_tbm = type_bitmask;
+    idx->cache_radius_policy = radius_policy;
     idx->valid = 1;
     /* Register this cache with the dirty tracker over [0, num_total). compact_xyzh
      * was just seeded from current P[] — bitset starts clean (all_dirty=0). */
@@ -812,6 +834,7 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     idx->num_pool = 0;
     idx->num_total = 0;
     idx->cache_tbm = -1;
+    idx->cache_radius_policy = MODE_B_RADIUS_DEFAULT;
     idx->valid = 0;
     if(idx->dirty_handle >= 0) {
         gpu_dirty_tracker_unregister(idx->dirty_handle);
@@ -829,7 +852,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         const double *search_radii_host,
                         const double *source_positions_host,
                         const char *caller_label,
-                        double j_kernel_radius_scale)
+                        double j_kernel_radius_scale,
+                        mode_b_radius_policy_t radius_policy)
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
@@ -858,6 +882,25 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             caller_label ? caller_label : "?", type_bitmask, cached_idx->cache_tbm);
         fflush(stderr);
         endrun(913005);
+    }
+    /* Companion HARD-ABORT for radius_policy mismatch (codex 2026-06-07).  The
+     * cached compact_xyzh[j*4+3] reflects the build-time policy's per-j reach;
+     * walking it under a different Spec policy would silently use the wrong
+     * leaf-side h_j and miss valid pairs.  Same shape as the cache_tbm gate. */
+    if (cached_idx && cached_idx->valid &&
+        cached_idx->cache_radius_policy != radius_policy) {
+        fprintf(stderr,
+            "gpu_ngb_list_build FATAL: caller='%s' radius_policy=0x%x but cached "
+            "SIDX was built with radius_policy=0x%x. The cached compact_xyzh[j*4+3] "
+            "encodes the build-time policy's per-particle pair-search reach; "
+            "walking it under a different policy returns wrong leaf-h_j values "
+            "and silently misses valid pairs.  Spec author: ensure Spec::radius_policy "
+            "matches the cache's owner (or declare SidxCacheKind::None to rebuild "
+            "per call). See OPEN_radius_policy_runner_design.md.\n",
+            caller_label ? caller_label : "?",
+            (unsigned)radius_policy, (unsigned)cached_idx->cache_radius_policy);
+        fflush(stderr);
+        endrun(913006);
     }
     /* Phase 0 instrumentation: env-gated, all-ranks, per-call line for
      * Nactive histogram + tiny-N phase-cost decomposition. Off ⇒ no work. */
@@ -964,12 +1007,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         idx = cached_idx;
     } else if(cached_idx) {
         HDBG("sidx_build_into_cache");
-        gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label);
+        gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label, radius_policy);
         HDBG("sidx_built_into_cache");
         idx = cached_idx;
     } else {
         HDBG("sidx_build_local");
-        gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label);
+        gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
         HDBG("sidx_built_local");
         idx = &local_idx;
     }
@@ -1027,10 +1070,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
         float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* see SIDX_H_SLACK — lazy-drift over-search slack */
+        /* SSOT per-j reach under the cached policy.  HARD-ABORT above guarantees
+         * cached_idx->cache_radius_policy == caller's radius_policy. */
+        const mode_b_radius_policy_t policy_capture = idx->cache_radius_policy;
         t_refresh_launch_in = my_second();
         if(refresh_all) {
             Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
-                compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
+                double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
+                compact[i*4+3] = (float)(h_j * (double)h_inflate);
             });
             /* Drain the bitset (no kernel use; just clear it). */
             struct {} dummy;
@@ -1055,7 +1102,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }
             Kokkos::parallel_for("compact_h_refresh_idx", n_dirty, KOKKOS_LAMBDA(int k) {
                 int i = d_dirty[k];
-                compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
+                double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
+                compact[i*4+3] = (float)(h_j * (double)h_inflate);
             });
             Kokkos::fence();
             gizmo_gpu_check_last_error("compact_h_refresh_idx", n_dirty);

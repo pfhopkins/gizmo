@@ -637,7 +637,12 @@ struct SinkSwkSpec {
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
-    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    /* sink_swk pair physics: pair body uses hj = P[j].KernelRadius for SPH
+     * weighting on gas-j (sink_swk_loop.h:282) and accumulates onto active i for
+     * any admitted j without an internal r > h_j gate.  Symmetric reach must
+     * include j-side KernelRadius for both gas and non-gas. */
+    static constexpr mode_b_radius_policy_t  radius_policy      =
+        MODE_B_RADIUS_GAS_KERNEL | MODE_B_RADIUS_NONGAS_KERNEL;
 
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;

@@ -6,7 +6,8 @@
 # y,z (BOX_LONG_X stretches x; BoxSize sets the transverse extent) to keep
 # particle count modest while resolving propagation along x. All velocities
 # lie along the x axis, so per basis p_y=p_z=0. Type=1, no gravity/hydro/gas.
-# NBASIS=4, NMOMENTS=4 (m, p_x, p_y, p_z) in 3D (no SECONDMOMENT).
+# NBASIS=4, NMOMENTS=10 (m, p_xyz, T_xx..T_zz) in 3D with SECONDMOMENT +
+# WITHGRADIENTS (the production CBE default).
 #
 # BOX_LONG_X=16 with BoxSize=0.0625 => box = [1.0 x 0.0625 x 0.0625].
 # BOX_LONG_X + BOX_PERIODIC requires SELFGRAVITY_OFF (begrun.cc:3133) — set.
@@ -18,6 +19,8 @@ BOX_LONG_X=16
 SELFGRAVITY_OFF
 
 CBE_INTEGRATOR=4
+CBE_INTEGRATOR_SECONDMOMENT
+CBE_INTEGRATOR_WITHGRADIENTS
 CBE_INTEGRATOR_OUTPUT_MOREINFO
 
 OUTPUT_ADDITIONAL_RUNINFO
