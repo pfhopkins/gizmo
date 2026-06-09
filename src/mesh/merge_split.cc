@@ -1096,20 +1096,25 @@ void swap_treewalk_pointers(int i, int j){
 */
 void remove_particle_from_treewalk(int i){
     int no, next;
+    long iter = 0, iter_max = (long)All.MaxPart + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
     no = All.MaxPart;
     while(no >= 0){ // walk the tree to find anything that might point to i and redirect it to i's nextnode
         if(no < All.MaxPart){
             next = Nextnode[no];
             if(Nextnode[no] == i) {Nextnode[no] = Nextnode[i];}
-        } else if (no < All.MaxPart+MaxNodes){
+        } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (Phase 9 LET; must match swap_treewalk_pointers)
             next = Nodes[no].u.d.nextnode;
             if(next == i) {Nodes[no].u.d.nextnode = Nextnode[i];}
             if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = Nextnode[i];}
-        } else {
-            next = Nextnode[no - MaxNodes];
-            if(next == i) {Nextnode[no - MaxNodes] = Nextnode[i];}
+        } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
+            next = Nextnode[no - MaxNodes - MaxForeignNodes];
+            if(next == i) {Nextnode[no - MaxNodes - MaxForeignNodes] = Nextnode[i];}
         }
         no = next;
+        if(++iter > iter_max){ // corrupt/cyclic chain: stop gracefully instead of hanging forever
+            printf("WARNING: remove_particle_from_treewalk(i=%d) aborted after %ld iters (no=%d) -- possible tree-chain cycle\n", i, iter, no);
+            break;
+        }
     }
 }
 
