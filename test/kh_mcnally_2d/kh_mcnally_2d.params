@@ -7,6 +7,11 @@
 %        EOS_GAMMA=(5.0/3.0)
 %        KERNEL_FUNCTION=5
 %
+% for the MHD version of the problem, additionally enable:
+%        MAGNETIC
+%        MHD_B_SET_IN_PARAMS
+% and then set the relevant BiniX, BiniY, BiniZ parameters below
+%
 InitCondFile                       kh_mcnally_2d_ics
 OutputDir                          output
 TimeMax                            2
@@ -14,6 +19,13 @@ BoxSize                            1
 TimeBetSnapshot                    0.5
 MaxSizeTimestep                    0.02
 DesNumNgb                          40
+% -- optional physics parameters
+BiniX                              0.07
+BiniY                              1.0e0
+BiniZ                              1.0e0
+ConductionCoeff                    0.0002
+ShearViscosityCoeff                0.0002
+BulkViscosityCoeff                 0.0
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.1
 MaxRMSDisplacementFac              0.1
