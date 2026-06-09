@@ -319,13 +319,21 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * bad-stop but DO NOT return -- the pseudodata Iallgatherv posted at
      * force_exchange_pseudodata_issue() above must still be completed below.
      * Drains at gravtree:after_treebuild before the GPU gravity walk. */
-    if(let_run_exchange() != 0)             {endrun(90000072);}
+    int let_status = let_run_exchange();
+    if(let_status != 0)                     {endrun(90000072);}
     int pseudo_status = force_exchange_pseudodata_complete();
-    /* On an unmatched complete (soft bad-stop already set) skip the foreign-moment
-     * scatter/finalize/resum -- they would run on un-exchanged moments and
-     * let_finalize would emergency-hold on a non-empty unredirected foreign topleaf.
-     * Drains at gravtree:after_treebuild before the GPU gravity walk. */
-    if(!pseudo_status) {
+    /* Skip the foreign-moment scatter/finalize/resum if EITHER the LET install or
+     * the pseudodata exchange failed on ANY rank. Running them after a failed LET
+     * reads un-exchanged / un-installed moments and makes let_finalize emergency-hold
+     * on every non-empty unredirected foreign topleaf -- a misleading cascade that
+     * masks the real cause (the LET-arena overflow). The pseudodata Iallgatherv
+     * issued above is already completed; the soft bad-stop drains at
+     * gravtree:after_treebuild before the GPU gravity walk. Decide globally so every
+     * rank takes the same path (the downstream steps and any retry are collective). */
+    int let_build_failed_local = (let_status != 0) || (pseudo_status != 0);
+    int let_build_failed_any = 0;
+    MPI_Allreduce(&let_build_failed_local, &let_build_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(!let_build_failed_any) {
         /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
          * ancestor topnode moments directly in SoA.  SoA is authoritative after
          * this point — no mark_all_dirty needed. */

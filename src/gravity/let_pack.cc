@@ -992,17 +992,20 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
 {
     if(recv_count_total == 0) return 0;
 
-    /* Capacity check */
-    if(Numforeignnodes + recv_count_total > MaxForeignNodes)
+    /* Capacity check (long long: capacity-bound, avoid int overflow on the sum). */
+    long long foreign_needed = (long long)Numforeignnodes + (long long)recv_count_total;
+    if(foreign_needed > (long long)MaxForeignNodes)
     {
-        if(ThisTask == 0)
-        {
-            printf("ERROR: LET unpack overflow.  Numforeignnodes=%d + recv=%d > MaxForeignNodes=%d.\n"
-                   "       Increase All.LETAllocFactor (currently %g) in the parameter file.\n"
-                   "       (Future option (b) -- graceful shrink + fallback to legacy export -- "
-                   "is documented in handoff_step13_phase9_locked.md but not implemented.)\n",
-                   Numforeignnodes, recv_count_total, MaxForeignNodes, All.LETAllocFactor);
-        }
+        /* Report the overflow shape on the overflowing rank (the heavy receiver is
+         * usually not rank 0): how far over, and which senders drove it. */
+        printf("LET unpack overflow on rank=%d: Numforeignnodes=%d + recv=%d = %lld > MaxForeignNodes=%d (over by %lld; MaxNodes=%d). Raise LETAllocFactor (currently %g) if this persists.\n",
+               ThisTask, Numforeignnodes, recv_count_total, foreign_needed,
+               MaxForeignNodes, foreign_needed - (long long)MaxForeignNodes, MaxNodes, All.LETAllocFactor);
+        for(int rr = 0; rr < NTask; rr++)
+            if(recv_count_per_rank[rr] > 0)
+                printf("  LET overflow rank=%d   from sender=%d: recv_count=%d recv_hdr=%d\n",
+                       ThisTask, rr, recv_count_per_rank[rr], recv_hdr_count_per_rank[rr]);
+        fflush(stdout);
         /* Soft bad-stop + return nonzero: the Alltoallv has already matched, so
          * this returns the error up to let_run_exchange without OOB-installing
          * the foreign nodes. The caller soft-stops and drains. */
