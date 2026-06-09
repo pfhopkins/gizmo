@@ -19,7 +19,8 @@
  */
 
 
-#define AGS_DSOFT_TOL (0.5)    // amount by which softening lengths are allowed to vary in single timesteps //
+/* AGS_DSOFT_TOL (amount by which softening lengths may vary per step) is defined
+ * globally in precompiler_logic.h, shared with the AGS density loop. */
 
 /*! this routine is called by the adaptive gravitational softening neighbor search and forcetree (for application 
     of the appropriate correction terms), to determine which particle types "talk to" which other particle types 

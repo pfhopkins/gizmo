@@ -224,6 +224,25 @@ int  let_pack_for_rank(int R,
                        const uint64_t *receiver_active_bitmap,
                        int bitmap_n_words);
 
+/*! LET exchange outcome.  Distinguishes the retryable foreign-arena overflow
+ *  (force_treebuild grows the arena and rebuilds) from non-retryable failures
+ *  (a bigger arena cannot fix a send-buffer malloc failure or a malformed
+ *  exchange).  Worst status wins when reduced across ranks:
+ *  PACK_OOM/UNPACK_INTERNAL > OVERFLOW_RETRYABLE > OK. */
+typedef enum {
+    LET_OK = 0,
+    LET_OVERFLOW_RETRYABLE,   /* receiver foreign arena too small; rebuild larger */
+    LET_PACK_OOM,             /* send-buffer realloc failed; not retryable */
+    LET_UNPACK_INTERNAL       /* malformed exchange; not retryable */
+} let_exchange_status_t;
+
+/*! Adaptive lower bound (in nodes) on the LET foreign-node arena MaxForeignNodes.
+ *  0 at startup; force_treebuild ratchets it up on a retryable overflow so the
+ *  arena self-sizes to the run's evolving clustering.  force_treeallocate is the
+ *  sole consumer.  NOT a parameter: All.LETAllocFactor is the input floor, this is
+ *  the runtime adaptive floor.  Not restart-persisted (recomputed each run). */
+extern long long RuntimeMinLETForeignNodes;
+
 /*! Two-phase MPI exchange + local install in one scope.  Phase 1 Alltoalls
  *  per-rank node-counts and header-counts; Phase 2 Alltoallvs the
  *  LETNodeWire and LETSubtreeHeader bytes; then directly calls
@@ -232,10 +251,11 @@ int  let_pack_for_rank(int R,
  *  stack discipline correct -- earlier draft returned flat_recv /
  *  flat_hdr_recv to the caller, leaving them mid-stack and triggering
  *  "not the last allocated block" aborts when intermediates were freed. */
-int  let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
+let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         const int *send_count_per_rank,
                         struct LETSubtreeHeader **send_hdr_per_rank,
-                        const int *send_hdr_count_per_rank);
+                        const int *send_hdr_count_per_rank,
+                        long long *foreign_needed_out);
 
 /*! Install received foreign nodes into Nodes_base[] / Extnodes_base[] /
  *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes), build
@@ -248,17 +268,20 @@ int  let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  *  buffer-overflow policy).  Future option (b) -- graceful shrink + revert
  *  to legacy export -- documented in handoff_step13_phase9_locked.md but
  *  not implemented unless practical memory limits demand it. */
-int  let_unpack_and_install(const struct LETNodeWire *recv_buf,
+let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                             const int *recv_count_per_rank,
                             int recv_count_total,
                             const struct LETSubtreeHeader *recv_hdr_buf,
                             const int *recv_hdr_count_per_rank,
-                            int recv_hdr_count_total);
+                            int recv_hdr_count_total,
+                            long long *foreign_needed_out);
 
 /*! Top-level LET exchange.  Called from gravity_tree() after the local tree
  *  is built and force_exchange_pseudodata() has run.  Composes the four
- *  steps above; resets Numforeignnodes to 0 first. */
-int  let_run_exchange(void);
+ *  steps above; resets Numforeignnodes to 0 first.  Returns a typed status and
+ *  (on overflow) the total foreign-node capacity the receiver needed, so the
+ *  force_treebuild retry loop can ratchet RuntimeMinLETForeignNodes. */
+let_exchange_status_t let_run_exchange(long long *foreign_needed_out);
 
 /*! LET completeness finalizer.  Call from force_treebuild() after
  *  gpu_scatter_pseudo_to_soa(): redirects provably-empty unredirected foreign

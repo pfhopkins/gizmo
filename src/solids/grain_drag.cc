@@ -224,9 +224,8 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
     } /* closes check for gas density, dt, vmag > 0, subtype valid */
 
 #ifdef PIC_MHD
-#ifndef PIC_SPEEDOFLIGHT_REDUCTION
-#define PIC_SPEEDOFLIGHT_REDUCTION (1)
-#endif
+    /* PIC_SPEEDOFLIGHT_REDUCTION default is set globally in precompiler_logic.h
+     * so this and the PIC timestep limiter (core/timestep.cc) stay consistent. */
     if((grain_subtype >= 3) && (dt > 0) && (pp[idx].Gas_Density>0) && (vgas_mag > 0))
     {
         double reduced_C = PIC_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;

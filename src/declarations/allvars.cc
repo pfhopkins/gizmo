@@ -371,6 +371,7 @@ int MaxNodes;			/*!< maximum allowed number of internal nodes */
 int Numnodestree;		/*!< number of (internal) nodes in each tree */
 int MaxForeignNodes = 0;        /*!< Phase 9 LET: foreign-node capacity; set in force_treeallocate. */
 int Numforeignnodes = 0;        /*!< Phase 9 LET: foreign nodes currently installed; reset on each LET exchange. */
+long long RuntimeMinLETForeignNodes = 0;  /*!< adaptive lower bound on MaxForeignNodes; ratcheted up by force_treebuild on a retryable LET overflow. Not a parameter; not restart-persisted. */
 
 
 int *Nextnode;			/*!< gives next node in tree walk  (nodes array) */

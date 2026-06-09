@@ -810,10 +810,11 @@ pack_oom_bail:
  * keep the unpack call inside this scope, so all temporaries can be
  * released in strict reverse-alloc order before returning.
  * ---------------------------------------------------------------------- */
-extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
+extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                                    const int *send_count_per_rank,
                                    struct LETSubtreeHeader **send_hdr_per_rank,
-                                   const int *send_hdr_count_per_rank)
+                                   const int *send_hdr_count_per_rank,
+                                   long long *foreign_needed_out)
 {
     double t_let_start = my_second();
     /* Phase 1: exchange node-counts AND header-counts */
@@ -907,8 +908,8 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
     /* Install foreign tree contents while flat_recv / flat_hdr_recv are
      * still alive on the mymalloc stack. Capture the status so an unpack
      * overflow propagates up to let_run_exchange. */
-    int unpack_status = let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
-                            flat_hdr_recv, recv_hdr_counts, total_hdr_recv);
+    let_exchange_status_t unpack_status = let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
+                            flat_hdr_recv, recv_hdr_counts, total_hdr_recv, foreign_needed_out);
 
     /* Free everything in strict reverse-alloc order */
     myfree(flat_hdr_recv);
@@ -983,31 +984,28 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  *     receiver redirects Nodes[DomainNodeIndex[h.topleaf_idx]].u.d.nextnode
  *     -> slot_base_r + h.wire_offset.
  */
-extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
+extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
                                        int recv_count_total,
                                        const struct LETSubtreeHeader *recv_hdr_buf,
                                        const int *recv_hdr_count_per_rank,
-                                       int recv_hdr_count_total)
+                                       int recv_hdr_count_total,
+                                       long long *foreign_needed_out)
 {
-    if(recv_count_total == 0) return 0;
+    if(foreign_needed_out) *foreign_needed_out = 0;
+    if(recv_count_total == 0) return LET_OK;
 
-    /* Capacity check */
-    if(Numforeignnodes + recv_count_total > MaxForeignNodes)
+    /* Capacity check (long long: capacity-bound, avoid int overflow on the sum).
+     * Report the full needed capacity (Numforeignnodes + recv_count_total -- the
+     * "+Numforeignnodes" is for a future per-sender/incremental install; today it
+     * is 0 at entry) and, on overflow, return a RETRYABLE status WITHOUT installing
+     * or aborting. force_treebuild ratchets RuntimeMinLETForeignNodes, rebuilds with
+     * a larger arena, and retries; all overflow messaging is owned by that loop. */
+    long long foreign_needed = (long long)Numforeignnodes + (long long)recv_count_total;
+    if(foreign_needed_out) *foreign_needed_out = foreign_needed;
+    if(foreign_needed > (long long)MaxForeignNodes)
     {
-        if(ThisTask == 0)
-        {
-            printf("ERROR: LET unpack overflow.  Numforeignnodes=%d + recv=%d > MaxForeignNodes=%d.\n"
-                   "       Increase All.LETAllocFactor (currently %g) in the parameter file.\n"
-                   "       (Future option (b) -- graceful shrink + fallback to legacy export -- "
-                   "is documented in handoff_step13_phase9_locked.md but not implemented.)\n",
-                   Numforeignnodes, recv_count_total, MaxForeignNodes, All.LETAllocFactor);
-        }
-        /* Soft bad-stop + return nonzero: the Alltoallv has already matched, so
-         * this returns the error up to let_run_exchange without OOB-installing
-         * the foreign nodes. The caller soft-stops and drains. */
-        endrun(90000062);
-        return 1;
+        return LET_OVERFLOW_RETRYABLE;
     }
 
     int node_off = 0;     /* running offset into recv_buf (per-sender) */
@@ -1126,18 +1124,19 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
         hdr_off  += hcount;
     }
 
-    return 0;
+    return LET_OK;
 }
 
 /* ----------------------------------------------------------------------
  * Top-level orchestrator
  * ---------------------------------------------------------------------- */
-extern "C" int let_run_exchange(void)
+extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 {
+    if(foreign_needed_out) *foreign_needed_out = 0;
     /* Defensive no-op if no foreign-node headroom was allocated.  GPU builds
      * reject LETAllocFactor<=0 during parameter validation because the legacy
      * gravity export fallback is retired there. */
-    if(MaxForeignNodes <= 0) return 0;
+    if(MaxForeignNodes <= 0) return LET_OK;
 
     g_let_pack_oom = 0;   /* fresh status for this exchange */
 
@@ -1204,8 +1203,8 @@ extern "C" int let_run_exchange(void)
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
      * local pack OOM (failed ranks carry zero send counts) so the Alltoallv stays
      * matched; the nonzero status drains via the caller after this returns. */
-    int exch_status = let_exchange_nodes(send_per_rank, send_count,
-                       send_hdr_per_rank, send_hdr_count);
+    let_exchange_status_t exch_status = let_exchange_nodes(send_per_rank, send_count,
+                       send_hdr_per_rank, send_hdr_count, foreign_needed_out);
 
     /* Free per-rank send buffers (allocated via realloc, not mymalloc) */
     for(int r = 0; r < NTask; r++) {
@@ -1221,7 +1220,10 @@ extern "C" int let_run_exchange(void)
     myfree(all_payloads);
     myfree(all_active_bitmaps);
     myfree(my_active_bitmap);
-    return (g_let_pack_oom || exch_status != 0) ? 1 : 0;
+    /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
+     * fixable by a larger foreign arena, so it outranks a retryable overflow. */
+    if(g_let_pack_oom) return LET_PACK_OOM;
+    return exch_status;
 }
 
 /* ----------------------------------------------------------------------
