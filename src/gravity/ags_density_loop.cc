@@ -45,12 +45,9 @@
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 
-/* AGS_DSOFT_TOL: legacy gravity/ags_rkern.cc:34 — softening growth tolerance
- * per step. Visible here so after_iter's minsoft/maxsoft clamp matches
- * legacy rkern.cc:205-206 verbatim. */
-#ifndef AGS_DSOFT_TOL
-#define AGS_DSOFT_TOL (0.5)
-#endif
+/* AGS_DSOFT_TOL (softening growth tolerance per step) is defined globally in
+ * precompiler_logic.h so after_iter's minsoft/maxsoft clamp matches the AGS
+ * radius solver in gravity/ags_rkern.cc. */
 
 /* Codex round-10 (2026-05-11) targeted diagnostic trace.
  *

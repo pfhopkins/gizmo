@@ -1564,6 +1564,31 @@
 #error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
 #endif
 
+/* Some modules compute neighbor fluxes explicitly within the force tree: those
+ * require the tree walk to open leaves more aggressively (sphere-box intersection)
+ * so possible neighbors are not missed. This must be a GLOBAL define so the CPU
+ * tree build/walk (forcetree.cc), the GPU walk (gpu_gravtree.cc), and the shared
+ * opening predicate (gravtree_opening.h) all use the same opening criterion; a
+ * file-local define would silently leave the GPU path on a weaker criterion and
+ * diverge from the CPU forces. */
+#if (defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))
+#define NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
+#endif
+
+/* Reduced speed-of-light factor for PIC dust dynamics. Global default so the
+ * grain drag (solids/grain_drag.cc) and the PIC timestep limiter (core/timestep.cc)
+ * use the same value; overridable from Config.sh. */
+#ifndef PIC_SPEEDOFLIGHT_REDUCTION
+#define PIC_SPEEDOFLIGHT_REDUCTION (1)
+#endif
+
+/* Fractional amount by which adaptive-gravity softening lengths are allowed to
+ * vary in a single timestep. Global so the AGS radius solver (gravity/ags_rkern.cc)
+ * and the AGS density loop (gravity/ags_density_loop.cc) share one tolerance. */
+#ifndef AGS_DSOFT_TOL
+#define AGS_DSOFT_TOL (0.5)
+#endif
+
 /* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
  *
  * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at

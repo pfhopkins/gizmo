@@ -128,11 +128,9 @@ void compute_all_force_softening(int mode)
 /*! auxiliary variable used to set-up non-recursive walk */
 static int last;
 
-/* some modules compute neighbor fluxes explicitly within the force-tree: in these cases, we need to
- take extra care about opening leaves to ensure possible neighbors are not missed, so defined a flag below for it */
-#if (defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))
-#define NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
-#endif
+/* NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE is defined globally in
+ * precompiler_logic.h (via allvars.h) so the CPU and GPU tree walks share the
+ * same leaf-opening criterion. */
 
 /*! length of look-up table for short-range force kernel in TreePM algorithm */
 #define NTAB 1000
