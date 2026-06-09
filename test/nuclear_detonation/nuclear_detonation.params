@@ -29,7 +29,7 @@ ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
 
 % EOS
-EosTable                           ../../eos/helmholtz/helm_table.dat
+EosTable                           ../../src/eos/helmholtz/helm_table.dat
 
 % softening (not used for gravity, but provides initial kernel radius guess)
 SofteningGas                       300.0

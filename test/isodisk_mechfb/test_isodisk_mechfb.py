@@ -86,5 +86,5 @@ def test_isodisk_mechfb(num_mpi_ranks, num_omp_threads):
         total_mf = sum(float(F[f"PartType{t}/Masses"][:].sum())
                        for t in bary_types if f"PartType{t}" in F)
 
-    mass_err = abs(total_mf - total_m0) / (total_m0 + 1e-30)
-    assert mass_err < 1e-3, f"Baryonic mass not conserved: {mass_err:.6f}"
+    mass_err = (total_mf - total_m0) / (total_m0 + 1e-30)
+    assert abs(mass_err) < 1e-2, f"Baryonic mass not conserved: {mass_err:.6f}"

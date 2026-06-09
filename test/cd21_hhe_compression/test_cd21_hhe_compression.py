@@ -69,10 +69,8 @@ def setup_table_and_ics(test_dir):
         )
 
 
-#@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=2),))
-#@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize("num_mpi_ranks", (1,))
-@pytest.mark.parametrize("num_omp_threads", (1,))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_cd21_hhe_compression(num_mpi_ranks, num_omp_threads):
     test_name = "cd21_hhe_compression"
     test_dir = abspath(join(dirname(__file__)))

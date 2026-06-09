@@ -34,12 +34,14 @@ BASALT_A0   = 1.275   # initial distention from material table (basalt, slot 15)
 
 def _make_ics():
     """Generate the IC file if not present."""
-    ic_path = f"test/{TEST_NAME}/jutzi_crater_ics.hdf5"
+    test_dir = f"test/{TEST_NAME}"
+    ic_path = f"{test_dir}/{TEST_NAME}_ics.hdf5"
     if not os.path.exists(ic_path):
         import subprocess, sys
-        script = f"test/{TEST_NAME}/make_ics.py"
-        subprocess.run([sys.executable, script], check=True,
-                       cwd=os.getcwd())
+        # make_ics.py writes its output to the cwd, so run it from the test dir
+        # (matches the cd21_hhe_compression / nuclear_detonation IC pattern).
+        subprocess.run([sys.executable, "make_ics.py"], check=True,
+                       cwd=test_dir)
     return ic_path
 
 
