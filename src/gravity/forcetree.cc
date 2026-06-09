@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <limits.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -249,6 +250,15 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
+    /* Adaptive LET foreign-arena retry: force_treebuild owns the rebuild loop (same
+     * idiom as the TreeAllocFactor-overflow retry below). On a retryable LET overflow
+     * we grow the adaptive floor and rebuild the whole tree from scratch -- the foreign
+     * arena is contiguous inside Nodes_base, so growing it means reallocating + rebuilding.
+     * One rebuild per ratchet event suffices (the in-call domain is fixed, so the rebuilt
+     * LET needs the same capacity and the 1.5x headroom covers it); the bound is a backstop. */
+    int let_retry = 0;
+    const int LET_MAX_RETRY = 3;
+let_build_attempt:
     /* Phase 9.6: reset force_add_element insertion counter at each full build. */
     ForceAddElementToTree_CallsSinceBuild = 0;
     do
@@ -315,33 +325,67 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
     force_exchange_pseudodata_issue();
-    /* LET exchange failed (pack OOM or unpack overflow, status-propagated): soft
-     * bad-stop but DO NOT return -- the pseudodata Iallgatherv posted at
-     * force_exchange_pseudodata_issue() above must still be completed below.
-     * Drains at gravtree:after_treebuild before the GPU gravity walk. */
-    int let_status = let_run_exchange();
-    if(let_status != 0)                     {endrun(90000072);}
+    /* LET exchange returns a typed status + (on overflow) the foreign-node capacity the
+     * receiver needed. The pseudodata Iallgatherv posted just above must still be
+     * completed regardless, so no early return here. */
+    long long foreign_needed = 0;
+    let_exchange_status_t let_status = let_run_exchange(&foreign_needed);
     int pseudo_status = force_exchange_pseudodata_complete();
-    /* Skip the foreign-moment scatter/finalize/resum if EITHER the LET install or
-     * the pseudodata exchange failed on ANY rank. Running them after a failed LET
-     * reads un-exchanged / un-installed moments and makes let_finalize emergency-hold
-     * on every non-empty unredirected foreign topleaf -- a misleading cascade that
-     * masks the real cause (the LET-arena overflow). The pseudodata Iallgatherv
-     * issued above is already completed; the soft bad-stop drains at
-     * gravtree:after_treebuild before the GPU gravity walk. Decide globally so every
-     * rank takes the same path (the downstream steps and any retry are collective). */
-    int let_build_failed_local = (let_status != 0) || (pseudo_status != 0);
-    int let_build_failed_any = 0;
-    MPI_Allreduce(&let_build_failed_local, &let_build_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(!let_build_failed_any) {
-        /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
-         * ancestor topnode moments directly in SoA.  SoA is authoritative after
-         * this point — no mark_all_dirty needed. */
+
+    /* Classify globally (worst status wins). A send-buffer malloc failure
+     * (LET_PACK_OOM), a malformed exchange (LET_UNPACK_INTERNAL), or a pseudodata
+     * failure are HARD -- graceful stop, no retry (a bigger arena cannot fix them).
+     * A LET_OVERFLOW_RETRYABLE on any rank triggers an arena grow + full rebuild.
+     * Deciding globally keeps every rank on the same path (downstream + retry are
+     * collective). */
+    int overflow_local = (let_status == LET_OVERFLOW_RETRYABLE);
+    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
+    int overflow_any = 0, hardfail_any = 0;
+    long long need_max = 0;
+    MPI_Allreduce(&overflow_local, &overflow_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&hardfail_local, &hardfail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&foreign_needed, &need_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+
+    if(hardfail_any)
+    {
+        /* Non-retryable. The failing rank records the cause; pseudodata failures
+         * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
+         * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
+        if(let_status == LET_PACK_OOM || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
+    }
+    else if(overflow_any)
+    {
+        if(let_retry >= LET_MAX_RETRY)
+        {
+            /* Should not happen: one rebuild per ratchet suffices (fixed in-call domain
+             * + 1.5x headroom). Each overflowing rank reports its own need, then stop. */
+            if(overflow_local)
+                printf("LET foreign-arena overflow persists after %d retries on rank=%d: needed %lld nodes > MaxForeignNodes=%d (MaxNodes=%d). Stopping.\n",
+                       LET_MAX_RETRY, ThisTask, foreign_needed, MaxForeignNodes, MaxNodes);
+            fflush(stdout);
+            endrun(90000062);   /* graceful drain; skip the foreign-moment steps */
+        }
+        else
+        {
+            long long want = (long long) ceil(1.5 * (double) need_max);
+            if(want > RuntimeMinLETForeignNodes) {RuntimeMinLETForeignNodes = want;}
+            if(ThisTask == 0)
+                printf("LET foreign arena too small (needed up to %lld nodes); growing adaptive floor to %lld and rebuilding the tree (retry %d/%d).\n",
+                       need_max, RuntimeMinLETForeignNodes, let_retry + 1, LET_MAX_RETRY);
+            fflush(stdout);
+            let_retry++;
+            force_treefree();
+            force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            /* drain a tree-alloc UVM OOM before rebuilding on a NULL-based tree (symmetric) */
+            gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
+            goto let_build_attempt;   /* rebuild the whole tree with the larger arena */
+        }
+    }
+    else
+    {
+        /* Success: foreign moments complete. Scatter AoS→SoA, finalize LET
+         * completeness, then re-sum ancestor topnode moments. */
         if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
-        /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
-         * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
-         * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
-         * and hard-fail on any non-empty unredirected one — before the GPU walk. */
         let_finalize_unredirected_foreign_topleaves();
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     }
@@ -3725,7 +3769,22 @@ void force_treeallocate(int maxnodes, int maxpart)
      * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
     {
         double synth_overhead = 2.0 * (double)All.MaxPart / (double)All.PartAllocFactor;
-        MaxForeignNodes = (int) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
+        long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
+        /* Take the larger of the parameter-derived floor and the runtime adaptive
+         * floor (ratcheted by force_treebuild on a retryable LET overflow). This is
+         * the SOLE place MaxForeignNodes is derived. */
+        long long want = (base > RuntimeMinLETForeignNodes) ? base : RuntimeMinLETForeignNodes;
+        if(want < 0) want = 0;
+        if(want > (long long)INT_MAX)
+        {
+            printf("force_treeallocate: LET foreign-node capacity %lld exceeds INT_MAX "
+                   "(MaxNodes=%d, RuntimeMinLETForeignNodes=%lld). Stopping.\n",
+                   want, MaxNodes, RuntimeMinLETForeignNodes);
+            fflush(stdout);
+            endrun(90000082);   /* graceful drain; same family as the foreign-arena UVM OOM below */
+            want = (long long)INT_MAX;
+        }
+        MaxForeignNodes = (int) want;
     }
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
     Numforeignnodes = 0;
