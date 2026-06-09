@@ -129,21 +129,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DIM = 1
 BOX = 1.0
 
-N           = int(sys.argv[1]) if len(sys.argv) > 1 else 48
-sigma       = float(sys.argv[2]) if len(sys.argv) > 2 else 0.05
-perturb_amp = float(sys.argv[3]) if len(sys.argv) > 3 else 0.5
-
 V_BKG    = np.array([1.0, 0.0, -1.0, -2.0])
 FRAC_BKG = np.array([0.49, 0.02, 0.49, 1e-8])
 FRAC_BKG = FRAC_BKG / FRAC_BKG.sum()
 
 
-def free_slot_bases_1d(x, box, m_cell):
+def free_slot_bases_1d(x, box, m_cell, spatial_sigma, perturb_amp):
     """Per-particle list of [(mass, [vx,0,0]) x4], with the localized v=+2
-    perturbation at x=0.5 (same construction as the harness)."""
+    perturbation at x=0.5 (same construction as the harness).  spatial_sigma
+    is the Gaussian WIDTH of the perturbation envelope; it is distinct from
+    the velocity-dispersion sigma passed to write_cbe_ic (which sets the
+    SECONDMOMENT Sxx = disp_sigma^2)."""
     dxc = np.abs(x - 0.5 * box)
     dxc = np.minimum(dxc, box - dxc)          # periodic min-image to centre
-    pert = perturb_amp * np.exp(-(dxc / sigma) ** 2)
+    pert = perturb_amp * np.exp(-(dxc / spatial_sigma) ** 2)
     out = []
     for a in range(len(x)):
         v_arr = V_BKG.copy()
@@ -159,13 +158,33 @@ def free_slot_bases_1d(x, box, m_cell):
     return out
 
 
-def main():
+def build(N=48, spatial_sigma=0.05, perturb_amp=0.5, disp_sigma=0.0, out=None):
+    """Write one free_slot_1d IC.  disp_sigma>0 -> SECONDMOMENT IC (NMOMENTS=3
+    in 1D; Sxx=disp_sigma^2 per basis, mirrors harness Sxx_floor=1e-6 i.e.
+    disp_sigma=1e-3).  disp_sigma=0 -> cold IC (NMOMENTS=2)."""
+    if out is None:
+        out = os.path.join(HERE, "cbe_free_slot_1d_ics.hdf5")
     x = (np.arange(N) + 0.5) * BOX / N
     pos = np.zeros((N, 3)); pos[:, 0] = x
     m_cell = 1.0 / N
-    per_particle_bases = free_slot_bases_1d(x, BOX, m_cell)
-    write_cbe_ic(os.path.join(HERE, "cbe_free_slot_1d_ics.hdf5"),
-                 pos, per_particle_bases, DIM, BOX)
+    per_particle_bases = free_slot_bases_1d(x, BOX, m_cell, spatial_sigma, perturb_amp)
+    return write_cbe_ic(out, pos, per_particle_bases, DIM, BOX, sigma=disp_sigma)
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="cbe_free_slot_1d IC builder")
+    ap.add_argument("--N", type=int, default=48)
+    ap.add_argument("--spatial-sigma", type=float, default=0.05,
+                    help="Gaussian width of the +2 perturbation envelope")
+    ap.add_argument("--perturb-amp", type=float, default=0.5)
+    ap.add_argument("--disp-sigma", type=float, default=0.1,
+                    help="velocity dispersion (Sxx=disp_sigma^2); >0 -> SECONDMOMENT IC "
+                         "(production grad+SM default); 0 -> cold dev IC")
+    ap.add_argument("--out", default=None, help="output HDF5 path")
+    args = ap.parse_args()
+    build(N=args.N, spatial_sigma=args.spatial_sigma,
+          perturb_amp=args.perturb_amp, disp_sigma=args.disp_sigma, out=args.out)
 
 
 if __name__ == "__main__":

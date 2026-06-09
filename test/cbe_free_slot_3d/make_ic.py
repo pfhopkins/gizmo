@@ -10,8 +10,10 @@ Box: BoxSize sets the TRANSVERSE (y,z) extent; BOX_LONG_X stretches x.
 With Config BOX_LONG_X=16 and BoxSize=0.0625 the box is [1.0 x 0.0625 x
 0.0625] and the lattice spacing is uniform (1/64 on every axis).
 
-Usage: python make_ic.py [Nx [Ny [sigma [perturb_amp]]]]
-  defaults: Nx=64, Ny=Nz=4, sigma=0.05, perturb_amp=0.5
+Usage: python make_ic.py [Nx [Ny [spatial_sigma [perturb_amp [vsigma]]]]]
+  defaults: Nx=64, Ny=Nz=4, spatial_sigma=0.05, perturb_amp=0.5, vsigma=0.1
+  vsigma > 0 writes per-basis SECONDMOMENT stress (S = vsigma^2), the
+  production grad+SM default; vsigma=0 writes a cold NMOMENTS=4 IC.
 """
 import os
 import sys
@@ -136,11 +138,12 @@ BOXSIZE    = 0.0625                 # transverse (y,z) extent
 LX = BOXSIZE * BOX_LONG_X           # = 1.0
 LY = LZ = BOXSIZE                   # = 0.0625
 
-Nx          = int(sys.argv[1]) if len(sys.argv) > 1 else 64
-Ny          = int(sys.argv[2]) if len(sys.argv) > 2 else 4
-Nz          = Ny
-sigma       = float(sys.argv[3]) if len(sys.argv) > 3 else 0.05
-perturb_amp = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
+Nx            = int(sys.argv[1]) if len(sys.argv) > 1 else 64
+Ny            = int(sys.argv[2]) if len(sys.argv) > 2 else 4
+Nz            = Ny
+spatial_sigma = float(sys.argv[3]) if len(sys.argv) > 3 else 0.05   # x-perturbation width
+perturb_amp   = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
+vsigma        = float(sys.argv[5]) if len(sys.argv) > 5 else 0.1     # per-basis velocity dispersion (SECONDMOMENT)
 
 V_BKG    = np.array([1.0, 0.0, -1.0, -2.0])
 FRAC_BKG = np.array([0.49, 0.02, 0.49, 1e-8])
@@ -160,7 +163,7 @@ def main():
     xp = pos[:, 0]
     dxc = np.abs(xp - 0.5 * LX)
     dxc = np.minimum(dxc, LX - dxc)
-    pert = perturb_amp * np.exp(-(dxc / sigma) ** 2)
+    pert = perturb_amp * np.exp(-(dxc / spatial_sigma) ** 2)
 
     per_particle_bases = []
     for a in range(N):
@@ -179,7 +182,7 @@ def main():
 
     write_cbe_ic(os.path.join(HERE, "cbe_free_slot_3d_ics.hdf5"),
                  pos, per_particle_bases, DIM, BOXSIZE,
-                 box_long=(BOX_LONG_X, 1.0, 1.0))
+                 box_long=(BOX_LONG_X, 1.0, 1.0), sigma=vsigma)
 
 
 if __name__ == "__main__":

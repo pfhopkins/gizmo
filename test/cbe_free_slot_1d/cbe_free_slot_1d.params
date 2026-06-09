@@ -13,9 +13,9 @@ TimeBetStatistics                  0.0125
 BoxSize                            1.0
 
 AGS_DesNumNgb                      4
-AGS_MaxNumNgbDeviation             0.5
+AGS_MaxNumNgbDeviation             0.3
 DesNumNgb                          4
-MaxNumNgbDeviation                 0.5
+MaxNumNgbDeviation                 0.3
 
 Softening_Type0                    0.01
 Softening_Type1                    0.01
