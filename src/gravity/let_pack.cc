@@ -46,6 +46,7 @@
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "../core/step_phases.h"              /* gizmo_verbose_diag() */
 #include "let_data.h"
+#include "gravtree_opening.h"   /* shared Stage-2 opening predicate (cell/AABB variant) */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
 
@@ -186,12 +187,14 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     }
     if(!found_any)
     {
-        /* No local topleaves.  Use degenerate bbox at origin; min_dist will
-         * be large for all nodes, so essential check returns 0 for everything,
-         * meaning we ship nothing -- correct behavior for a rank with no
-         * particles. */
+        /* No local topleaves -> no real cover.  Set a degenerate origin bbox; the
+         * has_cover flag below marks this rank so senders ship it nothing (the
+         * no-real-receiver guard in let_pack_for_rank).  Without that flag the
+         * degenerate cover + min_OldAcc==0 would make the relative criterion open
+         * every node and over-ship the whole tree to an empty rank. */
         for(int k = 0; k < 3; k++) {out->bbox_min[k] = out->bbox_max[k] = 0.0;}
     }
+    out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
     /* Per-particle bounds.  If active_bitmap is non-NULL, scan only
      * ActiveParticleList (Phase 9.5 tight mode).  Otherwise scan all NumPart
@@ -199,6 +202,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
      * on non-active particles. */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
+    out->min_soft = DBL_MAX;
     out->has_sink = 0;
 
     int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
@@ -219,21 +223,18 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         double oa = (double) P[i].OldAcc;
         if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
 
-        /* max softening kernel radius per type */
+        /* softening kernel radius: track per-type max (relative softening open) and the
+         * global min over the cover (non-NEIGHBORS node-softening open t_h < msoft). */
         double soft = (double) ForceSoftening_KernelRadius(i);
         if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
+        if(soft < out->min_soft) out->min_soft = soft;
 
         if(t == 5) out->has_sink = 1;
     }
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; relative check disabled */
-
-    /* Use relative criterion?  Standard GIZMO: relative is on iff All.ErrTolTheta == 0.
-     * Under GRAVITY_HYBRID_OPENING_CRIT it's also suppressed at first step. */
-#ifdef GRAVITY_HYBRID_OPENING_CRIT
-    out->use_rel_crit = (All.Ti_Current > 0 || RestartFlag == 1) ? 1 : 0;
-#else
-    out->use_rel_crit = (All.ErrTolTheta == 0) ? 1 : 0;
-#endif
+    if(out->min_soft == DBL_MAX) out->min_soft = 0.0;  /* empty cover; conservative (opens softening) */
+    /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
+     * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
 }
 
 /* ----------------------------------------------------------------------
@@ -252,74 +253,46 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
  *
  * Returns 1 if SOME particle in R might open this node (must ship + recurse).
  * Returns 0 if NO particle in R will open this node (ship as multipole-only OR
- * skip).  See handoff_step13_phase9_walk_audit.md for the 20-criterion derivation.
+ * skip).
+ *
+ * Routes the decision through the single shared opening predicate
+ * (gravtree_open_decision_cell) -- the SAME acceptance geometry the GPU/CPU
+ * walk uses, evaluated over a conservative cover of R's particles.  essential
+ * == (the walk would OPEN).  The cover worst-cases each input so the cell opens
+ * whenever ANY target in R's cover would: minimum distance-to-cover (for every
+ * distance-decreasing open test) and maximum for the lone increasing one (PM
+ * cull), max softening (relative softening open), min softening (node-softening
+ * open), min OldAcc (relative criterion), sink target if the cover holds a sink.
  * ---------------------------------------------------------------------- */
 static int let_node_essential_for_rank(double cx, double cy, double cz,
+                                       double sx, double sy, double sz,
                                        double len, double mass, double maxsoft,
+                                       int n_sink,
                                        const struct LETPerRankPayload *p)
 {
-    double r2 = let_point_to_bbox_dist_sq(p->bbox_min, p->bbox_max, cx, cy, cz);
+    double t_soft_max = 0.0;
+    for(int t = 0; t < 6; t++) if(p->max_soft_by_type[t] > t_soft_max) t_soft_max = p->max_soft_by_type[t];
+    double t_aold_min = p->min_OldAcc * All.ErrTolForceAcc;
 
-    /* BH criterion: open if len^2 > r^2 * theta^2 */
-    if(All.ErrTolTheta != 0)
-    {
-        double theta2 = All.ErrTolTheta * All.ErrTolTheta;
-        if(len * len > r2 * theta2) return 1;
-    }
-
-    /* Relative criterion: open if M*len^2 > r^4 * OldAcc * ErrTolForceAcc / G_factor.
-     * GIZMO's relative form uses aold = ErrTolForceAcc * OldAcc.  Smaller aold ->
-     * more permissive opening, so over-include with min(OldAcc) over R. */
-    if(p->use_rel_crit)
-    {
-        if(p->min_OldAcc > 0)
-        {
-            double aold_min = p->min_OldAcc * All.ErrTolForceAcc;
-            double lhs = mass * len * len;
-            double rhs = r2 * r2 * aold_min;
-            if(lhs > rhs) return 1;
-        }
-        else
-        {
-            /* No positive OldAcc info -- conservative: always essential under relative crit */
-            return 1;
-        }
-    }
-
-    /* Softening criterion (target-side): open if r < (target_soft + 0.6 * len).
-     * Use max softening over types in R for max permissiveness. */
-    double max_soft_R = 0.0;
-    for(int t = 0; t < 6; t++)
-    {
-        if(p->max_soft_by_type[t] > max_soft_R) max_soft_R = p->max_soft_by_type[t];
-    }
-    double soft_check = max_soft_R + 0.6 * len;
-    if(r2 < soft_check * soft_check) return 1;
-
-    /* Node-side maxsoft criterion: open if r < (node_maxsoft + 0.6 * len) */
-    double node_soft_check = maxsoft + 0.6 * len;
-    if(r2 < node_soft_check * node_soft_check) return 1;
-
+    double rcut = 0.0, rcut2 = 0.0;
 #ifdef PMGRID
-    /* PM short-range: walk skips nodes outside rcut.  For LET, ship if within
-     * rcut + 0.5*len (walk would touch).  Beyond that, walk skips -- don't ship. */
-    double rcut = (double) All.Rcut[0];
+    rcut = (double) All.Rcut[0];
 #ifdef PM_PLACEHIGHRESREGION
     if((double) All.Rcut[1] > rcut) rcut = (double) All.Rcut[1];
 #endif
-    double pm_check = rcut + 0.5 * len;
-    if(r2 >= pm_check * pm_check) return 0;  /* outside PM short-range; walk would skip */
+    rcut2 = rcut * rcut;
 #endif
 
-#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-    if(p->has_sink)
-    {
-        double ssdgr_check = SINGLE_STAR_DIRECT_GRAVITY_RADIUS + 0.6 * len;
-        if(r2 < ssdgr_check * ssdgr_check) return 1;
-    }
-#endif
+    /* Same first-step value the walk uses (hybrid opening: relative suppressed on step 0). */
+    int is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
 
-    return 0;
+    gravtree_open_t decision = gravtree_open_decision_cell(
+        cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
+        p->bbox_min, p->bbox_max,
+        t_soft_max, p->min_soft, t_aold_min, p->has_sink,
+        rcut, rcut2, is_first_step);
+
+    return (decision == GRAV_OPEN_NODE) ? 1 : 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -554,10 +527,17 @@ static void pack_recurse(int no, int sib_terminator,
     double cx = (double) Nodes[no].center[0];
     double cy = (double) Nodes[no].center[1];
     double cz = (double) Nodes[no].center[2];
+    double sx = (double) Nodes[no].u.d.s[0];
+    double sy = (double) Nodes[no].u.d.s[1];
+    double sz = (double) Nodes[no].u.d.s[2];
     double len = (double) Nodes[no].len;
     double mass = (double) Nodes[no].u.d.mass;
     double maxsoft = (double) Nodes[no].maxsoft;
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, len, mass, maxsoft, payload);
+    int node_nsink = 0;
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+    node_nsink = Nodes[no].N_SINK;
+#endif
+    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, node_nsink, payload);
 
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
@@ -688,8 +668,17 @@ extern "C" int let_pack_for_rank(int R,
 {
     int count = 0;
     int hdr_count = 0;
-    /* Phase 9.5: short-circuit when receiver R has zero active particles.
-     * R cannot use any LET nodes we'd ship; skip the entire local-tree walk. */
+    /* No-real-receiver guard: ship nothing to a receiver with no local cover at all (no owned
+     * topleaves -> degenerate origin bbox).  Inactive particles still count; only a rank with
+     * zero local cover is skipped.  Without this the all-local cover would over-open the whole
+     * tree for an empty rank (its min_OldAcc==0 makes the relative criterion open everything). */
+    if(!all_ranks[R].has_cover)
+    {
+        *out_hdr_count = 0;
+        return 0;
+    }
+    /* Phase 9.5 (experimental active-receiver-cover mode only): short-circuit when receiver R
+     * has zero active particles.  receiver_active_bitmap is NULL on the default all-local path. */
     if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
     {
         *out_hdr_count = 0;
@@ -1149,10 +1138,14 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
-    /* Phase 9.5: compute local active-topleaf bitmap and Allgather across
-     * ranks.  Then pass MY bitmap into the payload (for tighter bbox/bounds)
-     * and EACH RECEIVER R's bitmap into let_pack_for_rank(R) (for short-
-     * circuit when R is fully inactive this step). */
+    /* All-local receiver cover: ship every node any LOCAL particle could open, to every
+     * receiver, with no active-particle downscope.  The shared cell predicate (conservative +
+     * walk-consistent) plus the self-sizing foreign arena keep this safe and complete -- including
+     * the inactive / TREECOL / RT consumers an active-only cover would silently drop.  The
+     * active-receiver-cover downscope is preserved ONLY behind the audit-gated, default-OFF compile
+     * guard below; re-enabling it requires a TREECOL/RT/inactive-consumer audit. */
+    struct LETPerRankPayload my_payload;
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
     int bitmap_n_words = let_bitmap_word_count(NTopleaves);
     if(bitmap_n_words < 1) bitmap_n_words = 1;
     uint64_t *my_active_bitmap = (uint64_t *) mymalloc("LET_my_active_bitmap",
@@ -1165,11 +1158,12 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
                   all_active_bitmaps, bitmap_n_words, MPI_UINT64_T,
                   MPI_COMM_WORLD);
 
-    struct LETPerRankPayload my_payload;
-    /* Phase 9.5 Step C: pass MY active bitmap to tighten bbox + scan only
-     * active particles.  May regress TREECOL self-shielding for non-active
-     * particles -- gated by the bitmap pointer (NULL = Phase 9.4 conservative). */
+    /* Tighten the cover to MY active topleaves only (may regress TREECOL self-shielding for
+     * non-active particles -- that is exactly what the audit gate guards). */
     let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
+#else
+    let_compute_local_payload(&my_payload, NULL, 0);
+#endif
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
@@ -1191,11 +1185,18 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
         int cap = 0, hcap = 0, hcnt = 0;
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
         const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
         send_count[r] = let_pack_for_rank(r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            r_bitmap, bitmap_n_words);
+#else
+        send_count[r] = let_pack_for_rank(r, all_payloads,
+                                           &send_per_rank[r], &cap,
+                                           &send_hdr_per_rank[r], &hcap, &hcnt,
+                                           NULL, 0);
+#endif
         send_hdr_count[r] = hcnt;
     }
 
@@ -1218,8 +1219,10 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
     myfree(all_active_bitmaps);
     myfree(my_active_bitmap);
+#endif
     /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
      * fixable by a larger foreign arena, so it outranks a retryable overflow. */
     if(g_let_pack_oom) return LET_PACK_OOM;

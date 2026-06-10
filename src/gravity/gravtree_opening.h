@@ -133,4 +133,61 @@ gravtree_open_t gravtree_open_decision_point(
         rcut, rcut2, n_sink, is_first_step);
 }
 
+/* Conservative per-axis distance from a point to a receiver-cover axis-aligned box [lo,hi]^3,
+ * under the gravity wrap policy. The displacement to the box center is wrapped jointly (one
+ * nearest-image call, so shearing-box axis coupling enters through that wrap), then reduced to
+ * each axis half-width interval (zero once inside). The three returned distances are non-negative
+ * and <= boxHalf, so feeding them as the core's center deltas leaves its internal gravity_box_*
+ * wrap idempotent. Using the MINIMUM distance over the cover makes every distance-decreasing open
+ * test fire whenever any target in the cover would fire it, and the lone distance-increasing test
+ * (PM cull) skip only when the whole cover is beyond the cutoff -- a conservative over-include of
+ * what the walk needs. The per-axis half-width reduction is exact for open / non-shearing periodic
+ * boxes; under a shearing box (or a very large cover) it stays conservative -- it over-includes,
+ * but is not necessarily tight. */
+KOKKOS_INLINE_FUNCTION
+void gravtree_cover_axis_min_dist(double px, double py, double pz,
+                                  const double cover_min[3], const double cover_max[3],
+                                  double &ax, double &ay, double &az)
+{
+    double mx = 0.5*(cover_min[0]+cover_max[0]), wx = 0.5*(cover_max[0]-cover_min[0]);
+    double my = 0.5*(cover_min[1]+cover_max[1]), wy = 0.5*(cover_max[1]-cover_min[1]);
+    double mz = 0.5*(cover_min[2]+cover_max[2]), wz = 0.5*(cover_max[2]-cover_min[2]);
+    double dx = px - mx, dy = py - my, dz = pz - mz;
+    gravity_box_nearest_image(dx, dy, dz, -1);
+    double adx = (dx < 0.0) ? -dx : dx;
+    double ady = (dy < 0.0) ? -dy : dy;
+    double adz = (dz < 0.0) ? -dz : dz;
+    ax = (adx > wx) ? adx - wx : 0.0;
+    ay = (ady > wy) ? ady - wy : 0.0;
+    az = (adz > wz) ? adz - wz : 0.0;
+}
+
+/* Cell/AABB-target opening decision over a receiver cover (the point wrapper above is the
+ * degenerate cover_min==cover_max==target). Only the distance/parameter reduction differs from
+ * the point variant -- the same Stage-2 core makes the decision. Distances are the conservative
+ * minimum over the cover (CoM distance for the force-side geometry, geometric-center distance for
+ * the PM/inside-node side checks); softening, OldAcc and sink-target inputs are the cover's
+ * worst-case (max softening for the relative softening-open, min softening for the node-softening
+ * open, min OldAcc for the relative criterion, sink-target if any cover particle is a sink). The
+ * caller still owns the structure phase (empty subtree, single-particle) ahead of this. */
+KOKKOS_INLINE_FUNCTION
+gravtree_open_t gravtree_open_decision_cell(
+    double cx, double cy, double cz,
+    double sx, double sy, double sz,
+    double len, double mass, double msoft, int n_sink,
+    const double cover_min[3], const double cover_max[3],
+    double t_soft_max, double t_soft_min, double t_aold_min, int cover_has_sink,
+    double rcut, double rcut2, int is_first_step)
+{
+    double sax, say, saz;
+    gravtree_cover_axis_min_dist(sx, sy, sz, cover_min, cover_max, sax, say, saz);
+    double r2_com = sax*sax + say*say + saz*saz;
+    double cax, cay, caz;
+    gravtree_cover_axis_min_dist(cx, cy, cz, cover_min, cover_max, cax, cay, caz);
+    return gravtree_open_decision_from_distances(
+        r2_com, cax, cay, caz,
+        t_soft_max, t_soft_min, t_aold_min, cover_has_sink ? 5 : 0,
+        len, mass, msoft, rcut, rcut2, n_sink, is_first_step);
+}
+
 #endif /* GRAVTREE_OPENING_H */
