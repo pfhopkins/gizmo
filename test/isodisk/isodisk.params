@@ -48,13 +48,13 @@ Softening_Type1                    0.05
 Softening_Type2                    0.1
 Softening_Type3                    0.1
 Softening_Type4                    0.001
-Softening_Type5                    0
+Softening_Type5                    0.001
 SofteningGasMaxPhys                0.001
 Softening_Type1_MaxPhysLimit       0.05
 Softening_Type2_MaxPhysLimit       0.1
 Softening_Type3_MaxPhysLimit       0.1
 Softening_Type4_MaxPhysLimit       0.001
-Softening_Type5_MaxPhysLimit       0
+Softening_Type5_MaxPhysLimit       0.001
 MinGasTemp                         10
 InitGasTemp                        1e4
 ErrTolIntAccuracy                  0.01
@@ -63,7 +63,7 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
-MaxMemSize                         3000
+MaxMemSize                         4000
 ResubmitOn                         0
 ResubmitCommand                    none
 
@@ -71,7 +71,7 @@ ResubmitCommand                    none
 TreeDomainUpdateFrequency   0.1	% 0.0005-0.05, dept on core+particle number
 
 %----- Memory allocation
-PartAllocFactor            5.0     % memory load allowed (ratio of element number to mean) for better cpu balance [Default=2]
+PartAllocFactor            3.0     % memory load allowed (ratio of element number to mean) for better cpu balance [Default=2]
 
 %---- System of units
 UnitMagneticField_in_gauss  1.0   	        % 1 gauss
@@ -124,9 +124,10 @@ VariableWindSpecMomentum 5000.  % wind momentum per unit stellar mass (code velo
 %-------------- sink particle accretion & formation (SINK_PARTICLES on)
 %--- formation/seeding
 MinFoFMassForNewSeed    10.	    % log(M_stars) for on-the-fly FoF seeding
-TimeBetOnTheFlyFoF      200000     % time (in sec) between FoF searches
+TimeBetOnTheFlyFoF      200000  % time (in sec) between FoF searches
 SeedSinkMass            1.0e-7 	% initial mass (on-the-fly or single galaxy)
 %--- accretion
+SeedSinkPerUnitMass     1.e-4   % stellar mass (in code units) per Z=0 sink
 SinkAccretionFactor     1.0	    % multiplier for mdot
 SinkEddingtonFactor     1.0	    % fraction of eddington to cap (can be >1)
 SinkNgbFactor           3.0	    % multiplier for kernel neighbors for BH

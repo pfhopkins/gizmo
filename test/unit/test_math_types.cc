@@ -1,8 +1,8 @@
 // Unit tests for Vec3, Mat3, and SymmetricTensor2.
 #include "test_harness.h"
-#include "../../math_types/vec3.h"
-#include "../../math_types/mat3.h"
-#include "../../math_types/symmetric_tensor2.h"
+#include "../../src/math_types/vec3.h"
+#include "../../src/math_types/mat3.h"
+#include "../../src/math_types/symmetric_tensor2.h"
 
 static constexpr double EPS = 1e-14;
 

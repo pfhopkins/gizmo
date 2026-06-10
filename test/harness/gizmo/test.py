@@ -163,7 +163,13 @@ def get_cooling_tables(test_directory="."):
         system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
     treecool_dst = f"{test_directory}/TREECOOL"
     if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
-        system(f"cp data/cooling/TREECOOL {test_directory}")
+        # Resolve the TREECOOL source against the repo root, not the cwd: callers
+        # that chdir into the test dir before calling (e.g. isodisk) would otherwise
+        # look for data/cooling/TREECOOL under the test dir. __file__ is
+        # test/harness/gizmo/test.py, so the repo root is four dirnames up.
+        repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
+        treecool_src = path.join(repo_root, "data", "cooling", "TREECOOL")
+        system(f"cp {treecool_src} {test_directory}")
 
 
 _BASELINE_STASH = "__output_baseline_stash__"
