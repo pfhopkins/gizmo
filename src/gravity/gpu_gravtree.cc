@@ -733,6 +733,19 @@ gpu_gravtree_walk_one(int target,
             int in_foreign_n = (no >= maxPart + maxNodes);
             int foreign_force_multipole = (in_foreign_n && (s->nextnode[idx] < 0));
 
+            /* empty-node skip (mirrors forcetree.cc:2165): a zero-mass node contributes no
+             * force -> advance to the sibling. Not gated on foreign_force_multipole (a skip
+             * is never converted to a forced multipole); also avoids descending empty nodes. */
+            if(mass_node <= 0) { no = s->sibling[idx]; continue; }
+
+            /* single-particle node -> open to its leaf for an exact force (mirrors
+             * forcetree.cc:2171). A foreign single-particle node with nextnode<0 must instead
+             * be used as a multipole (opening it would exit the walk and drop its contribution),
+             * so gate on foreign_force_multipole, matching the LET-sentinel guard above. */
+            if(!(s->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                if(!foreign_force_multipole) { no = s->nextnode[idx]; continue; }
+            }
+
 #ifdef PMGRID
             if(r2 > rcut2)
             {
