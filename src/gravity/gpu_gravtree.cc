@@ -299,6 +299,9 @@ gpu_gravtree_walk_one(int target,
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
                       const struct gpu_gravity_tree_soa_t *s,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                      int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
+#endif
 #ifdef PMGRID
                       double rcut, double rcut2, double asmthfac,
                       const float *shortrange_tab, const float *shortrange_pot_tab,
@@ -792,7 +795,13 @@ gpu_gravtree_walk_one(int target,
                     no = s->nextnode[idx]; continue;
                 }
             }
+#ifndef GRAVITY_HYBRID_OPENING_CRIT
             else
+#else
+            /* hybrid: Barnes-Hut on step 0 (no a_old yet), then ALSO apply the relative
+             * criterion on later steps (mirrors forcetree.cc:2231-2235). */
+            if(!is_first_step)
+#endif
             {
                 if(!foreign_force_multipole && ((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
                    (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node)))) {
@@ -1804,6 +1813,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     int maxNodes_snap = MaxNodes;
     int maxForeignNodes_snap = MaxForeignNodes;    /* Phase 9 LET */
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    /* host-evaluate the first-step predicate once; captured by value into the device walk */
+    int is_first_step_snap = (All.Ti_Current == 0 && RestartFlag != 1);
+#endif
 
 #ifdef PMGRID
     double rcut_snap     = All.Rcut[0];
@@ -1842,6 +1855,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
         int nforeign;
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                                        is_first_step_snap,
+#endif
 #ifdef PMGRID
                                         rcut_snap, rcut2_snap, asmthfac_snap, d_st, d_sp,
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
@@ -2136,6 +2152,9 @@ gpu_ewald_walk_one(int target,
                    int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9 LET */
                    struct particle_data *P_dev,
                    const struct gpu_gravity_tree_soa_t *s,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                   int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
+#endif
                    const MyFloat *fcorrx, const MyFloat *fcorry, const MyFloat *fcorrz,
                    double fac_intp, double boxsize, double boxhalf,
                    double errtoltheta, double errtolforceacc,
@@ -2194,7 +2213,13 @@ gpu_ewald_walk_one(int target,
             int openflag = 0;
             if(errtoltheta) {
                 if(len * len > r2 * errtoltheta * errtoltheta) openflag = 1;
-            } else {
+            }
+#ifndef GRAVITY_HYBRID_OPENING_CRIT
+            else {
+#else
+            /* hybrid: relative criterion only after step 0 (mirrors forcetree.cc:3489-3493) */
+            if(!is_first_step) {
+#endif
                 if(mass * len * len > r2 * r2 * aold) {
                     openflag = 1;
                 } else {
@@ -2326,12 +2351,19 @@ extern "C" int gpu_ewald_walk_primary(void)
     const MyFloat *fcorry_dev = g_d_fcorry;
     const MyFloat *fcorrz_dev = g_d_fcorrz;
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    /* host-evaluate the first-step predicate once; captured by value into the device walk */
+    const int is_first_step_snap = (All.Ti_Current == 0 && RestartFlag != 1);
+#endif
 
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
         int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_sn,
                                      P_dev, &soa_snap,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                                     is_first_step_snap,
+#endif
                                      fcorrx_dev, fcorry_dev, fcorrz_dev,
                                      fac_intp, boxsize, boxhalf,
                                      errtoltheta, errtolforceacc,
