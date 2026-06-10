@@ -174,17 +174,15 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
 #endif
 
 
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
-#define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) NGB_PERIODIC_BOX_LONG_X(x,y,z,sign)
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign)
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign)
-#else /* either the box is not periodic, OR gravity is not, in either case no box-wrapping is needed */
-#define GRAVITY_NEAREST_XYZ(x,y,z,sign) /* this is an empty macro: nothing will happen to the variables input here */
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) (fabs(x)) /* just return absolute values */
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) (fabs(y))
-#define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) (fabs(z))
-#endif
+/* Gravity box-wrap policy is centralized in the shared helpers (single source used by both
+ * the CPU tree walk here and the GPU walks). The gravity gate (wrap only for periodic box
+ * AND periodic gravity, else no-op/abs) lives inside gravity_box_distance.h. The GRAVITY_*
+ * macros below are thin wrappers so the existing call sites are unchanged. */
+#include "gravity_box_distance.h"
+#define GRAVITY_NEAREST_XYZ(x,y,z,sign)             gravity_box_nearest_image(x,y,z,sign)
+#define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) gravity_box_long_abs_x(x,y,z,sign)
+#define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) gravity_box_long_abs_y(x,y,z,sign)
+#define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) gravity_box_long_abs_z(x,y,z,sign)
 
 /*! This function is a driver routine for constructing the gravitational
  *  oct-tree, which is done by calling a small number of other functions.

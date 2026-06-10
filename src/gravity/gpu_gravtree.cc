@@ -30,6 +30,7 @@
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
 #include "forcetree.h"
+#include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
 
 #include "../mesh/kernel.h"
 
@@ -546,6 +547,7 @@ gpu_gravtree_walk_one(int target,
         if(no < maxPart) /* particle leaf */
         {
             dr = P_dev[no].Pos - pos;
+            gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -721,6 +723,7 @@ gpu_gravtree_walk_one(int target,
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
+            gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
 
             /* LET guard (mirrors forcetree.cc): if a foreign node has nextnode < 0
@@ -734,9 +737,10 @@ gpu_gravtree_walk_one(int target,
             if(r2 > rcut2)
             {
                 double eff_dist = rcut + 0.5 * len_node;
-                double dcx = fabs(center_node[0] - pos[0]);
-                double dcy = fabs(center_node[1] - pos[1]);
-                double dcz = fabs(center_node[2] - pos[2]);
+                double dc0 = center_node[0] - pos[0], dc1 = center_node[1] - pos[1], dc2 = center_node[2] - pos[2];
+                double dcx = gravity_box_long_abs_x(dc0, dc1, dc2, -1);
+                double dcy = gravity_box_long_abs_y(dc0, dc1, dc2, -1);
+                double dcz = gravity_box_long_abs_z(dc0, dc1, dc2, -1);
                 if(dcx > eff_dist || dcy > eff_dist || dcz > eff_dist) {
                     no = s->sibling[idx]; continue;
                 }
@@ -753,14 +757,7 @@ gpu_gravtree_walk_one(int target,
                 double dcx = center_node[0] - pos[0];
                 double dcy = center_node[1] - pos[1];
                 double dcz = center_node[2] - pos[2];
-#ifdef BOX_PERIODIC
-                /* Nearest-image wrap (cubic box convention; matches gpu_ewald_walk pattern at lines 1672-1674). */
-                double bsz = All.BoxSize;
-                double bhf = 0.5 * bsz;
-                if(dcx >  bhf) dcx -= bsz; else if(dcx < -bhf) dcx += bsz;
-                if(dcy >  bhf) dcy -= bsz; else if(dcy < -bhf) dcy += bsz;
-                if(dcz >  bhf) dcz -= bsz; else if(dcz < -bhf) dcz += bsz;
-#endif
+                gravity_box_nearest_image(dcx, dcy, dcz, -1);
                 double dist_to_center2 = dcx*dcx + dcy*dcy + dcz*dcz;
                 double soft_max = (soft > msoft_node) ? soft : msoft_node;
                 double dist_to_open = soft_max + len_node * 1.73205 / 2.0;
@@ -791,9 +788,10 @@ gpu_gravtree_walk_one(int target,
                 if(!foreign_force_multipole && mass_node * len_node * len_node > r2 * r2 * aold) {
                     no = s->nextnode[idx]; continue;
                 }
-                double dcx = fabs(center_node[0] - pos[0]);
-                double dcy = fabs(center_node[1] - pos[1]);
-                double dcz = fabs(center_node[2] - pos[2]);
+                double dc0 = center_node[0] - pos[0], dc1 = center_node[1] - pos[1], dc2 = center_node[2] - pos[2];
+                double dcx = gravity_box_long_abs_x(dc0, dc1, dc2, -1);
+                double dcy = gravity_box_long_abs_y(dc0, dc1, dc2, -1);
+                double dcz = gravity_box_long_abs_z(dc0, dc1, dc2, -1);
                 if(!foreign_force_multipole && dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
                     no = s->nextnode[idx]; continue;
                 }
@@ -872,6 +870,7 @@ gpu_gravtree_walk_one(int target,
                 d_stellarlum[0] = s->rt_source_lum_s[idx][0] - pos[0];
                 d_stellarlum[1] = s->rt_source_lum_s[idx][1] - pos[1];
                 d_stellarlum[2] = s->rt_source_lum_s[idx][2] - pos[2];
+                gravity_box_nearest_image(d_stellarlum[0], d_stellarlum[1], d_stellarlum[2], -1);
 #else
                 d_stellarlum = dr;
 #endif
@@ -896,6 +895,7 @@ gpu_gravtree_walk_one(int target,
                 sink_dr[0] = s->sink_pos[idx][0] - pos[0];
                 sink_dr[1] = s->sink_pos[idx][1] - pos[1];
                 sink_dr[2] = s->sink_pos[idx][2] - pos[2];
+                gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
                 double sink_r2 = sink_dr.norm_sq();
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
                 /* Skip nearest-sink update for special primaries when WEIGHTED_MOTION
@@ -1126,12 +1126,7 @@ gpu_gravtree_walk_one(int target,
              * non-gas; mass_dm_local was zeroed for gas-targets above. */
             if(ptype != 0 && mass_dm_local > 0)
             {
-#ifdef BOX_PERIODIC
-                double bsz_dm = All.BoxSize, bhf_dm = 0.5 * bsz_dm;
-                if(d_dm[0] >  bhf_dm) d_dm[0] -= bsz_dm; else if(d_dm[0] < -bhf_dm) d_dm[0] += bsz_dm;
-                if(d_dm[1] >  bhf_dm) d_dm[1] -= bsz_dm; else if(d_dm[1] < -bhf_dm) d_dm[1] += bsz_dm;
-                if(d_dm[2] >  bhf_dm) d_dm[2] -= bsz_dm; else if(d_dm[2] < -bhf_dm) d_dm[2] += bsz_dm;
-#endif
+                gravity_box_nearest_image(d_dm[0], d_dm[1], d_dm[2], -1);
                 double r2_dm = d_dm[0]*d_dm[0] + d_dm[1]*d_dm[1] + d_dm[2]*d_dm[2];
                 double r_dm  = sqrt(r2_dm);
                 double fac_dmsf;
@@ -2173,10 +2168,8 @@ gpu_ewald_walk_one(int target,
             dr[2] = s->s[idx][2] - pos[2];
         }
 
-        /* nearest-image wrap on the displacement (mirrors GRAVITY_NEAREST_XYZ) */
-        if(dr[0] >  boxhalf) dr[0] -= boxsize; else if(dr[0] < -boxhalf) dr[0] += boxsize;
-        if(dr[1] >  boxhalf) dr[1] -= boxsize; else if(dr[1] < -boxhalf) dr[1] += boxsize;
-        if(dr[2] >  boxhalf) dr[2] -= boxsize; else if(dr[2] < -boxhalf) dr[2] += boxsize;
+        /* nearest-image wrap on the displacement (shared SSOT helper) */
+        gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
 
         if(is_leaf) {
             no = s->nextnode_aux[no];
@@ -2192,12 +2185,10 @@ gpu_ewald_walk_one(int target,
                 if(mass * len * len > r2 * r2 * aold) {
                     openflag = 1;
                 } else {
-                    double cx = s->center[idx][0] - pos[0]; if(cx >  boxhalf) cx -= boxsize; else if(cx < -boxhalf) cx += boxsize;
-                    double cy = s->center[idx][1] - pos[1]; if(cy >  boxhalf) cy -= boxsize; else if(cy < -boxhalf) cy += boxsize;
-                    double cz = s->center[idx][2] - pos[2]; if(cz >  boxhalf) cz -= boxsize; else if(cz < -boxhalf) cz += boxsize;
-                    double adx = (cx < 0) ? -cx : cx;
-                    double ady = (cy < 0) ? -cy : cy;
-                    double adz = (cz < 0) ? -cz : cz;
+                    double ad0 = s->center[idx][0] - pos[0], ad1 = s->center[idx][1] - pos[1], ad2 = s->center[idx][2] - pos[2];
+                    double adx = gravity_box_long_abs_x(ad0, ad1, ad2, -1);
+                    double ady = gravity_box_long_abs_y(ad0, ad1, ad2, -1);
+                    double adz = gravity_box_long_abs_z(ad0, ad1, ad2, -1);
                     if(adx < 0.60*len && ady < 0.60*len && adz < 0.60*len) openflag = 1;
                 }
             }
