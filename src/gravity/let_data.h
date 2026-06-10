@@ -83,24 +83,20 @@ struct LETPerRankPayload {
 /* ----------------------------------------------------------------------
  * Wire format for one shipped foreign node (LET payload exchange)
  *
- * Each shipped node is a packed record { remote_id, NODE, extNODE } where
- * remote_id is the sender's Nodes_base[] index for this node (used as the
- * lookup key during unpack pointer-remap in 9.1e).  NODE+extNODE bytes are
- * copied verbatim from the sender's UVM Nodes_base/Extnodes_base — both
+ * Each shipped node is a packed record { remote_id, NODE, extNODE }.  NODE+extNODE
+ * bytes are copied verbatim from the sender's UVM Nodes_base/Extnodes_base — both
  * sides have identical compile flags so byte layouts match.
  *
- * The NODE.u.d fields .sibling/.nextnode/.father carry the SENDER'S node
- * indices (in their Nodes_base index space).  The unpack step (9.1e) walks
- * the just-installed foreign subtree, builds a remote_id -> local_foreign_idx
- * translation table, and remaps these pointers in-place.  Pointers that
- * reference nodes OUTSIDE the shipped set (the source-side topleaf's
- * sibling/nextnode pointing back into the source's tree) are remapped to
- * point back into OUR local tree at the corresponding topleaf's continuation
- * — preserving the walk's "exit foreign subtree, resume local walk" semantics.
+ * By the time a node is shipped, the SENDER has relabelled NODE.u.d.{sibling,nextnode}
+ * into WIRE-LOCAL topology: each value is either a wire index into this sender's
+ * payload (the receiver rebases it to slot_base+wire) or LET_WIRE_EXIT (the receiver
+ * maps it to the owning topleaf's continuation).  The receiver never reconstructs
+ * sender topology; remote_id is retained for identity/debug only, NOT consulted for
+ * graph wiring.  (.father is set to -1 on install: foreign nodes have no local father.)
  * ---------------------------------------------------------------------- */
 struct LETNodeWire {
-    int    remote_id;      /* sender's Nodes_base index for this node */
-    int    _pad0;          /* alignment to 8B; reserved for future use (e.g. flags) */
+    int    remote_id;      /* sender's Nodes_base index (identity/debug only; NOT topology) */
+    int    _pad0;          /* alignment to 8B */
     struct NODE    node;   /* full NODE struct, sender's u.d form (post-build) */
     struct extNODE extnode;/* full extNODE struct */
 };
@@ -111,25 +107,10 @@ struct LETNodeWire {
  * The post-build pad in NODE.u.d (after the struct fields, before the union
  * close) is included in sizeof(NODE) so the wire layout is unambiguous. */
 
-/* ----------------------------------------------------------------------
- * Sentinels for pointer remap (9.1e unpack)
- *
- * The foreign subtree's "outermost" nextnode/sibling pointers reference
- * source-side nodes that aren't in the shipped set.  These are remapped to
- * a sentinel that means "exit foreign subtree, resume local walk at the
- * topleaf's nextnode".  The walk kernel (9.2) recognizes this sentinel and
- * jumps back to the local-tree continuation.
- *
- * Choice: the existing convention `nextnode = -1` already means "end of
- * walk" in the legacy code, so a separate sentinel is unsafe.  Instead, we
- * encode the local topleaf index directly: when a foreign subtree's edge
- * pointer would otherwise reference a remote-only node, we set it to the
- * local topleaf's u.d.nextnode value (already correctly pointing into our
- * tree).  The unpack step has access to `topleaf_no` per shipped subtree,
- * so this works without a sentinel. */
-#define LET_FOREIGN_REMAP_TO_TOPLEAF_NEXT  (-2)  /* tentative; walk kernel
-   will recognize this if we choose sentinel encoding instead.  Currently
-   we plan to do direct topleaf-nextnode substitution (no sentinel). */
+/* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
+ * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to
+ * the owning topleaf's continuation per the subtree header.  It is the only edge that
+ * leaves a subtree; all other topology is wire-local. */
 
 /* ----------------------------------------------------------------------
  * Per-subtree header (Phase 9.1e_v2)
@@ -139,7 +120,7 @@ struct LETNodeWire {
  *   - which LOCAL topleaf (DomainNodeIndex[topleaf_idx]) this foreign
  *     subtree is the contents of, so the receiver can redirect that
  *     topleaf's u.d.nextnode at the foreign subtree root, AND know which
- *     local topleaf's sibling each LET_EDGE_SENTINEL_BASE maps to.
+ *     local topleaf's continuation each LET_WIRE_EXIT maps to.
  *   - the range [wire_offset, wire_offset+count) inside the sender's flat
  *     LETNodeWire payload that contains this subtree.  The first wire
  *     entry (at wire_offset) is the subtree root.
@@ -245,10 +226,10 @@ let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         long long *foreign_needed_out);
 
 /*! Install received foreign nodes into Nodes_base[] / Extnodes_base[] /
- *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes), build
- *  the remote_id->local_foreign_idx translation table, remap intra-subtree
- *  pointers, redirect each affected local topleaf's u.suns[0] to the
- *  corresponding foreign subtree root.  Returns 0 on success.
+ *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes): rebase each
+ *  wire-local sibling/nextnode to slot_base+wire, map LET_WIRE_EXIT to the owning
+ *  topleaf's continuation, redirect each affected local topleaf's u.d.nextnode to
+ *  the corresponding foreign subtree root.  Returns LET_OK on success.
  *
  *  CRITICAL: if Numforeignnodes would exceed MaxForeignNodes after install,
  *  endrun() with the LETAllocFactor restart message (matches Phase 9.0

@@ -14,16 +14,16 @@
  *           let_node_essential_for_rank() flags as "could be opened by some
  *           particle in R".  At leaves, synthesize single-particle NODEs
  *           covering all #ifdef payloads (mirrors force_update_node_recursive
- *           single-particle accumulation, forcetree.cc:752-861).  Edge
- *           pointers (sibling/nextnode that exit the shipped subtree) are
- *           encoded via LET_EDGE_SENTINEL so the unpack can rewrite them to
- *           the local topleaf continuation.
+ *           single-particle accumulation, forcetree.cc:752-861).  After a topleaf
+ *           subtree is fully emitted, let_relabel_subtree() resolves every sibling
+ *           continuation to a WIRE index or the single LET_WIRE_EXIT sentinel, so
+ *           the shipped graph is self-contained (no sender indices in topology).
  *      4. let_exchange_nodes          -- MPI_Alltoall counts + MPI_Alltoallv payloads
- *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the
- *           foreign slot range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes);
- *           build remote_id->local_foreign_idx translation table; remap
- *           intra-subtree pointers; rewrite each affected local topleaf's
- *           u.d.nextnode to point at the foreign subtree root.
+ *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the foreign slot
+ *           range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes); rebase each
+ *           wire index to slot_base+wire; map LET_WIRE_EXIT to the local topleaf's
+ *           continuation; redirect each affected local topleaf's u.d.nextnode at the
+ *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
  *  Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
  *  MaxForeignNodes, endrun() with the LETAllocFactor restart message.
@@ -50,26 +50,29 @@
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
 
-/* Sentinel encoding for out-of-subtree sibling pointers:
- *
- *   v == LET_EDGE_SENTINEL_BASE                    -- legacy / nextnode of non-essential nodes:
- *                                                     resolves to topleaf_sibling (plain exit).
- *   v <  LET_EDGE_SENTINEL_BASE  (encoded)          -- sibling pointer exits this recursion level.
- *                                                     The target node index is:
- *                                                       orig_sib = LET_EDGE_SENTINEL_BASE - v
- *                                                     Receiver looks up orig_sib in the wire map.
- *                                                     If found  → slot_base + wire_map[orig_sib]
- *                                                     If absent → topleaf_sibling (genuine exit).
- *
- * Rule: the "last child sibling" sentinel in pack_recurse and the top-level loop must encode the
- * sib_terminator so the receiver can follow the sibling chain across recursion levels.
- * Never-followed nextnode sentinels (non-essential nodes, synthesized leaves) stay as
- * LET_EDGE_SENTINEL_BASE (plain), since they're never decoded.
+/* Temporary EMIT-time encoding for a "last child of a level" sibling whose continuation index
+ * is not yet known (it ships later in walk order).  The last child stores
+ * LET_EDGE_SENTINEL_ENCODE(sender_continuation); once the topleaf subtree is fully emitted,
+ * let_relabel_subtree() resolves every encoded value to a WIRE index (via the per-subtree
+ * sender->wire map, which includes synthesized particle leaves) or LET_WIRE_EXIT.  These encoded
+ * values never reach the receiver -- the installed wire graph carries only wire indices and
+ * LET_WIRE_EXIT.  Encoding is valid for non-negative sender indices only (negative GADGET
+ * terminators map straight to LET_WIRE_EXIT at the encode sites).
  */
 #define LET_EDGE_SENTINEL_BASE         (-1000000)
 #define LET_EDGE_SENTINEL_ENCODE(orig) (LET_EDGE_SENTINEL_BASE - (orig))
-#define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) < LET_EDGE_SENTINEL_BASE)
+/* `<=` (not `<`): ENCODE(0) == BASE must be detected as encoded.  The encode sites only ever
+ * pass a NON-NEGATIVE orig (negative GADGET terminators are mapped straight to LET_WIRE_EXIT),
+ * so every real encoded value is <= BASE; LET_WIRE_EXIT (-2) is far above BASE, no collision. */
+#define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) <= LET_EDGE_SENTINEL_BASE)
 #define LET_EDGE_SENTINEL_DECODE(v)      (LET_EDGE_SENTINEL_BASE - (v))
+
+/* Resolved subtree-exit marker on the wire (post pack-side RELABEL): a sibling/
+ * nextnode equal to LET_WIRE_EXIT means "leave this foreign subtree", which the
+ * receiver maps to the local topleaf's continuation (topleaf_sibling).  Distinct
+ * from any valid wire index (>= 0) and from the encoded terminators (< BASE). */
+#define LET_WIRE_EXIT  (-2)
+
 
 /* ----------------------------------------------------------------------
  * Phase 9.5: active-only LET helpers
@@ -549,9 +552,11 @@ static void pack_recurse(int no, int sib_terminator,
     w->_pad0 = 0;
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
-    /* Edge pointers: tentatively encode as sentinel; updated below if children land within S_R */
-    w->node.u.d.sibling = LET_EDGE_SENTINEL_BASE;
-    w->node.u.d.nextnode = LET_EDGE_SENTINEL_BASE;
+    /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
+     * wire index (or an encoded terminator resolved by RELABEL) and nextnode with the
+     * first shipped child's wire index when this node is opened-into. */
+    w->node.u.d.sibling = LET_WIRE_EXIT;
+    w->node.u.d.nextnode = LET_WIRE_EXIT;
     w->node.u.d.father = -1;  /* foreign nodes have no local father */
 
     if(!is_essential)
@@ -595,7 +600,7 @@ static void pack_recurse(int no, int sib_terminator,
             grow_wire_buf(buf, *count + 1, capacity);
             if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
             child_wire_idx = (*count)++;
-            let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*buf)[child_wire_idx]);
+            let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
         }
         else if(child < All.MaxPart + MaxNodes)
@@ -646,14 +651,106 @@ static void pack_recurse(int no, int sib_terminator,
         (*buf)[my_idx].node.u.d.nextnode = first_child_wire_idx;
         if(last_child_wire_idx >= 0)
         {
-            /* Last child's sibling encodes sib_terminator so the receiver can find the
-             * wire copy of the next sibling at this level (if it was shipped) or fall back
-             * to topleaf_sibling (if it wasn't).  See LET_EDGE_SENTINEL_ENCODE. */
-            (*buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_terminator);
+            /* Last child's sibling is the level's continuation, resolved to a wire index by
+             * RELABEL.  A negative sender terminator (GADGET "end of walk") is a true subtree
+             * exit -> LET_WIRE_EXIT directly (the encoding is only valid for non-negative
+             * indices: ENCODE(-1) would alias above BASE and escape IS_ENCODED). */
+            (*buf)[last_child_wire_idx].node.u.d.sibling =
+                (sib_terminator < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_terminator);
         }
     }
     /* else: no children shipped (e.g., all were particles outside essential range);
-     *       nextnode stays sentinel; receiver will treat as multipole-leaf. */
+     *       nextnode stays LET_WIRE_EXIT; receiver will treat as multipole-leaf. */
+}
+
+/* ----------------------------------------------------------------------
+ * Wire-space terminator resolution (pack side).
+ *
+ * EMIT links consecutive shipped children by their wire index directly; the
+ * only deferred links are the "last child of a level" sibling terminators,
+ * emitted as LET_EDGE_SENTINEL_ENCODE(sender_continuation) because the
+ * continuation's wire index is not known yet.  Once a topleaf subtree is fully
+ * emitted, RELABEL resolves every encoded terminator to a WIRE index (via a
+ * per-subtree sender->wire map that INCLUDES synthesized particle leaves, keyed
+ * by particle index) or the single LET_WIRE_EXIT sentinel.  The receiver then
+ * never reconstructs sender topology: install rebases wire -> slot_base+wire and
+ * maps LET_WIRE_EXIT -> the local topleaf's continuation.
+ * ---------------------------------------------------------------------- */
+struct let_kw { int key; int wire; };
+static int let_kw_cmp(const void *a, const void *b)
+{
+    int ka = ((const struct let_kw *)a)->key, kb = ((const struct let_kw *)b)->key;
+    return (ka > kb) - (ka < kb);
+}
+
+/* Resolve a sender continuation index `x` to a subtree-local wire index or
+ * LET_WIRE_EXIT, mirroring the pack walk's skip of unshipped pseudo/foreign
+ * nodes.  A missing in-subtree internal/particle continuation is a hard error
+ * (loud + graceful stop): silently skipping it is exactly the class of graph
+ * truncation this rewrite removes.  map is sorted by key over [lo_w,hi_w). */
+static int let_resolve_continuation(int x, int topleaf_term,
+                                    const struct let_kw *map, int map_n, int lo_w, int hi_w)
+{
+    int bound = (hi_w - lo_w) + NTopleaves + 16, guard = 0;
+    while(++guard < bound)
+    {
+        if(x < 0 || x == topleaf_term) return LET_WIRE_EXIT;          /* the true subtree exit */
+        struct let_kw probe; probe.key = x;
+        const struct let_kw *hit = (const struct let_kw *)
+            bsearch(&probe, map, map_n, sizeof(struct let_kw), let_kw_cmp);
+        if(hit) return hit->wire;                                     /* shipped -> wire (incl synth leaf) */
+        /* x is a non-shipped continuation; classify by EXPLICIT range (this is topology-repair
+         * code -- an unclassifiable positive index must abort, never index Nodes[] blindly). */
+        if(x >= 0 && x < All.MaxPart)
+        {
+            printf("LET pack FATAL: particle %d referenced as a sibling continuation but not shipped "
+                   "and not the subtree terminator (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000072);
+            return LET_WIRE_EXIT;
+        }
+        else if(x >= All.MaxPart && x < All.MaxPart + MaxNodes)
+        {
+            printf("LET pack FATAL: in-subtree internal node %d not shipped but referenced as a "
+                   "sibling continuation (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000071);
+            return LET_WIRE_EXIT;
+        }
+        else if(x >= All.MaxPart + MaxNodes && x < All.MaxPart + MaxNodes + MaxForeignNodes)
+            x = Nodes[x].u.d.sibling;                                 /* foreign: skip as the walk does */
+        else if(x >= All.MaxPart + MaxNodes + MaxForeignNodes)
+            x = Nextnode[x - MaxNodes - MaxForeignNodes];             /* pseudo: skip as the walk does */
+        else
+        {
+            printf("LET pack FATAL: unclassifiable continuation index %d (rank %d).\n",
+                   x, ThisTask); fflush(stdout); endrun(90000076);
+            return LET_WIRE_EXIT;
+        }
+    }
+    printf("LET pack FATAL: resolve_continuation guard exceeded (rank %d).\n", ThisTask);
+    fflush(stdout); endrun(90000073);
+    return LET_WIRE_EXIT;
+}
+
+/* RELABEL a just-emitted topleaf subtree [lo_w,hi_w): build the sender->wire map
+ * and resolve every encoded sibling terminator to a wire index / LET_WIRE_EXIT.
+ * map_scratch is caller-owned, sized >= (hi_w-lo_w). */
+static void let_relabel_subtree(struct LETNodeWire *buf, int lo_w, int hi_w,
+                                int topleaf_term, struct let_kw *map_scratch)
+{
+    int n = hi_w - lo_w;
+    for(int i = 0; i < n; i++)
+    {
+        int rid = buf[lo_w + i].remote_id;
+        map_scratch[i].key  = (rid < 0) ? (-1 - rid) : rid;   /* synth leaf -> particle index; node -> node index */
+        map_scratch[i].wire = lo_w + i;
+    }
+    qsort(map_scratch, n, sizeof(struct let_kw), let_kw_cmp);
+    for(int w = lo_w; w < hi_w; w++)
+    {
+        int sib = buf[w].node.u.d.sibling;
+        if(LET_EDGE_SENTINEL_IS_ENCODED(sib))
+            buf[w].node.u.d.sibling =
+                let_resolve_continuation(LET_EDGE_SENTINEL_DECODE(sib), topleaf_term, map_scratch, n, lo_w, hi_w);
+        /* nextnode is never encoded: it is either a plain first-child wire index or LET_WIRE_EXIT. */
+    }
 }
 
 extern "C" int let_pack_for_rank(int R,
@@ -732,7 +829,7 @@ extern "C" int let_pack_for_rank(int R,
                 grow_wire_buf(out_buf, count + 1, out_capacity);
                 if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
                 child_wire_idx = count;
-                let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*out_buf)[count]);
+                let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
                 count++;
                 next_child = Nextnode[child];
             }
@@ -759,15 +856,24 @@ extern "C" int let_pack_for_rank(int R,
             }
             child = next_child;
         }
-        /* Last top-level child: encode sib_term (= topleaf.sibling) so receiver resolves
-         * via the wire map (falls back to topleaf_sibling since sib_term is never packed). */
+        /* Last top-level child: continuation = sib_term (= topleaf.sibling), resolved to a wire
+         * index / LET_WIRE_EXIT by RELABEL.  Negative terminator -> LET_WIRE_EXIT directly. */
         if(last_child_wire_idx >= 0)
-            (*out_buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_term);
+            (*out_buf)[last_child_wire_idx].node.u.d.sibling =
+                (sib_term < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_term);
 
         /* Emit subtree header if this topleaf shipped any nodes */
         int subtree_count = count - wire_offset_before;
         if(subtree_count > 0)
         {
+            /* RELABEL: the subtree is fully emitted, so resolve every encoded sibling
+             * terminator to a wire index (incl. synth-leaf particles) or LET_WIRE_EXIT.
+             * After this, the wire graph is self-contained: install only rebases indices. */
+            struct let_kw *map_scratch = (struct let_kw *) malloc((size_t)subtree_count * sizeof(struct let_kw));
+            if(!map_scratch) { g_let_pack_oom = 1; goto pack_oom_bail; }
+            let_relabel_subtree(*out_buf, wire_offset_before, count, sib_term, map_scratch);
+            free(map_scratch);
+
             grow_hdr_buf(out_hdr_buf, hdr_count + 1, out_hdr_capacity);
             if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
             (*out_hdr_buf)[hdr_count].topleaf_idx = i;
@@ -923,56 +1029,24 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
 }
 
 /* ----------------------------------------------------------------------
- * Step 5: unpack received nodes into Nodes_base[] foreign range; remap
- *         pointers via remote_id->local_foreign_idx translation table;
- *         redirect each affected local topleaf's u.d.nextnode.
+ * Step 5: install received nodes into the Nodes_base[] foreign slot range and
+ *         splice them into the local walk.  The wire graph is self-contained
+ *         (pack's let_relabel_subtree() resolved all topology to wire indices /
+ *         LET_WIRE_EXIT), so the receiver does NOT reconstruct sender topology.
  *
- * Each sender's wire data is self-contained: shipped node indices reference
- * indices WITHIN this sender's wire buffer (we converted them in pack to
- * wire-indices, with sentinels for subtree-edge pointers).  So unpack per
- * sender:
- *   1. Allocate consecutive foreign slots for this sender's nodes.
- *   2. Build per-sender translation: wire_idx -> local_foreign_slot.
- *      (NOTE: the wire layout uses wire-local indices in u.d.{sibling,nextnode},
- *       NOT the original source-rank Nodes_base indices; pack stored wire
- *       offsets directly to simplify this step.)
- *   3. For each unpacked node, remap its sibling/nextnode/father using the
- *      translation; sentinel -> source-side topleaf's sibling on receiver.
- *      WAIT: we need to know WHICH local topleaf this subtree corresponds to.
+ * Per sender r (payload length recv_count_per_rank[r]):
+ *   - byte-copy each LETNodeWire into a consecutive foreign slot;
+ *   - rebase each u.d.{sibling,nextnode} value V: V in [0,rcount) -> slot_base+V,
+ *     V == LET_WIRE_EXIT -> mapped (Pass 2) to the owning local topleaf's
+ *     continuation; anything else is a malformed graph and aborts loudly;
+ *   - each subtree header h (topleaf_idx in the SHARED DomainNodeIndex[]/
+ *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
+ *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
  *
- * Fixme/limitation:  Per-subtree topleaf attribution requires extra metadata
- * we haven't carried in the wire format yet.  For Phase 9.1 first-cut, we
- * store the topleaf-correspondence by linking the foreign subtree's ROOT to
- * the local topleaf via DomainNodeIndex[] -- the foreign root's _pad0 field
- * carries the LOCAL topleaf node index that this subtree belongs to.  Pack
- * sets this when starting a new subtree-root entry.
- *
- * To keep this manageable: pack stores per-subtree-root the local topleaf_no
- * in the FIRST wire entry's _pad0 field, with a flag in remote_id high bits
- * to signal "I am a subtree root."  Unpack walks per-sender, identifies subtree
- * roots, and uses _pad0 as the topleaf-correspondence target.
+ * Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
+ * MaxForeignNodes, return LET_OVERFLOW_RETRYABLE without installing; the
+ * force_treebuild loop ratchets the arena and retries.
  * ---------------------------------------------------------------------- */
-
-/* Phase 9.1e_v2: install nodes per-sender into contiguous foreign slots,
- * remap intra-sender wire indices to absolute Node indices, resolve
- * subtree-edge sentinels via per-subtree topleaf, and redirect each affected
- * local topleaf's u.d.nextnode at the foreign subtree root.
- *
- * Key invariants:
- *   - Within sender r's flat node payload of length recv_count_per_rank[r],
- *     each LETNodeWire's u.d.{sibling,nextnode} value V is either:
- *       * V in [0, recv_count_per_rank[r])  -> intra-sender wire index;
- *         remap to slot_base_r + V.
- *       * V == LET_EDGE_SENTINEL_BASE       -> subtree-edge: redirect to
- *         the LOCAL topleaf's u.d.sibling (lookup via the subtree header
- *         that owns this node's wire range).
- *       * V == -1 (legacy "end of walk")    -> leave as-is.
- *       * other negative                    -> leave as-is (defensive).
- *   - Each subtree header h carries topleaf_idx referring to the SHARED
- *     DomainNodeIndex[]/DomainTask[] partition (same on every rank).  The
- *     receiver redirects Nodes[DomainNodeIndex[h.topleaf_idx]].u.d.nextnode
- *     -> slot_base_r + h.wire_offset.
- */
 extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
                                        int recv_count_total,
@@ -1013,27 +1087,11 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 
         int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
 
-        /* Build orig_to_wire[]: maps sender-side node index -> wire index (0-based within this
-         * sender's rcount-wide buffer).  Used to resolve LET_EDGE_SENTINEL_ENCODE sentinels
-         * where the encoded sibling may point to another packed node in the same sender's buffer.
-         * Array is indexed as (remote_id - All.MaxPart); remote_id in [All.MaxPart, All.MaxPart+MaxNodes).
-         * Synthesized particle leaves (remote_id < 0) are not in the map -- their nextnode sentinels
-         * are never followed (len=0 leaf always closed by BH criterion). */
-        int *orig_to_wire = (int *) mymalloc("orig_to_wire", MaxNodes * sizeof(int));
-        for(int jj = 0; jj < MaxNodes; jj++) orig_to_wire[jj] = -1;
-        for(int j = 0; j < rcount; j++)
-        {
-            int rid = recv_buf[node_off + j].remote_id;
-            if(rid >= All.MaxPart && rid < All.MaxPart + MaxNodes)
-                orig_to_wire[rid - All.MaxPart] = j;
-        }
-
-        /* Pass 1: install nodes (raw byte copy), remap intra-sender wire indices,
-         * resolve both plain sentinels (LET_EDGE_SENTINEL_BASE) and encoded sentinels
-         * (LET_EDGE_SENTINEL_ENCODE(orig_sib)) in sibling/nextnode.  We do NOT yet
-         * know topleaf_sibling per node (that requires the header lookup), so encoded
-         * sentinels that fall back (orig_sib not in map) are temporarily marked with
-         * LET_EDGE_SENTINEL_BASE and resolved in Pass 2. */
+        /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
+         * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
+         * wire index or LET_WIRE_EXIT -- so each sibling/nextnode is either LET_WIRE_EXIT
+         * (resolved to the local topleaf continuation in Pass 2) or an intra-sender wire
+         * index in [0,rcount).  No sender-index reconstruction; remote_id is identity-only. */
         for(int j = 0; j < rcount; j++)
         {
             int abs_idx = slot_base + j;
@@ -1042,34 +1100,20 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 
             int sib  = Nodes[abs_idx].u.d.sibling;
             int next = Nodes[abs_idx].u.d.nextnode;
-
-            /* Remap intra-buffer wire indices first */
-            if(sib  >= 0 && sib  < rcount) { Nodes[abs_idx].u.d.sibling  = slot_base + sib; sib = Nodes[abs_idx].u.d.sibling; }
-            if(next >= 0 && next < rcount) { Nodes[abs_idx].u.d.nextnode = slot_base + next; next = Nodes[abs_idx].u.d.nextnode; }
-
-            /* Resolve encoded sentinel for sibling */
-            if(LET_EDGE_SENTINEL_IS_ENCODED(sib))
+            if(sib != LET_WIRE_EXIT)
             {
-                int orig_sib = LET_EDGE_SENTINEL_DECODE(sib);
-                if(orig_sib >= All.MaxPart && orig_sib < All.MaxPart + MaxNodes && orig_to_wire[orig_sib - All.MaxPart] >= 0)
-                    Nodes[abs_idx].u.d.sibling = slot_base + orig_to_wire[orig_sib - All.MaxPart];
-                else
-                    Nodes[abs_idx].u.d.sibling = LET_EDGE_SENTINEL_BASE; /* resolved in Pass 2 */
+                if(sib >= 0 && sib < rcount) Nodes[abs_idx].u.d.sibling = slot_base + sib;
+                else { printf("LET install FATAL: node slot %d sibling wire %d out of [0,%d) and != EXIT "
+                              "(rank %d).\n", abs_idx, sib, rcount, ThisTask); fflush(stdout); endrun(90000074); }
             }
-            /* Resolve encoded sentinel for nextnode (non-essential / synth leaves -- usually
-             * never followed, but resolve for correctness) */
-            if(LET_EDGE_SENTINEL_IS_ENCODED(next))
+            if(next != LET_WIRE_EXIT)
             {
-                int orig_next = LET_EDGE_SENTINEL_DECODE(next);
-                if(orig_next >= All.MaxPart && orig_next < All.MaxPart + MaxNodes && orig_to_wire[orig_next - All.MaxPart] >= 0)
-                    Nodes[abs_idx].u.d.nextnode = slot_base + orig_to_wire[orig_next - All.MaxPart];
-                else
-                    Nodes[abs_idx].u.d.nextnode = LET_EDGE_SENTINEL_BASE;
+                if(next >= 0 && next < rcount) Nodes[abs_idx].u.d.nextnode = slot_base + next;
+                else { printf("LET install FATAL: node slot %d nextnode wire %d out of [0,%d) and != EXIT "
+                              "(rank %d).\n", abs_idx, next, rcount, ThisTask); fflush(stdout); endrun(90000075); }
             }
-
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
         }
-        myfree(orig_to_wire);
 
         /* Pass 2: resolve remaining plain sentinels (LET_EDGE_SENTINEL_BASE) to topleaf_sibling,
          * and redirect each affected local topleaf's u.d.nextnode at the foreign subtree root. */
@@ -1090,16 +1134,29 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
             int subtree_root    = slot_base + wire_off;
 
-            /* Resolve remaining plain sentinels (fallbacks + non-essential nextnode) */
+            /* Map this subtree's LET_WIRE_EXIT markers to the local topleaf's continuation, and
+             * assert HEADER-RANGE CONFINEMENT: every intra-subtree topology link must stay within
+             * this header's foreign range [subtree_root, subtree_root+wire_cnt); the only edge that
+             * leaves it is the exit -> topleaf_sibling.  Pack builds wire indices per-subtree so this
+             * holds by construction; the check makes a cross-header link loud rather than silent. */
+            int sub_lo = subtree_root, sub_hi = subtree_root + wire_cnt;
             for(int j = wire_off; j < wire_off + wire_cnt; j++)
             {
                 int abs_idx = slot_base + j;
-                if(Nodes[abs_idx].u.d.sibling  == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
-                if(Nodes[abs_idx].u.d.nextnode == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.sibling  == LET_WIRE_EXIT) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.nextnode == LET_WIRE_EXIT) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+                int s = Nodes[abs_idx].u.d.sibling, n = Nodes[abs_idx].u.d.nextnode;
+                if(s != topleaf_sibling && !(s >= sub_lo && s < sub_hi))
+                { printf("LET install FATAL: node slot %d sibling %d escapes header range [%d,%d) and "
+                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, s, sub_lo, sub_hi, topleaf_sibling, ThisTask);
+                  fflush(stdout); endrun(90000077); }
+                if(n != topleaf_sibling && !(n >= sub_lo && n < sub_hi))
+                { printf("LET install FATAL: node slot %d nextnode %d escapes header range [%d,%d) and "
+                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, n, sub_lo, sub_hi, topleaf_sibling, ThisTask);
+                  fflush(stdout); endrun(90000078); }
             }
 
             /* Redirect local topleaf at the foreign subtree root (AoS + SoA). */
-            int old_nn = Nodes[local_topleaf_no].u.d.nextnode;
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
             gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
         }
