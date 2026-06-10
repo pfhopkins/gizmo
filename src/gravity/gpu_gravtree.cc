@@ -50,21 +50,17 @@ extern float shortrange_table_tidal[GIZMO_GPU_GRAVTREE_NTAB];
 #endif
 #endif
 
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
-/* GPU-callable accessor for the cached force-softening kernel radius.
- *
- * The actual computation lives in compute_force_softening_kernel_radius(p) in
- * forcetree.cc; the host side calls compute_all_force_softening() at startup
- * (init.cc, all particles) and at the start of every gravity_tree() (active list).
- * This makes Pp[p].ForceSoftening the single source of truth for both CPU and GPU
- * walks -- new softening physics goes into compute_force_softening_kernel_radius()
- * and is automatically picked up here with no GPU-side changes required. */
+/* GPU-callable accessor for the cached force-softening kernel radius. Always available
+ * (Pp[p].ForceSoftening is populated for every build by compute_all_force_softening()), so the
+ * walk can load a leaf's secondary softening unconditionally -- mirrors the CPU
+ * ForceSoftening_KernelRadius(). The actual computation lives in
+ * compute_force_softening_kernel_radius(p) in forcetree.cc; new softening physics goes there
+ * and is picked up here with no GPU-side change. Pp[p].ForceSoftening is the single source of truth. */
 static KOKKOS_INLINE_FUNCTION
 double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 {
     return Pp[p].ForceSoftening;
 }
-#endif
 
 /* AGS_zeta field is gated (particle_data.h:331) on
  * ADAPTIVE_GRAVSOFT_FORGAS || AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
@@ -582,8 +578,11 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_DYNFRICTION_FROMTREE
             m_j_eff_for_df = mass;
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+            /* secondary (leaf) softening, loaded unconditionally so a pair whose source softening
+             * exceeds the target's gets the symmetrized max(h,h_p) force (mirrors forcetree.cc:2093).
+             * ptype_sec/zeta_sec stay gated -- only the adaptive symmetrize-by-averaging path uses them. */
             h_p = gpu_force_softening_kernel_radius(P_dev, no);
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
             ptype_sec = P_dev[no].Type;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
             if(ptype_sec == 0) {zeta_sec = gpu_get_ags_zeta(P_dev, no);}
