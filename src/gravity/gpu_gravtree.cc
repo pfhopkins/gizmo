@@ -31,6 +31,7 @@
 #include "gpu_gravtree.h"
 #include "forcetree.h"
 #include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
+#include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
 
 #include "../mesh/kernel.h"
 
@@ -748,85 +749,39 @@ gpu_gravtree_walk_one(int target,
                 if(!foreign_force_multipole) { no = s->nextnode[idx]; continue; }
             }
 
+            /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home for
+             * the node opening decision. The caller owns the wrapped dr/r2 (also used below for the
+             * accepted-node force) and the foreign-multipole policy; the predicate is foreign-blind
+             * geometry. PM short-range cull, neighbour sphere-box / softening-open, the angular and
+             * relative opening criteria, and the sink-direct gate all live in the predicate. */
+            {
+                double cen0 = (double)center_node[0] - pos[0];
+                double cen1 = (double)center_node[1] - pos[1];
+                double cen2 = (double)center_node[2] - pos[2];
 #ifdef PMGRID
-            if(r2 > rcut2)
-            {
-                double eff_dist = rcut + 0.5 * len_node;
-                double dc0 = center_node[0] - pos[0], dc1 = center_node[1] - pos[1], dc2 = center_node[2] - pos[2];
-                double dcx = gravity_box_long_abs_x(dc0, dc1, dc2, -1);
-                double dcy = gravity_box_long_abs_y(dc0, dc1, dc2, -1);
-                double dcz = gravity_box_long_abs_z(dc0, dc1, dc2, -1);
-                if(dcx > eff_dist || dcy > eff_dist || dcz > eff_dist) {
-                    no = s->sibling[idx]; continue;
-                }
-            }
-#endif
-
-#ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
-            /* Sphere-box intersection opening criterion (mirrors forcetree.cc:2122-2130).
-             * Open the node if any portion of its bounding cube lies within the
-             * interaction radius max(soft, msoft_node) of the target.  Required for
-             * ADAPTIVE_GRAVSOFT_FORALL, SINGLE_STAR_SINK_DYNAMICS, GRAVITY_ACCURATE_FEWBODY_INTEGRATION,
-             * ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION, and HERMITE_INTEGRATION. */
-            {
-                double dcx = center_node[0] - pos[0];
-                double dcy = center_node[1] - pos[1];
-                double dcz = center_node[2] - pos[2];
-                gravity_box_nearest_image(dcx, dcy, dcz, -1);
-                double dist_to_center2 = dcx*dcx + dcy*dcy + dcz*dcz;
-                double soft_max = (soft > msoft_node) ? soft : msoft_node;
-                double dist_to_open = soft_max + len_node * 1.73205 / 2.0;
-                if(!foreign_force_multipole && dist_to_center2 < dist_to_open * dist_to_open) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
+                double pred_rcut = rcut, pred_rcut2 = rcut2;
 #else
-            if(!foreign_force_multipole && h < msoft_node) {
-                if(r2 < msoft_node * msoft_node) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
+                double pred_rcut = 0.0, pred_rcut2 = 0.0;
 #endif
-
-            if(All.ErrTolTheta)
-            {
-                if(!foreign_force_multipole && len_node * len_node > r2 * All.ErrTolTheta * All.ErrTolTheta) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
-#ifndef GRAVITY_HYBRID_OPENING_CRIT
-            else
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                int pred_is_first_step = is_first_step;
 #else
-            /* hybrid: Barnes-Hut on step 0 (no a_old yet), then ALSO apply the relative
-             * criterion on later steps (mirrors forcetree.cc:2231-2235). */
-            if(!is_first_step)
+                int pred_is_first_step = 0;
 #endif
-            {
-                if(!foreign_force_multipole && ((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
-                   (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node)))) {
-                    no = s->nextnode[idx]; continue;
-                }
-                if(!foreign_force_multipole && mass_node * len_node * len_node > r2 * r2 * aold) {
-                    no = s->nextnode[idx]; continue;
-                }
-                double dc0 = center_node[0] - pos[0], dc1 = center_node[1] - pos[1], dc2 = center_node[2] - pos[2];
-                double dcx = gravity_box_long_abs_x(dc0, dc1, dc2, -1);
-                double dcy = gravity_box_long_abs_y(dc0, dc1, dc2, -1);
-                double dcz = gravity_box_long_abs_z(dc0, dc1, dc2, -1);
-                if(!foreign_force_multipole && dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
-                    no = s->nextnode[idx]; continue;
-                }
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-                /* Force star-star nodes to open inside the direct-gravity radius. */
-                if(ptype == 5) {
-                    if(!foreign_force_multipole && (s->N_SINK[idx] > 0)) {
-                        double r_direct = (double)SINGLE_STAR_DIRECT_GRAVITY_RADIUS / UNIT_LENGTH_IN_AU + 0.6*len_node;
-                        if(r2 < r_direct * r_direct) {
-                            no = s->nextnode[idx]; continue;
-                        }
-                    }
-                }
+                int pred_n_sink = (int)s->N_SINK[idx];
+#else
+                int pred_n_sink = 0;
 #endif
+                gravtree_open_t pred = gravtree_open_decision_from_distances(
+                    r2, cen0, cen1, cen2, soft, h, aold, ptype,
+                    (double)len_node, (double)mass_node, (double)msoft_node,
+                    pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+                /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign node
+                 * forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid dropping its
+                 * contribution; ACCEPT and OPEN&&foreign fall through to the payload load below. */
+                if(pred == GRAV_SKIP_NODE) { no = s->sibling[idx]; continue; }
+                if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) { no = s->nextnode[idx]; continue; }
             }
 
             /* Node accepted — load payload fields */
