@@ -19,15 +19,30 @@ void mbary_step_checkpoint(const char *tag)
 {
     static double last_M_tot = -1.0;
     static double last_M_Z   = -1.0;
+#ifdef GALSF_RESOLVEDISM_DUST
+    static double last_M_dust = -1.0;
+#endif
     static long long call_count = 0;
     int i;
     double M_gas_loc = 0, M_star_loc = 0, M_Z_loc = 0;
+#ifdef GALSF_RESOLVEDISM_DUST
+    double M_dust_loc = 0;
+#endif
     for(i = 0; i < NumPart; i++) {
         if(P[i].Mass <= 0) continue;
         if(P[i].Type == 0) {
             M_gas_loc += P[i].Mass;
 #if defined(METALS)
             M_Z_loc += P[i].Mass * P[i].Metallicity[0];  /* gas metal mass = Σ M·Met[0] */
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+            /* Dust is a PARTITION of the metals (Met[k] includes dust-locked atoms),
+             * so a dust diffusion leak is invisible in M_Z and M_bary — it only
+             * relabels dust-phase mass as gas-phase.  Track Σ M·ΣDust separately:
+             * must be constant across post_diff_unpack; changes legitimately at
+             * FB (yields/shock destruction) and sputtering checkpoints. */
+            {int kd; double dsum = 0; for(kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) {dsum += CellP[i].Dust[kd];}
+             M_dust_loc += P[i].Mass * dsum;}
 #endif
         }
         else if(P[i].Type == 4) {
@@ -38,10 +53,17 @@ void mbary_step_checkpoint(const char *tag)
     MPI_Allreduce(&M_gas_loc,  &M_gas,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&M_star_loc, &M_star, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&M_Z_loc,    &M_Z,    1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#ifdef GALSF_RESOLVEDISM_DUST
+    double M_dust = 0;
+    MPI_Allreduce(&M_dust_loc, &M_dust, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#endif
     double M_tot = M_gas + M_star;
     if(ThisTask == 0) {
         int should_log = 0;
         double dM = 0.0, dZ = 0.0;
+#ifdef GALSF_RESOLVEDISM_DUST
+        double dDust = 0.0;
+#endif
         if(last_M_tot < 0) { should_log = 1; }
         else {
             dM = M_tot - last_M_tot;
@@ -49,6 +71,11 @@ void mbary_step_checkpoint(const char *tag)
             double frac_M = (last_M_tot > 0) ? fabs(dM) / last_M_tot : 0.0;
             double frac_Z = (last_M_Z   > 0) ? fabs(dZ) / last_M_Z   : 0.0;
             if(frac_M > 1.0e-14 || frac_Z > 1.0e-14) should_log = 1;
+#ifdef GALSF_RESOLVEDISM_DUST
+            dDust = M_dust - last_M_dust;
+            double frac_D = (last_M_dust > 0) ? fabs(dDust) / last_M_dust : 0.0;
+            if(frac_D > 1.0e-14) should_log = 1;
+#endif
         }
         if(should_log) {
             char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
@@ -57,16 +84,28 @@ void mbary_step_checkpoint(const char *tag)
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
-                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for either M_bary or M_Z (or first call).\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, or M_dust (or first call).\n");
+#ifdef GALSF_RESOLVEDISM_DUST
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]\n");
+#else
                     fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]\n");
+#endif
                 }
+#ifdef GALSF_RESOLVEDISM_DUST
+                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e  %.16e  %+.16e\n",
+                    call_count, tag, All.Time, M_tot, dM, M_Z, dZ, M_dust, dDust);
+#else
                 fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e\n",
                     call_count, tag, All.Time, M_tot, dM, M_Z, dZ);
+#endif
                 fclose(f);
             }
         }
         last_M_tot = M_tot;
         last_M_Z   = M_Z;
+#ifdef GALSF_RESOLVEDISM_DUST
+        last_M_dust = M_dust;
+#endif
         call_count++;
     }
 }

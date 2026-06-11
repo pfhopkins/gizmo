@@ -883,10 +883,10 @@ void hydro_final_operations_and_cleanup(void)
                 }
                 double Z0_after = P[i].Metallicity[0];
                 dMZ_clamp_loc += P[i].Mass * (Z0_after - Z0_before) - Dy0;
-                /* Reset Dyield_pending now that this cell has consumed it.  Do NOT
-                 * reset in preloop — would clobber accumulated j-side contributions
-                 * from neighbors' walks during this cell's inactive steps. */
-                for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield_pending[k] = 0;}
+                /* NOTE: Dyield_pending reset moved BELOW the resolvedism Dust unpack —
+                 * the Dust slots must consume their pending contributions first.
+                 * Still NOT reset in preloop (would clobber accumulated j-side
+                 * contributions from neighbors' walks during inactive steps). */
             }
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             /* Force Σ Met[1..27] = 1 bit-exact: H = 1 − Z − Y absorbs any
@@ -942,7 +942,16 @@ void hydro_final_operations_and_cleanup(void)
             }
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
-            for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*CellP[i].Dust[k]);}
+            /* Dust diffusion unpack: same conservative pattern as the Metallicity
+             * unpack above — consume i-side Dyield PLUS the j-side Dyield_pending
+             * reservoir (accumulated while this cell was inactive), clamp at 0
+             * (not 0.01*old, which fabricates phantom dust on the donor side).
+             * Dust is an evolved field the chemistry does NOT recompute, so unlike
+             * TracAbund it must diffuse bit-conservatively. */
+            for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {
+                double total_dust_d = CellP[i].Dyield[k_offset+k] + CellP[i].Dyield_pending[k_offset+k];
+                CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + total_dust_d / P[i].Mass, 0.0);
+            }
             k_offset += NUM_RESOLVEDISM_DUST;
 #endif
 #if defined(CHEMCOOL) && defined(TURB_DIFF_METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
@@ -956,6 +965,12 @@ void hydro_final_operations_and_cleanup(void)
 #endif
             }
 #endif
+            /* Reset Dyield_pending now that ALL consumers above (Metallicity unpack,
+             * resolvedism Dust unpack) have read it.  TracAbund/D-pool slots are
+             * deliberately never applied (chemistry recomputes the ratios from the
+             * diffused element pools, assuming t_chem < t_diff) but their pending
+             * slots are still cleared here so they can't accumulate unboundedly. */
+            for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield_pending[k] = 0;}
 #endif
 
             
