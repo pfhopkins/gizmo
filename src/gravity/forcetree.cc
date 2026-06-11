@@ -8,6 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
@@ -135,7 +136,7 @@ static int last;
  * same leaf-opening criterion. */
 
 /*! length of look-up table for short-range force kernel in TreePM algorithm */
-#define NTAB 1000
+#define NTAB GRAVTREE_SHORTRANGE_NTAB   /* table length owned by gravtree_force_kernel.h (shared with the GPU walk) */
 /*! variables for short-range lookup table.  Non-static so the GPU gravity
  *  walk in gpu_gravtree.cc can read them via extern declarations.  Sized at
  *  NTAB floats = 4 KB each — fine to leave in host memory on Kokkos OMP;
@@ -1754,7 +1755,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     struct NODE *nop = 0;
     int no, nodesinlist=0, ptype, ninteractions=0, nexp, task, listindex = 0, maxPart = All.MaxPart;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* Phase 9: maxForeignNodes shifts pseudo-particle range above the foreign-node range */
-    double soft, r2, mass, r, fac_accel, u, h=0, h_p=0, h_inv, h3_inv, h_p_inv, h_p3_inv, u_p, xtmp, aold; xtmp=0; soft=0;
+    double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
     double pmass;
     double zeta=0, zeta_sec=0; int ptype_sec=-1;
@@ -1824,22 +1825,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     Vec3<double> Rad_Flux[N_RT_FREQ_BINS]; {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {Rad_Flux[kf] = {};}}
 #endif
 #ifdef SINK_CALC_DISTANCES
-    double Min_Distance_to_Sink2=MAX_REAL_NUMBER; Vec3<double> Min_xyz_to_Sink = {MAX_REAL_NUMBER,MAX_REAL_NUMBER,MAX_REAL_NUMBER};
-#ifdef SPECIAL_POINT_MOTION
-    Vec3<double> vel_of_nearest_special = {}, acc_of_nearest_special = {};
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    double weight_sum_for_special_point_smoothing = 0;
-#endif
-#endif
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    double Min_Sink_OrbitalTime=MAX_REAL_NUMBER, comp_Mass; Vec3<double> comp_dx, comp_dv;
-#endif
-#ifdef SINGLE_STAR_TIMESTEPPING
-    double Min_Sink_Approach_Time = MAX_REAL_NUMBER, Min_Sink_Freefall_time = MAX_REAL_NUMBER;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    double Min_Sink_FeedbackTime = MAX_REAL_NUMBER;
+    grav_sink_prox_accum_t sink_prox; grav_sink_prox_accum_init(sink_prox); /* nearest-sink + single-star timestep/binary accumulators (gravtree_force_kernel.h) */
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<double> d_dm = {}; double mass_dm = 0;
@@ -1871,11 +1857,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(SINK_DYNFRICTION_FROMTREE)
         if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-        if(ptype == 0) {if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+        grav_target_select_soft_and_zeta(ptype, P[target].AGS_zeta, soft, zeta);
 #endif
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
         if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
@@ -1906,23 +1889,26 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     if(pmass<=0) {return 0;} /* quick check if particle has mass: if not, we won't deal with it */
     int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
 #ifdef PMGRID
-    rcut2 = rcut * rcut; asmthfac = 0.5 / asmth * (NTAB / 3.0);
+    rcut2 = rcut * rcut; asmthfac = grav_pm_asmthfac(asmth);
 #endif
 #ifdef RT_USE_GRAVTREE
-    if(ptype==0) {if((soft>0)&&(pmass>0)) {valid_gas_particle_for_rt = 1;}}
+    valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
     double fac_stellum[N_RT_FREQ_BINS];
     if(valid_gas_particle_for_rt)
     {
-        double h_eff_phys = soft * pow(VOLUME_NORM_COEFF_FOR_NDIMS/All.DesNumNgb,1./NUMDIMS) * All.cf_atime; // convert from softening kernel extent to effective size, assuming 3D here, and convert to physical code units
-        double sigma_particle =  pmass / (h_eff_phys*h_eff_phys); // quick estimate of effective surface density of the target, in physical code units
-        double fac_stellum_0 = -All.PhotonMomentum_Coupled_Fraction / (4.*M_PI * C_LIGHT_CODE_REDUCED * sigma_particle * All.G); // this will be multiplied by L/r^2 below, giving acceleration, then extra G because code thinks this is gravity, so put extra G here. everything is in -physical- code units here //
-        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {fac_stellum[kf] = fac_stellum_0*(1 - exp(-rt_kappa(-1,kf, P, CellP)*sigma_particle));} // rt_kappa is in physical code units, so sigma_eff_abs should be also -- approximate surface-density through particle (for checking if we enter optically-thick limit)
+        double kappa_eff[N_RT_FREQ_BINS]; int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {kappa_eff[kf] = rt_kappa(-1,kf, P, CellP);} // rt_kappa is in physical code units (needs the walk's particle pointers, so evaluated here)
+        grav_target_rt_fac_stellum(soft, pmass, kappa_eff, fac_stellum);
     }
 #endif
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    double m_enc_in_rcrit = 0, r_for_total_menclosed = soft; r_for_total_menclosed = DMAX( r_for_total_menclosed , 0.1/(UNIT_LENGTH_IN_KPC*All.cf_atime) ); /* set a baseline Rcrit_min, otherwise we get statistics that are very noisy */
+    double m_enc_in_rcrit = 0, r_for_total_menclosed = grav_target_menc_radius(soft); /* baseline Rcrit_min applied in the helper, otherwise we get statistics that are very noisy */
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    /* per-target CR gate + max stream time, hoisted from the accumulation (the time helper is host-only; value is interaction-independent) */
+    int cr_active_gate = (All.Time > All.TimeBegin) ? 1 : 0; double cr_t_max = 0;
+    if(cr_active_gate) {cr_t_max = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/UNIT_TIME_IN_GYR;}
 #endif
     
     
@@ -1971,7 +1957,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 mass = P[no].Mass;
                 
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = sqrt(pow(P[no].Pos[0] - center[0],2) + pow(P[no].Pos[1] - center[1],2) + pow(P[no].Pos[2] - center[2],2));
+                r_source = grav_spherical_symmetry_r_from_center(P[no].Pos[0],P[no].Pos[1],P[no].Pos[2],center[0],center[1],center[2]);
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel;
@@ -1994,68 +1980,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {
                     
 #ifdef SINK_CALC_DISTANCES
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                    if(ptype == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-                    {
-                        int kx; double wt_special = weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
-                        weight_sum_for_special_point_smoothing += wt_special;
-                        vel_of_nearest_special += wt_special * P[no].Vel;
-                        acc_of_nearest_special += wt_special * P[no].Acc_Total_PrevStep;
-                    }
+                    /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
+                    grav_sink_prox_leaf_accumulate(r2, dr, ptype, pmass, soft, P[no].Type, P[no].Mass,
+                                                   P[no].Vel,
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+                                                   P[no].Acc_Total_PrevStep,
 #endif
-                    if(P[no].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) /* found a BH particle in grav calc */
-                    {
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                        if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-#endif
-                            if(r2 < Min_Distance_to_Sink2)    /* is this the closest BH part I've found yet? */
-                            {
-                                Min_Distance_to_Sink2 = r2;   /* if yes: adjust min bh dist */
-                                Min_xyz_to_Sink = dr; /* remember, dr = x_SINK - myx */
-#ifdef SPECIAL_POINT_MOTION
-                                int kx;
-                                vel_of_nearest_special = P[no].Vel;
-                                acc_of_nearest_special = P[no].Acc_Total_PrevStep;
-#endif
-                            }
-#ifdef SINGLE_STAR_TIMESTEPPING
-                        Vec3<double> sink_dv=P[no].Vel-vel; double vSqr=sink_dv.norm_sq(), M_total=P[no].Mass+pmass, r2soft=SinkParticle_GravityKernelRadius;
-                        r2soft = DMAX(r2soft, soft);
-                        r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
-                        r2soft = r2 + r2soft*r2soft;
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                                                   vel,
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                        if(ptype == 0) {
-                            double tSqr_fb = r2soft /(P[no].MaxFeedbackVel * P[no].MaxFeedbackVel + MIN_REAL_NUMBER);
-                            if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
-                        } // for gas, add the signal velocity of feedback from the star
+                                                   P[no].MaxFeedbackVel,
 #endif
-                        double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
-                        
-                        if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
-                        if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                        if(ptype == 5) // only for BH particles and for non center of mass calculation
-                        {
-                            double r_p5=sqrt(r2), specific_energy = 0.5*vSqr - All.G*M_total/r_p5;
-                            if(r2 < SinkParticle_GravityKernelRadius*SinkParticle_GravityKernelRadius)
-                            {
-                                double hinv_p5 = 1. / SinkParticle_GravityKernelRadius;
-                                specific_energy = 0.5*vSqr + All.G*M_total*kernel_gravity(r_p5*hinv_p5, hinv_p5, hinv_p5*hinv_p5*hinv_p5, -1);
-                            }
-                            if (specific_energy < 0)
-                            {
-                                double semimajor_axis= -All.G*M_total/(2.*specific_energy);
-                                double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
-                                if(t_orbital < Min_Sink_OrbitalTime) /* Save parameters of companion */
-                                {
-                                    Min_Sink_OrbitalTime=t_orbital; comp_Mass=P[no].Mass;
-                                    comp_dx=dr; comp_dv=sink_dv;
-                                }
-                            } /* specific_energy < 0 */
-                        } /* ptype == 5 */
-#endif //#ifdef SINGLE_STAR_FIND_BINARIES
-#endif //#ifdef SINGLE_STAR_TIMESTEPPING
-                    }
+#endif
+                                                   sink_prox);
 #endif // SINK_CALC_DISTANCES
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -2245,7 +2182,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 gasmass = nop->gasmass;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = sqrt(pow(nop->u.d.s[0] - center[0],2) + pow(nop->u.d.s[1] - center[1],2) + pow(nop->u.d.s[2] - center[2],2));
+                r_source = grav_spherical_symmetry_r_from_center(nop->u.d.s[0],nop->u.d.s[1],nop->u.d.s[2],center[0],center[1],center[2]);
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = Extnodes[no].vs - vel;
@@ -2289,60 +2226,30 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 
 #ifdef SINK_CALC_DISTANCES // NOTE: moved this to AFTER the checks for node opening, because we only want to record BH positions from the nodes that actually get used for the force calculation - MYG
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                if(ptype == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-                {
-                    int kx; double wt_special = weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
-                    weight_sum_for_special_point_smoothing += wt_special;
-                    vel_of_nearest_special = Extnodes[no].vs;
-                    acc_of_nearest_special = {}; /* no accel for now, that will be computed later, but keep this if needed */
-                }
+                grav_sink_prox_node_specialweighted(r2, Extnodes[no].vs, ptype, sink_prox);
 #endif
                 if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
                 {
                     Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
                     GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
-                    double sink_r2 = sink_dr.norm_sq(); // + (nop->len)*(nop->len);
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                    if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+                    grav_sink_prox_node_accumulate(r2, sink_dr, nop->sink_mass,
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+                                                   nop->sink_vel,
 #endif
-                        if(sink_r2 < Min_Distance_to_Sink2)
-                        {
-                            Min_Distance_to_Sink2 = sink_r2; Min_xyz_to_Sink = sink_dr; /* remember, dr = x_SINK - myx */
-#ifdef SPECIAL_POINT_MOTION
-                            int kx;
-                            vel_of_nearest_special = nop->sink_vel;
-                            acc_of_nearest_special = nop->sink_acc;
+#if defined(SPECIAL_POINT_MOTION)
+                                                   nop->sink_acc,
 #endif
-                        }
-#ifdef SINGLE_STAR_TIMESTEPPING
-                    Vec3<double> sink_dv = nop->sink_vel - vel; double vSqr=sink_dv.norm_sq(), M_total=nop->sink_mass+pmass, r2soft;
-                    r2soft = DMAX(SinkParticle_GravityKernelRadius, soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
-                    double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
+#if defined(SINGLE_STAR_FIND_BINARIES)
+                                                   (int)nop->N_SINK,
+#endif
+                                                   ptype, pmass, soft,
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                                                   vel,
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                    if(ptype == 0) {
-                        double tSqr_fb = r2soft /(nop->MaxFeedbackVel * nop->MaxFeedbackVel + MIN_REAL_NUMBER);
-                        if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
-                    } // for gas, add the signal velocity of feedback from the star
+                                                   nop->MaxFeedbackVel,
 #endif
-                    if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
-                    if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                    if(ptype == 5 && nop->N_SINK == 1) // only do it if we're looking at a single star in the node
-                    {
-                        double specific_energy = 0.5*vSqr - All.G*M_total/sqrt(r2);
-                        if (specific_energy<0)
-                        {
-                            double semimajor_axis= -All.G*M_total/(2.*specific_energy);
-                            double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
-                            if(t_orbital < Min_Sink_OrbitalTime) /* Save parameters of companion */
-                            {
-                                Min_Sink_OrbitalTime=t_orbital; comp_Mass=nop->sink_mass;
-                                comp_dx = sink_dr; comp_dv = sink_dv;
-                            }
-                        } /* specific_energy < 0 */
-                    } /* ptype == 5 */
-#endif //#ifdef SINGLE_STAR_FIND_BINARIES
-#endif //#ifdef SINGLE_STAR_TIMESTEPPING
+#endif
+                                                   sink_prox);
                 }
 #endif // SINK_CALC_DISTANCES
                 
@@ -2354,225 +2261,78 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             if((r2 > 0) && (mass > 0)) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
             {
                 r = sqrt(r2);
-                
-                /* now we compute the actual pair-wise gravity terms */
-                if((r >= h) && (r >= h_p)) // can safely do a purely-Newtonian force (can be done by kernel-gravity as well, but no need to enter all the conditional statements below so just do it here for simplicity //
+                /* pair-wise gravity terms (Newtonian/softened selection, softening symmetrization,
+                 * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
+                 * the single home for the pair physics on both walks. */
                 {
-                    fac_accel = mass / (r2 * r);
+                    grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+                                                                 , zeta, zeta_sec
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+                                                                 , AGS_kernel_shared_BITFLAG
+#endif
+                                                                 );
+                    fac_accel = pair_out.fac_accel;
 #ifdef EVALPOTENTIAL
-                    fac_pot = -mass / r;
+                    fac_pot = pair_out.fac_pot;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                    fac_tidal = fac_accel; fac2_tidal = 3.0 * mass / (r2 * r2 * r); /* second derivative of potential needs this factor */
+                    fac_tidal = pair_out.fac_tidal; fac2_tidal = pair_out.fac2_tidal;
 #endif
                 }
-                else
-                {
-                    double h_grav = h;
-#if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                    if(h_p > h_grav) {h_grav = h_p;} // in this case, symmetrize by taking the maximum here always
-#endif
-                    h_inv=1./h_grav; h3_inv=h_inv*h_inv*h_inv; u=r*h_inv; // set here to ensure this is using the correct values //
-                    fac_accel = mass * kernel_gravity(u, h_inv, h3_inv, 1);
-#ifdef EVALPOTENTIAL
-                    fac_pot = mass * kernel_gravity(u, h_inv, h3_inv, -1);
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* second derivatives needed -> calculate them from softened potential */
-                    fac_tidal = fac_accel; fac2_tidal = mass * kernel_gravity(u, h_inv, h3_inv, 2);  /* save original fac_accel without shortrange_table factor or zeta terms (needed for tidal field calculation) */
-#endif
-                    
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                    if(h_p > 0) // first, appropriately symmetrize the forces between particles. only do this is secondary is a particle, so has a type and softening! //
-                    {
-                        int symmetrize_by_averaging = 0; // default here to symmetrize by taking the maximum, but this will vary below //
-                        // the 'zeta' terms for conservation with adaptive softening assume kernel-scale forces are averaged to symmetrize, to make them continuous
-                        if(ptype_sec>=0) {if((1 << ptype_sec) & (AGS_kernel_shared_BITFLAG)) {symmetrize_by_averaging=1;}} // symmetrize by averaging only for particles which have a shared AGS structure since this is how our correction terms are derived //
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-                        if((ptype!=0) || (ptype_sec!=0)) {symmetrize_by_averaging=0;} // we don't want to do the symmetrization below for sink interactions because it can create very noisy interactions between tiny sink particles and diffuse gas. However we do want it for gas-gas interactions so we keep the below
-#endif
-                        double prefac_corr_p=1., prefac_corr_orig=1.; // this will give a symmetrized pair by linear averaging
-                        if(symmetrize_by_averaging==0) {prefac_corr_p=2; prefac_corr_orig=0.;} // symmetrize instead with the old method of simply taking the larger of the pair. here only act if the softening of the particle whose force is being summed is greater than the target //
-                        if((symmetrize_by_averaging==1) || (h_p>h)) // condition to need to evaluate the alternate particle ('p' side)
-                        {
-                            h_p_inv=1./h_p; h_p3_inv=h_p_inv*h_p_inv*h_p_inv; u_p=r*h_p_inv;
-                            fac_accel = 0.5 * (prefac_corr_orig * fac_accel + prefac_corr_p * mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, 1)); // average with neighbor
-#ifdef EVALPOTENTIAL
-                            fac_pot = 0.5 * (prefac_corr_orig * fac_pot + prefac_corr_p * mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, -1)); // average with neighbor
-#endif
-#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
-                            fac_tidal = fac_accel; fac2_tidal = 0.5 * (prefac_corr_orig * fac2_tidal + prefac_corr_p * mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, 2)); // average forces -> average in tidal tensor as well. also save updated fac_tidal
-#endif
-                        }
-                    } // closes if((h_p > 0)) clause
-#endif // closes clause to symmetrize by averaging instead of taking the larger softening
-                    
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    double fac_corr = 0; int add_ags_zeta_terms_primary=1, add_ags_zeta_terms_secondary=1; u_p=r/h_p; // define the correction factor but also a clause to see if we should apply any 'correction' term at all
-                    if((r<=0) || (pmass<=0) || (mass<=0) || (ptype_sec<0)) {add_ags_zeta_terms_primary=0; add_ags_zeta_terms_secondary=0;} // define conditions to add these terms at all (don't go forward if any of these conditions are met)
-                    if((zeta == 0) || (u >= 1) || (h <= 0)) {add_ags_zeta_terms_primary=0;} // other conditions that mean -dont- use the term for the ab side
-                    if((zeta_sec == 0) || (u_p >= 1) || (h_p <= 0)) {add_ags_zeta_terms_secondary=0;} // other conditions that mean -dont- use the term for the ba side
-                    // correction only applies to 'shared-kernel' particles: so this needs to check if these are the same particles for which the 'shared' kernel lengths are computed
-                    if(ptype != 0 || ptype_sec != 0) {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                        if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
-                        if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
-#else
-                        add_ags_zeta_terms_primary=0; add_ags_zeta_terms_secondary=0; // primary and secondary must be gas for ab side or ba side
-#endif
-                    } 
-                    if(add_ags_zeta_terms_primary) // ab side
-                    {
-                        double dWdr, wp; kernel_main(u, h3_inv, h3_inv*h_inv, &wp, &dWdr, 1);
-                        fac_corr += -(zeta/pmass) * dWdr / r; // go ahead and add the term
-                    }
-                    if(add_ags_zeta_terms_secondary) // ba side
-                    {
-                        double dWdr, wp; h_p_inv=1./h_p; h_p3_inv=h_p_inv*h_p_inv*h_p_inv; kernel_main(u_p, h_p3_inv, h_p3_inv*h_p_inv, &wp, &dWdr, 1);
-                        fac_corr += -(zeta_sec/pmass) * dWdr / r; // go ahead and add the term
-                    }
-                    if(!isnan(fac_corr)) {fac_accel += fac_corr;}
-#endif
-                } // closes r < h (else) clause [where we need to deal with inside-the-softening factors]
                 
                 
 #ifdef PMGRID
-                tabindex = (int) (asmthfac * r);
-                if(tabindex < NTAB && tabindex >= 0)
+                tabindex = grav_pm_shortrange_tabindex(asmthfac, r);
+                if(grav_pm_shortrange_in_range(tabindex))
 #endif // PMGRID //
                 {
 #ifdef PMGRID
-                    fac_accel *= shortrange_table[tabindex];
+                    grav_force_apply_pm_truncation(tabindex, shortrange_table,
+#ifdef EVALPOTENTIAL
+                                                   shortrange_table_potential, fac_pot,
+#endif
+                                                   fac_accel);
 #endif
 #ifdef EVALPOTENTIAL
-#ifdef PMGRID
-                    fac_pot *= shortrange_table_potential[tabindex];
-#endif
                     pot += (fac_pot);
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
                     pot += (mass * ewald_pot_corr(dr[0], dr[1], dr[2]));
 #endif
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                    r_target = sqrt(pow(pos[0] - center[0],2) + pow(pos[1] - center[1],2) + pow(pos[2] - center[2],2)); // distance of target point from box center
-                    if(r_source < r_target) {dr[0] = center[0] - pos[0]; dr[1] = center[1] - pos[1]; dr[2] = center[2] - pos[2]; fac_accel = mass/pow(DMAX(GRAVITY_SPHERICAL_SYMMETRY,DMAX(r_target,h)),3);} else {fac_accel = 0;}
+                    r_target = grav_spherical_symmetry_r_from_center(pos[0],pos[1],pos[2],center[0],center[1],center[2]); // distance of target point from box center
+                    grav_spherical_symmetry_force_override(r_source, r_target, h, mass, center[0],center[1],center[2], pos[0],pos[1],pos[2], dr, fac_accel);
 #endif
-                    
+
                     /* actually add the accelerations, now that we've corrected for the ewald and other terms */
                     acc += fac_accel * dr;
                     
                     
 #if defined(SINK_DYNFRICTION_FROMTREE)
-                    if( (fac_accel>MIN_REAL_NUMBER) && (ptype==5) && (mass>MIN_REAL_NUMBER) )
-                    {
-                        double dv2=dv.norm_sq();
-                        if((dv2 > MIN_REAL_NUMBER) && (sink_mass > MIN_REAL_NUMBER))
-                        {
-                            double dv0=sqrt(dv2); Vec3<double> dv_h=dv/dv0;
-                            double rdotvhat=dot(dr,dv_h);
-                            Vec3<double> b_im=dr-rdotvhat*dv_h; double b_impact=b_im.norm();
-                            double a_im=(b_impact*All.cf_atime)*(dv2*All.cf_a2inv)/(All.G*sink_mass), fac_df=fac_accel*b_impact*a_im/(1.+a_im*a_im); // need to convert to fully-physical units to ensure this has the correct dimensions
-                            /* this is where we can insert an ad-hoc renormalization to avoid double-counting if we have a genuinely very massive BH (so DF is well-resolved) */
-                            {
-                                double m_j=m_j_eff_for_df; /* estimate mean mass of the particles in the node */
-                                if(sink_mass > 14.251*m_j) {fac_df *= DMIN(1.,DMAX(0.,(-1.+3./log10(sink_mass/m_j))/1.6));} /* approximate correction factor estimated by linhao */
-                            }
-                            if((m_j_eff_for_df <= MIN_REAL_NUMBER) || (b_impact <= MIN_REAL_NUMBER) || (dv2 <= MIN_REAL_NUMBER)) {fac_df = 0;}
-                            /* parallel deflection component: dv = V[distant particle/node] - V[bh], sign here is set to accelerate towards V[ext], as needed */
-                            acc += fac_df * dv_h;
-                            /* perpendicular deflection component b_im = P[distant particle/node] - P[bh], so positive = accel -towards- P[ext], but this is the residual term (after subtracting the homogeneous term), which points in the opposite direction */
-                            double fac_df_p = -fac_df / (b_impact * a_im + MIN_REAL_NUMBER);
-                            if(fabs(fac_df_p)<MAX_REAL_NUMBER && isfinite(fac_df_p)) {acc += fac_df_p * b_im;}
-                        }
-                    }
+                    grav_sink_dynfriction_accumulate(dr, dv, fac_accel, mass, sink_mass, m_j_eff_for_df, ptype, acc);
 #endif
                     
                     
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION /* these are the 'correction' terms for variable smoothing lengths (analogous to the ags-zeta terms above). need to adjust for variable ptypes using these */
-                    int primary_uses_tidal_criterion=0, secondary_uses_tidal_criterion=0;
-                    if(mass > 0 && r2 > 0)
-                    {
-                        if((1 << ptype) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {primary_uses_tidal_criterion=1;} /* check if the primary particle uses the tidal softening */
-                        if((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {secondary_uses_tidal_criterion=1;} /* check if the secondary particle uses the tidal softening */
-                        double prefac_tt=0.5, h_touse=h, u_tt=sqrt(r2)/h_touse; // this corresponds to the result of symmetrizing by averaging
-#if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                        if(h >= h_p) {prefac_tt=1;} else {prefac_tt=1; h_touse=h_p; u_tt=sqrt(r2)/h_touse;} // this corresponds to adopting the MAX criterion for the softening
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION /* 'correction' terms for variable smoothing lengths (analogous to the ags-zeta terms); shared helper */
+                    grav_ags_tidal_criterion_accumulate(r, r2, dr, mass, h, h_p, ptype, ptype_sec, fac_tidal, fac2_tidal,
+                                                        i_zeta_tidal_tensorps_prevstep, j_zeta_tidal_tensorps_prevstep, tidal_zeta, acc);
 #endif
-                        if(u_tt<1 && prefac_tt>0) {tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt,1./h,1./(h*h*h),0);} // simple sum to calculate this contribution, only from particles inside the kernel of the primary -- this is up here instead of below the if below because it needs to include the 'self' contribution here
-                    }
-                    if(primary_uses_tidal_criterion || secondary_uses_tidal_criterion) // primary or secondary has associated correction terms here
-                    { // now this is correct, but always need to carefully ensure correction terms are only applied in the correct 'direction' if we have a mixed-particle-type pair //
-                        double h_touse = DMAX(h, h_p), f_b = -r*fac2_tidal, f_a = (6./r)*fac_tidal; // these will give the correct factors for the correction terms below, automatically symmetrized appropriately based on the same symmetry rules we use to define the tidal tensor itself in the first place
-                        if(r < h_touse)
-                        {
-                            double dwk,wk,f_a_corr; u=r/h_touse; kernel_main(u,1.,1.,&wk,&dwk,0); // gather the remaining kernel terms (note these derivatives come from the laplacian and its derivative, so can be reconstructed from our usual wk and dwk terms //
-                            f_a_corr = 4.*M_PI*mass * (dwk - (2./u)*wk) / (h_touse*h_touse*h_touse*h_touse); // default to symmetrize by taking the maximum, here
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                            if(h<h_p) {h_touse=h;} else {h_touse=h_p;}
-                            u=r/h_touse; kernel_main(u,1.,1.,&wk,&dwk,0);
-                            f_a_corr = 0.5 * (f_a_corr + 4.*M_PI*mass * (dwk - (2./u)*wk) / pow(h_touse,4)); // symmetrize by averaging since thats what we did above
-#endif
-                            f_a += f_a_corr; // add this to the relevant function to use below
-                        }
-                        int ki,kj,kk; double acc_corr_zeta[3]={0}; Vec3<double> rh = dr / r;
-                        for(kk=0;kk<3;kk++)
-                        {
-                            for(ki=0;ki<3;ki++)
-                            {
-                                for(kj=0;kj<3;kj++)
-                                {
-                                    double q0=rh[ki]*rh[kj]*rh[kk], fb_rh_add=0; /* first compute di dj dk [phi_kernel] -- this is generic */
-                                    if(ki==kj) {fb_rh_add+=rh[kk];} /* these are the delta_ij terms */
-                                    if(ki==kk) {fb_rh_add+=rh[kj];}
-                                    if(kj==kk) {fb_rh_add+=rh[ki];}
-                                    double qfun = f_a * q0 + f_b * (-3.*q0 + fb_rh_add); /* now double-dot this properly to get the sum we need - note only here need the combination of TT and zeta terms */
-                                    acc_corr_zeta[kk] += primary_uses_tidal_criterion * i_zeta_tidal_tensorps_prevstep[ki][kj] * qfun; // only non-zero here if primary is a tidal-softening-active particle
-                                    acc_corr_zeta[kk] += secondary_uses_tidal_criterion * j_zeta_tidal_tensorps_prevstep[ki][kj] * qfun; // only non-zero here if secondary is a tidal-softening-active particle
-                                }
-                            }
-                        }
-                        acc[0]+=acc_corr_zeta[0]; acc[1]+=acc_corr_zeta[1]; acc[2]+=acc_corr_zeta[2]; // final assignment
-                    }
-#endif
-                    
-                    
+
+
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                    /* tidal_tensorps[][] = Matrix of second derivatives of grav. potential, symmetric:
-                     |Txx Txy Txz|   |tidal_tensorps[0][0] tidal_tensorps[0][1] tidal_tensorps[0][2]|
-                     |Tyx Tyy Tyz| = |tidal_tensorps[1][0] tidal_tensorps[1][1] tidal_tensorps[1][2]|
-                     |Tzx Tzy Tzz|   |tidal_tensorps[2][0] tidal_tensorps[2][1] tidal_tensorps[2][2]|  */
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                    if(r_source < r_target) {fac2_tidal = 3 * mass / pow(DMAX(GRAVITY_SPHERICAL_SYMMETRY,DMAX(r_target,h)),5);} else {fac2_tidal = 0;}
+                    fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(r_source, r_target, h, mass);
 #endif
+                    grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal,
 #ifdef PMGRID
-                    tidal_tensorps[0][0] += ((-fac_tidal + dr[0] * dr[0] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[0] * dr[0] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-                    tidal_tensorps[0][1] += ((dr[0] * dr[1] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[0] * dr[1] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-                    tidal_tensorps[0][2] += ((dr[0] * dr[2] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[0] * dr[2] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-                    tidal_tensorps[1][1] += ((-fac_tidal + dr[1] * dr[1] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[1] * dr[1] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-                    tidal_tensorps[1][2] += ((dr[1] * dr[2] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[1] * dr[2] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-                    tidal_tensorps[2][2] += ((-fac_tidal + dr[2] * dr[2] * fac2_tidal) * shortrange_table[tabindex]) +
-                    dr[2] * dr[2] * fac2_tidal / 3.0 * shortrange_table_tidal[tabindex];
-#else
-                    tidal_tensorps[0][0] += (-fac_tidal + dr[0] * dr[0] * fac2_tidal);
-                    tidal_tensorps[0][1] += (dr[0] * dr[1] * fac2_tidal);
-                    tidal_tensorps[0][2] += (dr[0] * dr[2] * fac2_tidal);
-                    tidal_tensorps[1][1] += (-fac_tidal + dr[1] * dr[1] * fac2_tidal);
-                    tidal_tensorps[1][2] += (dr[1] * dr[2] * fac2_tidal);
-                    tidal_tensorps[2][2] += (-fac_tidal + dr[2] * dr[2] * fac2_tidal);
+                                                 shortrange_table[tabindex], shortrange_table_tidal[tabindex],
 #endif
+                                                 tidal_tensorps);
 #endif // COMPUTE_TIDAL_TENSOR_IN_GRAVTREE //
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-#ifndef ADAPTIVE_TREEFORCE_UPDATE // we want the jerk if we're doing lazy force updates
-                    if(ptype > 0)
-#endif
-                    {
-                        double dv_dot_dr = dot(dv, dr);
-                        jerk += fac_accel * dv - dv_dot_dr * fac2_tidal * dr;
-                    }
+                    grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk);
 #endif
                 } // closes TABINDEX<NTAB
                 
@@ -2585,132 +2345,56 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 tree_mass += mass;
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-                if(gasmass>0)
-                {
-                    int bin; // Here we do a simple six-bin angular binning scheme
-                    if((fabs(dr[0]) > fabs(dr[1])) && (fabs(dr[0])>fabs(dr[2]))) {if (dr[0] > 0) {bin = 0;} else {bin=1;}
-                    } else if (fabs(dr[1])>fabs(dr[2])){if (dr[1] > 0) {bin = 2;} else {bin=3;}
-                    } else {if (dr[2] > 0) {bin = 4;} else {bin = 5;}}
-                    treecol_angular_bins[bin] += fac_accel*gasmass*r / (angular_bin_size*mass); // in our binning scheme, we stretch the gas mass over a patch  of the sphere located at radius r subtending solid angle equal to the bin size - thus the area is r^2 * angular_bin_size, so sigma = m/(r^2 * angular bin size) = fac_accel/r / angular bin size. Factor of gasmass / mass corrects the gravitational mass to the gas mass
-                }
+                grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, treecol_angular_bins);
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                if(ptype==0 && r>0 && cr_injection>0 && All.Time>All.TimeBegin)
-                {
-                    double kappa_0 = All.CosmicRay_Subgrid_Kappa_0, vst_0 = All.CosmicRay_Subgrid_Vstream_0; // in code units
-                    double r_phys = sqrt(r*r + soft*soft/4.) * All.cf_atime, t_max = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/UNIT_TIME_IN_GYR; // make sure we're working in physical code units, and assign max time to formation at begin time, and include very crude 'softening' term here to prevent divergennce as r->0: for our default parameters can't be too large here or we get unphysically large CR halos compared to reality, b/c of large effective streaming terms
-                    double r_max = 0.5*t_max*vst_0 * (1. + sqrt(1. + 16.*kappa_0/(vst_0*vst_0*t_max))); // maximum stream distance
+                grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max,
 #ifdef PMGRID
-                    r_max = DMIN(r_max , 0.5*rcut*All.cf_atime); // truncate before reach the boundary of the grid to avoid numerical errors there
+                                          rcut,
 #endif
-                    double fac_cr_distance = 1./(4.*M_PI*r_phys*(kappa_0 + vst_0*r_phys)) * exp(-DMIN(r_phys*r_phys/(1.e-6*r_phys*r_phys+r_max*r_max),50.));
-                    if(fac_cr_distance>0) {SubGrid_CosmicRayEnergyDensity += fac_cr_distance * cr_injection / All.cf_a3inv;} // convert to appropriate code units for an energy density or pressure
-                }
+                                          SubGrid_CosmicRayEnergyDensity);
 #endif
 #ifdef RT_USE_GRAVTREE
-                if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
+                if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target; payload formulas in the shared helper */
                 {
-                    r2 = d_stellarlum.norm_sq(); r = sqrt(r2); double fac_rt;
-                    if(r >= soft) {fac_rt=1./(r2*r);} else {double h_inv_rt=1./soft, h3_inv_rt=h_inv_rt*h_inv_rt*h_inv_rt, u_rt=r*h_inv_rt; fac_rt=kernel_gravity(u_rt,h_inv_rt,h3_inv_rt,1);}
-                    if((soft>r)&&(soft>0)) fac_rt *= (r2/(soft*soft)); // don't allow cross-section > r2
-                    double fac_intensity; fac_intensity = fac_rt * r * All.cf_a2inv / (4.*M_PI); // ~L/(4pi*r^2), in -physical- units, since L is physical
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                    {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {Rad_E_gamma[kf] += fac_intensity * mass_stellarlum[kf];}}
-#endif
+                    grav_rt_payload_accumulate(d_stellarlum, soft, mass_stellarlum,
 #ifdef CHIMES_STELLAR_FLUXES
-                    int chimes_k; double chimes_fac = fac_intensity / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);  // 1/(4 * pi * r^2), in cm^-2
-                    for (chimes_k = 0; chimes_k < CHIMES_LOCAL_UV_NBINS; chimes_k++)
-                    {
-                        chimes_flux_G0[chimes_k] += chimes_fac * chimes_mass_stellarlum_G0[chimes_k];   // Habing flux units
-                        chimes_flux_ion[chimes_k] += chimes_fac * chimes_mass_stellarlum_ion[chimes_k]; // cm^-2 s^-1
-                    }
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                    incident_flux_uv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV];// * shortrange_table[tabindex];
-                    if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR]<mass_stellarlum[RT_FREQ_BIN_FIRE_UV])&&(mass_stellarlum[RT_FREQ_BIN_FIRE_IR]>0)) // if this -isn't- satisfied, no chance you are optically thin to EUV //
-                    {
-                        // here, use ratio and linear scaling of escape with tau to correct to the escape fraction for the correspondingly higher EUV kappa: factor ~2000 here comes from the ratio of (kappa_euv/kappa_uv)
-                        incident_flux_euv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV] * (All.PhotonMomentum_fUV + (1-All.PhotonMomentum_fUV) *
-                                                                                                     ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + mass_stellarlum[RT_FREQ_BIN_FIRE_IR]) /
-                                                                                                      (mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + 2042.6*mass_stellarlum[RT_FREQ_BIN_FIRE_IR])));
-                    } else {
-                        // here, just enforce a minimum escape fraction //
-                        double m_lum_total = 0; int ks_q; for(ks_q=0;ks_q<N_RT_FREQ_BINS;ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
-                        incident_flux_euv += All.PhotonMomentum_fUV * fac_intensity * m_lum_total;
-                    }
-                    // don't multiply by shortrange_table since that is to prevent 2x-counting by PMgrid (which never happens here) //
+                                               chimes_mass_stellarlum_G0, chimes_mass_stellarlum_ion, chimes_flux_G0, chimes_flux_ion,
 #endif
 #ifdef SINK_PHOTONMOMENTUM
+                                               mass_sinklumwt_forradfb,
+#endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                    Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * mass_sinklumwt_forradfb;
+                                               Rad_E_gamma,
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+                                               incident_flux_uv, incident_flux_euv,
 #endif
 #ifdef SINK_COMPTON_HEATING
-                    incident_flux_agn += fac_intensity * mass_sinklumwt_forradfb; // L/(4pi*r*r) analog
+                                               incident_flux_agn,
 #endif
-#endif
-                    
 #ifdef RT_OTVET
-                    /* use the information we have here from the gravity tree (optically thin incident fluxes) to estimate the Eddington tensor */
-                    if(r>0)
-                    {
-                        double fac_otvet_sum=0; int kf_rt;
-                        for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++)
-                        {
-                            fac_otvet_sum = mass_stellarlum[kf_rt];
-                            fac_otvet_sum *= fac_rt / (1.e-37 + r); // units are not important, since ET will be dimensionless, but final ET should scale as ~luminosity/r^2
-                            RT_ET[kf_rt] += fac_otvet_sum * outer_product(d_stellarlum);
-                        }
-                    }
-                    
+                                               RT_ET,
 #endif
-                    
-#ifdef RT_LEBRON /* now we couple radiation pressure [single-scattering] terms within this module */
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE /* we only allow the momentum to couple over some distance to prevent bad approximations when the distance between points here is enormous */
-                    if(r*UNIT_LENGTH_IN_KPC*All.cf_atime > 50.) {fac_rt=0;}
-#endif
-                    int kf_rt; double lum_force_fac=0;
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) /* save the fluxes for use below, where we will calculate their RP normally */
-                    double fac_flux = -fac_rt * All.cf_a2inv / (4.*M_PI); // ~L/(4pi*r^3), in -physical- units (except for last r, cancelled by dx_stellum), since L is physical
-                    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {Rad_Flux[kf_rt] += mass_stellarlum[kf_rt]*fac_flux*d_stellarlum;}
-#else /* simply apply an on-the-spot approximation and do the absorption and RP force now */
-                    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {lum_force_fac += mass_stellarlum[kf_rt] * fac_stellum[kf_rt];} // add directly to forces. appropriate normalization (and sign) in 'fac_stellum'
-#endif
-#ifdef SINK_PHOTONMOMENTUM /* divide out PhotoMom_coupled_frac here b/c we have our own SINK_Rad_Mom factor, and don't want to double-count */
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                    Rad_Flux[RT_FREQ_BIN_FIRE_IR] += mass_sinklumwt_forradfb*fac_flux*d_stellarlum;
-#elif !defined(RT_DISABLE_RAD_PRESSURE)
-                    lum_force_fac += (All.Sink_Rad_MomentumFactor / (MIN_REAL_NUMBER + All.PhotonMomentum_Coupled_Fraction)) * mass_sinklumwt_forradfb * fac_stellum[N_RT_FREQ_BINS-1];
+                                               Rad_Flux,
+#elif defined(RT_LEBRON)
+                                               fac_stellum,
 #endif
-#endif
-                    if(lum_force_fac>0) {acc += (fac_rt*lum_force_fac) * d_stellarlum;}
-#endif
+                                               acc);
                 } // closes if(valid_gas_particle_for_rt)
-                
+
 #endif // RT_USE_GRAVTREE
-                
-                
+
+
 #ifdef DM_SCALARFIELD_SCREENING
                 if(ptype != 0)    /* we have a dark matter particle as target */
                 {
-                    GRAVITY_NEAREST_XYZ(d_dm[0],d_dm[1],d_dm[2],-1);
-                    r2 = d_dm.norm_sq();
-                    r = sqrt(r2); double fac_dmsf, h_inv_dmsf, h3inv_dmsf, u_dmsf;
-                    if(r >= h) {fac_dmsf = mass_dm / (r2 * r);} else {
-                        h_inv_dmsf = 1.0 / h; h3inv_dmsf = h_inv_dmsf * h_inv_dmsf * h_inv_dmsf; u_dmsf = r * h_inv_dmsf;
-                        fac_dmsf = mass_dm * kernel_gravity(u_dmsf, h_inv_dmsf, h3inv_dmsf, 1);
-                    }
-                    /* assemble force with strength, screening length, and target charge.  */
-                    fac_dmsf *= All.ScalarBeta * (1 + r / All.ScalarScreeningLength) * exp(-r / All.ScalarScreeningLength);
+                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h,
 #ifdef PMGRID
-                    tabindex = (int) (asmthfac * r);
-                    if(tabindex < NTAB && tabindex >= 0)
+                                                   asmthfac, shortrange_table,
 #endif
-                    {
-#ifdef PMGRID
-                        fac_dmsf *= shortrange_table[tabindex];
-#endif
-                        acc += fac_dmsf * d_dm;
-                    }
+                                                   acc);
                 } // closes if(ptype != 0)
 #endif // DM_SCALARFIELD_SCREENING //
                 
@@ -2741,8 +2425,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             }
         } // closes (mode == 1) check
     } // closes outer (while(no>=0)) check
-    
-    
+
+
     /* store result at the proper place */
     if(mode == 0)
     {
@@ -2794,30 +2478,30 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         P[target].GravJerk = jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
-        P[target].Min_Distance_to_Sink = sqrt( Min_Distance_to_Sink2 );
-        P[target].Min_xyz_to_Sink = Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
+        P[target].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
+        P[target].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
         {
-            P[target].vel_of_nearest_special = vel_of_nearest_special;
-            P[target].acc_of_nearest_special = acc_of_nearest_special;
+            P[target].vel_of_nearest_special = sink_prox.vel_of_nearest_special;
+            P[target].acc_of_nearest_special = sink_prox.acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-            P[target].weight_sum_for_special_point_smoothing = weight_sum_for_special_point_smoothing; /* weighted sum needed */
+            P[target].weight_sum_for_special_point_smoothing = sink_prox.weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
         }
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
-        P[target].is_in_a_binary=0; P[target].Min_Sink_OrbitalTime=Min_Sink_OrbitalTime; //orbital time for binary
-        if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
+        P[target].is_in_a_binary=0; P[target].Min_Sink_OrbitalTime=sink_prox.Min_Sink_OrbitalTime; //orbital time for binary
+        if (sink_prox.Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
         {
-            P[target].is_in_a_binary=1; P[target].comp_Mass=comp_Mass; //mass of binary companion
-            P[target].comp_dx = comp_dx; P[target].comp_dv = comp_dv;
+            P[target].is_in_a_binary=1; P[target].comp_Mass=sink_prox.comp_Mass; //mass of binary companion
+            P[target].comp_dx = sink_prox.comp_dx; P[target].comp_dv = sink_prox.comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
-        P[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
-        P[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time)/All.G);
+        P[target].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
+        P[target].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        P[target].Min_Sink_FeedbackTime = sqrt(Min_Sink_FeedbackTime);
+        P[target].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
 #endif
 #endif
 #endif // SINK_CALC_DISTANCES
@@ -2869,30 +2553,30 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         GravDataResult[target].GravJerk = jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
-        GravDataResult[target].Min_Distance_to_Sink = sqrt( Min_Distance_to_Sink2 );
-        GravDataResult[target].Min_xyz_to_Sink = Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
+        GravDataResult[target].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
+        GravDataResult[target].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
         {
-            GravDataResult[target].vel_of_nearest_special = vel_of_nearest_special;
-            GravDataResult[target].acc_of_nearest_special = acc_of_nearest_special;
+            GravDataResult[target].vel_of_nearest_special = sink_prox.vel_of_nearest_special;
+            GravDataResult[target].acc_of_nearest_special = sink_prox.acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-            GravDataResult[target].weight_sum_for_special_point_smoothing = weight_sum_for_special_point_smoothing; /* weighted sum needed */
+            GravDataResult[target].weight_sum_for_special_point_smoothing = sink_prox.weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
         }
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
-        GravDataResult[target].is_in_a_binary=0; GravDataResult[target].Min_Sink_OrbitalTime=Min_Sink_OrbitalTime; // orbital time for binary
-        if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
+        GravDataResult[target].is_in_a_binary=0; GravDataResult[target].Min_Sink_OrbitalTime=sink_prox.Min_Sink_OrbitalTime; // orbital time for binary
+        if (sink_prox.Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
         {
-            GravDataResult[target].is_in_a_binary = 1; GravDataResult[target].comp_Mass=comp_Mass; //mass of binary companion
-            GravDataResult[target].comp_dx = comp_dx; GravDataResult[target].comp_dv = comp_dv;
+            GravDataResult[target].is_in_a_binary = 1; GravDataResult[target].comp_Mass=sink_prox.comp_Mass; //mass of binary companion
+            GravDataResult[target].comp_dx = sink_prox.comp_dx; GravDataResult[target].comp_dv = sink_prox.comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
-        GravDataResult[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
-        GravDataResult[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time)/All.G);
+        GravDataResult[target].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
+        GravDataResult[target].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        GravDataResult[target].Min_Sink_FeedbackTime = sqrt(Min_Sink_FeedbackTime);
+        GravDataResult[target].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
 #endif
 #endif
 #endif // SINK_CALC_DISTANCES

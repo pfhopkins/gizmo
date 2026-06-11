@@ -10,6 +10,8 @@
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
+#include "../mesh/kernel.h"
+#include "../gravity/gravtree_force_kernel.h" /* shared weight-function SSOT (grav_weight_function_for_weighted_motion_smoothing) */
 
 /*! Routines for the drift/predict step */
 
@@ -674,8 +676,6 @@ void advect_mesh_point(int i, double dt)
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode)
 {
-    double wt = 1, amax = 1.e2, rmax_pc = 100., slope_index = 1, r_pc = r * All.cf_atime * UNIT_LENGTH_IN_PC;
-    if(r_pc < rmax_pc) {wt = DMAX(pow(r_pc / rmax_pc , slope_index) , 1./amax);}
-    if(mode) {return 1 - sqrt(wt);} else {return wt;}
+    return grav_weight_function_for_weighted_motion_smoothing(r, mode); /* body moved verbatim to gravtree_force_kernel.h (shared with the GPU gravity walk) */
 }
 #endif

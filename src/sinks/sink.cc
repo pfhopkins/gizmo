@@ -7,6 +7,7 @@
 #include "../declarations/gpu_rng.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../gravity/gravtree_force_kernel.h"   /* shared angleweight SSOT (grav_sink_fb_angleweight) */
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 
@@ -196,20 +197,8 @@ double sink_fb_angleweight_localcoupling(int j, double cos_theta, double r, doub
     rely this for things like the long-range radiation pressure and compton heating) */
 double sink_fb_angleweight(double sink_lum_input, Vec3<double>& sink_angle, double dx, double dy, double dz)
 {
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    return sink_lum_input;
-#endif
-    if(sink_lum_input <= 0) return 0;
-    Vec3<double> d{dx, dy, dz};
-    double r2 = d.norm_sq(); if(r2 <= 0) return 0;
-    if(r2*UNIT_LENGTH_IN_PC*UNIT_LENGTH_IN_PC*All.cf_atime*All.cf_atime < 1) return 0; /* no force at < 1pc */
-#if defined(SINK_FB_COLLIMATED)
-    Vec3<double> sa{(double)sink_angle[0], (double)sink_angle[1], (double)sink_angle[2]};
-    double cos_theta = fabs(dot(d, sa)/sqrt(r2*sa.norm_sq())); if(!isfinite(cos_theta)) {cos_theta=1;}
-    double wt_normalized = 0.0847655*exp(4.5*cos_theta*cos_theta); // ~exp(-x^2/2*hR^2), normalized appropriately to give the correct total flux, for hR~0.3
-    return sink_lum_input * wt_normalized; // ~exp(-x^2/2*hR^2), normalized appropriately to give the correct total flux, for hR~0.3
-#endif
-    return sink_lum_input;
+    /* body moved verbatim to gravtree_force_kernel.h (shared with the GPU gravity walk) */
+    return grav_sink_fb_angleweight(sink_lum_input, (double)sink_angle[0], (double)sink_angle[1], (double)sink_angle[2], dx, dy, dz);
 }
 
 
