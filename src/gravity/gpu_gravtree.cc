@@ -1060,17 +1060,20 @@ gpu_gravtree_walk_one(int target,
             }
 #ifdef PMGRID
             int tabindex = (int) (asmthfac * r);
-            if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
-                fac_accel *= shortrange_tab[tabindex];
-#ifdef EVALPOTENTIAL
-                fac_pot   *= shortrange_pot_tab[tabindex];
+            /* PM short-range gate (mirrors forcetree.cc): wraps the acceleration,
+             * potential, dynamical-friction, adaptive-tidal-correction, tidal-tensor
+             * and jerk contributions ONLY. A source beyond the table range contributes
+             * nothing to those, but fac_accel stays UN-truncated for the payload blocks
+             * below the gate (TREECOL column estimate) -- there is no PM-side completion
+             * for those integrals, so truncating or zeroing them would be wrong. */
+            if(tabindex < GIZMO_GPU_GRAVTREE_NTAB && tabindex >= 0)
 #endif
-            } else {
-                fac_accel = 0.0;
+            {
+#ifdef PMGRID
+            fac_accel *= shortrange_tab[tabindex];
 #ifdef EVALPOTENTIAL
-                fac_pot   = 0.0;
+            fac_pot   *= shortrange_pot_tab[tabindex];
 #endif
-            }
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
             /* Shell-theorem override (mirrors forcetree.cc:2446-2449). Replaces dr
@@ -1091,40 +1094,6 @@ gpu_gravtree_walk_one(int target,
             acc[2] += fac_accel * dr[2];
 #ifdef EVALPOTENTIAL
             pot    += fac_pot;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-            /* Yukawa-screened scalar-field force on dark-matter particles
-             * (mirrors forcetree.cc:2683-2705).  Only acts when the target is
-             * non-gas; mass_dm_local was zeroed for gas-targets above. */
-            if(ptype != 0 && mass_dm_local > 0)
-            {
-                gravity_box_nearest_image(d_dm[0], d_dm[1], d_dm[2], -1);
-                double r2_dm = d_dm[0]*d_dm[0] + d_dm[1]*d_dm[1] + d_dm[2]*d_dm[2];
-                double r_dm  = sqrt(r2_dm);
-                double fac_dmsf;
-                if(r_dm >= h) {
-                    fac_dmsf = mass_dm_local / (r2_dm * r_dm);
-                } else {
-                    double h_inv_dm  = 1.0 / h;
-                    double h3_inv_dm = h_inv_dm * h_inv_dm * h_inv_dm;
-                    double u_dmsf    = r_dm * h_inv_dm;
-                    fac_dmsf = mass_dm_local * kernel_gravity(u_dmsf, h_inv_dm, h3_inv_dm, 1);
-                }
-                fac_dmsf *= All.ScalarBeta * (1 + r_dm / All.ScalarScreeningLength) * exp(-r_dm / All.ScalarScreeningLength);
-#ifdef PMGRID
-                int tabindex_dm = (int)(asmthfac * r_dm);
-                if(tabindex_dm >= 0 && tabindex_dm < GIZMO_GPU_GRAVTREE_NTAB) {
-                    fac_dmsf *= shortrange_tab[tabindex_dm];
-                    acc[0] += fac_dmsf * d_dm[0];
-                    acc[1] += fac_dmsf * d_dm[1];
-                    acc[2] += fac_dmsf * d_dm[2];
-                }
-#else
-                acc[0] += fac_dmsf * d_dm[0];
-                acc[1] += fac_dmsf * d_dm[1];
-                acc[2] += fac_dmsf * d_dm[2];
-#endif
-            }
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Adaptive softening 'tidal' correction terms (mirrors forcetree.cc:2481-2526).
@@ -1208,8 +1177,9 @@ gpu_gravtree_walk_one(int target,
             /* PMGRID short-range tidal correction (mirrors forcetree.cc:2538-2549).
              * The standard tidal kernel terms get modulated by shortrange_table[tabindex],
              * and an additional shortrange_table_tidal[tabindex] term is added to
-             * account for the smoothing-kernel derivative correction in TreePM. */
-            if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
+             * account for the smoothing-kernel derivative correction in TreePM.
+             * tabindex is in range here -- this code sits inside the PM short-range gate. */
+            {
                 float st  = shortrange_tab[tabindex];
                 float sti = shortrange_tidal_tab[tabindex];
                 tidal_acc[0][0] += (-fac_tidal + dr[0]*dr[0]*fac2_tidal) * st + dr[0]*dr[0]*fac2_tidal/3.0 * sti;
@@ -1219,7 +1189,6 @@ gpu_gravtree_walk_one(int target,
                 tidal_acc[1][2] += ( dr[1]*dr[2]*fac2_tidal)             * st + dr[1]*dr[2]*fac2_tidal/3.0 * sti;
                 tidal_acc[2][2] += (-fac_tidal + dr[2]*dr[2]*fac2_tidal) * st + dr[2]*dr[2]*fac2_tidal/3.0 * sti;
             }
-            /* tabindex out of range: no tidal contribution (consistent with fac_accel=0 above). */
 #else
             /* Non-PMGRID tidal accumulation (mirrors forcetree.cc:2551-2556). */
             tidal_acc[0][0] += (-fac_tidal + dr[0] * dr[0] * fac2_tidal);
@@ -1284,6 +1253,7 @@ gpu_gravtree_walk_one(int target,
                 }
             }
 #endif /* SINK_DYNFRICTION_FROMTREE */
+            } /* closes the PM short-range gate (tabindex in range; mirrors forcetree.cc) */
             ninter++;
 #ifdef COUNT_MASS_IN_GRAVTREE
             /* counted only for accepted interactions (r2>0, mass>0), mirroring
@@ -1294,10 +1264,11 @@ gpu_gravtree_walk_one(int target,
 
             /* ------------------------------------------------------------ *
              * RT cluster payloads (Phase 2-A).  Structure mirrors           *
-             * forcetree.cc:2290-2392 (outside the PMGRID tabindex gate,     *
-             * so fac_accel is already 0 when tabindex >= NTAB — correct for  *
-             * treecol; RT_USE_GRAVTREE computes its own fac_rt from          *
-             * d_stellarlum independently).                                   *
+             * forcetree.cc: OUTSIDE the PM short-range gate, so for an      *
+             * out-of-range source fac_accel is the raw un-truncated value   *
+             * here (used by the TREECOL column estimate, which has no       *
+             * PM-side completion); RT_USE_GRAVTREE computes its own fac_rt  *
+             * from d_stellarlum independently.                              *
              * ------------------------------------------------------------ */
 #ifdef RT_USE_TREECOL_FOR_NH
             if(gasmass > 0.0)
@@ -1435,6 +1406,43 @@ gpu_gravtree_walk_one(int target,
 
             } /* if(valid_gas_particle_for_rt) */
 #endif /* RT_USE_GRAVTREE */
+
+#ifdef DM_SCALARFIELD_SCREENING
+            /* Yukawa-screened scalar-field force on dark-matter particles
+             * (mirrors forcetree.cc -- evaluated OUTSIDE the main PM short-range
+             * gate, with its own table gate keyed on the dm-center distance).
+             * Only acts when the target is non-gas; mass_dm_local was zeroed for
+             * gas-targets above. */
+            if(ptype != 0 && mass_dm_local > 0)
+            {
+                gravity_box_nearest_image(d_dm[0], d_dm[1], d_dm[2], -1);
+                double r2_dm = d_dm[0]*d_dm[0] + d_dm[1]*d_dm[1] + d_dm[2]*d_dm[2];
+                double r_dm  = sqrt(r2_dm);
+                double fac_dmsf;
+                if(r_dm >= h) {
+                    fac_dmsf = mass_dm_local / (r2_dm * r_dm);
+                } else {
+                    double h_inv_dm  = 1.0 / h;
+                    double h3_inv_dm = h_inv_dm * h_inv_dm * h_inv_dm;
+                    double u_dmsf    = r_dm * h_inv_dm;
+                    fac_dmsf = mass_dm_local * kernel_gravity(u_dmsf, h_inv_dm, h3_inv_dm, 1);
+                }
+                fac_dmsf *= All.ScalarBeta * (1 + r_dm / All.ScalarScreeningLength) * exp(-r_dm / All.ScalarScreeningLength);
+#ifdef PMGRID
+                int tabindex_dm = (int)(asmthfac * r_dm);
+                if(tabindex_dm >= 0 && tabindex_dm < GIZMO_GPU_GRAVTREE_NTAB) {
+                    fac_dmsf *= shortrange_tab[tabindex_dm];
+                    acc[0] += fac_dmsf * d_dm[0];
+                    acc[1] += fac_dmsf * d_dm[1];
+                    acc[2] += fac_dmsf * d_dm[2];
+                }
+#else
+                acc[0] += fac_dmsf * d_dm[0];
+                acc[1] += fac_dmsf * d_dm[1];
+                acc[2] += fac_dmsf * d_dm[2];
+#endif
+            }
+#endif /* DM_SCALARFIELD_SCREENING */
 
         } /* if((r2>0)&&(mass>0)) */
 
