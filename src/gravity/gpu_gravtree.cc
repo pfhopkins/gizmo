@@ -237,9 +237,10 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * node accepts + per-particle precomputed d_cr_inject at leaf nodes (since
  * cr_get_source_injection_rate is not GPU-callable). */
 /* COUNT_MASS_IN_GRAVTREE: ported. tree_mass accumulator declared at function entry,
- * accumulated alongside both leaf-particle and node-accept paths, written to
+ * accumulated once per ACCEPTED interaction in the force kernel (r2>0, mass>0;
+ * mirrors forcetree.cc -- excludes the target's own leaf), written to
  * P_dev[target].TreeMass at end of walk, scattered back to P[i].TreeMass.  The
- * post-loop +=P[i].Mass at gravtree.cc:605 adds the target's own mass to finalize. */
+ * post-loop +=P[i].Mass in gravtree.cc adds the target's own mass to finalize. */
 /* DM_SCALARFIELD_SCREENING: ported. SoA tree-node fields mass_dm + s_dm are populated by
  * gpu_pseudo_update + gpu_moment_refresh + let_pack (already wired). The walk sets per-
  * interaction d_dm and mass_dm_local in both leaf and node branches, then accumulates the
@@ -363,9 +364,10 @@ gpu_gravtree_walk_one(int target,
     SymmetricTensor2<double> tidal_acc = {};
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
-    /* Diagnostic: total mass seen by this target during the walk (mirrors
-     * forcetree.cc:1754 + 2574 + 2743). Walk excludes the target itself; the
-     * post-loop +=P[i].Mass at gravtree.cc:605 finalizes the sum. */
+    /* Diagnostic: total mass seen by this target during the walk, summed only
+     * over accepted interactions (mirrors forcetree.cc). The walk excludes the
+     * target's own leaf (r2==0); the post-loop +=P[i].Mass in gravtree.cc
+     * finalizes the sum. */
     double tree_mass = 0.0;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
@@ -550,9 +552,6 @@ gpu_gravtree_walk_one(int target,
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
-#ifdef COUNT_MASS_IN_GRAVTREE
-            tree_mass += mass;
-#endif
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this leaf particle (mirrors forcetree.cc:2055). */
             if(ptype != 0 && P_dev[no].Type == 1) { d_dm = dr; mass_dm_local = mass; }
@@ -787,9 +786,6 @@ gpu_gravtree_walk_one(int target,
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
-#ifdef COUNT_MASS_IN_GRAVTREE
-            tree_mass += mass;
-#endif
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this accepted node (mirrors forcetree.cc:2272).
              * d_dm uses the DM CoM s_dm, NOT the total CoM (s_node). */
@@ -1289,6 +1285,12 @@ gpu_gravtree_walk_one(int target,
             }
 #endif /* SINK_DYNFRICTION_FROMTREE */
             ninter++;
+#ifdef COUNT_MASS_IN_GRAVTREE
+            /* counted only for accepted interactions (r2>0, mass>0), mirroring
+             * forcetree.cc -- the walk excludes the target's own (r2==0) leaf;
+             * the post-loop += P[i].Mass in gravtree.cc adds it back exactly once. */
+            tree_mass += mass;
+#endif
 
             /* ------------------------------------------------------------ *
              * RT cluster payloads (Phase 2-A).  Structure mirrors           *
