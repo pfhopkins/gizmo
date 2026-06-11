@@ -599,7 +599,10 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
-            /* Load leaf luminosity unconditionally (matching node path; valid_gas gate in force kernel). */
+            /* Load leaf luminosity only for valid gas targets (mirrors forcetree.cc; the
+             * RT accumulation below is gated the same way, so non-gas targets never read
+             * these and skipping the loads avoids the wasted per-leaf table traffic). */
+            if(valid_gas_particle_for_rt)
             {
                 d_stellarlum = dr;
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
@@ -830,9 +833,11 @@ gpu_gravtree_walk_one(int target,
             gasmass = s->gasmass[idx];
 #endif
 #ifdef RT_USE_GRAVTREE
-            /* Load node stellar luminosity unconditionally (CPU does the same — no valid_gas gate here).
-             * The nvc++ compiler miscompiles if(const int) in device code, so we also dropped 'const'
-             * on valid_gas_particle_for_rt.  RT accumulation is still gated in the force kernel below. */
+            /* Load node stellar luminosity only for valid gas targets (mirrors
+             * forcetree.cc; the RT accumulation below is gated the same way).
+             * valid_gas_particle_for_rt is volatile int -- nvc++ constant-propagates
+             * plain int gates in device code otherwise. */
+            if(valid_gas_particle_for_rt)
             {
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
                     mass_stellarlum[kf] = s->stellar_lum[idx * N_RT_FREQ_BINS + kf];
