@@ -32,6 +32,7 @@
 #include "forcetree.h"
 #include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
 #include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
+#include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
 
 #include "../mesh/kernel.h"
 
@@ -345,6 +346,16 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
+
+#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
+    /* high-res zoom particles use the finer short-range PM cutoff (mirrors the forcetree.cc target
+     * prologue). The dispatcher passes the coarse-mesh rcut/asmthfac; override per target here.
+     * asmthfac is written inline with the legacy short-range-table idiom on purpose -- the
+     * following K1a collapse commit routes it through the shared grav_pm_asmthfac() helper. */
+    if(pmforce_is_particle_high_res(ptype, pos)) {
+        rcut = All.Rcut[1]; rcut2 = rcut * rcut; asmthfac = 0.5 / All.Asmth[1] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
+    }
+#endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     const int ags_bitflag_primary = gpu_ags_kernel_shared_BITFLAG(ptype);

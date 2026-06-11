@@ -8,6 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */

@@ -191,7 +191,7 @@ void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);
 
 
-int pmforce_is_particle_high_res(int type, Vec3<double>& Pos);
+/* pmforce_is_particle_high_res() is now a KOKKOS_INLINE_FUNCTION in gravity/pm_highres_region.h. */
 
 void assign_unique_ids(void);
 
