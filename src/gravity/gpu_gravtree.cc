@@ -592,6 +592,11 @@ gpu_gravtree_walk_one(int target,
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass = (P_dev[no].Type == 0) ? P_dev[no].Mass : 0.0;
+#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
+            /* gas at the inner edge of a sink's alpha-disk should not see a hole due to
+             * the sink (mirrors forcetree.cc leaf branch + the node-moment kernel). */
+            if(P_dev[no].Type == 5) {gasmass = (double) P_dev[no].Sink_Mass_Reservoir;}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
             /* Load leaf luminosity unconditionally (matching node path; valid_gas gate in force kernel). */

@@ -1940,6 +1940,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         while(no >= 0)
         {
             h=soft; h_p=-1; /* initialize h and h_p, for use below: make sure to do so at the top of each iteration */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            gasmass=0; /* reset per interaction: non-gas leaf sources carry NO gas mass. Without this, a
+                        * non-gas leaf inherits the stale gasmass of an earlier source (or garbage before the
+                        * first assignment) and the TREECOL column estimate fabricates contributions through
+                        * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
+                        * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
+#endif
             
             if(no < maxPart) /* this is a particle, we will use it */
             {
