@@ -179,6 +179,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * AND periodic gravity, else no-op/abs) lives inside gravity_box_distance.h. The GRAVITY_*
  * macros below are thin wrappers so the existing call sites are unchanged. */
 #include "gravity_box_distance.h"
+#include "gravtree_opening.h"
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign)             gravity_box_nearest_image(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) gravity_box_long_abs_x(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) gravity_box_long_abs_y(x,y,z,sign)
@@ -1778,7 +1779,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif
 #ifdef PMGRID
-    int tabindex; double eff_dist, rcut, asmth, asmthfac, rcut2, dist; dist = 0; rcut = All.Rcut[0]; asmth = All.Asmth[0];
+    int tabindex; double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
     /* Bad mode (not 0/1): soft bad-stop + return 0 (no export, walk done) — NOT
      * -1, which means "buffer full, retry". Symmetric param check; drains at the
      * export-loop poll. */
@@ -2199,77 +2200,42 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 dr = nop->u.d.s - pos;
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
+                /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
+                 * for the node opening decision. The caller owns the wrapped dr/r2 (also used below
+                 * for the accepted-node force) and the foreign-multipole policy; the predicate is
+                 * foreign-blind geometry. PM short-range cull, neighbour sphere-box / softening-open,
+                 * the angular and relative opening criteria, and the sink-direct gate all live in the
+                 * predicate. */
+                {
+                    double cen0 = nop->center[0] - pos[0];
+                    double cen1 = nop->center[1] - pos[1];
+                    double cen2 = nop->center[2] - pos[2];
 #ifdef PMGRID
-                if(r2 > rcut2) /* check whether we can stop walking along this branch */
-                {
-                    eff_dist = rcut + 0.5 * nop->len;
-                    dist = GRAVITY_NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1);
-                    if(dist > eff_dist) {no = nop->u.d.sibling; continue;}
-                    dist = GRAVITY_NGB_PERIODIC_BOX_LONG_Y(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1);
-                    if(dist > eff_dist) {no = nop->u.d.sibling; continue;}
-                    dist = GRAVITY_NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1);
-                    if(dist > eff_dist) {no = nop->u.d.sibling; continue;}
-                }
-#endif // PMGRID //
-#ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
-                Vec3<double> d_nc = nop->center - pos;
-                GRAVITY_NEAREST_XYZ(d_nc[0],d_nc[1],d_nc[2],-1); /* find the closest image in the given box size  */
-                double dist_to_center2 = d_nc.norm_sq();
-                double dist_to_open = DMAX(soft , nop->maxsoft) + nop->len*1.73205/2.0;
-                if(dist_to_center2  < dist_to_open*dist_to_open) /* check if any portion the cell lies within the interaction range, then open cell */
-                {
-                    if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                }
+                    double pred_rcut = rcut, pred_rcut2 = rcut2;
 #else
-                if(h < nop->maxsoft) // compare primary softening to node maximum
-                {
-                    if(r2 < nop->maxsoft * nop->maxsoft) {
-                        if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                    }
-                }
+                    double pred_rcut = 0.0, pred_rcut2 = 0.0;
 #endif
-                if(All.ErrTolTheta)    /* check Barnes-Hut opening criterion */
-                {
-                    if(nop->len * nop->len > r2 * All.ErrTolTheta * All.ErrTolTheta) /* open cell */
-                    {
-                        if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                    }
-                }
-#ifndef GRAVITY_HYBRID_OPENING_CRIT
-                else        /* check relative opening criterion */
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                    int pred_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1);
 #else
-                    if(!(All.Ti_Current == 0 && RestartFlag != 1))
+                    int pred_is_first_step = 0;
 #endif
-                    {
-                        /* force node to open if we are within the gravitational softening length */
-                        if((r2 < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (r2 < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len)))
-                        {
-                            if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                        }
-                        if(mass * nop->len * nop->len > r2 * r2 * aold) /* open cell */
-                        {
-                            if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                        }
-                        /* check in addition whether we lie inside the cell */
-                        if(GRAVITY_NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)
-                        {
-                            if(GRAVITY_NGB_PERIODIC_BOX_LONG_Y(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)
-                            {
-                                if(GRAVITY_NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)
-                                {
-                                    if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                                }
-                            }
-                        }
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-                        if(ptype == 5) {
-                            if((nop->N_SINK > 0) && (r2 < pow(SINGLE_STAR_DIRECT_GRAVITY_RADIUS/UNIT_LENGTH_IN_AU + 0.6*nop->len,2))) // we are a star looking at another star within the specified radius, open cell to get direct force summation
-                            {
-                                if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
-                            }
-                        }
+                    int pred_n_sink = (int)nop->N_SINK;
+#else
+                    int pred_n_sink = 0;
 #endif
-                    }
+                    gravtree_open_t pred = gravtree_open_decision_from_distances(
+                        r2, cen0, cen1, cen2, soft, h, aold, ptype,
+                        nop->len, mass, nop->maxsoft,
+                        pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+                    /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign
+                     * node forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid
+                     * dropping its contribution; ACCEPT and OPEN&&foreign fall through to the
+                     * payload load below. */
+                    if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
+                    if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
+                }
 
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
