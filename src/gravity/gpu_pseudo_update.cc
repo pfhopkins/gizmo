@@ -324,6 +324,9 @@ static void topnode_resum_node_(int no_abs,
     MyFloat mass_dm = 0;
     Vec3<MyFloat> s_dm = {}, vs_dm = {};
 #endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep = {};
+#endif
 
     /* Walk 8 children via nextnode + sibling.  For INTERNAL_TOPLEVEL topnodes,
      * nextnode points to the first of 8 topnode children; sibling links them.
@@ -429,6 +432,11 @@ static void topnode_resum_node_(int no_abs,
                                             (MyFloat)soa->vs_dm[pk][2]};
         }
 #endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        for(int t = 0; t < 6; t++) {
+            tidal_tensorps_prevstep.data[t] += child_mass * (MyFloat) soa->tidal_tensorps[(long)pk * 6 + t];
+        }
+#endif
 
         p = soa->sibling[pk];   /* advance to next sibling */
     }
@@ -457,6 +465,9 @@ static void topnode_resum_node_(int no_abs,
                                             (MyFloat)Nodes[no_abs].center[1],
                                             (MyFloat)Nodes[no_abs].center[2]};
                      vs_dm = {};}
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); for(int t = 0; t < 6; t++) {tidal_tensorps_prevstep.data[t] *= inv_mass;}}
 #endif
 
     if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);}
@@ -527,6 +538,9 @@ static void topnode_resum_node_(int no_abs,
     soa->s_dm[no_k]    = {(MyGravFloat)s_dm[0], (MyGravFloat)s_dm[1], (MyGravFloat)s_dm[2]};
     soa->vs_dm[no_k]   = {(MyGravFloat)vs_dm[0], (MyGravFloat)vs_dm[1], (MyGravFloat)vs_dm[2]};
 #endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    for(int t = 0; t < 6; t++) {soa->tidal_tensorps[(long)no_k * 6 + t] = (MyGravFloat) tidal_tensorps_prevstep.data[t];}
+#endif
 
     /* --- AoS writeback (mirrors gpu_moment_writeback_to_aos for topnodes) */
     Nodes[no_abs].u.d.mass     = mass;
@@ -586,6 +600,9 @@ static void topnode_resum_node_(int no_abs,
     Nodes[no_abs].mass_dm     = mass_dm;
     Nodes[no_abs].s_dm        = s_dm;
     Extnodes[no_abs].vs_dm    = vs_dm;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    Nodes[no_abs].tidal_tensorps_prevstep = tidal_tensorps_prevstep;
 #endif
 }
 
