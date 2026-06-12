@@ -856,7 +856,7 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
         Nodes[no].sink_pos  = Vec3<MyFloat>{(MyFloat) soa->sink_pos[k][0],
                                              (MyFloat) soa->sink_pos[k][1],
                                              (MyFloat) soa->sink_pos[k][2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         Nodes[no].sink_vel  = Vec3<MyFloat>{(MyFloat) soa->sink_vel[k][0],
                                              (MyFloat) soa->sink_vel[k][1],
                                              (MyFloat) soa->sink_vel[k][2]};

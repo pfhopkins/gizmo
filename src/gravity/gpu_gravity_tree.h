@@ -104,7 +104,7 @@ struct gpu_gravity_tree_soa_t {
 #ifdef SINK_CALC_DISTANCES
     MyGravFloat       *sink_mass;
     Vec3<MyGravFloat> *sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     Vec3<MyGravFloat> *sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
