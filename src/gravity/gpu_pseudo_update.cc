@@ -364,7 +364,6 @@ static void topnode_resum_node_(int no_abs,
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     Vec3<MyFloat> rt_s = {}, rt_vs = {};
-    double l_tot_rt = 0;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat sink_lum = 0;
@@ -372,12 +371,12 @@ static void topnode_resum_node_(int no_abs,
 #endif
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass = 0;
-    Vec3<MyFloat> sink_pos_times_mass = {};
+    Vec3<MyFloat> sink_pos = {};
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    Vec3<MyFloat> sink_mom = {};
+    Vec3<MyFloat> sink_vel = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
-    Vec3<MyFloat> sink_force = {};
+    Vec3<MyFloat> sink_acc = {};
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat max_fbvel = 0;
@@ -431,13 +430,13 @@ static void topnode_resum_node_(int no_abs,
 #endif
 #ifdef SINK_CALC_DISTANCES
     acc_ref.sink_mass = &sink_mass;
-    acc_ref.sink_pos  = &sink_pos_times_mass;
+    acc_ref.sink_pos  = &sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     acc_ref.N_SINK   = &N_SINK;
-    acc_ref.sink_vel = &sink_mom;
+    acc_ref.sink_vel = &sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    acc_ref.sink_acc = &sink_force;
+    acc_ref.sink_acc = &sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     acc_ref.max_fbvel = &max_fbvel;
@@ -464,42 +463,18 @@ static void topnode_resum_node_(int no_abs,
 
         /* Accumulate this (now-finalized) child's re-weighted moments. */
         moment_node_accum<MyFloat> child = topnode_child_accum_(soa, pk);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        l_tot_rt += moment_child_total_luminosity<MyFloat>(child);
-#endif
         moment_accum_add_child_normalized<moment_plain_ops, MyFloat>(acc_ref, child);
 
         p = soa->sibling[pk];   /* advance to next sibling */
     }
 
-    /* --- normalize COM fields --------------------------------------- */
-    if(mass > 0) {s /= mass; vs /= mass;}
-    else         {s  = Vec3<MyFloat>{(MyFloat)Nodes[no_abs].center[0],
-                                      (MyFloat)Nodes[no_abs].center[1],
-                                      (MyFloat)Nodes[no_abs].center[2]};
-                  vs = {};}
-
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    if(l_tot_rt > 0) {rt_s /= (MyFloat)l_tot_rt; rt_vs /= (MyFloat)l_tot_rt;}
-    else             {rt_s  = Vec3<MyFloat>{(MyFloat)Nodes[no_abs].center[0],
-                                             (MyFloat)Nodes[no_abs].center[1],
-                                             (MyFloat)Nodes[no_abs].center[2]};
-                      rt_vs = {};}
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-    if(sink_lum > 0) {sink_lum_grad /= sink_lum;}
-    else             {sink_lum_grad  = {0, 0, 1};}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-    if(mass_dm > 0) {s_dm /= mass_dm; vs_dm /= mass_dm;}
-    else            {s_dm  = Vec3<MyFloat>{(MyFloat)Nodes[no_abs].center[0],
-                                            (MyFloat)Nodes[no_abs].center[1],
-                                            (MyFloat)Nodes[no_abs].center[2]};
-                     vs_dm = {};}
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); for(int t = 0; t < 6; t++) {tidal_tensorps_prevstep.data[t] *= inv_mass;}}
-#endif
+    /* Normalize the mass-weighted sums in place (COM-style fields divide, tidal keeps its
+     * reciprocal-multiply); the sink-distance COM accumulators (sink_pos / sink_vel / sink_acc) are
+     * normalized in place here, so the stores below write them directly. acc_ref.bitflags is null;
+     * the multiple-particles bit is set just below and applied to both the SoA and AoS bitflags. */
+    moment_finalize<MyFloat>(acc_ref, Vec3<MyFloat>{(MyFloat)Nodes[no_abs].center[0],
+                                                    (MyFloat)Nodes[no_abs].center[1],
+                                                    (MyFloat)Nodes[no_abs].center[2]});
 
     if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);}
 
@@ -548,15 +523,12 @@ static void topnode_resum_node_(int no_abs,
 #ifdef SINK_CALC_DISTANCES
     soa->sink_mass[no_k] = (MyGravFloat) sink_mass;
     if(sink_mass > 0) {
-        Vec3<MyFloat> sp = sink_pos_times_mass / sink_mass;
-        soa->sink_pos[no_k] = {(MyGravFloat)sp[0], (MyGravFloat)sp[1], (MyGravFloat)sp[2]};
+        soa->sink_pos[no_k] = {(MyGravFloat)sink_pos[0], (MyGravFloat)sink_pos[1], (MyGravFloat)sink_pos[2]};
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         soa->N_SINK[no_k] = N_SINK;
-        Vec3<MyFloat> sv = sink_mom / sink_mass;
-        soa->sink_vel[no_k] = {(MyGravFloat)sv[0], (MyGravFloat)sv[1], (MyGravFloat)sv[2]};
+        soa->sink_vel[no_k] = {(MyGravFloat)sink_vel[0], (MyGravFloat)sink_vel[1], (MyGravFloat)sink_vel[2]};
 #ifdef SPECIAL_POINT_MOTION
-        Vec3<MyFloat> sf = sink_force / sink_mass;
-        soa->sink_acc[no_k] = {(MyGravFloat)sf[0], (MyGravFloat)sf[1], (MyGravFloat)sf[2]};
+        soa->sink_acc[no_k] = {(MyGravFloat)sink_acc[0], (MyGravFloat)sink_acc[1], (MyGravFloat)sink_acc[2]};
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         soa->MaxFeedbackVel[no_k] = (MyGravFloat) max_fbvel;
@@ -614,12 +586,12 @@ static void topnode_resum_node_(int no_abs,
 #ifdef SINK_CALC_DISTANCES
     Nodes[no_abs].sink_mass = sink_mass;
     if(sink_mass > 0) {
-        Nodes[no_abs].sink_pos = sink_pos_times_mass / sink_mass;
+        Nodes[no_abs].sink_pos = sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         Nodes[no_abs].N_SINK   = N_SINK;
-        Nodes[no_abs].sink_vel = sink_mom / sink_mass;
+        Nodes[no_abs].sink_vel = sink_vel;
 #ifdef SPECIAL_POINT_MOTION
-        Nodes[no_abs].sink_acc = sink_force / sink_mass;
+        Nodes[no_abs].sink_acc = sink_acc;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         Nodes[no_abs].MaxFeedbackVel = max_fbvel;

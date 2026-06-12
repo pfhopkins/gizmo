@@ -527,79 +527,17 @@ static void mr_propagate_to_parent_(const mr_scratch_t& scr, int curr, int kp)
     moment_accum_add_child_raw<moment_atomic_ops, MyGravFloat>(mr_ref_(scr, kp), mr_child_accum_(scr, curr));
 }
 
-/* Helper: divide mass-weighted sums by mass and patch
- * BITFLAG_MULTIPLEPARTICLES.  `center` is the node's geometric
- * center (COM fallback when mass==0).  Mirrors the original
- * Kernel 5 body verbatim. */
+/* Finalize a node: turn the mass-weighted sums into stored normalized payloads + patch
+ * BITFLAG_MULTIPLEPARTICLES.  `center` is the node's geometric center (COM fallback when the weight
+ * is zero).  Delegates to the shared moment_finalize (gravtree_moment_kernel.h); the scratch
+ * bitflags carry the topology bits, so the multiple-particles bit is patched in place via the ref. */
 KOKKOS_INLINE_FUNCTION
 static void mr_normalize_payloads_(const mr_scratch_t& scr, int k, const Vec3<MyFloat>& center)
 {
-    MyGravFloat mass = scr.mass(k);
-    if(mass > 0) {
-        MyGravFloat inv = (MyGravFloat) 1 / mass;
-        scr.s(k)  = scr.s(k)  * inv;
-        scr.vs(k) = scr.vs(k) * inv;
-    } else {
-        scr.s(k) = Vec3<MyGravFloat>{(MyGravFloat) center[0],
-                                      (MyGravFloat) center[1],
-                                      (MyGravFloat) center[2]};
-        scr.vs(k) = Vec3<MyGravFloat>{};
-    }
-    if(scr.Npart(k) > 1) {scr.bitflags(k) |=  (1u << BITFLAG_MULTIPLEPARTICLES);}
-    else                  {scr.bitflags(k) &= ~(1u << BITFLAG_MULTIPLEPARTICLES);}
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    {
-        double l_tot = 0;
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {l_tot += scr.stellar_lum((long)k * N_RT_FREQ_BINS + b);}
-        if(l_tot > 0) {
-            MyGravFloat inv_l = (MyGravFloat) (1.0 / l_tot);
-            scr.rt_s (k) = scr.rt_s (k) * inv_l;
-            scr.rt_vs(k) = scr.rt_vs(k) * inv_l;
-        } else {
-            scr.rt_s (k) = Vec3<MyGravFloat>{(MyGravFloat) center[0],
-                                              (MyGravFloat) center[1],
-                                              (MyGravFloat) center[2]};
-            scr.rt_vs(k) = Vec3<MyGravFloat>{};
-        }
-    }
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-    if(scr.sink_lum(k) > 0) {
-        scr.sink_lum_grad(k) = scr.sink_lum_grad(k) * ((MyGravFloat) 1 / scr.sink_lum(k));
-    } else {
-        scr.sink_lum_grad(k) = Vec3<MyGravFloat>{0, 0, 1};
-    }
-#endif
-#ifdef SINK_CALC_DISTANCES
-    if(scr.sink_mass(k) > 0) {
-        MyGravFloat invsm = (MyGravFloat) 1 / scr.sink_mass(k);
-        scr.sink_pos(k) = scr.sink_pos(k) * invsm;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        scr.sink_vel(k) = scr.sink_vel(k) * invsm;
-#endif
-#ifdef SPECIAL_POINT_MOTION
-        scr.sink_acc(k) = scr.sink_acc(k) * invsm;
-#endif
-    }
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    if(mass > 0) {
-        MyGravFloat inv_m = (MyGravFloat) (1.0 / ((double)mass + MIN_REAL_NUMBER));
-        for(int kk = 0; kk < 6; kk++) {scr.tidal((long)k * 6 + kk) *= inv_m;}
-    }
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-    if(scr.mass_dm(k) > 0) {
-        MyGravFloat inv_dm = (MyGravFloat) 1 / scr.mass_dm(k);
-        scr.s_dm (k) = scr.s_dm (k) * inv_dm;
-        scr.vs_dm(k) = scr.vs_dm(k) * inv_dm;
-    } else {
-        scr.s_dm (k) = Vec3<MyGravFloat>{(MyGravFloat) center[0],
-                                          (MyGravFloat) center[1],
-                                          (MyGravFloat) center[2]};
-        scr.vs_dm(k) = Vec3<MyGravFloat>{};
-    }
-#endif
+    moment_finalize<MyGravFloat>(mr_ref_(scr, k),
+                                 Vec3<MyGravFloat>{(MyGravFloat) center[0],
+                                                   (MyGravFloat) center[1],
+                                                   (MyGravFloat) center[2]});
 }
 
 /* Pending-counter init launcher.  For each k in [0..n_iter), atomically

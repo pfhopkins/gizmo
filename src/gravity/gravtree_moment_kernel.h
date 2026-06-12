@@ -35,9 +35,11 @@
  * given source does not touch are left at the neutral element (0), which is a no-op for + and for fmax
  * (every max field here is >= 0 by construction), so the blind per-field apply is bit-exact.
  *
- * finalize (Σ m x -> COM divide, BITFLAG_MULTIPLEPARTICLES patch) is NOT unified here yet — it stays
- * inline in each venue until K1b-c2 (the one pre-registered FP-motion site: mr_normalize's reciprocal
- * multiply -> divide). c1 routes zero / add_particle / add_child only.
+ * finalize (Σ m x -> COM divide, BITFLAG_MULTIPLEPARTICLES patch) turns the accumulated sums into the
+ * stored normalized payloads. Normalization follows the legacy CPU anchor: COM-style vectors divide by
+ * their weight, the tidal tensor keeps its 1/(mass+eps) reciprocal-multiply, and the RT luminosity
+ * denominator is the bin-order stellar_lum sum. Those divide-vs-reciprocal and order choices are
+ * FP-equivalent normalization detail, not load-bearing physics.
  *
  * Adding a payload — checklist (every step in the SAME commit):
  *   1. add the field to moment_node_accum + moment_node_ref below, under its exact #ifdef.
@@ -45,7 +47,7 @@
  *   3. produce its contribution in from_particle (with the leaf gate) AND from_child_raw AND
  *      from_child_normalized (with the child weight).
  *   4. apply it in moment_accum_apply with the correct op (Ops::add / Ops::fmax).
- *   5. finalize it in the per-venue normalize (until c2 unifies finalize).
+ *   5. finalize it in moment_finalize (the normalize/divide), if it has a normalized form.
  *   6. wire venue storage: scratch View / SoA / AoS load+store at each caller.
  *
  * Include AFTER declarations/allvars.h (Vec3, particle_data, BITFLAG_*, MIN_REAL_NUMBER, the
@@ -596,6 +598,79 @@ template <class Ops, class AccT>
 KOKKOS_INLINE_FUNCTION static void moment_accum_add_child_normalized(const moment_node_ref<AccT>& r, const moment_node_accum<AccT>& child)
 {
     moment_accum_apply<Ops, AccT>(r, moment_source_from_child_normalized<AccT>(child));
+}
+
+
+/* Finalize a fully-accumulated node in place: turn the mass-weighted sums into the stored
+ * (normalized) payloads and set the multiple-particles flag. Plain by construction — every venue
+ * finalizes a node it solely owns, so no write policy is needed. `center` is the node geometric
+ * center, used as the COM fallback when the relevant weight is zero. If `r.bitflags` is null the
+ * caller patches the multiple-particles bit itself (the topnode venue writes that bit into two
+ * separate storages).
+ *
+ * Normalization form follows the legacy CPU anchor (force_update_node_recursive): COM-style vectors
+ * DIVIDE by their weight; the tidal tensor keeps the 1/(mass+eps) reciprocal-multiply. The RT
+ * luminosity-position denominator is the bin-order sum of stellar_lum (the CPU/local-tree form);
+ * routing every venue through it drops the topnode child-order running sum. The divide-vs-reciprocal
+ * and summation-order choices are FP-equivalent normalization detail, not load-bearing physics. */
+template <class AccT>
+KOKKOS_INLINE_FUNCTION static void moment_finalize(const moment_node_ref<AccT>& r, const Vec3<AccT>& center)
+{
+    AccT mass = *r.mass;
+    if(mass > 0) {
+        *r.s  = *r.s  / mass;
+        *r.vs = *r.vs / mass;
+    } else {
+        *r.s  = center;
+        *r.vs = Vec3<AccT>{};
+    }
+    if(r.bitflags) {
+        if(*r.Npart > 1) { *r.bitflags |=  (1u << BITFLAG_MULTIPLEPARTICLES); }
+        else             { *r.bitflags &= ~(1u << BITFLAG_MULTIPLEPARTICLES); }
+    }
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    {
+        double l_tot = 0;
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) { l_tot += (double) r.stellar_lum[b]; }
+        if(l_tot > 0) {
+            *r.rt_s  = *r.rt_s  / ((AccT) l_tot);
+            *r.rt_vs = *r.rt_vs / ((AccT) l_tot);
+        } else {
+            *r.rt_s  = center;
+            *r.rt_vs = Vec3<AccT>{};
+        }
+    }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(*r.sink_lum > 0) { *r.sink_lum_grad = *r.sink_lum_grad / *r.sink_lum; }
+    else                { *r.sink_lum_grad = Vec3<AccT>{0, 0, 1}; }
+#endif
+#ifdef SINK_CALC_DISTANCES
+    if(*r.sink_mass > 0) {
+        *r.sink_pos = *r.sink_pos / *r.sink_mass;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+        *r.sink_vel = *r.sink_vel / *r.sink_mass;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+        *r.sink_acc = *r.sink_acc / *r.sink_mass;
+#endif
+    }
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    if(mass > 0) {
+        AccT inv_m = (AccT) (1.0 / ((double)mass + MIN_REAL_NUMBER));   /* reciprocal-multiply: matches the legacy CPU anchor */
+        for(int kk = 0; kk < 6; kk++) { r.tidal[kk] *= inv_m; }
+    }
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    if(*r.mass_dm > 0) {
+        *r.s_dm  = *r.s_dm  / *r.mass_dm;
+        *r.vs_dm = *r.vs_dm / *r.mass_dm;
+    } else {
+        *r.s_dm  = center;
+        *r.vs_dm = Vec3<AccT>{};
+    }
+#endif
 }
 
 #endif /* GRAVTREE_MOMENT_KERNEL_H */
