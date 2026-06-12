@@ -9,6 +9,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
@@ -1690,7 +1691,7 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
     // update parent node properties [maximum softening, speed] for opening criteria
-    MyFloat new_hmax = DMAX(Extnodes[father].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
+    MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
     /* Mode B per-type incremental update — only the band corresponding to
      * iparent's type. Other bands unchanged (correct: this insertion adds
@@ -1703,8 +1704,7 @@ void force_add_element_to_tree(int iparent, int ichild)
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
     }
-    double new_vmax = Extnodes[father].vmax;
-    for(int k = 0; k < 3; k++) {if(fabs(P[ichild].Vel[k]) > new_vmax) {new_vmax = fabs(P[ichild].Vel[k]);}}
+    double new_vmax = moment_vmax_running_max(Extnodes[father].vmax, P[ichild].Vel[0], P[ichild].Vel[1], P[ichild].Vel[2]);
     Extnodes[father].vmax = (MyFloat) new_vmax;
 
     /* Phase 10.2 (α): keep SoA walk-mirror coherent with the AoS Extnodes

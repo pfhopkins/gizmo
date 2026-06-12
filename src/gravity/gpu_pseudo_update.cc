@@ -21,6 +21,7 @@
 #include "gpu_gravity_tree.h"
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
+#include "gravtree_moment_kernel.h"
 
 
 /* ===================================================================== */
@@ -264,6 +265,69 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
 /* Phase 6.7c — gpu_topnode_moment_resum                                 */
 /* ===================================================================== */
 
+/* Read one (already finalized, i.e. normalized) child topnode's moments out of the SoA into the
+ * shared moment kernel's by-value accumulator, casting to the plain MyFloat venue type.  Mirrors the
+ * per-child SoA reads the accumulate loop used to do inline; moment_source_from_child_normalized then
+ * re-weights the COM-vector payloads by the child's own mass / luminosity / sink-mass. */
+static moment_node_accum<MyFloat> topnode_child_accum_(const struct gpu_gravity_tree_soa_t *soa, int pk)
+{
+    moment_node_accum<MyFloat> c = {};
+    c.mass    = (MyFloat) soa->mass[pk];
+    c.s       = Vec3<MyFloat>{(MyFloat)soa->s[pk][0], (MyFloat)soa->s[pk][1], (MyFloat)soa->s[pk][2]};
+    c.vs      = Vec3<MyFloat>{(MyFloat)soa->node_vs[pk][0], (MyFloat)soa->node_vs[pk][1], (MyFloat)soa->node_vs[pk][2]};
+    c.Npart   = soa->N_part[pk];
+    c.hmax    = (MyFloat) soa->hmax[pk];
+    c.vmax    = (MyFloat) soa->vmax[pk];
+    c.divVmax = (MyFloat) soa->divVmax[pk];
+    c.maxsoft = (MyFloat) soa->maxsoft[pk];
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    c.gasmass = (MyFloat) soa->gasmass[pk];
+#endif
+#ifdef RT_USE_GRAVTREE
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {c.stellar_lum[b] = (MyFloat) soa->stellar_lum[(long)pk * N_RT_FREQ_BINS + b];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
+        c.chimes_G0 [b] = soa->chimes_stellar_lum_G0 [(long)pk * CHIMES_LOCAL_UV_NBINS + b];
+        c.chimes_ion[b] = soa->chimes_stellar_lum_ion[(long)pk * CHIMES_LOCAL_UV_NBINS + b];
+    }
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    c.rt_s  = Vec3<MyFloat>{(MyFloat)soa->rt_source_lum_s[pk][0],  (MyFloat)soa->rt_source_lum_s[pk][1],  (MyFloat)soa->rt_source_lum_s[pk][2]};
+    c.rt_vs = Vec3<MyFloat>{(MyFloat)soa->rt_source_lum_vs[pk][0], (MyFloat)soa->rt_source_lum_vs[pk][1], (MyFloat)soa->rt_source_lum_vs[pk][2]};
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    c.sink_lum      = (MyFloat) soa->sink_lum[pk];
+    c.sink_lum_grad = Vec3<MyFloat>{(MyFloat)soa->sink_lum_grad[pk][0], (MyFloat)soa->sink_lum_grad[pk][1], (MyFloat)soa->sink_lum_grad[pk][2]};
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    c.cr_inject = (double) soa->cr_injection[pk];
+#endif
+#ifdef SINK_CALC_DISTANCES
+    c.sink_mass = (MyFloat) soa->sink_mass[pk];
+    c.sink_pos  = Vec3<MyFloat>{(MyFloat)soa->sink_pos[pk][0], (MyFloat)soa->sink_pos[pk][1], (MyFloat)soa->sink_pos[pk][2]};
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    c.N_SINK   = soa->N_SINK[pk];
+    c.sink_vel = Vec3<MyFloat>{(MyFloat)soa->sink_vel[pk][0], (MyFloat)soa->sink_vel[pk][1], (MyFloat)soa->sink_vel[pk][2]};
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    c.sink_acc = Vec3<MyFloat>{(MyFloat)soa->sink_acc[pk][0], (MyFloat)soa->sink_acc[pk][1], (MyFloat)soa->sink_acc[pk][2]};
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    c.max_fbvel = (MyFloat) soa->MaxFeedbackVel[pk];
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    for(int t = 0; t < 6; t++) {c.tidal[t] = (MyFloat) soa->tidal_tensorps[(long)pk * 6 + t];}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    c.mass_dm = (MyFloat) soa->mass_dm[pk];
+    c.s_dm    = Vec3<MyFloat>{(MyFloat)soa->s_dm[pk][0], (MyFloat)soa->s_dm[pk][1], (MyFloat)soa->s_dm[pk][2]};
+    c.vs_dm   = Vec3<MyFloat>{(MyFloat)soa->vs_dm[pk][0], (MyFloat)soa->vs_dm[pk][1], (MyFloat)soa->vs_dm[pk][2]};
+#endif
+    return c;
+}
+
 /* Recursive SoA-native replacement for force_treeupdate_pseudos.
  * Reads moments from soa->* for the 8 children (topnode tree children)
  * of `no_abs`, re-sums them, and writes the result back to soa->[no_k].
@@ -331,6 +395,63 @@ static void topnode_resum_node_(int no_abs,
     /* Walk 8 children via nextnode + sibling.  For INTERNAL_TOPLEVEL topnodes,
      * nextnode points to the first of 8 topnode children; sibling links them.
      * Mirrors the force_treeupdate_pseudos loop (forcetree.cc:1292-1360). */
+    /* Point the shared moment kernel's ref at this node's local accumulators. The accumulate loop
+     * below adds each (normalized) child's re-weighted contribution through moment_accum_add_child_
+     * normalized; the normalize + store blocks that follow are untouched (finalize unifies in c2). */
+    moment_node_ref<MyFloat> acc_ref = {};
+    acc_ref.mass     = &mass;
+    acc_ref.s        = &s;
+    acc_ref.vs       = &vs;
+    acc_ref.Npart    = &count_particles;
+    acc_ref.hmax     = &hmax;
+    acc_ref.vmax     = &vmax;
+    acc_ref.divVmax  = &divVmax;
+    acc_ref.maxsoft  = &maxsoft;
+    acc_ref.bitflags = NULL;   /* multiple-particles bit handled at store, not accumulate */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    acc_ref.gasmass  = &gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+    acc_ref.stellar_lum = &stellar_lum[0];
+#ifdef CHIMES_STELLAR_FLUXES
+    acc_ref.chimes_G0  = &chimes_G0[0];
+    acc_ref.chimes_ion = &chimes_ion[0];
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    acc_ref.rt_s  = &rt_s;
+    acc_ref.rt_vs = &rt_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    acc_ref.sink_lum      = &sink_lum;
+    acc_ref.sink_lum_grad = &sink_lum_grad;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    acc_ref.cr_inject = &cr_injection;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    acc_ref.sink_mass = &sink_mass;
+    acc_ref.sink_pos  = &sink_pos_times_mass;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    acc_ref.N_SINK   = &N_SINK;
+    acc_ref.sink_vel = &sink_mom;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    acc_ref.sink_acc = &sink_force;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    acc_ref.max_fbvel = &max_fbvel;
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    acc_ref.tidal = &tidal_tensorps_prevstep.data[0];
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    acc_ref.mass_dm = &mass_dm;
+    acc_ref.s_dm    = &s_dm;
+    acc_ref.vs_dm   = &vs_dm;
+#endif
+
     int p = soa->nextnode[no_k];   /* first child (absolute index) */
     for(int j = 0; j < 8; j++) {
         if(p < MaxPart || p >= MaxPart + MaxNodes_) {endrun(6767); return;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
@@ -341,102 +462,12 @@ static void topnode_resum_node_(int no_abs,
             topnode_resum_node_(p, soa, MaxPart, MaxNodes_);
         }
 
-        /* Accumulate child moments. */
-        MyFloat child_mass = (MyFloat) soa->mass[pk];
-        mass         += child_mass;
-        s            += child_mass * Vec3<MyFloat>{(MyFloat)soa->s[pk][0],
-                                                    (MyFloat)soa->s[pk][1],
-                                                    (MyFloat)soa->s[pk][2]};
-        vs           += child_mass * Vec3<MyFloat>{(MyFloat)soa->node_vs[pk][0],
-                                                    (MyFloat)soa->node_vs[pk][1],
-                                                    (MyFloat)soa->node_vs[pk][2]};
-        count_particles += soa->N_part[pk];
-        if(soa->hmax[pk] > hmax)       {hmax    = (MyFloat) soa->hmax[pk];}
-        if(soa->vmax[pk] > vmax)       {vmax    = (MyFloat) soa->vmax[pk];}
-        if(soa->divVmax[pk] > divVmax) {divVmax = (MyFloat) soa->divVmax[pk];}
-        if(soa->maxsoft[pk] > maxsoft) {maxsoft = (MyFloat) soa->maxsoft[pk];}
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        gasmass      += (MyFloat) soa->gasmass[pk];
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        cr_injection += (double) soa->cr_injection[pk];
-#endif
-#ifdef RT_USE_GRAVTREE
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            stellar_lum[b] += (MyFloat) soa->stellar_lum[(long)pk * N_RT_FREQ_BINS + b];
-        }
-#ifdef CHIMES_STELLAR_FLUXES
-        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
-            chimes_G0 [b] += soa->chimes_stellar_lum_G0 [(long)pk * CHIMES_LOCAL_UV_NBINS + b];
-            chimes_ion[b] += soa->chimes_stellar_lum_ion[(long)pk * CHIMES_LOCAL_UV_NBINS + b];
-        }
-#endif
-#endif
+        /* Accumulate this (now-finalized) child's re-weighted moments. */
+        moment_node_accum<MyFloat> child = topnode_child_accum_(soa, pk);
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        {
-            double l_child = 0;
-            for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-                l_child += (double) soa->stellar_lum[(long)pk * N_RT_FREQ_BINS + b];
-            }
-            l_tot_rt += l_child;
-            rt_s  += (MyFloat)l_child * Vec3<MyFloat>{(MyFloat)soa->rt_source_lum_s[pk][0],
-                                                       (MyFloat)soa->rt_source_lum_s[pk][1],
-                                                       (MyFloat)soa->rt_source_lum_s[pk][2]};
-            rt_vs += (MyFloat)l_child * Vec3<MyFloat>{(MyFloat)soa->rt_source_lum_vs[pk][0],
-                                                       (MyFloat)soa->rt_source_lum_vs[pk][1],
-                                                       (MyFloat)soa->rt_source_lum_vs[pk][2]};
-        }
+        l_tot_rt += moment_child_total_luminosity<MyFloat>(child);
 #endif
-#ifdef SINK_PHOTONMOMENTUM
-        sink_lum      += (MyFloat) soa->sink_lum[pk];
-        sink_lum_grad += (MyFloat) soa->sink_lum[pk]
-                       * Vec3<MyFloat>{(MyFloat)soa->sink_lum_grad[pk][0],
-                                       (MyFloat)soa->sink_lum_grad[pk][1],
-                                       (MyFloat)soa->sink_lum_grad[pk][2]};
-#endif
-#ifdef SINK_CALC_DISTANCES
-        {
-            MyFloat sm = (MyFloat) soa->sink_mass[pk];
-            sink_mass             += sm;
-            sink_pos_times_mass   += sm * Vec3<MyFloat>{(MyFloat)soa->sink_pos[pk][0],
-                                                         (MyFloat)soa->sink_pos[pk][1],
-                                                         (MyFloat)soa->sink_pos[pk][2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-            N_SINK  += soa->N_SINK[pk];
-            sink_mom += sm * Vec3<MyFloat>{(MyFloat)soa->sink_vel[pk][0],
-                                            (MyFloat)soa->sink_vel[pk][1],
-                                            (MyFloat)soa->sink_vel[pk][2]};
-#ifdef SPECIAL_POINT_MOTION
-            sink_force += sm * Vec3<MyFloat>{(MyFloat)soa->sink_acc[pk][0],
-                                              (MyFloat)soa->sink_acc[pk][1],
-                                              (MyFloat)soa->sink_acc[pk][2]};
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-            if(sm > 0) {
-                MyFloat fv = (MyFloat) soa->MaxFeedbackVel[pk];
-                if(fv > max_fbvel) {max_fbvel = fv;}
-            }
-#endif
-#endif
-        }
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        {
-            MyFloat mdm = (MyFloat) soa->mass_dm[pk];
-            mass_dm += mdm;
-            s_dm    += mdm * Vec3<MyFloat>{(MyFloat)soa->s_dm[pk][0],
-                                            (MyFloat)soa->s_dm[pk][1],
-                                            (MyFloat)soa->s_dm[pk][2]};
-            vs_dm   += mdm * Vec3<MyFloat>{(MyFloat)soa->vs_dm[pk][0],
-                                            (MyFloat)soa->vs_dm[pk][1],
-                                            (MyFloat)soa->vs_dm[pk][2]};
-        }
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        for(int t = 0; t < 6; t++) {
-            tidal_tensorps_prevstep.data[t] += child_mass * (MyFloat) soa->tidal_tensorps[(long)pk * 6 + t];
-        }
-#endif
+        moment_accum_add_child_normalized<moment_plain_ops, MyFloat>(acc_ref, child);
 
         p = soa->sibling[pk];   /* advance to next sibling */
     }
