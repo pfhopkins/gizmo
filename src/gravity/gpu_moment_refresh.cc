@@ -218,7 +218,10 @@ static int precompute_alloc_(precomputed_t& pre, int N)
     if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); return 1;}
     memset(pre.cr_inject, 0, sz_cr);
     for(int p = 0; p < N; p++) {
-        if(P[p].Type != 0 || P[p].Mass <= 0) {continue;}
+        /* CR injection is nonzero only for Type 4 (stellar) and Type 5 (sink) sources;
+         * gas and degenerate (Mass<=0) slots return zero.  Mirror the legacy CPU tree,
+         * which evaluates every particle (forcetree.cc force_update_node_recursive). */
+        if(P[p].Mass <= 0) {continue;}
         pre.cr_inject[p] = (MyFloat) cr_get_source_injection_rate(p, P, CellP);
     }
 #endif

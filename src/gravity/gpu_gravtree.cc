@@ -1203,7 +1203,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
             t_max_cr = t_gyr / UNIT_TIME_IN_GYR;
         }
         for(int p = 0; p < NumPart; p++) {
-            if(P[p].Type != 0 || P[p].Mass <= 0) continue;
+            /* nonzero only for Type 4/5 sources; gas + degenerate slots return 0.
+             * Mirror the legacy CPU tree which evaluates every particle. */
+            if(P[p].Mass <= 0) continue;
             double rate = cr_get_source_injection_rate(p, P, CellP);
             d_cr_inject[p] = (MyFloat) rate;
         }
