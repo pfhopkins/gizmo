@@ -1007,10 +1007,17 @@ extern struct extNODE
    *
    * ONEWAY walks never read this field.
    *
-   * NOTE: cross-rank DomainMoment exchange of these bands is NOT YET WIRED
-   * (Stage 3 deferred). At single-rank, host-only Mode B walker uses these
-   * directly. Multi-rank Mode B SYMMETRIC walks must NOT rely on per-type
-   * bands across pseudo-particles until Stage 3 lands. */
+   * These bands are intentionally rank-local.  Their only consumer is the
+   * Mode B SYMMETRIC local tree-walk (mesh/mode_b_local_walker.cc), which is
+   * re-seeded on every rank at every tree build/refresh, returns only
+   * rank-local candidates, and never descends pseudo/foreign nodes.  A remote
+   * neighbor query is answered owner-side: the runner broadcasts each active
+   * to every rank, so a query against another rank's pool is pruned with THAT
+   * rank's locally-fresh bands -- no cross-rank band exchange is needed for
+   * correctness.  DomainNODE ships only the scalar hmax, which the gravity
+   * walk's opening criterion reads on pseudo/top-level nodes.  (Shipping the
+   * per-topleaf band maxima would let the sender geometrically route queries
+   * instead of broadcasting -- an efficiency option, not missing physics.) */
   MyFloat hmax_per_type[6];
   MyFloat divVmax;
   integertime Ti_lastkicked;

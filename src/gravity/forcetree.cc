@@ -192,22 +192,21 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  */
 /*! Mode B per-type hmax host-side re-seed.
  *
- *  Why this exists: gpu_moment_refresh() writes scalar Extnodes[no].hmax to
- *  AoS but does NOT compute Extnodes[no].hmax_per_type[] (the GPU SoA does
- *  not yet carry per-type bands; Stage 3 deferred). Without this pass, every
- *  full force_treebuild and every force_refresh_node_moments leaves
- *  hmax_per_type[] at zero (set by Stage-1 host code that the GPU early-
- *  return bypasses). Mode B's SYMMETRIC walker reading those zero bands
- *  would over-prune (collapse to ONEWAY) — exactly the oracle mismatch
- *  observed on fire_m11i.
+ *  Why this exists: gpu_moment_refresh() writes the scalar Extnodes[no].hmax
+ *  to AoS but not the per-type bands Extnodes[no].hmax_per_type[].  The GPU
+ *  SoA intentionally does not carry per-type bands -- their only consumer is
+ *  this host-side Mode B walker (mesh/mode_b_local_walker.cc) -- so the GPU
+ *  moment path bypasses the host moment loop that would otherwise seed them.
+ *  Without this pass every full force_treebuild and every
+ *  force_refresh_node_moments would leave the bands at zero, and Mode B's
+ *  SYMMETRIC walker reading zero bands would over-prune (collapse to ONEWAY)
+ *  -- exactly the oracle mismatch observed on fire_m11i.
  *
  *  Behavior: zero all internal-node bands, leaf-seed each particle's
- *  contribution into Father[i]'s band per the type/AGS rules in
- *  legacy_hmax_archaeology.md, then bottom-up max-over-children.
- *  Mirrors the dead-code Steps-1/2/3 in force_refresh_node_moments below
- *  but limited to per-type bands only (cheap host loop ~O(NumPart + Nnodes)).
- *  Caller-restriction: must run AFTER gpu_moment_refresh has populated
- *  Father[] / Nodes[].u.d.father, since Step 3 walks via father chain.
+ *  conservative radius into Father[i]'s band, then bottom-up max-over-children
+ *  (cheap host loop ~O(NumPart + Nnodes)).  Caller-restriction: must run AFTER
+ *  gpu_moment_refresh has populated Father[] / Nodes[].u.d.father, since the
+ *  bottom-up step walks the father chain.
  */
 /* Conservative per-particle radius (node-prune upper bound) for
  * Extnodes[no].hmax_per_type[Type] band seeding. See forcetree.h docstring.

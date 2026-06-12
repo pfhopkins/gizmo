@@ -14,10 +14,10 @@
  *
  * Fields mirrored: the subset the walk reads. center/len for opening, s/mass
  * for force, sibling/nextnode for traversal, bitflags for opening type,
- * maxsoft for adaptive softening. Optional payloads (RT_USE_GRAVTREE,
- * SINK_*, tidal tensor, DM_SCALARFIELD_SCREENING) are NOT mirrored yet —
- * Phase 4 will extend per-payload as the walk needs them, gated by the same
- * #ifdefs as the AoS NODE definition.
+ * maxsoft for adaptive softening. The optional payload families
+ * (RT_USE_GRAVTREE, SINK_*, tidal tensor, DM_SCALARFIELD_SCREENING) are
+ * mirrored too, gated by the same #ifdefs as the AoS NODE definition; the
+ * GPU gravity walk consumes them directly from the SoA.
  *
  * Memory model: GIZMO_KOKKOS_SHARED_SPACE (UVM) so host writes during
  * acquire are visible to device kernels without explicit deep_copy. Per-field
