@@ -55,6 +55,11 @@ void subfind_potential_compute(int num, struct unbind_data *d, int phase, double
         {
             place = DataIndexTable[j].Index;
             for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
+            /* Defensive: the imported (mode-1) walk reads GravDataGet[].Soft as the target softening h.
+             * The collective-SUBFIND foreign coverage is supplied by the LET (which is mandatory in GPU
+             * builds), so this export round-trip is currently unreachable (nexport==0); fill Soft anyway so
+             * the value is correct if the pseudo-export path is ever exercised. Matches the mode-0 local read. */
+            GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
             for(k = 0; k < NODELISTLENGTH; k++) {GravDataIn[j].NodeList[k] = DataNodeList[DataIndexTable[j].IndexGet].NodeList[k];}
         }
         /* exchange particle data */
@@ -106,7 +111,7 @@ void subfind_potential_compute(int num, struct unbind_data *d, int phase, double
         myfree(GravDataGet);
     }
     while(ndone < NTask);
-    
+
     for(i = 0; i < num; i++)
     {
         if(phase == 1) {if(P[d[i].index].v.DM_BindingEnergy <= weakly_bound_limit) {continue;}}

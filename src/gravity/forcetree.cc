@@ -3229,7 +3229,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
 {
     struct NODE *nop = 0;
     MyDouble pot;
-    int no, ptype, task, nexport_save, listindex = 0;
+    int no, task, nexport_save, listindex = 0;
     double r2, dx, dy, dz, mass, r, u, h, h_inv, pos_x, pos_y, pos_z, soft=0;
     
     nexport_save = *nexport;
@@ -3239,7 +3239,6 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
         pos_x = P[target].Pos[0];
         pos_y = P[target].Pos[1];
         pos_z = P[target].Pos[2];
-        ptype = P[target].Type;
         soft  = ForceSoftening_KernelRadius(target);
     }
     else
@@ -3247,10 +3246,9 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
         pos_x = GravDataGet[target].Pos[0];
         pos_y = GravDataGet[target].Pos[1];
         pos_z = GravDataGet[target].Pos[2];
-        ptype = GravDataGet[target].Type;
         soft  = GravDataGet[target].Soft;
     }
-    
+
     h = soft; h_inv = 1.0 / h;
     
     if(mode == 0)
