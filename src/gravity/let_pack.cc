@@ -47,6 +47,8 @@
 #include "../core/step_phases.h"              /* gizmo_verbose_diag() */
 #include "let_data.h"
 #include "gravtree_opening.h"   /* shared Stage-2 opening predicate (cell/AABB variant) */
+#include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
+#include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
 
@@ -301,14 +303,32 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
 /* ----------------------------------------------------------------------
  * Single-particle leaf NODE/extNODE synthesis.
  *
- * Mirrors the single-particle accumulation in force_update_node_recursive
- * (forcetree.cc:752-861) under the simplification mass = particle.Mass
- * (so all mass-weighted divisions degenerate to identity).  Sets BITFLAG_
- * MULTIPLEPARTICLES so the receiver's walk uses the synthesized multipole
- * directly (exact for single particle) instead of skipping to a non-existent
- * source-side particle.
+ * Builds a LET wire node for ONE particle by routing it through the shared
+ * node-moment construction kernel (gravtree_moment_kernel.h) -- the SAME
+ * physics body the live GPU node-moment venues use -- instead of a hand-
+ * inlined finalized copy.  A moment_node_ref points at the wire's payload
+ * storage; the zeroed wire (memset below) is the fresh accumulator, one
+ * particle is added, and moment_finalize normalizes in place.  RT/sink/CR
+ * source-input gates come from the shared host helper
+ * gravtree_fill_particle_source_inputs (gravtree_moment_sources.h).
  *
- * Edge pointers (sibling/nextnode) start as LET_EDGE_SENTINEL_BASE; the
+ * Sets BITFLAG_MULTIPLEPARTICLES (forced after finalize) so the receiver's
+ * walk uses the synthesized multipole directly (exact for a single particle)
+ * instead of skipping to a non-existent source-side particle.
+ *
+ * Two payloads differ from the previous hand-inlined form, both for a
+ * single-particle leaf and both matching the live GPU venues + the CPU
+ * anchor (so this is a correctness alignment, not dead-field noise):
+ *  - rt_source_lum_s: a sink leaf with sink_lum>0 but no stellar luminosity
+ *    now gets the geometric-center (== particle position) fallback from
+ *    moment_finalize, not 0.  This feeds grav_sink_fb_angleweight under
+ *    RT_SEPARATELY_TRACK_LUMPOS + SINK_PHOTONMOMENTUM at np>=2 -- a real
+ *    single-particle correctness fix.
+ *  - sink_lum_grad: a gated-in sink whose sink_lum_bol returns exactly 0 now
+ *    gets finalize's {0,0,1} fallback rather than the raw angle vector.  The
+ *    walk filters on sink_lum>0, so this field is never read in that case.
+ *
+ * Edge pointers (sibling/nextnode) start as the terminator sentinel; the
  * surrounding pack_recurse caller updates them based on the position of
  * this leaf in the iteration chain.
  * ---------------------------------------------------------------------- */
@@ -324,147 +344,131 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
                                   * fields are simpler (no inbound references except from parent). */
 
     struct particle_data *pa = &P[p_idx];
-    MyFloat mass = (MyFloat) pa->Mass;
     Vec3<MyFloat> pos = {(MyFloat) pa->Pos[0], (MyFloat) pa->Pos[1], (MyFloat) pa->Pos[2]};
-    Vec3<MyFloat> vel = {(MyFloat) pa->Vel[0], (MyFloat) pa->Vel[1], (MyFloat) pa->Vel[2]};
 
-    w->node.center = pos;
-    w->node.len = 0;     /* zero size -- never opens, always treated as multipole */
-    w->node.u.d.s = pos;
-    w->node.u.d.mass = mass;
-    /* CRITICAL: BITFLAG_MULTIPLEPARTICLES=1 forces the walk to use the multipole
-     * (exact for single particle).  Without it, walk skips and tries to access
-     * the source-side particle, which doesn't exist on the receiver. */
-    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
-    w->node.u.d.sibling = sib_terminator_sentinel;
-    w->node.u.d.nextnode = sib_terminator_sentinel;
-    w->node.u.d.father = -1;  /* foreign nodes have no father in OUR tree */
-    w->node.GravCost = 0;
-    w->node.Ti_current = All.Ti_Current;
-    w->node.N_part = 1;
-    w->node.maxsoft = (MyFloat) ForceSoftening_KernelRadius(p_idx);
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    if(pa->Type == 5 && pa->KernelRadius > w->node.maxsoft) w->node.maxsoft = (MyFloat) pa->KernelRadius;
-#endif
-
-    /* Optional payload fields, mirroring forcetree.cc:752-861 single-particle contribution */
-
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    if(pa->Type == 0) w->node.gasmass = mass;
+    /* Build the per-particle source POD for the moment kernel.  Geometry/bounds
+     * are venue-owned; RT/sink/CR source inputs come from the shared host gate
+     * helper (the same gates the GPU precompute venues apply). */
+    moment_particle_src<MyFloat> src = {};
+    src.mass              = (double) pa->Mass;
+    src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
+    src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+    src.type              = pa->Type;
+    src.kernel_radius     = (double) pa->KernelRadius;
+    src.max_kernel_radius = (double) All.MaxKernelRadius;
+    src.force_softening   = ForceSoftening_KernelRadius(p_idx);
+    src.particle_divvel   = (double) pa->Particle_DivVel;
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-    if(pa->Type == 5) w->node.gasmass = (MyFloat) P[p_idx].Sink_Mass_Reservoir;
+    src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
 #endif
+#if defined(SPECIAL_POINT_MOTION)
+    src.acc_prevstep[0] = (double) pa->Acc_Total_PrevStep[0];
+    src.acc_prevstep[1] = (double) pa->Acc_Total_PrevStep[1];
+    src.acc_prevstep[2] = (double) pa->Acc_Total_PrevStep[2];
 #endif
-
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    w->node.cr_injection = (MyFloat) cr_get_source_injection_rate(p_idx, P, CellP);
+#if defined(SINK_CALC_DISTANCES) && defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    src.max_feedback_vel = (double) pa->MaxFeedbackVel;
 #endif
-
-#ifdef RT_USE_GRAVTREE
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    for(int k = 0; k < 6; k++) { src.tidal_prevstep[k] = (double) pa->tidal_tensorps_prevstep.data[k]; }
+#endif
     {
-        double lum[N_RT_FREQ_BINS];
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p_idx, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            for(int k = 0; k < N_RT_FREQ_BINS; k++) { src.src_lum[k] = (double) in.src_lum[k]; }
 #ifdef CHIMES_STELLAR_FLUXES
-        double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS];
-        double chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-        int active_check = rt_get_source_luminosity_chimes(p_idx, 1, lum, chimes_lum_G0, chimes_lum_ion, P, CellP);
-#else
-        int active_check = rt_get_source_luminosity(p_idx, 1, lum, P, CellP);
-#endif
-        if(active_check)
-        {
-            for(int k = 0; k < N_RT_FREQ_BINS; k++) w->node.stellar_lum[k] = (MyFloat) lum[k];
-#ifdef CHIMES_STELLAR_FLUXES
-            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
-            {
-                w->node.chimes_stellar_lum_G0[k] = chimes_lum_G0[k];
-                w->node.chimes_stellar_lum_ion[k] = chimes_lum_ion[k];
+            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++) {
+                src.src_lum_G0[k]  = in.src_lum_G0[k];
+                src.src_lum_ion[k] = in.src_lum_ion[k];
             }
 #endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-            /* For a single particle, luminosity-weighted position == particle position;
-             * after the divide-by-l_tot the result is just pos. */
-            w->node.rt_source_lum_s = pos;
-            w->extnode.rt_source_lum_vs = vel;
-            w->extnode.rt_source_lum_dp = {};
-#endif
         }
-        /* If !active_check: stellar_lum stays zero (memset above) -- correct */
-    }
 #endif
-
 #ifdef SINK_PHOTONMOMENTUM
-    if(pa->Type == 5)
-    {
-        if(pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0)
-        {
-            double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p_idx);
-            w->node.sink_lum = (MyFloat) BHLum;
-            /* sink_lum_grad after div-by-sink_lum = the unweighted vector for single particle */
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            w->node.sink_lum_grad[0] = (MyFloat) pa->Sink_Specific_AngMom[0];
-            w->node.sink_lum_grad[1] = (MyFloat) pa->Sink_Specific_AngMom[1];
-            w->node.sink_lum_grad[2] = (MyFloat) pa->Sink_Specific_AngMom[2];
-#else
-            w->node.sink_lum_grad[0] = (MyFloat) pa->GradRho[0];
-            w->node.sink_lum_grad[1] = (MyFloat) pa->GradRho[1];
-            w->node.sink_lum_grad[2] = (MyFloat) pa->GradRho[2];
-#endif
+        if(in.bh_active) {
+            src.bh_lum      = (double) in.bh_lum;
+            src.bh_angle[0] = (double) in.bh_angle[0];
+            src.bh_angle[1] = (double) in.bh_angle[1];
+            src.bh_angle[2] = (double) in.bh_angle[2];
         }
-        /* else: sink_lum stays 0 (memset); walk's sink_lum > 0 check filters out */
-    }
 #endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        src.cr_inject = (double) in.cr_inject;
+#endif
+    }
 
+    /* Point a moment_node_ref at the wire's payload storage and run the shared
+     * add_particle + finalize (zero == the memset above for a fresh leaf). */
+    moment_node_ref<MyFloat> ref = {};
+    ref.mass     = &w->node.u.d.mass;
+    ref.s        = &w->node.u.d.s;
+    ref.vs       = &w->extnode.vs;
+    ref.Npart    = &w->node.N_part;
+    ref.hmax     = &w->extnode.hmax;
+    ref.vmax     = &w->extnode.vmax;
+    ref.divVmax  = &w->extnode.divVmax;
+    ref.maxsoft  = &w->node.maxsoft;
+    ref.bitflags = NULL;   /* multiple-particles bit forced below, after finalize */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    ref.gasmass  = &w->node.gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+    ref.stellar_lum = &w->node.stellar_lum[0];
+#ifdef CHIMES_STELLAR_FLUXES
+    ref.chimes_G0  = &w->node.chimes_stellar_lum_G0[0];
+    ref.chimes_ion = &w->node.chimes_stellar_lum_ion[0];
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    ref.rt_s  = &w->node.rt_source_lum_s;
+    ref.rt_vs = &w->extnode.rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    ref.sink_lum      = &w->node.sink_lum;
+    ref.sink_lum_grad = &w->node.sink_lum_grad;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    ref.cr_inject = &w->node.cr_injection;
+#endif
 #ifdef SINK_CALC_DISTANCES
-    if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-    {
-        w->node.sink_mass = mass;
-        w->node.sink_pos = pos;  /* pos*mass / mass = pos */
+    ref.sink_mass = &w->node.sink_mass;
+    ref.sink_pos  = &w->node.sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        w->node.N_SINK = 1;
-        w->node.sink_vel = vel;
-#ifdef SPECIAL_POINT_MOTION
-        w->node.sink_acc[0] = (MyFloat) pa->Acc_Total_PrevStep[0];
-        w->node.sink_acc[1] = (MyFloat) pa->Acc_Total_PrevStep[1];
-        w->node.sink_acc[2] = (MyFloat) pa->Acc_Total_PrevStep[2];
+    ref.N_SINK   = &w->node.N_SINK;
+    ref.sink_vel = &w->node.sink_vel;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    ref.sink_acc = &w->node.sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-        w->node.MaxFeedbackVel = (MyFloat) pa->MaxFeedbackVel;
+    ref.max_fbvel = &w->node.MaxFeedbackVel;
 #endif
 #endif
-    }
-#endif
-
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    for(int k = 0; k < 6; k++)
-        w->node.tidal_tensorps_prevstep.data[k] = (MyFloat) pa->tidal_tensorps_prevstep.data[k];
+    ref.tidal = &w->node.tidal_tensorps_prevstep.data[0];
 #endif
-
 #ifdef DM_SCALARFIELD_SCREENING
-    if(pa->Type != 0)
-    {
-        w->node.mass_dm = mass;
-        w->node.s_dm = pos;
-        w->extnode.vs_dm = vel;
-        w->extnode.dp_dm = {};
-    }
+    ref.mass_dm = &w->node.mass_dm;
+    ref.s_dm    = &w->node.s_dm;
+    ref.vs_dm   = &w->extnode.vs_dm;
 #endif
 
-    /* extnode core fields */
-    w->extnode.dp = {};
-    w->extnode.vs = vel;
-    w->extnode.vmax = (MyFloat) fmax(fabs(pa->Vel[0]), fmax(fabs(pa->Vel[1]), fabs(pa->Vel[2])));
-    if(pa->Type == 0)
-    {
-        double htmp = (double) pa->KernelRadius;
-        if(htmp > (double) All.MaxKernelRadius) htmp = (double) All.MaxKernelRadius;
-        w->extnode.hmax = (MyFloat) htmp;
-        w->extnode.divVmax = (MyFloat) pa->Particle_DivVel;
-    }
-    else
-    {
-        w->extnode.hmax = 0;
-        w->extnode.divVmax = 0;
-    }
+    moment_accum_add_particle<moment_plain_ops, MyFloat>(ref, src);
+    moment_finalize<MyFloat>(ref, pos);
+
+    /* wire topology + the forced multiple-particles bit (finalize left bitflags
+     * untouched since ref.bitflags was null). */
+    w->node.center       = pos;
+    w->node.len          = 0;   /* zero size -- never opens, always treated as multipole */
+    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
+    w->node.u.d.sibling  = sib_terminator_sentinel;
+    w->node.u.d.nextnode = sib_terminator_sentinel;
+    w->node.u.d.father   = -1;  /* foreign nodes have no father in OUR tree */
+    w->node.GravCost     = 0;
+    w->node.Ti_current   = All.Ti_Current;
+    w->node.N_part       = 1;
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag = 0;
 }
