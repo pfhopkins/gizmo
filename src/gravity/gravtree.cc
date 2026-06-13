@@ -39,7 +39,6 @@
 double Ewaldcount, Costtotal;
 long long N_nodesinlist;
 int Ewald_iter;			/* global in file scope, for simplicity */
-void sum_top_level_node_costfactors(void);
 
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
@@ -560,65 +559,8 @@ void *gravity_primary_loop(void *p)
 }
 
 
-void *gravity_secondary_loop(void *p)
-{
-    int j, nodesinlist, dummy, ret;
-#ifndef GRAVITY_SECONDARY_LOOP_BATCH_SIZE
-#define GRAVITY_SECONDARY_LOOP_BATCH_SIZE 8
-#endif
-    while(1)
-    {
-        int batch[GRAVITY_SECONDARY_LOOP_BATCH_SIZE], batch_count = 0;
-#ifdef _OPENMP
-#pragma omp critical(_nextlistgravsec_)
-#endif
-        {
-            while(batch_count < GRAVITY_SECONDARY_LOOP_BATCH_SIZE && NextJ < Nimport)
-            {
-                batch[batch_count++] = NextJ; NextJ++;
-            }
-        }
-        if(batch_count == 0) {break;}
-        for(int b = 0; b < batch_count; b++)
-        {
-            j = batch[b];
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-            if(Ewald_iter)
-            {
-                int cost = force_treeevaluate_ewald_correction(j, 1, &dummy, &dummy, &dummy);
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                Ewaldcount += cost;
-            }
-            else
-#endif
-            {
-                ret = force_treeevaluate(j, 1, &nodesinlist, &dummy, &dummy);
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                N_nodesinlist += nodesinlist;
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                Costtotal += ret;
-            }
-        }
-    }
-    return NULL;
-}
 
 
-void sum_top_level_node_costfactors(void)
-{
-    double *costlist = (double*)mymalloc("costlist", NTopnodes * sizeof(double));
-    double *costlist_all = (double*)mymalloc("costlist_all", NTopnodes * sizeof(double));
-    int i; for(i = 0; i < NTopnodes; i++) {costlist[i] = Nodes[All.MaxPart + i].GravCost;}
-    MPI_Allreduce(costlist, costlist_all, NTopnodes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    for(i = 0; i < NTopnodes; i++) {Nodes[All.MaxPart + i].GravCost = costlist_all[i];}
-    myfree(costlist_all); myfree(costlist);
-}
 
 
 /*! This function sets the (comoving) softening length of all particle types in the table All.ForceSoftening[...].

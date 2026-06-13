@@ -34,11 +34,9 @@ void force_refresh_node_moments(void);
 void force_flag_localnodes(void);
 
 void *gravity_primary_loop(void *p);
-void *gravity_secondary_loop(void *p);
 
 int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
 int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
-int force_treeevaluate_potential(int target, int type, int *nexport, int *nsend_local);
 void force_drift_node(int no, integertime time1);
 void force_tree_discardpartials(void);
 void force_treeupdate_pseudos(int);
@@ -76,7 +74,6 @@ int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
 void   force_update_node(int no, int flag);
-void   force_update_node_recursive(int no, int sib, int father);
 void   force_update_size_of_parent_node(int no);
 
 void   dump_particles(void);
