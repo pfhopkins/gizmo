@@ -35,6 +35,7 @@
 
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"  /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
 #include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
 
 
@@ -1102,10 +1103,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
 
     /* ------------------------------------------------------------------ *
-     * Phase 2-A: pre-compute per-particle source luminosities on CPU.     *
-     * rt_get_source_luminosity() is not device-callable; this loop        *
-     * mirrors what the CPU walk does per leaf-particle interaction, but    *
-     * amortised to once per particle before the GPU kernel launch.         *
+     * Phase 2: pre-compute per-particle gravity source inputs on the CPU.  *
+     * rt_get_source_luminosity / sink_lum_bol / cr_get_source_injection_rate*
+     * are not device-callable, so the gated physics lives once in the       *
+     * shared host helper gravtree_fill_particle_source_inputs() and is       *
+     * amortised to a single host pass before the GPU kernel launch.          *
      * ------------------------------------------------------------------  */
 #ifdef RT_USE_GRAVTREE
     MyFloat *d_src_lum = NULL;
@@ -1125,40 +1127,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
         memset(d_src_lum_G0,  0, szc);
         memset(d_src_lum_ion, 0, szc);
 #endif
-        for(int p = 0; p < NumPart; p++) {
-            if(P[p].Mass <= 0) {continue;}
-            double lum[N_RT_FREQ_BINS];
-#ifdef CHIMES_STELLAR_FLUXES
-            double lum_G0[CHIMES_LOCAL_UV_NBINS], lum_ion[CHIMES_LOCAL_UV_NBINS];
-            int active_check = rt_get_source_luminosity_chimes(p, 1, lum, lum_G0, lum_ion, P, CellP);
-#else
-            int active_check = rt_get_source_luminosity(p, 1, lum, P, CellP);
-#endif
-            if(active_check) {
-                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
-                    d_src_lum[(long)p * N_RT_FREQ_BINS + kf] = (MyFloat)lum[kf];
-                }
-#ifdef CHIMES_STELLAR_FLUXES
-                for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
-                    d_src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = lum_G0[kf];
-                    d_src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = lum_ion[kf];
-                }
-#endif
-            }
-        }
     }
-    struct gpu_rt_walk_data_t rt_data_snap;
-    rt_data_snap.src_lum = d_src_lum;
-#ifdef CHIMES_STELLAR_FLUXES
-    rt_data_snap.src_lum_G0  = d_src_lum_G0;
-    rt_data_snap.src_lum_ion = d_src_lum_ion;
-#endif
 #endif /* RT_USE_GRAVTREE */
 
-    /* Phase 2-C: precompute per-particle bolometric sink luminosity and
-     * angle vector for leaf-level SINK_PHOTONMOMENTUM contributions.
-     * sink_lum_bol() (and, for SINGLE_STAR_SINK_DYNAMICS,
-     * calculate_individual_stellar_luminosity()) are not GPU-callable. */
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat       *d_bh_lum   = NULL;
     Vec3<MyFloat> *d_bh_angle = NULL;
@@ -1170,25 +1141,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210); myfree(idx_host); return 1;}
         memset(d_bh_lum,   0, sz_lum);
         memset(d_bh_angle, 0, sz_ang);
-        for(int p = 0; p < NumPart; p++) {
-            if(P[p].Type != 5 || P[p].Mass <= 0) continue;
-            if(P[p].DensityAroundParticle <= 0 || P[p].Sink_Mdot <= 0) continue;
-            double bhlum = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p);
-            d_bh_lum[p] = (MyFloat) bhlum;
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            d_bh_angle[p] = P[p].Sink_Specific_AngMom;
-#else
-            d_bh_angle[p] = P[p].GradRho;
-#endif
-        }
     }
-    struct gpu_sink_walk_data_t sink_data_snap;
-    sink_data_snap.bh_lum   = d_bh_lum;
-    sink_data_snap.bh_angle = d_bh_angle;
 #endif /* SINK_PHOTONMOMENTUM */
 
-    /* Phase 2-D: precompute per-particle CR source injection rate.
-     * cr_get_source_injection_rate() is CPU-only. */
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     MyFloat *d_cr_inject = NULL;
     double   t_max_cr    = 0.0;
@@ -1200,16 +1155,56 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(All.Time > All.TimeBegin) {
             double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
             if(t_gyr > 1.0) {t_gyr = 1.0;}
-            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;
-        }
-        for(int p = 0; p < NumPart; p++) {
-            /* nonzero only for Type 4/5 sources; gas + degenerate slots return 0.
-             * Mirror the legacy CPU tree which evaluates every particle. */
-            if(P[p].Mass <= 0) continue;
-            double rate = cr_get_source_injection_rate(p, P, CellP);
-            d_cr_inject[p] = (MyFloat) rate;
+            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;     /* per-step scalar; computed once, not per-particle */
         }
     }
+#endif /* COSMIC_RAY_SUBGRID_LEBRON */
+
+    /* Single host pass: gated physics in the shared SSOT helper, then copy ONLY
+     * the active entries into this venue's SharedSpace arrays (already bulk-zeroed
+     * above), matching the legacy per-section write pattern. */
+#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    for(int p = 0; p < NumPart; p++) {
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            int kf;
+            for(kf = 0; kf < N_RT_FREQ_BINS; kf++) {d_src_lum[(long)p * N_RT_FREQ_BINS + kf] = in.src_lum[kf];}
+#ifdef CHIMES_STELLAR_FLUXES
+            for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++) {
+                d_src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = in.src_lum_G0[kf];
+                d_src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = in.src_lum_ion[kf];
+            }
+#endif
+        }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(in.bh_active) {
+            d_bh_lum[p]   = in.bh_lum;
+            d_bh_angle[p] = in.bh_angle;
+        }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        if(in.cr_inject != 0) {d_cr_inject[p] = in.cr_inject;}
+#endif
+    }
+#endif
+
+#ifdef RT_USE_GRAVTREE
+    struct gpu_rt_walk_data_t rt_data_snap;
+    rt_data_snap.src_lum = d_src_lum;
+#ifdef CHIMES_STELLAR_FLUXES
+    rt_data_snap.src_lum_G0  = d_src_lum_G0;
+    rt_data_snap.src_lum_ion = d_src_lum_ion;
+#endif
+#endif /* RT_USE_GRAVTREE */
+#ifdef SINK_PHOTONMOMENTUM
+    struct gpu_sink_walk_data_t sink_data_snap;
+    sink_data_snap.bh_lum   = d_bh_lum;
+    sink_data_snap.bh_angle = d_bh_angle;
+#endif /* SINK_PHOTONMOMENTUM */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
     struct gpu_cr_walk_data_t cr_data_snap;
     cr_data_snap.cr_inject = d_cr_inject;
     cr_data_snap.t_max_cr  = t_max_cr;

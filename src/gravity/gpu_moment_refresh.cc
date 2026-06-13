@@ -69,6 +69,7 @@
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
 #include "gravtree_moment_kernel.h"
+#include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
 
 #ifdef RT_USE_GRAVTREE
 #include "../radiation/rt_functions.h"
@@ -167,28 +168,6 @@ static int precompute_alloc_(precomputed_t& pre, int N)
     memset(pre.src_lum_G0,  0, szc);
     memset(pre.src_lum_ion, 0, szc);
 #endif
-    for(int p = 0; p < N; p++) {
-        if(P[p].Mass <= 0) {continue;}
-        double lum[N_RT_FREQ_BINS];
-#ifdef CHIMES_STELLAR_FLUXES
-        double lum_G0[CHIMES_LOCAL_UV_NBINS], lum_ion[CHIMES_LOCAL_UV_NBINS];
-        int active_check = rt_get_source_luminosity_chimes(p, 1, lum, lum_G0, lum_ion, P, CellP);
-#else
-        int active_check = rt_get_source_luminosity(p, 1, lum, P, CellP);
-#endif
-        if(active_check) {
-            int kf;
-            for(kf = 0; kf < N_RT_FREQ_BINS; kf++) {
-                pre.src_lum[(long)p * N_RT_FREQ_BINS + kf] = (MyFloat) lum[kf];
-            }
-#ifdef CHIMES_STELLAR_FLUXES
-            for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++) {
-                pre.src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = lum_G0[kf];
-                pre.src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = lum_ion[kf];
-            }
-#endif
-        }
-    }
 #endif
 
 #ifdef SINK_PHOTONMOMENTUM
@@ -199,17 +178,6 @@ static int precompute_alloc_(precomputed_t& pre, int N)
     if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); return 1;}
     memset(pre.bh_lum,   0, sz_lum);
     memset(pre.bh_angle, 0, sz_ang);
-    for(int p = 0; p < N; p++) {
-        if(P[p].Type != 5 || P[p].Mass <= 0) {continue;}
-        if(P[p].DensityAroundParticle <= 0 || P[p].Sink_Mdot <= 0) {continue;}
-        double bhlum = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p);
-        pre.bh_lum[p] = (MyFloat) bhlum;
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-        pre.bh_angle[p] = P[p].Sink_Specific_AngMom;
-#else
-        pre.bh_angle[p] = P[p].GradRho;
-#endif
-    }
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -217,12 +185,36 @@ static int precompute_alloc_(precomputed_t& pre, int N)
     pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_cr);
     if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); return 1;}
     memset(pre.cr_inject, 0, sz_cr);
+#endif
+
+    /* Single host pass: gated physics in the shared SSOT helper, then copy ONLY
+     * the active entries into this venue's SharedSpace arrays (already bulk-zeroed
+     * above), matching the legacy per-section write pattern. */
+#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
     for(int p = 0; p < N; p++) {
-        /* CR injection is nonzero only for Type 4 (stellar) and Type 5 (sink) sources;
-         * gas and degenerate (Mass<=0) slots return zero.  Mirror the legacy CPU tree,
-         * which evaluates every particle (forcetree.cc force_update_node_recursive). */
-        if(P[p].Mass <= 0) {continue;}
-        pre.cr_inject[p] = (MyFloat) cr_get_source_injection_rate(p, P, CellP);
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            int kf;
+            for(kf = 0; kf < N_RT_FREQ_BINS; kf++) {pre.src_lum[(long)p * N_RT_FREQ_BINS + kf] = in.src_lum[kf];}
+#ifdef CHIMES_STELLAR_FLUXES
+            for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++) {
+                pre.src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = in.src_lum_G0[kf];
+                pre.src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = in.src_lum_ion[kf];
+            }
+#endif
+        }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(in.bh_active) {
+            pre.bh_lum[p]   = in.bh_lum;
+            pre.bh_angle[p] = in.bh_angle;
+        }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        if(in.cr_inject != 0) {pre.cr_inject[p] = in.cr_inject;}
+#endif
     }
 #endif
     return 0;
