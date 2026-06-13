@@ -39,6 +39,15 @@
 #include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
 
 
+/* Single gate for the Ewald periodic-image POTENTIAL correction added in the
+ * primary walk (item #11): pure-tree periodic gravity with potentials requested.
+ * Mirrors the CPU gate at forcetree.cc:2299.  Defined once so the four-flag
+ * condition lives in one place and is referenced (not re-spelled) at the
+ * table-acquire site, the host helper, and the walk body. */
+#if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+#define GIZMO_GPU_EWALD_POT_CORRECTION
+#endif
+
 /* Globals that live at file-scope in gravtree.cc without a header declaration. */
 extern int Ewald_iter;
 extern double Costtotal;
@@ -128,6 +137,73 @@ struct gpu_sink_walk_data_t {
 /* The device replica of sink_fb_angleweight was collapsed into gravtree_force_kernel.h
  * (grav_sink_fb_angleweight, component args), shared verbatim with the host function. */
 #endif /* SINK_PHOTONMOMENTUM */
+
+/* Ewald periodic-image POTENTIAL correction for the primary walk.  Under
+ * pure-tree periodic gravity with EVALPOTENTIAL the CPU walk (forcetree.cc)
+ * adds mass*ewald_pot_corr(dr) to the potential of every accepted interaction;
+ * the GPU primary walk previously added only the short-range potential and left
+ * the periodic-image term out (the seeded g_d_potcorr table was never read).
+ * This POD carries the device mirror of that table + its interpolation scale
+ * into the primary walk.  It is passed UNCONDITIONALLY (one struct, optional
+ * fields gated once here) rather than as a stacked-#ifdef parameter; the walk
+ * reads it only inside the matching compile gate.  In a healthy run 'active' is
+ * always 1: an acquire failure hard-stops the primary walk (the build requires
+ * the correction).  'active' is 0 only as a NULL-guard for the graceful drain
+ * that follows that endrun. */
+struct gpu_ewald_pot_data_t {
+    const MyFloat *potcorr;   /* flat [(EN+1)^3] Ewald potential-correction table, or NULL */
+    double         fac_intp;  /* table interpolation scale (= g_ewald_fac_intp) */
+    int            active;    /* 1 iff potcorr is a valid acquired table */
+};
+
+/* Trilinear interpolation of one Ewald correction table at |dr|.  SSOT home for
+ * GPU Ewald table interpolation (mirrors CPU ewald_pot_corr, forcetree.cc:3751).
+ * Single-table form, used here for the potential correction.  The force walk's
+ * 3-table lookup (fcorrx/y/z) deliberately keeps its own inline form: it computes
+ * the indices+weights once and reuses them across the three tables, which a
+ * per-table helper would recompute three times.  Unifying both behind a
+ * weights-once / apply-N-tables helper is recorded for Phase E.  Gated with the
+ * correction itself: GIZMO_EWALD_EN exists only for periodic-gravity builds. */
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+static KOKKOS_INLINE_FUNCTION double
+gpu_ewald_table_interp_abs(const MyFloat *table, double dx, double dy, double dz, double fac_intp)
+{
+    const int EN      = GIZMO_EWALD_EN;
+    const int stride1 = EN + 1;
+    const int stride2 = stride1 * stride1;
+    if(dx < 0) dx = -dx;
+    if(dy < 0) dy = -dy;
+    if(dz < 0) dz = -dz;
+    double u = dx * fac_intp; int i = (int) u; if(i >= EN) i = EN - 1; u -= i;
+    double v = dy * fac_intp; int j = (int) v; if(j >= EN) j = EN - 1; v -= j;
+    double w = dz * fac_intp; int k = (int) w; if(k >= EN) k = EN - 1; w -= k;
+    double f1 = (1-u)*(1-v)*(1-w);
+    double f2 = (1-u)*(1-v)*(w);
+    double f3 = (1-u)*(v)  *(1-w);
+    double f4 = (1-u)*(v)  *(w);
+    double f5 = (u)  *(1-v)*(1-w);
+    double f6 = (u)  *(1-v)*(w);
+    double f7 = (u)  *(v)  *(1-w);
+    double f8 = (u)  *(v)  *(w);
+#define GIZMO_EW_POT_IDX3(ii,jj,kk) ((ii)*stride2 + (jj)*stride1 + (kk))
+    return table[GIZMO_EW_POT_IDX3(i,  j,  k  )] * f1 +
+           table[GIZMO_EW_POT_IDX3(i,  j,  k+1)] * f2 +
+           table[GIZMO_EW_POT_IDX3(i,  j+1,k  )] * f3 +
+           table[GIZMO_EW_POT_IDX3(i,  j+1,k+1)] * f4 +
+           table[GIZMO_EW_POT_IDX3(i+1,j,  k  )] * f5 +
+           table[GIZMO_EW_POT_IDX3(i+1,j,  k+1)] * f6 +
+           table[GIZMO_EW_POT_IDX3(i+1,j+1,k  )] * f7 +
+           table[GIZMO_EW_POT_IDX3(i+1,j+1,k+1)] * f8;
+#undef GIZMO_EW_POT_IDX3
+}
+#endif /* GIZMO_GPU_EWALD_POT_CORRECTION */
+
+/* Host: acquire the Ewald tables (idempotent) and fill the potential POD.
+ * Returns 0 on success (out->active=1), nonzero if the tables are not ready
+ * (out->active=0); the caller treats a nonzero return as a hard stop. */
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
+#endif
 
 /* -------------------------------------------------------------------------
  * Compile-time payload gates.
@@ -260,6 +336,7 @@ gpu_gravtree_walk_one(int target,
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                       const struct gpu_cr_walk_data_t *cr_data,
 #endif
+                      const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
                       Vec3<double> &acc_out,
                       int &ninter_out,
                       double &pot_out,
@@ -794,6 +871,15 @@ gpu_gravtree_walk_one(int target,
             acc += fac_accel * dr;
 #ifdef EVALPOTENTIAL
             pot    += fac_pot;
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+            /* Ewald periodic-image potential correction (mirrors forcetree.cc:2300).
+             * Pure-tree periodic only; under PMGRID the long-range potential comes
+             * from the PM solver.  active is 1 in a healthy run (acquire failure
+             * hard-stops the caller); the guard only covers the post-endrun drain. */
+            if(ewald_pot->active) {
+                pot += mass * gpu_ewald_table_interp_abs(ewald_pot->potcorr, dr[0], dr[1], dr[2], ewald_pot->fac_intp);
+            }
+#endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Adaptive softening 'tidal' correction terms via the shared helper
@@ -1264,6 +1350,22 @@ extern "C" int gpu_gravtree_walk_primary(void)
     const struct gpu_cr_walk_data_t cr_data_dev = cr_data_snap;
 #endif
 
+    /* Ewald periodic-image potential correction (pure-tree periodic + EVALPOTENTIAL).
+     * Acquire the table once (idempotent). This build requires the correction, so a
+     * missing table is a hard stop that aborts the primary walk -- never a silent
+     * skip of the term. */
+    struct gpu_ewald_pot_data_t ewald_pot_snap;
+    ewald_pot_snap.potcorr = NULL; ewald_pot_snap.fac_intp = 0.0; ewald_pot_snap.active = 0;
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+    if(gpu_ewald_acquire_pot_data(&ewald_pot_snap) != 0) {
+        printf("gpu_gravtree_walk_primary: Ewald potential-correction table unavailable; EVALPOTENTIAL periodic build requires it\n");
+        endrun(913212);
+        myfree(idx_host);   /* LIFO mymalloc cleanup; do not launch the walk with the term disabled */
+        return 1;
+    }
+#endif
+    const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
+
     double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1291,6 +1393,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                                         &cr_data_dev,
 #endif
+                                        &ewald_pot_dev,
                                         acc, ninter, pot, nforeign);
         if(ok) {
             d_acc[a] = acc;
@@ -1562,6 +1665,18 @@ static int gpu_ewald_tables_acquire(void)
     g_ewald_tables_ready = 1;
     return 0;
 }
+
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out)
+{
+    out->potcorr = NULL; out->fac_intp = 0.0; out->active = 0;
+    if(gpu_ewald_tables_acquire() != 0) return 1;   /* table acquire failed; caller hard-stops */
+    out->potcorr  = g_d_potcorr;
+    out->fac_intp = g_ewald_fac_intp;
+    out->active   = 1;
+    return 0;
+}
+#endif
 
 /* Device-side Ewald walk for a single target. Returns 1 on success (acc
  * written), 0 if a pseudo-particle was encountered (defer to CPU). */
