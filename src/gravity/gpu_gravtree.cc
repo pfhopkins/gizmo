@@ -920,31 +920,36 @@ gpu_gravtree_walk_one(int target,
             {
                 /* payload formulas in the shared helper; fac_rt computed there from d_stellarlum
                  * (may differ from dr when RT_SEPARATELY_TRACK_LUMPOS; otherwise d_stellarlum == dr) */
-                grav_rt_payload_accumulate(d_stellarlum, soft, mass_stellarlum,
+                grav_rt_src_t rt_src = {}; rt_src.d_stellarlum = d_stellarlum; rt_src.soft = soft; rt_src.mass_stellarlum = mass_stellarlum;
 #ifdef CHIMES_STELLAR_FLUXES
-                                           chimes_mass_stellarlum_G0, chimes_mass_stellarlum_ion, chimes_flux_G0, chimes_flux_ion,
+                rt_src.chimes_mass_stellarlum_G0 = chimes_mass_stellarlum_G0; rt_src.chimes_mass_stellarlum_ion = chimes_mass_stellarlum_ion;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                                           mass_sinklumwt_forradfb,
+                rt_src.mass_sinklumwt_forradfb = mass_sinklumwt_forradfb;
 #endif
+#if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+                rt_src.fac_stellum = fac_stellum;
+#endif
+                grav_rt_accum_t rt_accum = {};
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                                           Rad_E_gamma,
+                rt_accum.Rad_E_gamma = Rad_E_gamma;
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+                rt_accum.chimes_flux_G0 = chimes_flux_G0; rt_accum.chimes_flux_ion = chimes_flux_ion;
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                                           incident_flux_uv, incident_flux_euv,
+                rt_accum.incident_flux_uv = &incident_flux_uv; rt_accum.incident_flux_euv = &incident_flux_euv;
 #endif
 #ifdef SINK_COMPTON_HEATING
-                                           incident_flux_agn,
+                rt_accum.incident_flux_agn = &incident_flux_agn;
 #endif
 #ifdef RT_OTVET
-                                           RT_ET,
+                rt_accum.RT_ET = RT_ET;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                                           Rad_Flux,
-#elif defined(RT_LEBRON)
-                                           fac_stellum,
+                rt_accum.Rad_Flux = Rad_Flux;
 #endif
-                                           acc);
+                grav_rt_payload_accumulate(rt_src, rt_accum, acc);
             } /* if(valid_gas_particle_for_rt) */
 #endif /* RT_USE_GRAVTREE */
 

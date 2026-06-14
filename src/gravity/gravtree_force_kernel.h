@@ -586,71 +586,84 @@ KOKKOS_INLINE_FUNCTION void grav_cr_lebron_accumulate(int ptype, double r, doubl
  * as the walk locals).
  * ---------------------------------------------------------------------------------------- */
 #ifdef RT_USE_GRAVTREE
-template <typename AccVecT>
-KOKKOS_INLINE_FUNCTION void grav_rt_payload_accumulate(const Vec3<double> &d_stellarlum, double soft,
-                                                       const double *mass_stellarlum,
+/* Per-pair source inputs (read-only, passed by value). Optional fields gated once here. */
+struct grav_rt_src_t {
+    Vec3<double> d_stellarlum;
+    double soft;
+    const double *mass_stellarlum;
 #ifdef CHIMES_STELLAR_FLUXES
-                                                       const double *chimes_mass_stellarlum_G0, const double *chimes_mass_stellarlum_ion,
-                                                       double *chimes_flux_G0, double *chimes_flux_ion,
+    const double *chimes_mass_stellarlum_G0, *chimes_mass_stellarlum_ion;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                                                       double mass_sinklumwt_forradfb,
+    double mass_sinklumwt_forradfb;
 #endif
+#if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    const double *fac_stellum; // unused when SAVE_RAD_FLUX path stores fluxes instead
+#endif
+};
+
+/* Per-target output accumulators: a live VIEW (pointers) over the walk's existing
+ * per-target locals. The walk still owns zeroing + writeback; this only adds into them. */
+struct grav_rt_accum_t {
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                                                       double *Rad_E_gamma,
+    double *Rad_E_gamma;
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+    double *chimes_flux_G0, *chimes_flux_ion;
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                                                       double &incident_flux_uv, double &incident_flux_euv,
+    double *incident_flux_uv, *incident_flux_euv;
 #endif
 #ifdef SINK_COMPTON_HEATING
-                                                       double &incident_flux_agn,
+    double *incident_flux_agn;
 #endif
 #ifdef RT_OTVET
-                                                       SymmetricTensor2<double> *RT_ET,
+    SymmetricTensor2<double> *RT_ET;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                                                       Vec3<double> *Rad_Flux,
-#elif defined(RT_LEBRON)
-                                                       const double *fac_stellum,
+    Vec3<double> *Rad_Flux;
 #endif
-                                                       AccVecT &acc)
+};
+
+template <typename AccVecT>
+KOKKOS_INLINE_FUNCTION void grav_rt_payload_accumulate(grav_rt_src_t src, grav_rt_accum_t rt_accum, AccVecT &acc)
 {
     (void) acc;
-    double r2 = d_stellarlum.norm_sq(); double r = sqrt(r2); double fac_rt;
-    if(r >= soft) {fac_rt=1./(r2*r);} else {double h_inv_rt=1./soft, h3_inv_rt=h_inv_rt*h_inv_rt*h_inv_rt, u_rt=r*h_inv_rt; fac_rt=kernel_gravity(u_rt,h_inv_rt,h3_inv_rt,1);}
-    if((soft>r)&&(soft>0)) fac_rt *= (r2/(soft*soft)); // don't allow cross-section > r2
+    double r2 = src.d_stellarlum.norm_sq(); double r = sqrt(r2); double fac_rt;
+    if(r >= src.soft) {fac_rt=1./(r2*r);} else {double h_inv_rt=1./src.soft, h3_inv_rt=h_inv_rt*h_inv_rt*h_inv_rt, u_rt=r*h_inv_rt; fac_rt=kernel_gravity(u_rt,h_inv_rt,h3_inv_rt,1);}
+    if((src.soft>r)&&(src.soft>0)) fac_rt *= (r2/(src.soft*src.soft)); // don't allow cross-section > r2
     double fac_intensity; fac_intensity = fac_rt * r * All.cf_a2inv / (4.*M_PI); // ~L/(4pi*r^2), in -physical- units, since L is physical
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-    {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {Rad_E_gamma[kf] += fac_intensity * mass_stellarlum[kf];}}
+    {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {rt_accum.Rad_E_gamma[kf] += fac_intensity * src.mass_stellarlum[kf];}}
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
     int chimes_k; double chimes_fac = fac_intensity / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);  // 1/(4 * pi * r^2), in cm^-2
     for (chimes_k = 0; chimes_k < CHIMES_LOCAL_UV_NBINS; chimes_k++)
     {
-        chimes_flux_G0[chimes_k] += chimes_fac * chimes_mass_stellarlum_G0[chimes_k];   // Habing flux units
-        chimes_flux_ion[chimes_k] += chimes_fac * chimes_mass_stellarlum_ion[chimes_k]; // cm^-2 s^-1
+        rt_accum.chimes_flux_G0[chimes_k] += chimes_fac * src.chimes_mass_stellarlum_G0[chimes_k];   // Habing flux units
+        rt_accum.chimes_flux_ion[chimes_k] += chimes_fac * src.chimes_mass_stellarlum_ion[chimes_k]; // cm^-2 s^-1
     }
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-    incident_flux_uv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV]; // don't multiply by shortrange_table since that is to prevent 2x-counting by PMgrid (which never happens here) //
-    if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR]<mass_stellarlum[RT_FREQ_BIN_FIRE_UV])&&(mass_stellarlum[RT_FREQ_BIN_FIRE_IR]>0)) // if this -isn't- satisfied, no chance you are optically thin to EUV //
+    (*rt_accum.incident_flux_uv) += fac_intensity * src.mass_stellarlum[RT_FREQ_BIN_FIRE_UV]; // don't multiply by shortrange_table since that is to prevent 2x-counting by PMgrid (which never happens here) //
+    if((src.mass_stellarlum[RT_FREQ_BIN_FIRE_IR]<src.mass_stellarlum[RT_FREQ_BIN_FIRE_UV])&&(src.mass_stellarlum[RT_FREQ_BIN_FIRE_IR]>0)) // if this -isn't- satisfied, no chance you are optically thin to EUV //
     {
         // here, use ratio and linear scaling of escape with tau to correct to the escape fraction for the correspondingly higher EUV kappa: factor ~2000 here comes from the ratio of (kappa_euv/kappa_uv)
-        incident_flux_euv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV] * (All.PhotonMomentum_fUV + (1-All.PhotonMomentum_fUV) *
-                                                                                     ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + mass_stellarlum[RT_FREQ_BIN_FIRE_IR]) /
-                                                                                      (mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + 2042.6*mass_stellarlum[RT_FREQ_BIN_FIRE_IR])));
+        (*rt_accum.incident_flux_euv) += fac_intensity * src.mass_stellarlum[RT_FREQ_BIN_FIRE_UV] * (All.PhotonMomentum_fUV + (1-All.PhotonMomentum_fUV) *
+                                                                                     ((src.mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + src.mass_stellarlum[RT_FREQ_BIN_FIRE_IR]) /
+                                                                                      (src.mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + 2042.6*src.mass_stellarlum[RT_FREQ_BIN_FIRE_IR])));
     } else {
         // here, just enforce a minimum escape fraction //
-        double m_lum_total = 0; int ks_q; for(ks_q=0;ks_q<N_RT_FREQ_BINS;ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
-        incident_flux_euv += All.PhotonMomentum_fUV * fac_intensity * m_lum_total;
+        double m_lum_total = 0; int ks_q; for(ks_q=0;ks_q<N_RT_FREQ_BINS;ks_q++) {m_lum_total += src.mass_stellarlum[ks_q];}
+        (*rt_accum.incident_flux_euv) += All.PhotonMomentum_fUV * fac_intensity * m_lum_total;
     }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-    Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * mass_sinklumwt_forradfb;
+    rt_accum.Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * src.mass_sinklumwt_forradfb;
 #endif
 #ifdef SINK_COMPTON_HEATING
-    incident_flux_agn += fac_intensity * mass_sinklumwt_forradfb; // L/(4pi*r*r) analog
+    (*rt_accum.incident_flux_agn) += fac_intensity * src.mass_sinklumwt_forradfb; // L/(4pi*r*r) analog
 #endif
 #endif
 
@@ -661,9 +674,9 @@ KOKKOS_INLINE_FUNCTION void grav_rt_payload_accumulate(const Vec3<double> &d_ste
         double fac_otvet_sum=0; int kf_rt;
         for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++)
         {
-            fac_otvet_sum = mass_stellarlum[kf_rt];
+            fac_otvet_sum = src.mass_stellarlum[kf_rt];
             fac_otvet_sum *= fac_rt / (1.e-37 + r); // units are not important, since ET will be dimensionless, but final ET should scale as ~luminosity/r^2
-            RT_ET[kf_rt] += fac_otvet_sum * outer_product(d_stellarlum);
+            rt_accum.RT_ET[kf_rt] += fac_otvet_sum * outer_product(src.d_stellarlum);
         }
     }
 #endif
@@ -675,18 +688,18 @@ KOKKOS_INLINE_FUNCTION void grav_rt_payload_accumulate(const Vec3<double> &d_ste
     int kf_rt; double lum_force_fac=0;
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) /* save the fluxes for use below, where we will calculate their RP normally */
     double fac_flux = -fac_rt * All.cf_a2inv / (4.*M_PI); // ~L/(4pi*r^3), in -physical- units (except for last r, cancelled by dx_stellum), since L is physical
-    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {Rad_Flux[kf_rt] += mass_stellarlum[kf_rt]*fac_flux*d_stellarlum;}
+    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {rt_accum.Rad_Flux[kf_rt] += src.mass_stellarlum[kf_rt]*fac_flux*src.d_stellarlum;}
 #else /* simply apply an on-the-spot approximation and do the absorption and RP force now */
-    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {lum_force_fac += mass_stellarlum[kf_rt] * fac_stellum[kf_rt];} // add directly to forces. appropriate normalization (and sign) in 'fac_stellum'
+    for(kf_rt=0;kf_rt<N_RT_FREQ_BINS;kf_rt++) {lum_force_fac += src.mass_stellarlum[kf_rt] * src.fac_stellum[kf_rt];} // add directly to forces. appropriate normalization (and sign) in 'fac_stellum'
 #endif
 #ifdef SINK_PHOTONMOMENTUM /* divide out PhotoMom_coupled_frac here b/c we have our own SINK_Rad_Mom factor, and don't want to double-count */
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    Rad_Flux[RT_FREQ_BIN_FIRE_IR] += mass_sinklumwt_forradfb*fac_flux*d_stellarlum;
+    rt_accum.Rad_Flux[RT_FREQ_BIN_FIRE_IR] += src.mass_sinklumwt_forradfb*fac_flux*src.d_stellarlum;
 #elif !defined(RT_DISABLE_RAD_PRESSURE)
-    lum_force_fac += (All.Sink_Rad_MomentumFactor / (MIN_REAL_NUMBER + All.PhotonMomentum_Coupled_Fraction)) * mass_sinklumwt_forradfb * fac_stellum[N_RT_FREQ_BINS-1];
+    lum_force_fac += (All.Sink_Rad_MomentumFactor / (MIN_REAL_NUMBER + All.PhotonMomentum_Coupled_Fraction)) * src.mass_sinklumwt_forradfb * src.fac_stellum[N_RT_FREQ_BINS-1];
 #endif
 #endif
-    if(lum_force_fac>0) {acc += (fac_rt*lum_force_fac) * d_stellarlum;}
+    if(lum_force_fac>0) {acc += (fac_rt*lum_force_fac) * src.d_stellarlum;}
 #endif /* RT_LEBRON */
 }
 #endif /* RT_USE_GRAVTREE */
