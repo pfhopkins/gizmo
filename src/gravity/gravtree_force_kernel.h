@@ -188,6 +188,25 @@ struct grav_force_pair_t {
 #endif
 };
 
+/* PM short-range truncation CONFIG (read-only, per-walk-constant). Unconditional POD
+ * passed BY VALUE into the walk and the PM-gated force helpers; its fields are gated
+ * once here and it is empty when !PMGRID. Holds configuration only -- the per-pair
+ * tabindex and the per-pair table lookups stay in the walk / helper bodies. Both the
+ * CPU and GPU walks build one (PM_PLACEHIGHRESREGION overrides the per-target copy's
+ * rcut/rcut2/asmthfac). */
+struct grav_pm_shortrange_t {
+#ifdef PMGRID
+    double rcut, rcut2, asmthfac;
+    const float *shortrange_tab;
+#ifdef EVALPOTENTIAL
+    const float *shortrange_pot_tab;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    const float *shortrange_tidal_tab;
+#endif
+#endif
+};
+
 /* zeta/zeta_sec (AGS-softening correction) and ags_bitflag_primary (symmetrize-by-
  * averaging) are passed unconditionally; callers supply 0 when the corresponding flag
  * is off, and the body consumes them only under the matching #if (no behavior change),
@@ -314,15 +333,12 @@ KOKKOS_INLINE_FUNCTION int grav_pm_shortrange_in_range(int tabindex)
 {
     return (tabindex < GRAVTREE_SHORTRANGE_NTAB && tabindex >= 0);
 }
-KOKKOS_INLINE_FUNCTION void grav_force_apply_pm_truncation(int tabindex, const float *shortrange_tab,
-#ifdef EVALPOTENTIAL
-                                                           const float *shortrange_pot_tab, double &fac_pot,
-#endif
-                                                           double &fac_accel)
+KOKKOS_INLINE_FUNCTION void grav_force_apply_pm_truncation(grav_pm_shortrange_t pm, int tabindex,
+                                                           double &fac_pot, double &fac_accel)
 {
-    fac_accel *= shortrange_tab[tabindex];
+    fac_accel *= pm.shortrange_tab[tabindex];
 #ifdef EVALPOTENTIAL
-    fac_pot *= shortrange_pot_tab[tabindex];
+    fac_pot *= pm.shortrange_pot_tab[tabindex];   /* fac_pot is a dead 0 when !EVALPOTENTIAL */
 #endif
 }
 #endif /* PMGRID */
@@ -460,9 +476,7 @@ KOKKOS_INLINE_FUNCTION void grav_ags_tidal_criterion_accumulate(double r, double
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 template <typename TensorT>
 KOKKOS_INLINE_FUNCTION void grav_tidal_tensor_accumulate(const Vec3<double> &dr, double fac_tidal, double fac2_tidal,
-#ifdef PMGRID
-                                                         float st, float sti,
-#endif
+                                                         grav_pm_shortrange_t pm, int tabindex,
                                                          TensorT &tidal_tensorps)
 {
     /* tidal_tensorps[][] = Matrix of second derivatives of grav. potential, symmetric:
@@ -470,6 +484,9 @@ KOKKOS_INLINE_FUNCTION void grav_tidal_tensor_accumulate(const Vec3<double> &dr,
      |Tyx Tyy Tyz| = |tidal_tensorps[1][0] tidal_tensorps[1][1] tidal_tensorps[1][2]|
      |Tzx Tzy Tzz|   |tidal_tensorps[2][0] tidal_tensorps[2][1] tidal_tensorps[2][2]|  */
 #ifdef PMGRID
+    /* short-range PM truncation factors at this pair's table index (caller guarantees
+     * tabindex is in range under PMGRID -- this helper is called inside the PM gate). */
+    float st = pm.shortrange_tab[tabindex], sti = pm.shortrange_tidal_tab[tabindex];
     tidal_tensorps[0][0] += ((-fac_tidal + dr[0] * dr[0] * fac2_tidal) * st) +
     dr[0] * dr[0] * fac2_tidal / 3.0 * sti;
     tidal_tensorps[0][1] += ((dr[0] * dr[1] * fac2_tidal) * st) +
@@ -544,9 +561,7 @@ KOKKOS_INLINE_FUNCTION void grav_treecol_accumulate(const Vec3<double> &dr, doub
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
 KOKKOS_INLINE_FUNCTION void grav_cr_lebron_accumulate(int ptype, double r, double soft, double cr_injection,
                                                       int cr_active_gate, double t_max_cr,
-#ifdef PMGRID
-                                                      double rcut,
-#endif
+                                                      grav_pm_shortrange_t pm,
                                                       double &SubGrid_CosmicRayEnergyDensity)
 {
     if(ptype==0 && r>0 && cr_injection>0 && cr_active_gate)
@@ -555,7 +570,7 @@ KOKKOS_INLINE_FUNCTION void grav_cr_lebron_accumulate(int ptype, double r, doubl
         double r_phys = sqrt(r*r + soft*soft/4.) * All.cf_atime, t_max = t_max_cr; // make sure we're working in physical code units, and assign max time to formation at begin time, and include very crude 'softening' term here to prevent divergennce as r->0: for our default parameters can't be too large here or we get unphysically large CR halos compared to reality, b/c of large effective streaming terms
         double r_max = 0.5*t_max*vst_0 * (1. + sqrt(1. + 16.*kappa_0/(vst_0*vst_0*t_max))); // maximum stream distance
 #ifdef PMGRID
-        r_max = DMIN(r_max , 0.5*rcut*All.cf_atime); // truncate before reach the boundary of the grid to avoid numerical errors there
+        r_max = DMIN(r_max , 0.5*pm.rcut*All.cf_atime); // truncate before reach the boundary of the grid to avoid numerical errors there
 #endif
         double fac_cr_distance = 1./(4.*M_PI*r_phys*(kappa_0 + vst_0*r_phys)) * exp(-DMIN(r_phys*r_phys/(1.e-6*r_phys*r_phys+r_max*r_max),50.));
         if(fac_cr_distance>0) {SubGrid_CosmicRayEnergyDensity += fac_cr_distance * cr_injection / All.cf_a3inv;} // convert to appropriate code units for an energy density or pressure
@@ -685,9 +700,7 @@ KOKKOS_INLINE_FUNCTION void grav_rt_payload_accumulate(const Vec3<double> &d_ste
 #ifdef DM_SCALARFIELD_SCREENING
 template <typename AccVecT>
 KOKKOS_INLINE_FUNCTION void grav_dm_scalarfield_accumulate(Vec3<double> &d_dm, double mass_dm, double h,
-#ifdef PMGRID
-                                                           double asmthfac, const float *shortrange_tab,
-#endif
+                                                           grav_pm_shortrange_t pm,
                                                            AccVecT &acc)
 {
     gravity_box_nearest_image(d_dm[0],d_dm[1],d_dm[2],-1);
@@ -700,12 +713,12 @@ KOKKOS_INLINE_FUNCTION void grav_dm_scalarfield_accumulate(Vec3<double> &d_dm, d
     /* assemble force with strength, screening length, and target charge.  */
     fac_dmsf *= All.ScalarBeta * (1 + r / All.ScalarScreeningLength) * exp(-r / All.ScalarScreeningLength);
 #ifdef PMGRID
-    int tabindex = (int) (asmthfac * r);
+    int tabindex = (int) (pm.asmthfac * r);
     if(tabindex < GRAVTREE_SHORTRANGE_NTAB && tabindex >= 0)
 #endif
     {
 #ifdef PMGRID
-        fac_dmsf *= shortrange_tab[tabindex];
+        fac_dmsf *= pm.shortrange_tab[tabindex];
 #endif
         acc += fac_dmsf * d_dm;
     }

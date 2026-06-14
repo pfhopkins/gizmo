@@ -320,13 +320,7 @@ gpu_gravtree_walk_one(int target,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                       int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
 #endif
-#ifdef PMGRID
-                      double rcut, double rcut2, double asmthfac,
-                      const float *shortrange_tab, const float *shortrange_pot_tab,
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                      const float *shortrange_tidal_tab,
-#endif
-#endif
+                      grav_pm_shortrange_t pm,   /* PM short-range config by value (empty when !PMGRID); per-target PLACEHIGHRESREGION override below mutates this local copy */
 #ifdef RT_USE_GRAVTREE
                       const struct gpu_rt_walk_data_t *rt_data,
 #endif
@@ -362,7 +356,7 @@ gpu_gravtree_walk_one(int target,
     /* high-res zoom particles use the finer short-range PM cutoff (mirrors forcetree.cc target
      * prologue). The dispatcher passes the coarse-mesh rcut/asmthfac; override per target here. */
     if(pmforce_is_particle_high_res(ptype, pos)) {
-        rcut = All.Rcut[1]; rcut2 = rcut * rcut; asmthfac = grav_pm_asmthfac(All.Asmth[1]);
+        pm.rcut = All.Rcut[1]; pm.rcut2 = pm.rcut * pm.rcut; pm.asmthfac = grav_pm_asmthfac(All.Asmth[1]);
     }
 #endif
 
@@ -676,7 +670,7 @@ gpu_gravtree_walk_one(int target,
                 double cen1 = (double)center_node[1] - pos[1];
                 double cen2 = (double)center_node[2] - pos[2];
 #ifdef PMGRID
-                double pred_rcut = rcut, pred_rcut2 = rcut2;
+                double pred_rcut = pm.rcut, pred_rcut2 = pm.rcut2;
 #else
                 double pred_rcut = 0.0, pred_rcut2 = 0.0;
 #endif
@@ -817,9 +811,7 @@ gpu_gravtree_walk_one(int target,
         {
             double r = sqrt(r2);
             double fac_accel;
-#ifdef EVALPOTENTIAL
-            double fac_pot;
-#endif
+            double fac_pot = 0;   /* unconditional; a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
             double fac_tidal = 0.0, fac2_tidal = 0.0; /* mirrors forcetree.cc:1489; populated in branches below */
 #endif
@@ -837,8 +829,9 @@ gpu_gravtree_walk_one(int target,
                 fac_tidal = pair_out.fac_tidal; fac2_tidal = pair_out.fac2_tidal;
 #endif
             }
+            int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
 #ifdef PMGRID
-            int tabindex = grav_pm_shortrange_tabindex(asmthfac, r);
+            tabindex = grav_pm_shortrange_tabindex(pm.asmthfac, r);
             /* PM short-range gate (mirrors forcetree.cc): wraps the acceleration,
              * potential, dynamical-friction, adaptive-tidal-correction, tidal-tensor
              * and jerk contributions ONLY. A source beyond the table range contributes
@@ -849,11 +842,7 @@ gpu_gravtree_walk_one(int target,
 #endif
             {
 #ifdef PMGRID
-            grav_force_apply_pm_truncation(tabindex, shortrange_tab,
-#ifdef EVALPOTENTIAL
-                                           shortrange_pot_tab, fac_pot,
-#endif
-                                           fac_accel);
+            grav_force_apply_pm_truncation(pm, tabindex, fac_pot, fac_accel);
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
             /* Shell-theorem override via the shared helper; pot above is unmodified, matching CPU sequencing. */
@@ -886,11 +875,7 @@ gpu_gravtree_walk_one(int target,
 #endif
             /* tidal-tensor accumulation via the shared helper (PM-truncated or bare;
              * tabindex is in range here -- this call sits inside the PM short-range gate) */
-            grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal,
-#ifdef PMGRID
-                                         shortrange_tab[tabindex], shortrange_tidal_tab[tabindex],
-#endif
-                                         tidal_acc);
+            grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal, pm, tabindex, tidal_acc);
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
             grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk_acc);
@@ -927,11 +912,7 @@ gpu_gravtree_walk_one(int target,
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-            grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_data->t_max_cr,
-#ifdef PMGRID
-                                      rcut,
-#endif
-                                      SubGrid_CosmicRayEnergyDensity);
+            grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_data->t_max_cr, pm, SubGrid_CosmicRayEnergyDensity);
 #endif
 
 #ifdef RT_USE_GRAVTREE
@@ -972,11 +953,7 @@ gpu_gravtree_walk_one(int target,
              * own table gate keyed on the dm-center distance, outside the main PM gate) */
             if(ptype != 0)
             {
-                grav_dm_scalarfield_accumulate(d_dm, mass_dm_local, h,
-#ifdef PMGRID
-                                               asmthfac, shortrange_tab,
-#endif
-                                               acc);
+                grav_dm_scalarfield_accumulate(d_dm, mass_dm_local, h, pm, acc);
             }
 #endif /* DM_SCALARFIELD_SCREENING */
 
@@ -1331,6 +1308,19 @@ extern "C" int gpu_gravtree_walk_primary(void)
     memcpy(d_stid, shortrange_table_tidal, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #endif
 #endif
+    /* read-only PM short-range config captured by value into the device walk (empty when
+     * !PMGRID; per-target PLACEHIGHRESREGION override happens inside the walk on its copy). */
+    grav_pm_shortrange_t pm_snap{};
+#ifdef PMGRID
+    pm_snap.rcut = rcut_snap; pm_snap.rcut2 = rcut2_snap; pm_snap.asmthfac = asmthfac_snap;
+    pm_snap.shortrange_tab = d_st;
+#ifdef EVALPOTENTIAL
+    pm_snap.shortrange_pot_tab = d_sp;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    pm_snap.shortrange_tidal_tab = d_stid;
+#endif
+#endif
 
 #ifdef RT_USE_GRAVTREE
     const struct gpu_rt_walk_data_t rt_data_dev = rt_data_snap;
@@ -1370,12 +1360,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                                         is_first_step_snap,
 #endif
-#ifdef PMGRID
-                                        rcut_snap, rcut2_snap, asmthfac_snap, d_st, d_sp,
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                                        d_stid,
-#endif
-#endif
+                                        pm_snap,
 #ifdef RT_USE_GRAVTREE
                                         &rt_data_dev,
 #endif

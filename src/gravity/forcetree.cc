@@ -1335,8 +1335,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     center[0] = 0.5 * boxSize_X; center[1] = 0.5 * boxSize_Y; center[2] = 0.5 * boxSize_Z;
 #endif
 #endif
+    int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
 #ifdef PMGRID
-    int tabindex; double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
+    double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
     /* Bad mode (not 0/1): soft bad-stop + return 0 (no export, walk done) — NOT
      * -1, which means "buffer full, retry". Symmetric param check; drains at the
      * export-loop poll. */
@@ -1388,8 +1389,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(SINK_DYNFRICTION_FROMTREE)
     double sink_mass = 0, m_j_eff_for_df = 0;
 #endif
+    double fac_pot = 0;   /* unconditional; a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
 #ifdef EVALPOTENTIAL
-    double fac_pot; MyDouble pot; pot = 0;
+    MyDouble pot; pot = 0;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     tidal_tensorps = {};
@@ -1445,6 +1447,18 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
 #ifdef PMGRID
     rcut2 = rcut * rcut; asmthfac = grav_pm_asmthfac(asmth);
+#endif
+    /* read-only PM short-range config for the shared force helpers (empty when !PMGRID;
+     * built once per target after the PM_PLACEHIGHRESREGION rcut/asmth override above). */
+    grav_pm_shortrange_t pm{};
+#ifdef PMGRID
+    pm.rcut = rcut; pm.rcut2 = rcut2; pm.asmthfac = asmthfac; pm.shortrange_tab = shortrange_table;
+#ifdef EVALPOTENTIAL
+    pm.shortrange_pot_tab = shortrange_table_potential;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    pm.shortrange_tidal_tab = shortrange_table_tidal;
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
@@ -1838,11 +1852,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif // PMGRID //
                 {
 #ifdef PMGRID
-                    grav_force_apply_pm_truncation(tabindex, shortrange_table,
-#ifdef EVALPOTENTIAL
-                                                   shortrange_table_potential, fac_pot,
-#endif
-                                                   fac_accel);
+                    grav_force_apply_pm_truncation(pm, tabindex, fac_pot, fac_accel);
 #endif
 #ifdef EVALPOTENTIAL
                     pot += (fac_pot);
@@ -1874,11 +1884,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                     fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(r_source, r_target, h, mass);
 #endif
-                    grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal,
-#ifdef PMGRID
-                                                 shortrange_table[tabindex], shortrange_table_tidal[tabindex],
-#endif
-                                                 tidal_tensorps);
+                    grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal, pm, tabindex, tidal_tensorps);
 #endif // COMPUTE_TIDAL_TENSOR_IN_GRAVTREE //
 #ifdef COMPUTE_JERK_IN_GRAVTREE
                     grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk);
@@ -1897,11 +1903,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, treecol_angular_bins);
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max,
-#ifdef PMGRID
-                                          rcut,
-#endif
-                                          SubGrid_CosmicRayEnergyDensity);
+                grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max, pm, SubGrid_CosmicRayEnergyDensity);
 #endif
 #ifdef RT_USE_GRAVTREE
                 if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target; payload formulas in the shared helper */
@@ -1939,11 +1941,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef DM_SCALARFIELD_SCREENING
                 if(ptype != 0)    /* we have a dark matter particle as target */
                 {
-                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h,
-#ifdef PMGRID
-                                                   asmthfac, shortrange_table,
-#endif
-                                                   acc);
+                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h, pm, acc);
                 } // closes if(ptype != 0)
 #endif // DM_SCALARFIELD_SCREENING //
                 
