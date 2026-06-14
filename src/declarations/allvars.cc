@@ -331,10 +331,6 @@ struct gravdata_out *GravDataResult,	/*!< holds the partial results computed for
  *GravDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
 
 
-struct potdata_out *PotDataResult,	/*!< holds the partial results computed for imported particles. Note: We use GravDataResult = GravDataGet, such that the result replaces the imported data */
- *PotDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
-
-
 struct addFB_evaluate_data_in_ *addFB_evaluate_DataIn_, *addFB_evaluate_DataGet_; /*!< hold partial results of feedback calls if using various feedback algorithms >*/
 
 

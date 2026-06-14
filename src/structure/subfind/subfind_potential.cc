@@ -20,97 +20,20 @@
 
 void subfind_potential_compute(int num, struct unbind_data *d, int phase, double weakly_bound_limit)
 {
-    int i, j, k, recvTask, ndone, ndone_flag, dummy, ngrp, place, nexport, nimport; /* allocate buffers to arrange communication */
-    All.BunchSize = (long) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + sizeof(struct gravdata_in) +
-                                             sizeof(struct potdata_out) + sizemax(sizeof(struct gravdata_in), sizeof(struct potdata_out))));
-    DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
-    DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-
-    i = 0; /* begin with this index */
-    do
+    int i;
+    /* Each rank computes its local particles' potentials directly from the tree.
+     * Foreign-rank mass is covered by the locally-installed LET nodes (LET is
+     * mandatory; force_treebuild hard-stops on an incomplete LET), so no export/
+     * import round-trip is needed. subfind_potential_compute is reached symmetrically
+     * (only from subfind_col_unbind), so the bad-stop poll below is collective-safe. */
+    for(i = 0; i < num; i++)
     {
-        for(j = 0; j < NTask; j++) {Send_count[j] = 0; Exportflag[j] = -1;}
-        /* do local particles and prepare export list */
-        for(nexport = 0; i < num; i++)
-        {
-            if(phase == 1) {if(P[d[i].index].v.DM_BindingEnergy <= weakly_bound_limit) {continue;}}
-            if(subfind_force_treeevaluate_potential(d[i].index, 0, &nexport, Send_count) < 0) {break;}
-        }
-        qsort(DataIndexTable, nexport, sizeof(struct data_index), data_index_compare);
-        MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-        for(j = 0, nimport = 0, Recv_offset[0] = 0, Send_offset[0] = 0; j < NTask; j++)
-        {
-            nimport += Recv_count[j];
-            if(j > 0)
-            {
-                Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];
-                Recv_offset[j] = Recv_offset[j - 1] + Recv_count[j - 1];
-            }
-        }
-        GravDataGet = (struct gravdata_in *) mymalloc("GravDataGet", nimport * sizeof(struct gravdata_in));
-        GravDataIn = (struct gravdata_in *) mymalloc("GravDataIn", nexport * sizeof(struct gravdata_in));
-        
-        /* prepare particle data for export */
-        for(j = 0; j < nexport; j++)
-        {
-            place = DataIndexTable[j].Index;
-            for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
-            /* Defensive: the imported (mode-1) walk reads GravDataGet[].Soft as the target softening h.
-             * The collective-SUBFIND foreign coverage is supplied by the LET (which is mandatory in GPU
-             * builds), so this export round-trip is currently unreachable (nexport==0); fill Soft anyway so
-             * the value is correct if the pseudo-export path is ever exercised. Matches the mode-0 local read. */
-            GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
-            for(k = 0; k < NODELISTLENGTH; k++) {GravDataIn[j].NodeList[k] = DataNodeList[DataIndexTable[j].IndexGet].NodeList[k];}
-        }
-        /* exchange particle data */
-        for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
-        {
-            recvTask = ThisTask ^ ngrp;
-            if(recvTask < NTask)
-            {
-                if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-                {   /* get the particles */
-                    MPI_Sendrecv(&GravDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_POTENTIAL_A,
-                                 &GravDataGet[Recv_offset[recvTask]], Recv_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_POTENTIAL_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                }
-            }
-        }
-        myfree(GravDataIn);
-        PotDataResult = (struct potdata_out *) mymalloc("PotDataResult", nimport * sizeof(struct potdata_out));
-        PotDataOut = (struct potdata_out *) mymalloc("PotDataOut", nexport * sizeof(struct potdata_out));
-        
-        /* now do the particles that were sent to us */
-        for(j = 0; j < nimport; j++) {subfind_force_treeevaluate_potential(j, 1, &dummy, &dummy);}
-        if(i >= num) {ndone_flag = 1;} else {ndone_flag = 0;}
-        MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        /* all ranks have finished this round's query/import exchange and no peer is waiting in the
-           result exchange yet: drain a too-small-export-buffer soft stop here instead of retrying forever. */
-        gizmo_exit_bad_stop_if_requested("subfind_potential_compute:export_buffer");
-        /* get the result */
-        for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
-        {
-            recvTask = ThisTask ^ ngrp;
-            if(recvTask < NTask)
-            {
-                if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-                {   /* send the results */
-                    MPI_Sendrecv(&PotDataResult[Recv_offset[recvTask]], Recv_count[recvTask] * sizeof(struct potdata_out), MPI_BYTE, recvTask, TAG_POTENTIAL_B,
-                                 &PotDataOut[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct potdata_out), MPI_BYTE, recvTask, TAG_POTENTIAL_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                }
-            }
-            
-        }
-        /* add the results to the local particles */
-        for(j = 0; j < nexport; j++)
-        {
-            place = DataIndexTable[j].Index;
-            P[place].u.DM_Potential += PotDataOut[j].Potential;
-        }
-        myfree(PotDataOut);
-        myfree(PotDataResult);
-        myfree(GravDataGet);
+        if(phase == 1) {if(P[d[i].index].v.DM_BindingEnergy <= weakly_bound_limit) {continue;}}
+        if(subfind_force_treeevaluate_potential(d[i].index) != 0) {break;}    /* LET-incomplete guard tripped */
     }
-    while(ndone < NTask);
+    /* Drain a guard-tripped bad stop on every rank BEFORE any potential-derived
+     * collective logic (the caller's Allgather over the per-rank minimum potential). */
+    gizmo_exit_bad_stop_if_requested("subfind_potential_compute:retired_export_pseudo");
 
     for(i = 0; i < num; i++)
     {
@@ -120,8 +43,6 @@ void subfind_potential_compute(int num, struct unbind_data *d, int phase, double
         P[p].u.DM_Potential *= All.G / All.cf_atime;
         if(All.TotN_gas > 0 && (FOF_SECONDARY_LINK_TYPES & 1) == 0 && (FOF_PRIMARY_LINK_TYPES & 1) == 0 && All.OmegaBaryon > 0) {P[p].u.DM_Potential *= All.OmegaMatter / (All.OmegaMatter - All.OmegaBaryon);}
     }
-    myfree(DataNodeList);
-    myfree(DataIndexTable);
 }
 
 #endif

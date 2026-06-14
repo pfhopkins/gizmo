@@ -593,14 +593,6 @@ extern struct gravdata_out
  *GravDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
 
 
-extern struct potdata_out
-{
-  MyDouble Potential;
-}
- *PotDataResult,		/*!< holds the partial results computed for imported particles. Note: We use GravDataResult = GravDataGet, such that the result replaces the imported data */
- *PotDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
-
-
 extern struct info_block
 {
   char label[4];

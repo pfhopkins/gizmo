@@ -46,7 +46,7 @@ int subfind_contamination_treefind(MyDouble *searchcenter, MyFloat rkern, int ta
                                       int mode, int *nexport, int *nsend_local, double *Mass);
 int subfind_contamination_evaluate(int target, int mode, int *nexport, int *nsend_local);
 void subfind_contamination(void);
-int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_local);
+int subfind_force_treeevaluate_potential(int target);
 void subfind_density(int j);
 void Subfind_DensityOtherProps_Loop(void);
 int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_local);

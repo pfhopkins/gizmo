@@ -2484,167 +2484,83 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
 
 
 #ifdef SUBFIND
-int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_local)
+/* Local-only Barnes-Hut potential walk for SUBFIND unbinding. Foreign-rank mass is
+ * supplied by the locally-installed LET nodes (LET is mandatory and force_treebuild
+ * hard-stops on an incomplete LET), so no export/import round-trip is needed: each
+ * rank fully computes its own particles' DM_Potential. Reaching a pseudo-particle
+ * would mean the LET is incomplete -- a hard correctness failure, since the export
+ * fallback is retired -- so we request a controlled stop and abandon the walk
+ * (return nonzero; the caller drains at its next collective poll before any
+ * potential-derived logic). */
+int subfind_force_treeevaluate_potential(int target)
 {
     struct NODE *nop = 0;
-    MyDouble pot;
-    int no, task, nexport_save, listindex = 0;
-    double r2, dx, dy, dz, mass, r, u, h, h_inv, pos_x, pos_y, pos_z, soft=0;
-    
-    nexport_save = *nexport;
-    pot = 0;
-    if(mode == 0)
-    {
-        pos_x = P[target].Pos[0];
-        pos_y = P[target].Pos[1];
-        pos_z = P[target].Pos[2];
-        soft  = ForceSoftening_KernelRadius(target);
-    }
-    else
-    {
-        pos_x = GravDataGet[target].Pos[0];
-        pos_y = GravDataGet[target].Pos[1];
-        pos_z = GravDataGet[target].Pos[2];
-        soft  = GravDataGet[target].Soft;
-    }
+    MyDouble pot = 0;
+    int no = All.MaxPart;    /* root node */
+    double r2, dx, dy, dz, mass, r, u, h, h_inv, pos_x, pos_y, pos_z;
 
-    h = soft; h_inv = 1.0 / h;
-    
-    if(mode == 0)
-    {
-        no = All.MaxPart;        /* root node */
-    }
-    else
-    {
-        no = GravDataGet[target].NodeList[0];
-        no = Nodes[no].u.d.nextnode;    /* open it */
-    }
-    
+    pos_x = P[target].Pos[0];
+    pos_y = P[target].Pos[1];
+    pos_z = P[target].Pos[2];
+    h = ForceSoftening_KernelRadius(target); h_inv = 1.0 / h;
+
     while(no >= 0)
     {
-        while(no >= 0)
+        if(no < All.MaxPart)    /* single particle: node index is the particle index */
         {
-            if(no < All.MaxPart)    /* single particle */
-            {
-                /* the index of the node is the index of the particle */
-                /* observe the sign */
-                
-                dx = P[no].Pos[0] - pos_x;
-                dy = P[no].Pos[1] - pos_y;
-                dz = P[no].Pos[2] - pos_z;
-                mass = P[no].Mass;
-            }
-            else
-            {
-                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
-                {
-                    if(mode == 0)
-                    {
-                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
-                        {
-                            Exportflag[task] = target;
-                            Exportnodecount[task] = NODELISTLENGTH;
-                        }
-                        
-                        if(Exportnodecount[task] == NODELISTLENGTH)
-                        {
-                            if(*nexport >= All.BunchSize)
-                            {
-                                *nexport = nexport_save;
-                                if(nexport_save == 0) {endrun(13001);} /* buffer too small for even one particle; soft stop drains at subfind_potential_compute's all-rank round poll (the zero-progress -1 below would otherwise retry forever) */
-                                for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
-                                for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
-                                return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-                            }
-                            Exportnodecount[task] = 0;
-                            Exportindex[task] = *nexport;
-                            DataIndexTable[*nexport].Task = task;
-                            DataIndexTable[*nexport].Index = target;
-                            DataIndexTable[*nexport].IndexGet = *nexport;
-                            *nexport = *nexport + 1;
-                            nsend_local[task]++;
-                        }
-                        
-                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
-                        if(Exportnodecount[task] < NODELISTLENGTH) {DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;}
-                    }
-                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
-                    continue;
-                }
-                
-                nop = &Nodes[no];
-                if(mode == 1)
-                {
-                    if(nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))    /* we reached a top-level node again, which means that we are done with the branch */
-                    {
-                        no = -1;
-                        continue;
-                    }
-                }
-                
-                mass = nop->u.d.mass;
-                //if(nop->N_part <= 1)
-                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-                {
-                    if(mass) /* open cell */
-                    {
-                        no = nop->u.d.nextnode;
-                        continue;
-                    }
-                }
-                
-                dx = nop->u.d.s[0] - pos_x;
-                dy = nop->u.d.s[1] - pos_y;
-                dz = nop->u.d.s[2] - pos_z;
-            }
-            GRAVITY_NEAREST_XYZ(dx,dy,dz,-1);
-            r2 = dx * dx + dy * dy + dz * dz;
-            if(no < All.MaxPart)
-            {
-                no = Nextnode[no];
-            }
-            else            /* we have an internal node. Need to check opening criterion */
-            {
-                /* check Barnes-Hut opening criterion */
-                double ErrTolThetaSubfind = All.ErrTolTheta;
-                if(nop->len * nop->len > r2 * ErrTolThetaSubfind * ErrTolThetaSubfind)
-                {
-                    /* open cell */
-                    if(mass)
-                    {
-                        no = nop->u.d.nextnode;
-                        continue;
-                    }
-                }
-                no = nop->u.d.sibling;    /* node can be used */
-            }
-            
-            r = sqrt(r2);
-            if(r >= h)
-            {pot += (-mass / r);}
-            else
-            {
-                u = r * h_inv;
-                pot += ( mass * kernel_gravity(u, h_inv, 1, -1) );
-            }
+            dx = P[no].Pos[0] - pos_x;
+            dy = P[no].Pos[1] - pos_y;
+            dz = P[no].Pos[2] - pos_z;
+            mass = P[no].Mass;
         }
-        if(mode == 1)
+        else
         {
-            listindex++;
-            if(listindex < NODELISTLENGTH)
+            if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle */
             {
-                no = GravDataGet[target].NodeList[listindex];
-                if(no >= 0) {no = Nodes[no].u.d.nextnode;}    /* open it */
+                /* LET supplies complete foreign coverage in all allowed builds; the
+                 * export fallback is retired. A pseudo here means the LET is incomplete. */
+                endrun(90000080);    /* graceful stop request; does NOT return -- abandon this walk */
+                return 1;
             }
+
+            nop = &Nodes[no];
+            mass = nop->u.d.mass;
+            if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
+            {
+                if(mass) {no = nop->u.d.nextnode; continue;}    /* open cell */
+            }
+
+            dx = nop->u.d.s[0] - pos_x;
+            dy = nop->u.d.s[1] - pos_y;
+            dz = nop->u.d.s[2] - pos_z;
+        }
+        GRAVITY_NEAREST_XYZ(dx,dy,dz,-1);
+        r2 = dx * dx + dy * dy + dz * dz;
+        if(no < All.MaxPart)
+        {
+            no = Nextnode[no];
+        }
+        else            /* internal node: check Barnes-Hut opening criterion */
+        {
+            double ErrTolThetaSubfind = All.ErrTolTheta;
+            if(nop->len * nop->len > r2 * ErrTolThetaSubfind * ErrTolThetaSubfind)
+            {
+                if(mass) {no = nop->u.d.nextnode; continue;}    /* open cell */
+            }
+            no = nop->u.d.sibling;    /* node can be used */
+        }
+
+        r = sqrt(r2);
+        if(r >= h)
+        {pot += (-mass / r);}
+        else
+        {
+            u = r * h_inv;
+            pot += ( mass * kernel_gravity(u, h_inv, 1, -1) );
         }
     }
-    
-    /* store result at the proper place */
-    
-    if(mode == 0)
-        P[target].u.DM_Potential = pot;
-    else
-        PotDataResult[target].Potential = pot;
+
+    P[target].u.DM_Potential = pot;
     return 0;
 }
 #endif // SUBFIND //
