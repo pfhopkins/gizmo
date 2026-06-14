@@ -39,8 +39,15 @@ extern "C" {
  *   - TopNodes / DomainNodeIndex are populated on host (i.e.
  *     force_create_empty_nodes has run).
  *
+ * mp (optional): when non-NULL, build the tree over the subset P[mp[i].index]
+ * for i in 0..npart-1 (e.g. SUBFIND per-species / collective unbinding). When
+ * NULL, build over P[0..npart-1] (full/identity). The pipeline is slot-indexed;
+ * the slot->particle map is owned by this TU's scratch and consumed through
+ * gpu_topology_emit_bfs (freed by gpu_topology_build_release).
+ *
  * Returns 0 on success. */
-int gpu_topology_build_data_path(int npart);
+struct unbind_data;
+int gpu_topology_build_data_path(int npart, const struct unbind_data *mp);
 
 /* Read-only accessors.  Return NULL / 0 before data_path has run.
  * Buffers live in SharedSpace -- safe for both host and device reads. */

@@ -480,7 +480,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
          * suns_backup entries with the local particle subtree topology). */
         gpu_nextnode_backup_suns(numnodes);
 
-        if(gpu_topology_build_data_path(npart) != 0) {return -1;}
+        if(gpu_topology_build_data_path(npart, mp) != 0) {return -1;}
         int new_numnodes = numnodes;
         int rc = gpu_topology_emit_bfs(numnodes, &new_numnodes);
         if(rc == 1) {
