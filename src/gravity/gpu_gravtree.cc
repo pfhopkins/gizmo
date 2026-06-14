@@ -352,8 +352,8 @@ gpu_gravtree_walk_one(int target,
 #else
     double soft = All.ForceSoftening[ptype];
 #endif
+    double zeta = 0.0;    /* unconditional (matches CPU walk); passed to the shared pair kernel, consumed there only under #if AGS */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-    double zeta = 0.0;
     grav_target_select_soft_and_zeta(ptype, gpu_get_ags_zeta(P_dev, target), soft, zeta);
 #endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
@@ -366,9 +366,9 @@ gpu_gravtree_walk_one(int target,
     }
 #endif
 
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-    const int ags_bitflag_primary = gravtree_ags_kernel_shared_bitflag(ptype); /* fed to the shared pair kernel's averaging symmetrization (mirrors the CPU walk's per-target precompute) */
-#endif
+    /* fed unconditionally to the shared pair kernel (consumed there only under the
+     * symmetrize-by-averaging #if); matches the CPU walk's unconditional precompute. */
+    const int ags_bitflag_primary = gravtree_ags_kernel_shared_bitflag(ptype);
 
     /* ------------------------------------------------------------------ *
      * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
@@ -524,9 +524,7 @@ gpu_gravtree_walk_one(int target,
         double m_j_eff_for_df = 0.0;
 #endif
         int ptype_sec = -1;   /* unconditional, matching the CPU walk: consumed by the shared pair kernel */
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        double zeta_sec = 0.0;
-#endif
+        double zeta_sec = 0.0;   /* unconditional (matches CPU walk); assigned below only under #if AGS */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         double gasmass = 0.0;
 #endif
@@ -829,14 +827,8 @@ gpu_gravtree_walk_one(int target,
              * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
              * the single home for the pair physics on both walks. */
             {
-                grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-                                                             , zeta, zeta_sec
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                                                             , ags_bitflag_primary
-#endif
-                                                             );
+                grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass,
+                                                             zeta, zeta_sec, ags_bitflag_primary);
                 fac_accel = pair_out.fac_accel;
 #ifdef EVALPOTENTIAL
                 fac_pot = pair_out.fac_pot;

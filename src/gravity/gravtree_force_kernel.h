@@ -188,15 +188,14 @@ struct grav_force_pair_t {
 #endif
 };
 
+/* zeta/zeta_sec (AGS-softening correction) and ags_bitflag_primary (symmetrize-by-
+ * averaging) are passed unconditionally; callers supply 0 when the corresponding flag
+ * is off, and the body consumes them only under the matching #if (no behavior change),
+ * so the signature stays flag-independent and callers cannot drift out of gate order. */
 KOKKOS_INLINE_FUNCTION grav_force_pair_t grav_force_pair(
     double r, double r2, double mass, double h, double h_p,
-    int ptype, int ptype_sec, double pmass
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-    , double zeta, double zeta_sec
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-    , int ags_bitflag_primary
-#endif
+    int ptype, int ptype_sec, double pmass,
+    double zeta, double zeta_sec, int ags_bitflag_primary
     )
 {
     grav_force_pair_t out;

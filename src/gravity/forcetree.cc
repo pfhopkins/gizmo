@@ -1820,14 +1820,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
                  * the single home for the pair physics on both walks. */
                 {
-                    grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-                                                                 , zeta, zeta_sec
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                                                                 , AGS_kernel_shared_BITFLAG
-#endif
-                                                                 );
+                    grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass,
+                                                                 zeta, zeta_sec, AGS_kernel_shared_BITFLAG);
                     fac_accel = pair_out.fac_accel;
 #ifdef EVALPOTENTIAL
                     fac_pot = pair_out.fac_pot;
