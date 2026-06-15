@@ -14,16 +14,16 @@
  *           let_node_essential_for_rank() flags as "could be opened by some
  *           particle in R".  At leaves, synthesize single-particle NODEs
  *           covering all #ifdef payloads (mirrors force_update_node_recursive
- *           single-particle accumulation, forcetree.cc:752-861).  Edge
- *           pointers (sibling/nextnode that exit the shipped subtree) are
- *           encoded via LET_EDGE_SENTINEL so the unpack can rewrite them to
- *           the local topleaf continuation.
+ *           single-particle accumulation, forcetree.cc:752-861).  After a topleaf
+ *           subtree is fully emitted, let_relabel_subtree() resolves every sibling
+ *           continuation to a WIRE index or the single LET_WIRE_EXIT sentinel, so
+ *           the shipped graph is self-contained (no sender indices in topology).
  *      4. let_exchange_nodes          -- MPI_Alltoall counts + MPI_Alltoallv payloads
- *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the
- *           foreign slot range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes);
- *           build remote_id->local_foreign_idx translation table; remap
- *           intra-subtree pointers; rewrite each affected local topleaf's
- *           u.d.nextnode to point at the foreign subtree root.
+ *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the foreign slot
+ *           range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes); rebase each
+ *           wire index to slot_base+wire; map LET_WIRE_EXIT to the local topleaf's
+ *           continuation; redirect each affected local topleaf's u.d.nextnode at the
+ *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
  *  Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
  *  MaxForeignNodes, endrun() with the LETAllocFactor restart message.
@@ -46,29 +46,35 @@
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "../core/step_phases.h"              /* gizmo_verbose_diag() */
 #include "let_data.h"
+#include "gravtree_opening.h"   /* shared Stage-2 opening predicate (cell/AABB variant) */
+#include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
+#include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
 
-/* Sentinel encoding for out-of-subtree sibling pointers:
- *
- *   v == LET_EDGE_SENTINEL_BASE                    -- legacy / nextnode of non-essential nodes:
- *                                                     resolves to topleaf_sibling (plain exit).
- *   v <  LET_EDGE_SENTINEL_BASE  (encoded)          -- sibling pointer exits this recursion level.
- *                                                     The target node index is:
- *                                                       orig_sib = LET_EDGE_SENTINEL_BASE - v
- *                                                     Receiver looks up orig_sib in the wire map.
- *                                                     If found  → slot_base + wire_map[orig_sib]
- *                                                     If absent → topleaf_sibling (genuine exit).
- *
- * Rule: the "last child sibling" sentinel in pack_recurse and the top-level loop must encode the
- * sib_terminator so the receiver can follow the sibling chain across recursion levels.
- * Never-followed nextnode sentinels (non-essential nodes, synthesized leaves) stay as
- * LET_EDGE_SENTINEL_BASE (plain), since they're never decoded.
+/* Temporary EMIT-time encoding for a "last child of a level" sibling whose continuation index
+ * is not yet known (it ships later in walk order).  The last child stores
+ * LET_EDGE_SENTINEL_ENCODE(sender_continuation); once the topleaf subtree is fully emitted,
+ * let_relabel_subtree() resolves every encoded value to a WIRE index (via the per-subtree
+ * sender->wire map, which includes synthesized particle leaves) or LET_WIRE_EXIT.  These encoded
+ * values never reach the receiver -- the installed wire graph carries only wire indices and
+ * LET_WIRE_EXIT.  Encoding is valid for non-negative sender indices only (negative GADGET
+ * terminators map straight to LET_WIRE_EXIT at the encode sites).
  */
 #define LET_EDGE_SENTINEL_BASE         (-1000000)
 #define LET_EDGE_SENTINEL_ENCODE(orig) (LET_EDGE_SENTINEL_BASE - (orig))
-#define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) < LET_EDGE_SENTINEL_BASE)
+/* `<=` (not `<`): ENCODE(0) == BASE must be detected as encoded.  The encode sites only ever
+ * pass a NON-NEGATIVE orig (negative GADGET terminators are mapped straight to LET_WIRE_EXIT),
+ * so every real encoded value is <= BASE; LET_WIRE_EXIT (-2) is far above BASE, no collision. */
+#define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) <= LET_EDGE_SENTINEL_BASE)
 #define LET_EDGE_SENTINEL_DECODE(v)      (LET_EDGE_SENTINEL_BASE - (v))
+
+/* Resolved subtree-exit marker on the wire (post pack-side RELABEL): a sibling/
+ * nextnode equal to LET_WIRE_EXIT means "leave this foreign subtree", which the
+ * receiver maps to the local topleaf's continuation (topleaf_sibling).  Distinct
+ * from any valid wire index (>= 0) and from the encoded terminators (< BASE). */
+#define LET_WIRE_EXIT  (-2)
+
 
 /* ----------------------------------------------------------------------
  * Phase 9.5: active-only LET helpers
@@ -186,12 +192,14 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     }
     if(!found_any)
     {
-        /* No local topleaves.  Use degenerate bbox at origin; min_dist will
-         * be large for all nodes, so essential check returns 0 for everything,
-         * meaning we ship nothing -- correct behavior for a rank with no
-         * particles. */
+        /* No local topleaves -> no real cover.  Set a degenerate origin bbox; the
+         * has_cover flag below marks this rank so senders ship it nothing (the
+         * no-real-receiver guard in let_pack_for_rank).  Without that flag the
+         * degenerate cover + min_OldAcc==0 would make the relative criterion open
+         * every node and over-ship the whole tree to an empty rank. */
         for(int k = 0; k < 3; k++) {out->bbox_min[k] = out->bbox_max[k] = 0.0;}
     }
+    out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
     /* Per-particle bounds.  If active_bitmap is non-NULL, scan only
      * ActiveParticleList (Phase 9.5 tight mode).  Otherwise scan all NumPart
@@ -199,6 +207,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
      * on non-active particles. */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
+    out->min_soft = DBL_MAX;
     out->has_sink = 0;
 
     int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
@@ -219,21 +228,18 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         double oa = (double) P[i].OldAcc;
         if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
 
-        /* max softening kernel radius per type */
+        /* softening kernel radius: track per-type max (relative softening open) and the
+         * global min over the cover (non-NEIGHBORS node-softening open t_h < msoft). */
         double soft = (double) ForceSoftening_KernelRadius(i);
         if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
+        if(soft < out->min_soft) out->min_soft = soft;
 
         if(t == 5) out->has_sink = 1;
     }
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; relative check disabled */
-
-    /* Use relative criterion?  Standard GIZMO: relative is on iff All.ErrTolTheta == 0.
-     * Under GRAVITY_HYBRID_OPENING_CRIT it's also suppressed at first step. */
-#ifdef GRAVITY_HYBRID_OPENING_CRIT
-    out->use_rel_crit = (All.Ti_Current > 0 || RestartFlag == 1) ? 1 : 0;
-#else
-    out->use_rel_crit = (All.ErrTolTheta == 0) ? 1 : 0;
-#endif
+    if(out->min_soft == DBL_MAX) out->min_soft = 0.0;  /* empty cover; conservative (opens softening) */
+    /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
+     * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
 }
 
 /* ----------------------------------------------------------------------
@@ -252,87 +258,77 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
  *
  * Returns 1 if SOME particle in R might open this node (must ship + recurse).
  * Returns 0 if NO particle in R will open this node (ship as multipole-only OR
- * skip).  See handoff_step13_phase9_walk_audit.md for the 20-criterion derivation.
+ * skip).
+ *
+ * Routes the decision through the single shared opening predicate
+ * (gravtree_open_decision_cell) -- the SAME acceptance geometry the GPU/CPU
+ * walk uses, evaluated over a conservative cover of R's particles.  essential
+ * == (the walk would OPEN).  The cover worst-cases each input so the cell opens
+ * whenever ANY target in R's cover would: minimum distance-to-cover (for every
+ * distance-decreasing open test) and maximum for the lone increasing one (PM
+ * cull), max softening (relative softening open), min softening (node-softening
+ * open), min OldAcc (relative criterion), sink target if the cover holds a sink.
  * ---------------------------------------------------------------------- */
 static int let_node_essential_for_rank(double cx, double cy, double cz,
+                                       double sx, double sy, double sz,
                                        double len, double mass, double maxsoft,
+                                       int n_sink,
                                        const struct LETPerRankPayload *p)
 {
-    double r2 = let_point_to_bbox_dist_sq(p->bbox_min, p->bbox_max, cx, cy, cz);
+    double t_soft_max = 0.0;
+    for(int t = 0; t < 6; t++) if(p->max_soft_by_type[t] > t_soft_max) t_soft_max = p->max_soft_by_type[t];
+    double t_aold_min = p->min_OldAcc * All.ErrTolForceAcc;
 
-    /* BH criterion: open if len^2 > r^2 * theta^2 */
-    if(All.ErrTolTheta != 0)
-    {
-        double theta2 = All.ErrTolTheta * All.ErrTolTheta;
-        if(len * len > r2 * theta2) return 1;
-    }
-
-    /* Relative criterion: open if M*len^2 > r^4 * OldAcc * ErrTolForceAcc / G_factor.
-     * GIZMO's relative form uses aold = ErrTolForceAcc * OldAcc.  Smaller aold ->
-     * more permissive opening, so over-include with min(OldAcc) over R. */
-    if(p->use_rel_crit)
-    {
-        if(p->min_OldAcc > 0)
-        {
-            double aold_min = p->min_OldAcc * All.ErrTolForceAcc;
-            double lhs = mass * len * len;
-            double rhs = r2 * r2 * aold_min;
-            if(lhs > rhs) return 1;
-        }
-        else
-        {
-            /* No positive OldAcc info -- conservative: always essential under relative crit */
-            return 1;
-        }
-    }
-
-    /* Softening criterion (target-side): open if r < (target_soft + 0.6 * len).
-     * Use max softening over types in R for max permissiveness. */
-    double max_soft_R = 0.0;
-    for(int t = 0; t < 6; t++)
-    {
-        if(p->max_soft_by_type[t] > max_soft_R) max_soft_R = p->max_soft_by_type[t];
-    }
-    double soft_check = max_soft_R + 0.6 * len;
-    if(r2 < soft_check * soft_check) return 1;
-
-    /* Node-side maxsoft criterion: open if r < (node_maxsoft + 0.6 * len) */
-    double node_soft_check = maxsoft + 0.6 * len;
-    if(r2 < node_soft_check * node_soft_check) return 1;
-
+    double rcut = 0.0, rcut2 = 0.0;
 #ifdef PMGRID
-    /* PM short-range: walk skips nodes outside rcut.  For LET, ship if within
-     * rcut + 0.5*len (walk would touch).  Beyond that, walk skips -- don't ship. */
-    double rcut = (double) All.Rcut[0];
+    rcut = (double) All.Rcut[0];
 #ifdef PM_PLACEHIGHRESREGION
     if((double) All.Rcut[1] > rcut) rcut = (double) All.Rcut[1];
 #endif
-    double pm_check = rcut + 0.5 * len;
-    if(r2 >= pm_check * pm_check) return 0;  /* outside PM short-range; walk would skip */
+    rcut2 = rcut * rcut;
 #endif
 
-#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-    if(p->has_sink)
-    {
-        double ssdgr_check = SINGLE_STAR_DIRECT_GRAVITY_RADIUS + 0.6 * len;
-        if(r2 < ssdgr_check * ssdgr_check) return 1;
-    }
-#endif
+    /* Same first-step value the walk uses (hybrid opening: relative suppressed on step 0). */
+    int is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
 
-    return 0;
+    gravtree_open_t decision = gravtree_open_decision_cell(
+        cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
+        p->bbox_min, p->bbox_max,
+        t_soft_max, p->min_soft, t_aold_min, p->has_sink,
+        rcut, rcut2, is_first_step);
+
+    return (decision == GRAV_OPEN_NODE) ? 1 : 0;
 }
 
 /* ----------------------------------------------------------------------
  * Single-particle leaf NODE/extNODE synthesis.
  *
- * Mirrors the single-particle accumulation in force_update_node_recursive
- * (forcetree.cc:752-861) under the simplification mass = particle.Mass
- * (so all mass-weighted divisions degenerate to identity).  Sets BITFLAG_
- * MULTIPLEPARTICLES so the receiver's walk uses the synthesized multipole
- * directly (exact for single particle) instead of skipping to a non-existent
- * source-side particle.
+ * Builds a LET wire node for ONE particle by routing it through the shared
+ * node-moment construction kernel (gravtree_moment_kernel.h) -- the SAME
+ * physics body the live GPU node-moment venues use -- instead of a hand-
+ * inlined finalized copy.  A moment_node_ref points at the wire's payload
+ * storage; the zeroed wire (memset below) is the fresh accumulator, one
+ * particle is added, and moment_finalize normalizes in place.  RT/sink/CR
+ * source-input gates come from the shared host helper
+ * gravtree_fill_particle_source_inputs (gravtree_moment_sources.h).
  *
- * Edge pointers (sibling/nextnode) start as LET_EDGE_SENTINEL_BASE; the
+ * Sets BITFLAG_MULTIPLEPARTICLES (forced after finalize) so the receiver's
+ * walk uses the synthesized multipole directly (exact for a single particle)
+ * instead of skipping to a non-existent source-side particle.
+ *
+ * Two payloads differ from the previous hand-inlined form, both for a
+ * single-particle leaf and both matching the live GPU venues + the CPU
+ * anchor (so this is a correctness alignment, not dead-field noise):
+ *  - rt_source_lum_s: a sink leaf with sink_lum>0 but no stellar luminosity
+ *    now gets the geometric-center (== particle position) fallback from
+ *    moment_finalize, not 0.  This feeds grav_sink_fb_angleweight under
+ *    RT_SEPARATELY_TRACK_LUMPOS + SINK_PHOTONMOMENTUM at np>=2 -- a real
+ *    single-particle correctness fix.
+ *  - sink_lum_grad: a gated-in sink whose sink_lum_bol returns exactly 0 now
+ *    gets finalize's {0,0,1} fallback rather than the raw angle vector.  The
+ *    walk filters on sink_lum>0, so this field is never read in that case.
+ *
+ * Edge pointers (sibling/nextnode) start as the terminator sentinel; the
  * surrounding pack_recurse caller updates them based on the position of
  * this leaf in the iteration chain.
  * ---------------------------------------------------------------------- */
@@ -348,147 +344,131 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
                                   * fields are simpler (no inbound references except from parent). */
 
     struct particle_data *pa = &P[p_idx];
-    MyFloat mass = (MyFloat) pa->Mass;
     Vec3<MyFloat> pos = {(MyFloat) pa->Pos[0], (MyFloat) pa->Pos[1], (MyFloat) pa->Pos[2]};
-    Vec3<MyFloat> vel = {(MyFloat) pa->Vel[0], (MyFloat) pa->Vel[1], (MyFloat) pa->Vel[2]};
 
-    w->node.center = pos;
-    w->node.len = 0;     /* zero size -- never opens, always treated as multipole */
-    w->node.u.d.s = pos;
-    w->node.u.d.mass = mass;
-    /* CRITICAL: BITFLAG_MULTIPLEPARTICLES=1 forces the walk to use the multipole
-     * (exact for single particle).  Without it, walk skips and tries to access
-     * the source-side particle, which doesn't exist on the receiver. */
-    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
-    w->node.u.d.sibling = sib_terminator_sentinel;
-    w->node.u.d.nextnode = sib_terminator_sentinel;
-    w->node.u.d.father = -1;  /* foreign nodes have no father in OUR tree */
-    w->node.GravCost = 0;
-    w->node.Ti_current = All.Ti_Current;
-    w->node.N_part = 1;
-    w->node.maxsoft = (MyFloat) ForceSoftening_KernelRadius(p_idx);
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    if(pa->Type == 5 && pa->KernelRadius > w->node.maxsoft) w->node.maxsoft = (MyFloat) pa->KernelRadius;
-#endif
-
-    /* Optional payload fields, mirroring forcetree.cc:752-861 single-particle contribution */
-
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    if(pa->Type == 0) w->node.gasmass = mass;
+    /* Build the per-particle source POD for the moment kernel.  Geometry/bounds
+     * are venue-owned; RT/sink/CR source inputs come from the shared host gate
+     * helper (the same gates the GPU precompute venues apply). */
+    moment_particle_src<MyFloat> src = {};
+    src.mass              = (double) pa->Mass;
+    src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
+    src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+    src.type              = pa->Type;
+    src.kernel_radius     = (double) pa->KernelRadius;
+    src.max_kernel_radius = (double) All.MaxKernelRadius;
+    src.force_softening   = ForceSoftening_KernelRadius(p_idx);
+    src.particle_divvel   = (double) pa->Particle_DivVel;
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-    if(pa->Type == 5) w->node.gasmass = (MyFloat) P[p_idx].Sink_Mass_Reservoir;
+    src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
 #endif
+#if defined(SPECIAL_POINT_MOTION)
+    src.acc_prevstep[0] = (double) pa->Acc_Total_PrevStep[0];
+    src.acc_prevstep[1] = (double) pa->Acc_Total_PrevStep[1];
+    src.acc_prevstep[2] = (double) pa->Acc_Total_PrevStep[2];
 #endif
-
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    w->node.cr_injection = (MyFloat) cr_get_source_injection_rate(p_idx, P, CellP);
+#if defined(SINK_CALC_DISTANCES) && defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    src.max_feedback_vel = (double) pa->MaxFeedbackVel;
 #endif
-
-#ifdef RT_USE_GRAVTREE
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    for(int k = 0; k < 6; k++) { src.tidal_prevstep[k] = (double) pa->tidal_tensorps_prevstep.data[k]; }
+#endif
     {
-        double lum[N_RT_FREQ_BINS];
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p_idx, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            for(int k = 0; k < N_RT_FREQ_BINS; k++) { src.src_lum[k] = (double) in.src_lum[k]; }
 #ifdef CHIMES_STELLAR_FLUXES
-        double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS];
-        double chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-        int active_check = rt_get_source_luminosity_chimes(p_idx, 1, lum, chimes_lum_G0, chimes_lum_ion, P, CellP);
-#else
-        int active_check = rt_get_source_luminosity(p_idx, 1, lum, P, CellP);
-#endif
-        if(active_check)
-        {
-            for(int k = 0; k < N_RT_FREQ_BINS; k++) w->node.stellar_lum[k] = (MyFloat) lum[k];
-#ifdef CHIMES_STELLAR_FLUXES
-            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
-            {
-                w->node.chimes_stellar_lum_G0[k] = chimes_lum_G0[k];
-                w->node.chimes_stellar_lum_ion[k] = chimes_lum_ion[k];
+            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++) {
+                src.src_lum_G0[k]  = in.src_lum_G0[k];
+                src.src_lum_ion[k] = in.src_lum_ion[k];
             }
 #endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-            /* For a single particle, luminosity-weighted position == particle position;
-             * after the divide-by-l_tot the result is just pos. */
-            w->node.rt_source_lum_s = pos;
-            w->extnode.rt_source_lum_vs = vel;
-            w->extnode.rt_source_lum_dp = {};
-#endif
         }
-        /* If !active_check: stellar_lum stays zero (memset above) -- correct */
-    }
 #endif
-
 #ifdef SINK_PHOTONMOMENTUM
-    if(pa->Type == 5)
-    {
-        if(pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0)
-        {
-            double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p_idx);
-            w->node.sink_lum = (MyFloat) BHLum;
-            /* sink_lum_grad after div-by-sink_lum = the unweighted vector for single particle */
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            w->node.sink_lum_grad[0] = (MyFloat) pa->Sink_Specific_AngMom[0];
-            w->node.sink_lum_grad[1] = (MyFloat) pa->Sink_Specific_AngMom[1];
-            w->node.sink_lum_grad[2] = (MyFloat) pa->Sink_Specific_AngMom[2];
-#else
-            w->node.sink_lum_grad[0] = (MyFloat) pa->GradRho[0];
-            w->node.sink_lum_grad[1] = (MyFloat) pa->GradRho[1];
-            w->node.sink_lum_grad[2] = (MyFloat) pa->GradRho[2];
-#endif
+        if(in.bh_active) {
+            src.bh_lum      = (double) in.bh_lum;
+            src.bh_angle[0] = (double) in.bh_angle[0];
+            src.bh_angle[1] = (double) in.bh_angle[1];
+            src.bh_angle[2] = (double) in.bh_angle[2];
         }
-        /* else: sink_lum stays 0 (memset); walk's sink_lum > 0 check filters out */
-    }
 #endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        src.cr_inject = (double) in.cr_inject;
+#endif
+    }
 
+    /* Point a moment_node_ref at the wire's payload storage and run the shared
+     * add_particle + finalize (zero == the memset above for a fresh leaf). */
+    moment_node_ref<MyFloat> ref = {};
+    ref.mass     = &w->node.u.d.mass;
+    ref.s        = &w->node.u.d.s;
+    ref.vs       = &w->extnode.vs;
+    ref.Npart    = &w->node.N_part;
+    ref.hmax     = &w->extnode.hmax;
+    ref.vmax     = &w->extnode.vmax;
+    ref.divVmax  = &w->extnode.divVmax;
+    ref.maxsoft  = &w->node.maxsoft;
+    ref.bitflags = NULL;   /* multiple-particles bit forced below, after finalize */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    ref.gasmass  = &w->node.gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+    ref.stellar_lum = &w->node.stellar_lum[0];
+#ifdef CHIMES_STELLAR_FLUXES
+    ref.chimes_G0  = &w->node.chimes_stellar_lum_G0[0];
+    ref.chimes_ion = &w->node.chimes_stellar_lum_ion[0];
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    ref.rt_s  = &w->node.rt_source_lum_s;
+    ref.rt_vs = &w->extnode.rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    ref.sink_lum      = &w->node.sink_lum;
+    ref.sink_lum_grad = &w->node.sink_lum_grad;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    ref.cr_inject = &w->node.cr_injection;
+#endif
 #ifdef SINK_CALC_DISTANCES
-    if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-    {
-        w->node.sink_mass = mass;
-        w->node.sink_pos = pos;  /* pos*mass / mass = pos */
+    ref.sink_mass = &w->node.sink_mass;
+    ref.sink_pos  = &w->node.sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        w->node.N_SINK = 1;
-        w->node.sink_vel = vel;
-#ifdef SPECIAL_POINT_MOTION
-        w->node.sink_acc[0] = (MyFloat) pa->Acc_Total_PrevStep[0];
-        w->node.sink_acc[1] = (MyFloat) pa->Acc_Total_PrevStep[1];
-        w->node.sink_acc[2] = (MyFloat) pa->Acc_Total_PrevStep[2];
+    ref.N_SINK   = &w->node.N_SINK;
+    ref.sink_vel = &w->node.sink_vel;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    ref.sink_acc = &w->node.sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-        w->node.MaxFeedbackVel = (MyFloat) pa->MaxFeedbackVel;
+    ref.max_fbvel = &w->node.MaxFeedbackVel;
 #endif
 #endif
-    }
-#endif
-
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    for(int k = 0; k < 6; k++)
-        w->node.tidal_tensorps_prevstep.data[k] = (MyFloat) pa->tidal_tensorps_prevstep.data[k];
+    ref.tidal = &w->node.tidal_tensorps_prevstep.data[0];
 #endif
-
 #ifdef DM_SCALARFIELD_SCREENING
-    if(pa->Type != 0)
-    {
-        w->node.mass_dm = mass;
-        w->node.s_dm = pos;
-        w->extnode.vs_dm = vel;
-        w->extnode.dp_dm = {};
-    }
+    ref.mass_dm = &w->node.mass_dm;
+    ref.s_dm    = &w->node.s_dm;
+    ref.vs_dm   = &w->extnode.vs_dm;
 #endif
 
-    /* extnode core fields */
-    w->extnode.dp = {};
-    w->extnode.vs = vel;
-    w->extnode.vmax = (MyFloat) fmax(fabs(pa->Vel[0]), fmax(fabs(pa->Vel[1]), fabs(pa->Vel[2])));
-    if(pa->Type == 0)
-    {
-        double htmp = (double) pa->KernelRadius;
-        if(htmp > (double) All.MaxKernelRadius) htmp = (double) All.MaxKernelRadius;
-        w->extnode.hmax = (MyFloat) htmp;
-        w->extnode.divVmax = (MyFloat) pa->Particle_DivVel;
-    }
-    else
-    {
-        w->extnode.hmax = 0;
-        w->extnode.divVmax = 0;
-    }
+    moment_accum_add_particle<moment_plain_ops, MyFloat>(ref, src);
+    moment_finalize<MyFloat>(ref, pos);
+
+    /* wire topology + the forced multiple-particles bit (finalize left bitflags
+     * untouched since ref.bitflags was null). */
+    w->node.center       = pos;
+    w->node.len          = 0;   /* zero size -- never opens, always treated as multipole */
+    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
+    w->node.u.d.sibling  = sib_terminator_sentinel;
+    w->node.u.d.nextnode = sib_terminator_sentinel;
+    w->node.u.d.father   = -1;  /* foreign nodes have no father in OUR tree */
+    w->node.GravCost     = 0;
+    w->node.Ti_current   = All.Ti_Current;
+    w->node.N_part       = 1;
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag = 0;
 }
@@ -554,10 +534,17 @@ static void pack_recurse(int no, int sib_terminator,
     double cx = (double) Nodes[no].center[0];
     double cy = (double) Nodes[no].center[1];
     double cz = (double) Nodes[no].center[2];
+    double sx = (double) Nodes[no].u.d.s[0];
+    double sy = (double) Nodes[no].u.d.s[1];
+    double sz = (double) Nodes[no].u.d.s[2];
     double len = (double) Nodes[no].len;
     double mass = (double) Nodes[no].u.d.mass;
     double maxsoft = (double) Nodes[no].maxsoft;
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, len, mass, maxsoft, payload);
+    int node_nsink = 0;
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+    node_nsink = Nodes[no].N_SINK;
+#endif
+    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, node_nsink, payload);
 
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
@@ -569,9 +556,11 @@ static void pack_recurse(int no, int sib_terminator,
     w->_pad0 = 0;
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
-    /* Edge pointers: tentatively encode as sentinel; updated below if children land within S_R */
-    w->node.u.d.sibling = LET_EDGE_SENTINEL_BASE;
-    w->node.u.d.nextnode = LET_EDGE_SENTINEL_BASE;
+    /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
+     * wire index (or an encoded terminator resolved by RELABEL) and nextnode with the
+     * first shipped child's wire index when this node is opened-into. */
+    w->node.u.d.sibling = LET_WIRE_EXIT;
+    w->node.u.d.nextnode = LET_WIRE_EXIT;
     w->node.u.d.father = -1;  /* foreign nodes have no local father */
 
     if(!is_essential)
@@ -615,7 +604,7 @@ static void pack_recurse(int no, int sib_terminator,
             grow_wire_buf(buf, *count + 1, capacity);
             if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
             child_wire_idx = (*count)++;
-            let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*buf)[child_wire_idx]);
+            let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
         }
         else if(child < All.MaxPart + MaxNodes)
@@ -666,14 +655,106 @@ static void pack_recurse(int no, int sib_terminator,
         (*buf)[my_idx].node.u.d.nextnode = first_child_wire_idx;
         if(last_child_wire_idx >= 0)
         {
-            /* Last child's sibling encodes sib_terminator so the receiver can find the
-             * wire copy of the next sibling at this level (if it was shipped) or fall back
-             * to topleaf_sibling (if it wasn't).  See LET_EDGE_SENTINEL_ENCODE. */
-            (*buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_terminator);
+            /* Last child's sibling is the level's continuation, resolved to a wire index by
+             * RELABEL.  A negative sender terminator (GADGET "end of walk") is a true subtree
+             * exit -> LET_WIRE_EXIT directly (the encoding is only valid for non-negative
+             * indices: ENCODE(-1) would alias above BASE and escape IS_ENCODED). */
+            (*buf)[last_child_wire_idx].node.u.d.sibling =
+                (sib_terminator < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_terminator);
         }
     }
     /* else: no children shipped (e.g., all were particles outside essential range);
-     *       nextnode stays sentinel; receiver will treat as multipole-leaf. */
+     *       nextnode stays LET_WIRE_EXIT; receiver will treat as multipole-leaf. */
+}
+
+/* ----------------------------------------------------------------------
+ * Wire-space terminator resolution (pack side).
+ *
+ * EMIT links consecutive shipped children by their wire index directly; the
+ * only deferred links are the "last child of a level" sibling terminators,
+ * emitted as LET_EDGE_SENTINEL_ENCODE(sender_continuation) because the
+ * continuation's wire index is not known yet.  Once a topleaf subtree is fully
+ * emitted, RELABEL resolves every encoded terminator to a WIRE index (via a
+ * per-subtree sender->wire map that INCLUDES synthesized particle leaves, keyed
+ * by particle index) or the single LET_WIRE_EXIT sentinel.  The receiver then
+ * never reconstructs sender topology: install rebases wire -> slot_base+wire and
+ * maps LET_WIRE_EXIT -> the local topleaf's continuation.
+ * ---------------------------------------------------------------------- */
+struct let_kw { int key; int wire; };
+static int let_kw_cmp(const void *a, const void *b)
+{
+    int ka = ((const struct let_kw *)a)->key, kb = ((const struct let_kw *)b)->key;
+    return (ka > kb) - (ka < kb);
+}
+
+/* Resolve a sender continuation index `x` to a subtree-local wire index or
+ * LET_WIRE_EXIT, mirroring the pack walk's skip of unshipped pseudo/foreign
+ * nodes.  A missing in-subtree internal/particle continuation is a hard error
+ * (loud + graceful stop): silently skipping it is exactly the class of graph
+ * truncation this rewrite removes.  map is sorted by key over [lo_w,hi_w). */
+static int let_resolve_continuation(int x, int topleaf_term,
+                                    const struct let_kw *map, int map_n, int lo_w, int hi_w)
+{
+    int bound = (hi_w - lo_w) + NTopleaves + 16, guard = 0;
+    while(++guard < bound)
+    {
+        if(x < 0 || x == topleaf_term) return LET_WIRE_EXIT;          /* the true subtree exit */
+        struct let_kw probe; probe.key = x;
+        const struct let_kw *hit = (const struct let_kw *)
+            bsearch(&probe, map, map_n, sizeof(struct let_kw), let_kw_cmp);
+        if(hit) return hit->wire;                                     /* shipped -> wire (incl synth leaf) */
+        /* x is a non-shipped continuation; classify by EXPLICIT range (this is topology-repair
+         * code -- an unclassifiable positive index must abort, never index Nodes[] blindly). */
+        if(x >= 0 && x < All.MaxPart)
+        {
+            printf("LET pack FATAL: particle %d referenced as a sibling continuation but not shipped "
+                   "and not the subtree terminator (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000072);
+            return LET_WIRE_EXIT;
+        }
+        else if(x >= All.MaxPart && x < All.MaxPart + MaxNodes)
+        {
+            printf("LET pack FATAL: in-subtree internal node %d not shipped but referenced as a "
+                   "sibling continuation (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000071);
+            return LET_WIRE_EXIT;
+        }
+        else if(x >= All.MaxPart + MaxNodes && x < All.MaxPart + MaxNodes + MaxForeignNodes)
+            x = Nodes[x].u.d.sibling;                                 /* foreign: skip as the walk does */
+        else if(x >= All.MaxPart + MaxNodes + MaxForeignNodes)
+            x = Nextnode[x - MaxNodes - MaxForeignNodes];             /* pseudo: skip as the walk does */
+        else
+        {
+            printf("LET pack FATAL: unclassifiable continuation index %d (rank %d).\n",
+                   x, ThisTask); fflush(stdout); endrun(90000076);
+            return LET_WIRE_EXIT;
+        }
+    }
+    printf("LET pack FATAL: resolve_continuation guard exceeded (rank %d).\n", ThisTask);
+    fflush(stdout); endrun(90000073);
+    return LET_WIRE_EXIT;
+}
+
+/* RELABEL a just-emitted topleaf subtree [lo_w,hi_w): build the sender->wire map
+ * and resolve every encoded sibling terminator to a wire index / LET_WIRE_EXIT.
+ * map_scratch is caller-owned, sized >= (hi_w-lo_w). */
+static void let_relabel_subtree(struct LETNodeWire *buf, int lo_w, int hi_w,
+                                int topleaf_term, struct let_kw *map_scratch)
+{
+    int n = hi_w - lo_w;
+    for(int i = 0; i < n; i++)
+    {
+        int rid = buf[lo_w + i].remote_id;
+        map_scratch[i].key  = (rid < 0) ? (-1 - rid) : rid;   /* synth leaf -> particle index; node -> node index */
+        map_scratch[i].wire = lo_w + i;
+    }
+    qsort(map_scratch, n, sizeof(struct let_kw), let_kw_cmp);
+    for(int w = lo_w; w < hi_w; w++)
+    {
+        int sib = buf[w].node.u.d.sibling;
+        if(LET_EDGE_SENTINEL_IS_ENCODED(sib))
+            buf[w].node.u.d.sibling =
+                let_resolve_continuation(LET_EDGE_SENTINEL_DECODE(sib), topleaf_term, map_scratch, n, lo_w, hi_w);
+        /* nextnode is never encoded: it is either a plain first-child wire index or LET_WIRE_EXIT. */
+    }
 }
 
 extern "C" int let_pack_for_rank(int R,
@@ -688,8 +769,17 @@ extern "C" int let_pack_for_rank(int R,
 {
     int count = 0;
     int hdr_count = 0;
-    /* Phase 9.5: short-circuit when receiver R has zero active particles.
-     * R cannot use any LET nodes we'd ship; skip the entire local-tree walk. */
+    /* No-real-receiver guard: ship nothing to a receiver with no local cover at all (no owned
+     * topleaves -> degenerate origin bbox).  Inactive particles still count; only a rank with
+     * zero local cover is skipped.  Without this the all-local cover would over-open the whole
+     * tree for an empty rank (its min_OldAcc==0 makes the relative criterion open everything). */
+    if(!all_ranks[R].has_cover)
+    {
+        *out_hdr_count = 0;
+        return 0;
+    }
+    /* Phase 9.5 (experimental active-receiver-cover mode only): short-circuit when receiver R
+     * has zero active particles.  receiver_active_bitmap is NULL on the default all-local path. */
     if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
     {
         *out_hdr_count = 0;
@@ -743,7 +833,7 @@ extern "C" int let_pack_for_rank(int R,
                 grow_wire_buf(out_buf, count + 1, out_capacity);
                 if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
                 child_wire_idx = count;
-                let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*out_buf)[count]);
+                let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
                 count++;
                 next_child = Nextnode[child];
             }
@@ -770,15 +860,24 @@ extern "C" int let_pack_for_rank(int R,
             }
             child = next_child;
         }
-        /* Last top-level child: encode sib_term (= topleaf.sibling) so receiver resolves
-         * via the wire map (falls back to topleaf_sibling since sib_term is never packed). */
+        /* Last top-level child: continuation = sib_term (= topleaf.sibling), resolved to a wire
+         * index / LET_WIRE_EXIT by RELABEL.  Negative terminator -> LET_WIRE_EXIT directly. */
         if(last_child_wire_idx >= 0)
-            (*out_buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_term);
+            (*out_buf)[last_child_wire_idx].node.u.d.sibling =
+                (sib_term < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_term);
 
         /* Emit subtree header if this topleaf shipped any nodes */
         int subtree_count = count - wire_offset_before;
         if(subtree_count > 0)
         {
+            /* RELABEL: the subtree is fully emitted, so resolve every encoded sibling
+             * terminator to a wire index (incl. synth-leaf particles) or LET_WIRE_EXIT.
+             * After this, the wire graph is self-contained: install only rebases indices. */
+            struct let_kw *map_scratch = (struct let_kw *) malloc((size_t)subtree_count * sizeof(struct let_kw));
+            if(!map_scratch) { g_let_pack_oom = 1; goto pack_oom_bail; }
+            let_relabel_subtree(*out_buf, wire_offset_before, count, sib_term, map_scratch);
+            free(map_scratch);
+
             grow_hdr_buf(out_hdr_buf, hdr_count + 1, out_hdr_capacity);
             if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
             (*out_hdr_buf)[hdr_count].topleaf_idx = i;
@@ -934,56 +1033,24 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
 }
 
 /* ----------------------------------------------------------------------
- * Step 5: unpack received nodes into Nodes_base[] foreign range; remap
- *         pointers via remote_id->local_foreign_idx translation table;
- *         redirect each affected local topleaf's u.d.nextnode.
+ * Step 5: install received nodes into the Nodes_base[] foreign slot range and
+ *         splice them into the local walk.  The wire graph is self-contained
+ *         (pack's let_relabel_subtree() resolved all topology to wire indices /
+ *         LET_WIRE_EXIT), so the receiver does NOT reconstruct sender topology.
  *
- * Each sender's wire data is self-contained: shipped node indices reference
- * indices WITHIN this sender's wire buffer (we converted them in pack to
- * wire-indices, with sentinels for subtree-edge pointers).  So unpack per
- * sender:
- *   1. Allocate consecutive foreign slots for this sender's nodes.
- *   2. Build per-sender translation: wire_idx -> local_foreign_slot.
- *      (NOTE: the wire layout uses wire-local indices in u.d.{sibling,nextnode},
- *       NOT the original source-rank Nodes_base indices; pack stored wire
- *       offsets directly to simplify this step.)
- *   3. For each unpacked node, remap its sibling/nextnode/father using the
- *      translation; sentinel -> source-side topleaf's sibling on receiver.
- *      WAIT: we need to know WHICH local topleaf this subtree corresponds to.
+ * Per sender r (payload length recv_count_per_rank[r]):
+ *   - byte-copy each LETNodeWire into a consecutive foreign slot;
+ *   - rebase each u.d.{sibling,nextnode} value V: V in [0,rcount) -> slot_base+V,
+ *     V == LET_WIRE_EXIT -> mapped (Pass 2) to the owning local topleaf's
+ *     continuation; anything else is a malformed graph and aborts loudly;
+ *   - each subtree header h (topleaf_idx in the SHARED DomainNodeIndex[]/
+ *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
+ *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
  *
- * Fixme/limitation:  Per-subtree topleaf attribution requires extra metadata
- * we haven't carried in the wire format yet.  For Phase 9.1 first-cut, we
- * store the topleaf-correspondence by linking the foreign subtree's ROOT to
- * the local topleaf via DomainNodeIndex[] -- the foreign root's _pad0 field
- * carries the LOCAL topleaf node index that this subtree belongs to.  Pack
- * sets this when starting a new subtree-root entry.
- *
- * To keep this manageable: pack stores per-subtree-root the local topleaf_no
- * in the FIRST wire entry's _pad0 field, with a flag in remote_id high bits
- * to signal "I am a subtree root."  Unpack walks per-sender, identifies subtree
- * roots, and uses _pad0 as the topleaf-correspondence target.
+ * Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
+ * MaxForeignNodes, return LET_OVERFLOW_RETRYABLE without installing; the
+ * force_treebuild loop ratchets the arena and retries.
  * ---------------------------------------------------------------------- */
-
-/* Phase 9.1e_v2: install nodes per-sender into contiguous foreign slots,
- * remap intra-sender wire indices to absolute Node indices, resolve
- * subtree-edge sentinels via per-subtree topleaf, and redirect each affected
- * local topleaf's u.d.nextnode at the foreign subtree root.
- *
- * Key invariants:
- *   - Within sender r's flat node payload of length recv_count_per_rank[r],
- *     each LETNodeWire's u.d.{sibling,nextnode} value V is either:
- *       * V in [0, recv_count_per_rank[r])  -> intra-sender wire index;
- *         remap to slot_base_r + V.
- *       * V == LET_EDGE_SENTINEL_BASE       -> subtree-edge: redirect to
- *         the LOCAL topleaf's u.d.sibling (lookup via the subtree header
- *         that owns this node's wire range).
- *       * V == -1 (legacy "end of walk")    -> leave as-is.
- *       * other negative                    -> leave as-is (defensive).
- *   - Each subtree header h carries topleaf_idx referring to the SHARED
- *     DomainNodeIndex[]/DomainTask[] partition (same on every rank).  The
- *     receiver redirects Nodes[DomainNodeIndex[h.topleaf_idx]].u.d.nextnode
- *     -> slot_base_r + h.wire_offset.
- */
 extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
                                        int recv_count_total,
@@ -1024,27 +1091,11 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 
         int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
 
-        /* Build orig_to_wire[]: maps sender-side node index -> wire index (0-based within this
-         * sender's rcount-wide buffer).  Used to resolve LET_EDGE_SENTINEL_ENCODE sentinels
-         * where the encoded sibling may point to another packed node in the same sender's buffer.
-         * Array is indexed as (remote_id - All.MaxPart); remote_id in [All.MaxPart, All.MaxPart+MaxNodes).
-         * Synthesized particle leaves (remote_id < 0) are not in the map -- their nextnode sentinels
-         * are never followed (len=0 leaf always closed by BH criterion). */
-        int *orig_to_wire = (int *) mymalloc("orig_to_wire", MaxNodes * sizeof(int));
-        for(int jj = 0; jj < MaxNodes; jj++) orig_to_wire[jj] = -1;
-        for(int j = 0; j < rcount; j++)
-        {
-            int rid = recv_buf[node_off + j].remote_id;
-            if(rid >= All.MaxPart && rid < All.MaxPart + MaxNodes)
-                orig_to_wire[rid - All.MaxPart] = j;
-        }
-
-        /* Pass 1: install nodes (raw byte copy), remap intra-sender wire indices,
-         * resolve both plain sentinels (LET_EDGE_SENTINEL_BASE) and encoded sentinels
-         * (LET_EDGE_SENTINEL_ENCODE(orig_sib)) in sibling/nextnode.  We do NOT yet
-         * know topleaf_sibling per node (that requires the header lookup), so encoded
-         * sentinels that fall back (orig_sib not in map) are temporarily marked with
-         * LET_EDGE_SENTINEL_BASE and resolved in Pass 2. */
+        /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
+         * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
+         * wire index or LET_WIRE_EXIT -- so each sibling/nextnode is either LET_WIRE_EXIT
+         * (resolved to the local topleaf continuation in Pass 2) or an intra-sender wire
+         * index in [0,rcount).  No sender-index reconstruction; remote_id is identity-only. */
         for(int j = 0; j < rcount; j++)
         {
             int abs_idx = slot_base + j;
@@ -1053,34 +1104,20 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 
             int sib  = Nodes[abs_idx].u.d.sibling;
             int next = Nodes[abs_idx].u.d.nextnode;
-
-            /* Remap intra-buffer wire indices first */
-            if(sib  >= 0 && sib  < rcount) { Nodes[abs_idx].u.d.sibling  = slot_base + sib; sib = Nodes[abs_idx].u.d.sibling; }
-            if(next >= 0 && next < rcount) { Nodes[abs_idx].u.d.nextnode = slot_base + next; next = Nodes[abs_idx].u.d.nextnode; }
-
-            /* Resolve encoded sentinel for sibling */
-            if(LET_EDGE_SENTINEL_IS_ENCODED(sib))
+            if(sib != LET_WIRE_EXIT)
             {
-                int orig_sib = LET_EDGE_SENTINEL_DECODE(sib);
-                if(orig_sib >= All.MaxPart && orig_sib < All.MaxPart + MaxNodes && orig_to_wire[orig_sib - All.MaxPart] >= 0)
-                    Nodes[abs_idx].u.d.sibling = slot_base + orig_to_wire[orig_sib - All.MaxPart];
-                else
-                    Nodes[abs_idx].u.d.sibling = LET_EDGE_SENTINEL_BASE; /* resolved in Pass 2 */
+                if(sib >= 0 && sib < rcount) Nodes[abs_idx].u.d.sibling = slot_base + sib;
+                else { printf("LET install FATAL: node slot %d sibling wire %d out of [0,%d) and != EXIT "
+                              "(rank %d).\n", abs_idx, sib, rcount, ThisTask); fflush(stdout); endrun(90000074); }
             }
-            /* Resolve encoded sentinel for nextnode (non-essential / synth leaves -- usually
-             * never followed, but resolve for correctness) */
-            if(LET_EDGE_SENTINEL_IS_ENCODED(next))
+            if(next != LET_WIRE_EXIT)
             {
-                int orig_next = LET_EDGE_SENTINEL_DECODE(next);
-                if(orig_next >= All.MaxPart && orig_next < All.MaxPart + MaxNodes && orig_to_wire[orig_next - All.MaxPart] >= 0)
-                    Nodes[abs_idx].u.d.nextnode = slot_base + orig_to_wire[orig_next - All.MaxPart];
-                else
-                    Nodes[abs_idx].u.d.nextnode = LET_EDGE_SENTINEL_BASE;
+                if(next >= 0 && next < rcount) Nodes[abs_idx].u.d.nextnode = slot_base + next;
+                else { printf("LET install FATAL: node slot %d nextnode wire %d out of [0,%d) and != EXIT "
+                              "(rank %d).\n", abs_idx, next, rcount, ThisTask); fflush(stdout); endrun(90000075); }
             }
-
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
         }
-        myfree(orig_to_wire);
 
         /* Pass 2: resolve remaining plain sentinels (LET_EDGE_SENTINEL_BASE) to topleaf_sibling,
          * and redirect each affected local topleaf's u.d.nextnode at the foreign subtree root. */
@@ -1101,16 +1138,29 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
             int subtree_root    = slot_base + wire_off;
 
-            /* Resolve remaining plain sentinels (fallbacks + non-essential nextnode) */
+            /* Map this subtree's LET_WIRE_EXIT markers to the local topleaf's continuation, and
+             * assert HEADER-RANGE CONFINEMENT: every intra-subtree topology link must stay within
+             * this header's foreign range [subtree_root, subtree_root+wire_cnt); the only edge that
+             * leaves it is the exit -> topleaf_sibling.  Pack builds wire indices per-subtree so this
+             * holds by construction; the check makes a cross-header link loud rather than silent. */
+            int sub_lo = subtree_root, sub_hi = subtree_root + wire_cnt;
             for(int j = wire_off; j < wire_off + wire_cnt; j++)
             {
                 int abs_idx = slot_base + j;
-                if(Nodes[abs_idx].u.d.sibling  == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
-                if(Nodes[abs_idx].u.d.nextnode == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.sibling  == LET_WIRE_EXIT) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.nextnode == LET_WIRE_EXIT) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+                int s = Nodes[abs_idx].u.d.sibling, n = Nodes[abs_idx].u.d.nextnode;
+                if(s != topleaf_sibling && !(s >= sub_lo && s < sub_hi))
+                { printf("LET install FATAL: node slot %d sibling %d escapes header range [%d,%d) and "
+                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, s, sub_lo, sub_hi, topleaf_sibling, ThisTask);
+                  fflush(stdout); endrun(90000077); }
+                if(n != topleaf_sibling && !(n >= sub_lo && n < sub_hi))
+                { printf("LET install FATAL: node slot %d nextnode %d escapes header range [%d,%d) and "
+                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, n, sub_lo, sub_hi, topleaf_sibling, ThisTask);
+                  fflush(stdout); endrun(90000078); }
             }
 
             /* Redirect local topleaf at the foreign subtree root (AoS + SoA). */
-            int old_nn = Nodes[local_topleaf_no].u.d.nextnode;
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
             gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
         }
@@ -1149,10 +1199,14 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
-    /* Phase 9.5: compute local active-topleaf bitmap and Allgather across
-     * ranks.  Then pass MY bitmap into the payload (for tighter bbox/bounds)
-     * and EACH RECEIVER R's bitmap into let_pack_for_rank(R) (for short-
-     * circuit when R is fully inactive this step). */
+    /* All-local receiver cover: ship every node any LOCAL particle could open, to every
+     * receiver, with no active-particle downscope.  The shared cell predicate (conservative +
+     * walk-consistent) plus the self-sizing foreign arena keep this safe and complete -- including
+     * the inactive / TREECOL / RT consumers an active-only cover would silently drop.  The
+     * active-receiver-cover downscope is preserved ONLY behind the audit-gated, default-OFF compile
+     * guard below; re-enabling it requires a TREECOL/RT/inactive-consumer audit. */
+    struct LETPerRankPayload my_payload;
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
     int bitmap_n_words = let_bitmap_word_count(NTopleaves);
     if(bitmap_n_words < 1) bitmap_n_words = 1;
     uint64_t *my_active_bitmap = (uint64_t *) mymalloc("LET_my_active_bitmap",
@@ -1165,11 +1219,12 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
                   all_active_bitmaps, bitmap_n_words, MPI_UINT64_T,
                   MPI_COMM_WORLD);
 
-    struct LETPerRankPayload my_payload;
-    /* Phase 9.5 Step C: pass MY active bitmap to tighten bbox + scan only
-     * active particles.  May regress TREECOL self-shielding for non-active
-     * particles -- gated by the bitmap pointer (NULL = Phase 9.4 conservative). */
+    /* Tighten the cover to MY active topleaves only (may regress TREECOL self-shielding for
+     * non-active particles -- that is exactly what the audit gate guards). */
     let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
+#else
+    let_compute_local_payload(&my_payload, NULL, 0);
+#endif
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
@@ -1191,11 +1246,18 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
         int cap = 0, hcap = 0, hcnt = 0;
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
         const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
         send_count[r] = let_pack_for_rank(r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            r_bitmap, bitmap_n_words);
+#else
+        send_count[r] = let_pack_for_rank(r, all_payloads,
+                                           &send_per_rank[r], &cap,
+                                           &send_hdr_per_rank[r], &hcap, &hcnt,
+                                           NULL, 0);
+#endif
         send_hdr_count[r] = hcnt;
     }
 
@@ -1218,8 +1280,10 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
+#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
     myfree(all_active_bitmaps);
     myfree(my_active_bitmap);
+#endif
     /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
      * fixable by a larger foreign arena, so it outranks a retryable overflow. */
     if(g_let_pack_oom) return LET_PACK_OOM;

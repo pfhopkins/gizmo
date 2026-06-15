@@ -66,7 +66,7 @@ static void free_arrays_(void)
 #ifdef SINK_CALC_DISTANCES
     if(soa_.sink_mass)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_mass);      soa_.sink_mass      = NULL;}
     if(soa_.sink_pos)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_pos);       soa_.sink_pos       = NULL;}
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     if(soa_.sink_vel)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_vel);       soa_.sink_vel       = NULL;}
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -151,7 +151,7 @@ static int alloc_arrays_(int n)
     soa_.sink_mass = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
     soa_.sink_pos  = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_mass || !soa_.sink_pos) {printf("gpu_gravity_tree: sink_mass/pos alloc failed (%d)\n", n); return 0;}
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     soa_.sink_vel = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_vel) {printf("gpu_gravity_tree: sink_vel alloc failed (%d)\n", n); return 0;}
 #endif
@@ -237,6 +237,7 @@ extern "C" void gpu_gravity_tree_release(void)
     soa_capacity_ = 0;
     soa_valid_    = 0;
     gpu_force_drift_release();
+    gpu_moment_refresh_release();
 }
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)

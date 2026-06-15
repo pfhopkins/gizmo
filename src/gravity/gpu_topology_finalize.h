@@ -20,9 +20,6 @@
  *                                     u.suns via the union — safe because
  *                                     soa->suns_backup is the SoA truth.
  *
- * All three are no-ops on the non-GPU build path; force_update_node_recursive
- * still runs there.
- *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 

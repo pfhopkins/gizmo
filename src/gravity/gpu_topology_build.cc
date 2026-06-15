@@ -42,6 +42,18 @@ static int *g_topleaf_cursor      = NULL;  /* [NTopleaves] -- scatter cursors */
 static int  g_npart_cap           = 0;
 static int  g_topleaf_cap         = 0;
 
+/* Subset-build slot->particle map. force_treebuild(npart, mp) may request a
+ * tree over an arbitrary subset of P[] (mp[i].index, e.g. SUBFIND per-species
+ * density or collective unbinding). The build pipeline is slot-indexed (slot i
+ * in 0..npart-1); g_slot_to_particle[slot] gives the real P[] index. Identity
+ * (mp==NULL, full-tree builds) leaves g_slot_map_active=0 and the map unused.
+ * Scratch-owned + reset per build: set definitively in gpu_topology_build_data_path
+ * before it can be consumed, stays valid through gpu_topology_emit_bfs (incl.
+ * overflow/retry), freed in gpu_topology_build_release. */
+static int *g_slot_to_particle    = NULL;  /* [npart]; real index per build slot */
+static int  g_slot_cap            = 0;     /* own capacity: lazily grown only for subset builds */
+static int  g_slot_map_active     = 0;     /* 1 iff this build is a non-identity subset */
+
 /* Allocate/grow a SharedSpace int buffer. */
 static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *name) {
     if(old_cap >= new_cap) {return buf;}
@@ -55,8 +67,12 @@ static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *name
 
 }  /* anonymous namespace */
 
-extern "C" int gpu_topology_build_data_path(int npart)
+extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)
 {
+    /* Reset the subset map state first: any early-return failure below then
+     * leaves an identity (safe) build, never a stale subset map from a prior
+     * build that gpu_topology_emit_bfs could consume. */
+    g_slot_map_active = 0;
     if(npart <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -82,6 +98,20 @@ extern "C" int gpu_topology_build_data_path(int npart)
         g_particle_topleaf = grow_int_buffer(g_particle_topleaf, g_npart_cap, npart, "particle_topleaf");
         if(!g_sorted_idx || !g_particle_topleaf) {g_npart_cap = 0; return 1;}
         g_npart_cap = npart;
+    }
+
+    /* Subset build ONLY: lazily allocate (own capacity) + stage the real-particle
+     * index per slot. Identity/full builds (mp==NULL) keep g_slot_to_particle NULL
+     * and g_slot_map_active=0 (set at function entry) -> slot==real, zero extra cost.
+     * SharedSpace is host-writable; consumed on device by Kernel 1 + emit_bfs. */
+    if(mp) {
+        if(g_slot_cap < npart) {
+            g_slot_to_particle = grow_int_buffer(g_slot_to_particle, g_slot_cap, npart, "slot_to_particle");
+            if(!g_slot_to_particle) {g_slot_cap = 0; return 1;}
+            g_slot_cap = npart;
+        }
+        for(int s = 0; s < npart; s++) {g_slot_to_particle[s] = mp[s].index;}
+        g_slot_map_active = 1;
     }
     /* Grow per-topleaf scratch. */
     if(g_topleaf_cap < NTopleaves + 1) {
@@ -117,11 +147,15 @@ extern "C" int gpu_topology_build_data_path(int npart)
     gizmo_gpu_check_last_error("topo_zero_counts", ntl);
 
     /* Kernel 1: per-particle Peano + Morton key compute, TopNodes walk to
-     * topleaf id, write Morton key + topleaf id, increment bucket count. */
+     * topleaf id, write Morton key + topleaf id, increment bucket count.
+     * Geometry is read from the real particle (slot->particle map for subset
+     * builds); keys[]/pt[] stay slot-indexed. */
+    const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
-        double fx = (P_dev[i].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[i].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[i].Pos[2] - dc2) * inv_dlen;
+        int real = stp ? stp[i] : i;
+        double fx = (P_dev[real].Pos[0] - dc0) * inv_dlen;
+        double fy = (P_dev[real].Pos[1] - dc1) * inv_dlen;
+        double fz = (P_dev[real].Pos[2] - dc2) * inv_dlen;
         if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
         if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
         if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
@@ -222,6 +256,13 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {printf("gpu_topology_emit_bfs: SoA null\n"); return 3;}
+
+    /* Subset slot->particle map (set by gpu_topology_build_data_path; NULL for
+     * identity/full builds). Used to translate sidx slots to real P[] indices
+     * at the two real-particle boundaries below: the collocation ID read and
+     * the leaf emission into suns. keys[sidx[*]] + the split helpers stay slot-
+     * indexed. Father[]/Nextnode[] inherit real indices via the leaf slots. */
+    const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
 
     /* Capture SoA pointers for kernel use. */
     Vec3<MyFloat> *soa_center  = soa->center;
@@ -335,8 +376,8 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 /* Inner lambda must NOT use KOKKOS_FUNCTION (extended __host__ __device__
                  * lambda) -- nvcc forbids nesting extended lambdas inside each other.
                  * Plain capture is implicitly __device__ inside the outer KOKKOS_LAMBDA. */
-                auto id_of = [P_dev] (int idx) -> uint64_t {
-                    return (uint64_t) P_dev[idx].ID;
+                auto id_of = [P_dev, stp] (int idx) -> uint64_t {
+                    return (uint64_t) P_dev[stp ? stp[idx] : idx].ID;
                 };
                 int rrc = gpu_morton_split_8way_random_inplace(
                     sidx + w.range_first, range_count, id_of,
@@ -359,8 +400,9 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 int slot_value = -1;
 
                 if(cnt == 1) {
-                    /* Single particle: store its index directly as a leaf. */
-                    slot_value = sidx[rf];
+                    /* Single particle: store its REAL P[] index directly as a leaf
+                     * (subset builds map slot->particle; identity: slot==real). */
+                    slot_value = stp ? stp[sidx[rf]] : sidx[rf];
                 } else if(cnt > 1) {
                     /* Allocate a new internal node from the device counter.
                      * Collocation in the sub-range is OK -- the next BFS
@@ -473,6 +515,9 @@ extern "C" void gpu_topology_build_release(void)
     if(g_topleaf_start)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_start);    g_topleaf_start    = NULL;}
     if(g_topleaf_count)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_count);    g_topleaf_count    = NULL;}
     if(g_topleaf_cursor)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_cursor);   g_topleaf_cursor   = NULL;}
+    if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
+    g_slot_map_active = 0;
+    g_slot_cap = 0;
     g_npart_cap = 0;
     g_topleaf_cap = 0;
 }

@@ -142,22 +142,18 @@ void mode_b_local_neighbor_walk(const double pos[3],
     const int max_part  = All.MaxPart;
     const int pseudo_start = max_part + MaxNodes + MaxForeignNodes;
 
-    /* Stage 4 v1: SYMMETRIC pruning uses per-type hmax bands maintained in
-     * extNODE (see allvars.h). For each internal node we compute
-     *   R_eff = max(h_query, max_{t in type_mask, populated under policy}
-     *                          Extnodes[no].hmax_per_type[t])
-     * then sphere-vs-AABB overlap with R_eff. Matches old GIZMO's
-     * scalar-hmax pattern at the per-type level (legacy_hmax_archaeology.md).
-     * ONEWAY ignores hmax entirely and uses h_query alone.
+    /* SYMMETRIC pruning uses the per-type hmax bands maintained in extNODE
+     * (see allvars.h). For each internal node:
+     *   R_eff = max(h_query, max_{t in type_mask} Extnodes[no].hmax_per_type[t])
+     * then sphere-vs-AABB overlap with R_eff. Per-type generalization of the
+     * legacy scalar-hmax node prune. ONEWAY ignores hmax and uses h_query alone.
      *
-     * NOTE (Stage 3 deferred): cross-rank DomainMoment exchange of per-type
-     * bands is not yet wired. At single-rank, host-only, all values are
-     * locally consistent. Multi-rank Mode B SYMMETRIC walks reading
-     * pseudo-particle nodes with stale hmax_per_type[] could under-prune
-     * (return extra candidates → still correct, but slower) or over-prune
-     * (return missing candidates → INCORRECT). The walker currently never
-     * descends into foreign-pseudo nodes (they're skipped at the bottom of
-     * the loop), so this is only a perf concern at np>1 today. */
+     * The bands are rank-local by design: this walker returns only rank-local
+     * candidates and skips pseudo/foreign nodes (handled at the bottom of the
+     * loop), and the bands are re-seeded on every rank at every build/refresh.
+     * A query against another rank's pool is shipped to that rank and answered
+     * with its own locally-fresh bands, so no cross-rank band exchange is
+     * required for correctness. */
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
     int no = max_part; /* root node */

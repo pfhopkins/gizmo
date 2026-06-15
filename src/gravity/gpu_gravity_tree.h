@@ -14,10 +14,10 @@
  *
  * Fields mirrored: the subset the walk reads. center/len for opening, s/mass
  * for force, sibling/nextnode for traversal, bitflags for opening type,
- * maxsoft for adaptive softening. Optional payloads (RT_USE_GRAVTREE,
- * SINK_*, tidal tensor, DM_SCALARFIELD_SCREENING) are NOT mirrored yet —
- * Phase 4 will extend per-payload as the walk needs them, gated by the same
- * #ifdefs as the AoS NODE definition.
+ * maxsoft for adaptive softening. The optional payload families
+ * (RT_USE_GRAVTREE, SINK_*, tidal tensor, DM_SCALARFIELD_SCREENING) are
+ * mirrored too, gated by the same #ifdefs as the AoS NODE definition; the
+ * GPU gravity walk consumes them directly from the SoA.
  *
  * Memory model: GIZMO_KOKKOS_SHARED_SPACE (UVM) so host writes during
  * acquire are visible to device kernels without explicit deep_copy. Per-field
@@ -104,7 +104,7 @@ struct gpu_gravity_tree_soa_t {
 #ifdef SINK_CALC_DISTANCES
     MyGravFloat       *sink_mass;
     Vec3<MyGravFloat> *sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     Vec3<MyGravFloat> *sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -191,6 +191,12 @@ void gpu_force_drift_release(void);
  *
  * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
 int gpu_moment_refresh(int active_root_node);
+
+/* Free the persistent gpu_moment_refresh scratch pools (source-input buffers +
+ * Father mirror).  Attached to the existing gpu_gravity_tree_release() teardown
+ * API.  (That API is not yet invoked before Kokkos::finalize; the GPU-pool
+ * pre-finalize release plumbing is a pre-existing cross-subsystem cleanup.) */
+void gpu_moment_refresh_release(void);
 
 /* Bulk write SoA[k=0..n) back into Nodes[MaxPart+k] / Extnodes[MaxPart+k].
  * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding

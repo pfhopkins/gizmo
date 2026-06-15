@@ -34,11 +34,9 @@ void force_refresh_node_moments(void);
 void force_flag_localnodes(void);
 
 void *gravity_primary_loop(void *p);
-void *gravity_secondary_loop(void *p);
 
-int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
-int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
-int force_treeevaluate_potential(int target, int type, int *nexport, int *nsend_local);
+int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex);
+int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
 void force_tree_discardpartials(void);
 void force_treeupdate_pseudos(int);
@@ -76,7 +74,6 @@ int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
 void   force_update_node(int no, int flag);
-void   force_update_node_recursive(int no, int sib, int father);
 void   force_update_size_of_parent_node(int no);
 
 void   dump_particles(void);
@@ -84,8 +81,13 @@ void   dump_particles(void);
 /* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead on the Kokkos path.
    ngb_treebuild() callers replaced with force_treebuild(NumPart, NULL) directly. */
 
+#ifdef BOX_PERIODIC
+/* Ewald octant table size. Declared under BOX_PERIODIC to match `EN` in forcetree.cc: the tables
+ * + the CPU Ewald functions + the shared interp helper (gravtree_ewald.h) all compile under
+ * BOX_PERIODIC (even under GRAVITY_NOT_PERIODIC, where the correction is compiled-but-dead). */
+#define GIZMO_EWALD_EN 64
+#endif
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
-#define GIZMO_EWALD_EN 64  /* must match EN in forcetree.cc (size of Ewald correction look-up table octant) */
 /* Ewald correction table accessor. Returns flat pointers of length (EN+1)^3
  * to the four static look-up tables (fcorrx/y/z/potcorr) inside forcetree.cc,
  * plus fac_intp (= 2*EN/All.BoxSize). Used by gpu_gravtree.cc to mirror the

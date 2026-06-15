@@ -5,6 +5,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"   /* shared-bitflag SSOT (gravtree_ags_kernel_shared_bitflag) */
 #include "ags_functions.h"
 
 /*! \file ags_rkern.c
@@ -33,38 +34,7 @@
  */
 int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary)
 {
-#ifdef ADAPTIVE_GRAVSOFT_FORALL
-    if(!((1 << particle_type_primary) & (ADAPTIVE_GRAVSOFT_FORALL))) {return 0;} /* particle is NOT one of the designated 'adaptive' types */
-#endif
-
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    if(!((1 << particle_type_primary) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))) {return ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION;} /* particle is NOT one of the designated 'adaptive' types */
-#endif
-
-    if(particle_type_primary == 0) {return 1;} /* gas particles see gas particles */
-
-#if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES)
-    if(particle_type_primary == 5) {return 1;} /* sink particle particles are AGS-active, but using sink physics, they see only gas */
-#endif
-    
-#if defined(GALSF) && ( (ADAPTIVE_GRAVSOFT_FORALL & 16) || (ADAPTIVE_GRAVSOFT_FORALL & 8) || (ADAPTIVE_GRAVSOFT_FORALL & 4) )
-    if(All.ComovingIntegrationOn) /* stars [4 for cosmo runs, 2+3+4 for non-cosmo runs] are AGS-active and see baryons (any type) */
-    {
-        if(particle_type_primary == 4) {return 17;} // 2^0+2^4
-    } else {
-        if((particle_type_primary == 4)||(particle_type_primary == 2)||(particle_type_primary == 3)) {return 29;} // 2^0+2^2+2^3+2^4
-    }
-#endif
-    
-#ifdef DM_SIDM
-    if((1 << particle_type_primary) & (DM_SIDM)) {return DM_SIDM;} /* SIDM particles see other SIDM particles, regardless of type/mass */
-#endif
-    
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    return (1 << particle_type_primary); /* if we haven't been caught by one of the above checks, we simply return whether or not we see 'ourselves' */
-#endif
-    
-    return 0;
+    return gravtree_ags_kernel_shared_bitflag(particle_type_primary); /* body moved verbatim to gravtree_force_kernel.h (shared with the GPU gravity walk) */
 }
 
 

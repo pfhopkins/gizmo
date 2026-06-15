@@ -39,7 +39,6 @@
 double Ewaldcount, Costtotal;
 long long N_nodesinlist;
 int Ewald_iter;			/* global in file scope, for simplicity */
-void sum_top_level_node_costfactors(void);
 
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
@@ -106,9 +105,11 @@ void gravity_tree(void)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
     size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
-                                             sizeof(struct gravdata_in) + sizeof(struct gravdata_out) +
-                                             sizemax(sizeof(struct gravdata_in),sizeof(struct gravdata_out))));
+    /* DETECTOR buffer only: the gravity MPI export round-trip is retired (gravity now runs
+     * on the target-owning rank via the GPU pre-pass + LET). DataIndexTable/DataNodeList are
+     * no longer shipped -- they only record LET-incompleteness to raise Nexport. Sized off the
+     * surviving export-list structs (no gravdata_in/out payload). */
+    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist)));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {if(ThisTask == 0) printf(" ..All.BunchSize=%ld\n", All.BunchSize);}
@@ -216,25 +217,23 @@ void gravity_tree(void)
             tend = my_second(); timetree1 += timediff(tstart, tend);
 
             /* ============================================================
-             * Phase 9.4 RETIREMENT: CPU gravity export round-trip
+             * CPU gravity export round-trip is RETIRED.
              * ------------------------------------------------------------
-             * On the GPU path the GPU pre-pass + Locally Essential
-             * Tree (Phase 9.0-9.3) supply all foreign-rank gravity locally,
-             * so the legacy MPI export round-trip is dead.  The block below
-             * (BufferFullFlag compaction, MPI_Alltoall/Sendrecv exchange,
-             * gravity_secondary_loop, scatter-back to P[]) is gated out in
-             * retired in Step 5 C4. Final deletion is scheduled in
-             * the Step 7 dead-code cleanup; the export infrastructure
-             * (BunchSize, DataIndexTable, DataNodeList, gravdata_in/out)
-             * is kept alive for surviving consumers (mg_gradient_correction,
-             * potential.cc, subfind_potential).  See memory:
-             * project_post_let_porting.md for the full audit.
+             * The GPU pre-pass + Locally Essential Tree supply all
+             * foreign-rank gravity on the target-owning rank, so the legacy
+             * MPI export round-trip (compaction, MPI_Alltoall/Sendrecv,
+             * imported-particle walk, scatter-back) and its gravdata_in/out
+             * buffers are fully removed.  What survives is a DETECTOR:
+             * DataIndexTable/DataNodeList are no longer shipped -- the tree
+             * walk only records LET-incompleteness into Nexport.
              *
-             * If Nexport > 0 here it means a particle's gravity is not
-             * covered by LET -- raise LETAllocFactor in params.
+             * If Nexport > 0 a particle's gravity is not covered by LET --
+             * raise LETAllocFactor in params; we request a graceful
+             * controlled-stop here (drained at the all-rank poll below, no
+             * retry, no new collective).
              * ============================================================ */
             if(Nexport > 0) {
-                printf("Phase 9.4 LET export retirement: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
+                printf("LET incomplete: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
                 fflush(stdout);
                 /* Graceful soft-stop: the export round-trip is retired, so we cannot service
                  * these particles -- but the same loop iteration reaches the all-rank
@@ -534,7 +533,7 @@ void *gravity_primary_loop(void *p)
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             if(Ewald_iter)
             {
-                ret = force_treeevaluate_ewald_correction(i, 0, exportflag, exportnodecount, exportindex);
+                ret = force_treeevaluate_ewald_correction(i, exportflag, exportnodecount, exportindex);
                 if(ret >= 0) {
 #ifdef _OPENMP
 #pragma omp atomic
@@ -545,7 +544,7 @@ void *gravity_primary_loop(void *p)
             else
 #endif
             {
-                ret = force_treeevaluate(i, 0, exportflag, exportnodecount, exportindex);
+                ret = force_treeevaluate(i, exportflag, exportnodecount, exportindex);
                 if(ret < 0) {buffer_full = 1; break;}
 #ifdef _OPENMP
 #pragma omp atomic
@@ -560,65 +559,8 @@ void *gravity_primary_loop(void *p)
 }
 
 
-void *gravity_secondary_loop(void *p)
-{
-    int j, nodesinlist, dummy, ret;
-#ifndef GRAVITY_SECONDARY_LOOP_BATCH_SIZE
-#define GRAVITY_SECONDARY_LOOP_BATCH_SIZE 8
-#endif
-    while(1)
-    {
-        int batch[GRAVITY_SECONDARY_LOOP_BATCH_SIZE], batch_count = 0;
-#ifdef _OPENMP
-#pragma omp critical(_nextlistgravsec_)
-#endif
-        {
-            while(batch_count < GRAVITY_SECONDARY_LOOP_BATCH_SIZE && NextJ < Nimport)
-            {
-                batch[batch_count++] = NextJ; NextJ++;
-            }
-        }
-        if(batch_count == 0) {break;}
-        for(int b = 0; b < batch_count; b++)
-        {
-            j = batch[b];
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-            if(Ewald_iter)
-            {
-                int cost = force_treeevaluate_ewald_correction(j, 1, &dummy, &dummy, &dummy);
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                Ewaldcount += cost;
-            }
-            else
-#endif
-            {
-                ret = force_treeevaluate(j, 1, &nodesinlist, &dummy, &dummy);
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                N_nodesinlist += nodesinlist;
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                Costtotal += ret;
-            }
-        }
-    }
-    return NULL;
-}
 
 
-void sum_top_level_node_costfactors(void)
-{
-    double *costlist = (double*)mymalloc("costlist", NTopnodes * sizeof(double));
-    double *costlist_all = (double*)mymalloc("costlist_all", NTopnodes * sizeof(double));
-    int i; for(i = 0; i < NTopnodes; i++) {costlist[i] = Nodes[All.MaxPart + i].GravCost;}
-    MPI_Allreduce(costlist, costlist_all, NTopnodes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    for(i = 0; i < NTopnodes; i++) {Nodes[All.MaxPart + i].GravCost = costlist_all[i];}
-    myfree(costlist_all); myfree(costlist);
-}
 
 
 /*! This function sets the (comoving) softening length of all particle types in the table All.ForceSoftening[...].
@@ -651,57 +593,8 @@ void set_softenings(void)
 }
 
 
-/*! This function is used as a comparison kernel in a sort routine. It is used to group particles in the communication buffer that are going to be sent to the same CPU */
-int data_index_compare(const void *a, const void *b)
-{
-    if(((struct data_index *) a)->Task < (((struct data_index *) b)->Task)) {return -1;}
-    if(((struct data_index *) a)->Task > (((struct data_index *) b)->Task)) {return +1;}
-    if(((struct data_index *) a)->Index < (((struct data_index *) b)->Index)) {return -1;}
-    if(((struct data_index *) a)->Index > (((struct data_index *) b)->Index)) {return +1;}
-    if(((struct data_index *) a)->IndexGet < (((struct data_index *) b)->IndexGet)) {return -1;}
-    if(((struct data_index *) a)->IndexGet > (((struct data_index *) b)->IndexGet)) {return +1;}
-    return 0;
-}
-
-
-static void msort_dataindex_with_tmp(struct data_index *b, size_t n, struct data_index *t)
-{
-    if(n <= 1) {return;}
-    struct data_index *tmp;
-    struct data_index *b1, *b2;
-    size_t n1, n2;
-    n1 = n / 2;
-    n2 = n - n1;
-    b1 = b;
-    b2 = b + n1;
-    msort_dataindex_with_tmp(b1, n1, t);
-    msort_dataindex_with_tmp(b2, n2, t);
-    tmp = t;
-    while(n1 > 0 && n2 > 0)
-    {
-        if(b1->Task < b2->Task || (b1->Task == b2->Task && b1->Index <= b2->Index))
-        {
-            --n1;
-            *tmp++ = *b1++;
-        }
-        else
-        {
-            --n2;
-            *tmp++ = *b2++;
-        }
-    }
-    if(n1 > 0) {memcpy(tmp, b1, n1 * sizeof(struct data_index));}
-    memcpy(b, t, (n - n2) * sizeof(struct data_index));
-}
-
-
-void mysort_dataindex(void *b, size_t n, size_t s, int (*cmp) (const void *, const void *))
-{
-    const size_t size = n * s;
-    struct data_index *tmp = (struct data_index *) mymalloc("struct data_index *tmp", size);
-    msort_dataindex_with_tmp((struct data_index *) b, n, tmp);
-    myfree(tmp);
-}
+/* The DataIndexTable sorter (data_index_compare / mysort_dataindex) is retired with
+ * the gravity export round-trip: the detector never ships or sorts its records. */
 
 
 #if (SINGLE_STAR_TIMESTEPPING > 0)

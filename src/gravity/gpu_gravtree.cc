@@ -30,9 +30,24 @@
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
 #include "forcetree.h"
+#include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
+#include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
 
 #include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"  /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "gravtree_ewald.h"         /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
+#include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
+#include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
 
+
+/* Single gate for the Ewald periodic-image POTENTIAL correction added in the
+ * primary walk (item #11): pure-tree periodic gravity with potentials requested.
+ * Mirrors the CPU gate at forcetree.cc:2299.  Defined once so the four-flag
+ * condition lives in one place and is referenced (not re-spelled) at the
+ * table-acquire site, the host helper, and the walk body. */
+#if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+#define GIZMO_GPU_EWALD_POT_CORRECTION
+#endif
 
 /* Globals that live at file-scope in gravtree.cc without a header declaration. */
 extern int Ewald_iter;
@@ -40,8 +55,8 @@ extern double Costtotal;
 
 #ifdef PMGRID
 /* Short-range tables live as file-scope (non-static) globals in forcetree.cc.
- * NTAB matches the #define there. */
-#define GIZMO_GPU_GRAVTREE_NTAB 1000
+ * Table length owned by gravtree_force_kernel.h (shared with the CPU walk). */
+#define GIZMO_GPU_GRAVTREE_NTAB GRAVTREE_SHORTRANGE_NTAB
 extern float shortrange_table[GIZMO_GPU_GRAVTREE_NTAB];
 extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
@@ -49,21 +64,17 @@ extern float shortrange_table_tidal[GIZMO_GPU_GRAVTREE_NTAB];
 #endif
 #endif
 
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
-/* GPU-callable accessor for the cached force-softening kernel radius.
- *
- * The actual computation lives in compute_force_softening_kernel_radius(p) in
- * forcetree.cc; the host side calls compute_all_force_softening() at startup
- * (init.cc, all particles) and at the start of every gravity_tree() (active list).
- * This makes Pp[p].ForceSoftening the single source of truth for both CPU and GPU
- * walks -- new softening physics goes into compute_force_softening_kernel_radius()
- * and is automatically picked up here with no GPU-side changes required. */
+/* GPU-callable accessor for the cached force-softening kernel radius. Always available
+ * (Pp[p].ForceSoftening is populated for every build by compute_all_force_softening()), so the
+ * walk can load a leaf's secondary softening unconditionally -- mirrors the CPU
+ * ForceSoftening_KernelRadius(). The actual computation lives in
+ * compute_force_softening_kernel_radius(p) in forcetree.cc; new softening physics goes there
+ * and is picked up here with no GPU-side change. Pp[p].ForceSoftening is the single source of truth. */
 static KOKKOS_INLINE_FUNCTION
 double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 {
     return Pp[p].ForceSoftening;
 }
-#endif
 
 /* AGS_zeta field is gated (particle_data.h:331) on
  * ADAPTIVE_GRAVSOFT_FORGAS || AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
@@ -78,42 +89,10 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 }
 #endif
 
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-/* Device-callable replica of weight_function_for_weighted_motion_smoothing
- * (predict.cc:605).  Pure-function: uses only All.cf_atime + macros + math. */
-static KOKKOS_INLINE_FUNCTION
-double gpu_weight_function_for_weighted_motion_smoothing(double r, int mode)
-{
-    double wt = 1, amax = 1.e2, rmax_pc = 100., slope_index = 1;
-    double r_pc = r * All.cf_atime * UNIT_LENGTH_IN_PC;
-    if(r_pc < rmax_pc) {double v = pow(r_pc / rmax_pc, slope_index); wt = (v > 1.0/amax) ? v : 1.0/amax;}
-    if(mode) {return 1.0 - sqrt(wt);} else {return wt;}
-}
-#endif
-
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-/* Device-callable replica of ags_gravity_kernel_shared_BITFLAG (ags_rkern.cc). */
-static KOKKOS_INLINE_FUNCTION int
-gpu_ags_kernel_shared_BITFLAG(int ptype)
-{
-    if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL))) {return 0;}
-    if(ptype == 0) {return 1;}
-#if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES)
-    if(ptype == 5) {return 1;}
-#endif
-#if defined(GALSF) && ((ADAPTIVE_GRAVSOFT_FORALL & 16) || (ADAPTIVE_GRAVSOFT_FORALL & 8) || (ADAPTIVE_GRAVSOFT_FORALL & 4))
-    if(All.ComovingIntegrationOn) {
-        if(ptype == 4) {return 17;}
-    } else {
-        if(ptype == 4 || ptype == 2 || ptype == 3) {return 29;}
-    }
-#endif
-#ifdef DM_SIDM
-    if((1 << ptype) & (DM_SIDM)) {return DM_SIDM;}
-#endif
-    return (1 << ptype);
-}
-#endif
+/* The device replicas of weight_function_for_weighted_motion_smoothing and
+ * ags_gravity_kernel_shared_BITFLAG were collapsed into gravtree_force_kernel.h
+ * (grav_weight_function_for_weighted_motion_smoothing / gravtree_ags_kernel_shared_bitflag),
+ * shared verbatim with the CPU walk. */
 
 /* Phase 2-A: RT payload data passed to the GPU walk kernel.
  * src_lum[p * N_RT_FREQ_BINS + kf] = per-particle luminosity precomputed on
@@ -156,36 +135,34 @@ struct gpu_sink_walk_data_t {
     Vec3<MyFloat> *bh_angle;  /* [NumPart] */
 };
 
-/* Device-callable replica of sink_fb_angleweight (sinks/sink.cc:199). */
-static KOKKOS_INLINE_FUNCTION double
-gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
-                        double dx, double dy, double dz)
-{
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    return sink_lum_input;
-#else
-    if(sink_lum_input <= 0) return 0.0;
-    double r2 = dx*dx + dy*dy + dz*dz;
-    if(r2 <= 0) return 0.0;
-    double cf = All.cf_atime;
-    if(r2 * (UNIT_LENGTH_IN_PC*UNIT_LENGTH_IN_PC) * (cf*cf) < 1.0) return 0.0; /* no force at < 1pc */
-#if defined(SINK_FB_COLLIMATED)
-    double sa_ns = (double)sink_angle[0]*sink_angle[0] + (double)sink_angle[1]*sink_angle[1] + (double)sink_angle[2]*sink_angle[2];
-    double cos_theta;
-    if(sa_ns > 0) {
-        cos_theta = fabs((dx*(double)sink_angle[0] + dy*(double)sink_angle[1] + dz*(double)sink_angle[2]) / sqrt(r2 * sa_ns));
-        if(!isfinite(cos_theta)) {cos_theta = 1.0;}
-    } else {
-        cos_theta = 1.0;
-    }
-    double wt_normalized = 0.0847655 * exp(4.5*cos_theta*cos_theta);
-    return sink_lum_input * wt_normalized;
-#else
-    return sink_lum_input;
-#endif
-#endif /* SINGLE_STAR_SINK_DYNAMICS */
-}
+/* The device replica of sink_fb_angleweight was collapsed into gravtree_force_kernel.h
+ * (grav_sink_fb_angleweight, component args), shared verbatim with the host function. */
 #endif /* SINK_PHOTONMOMENTUM */
+
+/* Ewald periodic-image POTENTIAL correction for the primary walk.  Under
+ * pure-tree periodic gravity with EVALPOTENTIAL the CPU walk (forcetree.cc)
+ * adds mass*ewald_pot_corr(dr) to the potential of every accepted interaction;
+ * the GPU primary walk previously added only the short-range potential and left
+ * the periodic-image term out (the seeded g_d_potcorr table was never read).
+ * This POD carries the device mirror of that table + its interpolation scale
+ * into the primary walk.  It is passed UNCONDITIONALLY (one struct, optional
+ * fields gated once here) rather than as a stacked-#ifdef parameter; the walk
+ * reads it only inside the matching compile gate.  In a healthy run 'active' is
+ * always 1: an acquire failure hard-stops the primary walk (the build requires
+ * the correction).  'active' is 0 only as a NULL-guard for the graceful drain
+ * that follows that endrun. */
+struct gpu_ewald_pot_data_t {
+    const MyFloat *potcorr;   /* flat [(EN+1)^3] Ewald potential-correction table, or NULL */
+    double         fac_intp;  /* table interpolation scale (= g_ewald_fac_intp) */
+    int            active;    /* 1 iff potcorr is a valid acquired table */
+};
+
+/* Host: acquire the Ewald tables (idempotent) and fill the potential POD.
+ * Returns 0 on success (out->active=1), nonzero if the tables are not ready
+ * (out->active=0); the caller treats a nonzero return as a hard stop. */
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
+#endif
 
 /* -------------------------------------------------------------------------
  * Compile-time payload gates.
@@ -230,8 +207,8 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * SINK_CALC_DISTANCES branches (leaf-particle and node paths). The Acc_Total_PrevStep
  * field is a member of particle_data and is automatically mirrored in P_dev.
  * Tree-node sink_acc lives in the GravitySoA + populated by gpu_pseudo_update +
- * gpu_moment_refresh.  The weighted variant uses gpu_weight_function_for_weighted_motion_smoothing()
- * (a pure-function GPU mirror of predict.cc:605). */
+ * gpu_moment_refresh.  The weighted variant uses the shared
+ * grav_weight_function_for_weighted_motion_smoothing() (gravtree_force_kernel.h). */
 /* SINK_CALC_DISTANCES, SINGLE_STAR_SINK_DYNAMICS, SINGLE_STAR_TIMESTEPPING,
  * SINGLE_STAR_FIND_BINARIES, SINGLE_STAR_FB_TIMESTEPLIMIT, SINGLE_STAR_STARFORGE_DEFAULTS:
  * ported in Phase 2-B. */
@@ -239,9 +216,10 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * node accepts + per-particle precomputed d_cr_inject at leaf nodes (since
  * cr_get_source_injection_rate is not GPU-callable). */
 /* COUNT_MASS_IN_GRAVTREE: ported. tree_mass accumulator declared at function entry,
- * accumulated alongside both leaf-particle and node-accept paths, written to
+ * accumulated once per ACCEPTED interaction in the force kernel (r2>0, mass>0;
+ * mirrors forcetree.cc -- excludes the target's own leaf), written to
  * P_dev[target].TreeMass at end of walk, scattered back to P[i].TreeMass.  The
- * post-loop +=P[i].Mass at gravtree.cc:605 adds the target's own mass to finalize. */
+ * post-loop +=P[i].Mass in gravtree.cc adds the target's own mass to finalize. */
 /* DM_SCALARFIELD_SCREENING: ported. SoA tree-node fields mass_dm + s_dm are populated by
  * gpu_pseudo_update + gpu_moment_refresh + let_pack (already wired). The walk sets per-
  * interaction d_dm and mass_dm_local in both leaf and node branches, then accumulates the
@@ -297,14 +275,11 @@ gpu_gravtree_walk_one(int target,
                       int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9: foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
-                      const struct gpu_gravity_tree_soa_t *s,
-#ifdef PMGRID
-                      double rcut, double rcut2, double asmthfac,
-                      const float *shortrange_tab, const float *shortrange_pot_tab,
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                      const float *shortrange_tidal_tab,
+                      const struct gpu_gravity_tree_soa_t *tree_soa,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                      int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
 #endif
-#endif
+                      grav_pm_shortrange_t pm,   /* PM short-range config by value (empty when !PMGRID); per-target PLACEHIGHRESREGION override below mutates this local copy */
 #ifdef RT_USE_GRAVTREE
                       const struct gpu_rt_walk_data_t *rt_data,
 #endif
@@ -314,6 +289,7 @@ gpu_gravtree_walk_one(int target,
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                       const struct gpu_cr_walk_data_t *cr_data,
 #endif
+                      const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
                       Vec3<double> &acc_out,
                       int &ninter_out,
                       double &pot_out,
@@ -329,24 +305,23 @@ gpu_gravtree_walk_one(int target,
 #else
     double soft = All.ForceSoftening[ptype];
 #endif
+    double zeta = 0.0;    /* unconditional (matches CPU walk); passed to the shared pair kernel, consumed there only under #if AGS */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-    double zeta = 0.0;
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-    if(ptype == 0) {
-        if(soft > All.ForceSoftening[ptype]) { zeta = gpu_get_ags_zeta(P_dev, target); }
-        else { soft = All.ForceSoftening[ptype]; zeta = 0; }
-    }
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(soft > All.ForceSoftening[ptype]) { zeta = gpu_get_ags_zeta(P_dev, target); }
-    else { soft = All.ForceSoftening[ptype]; zeta = 0; }
-#endif
+    grav_target_select_soft_and_zeta(ptype, gpu_get_ags_zeta(P_dev, target), soft, zeta);
 #endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
 
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    const int ags_bitflag_primary = gpu_ags_kernel_shared_BITFLAG(ptype);
+#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
+    /* high-res zoom particles use the finer short-range PM cutoff (mirrors forcetree.cc target
+     * prologue). The dispatcher passes the coarse-mesh rcut/asmthfac; override per target here. */
+    if(pmforce_is_particle_high_res(ptype, pos)) {
+        pm.rcut = All.Rcut[1]; pm.rcut2 = pm.rcut * pm.rcut; pm.asmthfac = grav_pm_asmthfac(All.Asmth[1]);
+    }
 #endif
+
+    /* fed unconditionally to the shared pair kernel (consumed there only under the
+     * symmetrize-by-averaging #if); matches the CPU walk's unconditional precompute. */
+    const int ags_bitflag_primary = gravtree_ags_kernel_shared_bitflag(ptype);
 
     /* ------------------------------------------------------------------ *
      * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
@@ -362,9 +337,10 @@ gpu_gravtree_walk_one(int target,
     SymmetricTensor2<double> tidal_acc = {};
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
-    /* Diagnostic: total mass seen by this target during the walk (mirrors
-     * forcetree.cc:1754 + 2574 + 2743). Walk excludes the target itself; the
-     * post-loop +=P[i].Mass at gravtree.cc:605 finalizes the sum. */
+    /* Diagnostic: total mass seen by this target during the walk, summed only
+     * over accepted interactions (mirrors forcetree.cc). The walk excludes the
+     * target's own leaf (r2==0); the post-loop +=P[i].Mass in gravtree.cc
+     * finalizes the sum. */
     double tree_mass = 0.0;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
@@ -399,10 +375,7 @@ gpu_gravtree_walk_one(int target,
     sph_center[1] = 0.5 * boxSize_Y;
     sph_center[2] = 0.5 * boxSize_Z;
 #endif
-    double sph_dx_t = pos[0] - sph_center[0];
-    double sph_dy_t = pos[1] - sph_center[1];
-    double sph_dz_t = pos[2] - sph_center[2];
-    double r_target = sqrt(sph_dx_t * sph_dx_t + sph_dy_t * sph_dy_t + sph_dz_t * sph_dz_t);
+    double r_target = 0.0; /* set per-interaction inside the PM short-range gate (mirrors the CPU walk) */
     double r_source = 0.0; /* set per-interaction in leaf/node branches */
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
@@ -416,31 +389,7 @@ gpu_gravtree_walk_one(int target,
     double cr_injection = 0.0; /* per-interaction; reset in leaf/node blocks */
 #endif
 #ifdef SINK_CALC_DISTANCES
-    double Min_Distance_to_Sink2 = MAX_REAL_NUMBER;
-    Vec3<double> Min_xyz_to_Sink = {MAX_REAL_NUMBER, MAX_REAL_NUMBER, MAX_REAL_NUMBER};
-#ifdef SPECIAL_POINT_MOTION
-    /* Walk-side accumulators that capture the velocity and previous-step
-     * acceleration of the nearest special particle (mirrors forcetree.cc:1795
-     * + 2305 for nodes, 1971-1975 for leaf particles).  Under WEIGHTED_MOTION,
-     * non-special primaries instead accumulate weighted sums (forcetree.cc:1955-1959). */
-    Vec3<double> vel_of_nearest_special = {0,0,0};
-    Vec3<double> acc_of_nearest_special = {0,0,0};
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    double weight_sum_for_special_point_smoothing = 0.0;
-#endif
-#endif
-#endif
-#ifdef SINGLE_STAR_TIMESTEPPING
-    double Min_Sink_Approach_Time = MAX_REAL_NUMBER;
-    double Min_Sink_Freefall_time = MAX_REAL_NUMBER;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    double Min_Sink_FeedbackTime = MAX_REAL_NUMBER;
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    double Min_Sink_OrbitalTime = MAX_REAL_NUMBER;
-    double comp_Mass_local = 0.0;
-    Vec3<double> comp_dx_local = {0,0,0}, comp_dv_local = {0,0,0};
+    grav_sink_prox_accum_t sink_prox; grav_sink_prox_accum_init(sink_prox); /* nearest-sink + single-star timestep/binary accumulators (gravtree_force_kernel.h, shared with the CPU walk) */
 #endif
 
     /* ------------------------------------------------------------------ *
@@ -454,14 +403,12 @@ gpu_gravtree_walk_one(int target,
 #endif
 
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    /* Mirror forcetree.cc:1891 — total mass enclosed in Rcrit, where Rcrit is
-     * the larger of the target softening and a fixed 0.1 kpc floor. */
-    double m_enc_in_rcrit = 0.0;
-    double r_for_total_menclosed = soft;
-    {
-        double r_floor = 0.1 / (UNIT_LENGTH_IN_KPC * All.cf_atime);
-        if(r_for_total_menclosed < r_floor) r_for_total_menclosed = r_floor;
-    }
+    double m_enc_in_rcrit = 0.0, r_for_total_menclosed = grav_target_menc_radius(soft); /* baseline Rcrit_min applied in the helper */
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    /* per-target CR gate (the host precompute leaves t_max_cr=0 unless All.Time>All.TimeBegin,
+     * mirroring the CPU walk's gate) */
+    int cr_active_gate = (cr_data->t_max_cr > 0) ? 1 : 0;
 #endif
 
 #ifdef RT_USE_GRAVTREE
@@ -478,8 +425,8 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_PHOTONMOMENTUM
     double mass_sinklumwt_forradfb = 0.0; /* per-interaction; reset in leaf/node blocks */
 #endif
-    /* Mirror CPU's valid_gas_particle_for_rt gate (forcetree.cc:1595) */
-    volatile int valid_gas_particle_for_rt = (ptype == 0 && soft > 0 && pmass > 0) ? 1 : 0; /* volatile: nvc++ constant-propagates this to 0 inside the walk loop otherwise */
+    /* valid-gas RT gate via the shared helper */
+    volatile int valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass); /* volatile: nvc++ constant-propagates this to 0 inside the walk loop otherwise */
 #ifdef RT_OTVET
     SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS];
     {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {RT_ET[kf] = {};}}
@@ -506,12 +453,8 @@ gpu_gravtree_walk_one(int target,
     double fac_stellum[N_RT_FREQ_BINS];
     {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {fac_stellum[kf]=0.0;}}
     if(valid_gas_particle_for_rt) {
-        double h_eff_phys = soft * pow(VOLUME_NORM_COEFF_FOR_NDIMS / (double)All.DesNumNgb, 1.0/NUMDIMS) * All.cf_atime;
-        double sigma_particle = pmass / (h_eff_phys * h_eff_phys);
-        double fac_stellum_0 = -All.PhotonMomentum_Coupled_Fraction / (4.0*M_PI * C_LIGHT_CODE_REDUCED * sigma_particle * All.G);
-        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
-            fac_stellum[kf] = fac_stellum_0 * (1.0 - exp(-rt_kappa(-1, kf, P_dev, CellP_dev) * sigma_particle));
-        }
+        double kappa_eff[N_RT_FREQ_BINS]; int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {kappa_eff[kf] = rt_kappa(-1, kf, P_dev, CellP_dev);}
+        grav_target_rt_fac_stellum(soft, pmass, kappa_eff, fac_stellum);
     }
 #endif
 
@@ -533,12 +476,8 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_DYNFRICTION_FROMTREE
         double m_j_eff_for_df = 0.0;
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
-        int ptype_sec = -1;   /* assigned at L572-ish (outer gate includes MERGER_STARCLUSTER); only USED under FORGAS/FORALL sub-gates. Matches CPU forcetree.cc:1672 unconditional decl. Phase D fix 2026-05-21 config 126. */
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        double zeta_sec = 0.0;
-#endif
+        int ptype_sec = -1;   /* unconditional, matching the CPU walk: consumed by the shared pair kernel */
+        double zeta_sec = 0.0;   /* unconditional (matches CPU walk); assigned below only under #if AGS */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         double gasmass = 0.0;
 #endif
@@ -546,23 +485,16 @@ gpu_gravtree_walk_one(int target,
         if(no < maxPart) /* particle leaf */
         {
             dr = P_dev[no].Pos - pos;
+            gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
-#ifdef COUNT_MASS_IN_GRAVTREE
-            tree_mass += mass;
-#endif
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this leaf particle (mirrors forcetree.cc:2055). */
             if(ptype != 0 && P_dev[no].Type == 1) { d_dm = dr; mass_dm_local = mass; }
             else { d_dm = Vec3<double>{0,0,0}; mass_dm_local = 0; }
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-            {
-                double sph_dx_s = (double)P_dev[no].Pos[0] - sph_center[0];
-                double sph_dy_s = (double)P_dev[no].Pos[1] - sph_center[1];
-                double sph_dz_s = (double)P_dev[no].Pos[2] - sph_center[2];
-                r_source = sqrt(sph_dx_s * sph_dx_s + sph_dy_s * sph_dy_s + sph_dz_s * sph_dz_s);
-            }
+            r_source = grav_spherical_symmetry_r_from_center(P_dev[no].Pos[0],P_dev[no].Pos[1],P_dev[no].Pos[2],sph_center[0],sph_center[1],sph_center[2]);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Load secondary's previous-step tidal tensor (mirrors forcetree.cc:1945). */
@@ -577,7 +509,9 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_DYNFRICTION_FROMTREE
             m_j_eff_for_df = mass;
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+            /* secondary (leaf) softening, loaded unconditionally so a pair whose source softening
+             * exceeds the target's gets the symmetrized max(h,h_p) force (mirrors forcetree.cc:2093).
+             * ptype_sec/zeta_sec stay gated -- only the adaptive symmetrize-by-averaging path uses them. */
             h_p = gpu_force_softening_kernel_radius(P_dev, no);
             ptype_sec = P_dev[no].Type;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
@@ -585,12 +519,19 @@ gpu_gravtree_walk_one(int target,
 #elif defined(ADAPTIVE_GRAVSOFT_FORALL)
             zeta_sec = gpu_get_ags_zeta(P_dev, no);
 #endif
-#endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass = (P_dev[no].Type == 0) ? P_dev[no].Mass : 0.0;
+#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
+            /* gas at the inner edge of a sink's alpha-disk should not see a hole due to
+             * the sink (mirrors forcetree.cc leaf branch + the node-moment kernel). */
+            if(P_dev[no].Type == 5) {gasmass = (double) P_dev[no].Sink_Mass_Reservoir;}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
-            /* Load leaf luminosity unconditionally (matching node path; valid_gas gate in force kernel). */
+            /* Load leaf luminosity only for valid gas targets (mirrors forcetree.cc; the
+             * RT accumulation below is gated the same way, so non-gas targets never read
+             * these and skipping the loads avoids the wasted per-leaf table traffic). */
+            if(valid_gas_particle_for_rt)
             {
                 d_stellarlum = dr;
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
@@ -603,12 +544,13 @@ gpu_gravtree_walk_one(int target,
                 }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                /* Mirror forcetree.cc:1756-1767: per-sink-leaf angle-weighted luminosity. */
+                /* per-sink-leaf angle-weighted luminosity (shared formula helper) */
                 mass_sinklumwt_forradfb = 0.0;
                 if(P_dev[no].Type == 5) {
                     double bhlum_t = (double) sink_data->bh_lum[no];
-                    mass_sinklumwt_forradfb = gpu_sink_fb_angleweight(bhlum_t, sink_data->bh_angle[no],
-                                                                     dr[0], dr[1], dr[2]);
+                    mass_sinklumwt_forradfb = grav_sink_fb_angleweight(bhlum_t,
+                                                                       (double) sink_data->bh_angle[no][0], (double) sink_data->bh_angle[no][1], (double) sink_data->bh_angle[no][2],
+                                                                       dr[0], dr[1], dr[2]);
                 }
 #endif
             }
@@ -617,90 +559,23 @@ gpu_gravtree_walk_one(int target,
             /* Mirror forcetree.cc:1734-1736 leaf CR source injection. */
             cr_injection = (double) cr_data->cr_inject[no];
 #endif
-            /* Phase 2-B: sink-distance + timestepping tracking on particle leafs.
-             * Mirrors forcetree.cc:1669-1732. Only fires when source is a sink
-             * particle (Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES). */
+            /* Sink-distance + single-star timestepping tracking on particle leafs via the
+             * shared helper (gravtree_force_kernel.h) — CPU-walk semantics verbatim. */
 #ifdef SINK_CALC_DISTANCES
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-            /* Non-special primaries weighted-accumulate over ALL particles in range
-             * (mirrors forcetree.cc:1953-1960). Special primaries fall through to
-             * the nearest-sink branch below. */
-            if((r2 > 0) && (mass > 0) && (ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES))
+            if((r2 > 0) && (mass > 0))
             {
-                double wt_special = gpu_weight_function_for_weighted_motion_smoothing(sqrt(r2), 1);
-                weight_sum_for_special_point_smoothing += wt_special;
-                vel_of_nearest_special[0] += wt_special * (double) P_dev[no].Vel[0];
-                vel_of_nearest_special[1] += wt_special * (double) P_dev[no].Vel[1];
-                vel_of_nearest_special[2] += wt_special * (double) P_dev[no].Vel[2];
-                acc_of_nearest_special[0] += wt_special * (double) P_dev[no].Acc_Total_PrevStep[0];
-                acc_of_nearest_special[1] += wt_special * (double) P_dev[no].Acc_Total_PrevStep[1];
-                acc_of_nearest_special[2] += wt_special * (double) P_dev[no].Acc_Total_PrevStep[2];
-            }
+                grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                prox_target.vel = vel;
 #endif
-            if((r2 > 0) && (mass > 0) && (P_dev[no].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES))
-            {
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                /* Skip nearest-sink updates for special primaries when WEIGHTED_MOTION
-                 * is active (mirrors forcetree.cc:1965). */
-                if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+                grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = P_dev[no].Mass; prox_src.motion.vel = P_dev[no].Vel;
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+                prox_src.motion.acc = P_dev[no].Acc_Total_PrevStep;
 #endif
-                if(r2 < Min_Distance_to_Sink2) {
-                    Min_Distance_to_Sink2 = r2;
-                    Min_xyz_to_Sink = dr;
-#ifdef SPECIAL_POINT_MOTION
-                    /* Capture velocity and previous-step acceleration of this nearest
-                     * special particle (forcetree.cc:1971-1975). Under WEIGHTED_MOTION
-                     * this overwrites the weighted-accumulation result above for
-                     * non-special primaries -- consistent with the CPU sequencing. */
-                    vel_of_nearest_special[0] = (double) P_dev[no].Vel[0];
-                    vel_of_nearest_special[1] = (double) P_dev[no].Vel[1];
-                    vel_of_nearest_special[2] = (double) P_dev[no].Vel[2];
-                    acc_of_nearest_special[0] = (double) P_dev[no].Acc_Total_PrevStep[0];
-                    acc_of_nearest_special[1] = (double) P_dev[no].Acc_Total_PrevStep[1];
-                    acc_of_nearest_special[2] = (double) P_dev[no].Acc_Total_PrevStep[2];
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                prox_src.motion.max_feedback_vel = P_dev[no].MaxFeedbackVel;
 #endif
-                }
-#ifdef SINGLE_STAR_TIMESTEPPING
-                Vec3<double> sink_dv = P_dev[no].Vel - vel;
-                double vSqr = sink_dv.norm_sq();
-                double M_total = P_dev[no].Mass + pmass;
-                double r2soft = SinkParticle_GravityKernelRadius;
-                if(r2soft < soft) {r2soft = soft;}
-                r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
-                r2soft = r2 + r2soft * r2soft;
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                if(ptype == 0) {
-                    double tSqr_fb = r2soft / (P_dev[no].MaxFeedbackVel * P_dev[no].MaxFeedbackVel + MIN_REAL_NUMBER);
-                    if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
-                }
-#endif
-                double tSqr = r2soft / (vSqr + MIN_REAL_NUMBER);
-                double tff4 = r2soft * r2soft * r2soft / (M_total * M_total);
-                if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
-                if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if(ptype == 5) {
-                    double r_p5 = sqrt(r2);
-                    double specific_energy = 0.5 * vSqr - All.G * M_total / r_p5;
-                    if(r2 < SinkParticle_GravityKernelRadius * SinkParticle_GravityKernelRadius) {
-                        double hinv_p5 = 1.0 / SinkParticle_GravityKernelRadius;
-                        specific_energy = 0.5 * vSqr + All.G * M_total *
-                            kernel_gravity(r_p5*hinv_p5, hinv_p5, hinv_p5*hinv_p5*hinv_p5, -1);
-                    }
-                    if(specific_energy < 0) {
-                        double semimajor_axis = -All.G * M_total / (2.0 * specific_energy);
-                        double t_orbital = 2.0 * M_PI *
-                            sqrt(semimajor_axis*semimajor_axis*semimajor_axis / (All.G * M_total));
-                        if(t_orbital < Min_Sink_OrbitalTime) {
-                            Min_Sink_OrbitalTime = t_orbital;
-                            comp_Mass_local = P_dev[no].Mass;
-                            comp_dx_local = dr;
-                            comp_dv_local = sink_dv;
-                        }
-                    }
-                }
-#endif /* SINGLE_STAR_FIND_BINARIES */
-#endif /* SINGLE_STAR_TIMESTEPPING */
+                grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
             }
 #endif /* SINK_CALC_DISTANCES */
         }
@@ -712,15 +587,16 @@ gpu_gravtree_walk_one(int target,
         {
             if(no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes) n_foreign++;  /* Phase 9.3 diag */
             int idx = no - maxPart;
-            Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)s->s[idx][0], (MyFloat)s->s[idx][1], (MyFloat)s->s[idx][2]};
-            MyFloat len_node = s->len[idx];
-            MyFloat msoft_node = s->maxsoft[idx];
-            MyFloat mass_node = s->mass[idx];
-            Vec3<MyFloat> center_node = s->center[idx];
+            Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)tree_soa->s[idx][0], (MyFloat)tree_soa->s[idx][1], (MyFloat)tree_soa->s[idx][2]};
+            MyFloat len_node = tree_soa->len[idx];
+            MyFloat msoft_node = tree_soa->maxsoft[idx];
+            MyFloat mass_node = tree_soa->mass[idx];
+            Vec3<MyFloat> center_node = tree_soa->center[idx];
 
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
+            gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
 
             /* LET guard (mirrors forcetree.cc): if a foreign node has nextnode < 0
@@ -728,233 +604,163 @@ gpu_gravtree_walk_one(int target,
              * the while(no >= 0) walk, skipping this node's force contribution.
              * Force multipole treatment instead. */
             int in_foreign_n = (no >= maxPart + maxNodes);
-            int foreign_force_multipole = (in_foreign_n && (s->nextnode[idx] < 0));
+            int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
+            /* empty-node skip (mirrors forcetree.cc:2165): a zero-mass node contributes no
+             * force -> advance to the sibling. Not gated on foreign_force_multipole (a skip
+             * is never converted to a forced multipole); also avoids descending empty nodes. */
+            if(mass_node <= 0) { no = tree_soa->sibling[idx]; continue; }
+
+            /* single-particle node -> open to its leaf for an exact force (mirrors
+             * forcetree.cc:2171). A foreign single-particle node with nextnode<0 must instead
+             * be used as a multipole (opening it would exit the walk and drop its contribution),
+             * so gate on foreign_force_multipole, matching the LET-sentinel guard above. */
+            if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                if(!foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
+            }
+
+            /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home for
+             * the node opening decision. The caller owns the wrapped dr/r2 (also used below for the
+             * accepted-node force) and the foreign-multipole policy; the predicate is foreign-blind
+             * geometry. PM short-range cull, neighbour sphere-box / softening-open, the angular and
+             * relative opening criteria, and the sink-direct gate all live in the predicate. */
+            {
+                double cen0 = (double)center_node[0] - pos[0];
+                double cen1 = (double)center_node[1] - pos[1];
+                double cen2 = (double)center_node[2] - pos[2];
 #ifdef PMGRID
-            if(r2 > rcut2)
-            {
-                double eff_dist = rcut + 0.5 * len_node;
-                double dcx = fabs(center_node[0] - pos[0]);
-                double dcy = fabs(center_node[1] - pos[1]);
-                double dcz = fabs(center_node[2] - pos[2]);
-                if(dcx > eff_dist || dcy > eff_dist || dcz > eff_dist) {
-                    no = s->sibling[idx]; continue;
-                }
-            }
-#endif
-
-#ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
-            /* Sphere-box intersection opening criterion (mirrors forcetree.cc:2122-2130).
-             * Open the node if any portion of its bounding cube lies within the
-             * interaction radius max(soft, msoft_node) of the target.  Required for
-             * ADAPTIVE_GRAVSOFT_FORALL, SINGLE_STAR_SINK_DYNAMICS, GRAVITY_ACCURATE_FEWBODY_INTEGRATION,
-             * ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION, and HERMITE_INTEGRATION. */
-            {
-                double dcx = center_node[0] - pos[0];
-                double dcy = center_node[1] - pos[1];
-                double dcz = center_node[2] - pos[2];
-#ifdef BOX_PERIODIC
-                /* Nearest-image wrap (cubic box convention; matches gpu_ewald_walk pattern at lines 1672-1674). */
-                double bsz = All.BoxSize;
-                double bhf = 0.5 * bsz;
-                if(dcx >  bhf) dcx -= bsz; else if(dcx < -bhf) dcx += bsz;
-                if(dcy >  bhf) dcy -= bsz; else if(dcy < -bhf) dcy += bsz;
-                if(dcz >  bhf) dcz -= bsz; else if(dcz < -bhf) dcz += bsz;
-#endif
-                double dist_to_center2 = dcx*dcx + dcy*dcy + dcz*dcz;
-                double soft_max = (soft > msoft_node) ? soft : msoft_node;
-                double dist_to_open = soft_max + len_node * 1.73205 / 2.0;
-                if(!foreign_force_multipole && dist_to_center2 < dist_to_open * dist_to_open) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
+                double pred_rcut = pm.rcut, pred_rcut2 = pm.rcut2;
 #else
-            if(!foreign_force_multipole && h < msoft_node) {
-                if(r2 < msoft_node * msoft_node) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
+                double pred_rcut = 0.0, pred_rcut2 = 0.0;
 #endif
-
-            if(All.ErrTolTheta)
-            {
-                if(!foreign_force_multipole && len_node * len_node > r2 * All.ErrTolTheta * All.ErrTolTheta) {
-                    no = s->nextnode[idx]; continue;
-                }
-            }
-            else
-            {
-                if(!foreign_force_multipole && ((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
-                   (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node)))) {
-                    no = s->nextnode[idx]; continue;
-                }
-                if(!foreign_force_multipole && mass_node * len_node * len_node > r2 * r2 * aold) {
-                    no = s->nextnode[idx]; continue;
-                }
-                double dcx = fabs(center_node[0] - pos[0]);
-                double dcy = fabs(center_node[1] - pos[1]);
-                double dcz = fabs(center_node[2] - pos[2]);
-                if(!foreign_force_multipole && dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
-                    no = s->nextnode[idx]; continue;
-                }
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                int pred_is_first_step = is_first_step;
+#else
+                int pred_is_first_step = 0;
+#endif
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-                /* Force star-star nodes to open inside the direct-gravity radius. */
-                if(ptype == 5) {
-                    if(!foreign_force_multipole && (s->N_SINK[idx] > 0)) {
-                        double r_direct = (double)SINGLE_STAR_DIRECT_GRAVITY_RADIUS / UNIT_LENGTH_IN_AU + 0.6*len_node;
-                        if(r2 < r_direct * r_direct) {
-                            no = s->nextnode[idx]; continue;
-                        }
-                    }
-                }
+                int pred_n_sink = (int)tree_soa->N_SINK[idx];
+#else
+                int pred_n_sink = 0;
 #endif
+                gravtree_open_t pred = gravtree_open_decision_from_distances(
+                    r2, cen0, cen1, cen2, soft, h, aold, ptype,
+                    (double)len_node, (double)mass_node, (double)msoft_node,
+                    pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+                /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign node
+                 * forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid dropping its
+                 * contribution; ACCEPT and OPEN&&foreign fall through to the payload load below. */
+                if(pred == GRAV_SKIP_NODE) { no = tree_soa->sibling[idx]; continue; }
+                if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
             }
 
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
-#ifdef COUNT_MASS_IN_GRAVTREE
-            tree_mass += mass;
-#endif
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this accepted node (mirrors forcetree.cc:2272).
              * d_dm uses the DM CoM s_dm, NOT the total CoM (s_node). */
             if(ptype != 0) {
-                d_dm[0] = (double)s->s_dm[idx][0] - pos[0];
-                d_dm[1] = (double)s->s_dm[idx][1] - pos[1];
-                d_dm[2] = (double)s->s_dm[idx][2] - pos[2];
-                mass_dm_local = (double)s->mass_dm[idx];
+                d_dm[0] = (double)tree_soa->s_dm[idx][0] - pos[0];
+                d_dm[1] = (double)tree_soa->s_dm[idx][1] - pos[1];
+                d_dm[2] = (double)tree_soa->s_dm[idx][2] - pos[2];
+                mass_dm_local = (double)tree_soa->mass_dm[idx];
             } else { d_dm = Vec3<double>{0,0,0}; mass_dm_local = 0; }
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-            {
-                double sph_dx_s = (double)s_node[0] - sph_center[0];
-                double sph_dy_s = (double)s_node[1] - sph_center[1];
-                double sph_dz_s = (double)s_node[2] - sph_center[2];
-                r_source = sqrt(sph_dx_s * sph_dx_s + sph_dy_s * sph_dy_s + sph_dz_s * sph_dz_s);
-            }
+            r_source = grav_spherical_symmetry_r_from_center(s_node[0],s_node[1],s_node[2],sph_center[0],sph_center[1],sph_center[2]);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Load node's previous-step tidal tensor from SoA (mirrors forcetree.cc:2278). */
             for(int kk = 0; kk < 6; kk++) {
-                j_zeta_tidal_tt.data[kk] = (double) s->tidal_tensorps[(long)idx * 6 + kk];
+                j_zeta_tidal_tt.data[kk] = (double) tree_soa->tidal_tensorps[(long)idx * 6 + kk];
             }
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-            dv[0] = (double) s->node_vs[idx][0] - vel[0];
-            dv[1] = (double) s->node_vs[idx][1] - vel[1];
-            dv[2] = (double) s->node_vs[idx][2] - vel[2];
+            dv[0] = (double) tree_soa->node_vs[idx][0] - vel[0];
+            dv[1] = (double) tree_soa->node_vs[idx][1] - vel[1];
+            dv[2] = (double) tree_soa->node_vs[idx][2] - vel[2];
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             {
-                long np = s->N_part[idx];
+                long np = tree_soa->N_part[idx];
                 m_j_eff_for_df = (np > 0) ? (mass / (double)np) : 0.0;
             }
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            gasmass = s->gasmass[idx];
+            gasmass = tree_soa->gasmass[idx];
 #endif
 #ifdef RT_USE_GRAVTREE
-            /* Load node stellar luminosity unconditionally (CPU does the same — no valid_gas gate here).
-             * The nvc++ compiler miscompiles if(const int) in device code, so we also dropped 'const'
-             * on valid_gas_particle_for_rt.  RT accumulation is still gated in the force kernel below. */
+            /* Load node stellar luminosity only for valid gas targets (mirrors
+             * forcetree.cc; the RT accumulation below is gated the same way).
+             * valid_gas_particle_for_rt is volatile int -- nvc++ constant-propagates
+             * plain int gates in device code otherwise. */
+            if(valid_gas_particle_for_rt)
             {
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
-                    mass_stellarlum[kf] = s->stellar_lum[idx * N_RT_FREQ_BINS + kf];
+                    mass_stellarlum[kf] = tree_soa->stellar_lum[idx * N_RT_FREQ_BINS + kf];
                 }
 #ifdef CHIMES_STELLAR_FLUXES
                 for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
-                    chimes_mass_stellarlum_G0[kf] = s->chimes_stellar_lum_G0[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
-                    chimes_mass_stellarlum_ion[kf] = s->chimes_stellar_lum_ion[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_G0[kf] = tree_soa->chimes_stellar_lum_G0[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_ion[kf] = tree_soa->chimes_stellar_lum_ion[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
                 }
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-                d_stellarlum[0] = s->rt_source_lum_s[idx][0] - pos[0];
-                d_stellarlum[1] = s->rt_source_lum_s[idx][1] - pos[1];
-                d_stellarlum[2] = s->rt_source_lum_s[idx][2] - pos[2];
+                d_stellarlum[0] = tree_soa->rt_source_lum_s[idx][0] - pos[0];
+                d_stellarlum[1] = tree_soa->rt_source_lum_s[idx][1] - pos[1];
+                d_stellarlum[2] = tree_soa->rt_source_lum_s[idx][2] - pos[2];
+                gravity_box_nearest_image(d_stellarlum[0], d_stellarlum[1], d_stellarlum[2], -1);
 #else
                 d_stellarlum = dr;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                /* Mirror forcetree.cc:1977-1979: node-aggregated sink angle-weighted luminosity. */
-                mass_sinklumwt_forradfb = gpu_sink_fb_angleweight((double) s->sink_lum[idx], s->sink_lum_grad[idx],
-                                                                 d_stellarlum[0], d_stellarlum[1], d_stellarlum[2]);
+                /* node-aggregated sink angle-weighted luminosity (shared formula helper) */
+                mass_sinklumwt_forradfb = grav_sink_fb_angleweight((double) tree_soa->sink_lum[idx],
+                                                                   (double) tree_soa->sink_lum_grad[idx][0], (double) tree_soa->sink_lum_grad[idx][1], (double) tree_soa->sink_lum_grad[idx][2],
+                                                                   d_stellarlum[0], d_stellarlum[1], d_stellarlum[2]);
 #endif
             }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             /* Mirror forcetree.cc:1956-1957 node-aggregated CR injection. */
-            cr_injection = (double) s->cr_injection[idx];
+            cr_injection = (double) tree_soa->cr_injection[idx];
 #endif
-            /* Phase 2-B: node-side sink distance + timestepping accumulators.
-             * Mirrors forcetree.cc:1993-2050. Runs only when the closed node
-             * has non-zero sink mass (i.e., contains at least one sink). */
+            /* Node-side sink distance + timestepping accumulators via the shared helper
+             * (gravtree_force_kernel.h) — CPU-walk semantics verbatim. The sink_vel/sink_acc
+             * SoA fields are populated from Nodes[] by gpu_pseudo_update + gpu_moment_refresh. */
 #ifdef SINK_CALC_DISTANCES
-            if(s->sink_mass[idx] > 0)
+#ifdef SPECIAL_POINT_WEIGHTED_MOTION
+            {
+                Vec3<double> node_vs = Vec3<double>{(double)tree_soa->node_vs[idx][0], (double)tree_soa->node_vs[idx][1], (double)tree_soa->node_vs[idx][2]};
+                grav_sink_prox_node_specialweighted(r2, node_vs, ptype, sink_prox);
+            }
+#endif
+            if(tree_soa->sink_mass[idx] > 0)
             {
                 Vec3<double> sink_dr;
-                sink_dr[0] = s->sink_pos[idx][0] - pos[0];
-                sink_dr[1] = s->sink_pos[idx][1] - pos[1];
-                sink_dr[2] = s->sink_pos[idx][2] - pos[2];
-                double sink_r2 = sink_dr.norm_sq();
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                /* Skip nearest-sink update for special primaries when WEIGHTED_MOTION
-                 * is active (mirrors forcetree.cc:2296-2297). */
-                if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+                sink_dr[0] = tree_soa->sink_pos[idx][0] - pos[0];
+                sink_dr[1] = tree_soa->sink_pos[idx][1] - pos[1];
+                sink_dr[2] = tree_soa->sink_pos[idx][2] - pos[2];
+                gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
+                grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                prox_target.vel = vel;
 #endif
-                if(sink_r2 < Min_Distance_to_Sink2) {
-                    Min_Distance_to_Sink2 = sink_r2;
-                    Min_xyz_to_Sink = sink_dr;
-#ifdef SPECIAL_POINT_MOTION
-                    /* Capture node's CoM-weighted velocity and previous-step
-                     * acceleration for the nearest special particle (mirrors
-                     * forcetree.cc:2304-2305). The sink_acc SoA field is populated
-                     * from Nodes[].sink_acc by gpu_pseudo_update + gpu_moment_refresh. */
-                    vel_of_nearest_special[0] = (double) s->sink_vel[idx][0];
-                    vel_of_nearest_special[1] = (double) s->sink_vel[idx][1];
-                    vel_of_nearest_special[2] = (double) s->sink_vel[idx][2];
-                    acc_of_nearest_special[0] = (double) s->sink_acc[idx][0];
-                    acc_of_nearest_special[1] = (double) s->sink_acc[idx][1];
-                    acc_of_nearest_special[2] = (double) s->sink_acc[idx][2];
+                grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) tree_soa->sink_mass[idx];
+#if defined(SINGLE_STAR_FIND_BINARIES)
+                prox_src.n_sink = (int) tree_soa->N_SINK[idx];
 #endif
-                }
-#ifdef SINGLE_STAR_TIMESTEPPING
-                Vec3<double> sink_dv = Vec3<double>{(double)s->sink_vel[idx][0] - vel[0],
-                                                    (double)s->sink_vel[idx][1] - vel[1],
-                                                    (double)s->sink_vel[idx][2] - vel[2]};
-                double vSqr = sink_dv.norm_sq();
-                double M_total = s->sink_mass[idx] + pmass;
-                double r2soft = SinkParticle_GravityKernelRadius;
-                if(r2soft < soft) {r2soft = soft;}
-                r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
-                r2soft = r2 + r2soft * r2soft;
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                if(ptype == 0) {
-                    double tSqr_fb = r2soft / (s->MaxFeedbackVel[idx] * s->MaxFeedbackVel[idx] + MIN_REAL_NUMBER);
-                    if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
-                }
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+                prox_src.motion.vel = tree_soa->sink_vel[idx];
 #endif
-                double tSqr = r2soft / (vSqr + MIN_REAL_NUMBER);
-                double tff4 = r2soft * r2soft * r2soft / (M_total * M_total);
-                if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
-                if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if(ptype == 5 && s->N_SINK[idx] == 1) {
-                    double specific_energy = 0.5 * vSqr - All.G * M_total / sqrt(r2);
-                    if(specific_energy < 0) {
-                        double semimajor_axis = -All.G * M_total / (2.0 * specific_energy);
-                        double t_orbital = 2.0 * M_PI *
-                            sqrt(semimajor_axis*semimajor_axis*semimajor_axis / (All.G * M_total));
-                        if(t_orbital < Min_Sink_OrbitalTime) {
-                            Min_Sink_OrbitalTime = t_orbital;
-                            comp_Mass_local = s->sink_mass[idx];
-                            comp_dx_local = sink_dr;
-                            comp_dv_local = sink_dv;
-                        }
-                    }
-                }
-#endif /* SINGLE_STAR_FIND_BINARIES */
-#endif /* SINGLE_STAR_TIMESTEPPING */
+#if defined(SPECIAL_POINT_MOTION)
+                prox_src.motion.acc = tree_soa->sink_acc[idx];
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                prox_src.motion.max_feedback_vel = tree_soa->MaxFeedbackVel[idx];
+#endif
+                grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
             }
 #endif /* SINK_CALC_DISTANCES */
         }
@@ -964,511 +770,164 @@ gpu_gravtree_walk_one(int target,
         {
             double r = sqrt(r2);
             double fac_accel;
-#ifdef EVALPOTENTIAL
-            double fac_pot;
-#endif
+            double fac_pot = 0;   /* unconditional; a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
             double fac_tidal = 0.0, fac2_tidal = 0.0; /* mirrors forcetree.cc:1489; populated in branches below */
 #endif
-            if((r >= h) && (r >= h_p)) {
-                fac_accel = mass / (r2 * r);
+            /* pair-wise gravity terms (Newtonian/softened selection, softening symmetrization,
+             * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
+             * the single home for the pair physics on both walks. */
+            {
+                grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass,
+                                                             zeta, zeta_sec, ags_bitflag_primary);
+                fac_accel = pair_out.fac_accel;
 #ifdef EVALPOTENTIAL
-                fac_pot   = -mass / r;
+                fac_pot = pair_out.fac_pot;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                /* forcetree.cc:2082 Newtonian branch */
-                fac_tidal = fac_accel; fac2_tidal = 3.0 * mass / (r2 * r2 * r);
-#endif
-            } else {
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                double h_inv  = 1.0 / h;
-                double h3_inv = h_inv * h_inv * h_inv;
-                double u      = r * h_inv;
-                fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
-#ifdef EVALPOTENTIAL
-                fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                /* Initial tidal kernel values from primary (mirrors forcetree.cc:2358-2359
-                 * inside-softening initialization).  May be averaged below alongside fac_accel. */
-                fac_tidal  = fac_accel;
-                fac2_tidal = mass * kernel_gravity(u, h_inv, h3_inv, 2);
-#endif
-                if(h_p > 0) {
-                    int symmetrize_by_averaging = 0;
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    if(ptype_sec >= 0 && ((1 << ptype_sec) & ags_bitflag_primary)) {
-                        symmetrize_by_averaging = 1;
-                    }
-#endif
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-                    /* sinks: only gas-gas keeps averaging (forcetree.cc:2093-2095) */
-                    if((ptype != 0) || (ptype_sec != 0)) {symmetrize_by_averaging = 0;}
-#endif
-                    double prefac_corr_p    = 1.0;
-                    double prefac_corr_orig = 1.0;
-                    if(symmetrize_by_averaging == 0) {prefac_corr_p = 2.0; prefac_corr_orig = 0.0;}
-                    if((symmetrize_by_averaging == 1) || (h_p > h)) {
-                        double h_p_inv  = 1.0 / h_p;
-                        double h_p3_inv = h_p_inv * h_p_inv * h_p_inv;
-                        double u_p      = r * h_p_inv;
-                        double fac_p    = mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, 1);
-                        fac_accel = 0.5 * (prefac_corr_orig * fac_accel + prefac_corr_p * fac_p);
-#ifdef EVALPOTENTIAL
-                        double fac_pot_p = mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, -1);
-                        fac_pot          = 0.5 * (prefac_corr_orig * fac_pot   + prefac_corr_p * fac_pot_p);
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                        /* Per-pair tidal-tensor averaging (mirrors forcetree.cc:2393-2394).
-                         * fac2_tidal averages with the secondary's mode=2 kernel; fac_tidal
-                         * follows the post-averaging fac_accel since the radial second-derivative
-                         * trace term equals fac_accel by construction. */
-                        double fac2_tidal_p = mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, 2);
-                        fac2_tidal = 0.5 * (prefac_corr_orig * fac2_tidal + prefac_corr_p * fac2_tidal_p);
-                        fac_tidal  = fac_accel;
-#endif
-                    }
-                }
-#else  /* MAX-symmetrize (non-AVERAGING) */
-                double h_grav = h;
-                if(h_p > h_grav) {h_grav = h_p;}
-                double h_inv  = 1.0 / h_grav;
-                double h3_inv = h_inv * h_inv * h_inv;
-                double u      = r * h_inv;
-                fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
-#ifdef EVALPOTENTIAL
-                fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                /* forcetree.cc:2097 softened branch */
-                fac_tidal = fac_accel; fac2_tidal = mass * kernel_gravity(u, h_inv, h3_inv, 2);
-#endif
-#endif  /* SYMMETRIZE_FORCE_BY_AVERAGING */
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-                double fac_corr = 0.0;
-                int add_primary = 1, add_secondary = 1;
-                double u_p = (h_p > 0) ? (r / h_p) : 0.0;
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                double h_inv_for_zeta = 1.0 / h, h3_inv_for_zeta = h_inv_for_zeta*h_inv_for_zeta*h_inv_for_zeta;
-                double u_for_zeta = r * h_inv_for_zeta;
-#else
-                double h_inv_for_zeta = 1.0 / h_grav, h3_inv_for_zeta = h_inv_for_zeta*h_inv_for_zeta*h_inv_for_zeta;
-                double u_for_zeta = u;
-#endif
-                if(r <= 0.0 || pmass <= 0.0 || mass <= 0.0 || ptype_sec < 0) {
-                    add_primary = 0; add_secondary = 0;
-                }
-                if(zeta == 0.0 || u_for_zeta >= 1.0 || h <= 0.0) {add_primary = 0;}
-                if(zeta_sec == 0.0 || u_p >= 1.0 || h_p <= 0.0) {add_secondary = 0;}
-                if(ptype != 0 || ptype_sec != 0) {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    int bm_sec = gpu_ags_kernel_shared_BITFLAG(ptype_sec);
-                    if(!((1 << ptype)     & (ADAPTIVE_GRAVSOFT_FORALL)) ||
-                       !((1 << ptype_sec) & ags_bitflag_primary)) {add_primary = 0;}
-                    if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) ||
-                       !((1 << ptype)     & bm_sec)) {add_secondary = 0;}
-#else
-                    add_primary = 0; add_secondary = 0;
-#endif
-                }
-                if(add_primary) {
-                    double dWdr, wp;
-                    kernel_main(u_for_zeta, h3_inv_for_zeta, h3_inv_for_zeta * h_inv_for_zeta, &wp, &dWdr, 1);
-                    fac_corr += -(zeta / pmass) * dWdr / r;
-                }
-                if(add_secondary) {
-                    double dWdr, wp;
-                    double h_p_inv  = 1.0 / h_p;
-                    double h_p3_inv = h_p_inv * h_p_inv * h_p_inv;
-                    kernel_main(u_p, h_p3_inv, h_p3_inv * h_p_inv, &wp, &dWdr, 1);
-                    fac_corr += -(zeta_sec / pmass) * dWdr / r;
-                }
-                if(!isnan(fac_corr)) {fac_accel += fac_corr;}
+                fac_tidal = pair_out.fac_tidal; fac2_tidal = pair_out.fac2_tidal;
 #endif
             }
+            int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
 #ifdef PMGRID
-            int tabindex = (int) (asmthfac * r);
-            if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
-                fac_accel *= shortrange_tab[tabindex];
-#ifdef EVALPOTENTIAL
-                fac_pot   *= shortrange_pot_tab[tabindex];
+            tabindex = grav_pm_shortrange_tabindex(pm.asmthfac, r);
+            /* PM short-range gate (mirrors forcetree.cc): wraps the acceleration,
+             * potential, dynamical-friction, adaptive-tidal-correction, tidal-tensor
+             * and jerk contributions ONLY. A source beyond the table range contributes
+             * nothing to those, but fac_accel stays UN-truncated for the payload blocks
+             * below the gate (TREECOL column estimate) -- there is no PM-side completion
+             * for those integrals, so truncating or zeroing them would be wrong. */
+            if(grav_pm_shortrange_in_range(tabindex))
 #endif
-            } else {
-                fac_accel = 0.0;
-#ifdef EVALPOTENTIAL
-                fac_pot   = 0.0;
-#endif
-            }
+            {
+#ifdef PMGRID
+            grav_force_apply_pm_truncation(pm, tabindex, fac_pot, fac_accel);
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-            /* Shell-theorem override (mirrors forcetree.cc:2446-2449). Replaces dr
-             * and fac_accel; pot above is unmodified, matching CPU sequencing. */
-            if(r_source < r_target) {
-                dr[0] = sph_center[0] - pos[0];
-                dr[1] = sph_center[1] - pos[1];
-                dr[2] = sph_center[2] - pos[2];
-                double rt_eff = (r_target > h) ? r_target : h;
-                if((double)GRAVITY_SPHERICAL_SYMMETRY > rt_eff) rt_eff = (double)GRAVITY_SPHERICAL_SYMMETRY;
-                fac_accel = mass / (rt_eff * rt_eff * rt_eff);
-            } else {
-                fac_accel = 0.0;
-            }
+            /* Shell-theorem override via the shared helper; pot above is unmodified, matching CPU sequencing. */
+            r_target = grav_spherical_symmetry_r_from_center(pos[0],pos[1],pos[2],sph_center[0],sph_center[1],sph_center[2]);
+            grav_spherical_symmetry_force_override(r_source, r_target, h, mass, sph_center[0],sph_center[1],sph_center[2], pos[0],pos[1],pos[2], dr, fac_accel);
 #endif
-            acc[0] += fac_accel * dr[0];
-            acc[1] += fac_accel * dr[1];
-            acc[2] += fac_accel * dr[2];
+            acc += fac_accel * dr;
 #ifdef EVALPOTENTIAL
             pot    += fac_pot;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-            /* Yukawa-screened scalar-field force on dark-matter particles
-             * (mirrors forcetree.cc:2683-2705).  Only acts when the target is
-             * non-gas; mass_dm_local was zeroed for gas-targets above. */
-            if(ptype != 0 && mass_dm_local > 0)
-            {
-#ifdef BOX_PERIODIC
-                double bsz_dm = All.BoxSize, bhf_dm = 0.5 * bsz_dm;
-                if(d_dm[0] >  bhf_dm) d_dm[0] -= bsz_dm; else if(d_dm[0] < -bhf_dm) d_dm[0] += bsz_dm;
-                if(d_dm[1] >  bhf_dm) d_dm[1] -= bsz_dm; else if(d_dm[1] < -bhf_dm) d_dm[1] += bsz_dm;
-                if(d_dm[2] >  bhf_dm) d_dm[2] -= bsz_dm; else if(d_dm[2] < -bhf_dm) d_dm[2] += bsz_dm;
-#endif
-                double r2_dm = d_dm[0]*d_dm[0] + d_dm[1]*d_dm[1] + d_dm[2]*d_dm[2];
-                double r_dm  = sqrt(r2_dm);
-                double fac_dmsf;
-                if(r_dm >= h) {
-                    fac_dmsf = mass_dm_local / (r2_dm * r_dm);
-                } else {
-                    double h_inv_dm  = 1.0 / h;
-                    double h3_inv_dm = h_inv_dm * h_inv_dm * h_inv_dm;
-                    double u_dmsf    = r_dm * h_inv_dm;
-                    fac_dmsf = mass_dm_local * kernel_gravity(u_dmsf, h_inv_dm, h3_inv_dm, 1);
-                }
-                fac_dmsf *= All.ScalarBeta * (1 + r_dm / All.ScalarScreeningLength) * exp(-r_dm / All.ScalarScreeningLength);
-#ifdef PMGRID
-                int tabindex_dm = (int)(asmthfac * r_dm);
-                if(tabindex_dm >= 0 && tabindex_dm < GIZMO_GPU_GRAVTREE_NTAB) {
-                    fac_dmsf *= shortrange_tab[tabindex_dm];
-                    acc[0] += fac_dmsf * d_dm[0];
-                    acc[1] += fac_dmsf * d_dm[1];
-                    acc[2] += fac_dmsf * d_dm[2];
-                }
-#else
-                acc[0] += fac_dmsf * d_dm[0];
-                acc[1] += fac_dmsf * d_dm[1];
-                acc[2] += fac_dmsf * d_dm[2];
-#endif
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+            /* Ewald periodic-image potential correction (mirrors forcetree.cc:2300).
+             * Pure-tree periodic only; under PMGRID the long-range potential comes
+             * from the PM solver.  active is 1 in a healthy run (acquire failure
+             * hard-stops the caller); the guard only covers the post-endrun drain. */
+            if(ewald_pot->active) {
+                grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], ewald_pot->fac_intp);
+                pot += mass * grav_ewald_interp_apply(ewald_pot->potcorr, ew);
             }
+#endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-            /* Adaptive softening 'tidal' correction terms (mirrors forcetree.cc:2481-2526).
-             * tidal_zeta accumulates inside the primary's kernel; per-pair acc_corr_zeta
-             * is folded into acc directly. Reads fac_tidal/fac2_tidal which are valid
-             * here (set by force kernel above; GRAVITY_SPHERICAL_SYMMETRY override of
-             * fac2_tidal happens later, in the tidal accumulation block). */
-            {
-                int primary_uses_tidal = ((1 << ptype) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) ? 1 : 0;
-                int secondary_uses_tidal = (ptype_sec >= 0 && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))) ? 1 : 0;
-                if(mass > 0 && r2 > 0)
-                {
-                    double prefac_tt = 0.5;
-                    double h_touse_zeta = h;
-                    double u_tt = r / h_touse_zeta;
-#if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                    if(h >= h_p) { prefac_tt = 1.0; }
-                    else { prefac_tt = 1.0; h_touse_zeta = h_p; u_tt = r / h_touse_zeta; }
-#endif
-                    if(u_tt < 1.0 && prefac_tt > 0.0) {
-                        double h_inv_z  = 1.0 / h;
-                        double h3_inv_z = h_inv_z * h_inv_z * h_inv_z;
-                        tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt, h_inv_z, h3_inv_z, 0);
-                    }
-                }
-                if(primary_uses_tidal || secondary_uses_tidal)
-                {
-                    double h_touse = (h > h_p) ? h : h_p;
-                    double f_b = -r * fac2_tidal;
-                    double f_a = (6.0 / r) * fac_tidal;
-                    if(r < h_touse)
-                    {
-                        double dwk, wk;
-                        double u_corr = r / h_touse;
-                        kernel_main(u_corr, 1.0, 1.0, &wk, &dwk, 0);
-                        double f_a_corr = 4.0 * M_PI * mass * (dwk - (2.0/u_corr) * wk) / (h_touse*h_touse*h_touse*h_touse);
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                        double h_alt = (h < h_p) ? h : h_p;
-                        double u_alt = r / h_alt;
-                        kernel_main(u_alt, 1.0, 1.0, &wk, &dwk, 0);
-                        f_a_corr = 0.5 * (f_a_corr + 4.0 * M_PI * mass * (dwk - (2.0/u_alt) * wk) / (h_alt*h_alt*h_alt*h_alt));
-#endif
-                        f_a += f_a_corr;
-                    }
-                    Vec3<double> rh = Vec3<double>{dr[0]/r, dr[1]/r, dr[2]/r};
-                    double acc_corr_zeta[3] = {0.0, 0.0, 0.0};
-                    for(int kk = 0; kk < 3; kk++) {
-                        for(int ki = 0; ki < 3; ki++) {
-                            for(int kj = 0; kj < 3; kj++) {
-                                double q0 = rh[ki] * rh[kj] * rh[kk];
-                                double fb_rh_add = 0.0;
-                                if(ki == kj) fb_rh_add += rh[kk];
-                                if(ki == kk) fb_rh_add += rh[kj];
-                                if(kj == kk) fb_rh_add += rh[ki];
-                                double qfun = f_a * q0 + f_b * (-3.0 * q0 + fb_rh_add);
-                                acc_corr_zeta[kk] += primary_uses_tidal   * i_zeta_tidal_tt[ki][kj] * qfun;
-                                acc_corr_zeta[kk] += secondary_uses_tidal * j_zeta_tidal_tt[ki][kj] * qfun;
-                            }
-                        }
-                    }
-                    acc[0] += acc_corr_zeta[0];
-                    acc[1] += acc_corr_zeta[1];
-                    acc[2] += acc_corr_zeta[2];
-                }
-            }
+            /* Adaptive softening 'tidal' correction terms via the shared helper
+             * (gravtree_force_kernel.h); GRAVITY_SPHERICAL_SYMMETRY override of
+             * fac2_tidal happens later, in the tidal accumulation block. */
+            grav_ags_tidal_criterion_accumulate(r, r2, dr, mass, h, h_p, ptype, ptype_sec, fac_tidal, fac2_tidal,
+                                                i_zeta_tidal_tt, j_zeta_tidal_tt, tidal_zeta, acc);
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-            /* Shell-theorem override of fac2_tidal (mirrors forcetree.cc:2534-2536).
-             * fac_tidal is left unmodified; the spherical-symmetry shell formula
-             * only affects the radial second derivative term carried by fac2_tidal. */
-            if(r_source < r_target) {
-                double rt_eff5 = (r_target > h) ? r_target : h;
-                if((double)GRAVITY_SPHERICAL_SYMMETRY > rt_eff5) rt_eff5 = (double)GRAVITY_SPHERICAL_SYMMETRY;
-                fac2_tidal = 3.0 * mass / (rt_eff5 * rt_eff5 * rt_eff5 * rt_eff5 * rt_eff5);
-            } else {
-                fac2_tidal = 0.0;
-            }
+            fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(r_source, r_target, h, mass);
 #endif
-#ifdef PMGRID
-            /* PMGRID short-range tidal correction (mirrors forcetree.cc:2538-2549).
-             * The standard tidal kernel terms get modulated by shortrange_table[tabindex],
-             * and an additional shortrange_table_tidal[tabindex] term is added to
-             * account for the smoothing-kernel derivative correction in TreePM. */
-            if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
-                float st  = shortrange_tab[tabindex];
-                float sti = shortrange_tidal_tab[tabindex];
-                tidal_acc[0][0] += (-fac_tidal + dr[0]*dr[0]*fac2_tidal) * st + dr[0]*dr[0]*fac2_tidal/3.0 * sti;
-                tidal_acc[0][1] += ( dr[0]*dr[1]*fac2_tidal)             * st + dr[0]*dr[1]*fac2_tidal/3.0 * sti;
-                tidal_acc[0][2] += ( dr[0]*dr[2]*fac2_tidal)             * st + dr[0]*dr[2]*fac2_tidal/3.0 * sti;
-                tidal_acc[1][1] += (-fac_tidal + dr[1]*dr[1]*fac2_tidal) * st + dr[1]*dr[1]*fac2_tidal/3.0 * sti;
-                tidal_acc[1][2] += ( dr[1]*dr[2]*fac2_tidal)             * st + dr[1]*dr[2]*fac2_tidal/3.0 * sti;
-                tidal_acc[2][2] += (-fac_tidal + dr[2]*dr[2]*fac2_tidal) * st + dr[2]*dr[2]*fac2_tidal/3.0 * sti;
-            }
-            /* tabindex out of range: no tidal contribution (consistent with fac_accel=0 above). */
-#else
-            /* Non-PMGRID tidal accumulation (mirrors forcetree.cc:2551-2556). */
-            tidal_acc[0][0] += (-fac_tidal + dr[0] * dr[0] * fac2_tidal);
-            tidal_acc[0][1] += ( dr[0] * dr[1] * fac2_tidal);
-            tidal_acc[0][2] += ( dr[0] * dr[2] * fac2_tidal);
-            tidal_acc[1][1] += (-fac_tidal + dr[1] * dr[1] * fac2_tidal);
-            tidal_acc[1][2] += ( dr[1] * dr[2] * fac2_tidal);
-            tidal_acc[2][2] += (-fac_tidal + dr[2] * dr[2] * fac2_tidal);
-#endif
+            /* tidal-tensor accumulation via the shared helper (PM-truncated or bare;
+             * tabindex is in range here -- this call sits inside the PM short-range gate) */
+            grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal, pm, tabindex, tidal_acc);
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-            /* forcetree.cc:2289-2290.  Note: under ATFU the CPU skips the
-             * `if(ptype>0)` gate to include gas in jerk accumulation. */
-            {
-                double dv_dot_dr = dv[0]*dr[0] + dv[1]*dr[1] + dv[2]*dr[2];
-#ifndef ADAPTIVE_TREEFORCE_UPDATE
-                if(ptype > 0)
-#endif
-                {
-                    jerk_acc[0] += fac_accel * dv[0] - dv_dot_dr * fac2_tidal * dr[0];
-                    jerk_acc[1] += fac_accel * dv[1] - dv_dot_dr * fac2_tidal * dr[1];
-                    jerk_acc[2] += fac_accel * dv[2] - dv_dot_dr * fac2_tidal * dr[2];
-                }
-            }
+            grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk_acc);
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
-            /* Mirror forcetree.cc:2167-2190. Dynamical-friction correction
-             * applied only to type-5 sinks acting on gravity sources. */
-            if((fac_accel > MIN_REAL_NUMBER) && (ptype == 5) && (mass > MIN_REAL_NUMBER)) {
-                double dv2 = dv.norm_sq();
-                if((dv2 > MIN_REAL_NUMBER) && (target_sink_mass > MIN_REAL_NUMBER)) {
-                    double dv0 = sqrt(dv2);
-                    Vec3<double> dv_h = dv / dv0;
-                    double rdotvhat = dot(dr, dv_h);
-                    Vec3<double> b_im = dr - rdotvhat * dv_h;
-                    double b_impact = b_im.norm();
-                    double a_im = (b_impact * All.cf_atime) * (dv2 * All.cf_a2inv) / (All.G * target_sink_mass);
-                    double fac_df = fac_accel * b_impact * a_im / (1.0 + a_im * a_im);
-                    {
-                        double m_j = m_j_eff_for_df;
-                        if((m_j > 0) && (target_sink_mass > 14.251 * m_j)) {
-                            double corr = (-1.0 + 3.0 / log10(target_sink_mass / m_j)) / 1.6;
-                            if(corr < 0) corr = 0;
-                            if(corr > 1) corr = 1;
-                            fac_df *= corr;
-                        }
-                    }
-                    if((m_j_eff_for_df <= MIN_REAL_NUMBER) || (b_impact <= MIN_REAL_NUMBER) || (dv2 <= MIN_REAL_NUMBER)) {
-                        fac_df = 0;
-                    }
-                    /* parallel deflection component */
-                    acc[0] += fac_df * dv_h[0];
-                    acc[1] += fac_df * dv_h[1];
-                    acc[2] += fac_df * dv_h[2];
-                    /* perpendicular deflection component (residual after subtracting homogeneous) */
-                    double fac_df_p = -fac_df / (b_impact * a_im + MIN_REAL_NUMBER);
-                    if(fabs(fac_df_p) < MAX_REAL_NUMBER && isfinite(fac_df_p)) {
-                        acc[0] += fac_df_p * b_im[0];
-                        acc[1] += fac_df_p * b_im[1];
-                        acc[2] += fac_df_p * b_im[2];
-                    }
-                }
-            }
+            /* dynamical-friction deflection for type-5 sink targets (shared helper) */
+            grav_sink_dynfriction_accumulate(dr, dv, fac_accel, mass, target_sink_mass, m_j_eff_for_df, ptype, acc);
 #endif /* SINK_DYNFRICTION_FROMTREE */
+            } /* closes the PM short-range gate (tabindex in range; mirrors forcetree.cc) */
             ninter++;
+#ifdef COUNT_MASS_IN_GRAVTREE
+            /* counted only for accepted interactions (r2>0, mass>0), mirroring
+             * forcetree.cc -- the walk excludes the target's own (r2==0) leaf;
+             * the post-loop += P[i].Mass in gravtree.cc adds it back exactly once. */
+            tree_mass += mass;
+#endif
 
             /* ------------------------------------------------------------ *
              * RT cluster payloads (Phase 2-A).  Structure mirrors           *
-             * forcetree.cc:2290-2392 (outside the PMGRID tabindex gate,     *
-             * so fac_accel is already 0 when tabindex >= NTAB — correct for  *
-             * treecol; RT_USE_GRAVTREE computes its own fac_rt from          *
-             * d_stellarlum independently).                                   *
+             * forcetree.cc: OUTSIDE the PM short-range gate, so for an      *
+             * out-of-range source fac_accel is the raw un-truncated value   *
+             * here (used by the TREECOL column estimate, which has no       *
+             * PM-side completion); RT_USE_GRAVTREE computes its own fac_rt  *
+             * from d_stellarlum independently.                              *
              * ------------------------------------------------------------ */
 #ifdef RT_USE_TREECOL_FOR_NH
-            if(gasmass > 0.0)
-            {
-                int bin;
-                if((fabs(dr[0]) > fabs(dr[1])) && (fabs(dr[0]) > fabs(dr[2]))) {
-                    bin = (dr[0] > 0) ? 0 : 1;
-                } else if(fabs(dr[1]) > fabs(dr[2])) {
-                    bin = (dr[1] > 0) ? 2 : 3;
-                } else {
-                    bin = (dr[2] > 0) ? 4 : 5;
-                }
-                treecol_angular_bins[bin] += fac_accel * gasmass * r / (angular_bin_size * mass);
-            }
+            grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, treecol_angular_bins);
 #endif
 
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-            /* Mirror forcetree.cc:2573. Per-interaction mass accumulation, where
+            /* Mirror forcetree.cc. Per-interaction mass accumulation, where
              * each visited node contributes its multipole mass when within Rcrit. */
             if(r < r_for_total_menclosed) {m_enc_in_rcrit += mass;}
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-            /* Mirror forcetree.cc:2300-2311. CR sub-grid LEBRON energy density
-             * accumulation at the post-opening stage. All.Time>All.TimeBegin
-             * and t_max_cr>0 are host-side checks; cr_data->t_max_cr is 0 at
-             * t=TimeBegin which makes r_max=0 and the exp() factor zero, so
-             * the block is a no-op on the first step even without the gate. */
-            if(ptype == 0 && r > 0 && cr_injection > 0 && cr_data->t_max_cr > 0)
-            {
-                double kappa_0 = All.CosmicRay_Subgrid_Kappa_0;
-                double vst_0   = All.CosmicRay_Subgrid_Vstream_0;
-                double r_phys  = sqrt(r*r + soft*soft/4.0) * All.cf_atime;
-                double t_max   = cr_data->t_max_cr;
-                double r_max   = 0.5 * t_max * vst_0 * (1.0 + sqrt(1.0 + 16.0*kappa_0/(vst_0*vst_0*t_max)));
-#ifdef PMGRID
-                double r_max_pm = 0.5 * rcut * All.cf_atime;
-                if(r_max_pm < r_max) {r_max = r_max_pm;}
-#endif
-                double denom = 4.0 * M_PI * r_phys * (kappa_0 + vst_0*r_phys);
-                double expo  = r_phys*r_phys / (1.e-6*r_phys*r_phys + r_max*r_max);
-                if(expo > 50.0) {expo = 50.0;}
-                double fac_cr_distance = exp(-expo) / denom;
-                if(fac_cr_distance > 0) {
-                    SubGrid_CosmicRayEnergyDensity += fac_cr_distance * cr_injection / All.cf_a3inv;
-                }
-            }
+            grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_data->t_max_cr, pm, SubGrid_CosmicRayEnergyDensity);
 #endif
 
 #ifdef RT_USE_GRAVTREE
             if(valid_gas_particle_for_rt)
             {
-                /* Compute fac_rt from d_stellarlum (may differ from dr when
-                 * RT_SEPARATELY_TRACK_LUMPOS; otherwise d_stellarlum == dr). */
-                double r2_rt = d_stellarlum.norm_sq(), r_rt = sqrt(r2_rt);
-                double fac_rt;
-                if(r_rt >= soft) {
-                    fac_rt = 1.0 / (r2_rt * r_rt);
-                } else {
-                    double h_inv_rt = 1.0/soft, h3_inv_rt = h_inv_rt*h_inv_rt*h_inv_rt;
-                    double u_rt = r_rt * h_inv_rt;
-                    fac_rt = kernel_gravity(u_rt, h_inv_rt, h3_inv_rt, 1);
-                }
-                if((soft > r_rt) && (soft > 0)) {fac_rt *= (r2_rt / (soft * soft));}
-                double fac_intensity = fac_rt * r_rt * All.cf_a2inv / (4.0 * M_PI);
-
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {Rad_E_gamma[kf] += fac_intensity * mass_stellarlum[kf];}}
-#ifdef SINK_PHOTONMOMENTUM
-                Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * mass_sinklumwt_forradfb;
+                /* payload formulas in the shared helper; fac_rt computed there from d_stellarlum
+                 * (may differ from dr when RT_SEPARATELY_TRACK_LUMPOS; otherwise d_stellarlum == dr) */
+                grav_rt_src_t rt_src = {}; rt_src.d_stellarlum = d_stellarlum; rt_src.soft = soft; rt_src.mass_stellarlum = mass_stellarlum;
+#ifdef CHIMES_STELLAR_FLUXES
+                rt_src.chimes_mass_stellarlum_G0 = chimes_mass_stellarlum_G0; rt_src.chimes_mass_stellarlum_ion = chimes_mass_stellarlum_ion;
 #endif
+#ifdef SINK_PHOTONMOMENTUM
+                rt_src.mass_sinklumwt_forradfb = mass_sinklumwt_forradfb;
+#endif
+#if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+                rt_src.fac_stellum = fac_stellum;
+#endif
+                grav_rt_accum_t rt_accum = {};
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+                rt_accum.Rad_E_gamma = Rad_E_gamma;
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+                rt_accum.chimes_flux_G0 = chimes_flux_G0; rt_accum.chimes_flux_ion = chimes_flux_ion;
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+                rt_accum.incident_flux_uv = &incident_flux_uv; rt_accum.incident_flux_euv = &incident_flux_euv;
 #endif
 #ifdef SINK_COMPTON_HEATING
-                incident_flux_agn += fac_intensity * mass_sinklumwt_forradfb; /* L/(4pi r^2) analog */
+                rt_accum.incident_flux_agn = &incident_flux_agn;
 #endif
-
-#ifdef CHIMES_STELLAR_FLUXES
-                {
-                    double chimes_fac = fac_intensity / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
-                    int ck; for(ck=0; ck<CHIMES_LOCAL_UV_NBINS; ck++) {
-                        chimes_flux_G0[ck]  += chimes_fac * chimes_mass_stellarlum_G0[ck];
-                        chimes_flux_ion[ck] += chimes_fac * chimes_mass_stellarlum_ion[ck];
-                    }
-                }
-#endif
-
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                incident_flux_uv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV];
-                if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR] < mass_stellarlum[RT_FREQ_BIN_FIRE_UV]) &&
-                   (mass_stellarlum[RT_FREQ_BIN_FIRE_IR] > 0))
-                {
-                    incident_flux_euv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV] *
-                        (All.PhotonMomentum_fUV + (1 - All.PhotonMomentum_fUV) *
-                         ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + mass_stellarlum[RT_FREQ_BIN_FIRE_IR]) /
-                          (mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + 2042.6 * mass_stellarlum[RT_FREQ_BIN_FIRE_IR])));
-                } else {
-                    double m_lum_total = 0;
-                    int ks_q; for(ks_q=0; ks_q<N_RT_FREQ_BINS; ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
-                    incident_flux_euv += All.PhotonMomentum_fUV * fac_intensity * m_lum_total;
-                }
-#endif
-
 #ifdef RT_OTVET
-                if(r_rt > 0)
-                {
-                    int kf_rt; for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {
-                        double fac_otvet = mass_stellarlum[kf_rt] * fac_rt / (1.0e-37 + r_rt);
-                        RT_ET[kf_rt] += fac_otvet * outer_product(d_stellarlum);
-                    }
-                }
+                rt_accum.RT_ET = RT_ET;
 #endif
-
-#ifdef RT_LEBRON
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                if(r_rt * UNIT_LENGTH_IN_KPC * All.cf_atime > 50.0) {fac_rt = 0.0;}
-#endif
-                {
-                    int kf_rt; double lum_force_fac = 0.0;
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                    double fac_flux = -fac_rt * All.cf_a2inv / (4.0 * M_PI);
-                    for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {Rad_Flux[kf_rt] += mass_stellarlum[kf_rt] * fac_flux * d_stellarlum;}
-#ifdef SINK_PHOTONMOMENTUM
-                    Rad_Flux[RT_FREQ_BIN_FIRE_IR] += mass_sinklumwt_forradfb * fac_flux * d_stellarlum;
+                rt_accum.Rad_Flux = Rad_Flux;
 #endif
-#else
-                    for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {lum_force_fac += mass_stellarlum[kf_rt] * fac_stellum[kf_rt];}
-#if defined(SINK_PHOTONMOMENTUM) && !defined(RT_DISABLE_RAD_PRESSURE)
-                    lum_force_fac += (All.Sink_Rad_MomentumFactor / (MIN_REAL_NUMBER + All.PhotonMomentum_Coupled_Fraction))
-                                     * mass_sinklumwt_forradfb * fac_stellum[N_RT_FREQ_BINS-1];
-#endif
-#endif
-                    if(lum_force_fac > 0) {acc += (fac_rt * lum_force_fac) * d_stellarlum;}
-                }
-#endif /* RT_LEBRON */
-
+                grav_rt_payload_accumulate(rt_src, rt_accum, acc);
             } /* if(valid_gas_particle_for_rt) */
 #endif /* RT_USE_GRAVTREE */
+
+#ifdef DM_SCALARFIELD_SCREENING
+            /* Yukawa-screened scalar-field force on non-gas targets (shared helper;
+             * own table gate keyed on the dm-center distance, outside the main PM gate) */
+            if(ptype != 0)
+            {
+                grav_dm_scalarfield_accumulate(d_dm, mass_dm_local, h, pm, acc);
+            }
+#endif /* DM_SCALARFIELD_SCREENING */
 
         } /* if((r2>0)&&(mass>0)) */
 
         if(no < maxPart) {
-            no = s->nextnode_aux[no];
+            no = tree_soa->nextnode_aux[no];
         } else {
-            no = s->sibling[no - maxPart];
+            no = tree_soa->sibling[no - maxPart];
         }
     } /* while(no >= 0) */
 
@@ -1531,23 +990,23 @@ gpu_gravtree_walk_one(int target,
      * Mirrors forcetree.cc:2499-2526 (mode=0). Scatter from P_dev back to P[]
      * happens in the host post-walk loop (primary driver). */
 #ifdef SINK_CALC_DISTANCES
-    P_dev[target].Min_Distance_to_Sink = sqrt(Min_Distance_to_Sink2);
-    P_dev[target].Min_xyz_to_Sink = Min_xyz_to_Sink;
+    P_dev[target].Min_Distance_to_Sink = sqrt(sink_prox.Min_Distance_to_Sink2);
+    P_dev[target].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;
 #ifdef SINGLE_STAR_FIND_BINARIES
     P_dev[target].is_in_a_binary = 0;
-    P_dev[target].Min_Sink_OrbitalTime = Min_Sink_OrbitalTime;
-    if(Min_Sink_OrbitalTime < MAX_REAL_NUMBER) {
+    P_dev[target].Min_Sink_OrbitalTime = sink_prox.Min_Sink_OrbitalTime;
+    if(sink_prox.Min_Sink_OrbitalTime < MAX_REAL_NUMBER) {
         P_dev[target].is_in_a_binary = 1;
-        P_dev[target].comp_Mass = comp_Mass_local;
-        P_dev[target].comp_dx = comp_dx_local;
-        P_dev[target].comp_dv = comp_dv_local;
+        P_dev[target].comp_Mass = sink_prox.comp_Mass;
+        P_dev[target].comp_dx = sink_prox.comp_dx;
+        P_dev[target].comp_dv = sink_prox.comp_dv;
     }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
-    P_dev[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
-    P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time) / All.G);
+    P_dev[target].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
+    P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time) / All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    P_dev[target].Min_Sink_FeedbackTime = sqrt(Min_Sink_FeedbackTime);
+    P_dev[target].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
 #endif
 #endif
 #endif /* SINK_CALC_DISTANCES */
@@ -1565,14 +1024,14 @@ gpu_gravtree_walk_one(int target,
     P_dev[target].tidal_zeta = (MyFloat) tidal_zeta;
 #endif
 #ifdef SPECIAL_POINT_MOTION
-    P_dev[target].vel_of_nearest_special = Vec3<MyFloat>{(MyFloat)vel_of_nearest_special[0],
-                                                         (MyFloat)vel_of_nearest_special[1],
-                                                         (MyFloat)vel_of_nearest_special[2]};
-    P_dev[target].acc_of_nearest_special = Vec3<MyFloat>{(MyFloat)acc_of_nearest_special[0],
-                                                         (MyFloat)acc_of_nearest_special[1],
-                                                         (MyFloat)acc_of_nearest_special[2]};
+    P_dev[target].vel_of_nearest_special = Vec3<MyFloat>{(MyFloat)sink_prox.vel_of_nearest_special[0],
+                                                         (MyFloat)sink_prox.vel_of_nearest_special[1],
+                                                         (MyFloat)sink_prox.vel_of_nearest_special[2]};
+    P_dev[target].acc_of_nearest_special = Vec3<MyFloat>{(MyFloat)sink_prox.acc_of_nearest_special[0],
+                                                         (MyFloat)sink_prox.acc_of_nearest_special[1],
+                                                         (MyFloat)sink_prox.acc_of_nearest_special[2]};
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    P_dev[target].weight_sum_for_special_point_smoothing = (MyFloat) weight_sum_for_special_point_smoothing;
+    P_dev[target].weight_sum_for_special_point_smoothing = (MyFloat) sink_prox.weight_sum_for_special_point_smoothing;
 #endif
 #endif
 
@@ -1664,10 +1123,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
 
     /* ------------------------------------------------------------------ *
-     * Phase 2-A: pre-compute per-particle source luminosities on CPU.     *
-     * rt_get_source_luminosity() is not device-callable; this loop        *
-     * mirrors what the CPU walk does per leaf-particle interaction, but    *
-     * amortised to once per particle before the GPU kernel launch.         *
+     * Phase 2: pre-compute per-particle gravity source inputs on the CPU.  *
+     * rt_get_source_luminosity / sink_lum_bol / cr_get_source_injection_rate*
+     * are not device-callable, so the gated physics lives once in the       *
+     * shared host helper gravtree_fill_particle_source_inputs() and is       *
+     * amortised to a single host pass before the GPU kernel launch.          *
      * ------------------------------------------------------------------  */
 #ifdef RT_USE_GRAVTREE
     MyFloat *d_src_lum = NULL;
@@ -1687,40 +1147,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
         memset(d_src_lum_G0,  0, szc);
         memset(d_src_lum_ion, 0, szc);
 #endif
-        for(int p = 0; p < NumPart; p++) {
-            if(P[p].Mass <= 0) {continue;}
-            double lum[N_RT_FREQ_BINS];
-#ifdef CHIMES_STELLAR_FLUXES
-            double lum_G0[CHIMES_LOCAL_UV_NBINS], lum_ion[CHIMES_LOCAL_UV_NBINS];
-            int active_check = rt_get_source_luminosity_chimes(p, 1, lum, lum_G0, lum_ion, P, CellP);
-#else
-            int active_check = rt_get_source_luminosity(p, 1, lum, P, CellP);
-#endif
-            if(active_check) {
-                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
-                    d_src_lum[(long)p * N_RT_FREQ_BINS + kf] = (MyFloat)lum[kf];
-                }
-#ifdef CHIMES_STELLAR_FLUXES
-                for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
-                    d_src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = lum_G0[kf];
-                    d_src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = lum_ion[kf];
-                }
-#endif
-            }
-        }
     }
-    struct gpu_rt_walk_data_t rt_data_snap;
-    rt_data_snap.src_lum = d_src_lum;
-#ifdef CHIMES_STELLAR_FLUXES
-    rt_data_snap.src_lum_G0  = d_src_lum_G0;
-    rt_data_snap.src_lum_ion = d_src_lum_ion;
-#endif
 #endif /* RT_USE_GRAVTREE */
 
-    /* Phase 2-C: precompute per-particle bolometric sink luminosity and
-     * angle vector for leaf-level SINK_PHOTONMOMENTUM contributions.
-     * sink_lum_bol() (and, for SINGLE_STAR_SINK_DYNAMICS,
-     * calculate_individual_stellar_luminosity()) are not GPU-callable. */
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat       *d_bh_lum   = NULL;
     Vec3<MyFloat> *d_bh_angle = NULL;
@@ -1732,25 +1161,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210); myfree(idx_host); return 1;}
         memset(d_bh_lum,   0, sz_lum);
         memset(d_bh_angle, 0, sz_ang);
-        for(int p = 0; p < NumPart; p++) {
-            if(P[p].Type != 5 || P[p].Mass <= 0) continue;
-            if(P[p].DensityAroundParticle <= 0 || P[p].Sink_Mdot <= 0) continue;
-            double bhlum = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p);
-            d_bh_lum[p] = (MyFloat) bhlum;
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            d_bh_angle[p] = P[p].Sink_Specific_AngMom;
-#else
-            d_bh_angle[p] = P[p].GradRho;
-#endif
-        }
     }
-    struct gpu_sink_walk_data_t sink_data_snap;
-    sink_data_snap.bh_lum   = d_bh_lum;
-    sink_data_snap.bh_angle = d_bh_angle;
 #endif /* SINK_PHOTONMOMENTUM */
 
-    /* Phase 2-D: precompute per-particle CR source injection rate.
-     * cr_get_source_injection_rate() is CPU-only. */
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     MyFloat *d_cr_inject = NULL;
     double   t_max_cr    = 0.0;
@@ -1762,14 +1175,56 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(All.Time > All.TimeBegin) {
             double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
             if(t_gyr > 1.0) {t_gyr = 1.0;}
-            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;
-        }
-        for(int p = 0; p < NumPart; p++) {
-            if(P[p].Type != 0 || P[p].Mass <= 0) continue;
-            double rate = cr_get_source_injection_rate(p, P, CellP);
-            d_cr_inject[p] = (MyFloat) rate;
+            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;     /* per-step scalar; computed once, not per-particle */
         }
     }
+#endif /* COSMIC_RAY_SUBGRID_LEBRON */
+
+    /* Single host pass: gated physics in the shared SSOT helper, then copy ONLY
+     * the active entries into this venue's SharedSpace arrays (already bulk-zeroed
+     * above), matching the legacy per-section write pattern. */
+#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    for(int p = 0; p < NumPart; p++) {
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            int kf;
+            for(kf = 0; kf < N_RT_FREQ_BINS; kf++) {d_src_lum[(long)p * N_RT_FREQ_BINS + kf] = in.src_lum[kf];}
+#ifdef CHIMES_STELLAR_FLUXES
+            for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++) {
+                d_src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = in.src_lum_G0[kf];
+                d_src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = in.src_lum_ion[kf];
+            }
+#endif
+        }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(in.bh_active) {
+            d_bh_lum[p]   = in.bh_lum;
+            d_bh_angle[p] = in.bh_angle;
+        }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        if(in.cr_inject != 0) {d_cr_inject[p] = in.cr_inject;}
+#endif
+    }
+#endif
+
+#ifdef RT_USE_GRAVTREE
+    struct gpu_rt_walk_data_t rt_data_snap;
+    rt_data_snap.src_lum = d_src_lum;
+#ifdef CHIMES_STELLAR_FLUXES
+    rt_data_snap.src_lum_G0  = d_src_lum_G0;
+    rt_data_snap.src_lum_ion = d_src_lum_ion;
+#endif
+#endif /* RT_USE_GRAVTREE */
+#ifdef SINK_PHOTONMOMENTUM
+    struct gpu_sink_walk_data_t sink_data_snap;
+    sink_data_snap.bh_lum   = d_bh_lum;
+    sink_data_snap.bh_angle = d_bh_angle;
+#endif /* SINK_PHOTONMOMENTUM */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
     struct gpu_cr_walk_data_t cr_data_snap;
     cr_data_snap.cr_inject = d_cr_inject;
     cr_data_snap.t_max_cr  = t_max_cr;
@@ -1796,6 +1251,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     int maxNodes_snap = MaxNodes;
     int maxForeignNodes_snap = MaxForeignNodes;    /* Phase 9 LET */
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    /* host-evaluate the first-step predicate once; captured by value into the device walk */
+    int is_first_step_snap = (All.Ti_Current == 0 && RestartFlag != 1);
+#endif
 
 #ifdef PMGRID
     double rcut_snap     = All.Rcut[0];
@@ -1814,6 +1273,19 @@ extern "C" int gpu_gravtree_walk_primary(void)
     memcpy(d_stid, shortrange_table_tidal, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #endif
 #endif
+    /* read-only PM short-range config captured by value into the device walk (empty when
+     * !PMGRID; per-target PLACEHIGHRESREGION override happens inside the walk on its copy). */
+    grav_pm_shortrange_t pm_snap{};
+#ifdef PMGRID
+    pm_snap.rcut = rcut_snap; pm_snap.rcut2 = rcut2_snap; pm_snap.asmthfac = asmthfac_snap;
+    pm_snap.shortrange_tab = d_st;
+#ifdef EVALPOTENTIAL
+    pm_snap.shortrange_pot_tab = d_sp;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    pm_snap.shortrange_tidal_tab = d_stid;
+#endif
+#endif
 
 #ifdef RT_USE_GRAVTREE
     const struct gpu_rt_walk_data_t rt_data_dev = rt_data_snap;
@@ -1825,6 +1297,22 @@ extern "C" int gpu_gravtree_walk_primary(void)
     const struct gpu_cr_walk_data_t cr_data_dev = cr_data_snap;
 #endif
 
+    /* Ewald periodic-image potential correction (pure-tree periodic + EVALPOTENTIAL).
+     * Acquire the table once (idempotent). This build requires the correction, so a
+     * missing table is a hard stop that aborts the primary walk -- never a silent
+     * skip of the term. */
+    struct gpu_ewald_pot_data_t ewald_pot_snap;
+    ewald_pot_snap.potcorr = NULL; ewald_pot_snap.fac_intp = 0.0; ewald_pot_snap.active = 0;
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+    if(gpu_ewald_acquire_pot_data(&ewald_pot_snap) != 0) {
+        printf("gpu_gravtree_walk_primary: Ewald potential-correction table unavailable; EVALPOTENTIAL periodic build requires it\n");
+        endrun(913212);
+        myfree(idx_host);   /* LIFO mymalloc cleanup; do not launch the walk with the term disabled */
+        return 1;
+    }
+#endif
+    const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
+
     double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1834,12 +1322,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
         int nforeign;
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
-#ifdef PMGRID
-                                        rcut_snap, rcut2_snap, asmthfac_snap, d_st, d_sp,
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                                        d_stid,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                                        is_first_step_snap,
 #endif
-#endif
+                                        pm_snap,
 #ifdef RT_USE_GRAVTREE
                                         &rt_data_dev,
 #endif
@@ -1849,6 +1335,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                                         &cr_data_dev,
 #endif
+                                        &ewald_pot_dev,
                                         acc, ninter, pot, nforeign);
         if(ok) {
             d_acc[a] = acc;
@@ -2121,13 +1608,28 @@ static int gpu_ewald_tables_acquire(void)
     return 0;
 }
 
+#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
+static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out)
+{
+    out->potcorr = NULL; out->fac_intp = 0.0; out->active = 0;
+    if(gpu_ewald_tables_acquire() != 0) return 1;   /* table acquire failed; caller hard-stops */
+    out->potcorr  = g_d_potcorr;
+    out->fac_intp = g_ewald_fac_intp;
+    out->active   = 1;
+    return 0;
+}
+#endif
+
 /* Device-side Ewald walk for a single target. Returns 1 on success (acc
  * written), 0 if a pseudo-particle was encountered (defer to CPU). */
 static KOKKOS_INLINE_FUNCTION int
 gpu_ewald_walk_one(int target,
                    int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9 LET */
                    struct particle_data *P_dev,
-                   const struct gpu_gravity_tree_soa_t *s,
+                   const struct gpu_gravity_tree_soa_t *tree_soa,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                   int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
+#endif
                    const MyFloat *fcorrx, const MyFloat *fcorry, const MyFloat *fcorrz,
                    double fac_intp, double boxsize, double boxhalf,
                    double errtoltheta, double errtolforceacc,
@@ -2136,9 +1638,6 @@ gpu_ewald_walk_one(int target,
     Vec3<double> pos = P_dev[target].Pos;
     double aold = errtolforceacc * P_dev[target].OldAcc;
     Vec3<double> acc = {0.0, 0.0, 0.0};
-    const int EN       = GIZMO_EWALD_EN;
-    const int stride1  = EN + 1;
-    const int stride2  = stride1 * stride1;
 
     int no = maxPart; /* root node */
     while(no >= 0)
@@ -2163,101 +1662,71 @@ gpu_ewald_walk_one(int target,
         {
             idx = no - maxPart;
             /* skip single-particle node (open it to its daughter chain) */
-            if(!(s->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
-                no = s->nextnode[idx];
+            if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                no = tree_soa->nextnode[idx];
                 continue;
             }
-            mass  = s->mass[idx];
-            dr[0] = s->s[idx][0] - pos[0];
-            dr[1] = s->s[idx][1] - pos[1];
-            dr[2] = s->s[idx][2] - pos[2];
+            mass  = tree_soa->mass[idx];
+            dr[0] = tree_soa->s[idx][0] - pos[0];
+            dr[1] = tree_soa->s[idx][1] - pos[1];
+            dr[2] = tree_soa->s[idx][2] - pos[2];
         }
 
-        /* nearest-image wrap on the displacement (mirrors GRAVITY_NEAREST_XYZ) */
-        if(dr[0] >  boxhalf) dr[0] -= boxsize; else if(dr[0] < -boxhalf) dr[0] += boxsize;
-        if(dr[1] >  boxhalf) dr[1] -= boxsize; else if(dr[1] < -boxhalf) dr[1] += boxsize;
-        if(dr[2] >  boxhalf) dr[2] -= boxsize; else if(dr[2] < -boxhalf) dr[2] += boxsize;
+        /* nearest-image wrap on the displacement (shared SSOT helper) */
+        gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
 
         if(is_leaf) {
-            no = s->nextnode_aux[no];
+            no = tree_soa->nextnode_aux[no];
         } else {
             /* Opening check + periodic-boundary skip (mirrors forcetree.cc:2769-2842) */
             double r2  = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2];
             if(r2 <= 0) r2 = 1e-300;
-            double len = s->len[idx];
+            double len = tree_soa->len[idx];
             int openflag = 0;
             if(errtoltheta) {
                 if(len * len > r2 * errtoltheta * errtoltheta) openflag = 1;
-            } else {
+            }
+#ifndef GRAVITY_HYBRID_OPENING_CRIT
+            else {
+#else
+            /* hybrid: relative criterion only after step 0 (mirrors forcetree.cc:3489-3493) */
+            if(!is_first_step) {
+#endif
                 if(mass * len * len > r2 * r2 * aold) {
                     openflag = 1;
                 } else {
-                    double cx = s->center[idx][0] - pos[0]; if(cx >  boxhalf) cx -= boxsize; else if(cx < -boxhalf) cx += boxsize;
-                    double cy = s->center[idx][1] - pos[1]; if(cy >  boxhalf) cy -= boxsize; else if(cy < -boxhalf) cy += boxsize;
-                    double cz = s->center[idx][2] - pos[2]; if(cz >  boxhalf) cz -= boxsize; else if(cz < -boxhalf) cz += boxsize;
-                    double adx = (cx < 0) ? -cx : cx;
-                    double ady = (cy < 0) ? -cy : cy;
-                    double adz = (cz < 0) ? -cz : cz;
+                    double ad0 = tree_soa->center[idx][0] - pos[0], ad1 = tree_soa->center[idx][1] - pos[1], ad2 = tree_soa->center[idx][2] - pos[2];
+                    double adx = gravity_box_long_abs_x(ad0, ad1, ad2, -1);
+                    double ady = gravity_box_long_abs_y(ad0, ad1, ad2, -1);
+                    double adz = gravity_box_long_abs_z(ad0, ad1, ad2, -1);
                     if(adx < 0.60*len && ady < 0.60*len && adz < 0.60*len) openflag = 1;
                 }
             }
             if(openflag) {
                 /* short-cut: if the node is entirely on one side of the periodic
                  * boundary along any axis, we can safely skip it without opening */
-                double ux = s->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
-                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
-                double uy = s->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
-                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
-                double uz = s->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
-                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
+                double ux = tree_soa->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
+                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
+                double uy = tree_soa->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
+                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
+                double uz = tree_soa->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
+                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
                 /* cell too large → must refine */
-                if(len > 0.20 * boxsize) { no = s->nextnode[idx]; continue; }
+                if(len > 0.20 * boxsize) { no = tree_soa->nextnode[idx]; continue; }
             }
-            no = s->sibling[idx];
+            no = tree_soa->sibling[idx];
         }
 
-        /* Trilinear interpolation of the Ewald correction table. */
-        double signx, signy, signz, adrx, adry, adrz;
-        if(dr[0] < 0) { adrx = -dr[0]; signx = +1.0; } else { adrx = dr[0]; signx = -1.0; }
-        if(dr[1] < 0) { adry = -dr[1]; signy = +1.0; } else { adry = dr[1]; signy = -1.0; }
-        if(dr[2] < 0) { adrz = -dr[2]; signz = +1.0; } else { adrz = dr[2]; signz = -1.0; }
-        double u = adrx * fac_intp; int i = (int) u; if(i >= EN) i = EN - 1; u -= i;
-        double v = adry * fac_intp; int j = (int) v; if(j >= EN) j = EN - 1; v -= j;
-        double w = adrz * fac_intp; int k = (int) w; if(k >= EN) k = EN - 1; w -= k;
-        double f1 = (1-u)*(1-v)*(1-w);
-        double f2 = (1-u)*(1-v)*(w);
-        double f3 = (1-u)*(v)  *(1-w);
-        double f4 = (1-u)*(v)  *(w);
-        double f5 = (u)  *(1-v)*(1-w);
-        double f6 = (u)  *(1-v)*(w);
-        double f7 = (u)  *(v)  *(1-w);
-        double f8 = (u)  *(v)  *(w);
-#define GIZMO_EW_IDX3(ii,jj,kk) ((ii)*stride2 + (jj)*stride1 + (kk))
-        acc[0] += mass * signx * (fcorrx[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-        acc[1] += mass * signy * (fcorry[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-        acc[2] += mass * signz * (fcorrz[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-#undef GIZMO_EW_IDX3
+        /* Trilinear interp of the Ewald force octant tables via the shared SSOT helper
+         * (gravtree_ewald.h): weights from |dr| once, applied to all three tables; the
+         * odd-force per-component signs stay here. */
+        double signx = (dr[0] < 0) ? +1.0 : -1.0;
+        double signy = (dr[1] < 0) ? +1.0 : -1.0;
+        double signz = (dr[2] < 0) ? +1.0 : -1.0;
+        grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], fac_intp);
+        acc[0] += mass * signx * grav_ewald_interp_apply(fcorrx, ew);
+        acc[1] += mass * signy * grav_ewald_interp_apply(fcorry, ew);
+        acc[2] += mass * signz * grav_ewald_interp_apply(fcorrz, ew);
     }
 
     acc_out = acc;
@@ -2322,12 +1791,19 @@ extern "C" int gpu_ewald_walk_primary(void)
     const MyFloat *fcorry_dev = g_d_fcorry;
     const MyFloat *fcorrz_dev = g_d_fcorrz;
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    /* host-evaluate the first-step predicate once; captured by value into the device walk */
+    const int is_first_step_snap = (All.Ti_Current == 0 && RestartFlag != 1);
+#endif
 
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
         int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_sn,
                                      P_dev, &soa_snap,
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                                     is_first_step_snap,
+#endif
                                      fcorrx_dev, fcorry_dev, fcorrz_dev,
                                      fac_intp, boxsize, boxhalf,
                                      errtoltheta, errtolforceacc,

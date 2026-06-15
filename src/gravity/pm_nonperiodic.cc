@@ -19,6 +19,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "pm_highres_region.h"   /* pmforce_is_particle_high_res SSOT (shared with the gravity tree walks) */
 
 #ifdef PMGRID
 #if !defined (BOX_PERIODIC) || defined (PM_PLACEHIGHRESREGION)
@@ -679,27 +680,8 @@ void pm_setup_nonperiodic_kernel(void)
   pm_init_nonperiodic_free();
 }
 
-#ifdef PM_PLACEHIGHRESREGION
-int pmforce_is_particle_high_res(int type,  Vec3<double>& Pos)
-{
-#ifndef SPECIAL_GAS_TREATMENT_IN_HIGHRESREGION
-  /* standard treatment */
-  return (1 << type) & (PM_PLACEHIGHRESREGION);
-#else
-
-  if((1 << type) & (PM_PLACEHIGHRESREGION))
-    return 1;
-
-  /* special treatment */
-  int j, flag = 1;
-  for(j = 0; j < 3; j++)
-    if(Pos[j] < All.Xmintot[1][j] || Pos[j] > All.Xmaxtot[1][j])
-      flag = 0;
-
-  return flag;
-#endif
-}
-#endif
+/* pmforce_is_particle_high_res() moved verbatim to gravity/pm_highres_region.h (now device-callable,
+ * shared with the gravity tree walks). */
 
 /*! Calculates the long-range non-periodic forces using the PM method.  The
  *  potential is Gaussian filtered with Asmth, given in mesh-cell units. The
