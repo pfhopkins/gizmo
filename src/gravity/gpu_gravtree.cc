@@ -1666,7 +1666,7 @@ static KOKKOS_INLINE_FUNCTION int
 gpu_ewald_walk_one(int target,
                    int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9 LET */
                    struct particle_data *P_dev,
-                   const struct gpu_gravity_tree_soa_t *s,
+                   const struct gpu_gravity_tree_soa_t *tree_soa,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                    int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
 #endif
@@ -1705,26 +1705,26 @@ gpu_ewald_walk_one(int target,
         {
             idx = no - maxPart;
             /* skip single-particle node (open it to its daughter chain) */
-            if(!(s->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
-                no = s->nextnode[idx];
+            if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                no = tree_soa->nextnode[idx];
                 continue;
             }
-            mass  = s->mass[idx];
-            dr[0] = s->s[idx][0] - pos[0];
-            dr[1] = s->s[idx][1] - pos[1];
-            dr[2] = s->s[idx][2] - pos[2];
+            mass  = tree_soa->mass[idx];
+            dr[0] = tree_soa->s[idx][0] - pos[0];
+            dr[1] = tree_soa->s[idx][1] - pos[1];
+            dr[2] = tree_soa->s[idx][2] - pos[2];
         }
 
         /* nearest-image wrap on the displacement (shared SSOT helper) */
         gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
 
         if(is_leaf) {
-            no = s->nextnode_aux[no];
+            no = tree_soa->nextnode_aux[no];
         } else {
             /* Opening check + periodic-boundary skip (mirrors forcetree.cc:2769-2842) */
             double r2  = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2];
             if(r2 <= 0) r2 = 1e-300;
-            double len = s->len[idx];
+            double len = tree_soa->len[idx];
             int openflag = 0;
             if(errtoltheta) {
                 if(len * len > r2 * errtoltheta * errtoltheta) openflag = 1;
@@ -1738,7 +1738,7 @@ gpu_ewald_walk_one(int target,
                 if(mass * len * len > r2 * r2 * aold) {
                     openflag = 1;
                 } else {
-                    double ad0 = s->center[idx][0] - pos[0], ad1 = s->center[idx][1] - pos[1], ad2 = s->center[idx][2] - pos[2];
+                    double ad0 = tree_soa->center[idx][0] - pos[0], ad1 = tree_soa->center[idx][1] - pos[1], ad2 = tree_soa->center[idx][2] - pos[2];
                     double adx = gravity_box_long_abs_x(ad0, ad1, ad2, -1);
                     double ady = gravity_box_long_abs_y(ad0, ad1, ad2, -1);
                     double adz = gravity_box_long_abs_z(ad0, ad1, ad2, -1);
@@ -1748,16 +1748,16 @@ gpu_ewald_walk_one(int target,
             if(openflag) {
                 /* short-cut: if the node is entirely on one side of the periodic
                  * boundary along any axis, we can safely skip it without opening */
-                double ux = s->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
-                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
-                double uy = s->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
-                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
-                double uz = s->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
-                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
+                double ux = tree_soa->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
+                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
+                double uy = tree_soa->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
+                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
+                double uz = tree_soa->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
+                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
                 /* cell too large → must refine */
-                if(len > 0.20 * boxsize) { no = s->nextnode[idx]; continue; }
+                if(len > 0.20 * boxsize) { no = tree_soa->nextnode[idx]; continue; }
             }
-            no = s->sibling[idx];
+            no = tree_soa->sibling[idx];
         }
 
         /* Trilinear interpolation of the Ewald correction table. */
