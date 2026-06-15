@@ -787,59 +787,79 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_accum_init(grav_sink_prox_accum_t &pr
 #endif
 }
 
+/* Target-side state shared by the leaf + node sink-proximity helpers (by value). */
+struct grav_sink_prox_target_t {
+    int ptype; double pmass, soft;
+#ifdef SINGLE_STAR_TIMESTEPPING
+    Vec3<double> vel;
+#endif
+};
+
+/* Source kinematics shared by the leaf + node sink-proximity helpers. Field set is the union
+ * of what either side reads (vel always; the others gated); the unused side leaves it zero. */
+struct grav_sink_source_motion_t {
+    Vec3<double> vel;
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+    Vec3<double> acc;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    double max_feedback_vel;
+#endif
+};
+
+/* Leaf (single-particle) source. */
+struct grav_sink_prox_leaf_src_t {
+    int src_type; double src_mass;
+    grav_sink_source_motion_t motion;
+};
+
+/* Node (aggregate) source. */
+struct grav_sink_prox_node_src_t {
+    double sink_mass;
+#if defined(SINGLE_STAR_FIND_BINARIES)
+    int n_sink;
+#endif
+    grav_sink_source_motion_t motion;
+};
+
 /* Leaf-source variant. Caller gates on (r2 > 0 && mass > 0); source fields loaded walk-side. */
-template <typename SrcVelT
-#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
-        , typename SrcAccT
-#endif
-        >
 KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3<double> &dr,
-                                                           int ptype, double pmass, double soft,
-                                                           int src_type, double src_mass,
-                                                           const SrcVelT &src_vel,
-#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
-                                                           const SrcAccT &src_acc_prevstep,
-#endif
-#if defined(SINGLE_STAR_TIMESTEPPING)
-                                                           const Vec3<double> &vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                                           double src_max_feedback_vel,
-#endif
-#endif
+                                                           grav_sink_prox_target_t target,
+                                                           grav_sink_prox_leaf_src_t src,
                                                            grav_sink_prox_accum_t &prox)
 {
-    (void) src_vel; (void) ptype; (void) pmass; (void) soft;
+    (void) target;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    if(ptype == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+    if(target.ptype == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
     {
         double wt_special = grav_weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
         prox.weight_sum_for_special_point_smoothing += wt_special;
-        prox.vel_of_nearest_special += wt_special * src_vel;
-        prox.acc_of_nearest_special += wt_special * src_acc_prevstep;
+        prox.vel_of_nearest_special += wt_special * src.motion.vel;
+        prox.acc_of_nearest_special += wt_special * src.motion.acc;
     }
 #endif
-    if(src_type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) /* found a BH particle in grav calc */
+    if(src.src_type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) /* found a BH particle in grav calc */
     {
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-        if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+        if(target.ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
 #endif
             if(r2 < prox.Min_Distance_to_Sink2)    /* is this the closest BH part I've found yet? */
             {
                 prox.Min_Distance_to_Sink2 = r2;   /* if yes: adjust min bh dist */
                 prox.Min_xyz_to_Sink = dr; /* remember, dr = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
-                prox.vel_of_nearest_special = src_vel;
-                prox.acc_of_nearest_special = src_acc_prevstep;
+                prox.vel_of_nearest_special = src.motion.vel;
+                prox.acc_of_nearest_special = src.motion.acc;
 #endif
             }
 #ifdef SINGLE_STAR_TIMESTEPPING
-        Vec3<double> sink_dv=src_vel-vel; double vSqr=sink_dv.norm_sq(), M_total=src_mass+pmass, r2soft=SinkParticle_GravityKernelRadius;
-        r2soft = DMAX(r2soft, soft);
+        Vec3<double> sink_dv=src.motion.vel-target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.src_mass+target.pmass, r2soft=SinkParticle_GravityKernelRadius;
+        r2soft = DMAX(r2soft, target.soft);
         r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
         r2soft = r2 + r2soft*r2soft;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        if(ptype == 0) {
-            double tSqr_fb = r2soft /(src_max_feedback_vel * src_max_feedback_vel + MIN_REAL_NUMBER);
+        if(target.ptype == 0) {
+            double tSqr_fb = r2soft /(src.motion.max_feedback_vel * src.motion.max_feedback_vel + MIN_REAL_NUMBER);
             if(tSqr_fb < prox.Min_Sink_FeedbackTime) {prox.Min_Sink_FeedbackTime = tSqr_fb;}
         } // for gas, add the signal velocity of feedback from the star
 #endif
@@ -848,7 +868,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
         if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
         if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}
 #ifdef SINGLE_STAR_FIND_BINARIES
-        if(ptype == 5) // only for BH particles and for non center of mass calculation
+        if(target.ptype == 5) // only for BH particles and for non center of mass calculation
         {
             double r_p5=sqrt(r2), specific_energy = 0.5*vSqr - All.G*M_total/r_p5;
             if(r2 < SinkParticle_GravityKernelRadius*SinkParticle_GravityKernelRadius)
@@ -862,7 +882,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
                 double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
                 if(t_orbital < prox.Min_Sink_OrbitalTime) /* Save parameters of companion */
                 {
-                    prox.Min_Sink_OrbitalTime=t_orbital; prox.comp_Mass=src_mass;
+                    prox.Min_Sink_OrbitalTime=t_orbital; prox.comp_Mass=src.src_mass;
                     prox.comp_dx=dr; prox.comp_dv=sink_dv;
                 }
             } /* specific_energy < 0 */
@@ -890,62 +910,40 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_specialweighted(double r2, const
 #endif
 
 /* Node-source variant. Caller gates on (node sink_mass > 0) and supplies the wrapped
- * displacement to the node's sink center-of-mass. (sink_vel/sink_acc/n_sink parameters exist
+ * displacement to the node's sink center-of-mass. (motion/n_sink fields in node_src exist
  * exactly when the corresponding NODE payload fields exist.) */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-template <typename SinkVelT
-#if defined(SPECIAL_POINT_MOTION)
-        , typename SinkAccT
-#endif
-        >
-#endif
 KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3<double> &sink_dr,
-                                                           double sink_mass,
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                                                           const SinkVelT &sink_vel,
-#endif
-#if defined(SPECIAL_POINT_MOTION)
-                                                           const SinkAccT &sink_acc,
-#endif
-#if defined(SINGLE_STAR_FIND_BINARIES)
-                                                           int n_sink,
-#endif
-                                                           int ptype, double pmass, double soft,
-#if defined(SINGLE_STAR_TIMESTEPPING)
-                                                           const Vec3<double> &vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                                           double node_max_feedback_vel,
-#endif
-#endif
+                                                           grav_sink_prox_node_src_t src,
+                                                           grav_sink_prox_target_t target,
                                                            grav_sink_prox_accum_t &prox)
 {
-    (void) r2; (void) sink_mass; (void) ptype; (void) pmass; (void) soft;
+    (void) r2; (void) src; (void) target;
     double sink_r2 = sink_dr.norm_sq(); // + (nop->len)*(nop->len);
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    if(ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+    if(target.ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
 #endif
         if(sink_r2 < prox.Min_Distance_to_Sink2)
         {
             prox.Min_Distance_to_Sink2 = sink_r2; prox.Min_xyz_to_Sink = sink_dr; /* remember, dr = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
-            prox.vel_of_nearest_special = sink_vel;
-            prox.acc_of_nearest_special = sink_acc;
+            prox.vel_of_nearest_special = src.motion.vel;
+            prox.acc_of_nearest_special = src.motion.acc;
 #endif
         }
 #ifdef SINGLE_STAR_TIMESTEPPING
-    Vec3<double> sink_dv = sink_vel - vel; double vSqr=sink_dv.norm_sq(), M_total=sink_mass+pmass, r2soft;
-    r2soft = DMAX(SinkParticle_GravityKernelRadius, soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
+    Vec3<double> sink_dv = src.motion.vel - target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.sink_mass+target.pmass, r2soft;
+    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    if(ptype == 0) {
-        double tSqr_fb = r2soft /(node_max_feedback_vel * node_max_feedback_vel + MIN_REAL_NUMBER);
+    if(target.ptype == 0) {
+        double tSqr_fb = r2soft /(src.motion.max_feedback_vel * src.motion.max_feedback_vel + MIN_REAL_NUMBER);
         if(tSqr_fb < prox.Min_Sink_FeedbackTime) {prox.Min_Sink_FeedbackTime = tSqr_fb;}
     } // for gas, add the signal velocity of feedback from the star
 #endif
     if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
     if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}
 #ifdef SINGLE_STAR_FIND_BINARIES
-    if(ptype == 5 && n_sink == 1) // only do it if we're looking at a single star in the node
+    if(target.ptype == 5 && src.n_sink == 1) // only do it if we're looking at a single star in the node
     {
         double specific_energy = 0.5*vSqr - All.G*M_total/sqrt(r2);
         if (specific_energy<0)
@@ -954,7 +952,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
             double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
             if(t_orbital < prox.Min_Sink_OrbitalTime) /* Save parameters of companion */
             {
-                prox.Min_Sink_OrbitalTime=t_orbital; prox.comp_Mass=sink_mass;
+                prox.Min_Sink_OrbitalTime=t_orbital; prox.comp_Mass=src.sink_mass;
                 prox.comp_dx = sink_dr; prox.comp_dv = sink_dv;
             }
         } /* specific_energy < 0 */

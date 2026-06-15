@@ -1550,18 +1550,18 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     
 #ifdef SINK_CALC_DISTANCES
                     /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
-                    grav_sink_prox_leaf_accumulate(r2, dr, ptype, pmass, soft, P[no].Type, P[no].Mass,
-                                                   P[no].Vel,
-#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
-                                                   P[no].Acc_Total_PrevStep,
-#endif
+                    grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
-                                                   vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                                   P[no].MaxFeedbackVel,
+                    prox_target.vel = vel;
 #endif
+                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = P[no].Vel;
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+                    prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif
-                                                   sink_prox);
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                    prox_src.motion.max_feedback_vel = P[no].MaxFeedbackVel;
+#endif
+                    grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
 #endif // SINK_CALC_DISTANCES
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1801,24 +1801,24 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {
                     Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
                     GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
-                    grav_sink_prox_node_accumulate(r2, sink_dr, nop->sink_mass,
+                    grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                    prox_target.vel = vel;
+#endif
+                    grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = nop->sink_mass;
+#if defined(SINGLE_STAR_FIND_BINARIES)
+                    prox_src.n_sink = (int)nop->N_SINK;
+#endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                                                   nop->sink_vel,
+                    prox_src.motion.vel = nop->sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-                                                   nop->sink_acc,
+                    prox_src.motion.acc = nop->sink_acc;
 #endif
-#if defined(SINGLE_STAR_FIND_BINARIES)
-                                                   (int)nop->N_SINK,
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                    prox_src.motion.max_feedback_vel = nop->MaxFeedbackVel;
 #endif
-                                                   ptype, pmass, soft,
-#if defined(SINGLE_STAR_TIMESTEPPING)
-                                                   vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                                   nop->MaxFeedbackVel,
-#endif
-#endif
-                                                   sink_prox);
+                    grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
                 }
 #endif // SINK_CALC_DISTANCES
                 

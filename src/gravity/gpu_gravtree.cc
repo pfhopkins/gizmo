@@ -605,18 +605,18 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_CALC_DISTANCES
             if((r2 > 0) && (mass > 0))
             {
-                grav_sink_prox_leaf_accumulate(r2, dr, ptype, pmass, soft, P_dev[no].Type, P_dev[no].Mass,
-                                               P_dev[no].Vel,
-#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
-                                               P_dev[no].Acc_Total_PrevStep,
-#endif
+                grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
-                                               vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                               P_dev[no].MaxFeedbackVel,
+                prox_target.vel = vel;
 #endif
+                grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = P_dev[no].Mass; prox_src.motion.vel = P_dev[no].Vel;
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+                prox_src.motion.acc = P_dev[no].Acc_Total_PrevStep;
 #endif
-                                               sink_prox);
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                prox_src.motion.max_feedback_vel = P_dev[no].MaxFeedbackVel;
+#endif
+                grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
             }
 #endif /* SINK_CALC_DISTANCES */
         }
@@ -784,24 +784,24 @@ gpu_gravtree_walk_one(int target,
                 sink_dr[1] = s->sink_pos[idx][1] - pos[1];
                 sink_dr[2] = s->sink_pos[idx][2] - pos[2];
                 gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
-                grav_sink_prox_node_accumulate(r2, sink_dr, (double) s->sink_mass[idx],
+                grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+#if defined(SINGLE_STAR_TIMESTEPPING)
+                prox_target.vel = vel;
+#endif
+                grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) s->sink_mass[idx];
+#if defined(SINGLE_STAR_FIND_BINARIES)
+                prox_src.n_sink = (int) s->N_SINK[idx];
+#endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                                               s->sink_vel[idx],
+                prox_src.motion.vel = s->sink_vel[idx];
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-                                               s->sink_acc[idx],
+                prox_src.motion.acc = s->sink_acc[idx];
 #endif
-#if defined(SINGLE_STAR_FIND_BINARIES)
-                                               (int) s->N_SINK[idx],
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                prox_src.motion.max_feedback_vel = s->MaxFeedbackVel[idx];
 #endif
-                                               ptype, pmass, soft,
-#if defined(SINGLE_STAR_TIMESTEPPING)
-                                               vel,
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                                               s->MaxFeedbackVel[idx],
-#endif
-#endif
-                                               sink_prox);
+                grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
             }
 #endif /* SINK_CALC_DISTANCES */
         }
