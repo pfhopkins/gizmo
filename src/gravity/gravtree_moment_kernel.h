@@ -50,6 +50,18 @@
  *   5. finalize it in moment_finalize (the normalize/divide), if it has a normalized form.
  *   6. wire venue storage: scratch View / SoA / AoS load+store at each caller.
  *
+ * The four LOCKSTEP sites for a payload field are moment_node_accum (values), moment_node_ref
+ * (pointer mirror), moment_accum_zero, and moment_accum_apply: each must carry the same fields
+ * under the same #ifdef gates. Accum/ref/apply drift is mostly caught at COMPILE time — apply
+ * names both a.<field> and r.<field>, so a field missing from one struct (or mistyped between
+ * them) fails to build. The residual SILENT risks are forgetting to zero a field or forgetting to
+ * apply it; those are caught by the non-vacuous moment-construction comparison gate, which any
+ * payload edit must pass. A grouping macro to fold these four lists into a single field manifest
+ * was considered and deliberately rejected: it would hide this readable data layout behind macro
+ * machinery, and the compile + comparison coverage above already removes most of the alignment
+ * hazard. Keep the four lists explicit and field-aligned; on any new payload, run the
+ * moment-construction gate with that payload actually populated.
+ *
  * Include AFTER declarations/allvars.h (Vec3, particle_data, BITFLAG_*, MIN_REAL_NUMBER, the
  * payload-count macros N_RT_FREQ_BINS / CHIMES_LOCAL_UV_NBINS, and the config flags are consumed from
  * the including TU, mirroring gravtree_opening.h / gravtree_force_kernel.h).
