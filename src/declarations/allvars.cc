@@ -51,7 +51,7 @@ int RestartFlag;		/*!< taken from command line used to start code. 0 is normal s
 int RestartSnapNum;
 int SelRnd;
 
-int *Exportflag;		/*!< Buffer used for flagging whether a particle needs to be exported to another process */
+int *Exportflag;		/*!< per-task flag used by the gravity LET-incompleteness detector (the export round-trip is retired) */
 int *Exportnodecount;
 int *Exportindex;
 
@@ -316,20 +316,14 @@ struct state_of_system SysState, SysStateAtStart, SysStateAtEnd;
 /* Various structures for communication during the gravity computation.
  */
 
-struct data_index *DataIndexTable;	/*!< the particles to be exported are grouped
-					   by task-number. This table allows the
-					   results to be disentangled again and to be
-					   assigned to the correct particle */
+struct data_index *DataIndexTable;	/*!< records would-be-exported targets per task for
+					   the gravity LET-incompleteness detector; never
+					   shipped (the export round-trip is retired) */
 
 struct data_nodelist *DataNodeList;
 
-struct gravdata_in *GravDataIn,	/*!< holds particle data to be exported to other processors */
- *GravDataGet;			/*!< holds particle data imported from other processors */
-
-
-struct gravdata_out *GravDataResult,	/*!< holds the partial results computed for imported particles. Note: We use GravDataResult = GravDataGet, such that the result replaces the imported data */
- *GravDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
-
+/* GravDataIn/Get/Result/Out + their gravdata_in/out structs are RETIRED (the gravity
+ * MPI export round-trip is gone; gravity runs on the target-owning rank via GPU+LET). */
 
 struct addFB_evaluate_data_in_ *addFB_evaluate_DataIn_, *addFB_evaluate_DataGet_; /*!< hold partial results of feedback calls if using various feedback algorithms >*/
 
@@ -351,7 +345,7 @@ struct sink_temp_particle_data *SinkTempInfo; /*! declare this structure, we'll 
  * ------------------
  */
 
-long Nexport, Nimport;
+long Nexport;   /* gravity LET-incompleteness detector count (Nimport retired with the export round-trip) */
 int BufferCollisionFlag;
 int BufferFullFlag;
 int NextParticle;

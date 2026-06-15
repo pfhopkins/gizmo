@@ -1307,10 +1307,10 @@ void force_add_element_to_tree(int iparent, int ichild)
  *  memory-access panelty (which reduces cache performance) incurred by the
  *  table.
  */
-int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex)
+int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int no, nodesinlist=0, ptype, ninteractions=0, nexp, task, listindex = 0, maxPart = All.MaxPart;
+    int no, ptype, ninteractions=0, nexp, task, maxPart = All.MaxPart;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* Phase 9: maxForeignNodes shifts pseudo-particle range above the foreign-node range */
     double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
@@ -1340,10 +1340,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
 #ifdef PMGRID
     double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
-    /* Bad mode (not 0/1): soft bad-stop + return 0 (no export, walk done) — NOT
-     * -1, which means "buffer full, retry". Symmetric param check; drains at the
-     * export-loop poll. */
-    if(mode != 0 && mode != 1) {printf("%d %d %d %d %d\n", target, mode, *exportflag, *exportnodecount, *exportindex); endrun(90000079); return 0;}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass = 0;
@@ -1399,52 +1395,29 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     tidal_tensorps = {};
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     double tidal_zeta=0; SymmetricTensor2<MyFloat> i_zeta_tidal_tensorps_prevstep, j_zeta_tidal_tensorps_prevstep;
-    if(mode==0) {i_zeta_tidal_tensorps_prevstep=P[target].tidal_tensorps_prevstep;} else {i_zeta_tidal_tensorps_prevstep=GravDataGet[target].tidal_tensorps_prevstep;}
+    i_zeta_tidal_tensorps_prevstep=P[target].tidal_tensorps_prevstep;
 #endif
 #endif
     
-    if(mode == 0)
-    {
-        pos = P[target].Pos;
-        ptype = P[target].Type;
-        soft = ForceSoftening_KernelRadius(target);
-        aold = All.ErrTolForceAcc * P[target].OldAcc;
-        pmass = P[target].Mass;
+    pos = P[target].Pos;
+    ptype = P[target].Type;
+    soft = ForceSoftening_KernelRadius(target);
+    aold = All.ErrTolForceAcc * P[target].OldAcc;
+    pmass = P[target].Mass;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-        vel = P[target].Vel;
+    vel = P[target].Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
-        if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
+    if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        grav_target_select_soft_and_zeta(ptype, P[target].AGS_zeta, soft, zeta);
+    grav_target_select_soft_and_zeta(ptype, P[target].AGS_zeta, soft, zeta);
 #endif
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
-        if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
+    if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
 #endif
-    }
-    else
-    {
-        pos = GravDataGet[target].Pos;
-        ptype = GravDataGet[target].Type;
-        soft = GravDataGet[target].Soft;
-        aold = All.ErrTolForceAcc * GravDataGet[target].OldAcc;
-        pmass = GravDataGet[target].Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-        vel = GravDataGet[target].Vel;
-#endif
-#if defined(SINK_DYNFRICTION_FROMTREE)
-        if(ptype == 5) {sink_mass = GravDataGet[target].Sink_Mass;}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        zeta = GravDataGet[target].AGS_zeta;
-#endif
-#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
-        if(pmforce_is_particle_high_res(ptype, GravDataGet[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
-#endif
-    }
-    
-    
+
+
     if(pmass<=0) {return 0;} /* quick check if particle has mass: if not, we won't deal with it */
     int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
 #ifdef PMGRID
@@ -1483,18 +1456,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
     
     
-    if(mode == 0)
-    {
-        no = maxPart;        /* root node */
-    }
-    else
-    {
-        nodesinlist++;
-        no = GravDataGet[target].NodeList[0];
-        no = Nodes[no].u.d.nextnode;    /* open it */
-    }
-    
-    while(no >= 0)
+    no = maxPart;        /* root node */
+
+    while(no >= 0)   /* outer loop runs once: the mode-1 imported-NodeList iteration is retired */
     {
         while(no >= 0)
         {
@@ -1621,43 +1585,45 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             {
                 if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo particle (Phase 9: foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
                 {
-                    if(mode == 0)
+                    /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
+                     * retired). Reaching a non-empty pseudo means this target's gravity is not
+                     * covered by the local LET; record it so Nexport>0 and gravity_tree() can
+                     * raise a graceful controlled-stop ("raise LETAllocFactor"). The
+                     * DataIndexTable/DataNodeList entries are never shipped -- they only count. */
+                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes + maxForeignNodes)]] != target)
                     {
-                        if(exportflag[task = DomainTask[no - (maxPart + maxNodes + maxForeignNodes)]] != target)
-                        {
-                            exportflag[task] = target;
-                            exportnodecount[task] = NODELISTLENGTH;
-                        }
-                        if(exportnodecount[task] == NODELISTLENGTH)
-                        {
-                            int exitFlag = 0;
+                        exportflag[task] = target;
+                        exportnodecount[task] = NODELISTLENGTH;
+                    }
+                    if(exportnodecount[task] == NODELISTLENGTH)
+                    {
+                        int exitFlag = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nexportforce_)
 #endif
+                        {
+                            if(Nexport >= bunchSize)
                             {
-                                if(Nexport >= bunchSize)
-                                {
-                                    /* out of buffer space. Need to discard work for this particle and interrupt */
-                                    BufferFullFlag = 1;
-                                    exitFlag = 1;
-                                }
-                                else
-                                {
-                                    nexp = Nexport;
-                                    Nexport++;
-                                }
+                                /* out of buffer space. Need to discard work for this particle and interrupt */
+                                BufferFullFlag = 1;
+                                exitFlag = 1;
                             }
-                            if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-                            exportnodecount[task] = 0;
-                            exportindex[task] = nexp;
-                            DataIndexTable[nexp].Task = task;
-                            DataIndexTable[nexp].Index = target;
-                            DataIndexTable[nexp].IndexGet = nexp;
+                            else
+                            {
+                                nexp = Nexport;
+                                Nexport++;
+                            }
                         }
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                        DomainNodeIndex[no - (maxPart + maxNodes + maxForeignNodes)];
-                        if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
+                        if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
+                        exportnodecount[task] = 0;
+                        exportindex[task] = nexp;
+                        DataIndexTable[nexp].Task = task;
+                        DataIndexTable[nexp].Index = target;
+                        DataIndexTable[nexp].IndexGet = nexp;
                     }
+                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
+                    DomainNodeIndex[no - (maxPart + maxNodes + maxForeignNodes)];
+                    if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
                     no = Nextnode[no - maxNodes - maxForeignNodes];
                     continue;
                 }
@@ -1670,14 +1636,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * Force multipole treatment instead so the node's contribution is accumulated. */
                 int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
 
-                if(mode == 1)
-                {
-                    if(nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))    /* we reached a top-level node again, which means that we are done with the branch */
-                    {
-                        no = -1;
-                        continue;
-                    }
-                }
                 mass = nop->u.d.mass;
                 if(mass <= 0) /* nothing in the node */
                 {
@@ -1965,24 +1923,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             }
             
         } // closes inner (while(no>=0)) check
-        if(mode == 1)
-        {
-            listindex++;
-            if(listindex < NODELISTLENGTH)
-            {
-                no = GravDataGet[target].NodeList[listindex];
-                if(no >= 0)
-                {
-                    nodesinlist++;
-                    no = Nodes[no].u.d.nextnode;    /* open it */
-                }
-            }
-        } // closes (mode == 1) check
     } // closes outer (while(no>=0)) check
 
 
-    /* store result at the proper place */
-    if(mode == 0)
+    /* store result at the proper place (local target only; the imported-particle export path is retired) */
     {
         P[target].GravAccel = acc;
 #ifdef RT_USE_TREECOL_FOR_NH
@@ -2060,83 +2004,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif // SINK_CALC_DISTANCES
     }
-    else
-    {
-        GravDataResult[target].Acc = acc;
-#ifdef COUNT_MASS_IN_GRAVTREE
-        GravDataResult[target].TreeMass = tree_mass;
-#endif
-#ifdef RT_USE_TREECOL_FOR_NH
-        {int k; for(k=0;k<RT_USE_TREECOL_FOR_NH;k++) GravDataResult[target].ColumnDensityBins[k] = treecol_angular_bins[k];}
-#endif
-#ifdef RT_OTVET
-        {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {GravDataResult[target].ET[k] = RT_ET[k];}}
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-        GravDataResult[target].Rad_Flux_UV = incident_flux_uv;
-        GravDataResult[target].Rad_Flux_EUV = incident_flux_euv;
-#endif
-#ifdef CHIMES_STELLAR_FLUXES
-        int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {GravDataResult[target].Chimes_G0[kc] = chimes_flux_G0[kc]; GravDataResult[target].Chimes_fluxPhotIon[kc] = chimes_flux_ion[kc];}
-#endif
-#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-        GravDataResult[target].MencInRcrit = m_enc_in_rcrit;
-#endif
-#ifdef SINK_COMPTON_HEATING
-        GravDataResult[target].Rad_Flux_AGN = incident_flux_agn;
-#endif
-#if defined(COSMIC_RAY_SUBGRID_LEBRON)
-        GravDataResult[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-        {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {GravDataResult[target].Rad_E_gamma[kf] = Rad_E_gamma[kf];}}
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-        {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {GravDataResult[target].Rad_Flux[kf] = Rad_Flux[kf];}}
-#endif
-#ifdef EVALPOTENTIAL
-        GravDataResult[target].Potential = pot;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        GravDataResult[target].tidal_tensorps = tidal_tensorps;
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        GravDataResult[target].tidal_zeta = tidal_zeta;
-#endif
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-        GravDataResult[target].GravJerk = jerk;
-#endif
-#ifdef SINK_CALC_DISTANCES
-        GravDataResult[target].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
-        GravDataResult[target].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
-#ifdef SPECIAL_POINT_MOTION
-        {
-            GravDataResult[target].vel_of_nearest_special = sink_prox.vel_of_nearest_special;
-            GravDataResult[target].acc_of_nearest_special = sink_prox.acc_of_nearest_special;
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-            GravDataResult[target].weight_sum_for_special_point_smoothing = sink_prox.weight_sum_for_special_point_smoothing; /* weighted sum needed */
-#endif
-        }
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-        GravDataResult[target].is_in_a_binary=0; GravDataResult[target].Min_Sink_OrbitalTime=sink_prox.Min_Sink_OrbitalTime; // orbital time for binary
-        if (sink_prox.Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
-        {
-            GravDataResult[target].is_in_a_binary = 1; GravDataResult[target].comp_Mass=sink_prox.comp_Mass; //mass of binary companion
-            GravDataResult[target].comp_dx = sink_prox.comp_dx; GravDataResult[target].comp_dv = sink_prox.comp_dv;
-        }
-#endif
-#ifdef SINGLE_STAR_TIMESTEPPING
-        GravDataResult[target].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
-        GravDataResult[target].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        GravDataResult[target].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
-#endif
-#endif
-#endif // SINK_CALC_DISTANCES
-        *exportflag = nodesinlist;
-    }
-    
+
     return ninteractions;
 }
 
@@ -2163,10 +2031,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
  *  that was mapped to a different nearest neighbour position when the tree
  *  walk would be further refined.
  */
-int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex)
+int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int signx, signy, signz, nexp, openflag, task, no, cost, listindex = 0;
+    int signx, signy, signz, nexp, openflag, task, no, cost;
     double mass, r2, u;   /* u: scratch in the periodic-boundary shortcut; interp locals now in the SSOT helper */
     double boxsize, boxhalf, aold, xtmp; xtmp=0;
     Vec3<double> pos, dr;
@@ -2176,28 +2044,12 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
     boxhalf = 0.5 * All.BoxSize;
 
     cost = 0;
-    if(mode == 0)
-    {
-        pos = P[target].Pos;
-        aold = All.ErrTolForceAcc * P[target].OldAcc;
-    }
-    else
-    {
-        pos = GravDataGet[target].Pos;
-        aold = All.ErrTolForceAcc * GravDataGet[target].OldAcc;
-    }
-    
-    if(mode == 0)
-    {
-        no = All.MaxPart;        /* root node */
-    }
-    else
-    {
-        no = GravDataGet[target].NodeList[0];
-        no = Nodes[no].u.d.nextnode;    /* open it */
-    }
-    
-    while(no >= 0)
+    pos = P[target].Pos;
+    aold = All.ErrTolForceAcc * P[target].OldAcc;
+
+    no = All.MaxPart;        /* root node */
+
+    while(no >= 0)   /* outer loop runs once: the mode-1 imported-NodeList iteration is retired */
     {
         while(no >= 0)
         {
@@ -2225,60 +2077,52 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
             {
                 if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
                 {
-                    if(mode == 0)
+                    /* LET-incompleteness DETECTOR (the MPI export round-trip is retired): reaching a
+                     * non-empty pseudo means this target's Ewald correction is not covered by the local
+                     * LET; record it so Nexport>0 triggers gravity_tree()'s graceful controlled-stop. */
+                    if(exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
                     {
-                        if(exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
-                        {
-                            exportflag[task] = target;
-                            exportnodecount[task] = NODELISTLENGTH;
-                        }
-                        
-                        if(exportnodecount[task] == NODELISTLENGTH)
-                        {
-                            int exitFlag = 0;
+                        exportflag[task] = target;
+                        exportnodecount[task] = NODELISTLENGTH;
+                    }
+
+                    if(exportnodecount[task] == NODELISTLENGTH)
+                    {
+                        int exitFlag = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nexportewald_)
 #endif
+                        {
+                            if(Nexport >= All.BunchSize)
                             {
-                                if(Nexport >= All.BunchSize)
-                                {
-                                    /* out if buffer space. Need to discard work for this particle and interrupt */
-                                    BufferFullFlag = 1;
-                                    exitFlag = 1;
-                                }
-                                else
-                                {
-                                    nexp = Nexport;
-                                    Nexport++;
-                                }
+                                /* out if buffer space. Need to discard work for this particle and interrupt */
+                                BufferFullFlag = 1;
+                                exitFlag = 1;
                             }
-                            if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-                            
-                            exportnodecount[task] = 0;
-                            exportindex[task] = nexp;
-                            DataIndexTable[nexp].Task = task;
-                            DataIndexTable[nexp].Index = target;
-                            DataIndexTable[nexp].IndexGet = nexp;
+                            else
+                            {
+                                nexp = Nexport;
+                                Nexport++;
+                            }
                         }
-                        
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
-                        
-                        if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
+                        if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
+
+                        exportnodecount[task] = 0;
+                        exportindex[task] = nexp;
+                        DataIndexTable[nexp].Task = task;
+                        DataIndexTable[nexp].Index = target;
+                        DataIndexTable[nexp].IndexGet = nexp;
                     }
+
+                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
+
+                    if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
                     no = Nextnode[no - MaxNodes - MaxForeignNodes];
                     continue;
                 }
-                
+
                 nop = &Nodes[no];
-                
-                if(mode == 1)
-                {
-                    if(nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))    /* we reached a top-level node again, which means that we are done with the branch */
-                    {
-                        no = -1;
-                        continue;
-                    }
-                }
+
                 //if(nop->N_part <= 1) /* open cell */
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
@@ -2415,27 +2259,10 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
             cost++;
         }
         
-        if(mode == 1)
-        {
-            listindex++;
-            if(listindex < NODELISTLENGTH)
-            {
-                no = GravDataGet[target].NodeList[listindex];
-                if(no >= 0) {no = Nodes[no].u.d.nextnode;}    /* open it */
-            }
-        }
     }
-    
-    /* add the result at the proper place */
-    
-    if(mode == 0)
-    {
-        P[target].GravAccel += acc;
-    }
-    else
-    {
-        GravDataResult[target].Acc = acc;
-    }
+
+    /* add the result at the proper place (local target only; the imported-particle export path is retired) */
+    P[target].GravAccel += acc;
 
     return cost;
 }

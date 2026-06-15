@@ -189,7 +189,7 @@ extern int RestartFlag;		/*!< taken from command line used to start code. 0 is n
 extern int RestartSnapNum;
 extern int SelRnd;
 extern int TakeLevel;
-extern int *Exportflag;	        /*!< Buffer used for flagging whether a particle needs to be exported to another process */
+extern int *Exportflag;	        /*!< per-task flag used by the gravity LET-incompleteness detector (the export round-trip is retired) */
 extern int *Exportnodecount;
 extern int *Exportindex;
 extern int *Send_offset, *Send_count, *Recv_count, *Recv_offset;
@@ -363,7 +363,7 @@ extern int NumPartGroup;
 extern peanokey *DomainKeyBuf;
 
 /* Tree variables */
-extern long Nexport, Nimport;
+extern long Nexport;   /* gravity LET-incompleteness detector count (Nimport retired with the export round-trip) */
 extern int BufferCollisionFlag;
 extern int BufferFullFlag;
 extern int NextParticle;
@@ -465,7 +465,7 @@ extern struct data_index
   int Index;
   int IndexGet;
 }
- *DataIndexTable;		/*!< the particles to be exported are grouped by task-number. This table allows the results to be disentangled again and to be assigned to the correct particle */
+ *DataIndexTable;		/*!< records would-be-exported targets per task for the gravity LET-incompleteness detector; never shipped (the export round-trip is retired) */
 
 
 extern struct data_nodelist
@@ -475,122 +475,10 @@ extern struct data_nodelist
 *DataNodeList;
 
 
-extern struct gravdata_in
-{
-    int Type;
-    Vec3<MyFloat> Pos;
-    MyFloat Soft;
-    MyFloat Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-    Vec3<MyFloat> Vel;
-#endif
-#if defined(SINK_DYNFRICTION_FROMTREE)
-    MyFloat Sink_Mass;
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-    MyFloat AGS_zeta;
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime;   /*!<orbital time for binary */
-    Vec3<MyDouble> comp_dx;        /*!< position of binary companion */
-    Vec3<MyDouble> comp_dv;        /*!< velocity of binary companion */
-    MyDouble comp_Mass;         /*!< mass of binary companion */
-    int is_in_a_binary;
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    int SuperTimestepFlag;  /*!< 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise */
-#endif
-    MyFloat OldAcc;
-    int NodeList[NODELISTLENGTH];
-}
- *GravDataIn,			/*!< holds particle data to be exported to other processors */
- *GravDataGet;			/*!< holds particle data imported from other processors */
-
-
-extern struct gravdata_out
-{
-    Vec3<MyDouble> Acc;
-#ifdef RT_USE_TREECOL_FOR_NH
-    MyDouble ColumnDensityBins[RT_USE_TREECOL_FOR_NH];
-#endif
-#ifdef COUNT_MASS_IN_GRAVTREE
-    MyDouble TreeMass;
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    MyDouble SubGrid_CosmicRayEnergyDensity;
-#endif
-#ifdef RT_OTVET
-    SymmetricTensor2<MyDouble> ET[N_RT_FREQ_BINS];
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-    MyDouble Rad_Flux_UV;
-    MyDouble Rad_Flux_EUV;
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-    MyDouble Rad_E_gamma[N_RT_FREQ_BINS];
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    Vec3<MyDouble> Rad_Flux[N_RT_FREQ_BINS];
-#endif
-#ifdef CHIMES_STELLAR_FLUXES
-    double Chimes_G0[CHIMES_LOCAL_UV_NBINS];
-    double Chimes_fluxPhotIon[CHIMES_LOCAL_UV_NBINS];
-#endif
-#ifdef SINK_COMPTON_HEATING
-    MyDouble Rad_Flux_AGN;
-#endif
-#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    MyDouble MencInRcrit;
-#endif
-#ifdef EVALPOTENTIAL
-    MyDouble Potential;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<MyFloat> tidal_tensorps;
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyFloat tidal_zeta;
-#endif
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-    Vec3<MyDouble> GravJerk;
-#endif
-#ifdef SINK_CALC_DISTANCES
-    MyFloat Min_Distance_to_Sink;
-    Vec3<MyFloat> Min_xyz_to_Sink;
-#ifdef SPECIAL_POINT_MOTION
-    Vec3<MyFloat> vel_of_nearest_special;
-    Vec3<MyFloat> acc_of_nearest_special;
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    MyFloat weight_sum_for_special_point_smoothing;
-#endif
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime; //orbital time for binary
-    Vec3<MyDouble> comp_dx; //position of binary companion
-    Vec3<MyDouble> comp_dv; //velocity of binary companion
-    MyDouble comp_Mass; //mass of binary companion
-    int is_in_a_binary; // 1 if star is in a binary, 0 otherwise
-#endif
-#ifdef SINGLE_STAR_TIMESTEPPING
-    MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
-    MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    SymmetricTensor2<MyFloat> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
-    MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
-    int COM_calc_flag; //flag that tells whether this was only a rerun to get the acceleration ad the tidal tenor at the center of mass of a binary
-    int SuperTimestepFlag; // 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    MyFloat Min_Sink_FeedbackTime; // minimum time for feedback to arrive from a star
-#endif    
-#endif
-#endif
-}
- *GravDataResult,		/*!< holds the partial results computed for imported particles. Note: We use GravDataResult = GravDataGet, such that the result replaces the imported data */
- *GravDataOut;			/*!< holds partial results received from other processors. This will overwrite the GravDataIn array */
+/* The gravdata_in/gravdata_out export+import buffers (GravDataIn/Get/Result/Out)
+ * are RETIRED: gravity runs on the target-owning rank via the GPU pre-pass + LET,
+ * so there is no MPI export round-trip. The surviving export-list structs
+ * (data_index/data_nodelist) now serve only as the LET-incompleteness detector. */
 
 
 extern struct info_block

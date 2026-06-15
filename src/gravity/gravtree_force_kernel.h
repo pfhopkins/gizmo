@@ -21,7 +21,7 @@
  *      embeds a formula (not a raw field read), the formula becomes a helper here.
  *   3. accumulate: a grav_<payload>_accumulate helper here, called by BOTH walks at the same
  *      structural point (inside/outside the PM short-range gate exactly as the physics needs).
- *   4. store: walk-side (P[] mode-0, GravDataResult mode-1, P_dev/CellP_dev + host scatter).
+ *   4. store: walk-side (CPU walk writes P[] directly; GPU walk writes P_dev/CellP_dev + host scatter).
  *   5. wire/SoA: extend the LET wire + tree SoA + gpu_scatter_foreign_to_soa + drift kernel.
  *   6. moment construction: gpu_moment_refresh + force_treeupdate_pseudos (+ LET synth leaf).
  */

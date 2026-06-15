@@ -35,8 +35,8 @@ void force_flag_localnodes(void);
 
 void *gravity_primary_loop(void *p);
 
-int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
-int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex);
+int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex);
+int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
 void force_tree_discardpartials(void);
 void force_treeupdate_pseudos(int);
