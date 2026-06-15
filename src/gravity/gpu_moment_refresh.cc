@@ -298,121 +298,280 @@ static int *father_mirror_ensure_(int N)
 /* =================================================================== */
 namespace {
 
-using MrExSpace  = Kokkos::DefaultExecutionSpace;
-using MrMemSpace = MrExSpace::memory_space;
+using MrExSpace   = Kokkos::DefaultExecutionSpace;
+using MrMemSpace  = MrExSpace::memory_space;
+using MrUnmanaged = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
 
+/* The scratch is held as UNMANAGED Views over a persistent raw kokkos_malloc
+ * pool (mr_rawpool_t below): the pool gives grow-and-keep lifetime + finalize
+ * safety (raw pointers, freed via explicit release, never a tracked View
+ * outliving Kokkos::finalize), while the Views keep the kernel/accessor code
+ * unchanged.  The Views own nothing; they are rebound (pointer + extent n) each
+ * refresh by mr_scratch_bind_. */
 struct mr_scratch_t {
-    Kokkos::View<int*,           MrMemSpace> pending;
-    Kokkos::View<MyGravFloat*,   MrMemSpace> mass;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> s;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> vs;
-    Kokkos::View<long*,          MrMemSpace> Npart;
-    Kokkos::View<MyGravFloat*,   MrMemSpace> hmax;
-    Kokkos::View<MyGravFloat*,   MrMemSpace> vmax;
-    Kokkos::View<MyGravFloat*,   MrMemSpace> divVmax;
-    Kokkos::View<MyGravFloat*,   MrMemSpace> maxsoft;
-    Kokkos::View<unsigned int*,  MrMemSpace> bitflags;
+    Kokkos::View<int*,           MrMemSpace, MrUnmanaged> pending;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> mass;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> s;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> vs;
+    Kokkos::View<long*,          MrMemSpace, MrUnmanaged> Npart;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> hmax;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> vmax;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> divVmax;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> maxsoft;
+    Kokkos::View<unsigned int*,  MrMemSpace, MrUnmanaged> bitflags;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    Kokkos::View<MyGravFloat*,   MrMemSpace> gasmass;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> gasmass;
 #endif
 #ifdef RT_USE_GRAVTREE
-    Kokkos::View<MyGravFloat*,   MrMemSpace> stellar_lum;  /* [n * N_RT_FREQ_BINS] */
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> stellar_lum;  /* [n * N_RT_FREQ_BINS] */
 #ifdef CHIMES_STELLAR_FLUXES
-    Kokkos::View<double*,        MrMemSpace> chimes_G0;    /* [n * CHIMES_LOCAL_UV_NBINS] */
-    Kokkos::View<double*,        MrMemSpace> chimes_ion;
+    Kokkos::View<double*,        MrMemSpace, MrUnmanaged> chimes_G0;    /* [n * CHIMES_LOCAL_UV_NBINS] */
+    Kokkos::View<double*,        MrMemSpace, MrUnmanaged> chimes_ion;
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> rt_s;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> rt_vs;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> rt_s;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> rt_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    Kokkos::View<MyGravFloat*,   MrMemSpace> sink_lum;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> sink_lum_grad;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> sink_lum;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_lum_grad;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    Kokkos::View<MyGravFloat*,   MrMemSpace> cr_inject;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> cr_inject;
 #endif
 #ifdef SINK_CALC_DISTANCES
-    Kokkos::View<MyGravFloat*,   MrMemSpace> sink_mass;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> sink_pos;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> sink_mass;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    Kokkos::View<int*,           MrMemSpace> N_SINK;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> sink_vel;
+    Kokkos::View<int*,           MrMemSpace, MrUnmanaged> N_SINK;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> sink_acc;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    Kokkos::View<MyGravFloat*,   MrMemSpace> max_fbvel;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> max_fbvel;
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    Kokkos::View<MyGravFloat*,   MrMemSpace> tidal;        /* [n * 6] */
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> tidal;        /* [n * 6] */
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    Kokkos::View<MyGravFloat*,   MrMemSpace> mass_dm;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> s_dm;
-    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace> vs_dm;
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> mass_dm;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> s_dm;
+    Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> vs_dm;
 #endif
 };
 
-/* Allocate all scratch Views sized to n internal nodes. */
-static void mr_scratch_alloc_(mr_scratch_t& scr, int n)
-{
-    scr.pending  = Kokkos::View<int*,         MrMemSpace>("mr_pending",  n);
-    scr.mass     = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_mass",     n);
-    scr.s        = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_s",  n);
-    scr.vs       = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_vs", n);
-    scr.Npart    = Kokkos::View<long*,        MrMemSpace>("mr_Npart",    n);
-    scr.hmax     = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_hmax",     n);
-    scr.vmax     = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_vmax",     n);
-    scr.divVmax  = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_divVmax",  n);
-    scr.maxsoft  = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_maxsoft",  n);
-    scr.bitflags = Kokkos::View<unsigned int*,MrMemSpace>("mr_bitflags", n);
+/* Persistent raw scratch pool (MrMemSpace) backing the unmanaged scratch Views.
+ * Grow-and-keep; freed via gpu_moment_refresh_release().  Raw pointers, not
+ * Views, so nothing tracked outlives Kokkos::finalize. */
+struct mr_rawpool_t {
+    int*               pending;
+    MyGravFloat*       mass;
+    Vec3<MyGravFloat>* s;
+    Vec3<MyGravFloat>* vs;
+    long*              Npart;
+    MyGravFloat*       hmax;
+    MyGravFloat*       vmax;
+    MyGravFloat*       divVmax;
+    MyGravFloat*       maxsoft;
+    unsigned int*      bitflags;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    scr.gasmass  = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_gasmass",  n);
+    MyGravFloat*       gasmass;
 #endif
 #ifdef RT_USE_GRAVTREE
-    scr.stellar_lum = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_stellar_lum", (long)n * N_RT_FREQ_BINS);
+    MyGravFloat*       stellar_lum;
 #ifdef CHIMES_STELLAR_FLUXES
-    scr.chimes_G0  = Kokkos::View<double*, MrMemSpace>("mr_chimes_G0",  (long)n * CHIMES_LOCAL_UV_NBINS);
-    scr.chimes_ion = Kokkos::View<double*, MrMemSpace>("mr_chimes_ion", (long)n * CHIMES_LOCAL_UV_NBINS);
+    double*            chimes_G0;
+    double*            chimes_ion;
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    scr.rt_s  = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_rt_s",  n);
-    scr.rt_vs = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_rt_vs", n);
+    Vec3<MyGravFloat>* rt_s;
+    Vec3<MyGravFloat>* rt_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    scr.sink_lum      = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_sink_lum",      n);
-    scr.sink_lum_grad = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_sink_lum_grad", n);
+    MyGravFloat*       sink_lum;
+    Vec3<MyGravFloat>* sink_lum_grad;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    scr.cr_inject = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_cr_inj", n);
+    MyGravFloat*       cr_inject;
 #endif
 #ifdef SINK_CALC_DISTANCES
-    scr.sink_mass = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_sink_mass", n);
-    scr.sink_pos  = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_sink_pos",  n);
+    MyGravFloat*       sink_mass;
+    Vec3<MyGravFloat>* sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    scr.N_SINK   = Kokkos::View<int*,         MrMemSpace>("mr_N_SINK",   n);
-    scr.sink_vel = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_sink_vel", n);
+    int*               N_SINK;
+    Vec3<MyGravFloat>* sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    scr.sink_acc = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_sink_acc", n);
+    Vec3<MyGravFloat>* sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    scr.max_fbvel = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_max_fbvel", n);
+    MyGravFloat*       max_fbvel;
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    scr.tidal = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_tidal", (long)n * 6);
+    MyGravFloat*       tidal;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    scr.mass_dm = Kokkos::View<MyGravFloat*, MrMemSpace>("mr_mass_dm", n);
-    scr.s_dm    = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_s_dm", n);
-    scr.vs_dm   = Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace>("mr_vs_dm", n);
+    MyGravFloat*       mass_dm;
+    Vec3<MyGravFloat>* s_dm;
+    Vec3<MyGravFloat>* vs_dm;
 #endif
+};
+
+static mr_rawpool_t raw_     = {};
+static int          raw_cap_ = 0;   /* capacity in nodes */
+
+/* Free every allocated pool buffer.  Visits the same #ifdef field set as the
+ * struct; idempotent (NULL-checked), used both on grow and at teardown. */
+static void mr_rawpool_free_(void)
+{
+#define MRFREE(p) do { if(raw_.p) { Kokkos::kokkos_free<MrMemSpace>(raw_.p); raw_.p = NULL; } } while(0)
+    MRFREE(pending); MRFREE(mass);    MRFREE(s);       MRFREE(vs);     MRFREE(Npart);
+    MRFREE(hmax);    MRFREE(vmax);    MRFREE(divVmax); MRFREE(maxsoft); MRFREE(bitflags);
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MRFREE(gasmass);
+#endif
+#ifdef RT_USE_GRAVTREE
+    MRFREE(stellar_lum);
+#ifdef CHIMES_STELLAR_FLUXES
+    MRFREE(chimes_G0); MRFREE(chimes_ion);
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    MRFREE(rt_s); MRFREE(rt_vs);
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    MRFREE(sink_lum); MRFREE(sink_lum_grad);
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    MRFREE(cr_inject);
+#endif
+#ifdef SINK_CALC_DISTANCES
+    MRFREE(sink_mass); MRFREE(sink_pos);
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    MRFREE(N_SINK); MRFREE(sink_vel);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    MRFREE(sink_acc);
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    MRFREE(max_fbvel);
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    MRFREE(tidal);
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    MRFREE(mass_dm); MRFREE(s_dm); MRFREE(vs_dm);
+#endif
+#undef MRFREE
+}
+
+/* Grow the raw pool to hold at least n nodes (no shrink).  On any allocation
+ * failure frees the whole pool and leaves capacity invalid (0). */
+static int mr_rawpool_ensure_(int n)
+{
+    if(raw_cap_ >= n) {return 0;}        /* capacity already sufficient: reuse */
+    mr_rawpool_free_();                  /* drop the smaller pool before growing */
+    int fail = 0;
+#define MRALLOC(p, count) do { \
+        raw_.p = (decltype(raw_.p)) Kokkos::kokkos_malloc<MrMemSpace>((long)(count) * sizeof(*raw_.p)); \
+        if(!raw_.p) { fail = 1; } } while(0)
+    MRALLOC(pending, n); MRALLOC(mass, n);    MRALLOC(s, n);       MRALLOC(vs, n);     MRALLOC(Npart, n);
+    MRALLOC(hmax, n);    MRALLOC(vmax, n);    MRALLOC(divVmax, n); MRALLOC(maxsoft, n); MRALLOC(bitflags, n);
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MRALLOC(gasmass, n);
+#endif
+#ifdef RT_USE_GRAVTREE
+    MRALLOC(stellar_lum, (long)n * N_RT_FREQ_BINS);
+#ifdef CHIMES_STELLAR_FLUXES
+    MRALLOC(chimes_G0, (long)n * CHIMES_LOCAL_UV_NBINS); MRALLOC(chimes_ion, (long)n * CHIMES_LOCAL_UV_NBINS);
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    MRALLOC(rt_s, n); MRALLOC(rt_vs, n);
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    MRALLOC(sink_lum, n); MRALLOC(sink_lum_grad, n);
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    MRALLOC(cr_inject, n);
+#endif
+#ifdef SINK_CALC_DISTANCES
+    MRALLOC(sink_mass, n); MRALLOC(sink_pos, n);
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    MRALLOC(N_SINK, n); MRALLOC(sink_vel, n);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    MRALLOC(sink_acc, n);
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    MRALLOC(max_fbvel, n);
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    MRALLOC(tidal, (long)n * 6);
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    MRALLOC(mass_dm, n); MRALLOC(s_dm, n); MRALLOC(vs_dm, n);
+#endif
+#undef MRALLOC
+    if(fail) {printf("gpu_moment_refresh: scratch pool alloc failed\n"); endrun(913306); mr_rawpool_free_(); raw_cap_ = 0; return 1;}
+    raw_cap_ = n;
+    return 0;
+}
+
+/* Bind the scratch Views (extent n) over the persistent raw pool, growing the
+ * pool first.  Returns 1 on allocation failure (pool left freed/invalid). */
+static int mr_scratch_bind_(mr_scratch_t& scr, int n)
+{
+    if(mr_rawpool_ensure_(n) != 0) {return 1;}
+#define MRBIND(p, ext) scr.p = decltype(scr.p)(raw_.p, (ext))
+    MRBIND(pending, n); MRBIND(mass, n);    MRBIND(s, n);       MRBIND(vs, n);     MRBIND(Npart, n);
+    MRBIND(hmax, n);    MRBIND(vmax, n);    MRBIND(divVmax, n); MRBIND(maxsoft, n); MRBIND(bitflags, n);
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MRBIND(gasmass, n);
+#endif
+#ifdef RT_USE_GRAVTREE
+    MRBIND(stellar_lum, (long)n * N_RT_FREQ_BINS);
+#ifdef CHIMES_STELLAR_FLUXES
+    MRBIND(chimes_G0, (long)n * CHIMES_LOCAL_UV_NBINS); MRBIND(chimes_ion, (long)n * CHIMES_LOCAL_UV_NBINS);
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    MRBIND(rt_s, n); MRBIND(rt_vs, n);
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    MRBIND(sink_lum, n); MRBIND(sink_lum_grad, n);
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    MRBIND(cr_inject, n);
+#endif
+#ifdef SINK_CALC_DISTANCES
+    MRBIND(sink_mass, n); MRBIND(sink_pos, n);
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    MRBIND(N_SINK, n); MRBIND(sink_vel, n);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    MRBIND(sink_acc, n);
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    MRBIND(max_fbvel, n);
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    MRBIND(tidal, (long)n * 6);
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    MRBIND(mass_dm, n); MRBIND(s_dm, n); MRBIND(vs_dm, n);
+#endif
+#undef MRBIND
+    return 0;
 }
 
 /* Adapters between this venue's scratch Views and the shared moment kernel's POD interface
@@ -576,7 +735,7 @@ static void mr_normalize_payloads_(const mr_scratch_t& scr, int k, const Vec3<My
  * increments pending[father(k) - MaxPart] when father falls within
  * [range_lo, range_hi).  Phase 6.7c passes a restricted iteration
  * range + filter for the topnode-subtree variant. */
-static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace> pending,
+static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> pending,
                                      int *father_soa, int MaxPart,
                                      int n_iter, int range_lo, int range_hi)
 {
@@ -630,7 +789,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
      * propagate / normalize / pending_init) above can be reused unchanged
      * by gpu_moment_refresh_topnodes() in Phase 6.7c. */
     mr_scratch_t scr;
-    mr_scratch_alloc_(scr, n);
+    if(mr_scratch_bind_(scr, n) != 0) {return 1;}   /* soft bad-stop: pool freed by ensure on failure; caller drains at next poll */
 
     /* SoA pointers captured into the lambdas (raw pointers; SharedSpace is
      * accessible from device). The SoA `father`/`bitflags` carry topology
@@ -833,6 +992,8 @@ extern "C" void gpu_moment_refresh_release(void)
     pre_cap_ = 0;
     if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
     fmirror_cap_ = 0;
+    mr_rawpool_free_();
+    raw_cap_ = 0;
 }
 
 /* =================================================================== */
