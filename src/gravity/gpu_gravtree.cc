@@ -316,7 +316,7 @@ gpu_gravtree_walk_one(int target,
                       int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9: foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
-                      const struct gpu_gravity_tree_soa_t *s,
+                      const struct gpu_gravity_tree_soa_t *tree_soa,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                       int is_first_step,   /* hybrid opening: relative criterion applies only after step 0 */
 #endif
@@ -628,11 +628,11 @@ gpu_gravtree_walk_one(int target,
         {
             if(no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes) n_foreign++;  /* Phase 9.3 diag */
             int idx = no - maxPart;
-            Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)s->s[idx][0], (MyFloat)s->s[idx][1], (MyFloat)s->s[idx][2]};
-            MyFloat len_node = s->len[idx];
-            MyFloat msoft_node = s->maxsoft[idx];
-            MyFloat mass_node = s->mass[idx];
-            Vec3<MyFloat> center_node = s->center[idx];
+            Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)tree_soa->s[idx][0], (MyFloat)tree_soa->s[idx][1], (MyFloat)tree_soa->s[idx][2]};
+            MyFloat len_node = tree_soa->len[idx];
+            MyFloat msoft_node = tree_soa->maxsoft[idx];
+            MyFloat mass_node = tree_soa->mass[idx];
+            Vec3<MyFloat> center_node = tree_soa->center[idx];
 
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
@@ -645,19 +645,19 @@ gpu_gravtree_walk_one(int target,
              * the while(no >= 0) walk, skipping this node's force contribution.
              * Force multipole treatment instead. */
             int in_foreign_n = (no >= maxPart + maxNodes);
-            int foreign_force_multipole = (in_foreign_n && (s->nextnode[idx] < 0));
+            int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
             /* empty-node skip (mirrors forcetree.cc:2165): a zero-mass node contributes no
              * force -> advance to the sibling. Not gated on foreign_force_multipole (a skip
              * is never converted to a forced multipole); also avoids descending empty nodes. */
-            if(mass_node <= 0) { no = s->sibling[idx]; continue; }
+            if(mass_node <= 0) { no = tree_soa->sibling[idx]; continue; }
 
             /* single-particle node -> open to its leaf for an exact force (mirrors
              * forcetree.cc:2171). A foreign single-particle node with nextnode<0 must instead
              * be used as a multipole (opening it would exit the walk and drop its contribution),
              * so gate on foreign_force_multipole, matching the LET-sentinel guard above. */
-            if(!(s->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
-                if(!foreign_force_multipole) { no = s->nextnode[idx]; continue; }
+            if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                if(!foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
             }
 
             /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home for
@@ -680,7 +680,7 @@ gpu_gravtree_walk_one(int target,
                 int pred_is_first_step = 0;
 #endif
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-                int pred_n_sink = (int)s->N_SINK[idx];
+                int pred_n_sink = (int)tree_soa->N_SINK[idx];
 #else
                 int pred_n_sink = 0;
 #endif
@@ -691,8 +691,8 @@ gpu_gravtree_walk_one(int target,
                 /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign node
                  * forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid dropping its
                  * contribution; ACCEPT and OPEN&&foreign fall through to the payload load below. */
-                if(pred == GRAV_SKIP_NODE) { no = s->sibling[idx]; continue; }
-                if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) { no = s->nextnode[idx]; continue; }
+                if(pred == GRAV_SKIP_NODE) { no = tree_soa->sibling[idx]; continue; }
+                if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
             }
 
             /* Node accepted — load payload fields */
@@ -702,10 +702,10 @@ gpu_gravtree_walk_one(int target,
             /* Set per-interaction DM state for this accepted node (mirrors forcetree.cc:2272).
              * d_dm uses the DM CoM s_dm, NOT the total CoM (s_node). */
             if(ptype != 0) {
-                d_dm[0] = (double)s->s_dm[idx][0] - pos[0];
-                d_dm[1] = (double)s->s_dm[idx][1] - pos[1];
-                d_dm[2] = (double)s->s_dm[idx][2] - pos[2];
-                mass_dm_local = (double)s->mass_dm[idx];
+                d_dm[0] = (double)tree_soa->s_dm[idx][0] - pos[0];
+                d_dm[1] = (double)tree_soa->s_dm[idx][1] - pos[1];
+                d_dm[2] = (double)tree_soa->s_dm[idx][2] - pos[2];
+                mass_dm_local = (double)tree_soa->mass_dm[idx];
             } else { d_dm = Vec3<double>{0,0,0}; mass_dm_local = 0; }
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
@@ -714,22 +714,22 @@ gpu_gravtree_walk_one(int target,
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Load node's previous-step tidal tensor from SoA (mirrors forcetree.cc:2278). */
             for(int kk = 0; kk < 6; kk++) {
-                j_zeta_tidal_tt.data[kk] = (double) s->tidal_tensorps[(long)idx * 6 + kk];
+                j_zeta_tidal_tt.data[kk] = (double) tree_soa->tidal_tensorps[(long)idx * 6 + kk];
             }
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-            dv[0] = (double) s->node_vs[idx][0] - vel[0];
-            dv[1] = (double) s->node_vs[idx][1] - vel[1];
-            dv[2] = (double) s->node_vs[idx][2] - vel[2];
+            dv[0] = (double) tree_soa->node_vs[idx][0] - vel[0];
+            dv[1] = (double) tree_soa->node_vs[idx][1] - vel[1];
+            dv[2] = (double) tree_soa->node_vs[idx][2] - vel[2];
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             {
-                long np = s->N_part[idx];
+                long np = tree_soa->N_part[idx];
                 m_j_eff_for_df = (np > 0) ? (mass / (double)np) : 0.0;
             }
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            gasmass = s->gasmass[idx];
+            gasmass = tree_soa->gasmass[idx];
 #endif
 #ifdef RT_USE_GRAVTREE
             /* Load node stellar luminosity only for valid gas targets (mirrors
@@ -739,33 +739,33 @@ gpu_gravtree_walk_one(int target,
             if(valid_gas_particle_for_rt)
             {
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
-                    mass_stellarlum[kf] = s->stellar_lum[idx * N_RT_FREQ_BINS + kf];
+                    mass_stellarlum[kf] = tree_soa->stellar_lum[idx * N_RT_FREQ_BINS + kf];
                 }
 #ifdef CHIMES_STELLAR_FLUXES
                 for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
-                    chimes_mass_stellarlum_G0[kf] = s->chimes_stellar_lum_G0[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
-                    chimes_mass_stellarlum_ion[kf] = s->chimes_stellar_lum_ion[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_G0[kf] = tree_soa->chimes_stellar_lum_G0[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_ion[kf] = tree_soa->chimes_stellar_lum_ion[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
                 }
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-                d_stellarlum[0] = s->rt_source_lum_s[idx][0] - pos[0];
-                d_stellarlum[1] = s->rt_source_lum_s[idx][1] - pos[1];
-                d_stellarlum[2] = s->rt_source_lum_s[idx][2] - pos[2];
+                d_stellarlum[0] = tree_soa->rt_source_lum_s[idx][0] - pos[0];
+                d_stellarlum[1] = tree_soa->rt_source_lum_s[idx][1] - pos[1];
+                d_stellarlum[2] = tree_soa->rt_source_lum_s[idx][2] - pos[2];
                 gravity_box_nearest_image(d_stellarlum[0], d_stellarlum[1], d_stellarlum[2], -1);
 #else
                 d_stellarlum = dr;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                 /* node-aggregated sink angle-weighted luminosity (shared formula helper) */
-                mass_sinklumwt_forradfb = grav_sink_fb_angleweight((double) s->sink_lum[idx],
-                                                                   (double) s->sink_lum_grad[idx][0], (double) s->sink_lum_grad[idx][1], (double) s->sink_lum_grad[idx][2],
+                mass_sinklumwt_forradfb = grav_sink_fb_angleweight((double) tree_soa->sink_lum[idx],
+                                                                   (double) tree_soa->sink_lum_grad[idx][0], (double) tree_soa->sink_lum_grad[idx][1], (double) tree_soa->sink_lum_grad[idx][2],
                                                                    d_stellarlum[0], d_stellarlum[1], d_stellarlum[2]);
 #endif
             }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             /* Mirror forcetree.cc:1956-1957 node-aggregated CR injection. */
-            cr_injection = (double) s->cr_injection[idx];
+            cr_injection = (double) tree_soa->cr_injection[idx];
 #endif
             /* Node-side sink distance + timestepping accumulators via the shared helper
              * (gravtree_force_kernel.h) — CPU-walk semantics verbatim. The sink_vel/sink_acc
@@ -773,33 +773,33 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_CALC_DISTANCES
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
             {
-                Vec3<double> node_vs = Vec3<double>{(double)s->node_vs[idx][0], (double)s->node_vs[idx][1], (double)s->node_vs[idx][2]};
+                Vec3<double> node_vs = Vec3<double>{(double)tree_soa->node_vs[idx][0], (double)tree_soa->node_vs[idx][1], (double)tree_soa->node_vs[idx][2]};
                 grav_sink_prox_node_specialweighted(r2, node_vs, ptype, sink_prox);
             }
 #endif
-            if(s->sink_mass[idx] > 0)
+            if(tree_soa->sink_mass[idx] > 0)
             {
                 Vec3<double> sink_dr;
-                sink_dr[0] = s->sink_pos[idx][0] - pos[0];
-                sink_dr[1] = s->sink_pos[idx][1] - pos[1];
-                sink_dr[2] = s->sink_pos[idx][2] - pos[2];
+                sink_dr[0] = tree_soa->sink_pos[idx][0] - pos[0];
+                sink_dr[1] = tree_soa->sink_pos[idx][1] - pos[1];
+                sink_dr[2] = tree_soa->sink_pos[idx][2] - pos[2];
                 gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
                 grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
                 prox_target.vel = vel;
 #endif
-                grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) s->sink_mass[idx];
+                grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) tree_soa->sink_mass[idx];
 #if defined(SINGLE_STAR_FIND_BINARIES)
-                prox_src.n_sink = (int) s->N_SINK[idx];
+                prox_src.n_sink = (int) tree_soa->N_SINK[idx];
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                prox_src.motion.vel = s->sink_vel[idx];
+                prox_src.motion.vel = tree_soa->sink_vel[idx];
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-                prox_src.motion.acc = s->sink_acc[idx];
+                prox_src.motion.acc = tree_soa->sink_acc[idx];
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-                prox_src.motion.max_feedback_vel = s->MaxFeedbackVel[idx];
+                prox_src.motion.max_feedback_vel = tree_soa->MaxFeedbackVel[idx];
 #endif
                 grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
             }
@@ -965,9 +965,9 @@ gpu_gravtree_walk_one(int target,
         } /* if((r2>0)&&(mass>0)) */
 
         if(no < maxPart) {
-            no = s->nextnode_aux[no];
+            no = tree_soa->nextnode_aux[no];
         } else {
-            no = s->sibling[no - maxPart];
+            no = tree_soa->sibling[no - maxPart];
         }
     } /* while(no >= 0) */
 
