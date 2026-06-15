@@ -8,8 +8,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
+#include "gravtree_ewald.h"          /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
@@ -2164,8 +2166,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int signx, signy, signz, nexp, i, j, k, openflag, task, no, cost, listindex = 0;
-    double mass, r2, u, v, w, f1, f2, f3, f4, f5, f6, f7, f8;
+    int signx, signy, signz, nexp, openflag, task, no, cost, listindex = 0;
+    double mass, r2, u;   /* u: scratch in the periodic-boundary shortcut; interp locals now in the SSOT helper */
     double boxsize, boxhalf, aold, xtmp; xtmp=0;
     Vec3<double> pos, dr;
     Vec3<MyDouble> acc = {};
@@ -2403,46 +2405,13 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
             }
             else
             {signz = -1;}
-            u = dr[0] * fac_intp;
-            i = (int) u;
-            if(i >= EN) {i = EN - 1;}
-            u -= i;
-            v = dr[1] * fac_intp;
-            j = (int) v;
-            if(j >= EN) {j = EN - 1;}
-            v -= j;
-            w = dr[2] * fac_intp;
-            k = (int) w;
-            if(k >= EN) {k = EN - 1;}
-            w -= k;
-            /* compute factors for trilinear interpolation */
-            f1 = (1 - u) * (1 - v) * (1 - w);
-            f2 = (1 - u) * (1 - v) * (w);
-            f3 = (1 - u) * (v) * (1 - w);
-            f4 = (1 - u) * (v) * (w);
-            f5 = (u) * (1 - v) * (1 - w);
-            f6 = (u) * (1 - v) * (w);
-            f7 = (u) * (v) * (1 - w);
-            f8 = (u) * (v) * (w);
-            acc[0] += (mass * signx * (fcorrx[i][j][k] * f1 +
-                                      fcorrx[i][j][k + 1] * f2 +
-                                      fcorrx[i][j + 1][k] * f3 +
-                                      fcorrx[i][j + 1][k + 1] * f4 +
-                                      fcorrx[i + 1][j][k] * f5 +
-                                      fcorrx[i + 1][j][k + 1] * f6 +
-                                      fcorrx[i + 1][j + 1][k] * f7 + fcorrx[i + 1][j + 1][k + 1] * f8));
-            acc[1] +=
-            (mass * signy *
-             (fcorry[i][j][k] * f1 + fcorry[i][j][k + 1] * f2 +
-              fcorry[i][j + 1][k] * f3 + fcorry[i][j + 1][k + 1] * f4 + fcorry[i + 1]
-              [j][k] * f5 + fcorry[i + 1][j][k + 1] * f6 + fcorry[i + 1][j + 1][k] *
-              f7 + fcorry[i + 1][j + 1][k + 1] * f8));
-            acc[2] +=
-            (mass * signz *
-             (fcorrz[i][j][k] * f1 + fcorrz[i][j][k + 1] * f2 +
-              fcorrz[i][j + 1][k] * f3 + fcorrz[i][j + 1][k + 1] * f4 + fcorrz[i + 1]
-              [j][k] * f5 + fcorrz[i + 1][j][k + 1] * f6 + fcorrz[i + 1][j + 1][k] *
-              f7 + fcorrz[i + 1][j + 1][k + 1] * f8));
+            /* trilinear interp of the Ewald force octant tables via the shared SSOT helper
+             * (gravtree_ewald.h): the index + 8 weights are built once from |dr| and applied to
+             * all three force tables; the odd-force per-component signs stay here. */
+            grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], fac_intp);
+            acc[0] += mass * signx * grav_ewald_interp_apply(&fcorrx[0][0][0], ew);
+            acc[1] += mass * signy * grav_ewald_interp_apply(&fcorry[0][0][0], ew);
+            acc[2] += mass * signz * grav_ewald_interp_apply(&fcorrz[0][0][0], ew);
             cost++;
         }
         
@@ -2920,45 +2889,9 @@ void ewald_init(void)
  */
 double ewald_pot_corr(double dx, double dy, double dz)
 {
-    int i, j, k;
-    double u, v, w;
-    double f1, f2, f3, f4, f5, f6, f7, f8;
-    
-    if(dx < 0)
-        dx = -dx;
-    if(dy < 0)
-        dy = -dy;
-    if(dz < 0)
-        dz = -dz;
-    u = dx * fac_intp;
-    i = (int) u;
-    if(i >= EN)
-        i = EN - 1;
-    u -= i;
-    v = dy * fac_intp;
-    j = (int) v;
-    if(j >= EN)
-        j = EN - 1;
-    v -= j;
-    w = dz * fac_intp;
-    k = (int) w;
-    if(k >= EN)
-        k = EN - 1;
-    w -= k;
-    f1 = (1 - u) * (1 - v) * (1 - w);
-    f2 = (1 - u) * (1 - v) * (w);
-    f3 = (1 - u) * (v) * (1 - w);
-    f4 = (1 - u) * (v) * (w);
-    f5 = (u) * (1 - v) * (1 - w);
-    f6 = (u) * (1 - v) * (w);
-    f7 = (u) * (v) * (1 - w);
-    f8 = (u) * (v) * (w);
-    return potcorr[i][j][k] * f1 +
-    potcorr[i][j][k + 1] * f2 +
-    potcorr[i][j + 1][k] * f3 +
-    potcorr[i][j + 1][k + 1] * f4 +
-    potcorr[i + 1][j][k] * f5 +
-    potcorr[i + 1][j][k + 1] * f6 + potcorr[i + 1][j + 1][k] * f7 + potcorr[i + 1][j + 1][k + 1] * f8;
+    /* trilinear interp of the potential octant table via the shared SSOT helper (gravtree_ewald.h) */
+    grav_ewald_interp_weights w = grav_ewald_interp_setup(dx, dy, dz, fac_intp);
+    return grav_ewald_interp_apply(&potcorr[0][0][0], w);
 }
 
 

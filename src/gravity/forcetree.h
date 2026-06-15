@@ -81,8 +81,13 @@ void   dump_particles(void);
 /* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead on the Kokkos path.
    ngb_treebuild() callers replaced with force_treebuild(NumPart, NULL) directly. */
 
+#ifdef BOX_PERIODIC
+/* Ewald octant table size. Declared under BOX_PERIODIC to match `EN` in forcetree.cc: the tables
+ * + the CPU Ewald functions + the shared interp helper (gravtree_ewald.h) all compile under
+ * BOX_PERIODIC (even under GRAVITY_NOT_PERIODIC, where the correction is compiled-but-dead). */
+#define GIZMO_EWALD_EN 64
+#endif
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
-#define GIZMO_EWALD_EN 64  /* must match EN in forcetree.cc (size of Ewald correction look-up table octant) */
 /* Ewald correction table accessor. Returns flat pointers of length (EN+1)^3
  * to the four static look-up tables (fcorrx/y/z/potcorr) inside forcetree.cc,
  * plus fac_intp (= 2*EN/All.BoxSize). Used by gpu_gravtree.cc to mirror the

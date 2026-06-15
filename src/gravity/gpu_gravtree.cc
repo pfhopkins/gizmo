@@ -35,6 +35,7 @@
 
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"  /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "gravtree_ewald.h"         /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
 #include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
 #include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
 
@@ -155,48 +156,6 @@ struct gpu_ewald_pot_data_t {
     double         fac_intp;  /* table interpolation scale (= g_ewald_fac_intp) */
     int            active;    /* 1 iff potcorr is a valid acquired table */
 };
-
-/* Trilinear interpolation of one Ewald correction table at |dr|.  SSOT home for
- * GPU Ewald table interpolation (mirrors CPU ewald_pot_corr, forcetree.cc:3751).
- * Single-table form, used here for the potential correction.  The force walk's
- * 3-table lookup (fcorrx/y/z) deliberately keeps its own inline form: it computes
- * the indices+weights once and reuses them across the three tables, which a
- * per-table helper would recompute three times.  Unifying both behind a
- * weights-once / apply-N-tables helper is recorded for Phase E.  Gated with the
- * correction itself: GIZMO_EWALD_EN exists only for periodic-gravity builds. */
-#ifdef GIZMO_GPU_EWALD_POT_CORRECTION
-static KOKKOS_INLINE_FUNCTION double
-gpu_ewald_table_interp_abs(const MyFloat *table, double dx, double dy, double dz, double fac_intp)
-{
-    const int EN      = GIZMO_EWALD_EN;
-    const int stride1 = EN + 1;
-    const int stride2 = stride1 * stride1;
-    if(dx < 0) dx = -dx;
-    if(dy < 0) dy = -dy;
-    if(dz < 0) dz = -dz;
-    double u = dx * fac_intp; int i = (int) u; if(i >= EN) i = EN - 1; u -= i;
-    double v = dy * fac_intp; int j = (int) v; if(j >= EN) j = EN - 1; v -= j;
-    double w = dz * fac_intp; int k = (int) w; if(k >= EN) k = EN - 1; w -= k;
-    double f1 = (1-u)*(1-v)*(1-w);
-    double f2 = (1-u)*(1-v)*(w);
-    double f3 = (1-u)*(v)  *(1-w);
-    double f4 = (1-u)*(v)  *(w);
-    double f5 = (u)  *(1-v)*(1-w);
-    double f6 = (u)  *(1-v)*(w);
-    double f7 = (u)  *(v)  *(1-w);
-    double f8 = (u)  *(v)  *(w);
-#define GIZMO_EW_POT_IDX3(ii,jj,kk) ((ii)*stride2 + (jj)*stride1 + (kk))
-    return table[GIZMO_EW_POT_IDX3(i,  j,  k  )] * f1 +
-           table[GIZMO_EW_POT_IDX3(i,  j,  k+1)] * f2 +
-           table[GIZMO_EW_POT_IDX3(i,  j+1,k  )] * f3 +
-           table[GIZMO_EW_POT_IDX3(i,  j+1,k+1)] * f4 +
-           table[GIZMO_EW_POT_IDX3(i+1,j,  k  )] * f5 +
-           table[GIZMO_EW_POT_IDX3(i+1,j,  k+1)] * f6 +
-           table[GIZMO_EW_POT_IDX3(i+1,j+1,k  )] * f7 +
-           table[GIZMO_EW_POT_IDX3(i+1,j+1,k+1)] * f8;
-#undef GIZMO_EW_POT_IDX3
-}
-#endif /* GIZMO_GPU_EWALD_POT_CORRECTION */
 
 /* Host: acquire the Ewald tables (idempotent) and fill the potential POD.
  * Returns 0 on success (out->active=1), nonzero if the tables are not ready
@@ -858,7 +817,8 @@ gpu_gravtree_walk_one(int target,
              * from the PM solver.  active is 1 in a healthy run (acquire failure
              * hard-stops the caller); the guard only covers the post-endrun drain. */
             if(ewald_pot->active) {
-                pot += mass * gpu_ewald_table_interp_abs(ewald_pot->potcorr, dr[0], dr[1], dr[2], ewald_pot->fac_intp);
+                grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], ewald_pot->fac_intp);
+                pot += mass * grav_ewald_interp_apply(ewald_pot->potcorr, ew);
             }
 #endif
 #endif
@@ -1678,9 +1638,6 @@ gpu_ewald_walk_one(int target,
     Vec3<double> pos = P_dev[target].Pos;
     double aold = errtolforceacc * P_dev[target].OldAcc;
     Vec3<double> acc = {0.0, 0.0, 0.0};
-    const int EN       = GIZMO_EWALD_EN;
-    const int stride1  = EN + 1;
-    const int stride2  = stride1 * stride1;
 
     int no = maxPart; /* root node */
     while(no >= 0)
@@ -1760,48 +1717,16 @@ gpu_ewald_walk_one(int target,
             no = tree_soa->sibling[idx];
         }
 
-        /* Trilinear interpolation of the Ewald correction table. */
-        double signx, signy, signz, adrx, adry, adrz;
-        if(dr[0] < 0) { adrx = -dr[0]; signx = +1.0; } else { adrx = dr[0]; signx = -1.0; }
-        if(dr[1] < 0) { adry = -dr[1]; signy = +1.0; } else { adry = dr[1]; signy = -1.0; }
-        if(dr[2] < 0) { adrz = -dr[2]; signz = +1.0; } else { adrz = dr[2]; signz = -1.0; }
-        double u = adrx * fac_intp; int i = (int) u; if(i >= EN) i = EN - 1; u -= i;
-        double v = adry * fac_intp; int j = (int) v; if(j >= EN) j = EN - 1; v -= j;
-        double w = adrz * fac_intp; int k = (int) w; if(k >= EN) k = EN - 1; w -= k;
-        double f1 = (1-u)*(1-v)*(1-w);
-        double f2 = (1-u)*(1-v)*(w);
-        double f3 = (1-u)*(v)  *(1-w);
-        double f4 = (1-u)*(v)  *(w);
-        double f5 = (u)  *(1-v)*(1-w);
-        double f6 = (u)  *(1-v)*(w);
-        double f7 = (u)  *(v)  *(1-w);
-        double f8 = (u)  *(v)  *(w);
-#define GIZMO_EW_IDX3(ii,jj,kk) ((ii)*stride2 + (jj)*stride1 + (kk))
-        acc[0] += mass * signx * (fcorrx[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-        acc[1] += mass * signy * (fcorry[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-        acc[2] += mass * signz * (fcorrz[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
-                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
-                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
-#undef GIZMO_EW_IDX3
+        /* Trilinear interp of the Ewald force octant tables via the shared SSOT helper
+         * (gravtree_ewald.h): weights from |dr| once, applied to all three tables; the
+         * odd-force per-component signs stay here. */
+        double signx = (dr[0] < 0) ? +1.0 : -1.0;
+        double signy = (dr[1] < 0) ? +1.0 : -1.0;
+        double signz = (dr[2] < 0) ? +1.0 : -1.0;
+        grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], fac_intp);
+        acc[0] += mass * signx * grav_ewald_interp_apply(fcorrx, ew);
+        acc[1] += mass * signy * grav_ewald_interp_apply(fcorry, ew);
+        acc[2] += mass * signz * grav_ewald_interp_apply(fcorrz, ew);
     }
 
     acc_out = acc;
