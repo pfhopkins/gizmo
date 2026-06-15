@@ -795,6 +795,12 @@ integertime get_timestep(int p,		/*!< particle index */
                     if((CellP[p].Rad_E_gamma[kf] <= MIN_REAL_NUMBER) || (CellP[p].Rad_E_gamma_Pred[kf] <= MIN_REAL_NUMBER) || (CellP[p].Rad_E_gamma[kf] < 1.e-5*P[p].Mass*CellP[p].InternalEnergy)) {dt_rt_diffusion = 1.e10 * dt;} /* ignore particles where the radiation energy density is negligible */
                     dt_rad = DMIN(dt_rad, dt_rt_diffusion);
                 }
+                /* In the optically-thin / near-zero-opacity limit the FLD-style diffusion estimate above
+                   diverges (rt_diffusion_coefficient ~ c_reduced/(kappa*rho) grows without bound as
+                   kappa->0), which would demand an unphysical sub-free-streaming step. For the M1
+                   advective solver the reduced-c Courant limit is the correct floor in that limit, so the
+                   diffusion term may only relax the step upward, never push dt_rad below it. */
+                dt_rad = DMAX(dt_rad, dt_courant);
                 if(All.ComovingIntegrationOn) {dt_courant = DMAX(dt_courant, DMIN(dt_rad, 1.e3*dt_courant));}
 #endif
                 if(dt_courant < dt_rad) {dt_rad = dt_courant;}
