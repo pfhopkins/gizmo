@@ -237,6 +237,7 @@ extern "C" void gpu_gravity_tree_release(void)
     soa_capacity_ = 0;
     soa_valid_    = 0;
     gpu_force_drift_release();
+    gpu_moment_refresh_release();
 }
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)

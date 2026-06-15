@@ -192,6 +192,12 @@ void gpu_force_drift_release(void);
  * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
 int gpu_moment_refresh(int active_root_node);
 
+/* Free the persistent gpu_moment_refresh scratch pools (source-input buffers +
+ * Father mirror).  Attached to the existing gpu_gravity_tree_release() teardown
+ * API.  (That API is not yet invoked before Kokkos::finalize; the GPU-pool
+ * pre-finalize release plumbing is a pre-existing cross-subsystem cleanup.) */
+void gpu_moment_refresh_release(void);
+
 /* Bulk write SoA[k=0..n) back into Nodes[MaxPart+k] / Extnodes[MaxPart+k].
  * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding
  * could call it directly. Caller must have a valid SoA acquired. */

@@ -153,44 +153,71 @@ struct precomputed_t {
 #endif
 };
 
-static int precompute_alloc_(precomputed_t& pre, int N)
+/* Persistent grow-and-keep pool for the per-particle source-input buffers,
+ * mirroring the gpu_gravity_tree.cc SoA idiom: reused across refreshes,
+ * reallocated only when NumPart grows, freed at GPU gravity teardown
+ * (gpu_moment_refresh_release).  Removes per-refresh allocator churn. */
+static precomputed_t pre_persist_ = {};
+static int           pre_cap_     = 0;   /* current capacity in particles */
+static void precompute_free_(precomputed_t& pre);   /* defined just below */
+
+/* Grow the persistent source-input pool to hold at least N particles (no shrink).
+ * On allocation failure frees the whole pool and leaves capacity invalid (0). */
+static int precompute_ensure_(int N)
 {
+    if(pre_cap_ >= N) {return 0;}        /* capacity already sufficient: reuse */
+    precompute_free_(pre_persist_);      /* drop the smaller pool before growing */
+#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    precomputed_t& pre = pre_persist_;
 #ifdef RT_USE_GRAVTREE
-    long sz = (long)N * N_RT_FREQ_BINS * sizeof(MyFloat);
-    pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-    if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301); return 1;}
-    memset(pre.src_lum, 0, sz);
+    pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
+    if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #ifdef CHIMES_STELLAR_FLUXES
-    long szc = (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double);
-    pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
-    pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
-    if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302); return 1;}
-    memset(pre.src_lum_G0,  0, szc);
-    memset(pre.src_lum_ion, 0, szc);
+    pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #endif
-
 #ifdef SINK_PHOTONMOMENTUM
-    long sz_lum  = (long)N * sizeof(MyFloat);
-    long sz_ang  = (long)N * sizeof(Vec3<MyFloat>);
-    pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
-    pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_ang);
-    if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); return 1;}
-    memset(pre.bh_lum,   0, sz_lum);
-    memset(pre.bh_angle, 0, sz_ang);
+    pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(MyFloat));
+    pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(Vec3<MyFloat>));
+    if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
-
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    long sz_cr = (long)N * sizeof(MyFloat);
-    pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_cr);
-    if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); return 1;}
-    memset(pre.cr_inject, 0, sz_cr);
+    pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(MyFloat));
+    if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); precompute_free_(pre); pre_cap_ = 0; return 1;}
+#endif
+#endif
+    pre_cap_ = N;
+    return 0;
+}
+
+/* Reinitialize the active [0,N) range every refresh: bulk-zero the buffers (the
+ * pool is reused, so prior contents must be cleared), then write the active
+ * source payloads via the shared SSOT helper.  The full-NumPart scan is
+ * unchanged (source sparsification is a separate, profiling-gated change). */
+static void precompute_fill_(int N)
+{
+#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    precomputed_t& pre = pre_persist_;
+#ifdef RT_USE_GRAVTREE
+    memset(pre.src_lum, 0, (long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
+#ifdef CHIMES_STELLAR_FLUXES
+    memset(pre.src_lum_G0,  0, (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    memset(pre.src_lum_ion, 0, (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+#endif
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    memset(pre.bh_lum,   0, (long)N * sizeof(MyFloat));
+    memset(pre.bh_angle, 0, (long)N * sizeof(Vec3<MyFloat>));
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    memset(pre.cr_inject, 0, (long)N * sizeof(MyFloat));
 #endif
 
     /* Single host pass: gated physics in the shared SSOT helper, then copy ONLY
      * the active entries into this venue's SharedSpace arrays (already bulk-zeroed
      * above), matching the legacy per-section write pattern. */
-#if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
     for(int p = 0; p < N; p++) {
         struct gravtree_source_inputs_t in;
         gravtree_fill_particle_source_inputs(p, P, CellP, &in);
@@ -216,8 +243,9 @@ static int precompute_alloc_(precomputed_t& pre, int N)
         if(in.cr_inject != 0) {pre.cr_inject[p] = in.cr_inject;}
 #endif
     }
+#else
+    (void) N;
 #endif
-    return 0;
 }
 
 static void precompute_free_(precomputed_t& pre)
@@ -240,15 +268,24 @@ static void precompute_free_(precomputed_t& pre)
 } /* anonymous namespace */
 
 /* ------------------------------------------------------------------ */
-/* Father[i] mirror in SharedSpace. Allocated and populated once per   */
-/* gpu_moment_refresh call.                                             */
+/* Father[i] mirror in SharedSpace.  Persistent grow-and-keep pool      */
+/* (same idiom as the source-input pool above): grown only when NumPart */
+/* grows, refilled from Father[] every refresh, freed at GPU gravity     */
+/* teardown (gpu_moment_refresh_release).                                */
 /* ------------------------------------------------------------------ */
-static int *father_mirror_alloc_(int N)
+static int *fmirror_persist_ = NULL;
+static int  fmirror_cap_     = 0;   /* current capacity in particles */
+
+static int *father_mirror_ensure_(int N)
 {
-    int *fmirror = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(int));
-    if(!fmirror) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); return NULL;}
-    for(int i = 0; i < N; i++) {fmirror[i] = Father[i];}
-    return fmirror;
+    if(fmirror_cap_ < N) {
+        if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
+        fmirror_persist_ = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(int));
+        if(!fmirror_persist_) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); fmirror_cap_ = 0; return NULL;}
+        fmirror_cap_ = N;
+    }
+    for(int i = 0; i < N; i++) {fmirror_persist_[i] = Father[i];}
+    return fmirror_persist_;
 }
 
 /* =================================================================== */
@@ -583,10 +620,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {printf("gpu_moment_refresh: SoA null\n"); return 1;}
 
-    precomputed_t pre = {};
-    if(precompute_alloc_(pre, N) != 0) {precompute_free_(pre); return 1;}   /* soft bad-stop: no kernel launch on NULL precompute buffers; caller (forcetree) drains at next poll */
-    int *fmirror = father_mirror_alloc_(N);
-    if(!fmirror) {precompute_free_(pre); return 1;}   /* soft bad-stop: no kernel launch on NULL Father mirror */
+    if(precompute_ensure_(N) != 0) {return 1;}   /* soft bad-stop: ensure freed the pool on failure; caller (forcetree) drains at next poll */
+    precompute_fill_(N);
+    int *fmirror = father_mirror_ensure_(N);
+    if(!fmirror) {return 1;}   /* soft bad-stop: persistent pools kept; caller drains at next poll */
 
     /* ---------------- 2. device-local scratch (Phase 6.7.0) ------------ */
     /* Bundled into mr_scratch_t so the per-payload helpers (zero /
@@ -621,18 +658,18 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     /* ---------------- Kernel 3: particle pass -------------------------- */
     double maxKR = All.MaxKernelRadius;
 #ifdef SINK_PHOTONMOMENTUM
-    MyFloat       *bh_lum_   = pre.bh_lum;
-    Vec3<MyFloat> *bh_angle_ = pre.bh_angle;
+    MyFloat       *bh_lum_   = pre_persist_.bh_lum;
+    Vec3<MyFloat> *bh_angle_ = pre_persist_.bh_angle;
 #endif
 #ifdef RT_USE_GRAVTREE
-    MyFloat *src_lum_ = pre.src_lum;
+    MyFloat *src_lum_ = pre_persist_.src_lum;
 #ifdef CHIMES_STELLAR_FLUXES
-    double  *src_lum_G0_  = pre.src_lum_G0;
-    double  *src_lum_ion_ = pre.src_lum_ion;
+    double  *src_lum_G0_  = pre_persist_.src_lum_G0;
+    double  *src_lum_ion_ = pre_persist_.src_lum_ion;
 #endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    MyFloat *cr_inj_ = pre.cr_inject;
+    MyFloat *cr_inj_ = pre_persist_.cr_inject;
 #endif
     Kokkos::parallel_for("mr_part_accum", N, KOKKOS_LAMBDA(int i) {
         int f = fmirror[i];
@@ -775,10 +812,27 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     gpu_moment_writeback_to_aos(n);
 
     /* ---------------- cleanup ----------------------------------------- */
-    if(fmirror) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror);}
-    precompute_free_(pre);
+    /* The source-input + Father-mirror pools are persistent (grow-and-keep);
+     * they are reused next refresh and freed only at GPU gravity teardown
+     * (gpu_moment_refresh_release).  No per-call free here. */
+    (void) fmirror;
 
     return 0;
+}
+
+/* =================================================================== */
+/* Free the persistent gpu_moment_refresh scratch pools.  Attached to    */
+/* the existing gpu_gravity_tree_release() teardown API (alongside the    */
+/* SoA + force-drift pools).  Note: that release API is not yet invoked   */
+/* before Kokkos::finalize -- the pre-finalize release plumbing for the   */
+/* GPU persistent pools is a pre-existing cross-subsystem cleanup item.   */
+/* =================================================================== */
+extern "C" void gpu_moment_refresh_release(void)
+{
+    precompute_free_(pre_persist_);
+    pre_cap_ = 0;
+    if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
+    fmirror_cap_ = 0;
 }
 
 /* =================================================================== */
