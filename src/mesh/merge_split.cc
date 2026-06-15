@@ -25,6 +25,7 @@
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
+#include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
@@ -1045,6 +1046,14 @@ int merge_particles_ij(int i, int j)
   This should be run if you are messing around with the indices of things but don't intend to do a whole treebuild after. - MYG
  */
 
+/* The MAINTAIN_TREE_IN_REARRANGE fixups below rewrite host/AoS node pointers
+ * (Nodes[no].u.d.{nextnode,sibling}) on the existing tree between full builds.
+ * The GPU gravity walk reads node nextnode/sibling from the SoA mirror, so each
+ * node-pointer write must update both AoS and SoA.  (Particle Nextnode[] is
+ * aliased into the SoA, so particle/pseudo writes need no explicit mirror.) */
+static inline void rearrange_set_node_nextnode(int no, int v){ Nodes[no].u.d.nextnode = v; gpu_set_soa_nextnode(no, v); }
+static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sibling  = v; gpu_set_soa_sibling (no, v); }
+
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
@@ -1060,10 +1069,10 @@ void swap_treewalk_pointers(int i, int j){
             no = next;
         } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (Phase 9 LET)
             next = Nodes[no].u.d.nextnode;
-            if(next == i) { previous_node_i = no; Nodes[no].u.d.nextnode = j;}
-            else if(next == j) { previous_node_j = no; Nodes[no].u.d.nextnode = i;}
-            if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = j; pre_sibling_i = no;}
-            else if(Nodes[no].u.d.sibling == j) { Nodes[no].u.d.sibling = i; pre_sibling_j = no;}
+            if(next == i) { previous_node_i = no; rearrange_set_node_nextnode(no, j);}
+            else if(next == j) { previous_node_j = no; rearrange_set_node_nextnode(no, i);}
+            if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, j); pre_sibling_i = no;}
+            else if(Nodes[no].u.d.sibling == j) { rearrange_set_node_sibling(no, i); pre_sibling_j = no;}
             no = next;
         } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
             int pseudo_idx = no - MaxNodes - MaxForeignNodes;
@@ -1104,8 +1113,8 @@ void remove_particle_from_treewalk(int i){
             if(Nextnode[no] == i) {Nextnode[no] = Nextnode[i];}
         } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (Phase 9 LET; must match swap_treewalk_pointers)
             next = Nodes[no].u.d.nextnode;
-            if(next == i) {Nodes[no].u.d.nextnode = Nextnode[i];}
-            if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = Nextnode[i];}
+            if(next == i) {rearrange_set_node_nextnode(no, Nextnode[i]);}
+            if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, Nextnode[i]);}
         } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
             next = Nextnode[no - MaxNodes - MaxForeignNodes];
             if(next == i) {Nextnode[no - MaxNodes - MaxForeignNodes] = Nextnode[i];}

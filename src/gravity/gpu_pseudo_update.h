@@ -56,6 +56,11 @@ int gpu_scatter_foreign_to_soa(int slot_base_abs, int count);
  * about LET).  abs_idx is the full Node index. */
 int gpu_set_soa_nextnode(int abs_idx, int new_nextnode);
 
+/* Sibling twin of gpu_set_soa_nextnode (same role for u.d.sibling).  Used by the
+ * MAINTAIN_TREE_IN_REARRANGE pointer fixups to keep the SoA node thread coherent
+ * with their AoS edits between full tree builds. */
+int gpu_set_soa_sibling(int abs_idx, int new_sibling);
+
 /* Phase 6.7c: Re-sum ancestor topnode moments directly in SoA after the
  * foreign pseudo data is in place (i.e. after gpu_scatter_pseudo_to_soa).
  * Recursive CPU walk of the topnode tree (all NTopnodes nodes; typically

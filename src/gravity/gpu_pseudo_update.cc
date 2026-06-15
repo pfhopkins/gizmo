@@ -764,8 +764,22 @@ extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || !soa->nextnode) {return 1;}
     int k = abs_idx - All.MaxPart;
-    if(k < 0) {return 1;}
+    if(k < 0 || k >= gpu_gravity_tree_capacity()) {return 1;}
     soa->nextnode[k] = new_nextnode;
+    return 0;
+}
+
+/* Sibling twin of gpu_set_soa_nextnode: mirror a single AoS sibling write into
+ * the SoA node slot.  The walk reads node sibling/nextnode from the SoA, so any
+ * host-side node-pointer fixup between tree builds (MAINTAIN_TREE_IN_REARRANGE)
+ * must update both. */
+extern "C" int gpu_set_soa_sibling(int abs_idx, int new_sibling)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->sibling) {return 1;}
+    int k = abs_idx - All.MaxPart;
+    if(k < 0 || k >= gpu_gravity_tree_capacity()) {return 1;}
+    soa->sibling[k] = new_sibling;
     return 0;
 }
 
