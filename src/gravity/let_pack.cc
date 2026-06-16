@@ -471,6 +471,22 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     w->node.N_part       = 1;
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag = 0;
+
+    /* C1 foreign-leaf identity sidecar: this singleton ships as a synthesized terminal multipole,
+     * but the receiver must consume it with particle-leaf secondary-source semantics.  The node
+     * moment already carries every other source field (and for a singleton equals the particle
+     * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
+     * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
+    w->leaf_tag      = 1;
+    w->leaf_type     = pa->Type;
+    w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
+                                                              * conflated maxsoft=max(soft,kernel) */
+    w->leaf_ags_zeta = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+    if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+    w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta;
+#endif
 }
 
 /* ----------------------------------------------------------------------
@@ -485,6 +501,13 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
  * caller soft-stops; the Alltoallv still runs (zero counts for failed ranks)
  * before the drain, keeping the MPI choreography intact. */
 static int g_let_pack_oom = 0;
+
+/* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated/freed with the
+ * foreign-node arena in force_treeallocate/force_treefree; memset-0 reset in let_run_exchange. */
+int     *ForeignLeafTag  = NULL;
+int     *ForeignLeafType = NULL;
+MyFloat *ForeignLeafZeta = NULL;
+MyFloat *ForeignLeafSoft = NULL;
 
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
 {
@@ -553,7 +576,7 @@ static void pack_recurse(int no, int sib_terminator,
     int my_idx = (*count)++;
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
-    w->_pad0 = 0;
+    w->leaf_tag = 0; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
     /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
@@ -576,6 +599,33 @@ static void pack_recurse(int no, int sib_terminator,
      * for single particle. */
     if(!(Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))
     {
+        /* C1: this single-particle source-tree node is shipped as a multipole, so the receiver
+         * must consume it as a real foreign leaf.  Recover the underlying particle from the
+         * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
+         * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
+         * synthesized-leaf path.  Hard-check the child is a real particle (p < MaxPart); if not, the
+         * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
+         * surfaces it rather than mis-routing a non-particle as a leaf. */
+        int p = Nodes[no].u.d.nextnode;
+        if(p >= 0 && p < All.MaxPart)
+        {
+            struct particle_data *pa = &P[p];
+            w->leaf_tag      = 1;
+            w->leaf_type     = pa->Type;
+            w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
+            w->leaf_ags_zeta = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+            if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+            w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta;
+#endif
+        }
+        else
+        {
+            printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); "
+                   "shipping untagged (receiver guard will surface it).\n", no, p, ThisTask);
+            fflush(stdout);
+        }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
         return;  /* no children to recurse into */
     }
@@ -1117,6 +1167,18 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
                               "(rank %d).\n", abs_idx, next, rcount, ThisTask); fflush(stdout); endrun(90000075); }
             }
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
+
+            /* C1: install the foreign-leaf identity sidecar at this slot's foreign_slot
+             * (= no - (MaxPart+MaxNodes), NOT the SoA index no-MaxPart). Non-leaf records carry
+             * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
+            int foreign_slot = abs_idx - (All.MaxPart + MaxNodes);
+            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < MaxForeignNodes)
+            {
+                ForeignLeafTag[foreign_slot]  = recv_buf[node_off + j].leaf_tag;
+                ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
+                ForeignLeafZeta[foreign_slot] = recv_buf[node_off + j].leaf_ags_zeta;
+                ForeignLeafSoft[foreign_slot] = recv_buf[node_off + j].leaf_force_softening;
+            }
         }
 
         /* Pass 2: resolve remaining plain sentinels (LET_EDGE_SENTINEL_BASE) to topleaf_sibling,
@@ -1163,6 +1225,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             /* Redirect local topleaf at the foreign subtree root (AoS + SoA). */
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
             gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
+
         }
         /* Pass 3: AoS -> SoA scatter for the foreign-node range we just
          * installed.  GPU walk reads node fields via SoA only; without this
@@ -1198,6 +1261,16 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
+
+    /* C1: reset the foreign-leaf identity sidecar for the fresh exchange.  These host arrays are
+     * read only by host code (the CPU walk and gpu_scatter_foreign_to_soa); the GPU mirror lives in
+     * the tree SoA and is fully rewritten by the scatter after install.  let_run_exchange runs at
+     * tree-build time, after the previous step's gravity walk has fenced and returned, so no GPU
+     * walk is in flight against the old sidecar -- a device fence is not required for this host memset. */
+    if(ForeignLeafTag)  memset(ForeignLeafTag,  0, (size_t)MaxForeignNodes * sizeof(int));
+    if(ForeignLeafType) memset(ForeignLeafType, 0, (size_t)MaxForeignNodes * sizeof(int));
+    if(ForeignLeafZeta) memset(ForeignLeafZeta, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
+    if(ForeignLeafSoft) memset(ForeignLeafSoft, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
 
     /* All-local receiver cover: ship every node any LOCAL particle could open, to every
      * receiver, with no active-particle downscope.  The shared cell predicate (conservative +

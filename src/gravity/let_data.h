@@ -96,16 +96,63 @@ struct LETPerRankPayload {
  * ---------------------------------------------------------------------- */
 struct LETNodeWire {
     int    remote_id;      /* sender's Nodes_base index (identity/debug only; NOT topology) */
-    int    _pad0;          /* alignment to 8B */
+    int    leaf_tag;       /* 1 = real foreign single-particle leaf source; 0 = node/multipole.
+                            * A foreign singleton (one particle, shipped as a synthesized terminal
+                            * multipole) must be consumed with PARTICLE-LEAF secondary-source
+                            * semantics, not node semantics -- see the leaf-identity sidecar below
+                            * and the receiver walk's foreign-leaf routing. */
     struct NODE    node;   /* full NODE struct, sender's u.d form (post-build) */
     struct extNODE extnode;/* full extNODE struct */
+    /* Leaf-identity sidecar -- meaningful iff leaf_tag==1.  The synthesized node moment already
+     * carries every other source field (mass/pos/vel/soft/RT/sink/CR/tidal), and for a singleton
+     * those aggregates equal the particle value.  The two fields a node moment CANNOT carry are the
+     * particle Type and AGS_zeta, which the leaf secondary-source path needs (ptype_sec / zeta_sec).
+     * Carried at MyFloat (double) so a foreign leaf delivers the SAME zeta the source particle's home
+     * rank delivers through its local-leaf path -- preserving force reciprocity exactly. */
+    MyFloat leaf_ags_zeta; /* source particle AGS_zeta -> zeta_sec; 0 when adaptive softening is off */
+    MyFloat leaf_force_softening; /* source particle ForceSoftening -> h_p.  The node moment carries
+                            * maxsoft = max(ForceSoftening, KernelRadius) (conflated for the opening
+                            * criterion), which OVER-softens an accepted leaf relative to the local-leaf
+                            * force (which uses the pure ForceSoftening) -- the rank-asymmetric softening
+                            * that injects momentum under adaptive softening.  Carry the pure value. */
+    int     leaf_type;     /* source particle Type -> ptype_sec */
+    int     _pad1;         /* explicit tail pad to keep the record 8B-aligned */
 };
+#ifdef __cplusplus
+#include <cstddef>
+/* The wire record is the unit MPI_Alltoallv exchanges (sizeof(LETNodeWire) bytes); all ranks compile
+ * the same struct, so the ABI is self-consistent per build.  Adding the leaf sidecar is an INTENTIONAL
+ * wire-layout change -- assert structural/alignment invariants (NOT a brittle compile-flag-independent
+ * numeric size) so an accidental reorder/misalignment fails loudly at compile time. */
+static_assert(offsetof(struct LETNodeWire, node) % alignof(struct NODE) == 0,
+              "LETNodeWire.node misaligned vs struct NODE alignment");
+static_assert(sizeof(struct LETNodeWire) >= sizeof(struct NODE) + sizeof(struct extNODE),
+              "LETNodeWire smaller than its NODE+extNODE payload");
+static_assert(sizeof(struct LETNodeWire) % 8 == 0,
+              "LETNodeWire not 8-byte aligned");
+#endif
 /* Wire size: 8 B header + sizeof(NODE) + sizeof(extNODE).  NODE is ALIGN(32);
  * with all #ifdef payloads off, sizeof(NODE) ~ 144 B, sizeof(extNODE) ~ 80 B,
  * total ~ 232 B per shipped node.  With heavy payloads (RT_USE_GRAVTREE,
  * SINK_*, ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) it inflates to ~400-500 B.
  * The post-build pad in NODE.u.d (after the struct fields, before the union
  * close) is included in sizeof(NODE) so the wire layout is unambiguous. */
+
+/* ----------------------------------------------------------------------
+ * Foreign-leaf sidecar arrays (receiver side).
+ *
+ * The receiver walk reads node fields from Nodes_base[] (CPU) / the GPU SoA, neither of which can
+ * carry per-foreign-leaf particle identity (NODE is shared with the local tree and must not be
+ * fattened).  These three parallel arrays hold the installed leaf identity for the foreign-node
+ * range, sized MaxForeignNodes and indexed by foreign_slot = no - (MaxPart + MaxNodes) -- NOT the
+ * ordinary node SoA index no - MaxPart.  Allocated/freed with the foreign-node arena in
+ * force_treeallocate/force_treefree; memset-0 reset on each LET exchange (let_run_exchange).  The GPU
+ * mirror lives in the tree SoA (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
+ * ---------------------------------------------------------------------- */
+extern int     *ForeignLeafTag;   /* 1 = real foreign single-particle leaf; 0 = node/multipole */
+extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
+extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
+extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
 
 /* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
  * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to

@@ -19,6 +19,7 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
+#include "let_data.h"   /* C1: ForeignLeaf{Tag,Type,Zeta}[] host sidecar (scattered into SoA below) */
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
 #include "gravtree_moment_kernel.h"
@@ -686,6 +687,20 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         soa->sibling[k]  = Nodes[no].u.d.sibling;
         soa->nextnode[k] = Nodes[no].u.d.nextnode;
         soa->father[k]   = Nodes[no].u.d.father;
+
+        /* C1 foreign-leaf identity sidecar: mirror the host ForeignLeaf* arrays into the SoA at
+         * foreign_slot (= no-(MaxPart+MaxNodes) = k-MaxNodes), the foreign-only index the walk uses
+         * -- NOT k.  Bounds-checked against both the SoA foreign capacity and the host array size. */
+        {
+            int foreign_slot = no - (MaxPart_ + MaxNodes);
+            if(soa->foreign_leaf_tag && foreign_slot >= 0 && foreign_slot < soa->foreign_leaf_cap
+               && ForeignLeafTag && foreign_slot < MaxForeignNodes) {
+                soa->foreign_leaf_tag[foreign_slot]  = ForeignLeafTag[foreign_slot];
+                soa->foreign_leaf_type[foreign_slot] = ForeignLeafType[foreign_slot];
+                soa->foreign_leaf_zeta[foreign_slot] = ForeignLeafZeta[foreign_slot];
+                soa->foreign_leaf_soft[foreign_slot] = ForeignLeafSoft[foreign_slot];
+            }
+        }
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         soa->gasmass[k]  = (MyGravFloat) Nodes[no].gasmass;

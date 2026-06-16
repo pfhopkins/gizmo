@@ -207,6 +207,27 @@ struct grav_pm_shortrange_t {
 #endif
 };
 
+/* C1 foreign-leaf source seam (shared by the CPU and GPU walks -- the single home for foreign-leaf
+ * secondary-source semantics, so the two walks cannot drift).  A foreign single particle is shipped as a
+ * synthesized terminal multipole; the node payload carries mass/pos/etc. (singleton-exact), but it CANNOT
+ * carry the leaf-identity fields the force needs.  When the accepted foreign node is a tagged real leaf,
+ * restore them so the unchanged grav_force_pair reproduces the source's local-leaf interaction on its home
+ * rank (preserving force reciprocity):
+ *   - h_p <- leaf_force_soft, which the producer fills from ForceSoftening_KernelRadius() -- the SAME
+ *     local-leaf softening accessor the home rank's walk uses for h_p (for adaptive types this is the
+ *     adaptive kernel radius, not the fixed table value).  Restoring it makes the accepted foreign leaf
+ *     use the identical h_p it would on its home rank, rather than the node-payload maxsoft.
+ *   - ptype_sec/zeta_sec <- Type and AGS_zeta, consumed by the AGS symmetrize-by-averaging + zeta-correction
+ *     paths (no-ops when those are compiled out / zeta==0, but required for general configs).
+ * Returns 1 if leaf identity was applied, 0 for a true node/multipole. */
+KOKKOS_INLINE_FUNCTION
+int grav_apply_foreign_leaf_identity(int leaf_tag, int leaf_type, double leaf_zeta, double leaf_force_soft,
+                                     int *ptype_sec, double *zeta_sec, double *h_p)
+{
+    if(leaf_tag == 1) { *ptype_sec = leaf_type; *zeta_sec = leaf_zeta; *h_p = leaf_force_soft; return 1; }
+    return 0;
+}
+
 /* zeta/zeta_sec (AGS-softening correction) and ags_bitflag_primary (symmetrize-by-
  * averaging) are passed unconditionally; callers supply 0 when the corresponding flag
  * is off, and the body consumes them only under the matching #if (no behavior change),

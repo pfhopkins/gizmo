@@ -1615,7 +1615,6 @@ void cbe_face_K_and_vn_from_Q(
 }
 
 
-KOKKOS_INLINE_FUNCTION
 /* Wave-CBE Commit 8 (Fix #1, 2026-05-30) — branched HLLC vacuum one-sided
  * flux. Per-basis flux on one side of a face, in the SOURCE-side outward
  * frame defined by Area_outward.

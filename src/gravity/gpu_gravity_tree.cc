@@ -36,6 +36,11 @@ static void free_arrays_(void)
     if(soa_.bitflags) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.bitflags); soa_.bitflags = NULL;}
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
+    if(soa_.foreign_leaf_tag)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_tag);  soa_.foreign_leaf_tag  = NULL;}
+    if(soa_.foreign_leaf_type) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_type); soa_.foreign_leaf_type = NULL;}
+    if(soa_.foreign_leaf_zeta) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_zeta); soa_.foreign_leaf_zeta = NULL;}
+    if(soa_.foreign_leaf_soft) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_soft); soa_.foreign_leaf_soft = NULL;}
+    soa_.foreign_leaf_cap = 0;
     /* Phase 6.8e: nextnode_aux is an alias to Nextnode[] (UVM, owned by
      * forcetree.cc).  Do NOT free or clear here — the alias persists across
      * SoA realloc cycles and is set/cleared exclusively by
@@ -118,6 +123,21 @@ static int alloc_arrays_(int n)
        !soa_.suns_backup) {
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
+    }
+    /* C1 foreign-leaf identity sidecar mirror -- sized MaxForeignNodes (foreign-only), NOT n, and
+     * indexed by foreign_slot = no-(MaxPart+MaxNodes) by both the scatter and the walk.  acquire()
+     * adds MaxForeignNodes to its capacity request, so this runs with the current MaxForeignNodes. */
+    soa_.foreign_leaf_cap = (MaxForeignNodes > 0) ? MaxForeignNodes : 0;
+    if(soa_.foreign_leaf_cap > 0) {
+        soa_.foreign_leaf_tag  = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(int));
+        soa_.foreign_leaf_type = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(int));
+        soa_.foreign_leaf_zeta = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
+        soa_.foreign_leaf_soft = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
+        if(!soa_.foreign_leaf_tag || !soa_.foreign_leaf_type || !soa_.foreign_leaf_zeta || !soa_.foreign_leaf_soft) {
+            printf("gpu_gravity_tree: foreign_leaf sidecar alloc failed (%d)\n", soa_.foreign_leaf_cap); return 0;
+        }
+    } else {
+        soa_.foreign_leaf_tag = NULL; soa_.foreign_leaf_type = NULL; soa_.foreign_leaf_zeta = NULL; soa_.foreign_leaf_soft = NULL;
     }
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     soa_.gasmass = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
