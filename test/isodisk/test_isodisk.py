@@ -15,6 +15,8 @@ from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, stash_baseline_output, finalize_variant_output
 
 
+#@pytest.mark.parametrize("num_mpi_ranks", (2,))
+#@pytest.mark.parametrize("num_omp_threads", (1,))
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
@@ -52,7 +54,8 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
         mass_f = F["PartType0/Masses"][:]
         rho_f = F["PartType0/Density"][:]
 
-    center = boxsize / 2.0
+    #center = boxsize / 2.0
+    center = 0.
 
     # Plot face-on view of the disk using Meshoid slice interpolation
     M = Meshoid(pos_f, boxsize=boxsize)

@@ -34,10 +34,10 @@
 %
 InitCondFile                       isodisk_ics
 OutputDir                          output
-TimeMax                            0.5
+TimeMax                            0.005  %0.5
 BoxSize                            200
-TimeBetSnapshot                    0.1
-MaxSizeTimestep                    0.005
+TimeBetSnapshot                    0.0005 %0.1
+MaxSizeTimestep                    0.0005 %0.01
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
 UnitLength_in_cm                   3.085678e+21
