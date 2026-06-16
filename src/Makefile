@@ -786,12 +786,13 @@ $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
 # Vista NVC++ 25.5 ICE workaround: gen_llvm_expr() unknown opcode at -O2 inside
-# addFB_evaluate in mechanical_fb.cc. Compile at -O1 for Vista only; CPU-only
-# code (GPU path lives in mechfb_loop.cc), negligible performance impact.
-# This explicit rule comes AFTER the $(OBJS) static pattern rule so it overrides it.
+# addFB_evaluate in mechanical_fb.cc. Compile this one CPU-only object at -O1 on
+# Vista via a target-specific CFLAGS override (NOT a second explicit recipe, which
+# collides with the $(OBJS) static-pattern rule and warns). The static-pattern
+# recipe then builds it with the -O1 CFLAGS. GPU path lives in mechfb_loop.cc;
+# negligible performance impact.
 ifeq ($(SYSTYPE),"Vista")
-galaxy_sf/mechanical_fb.o: galaxy_sf/mechanical_fb.cc $(INCL) $(CONFIG) compile_time_info.cc
-	$(CXX) $(subst -O2,-O1,$(CFLAGS)) -c $< -o $@
+galaxy_sf/mechanical_fb.o: CFLAGS := $(subst -O2,-O1,$(CFLAGS))
 endif
 
 compile_time_info.cc: $(CONFIG)
