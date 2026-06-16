@@ -62,6 +62,16 @@ struct gpu_gravity_tree_soa_t {
     /* Force kernel */
     MyGravFloat    *maxsoft;
     long           *N_part;
+    /* C1 foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
+     * MaxForeignNodes and indexed by foreign_slot = no - (MaxPart+MaxNodes) == (node SoA idx) -
+     * MaxNodes -- a DIFFERENT index than every other array above (which use no - MaxPart).  The GPU
+     * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
+     * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
+    int            *foreign_leaf_tag;   /* 1 = real foreign single-particle leaf; 0 = node */
+    int            *foreign_leaf_type;  /* source particle Type   -> ptype_sec */
+    MyFloat        *foreign_leaf_zeta;  /* source particle AGS_zeta -> zeta_sec (double; preserves reciprocity) */
+    MyFloat        *foreign_leaf_soft;  /* source particle ForceSoftening -> h_p (pure, NOT node maxsoft) */
+    int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== MaxForeignNodes) */
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
      * lands on `no < MaxPart`, advance via nextnode_aux[no]. Sized for

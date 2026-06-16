@@ -535,7 +535,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
  *  level in the tree, even when the particle population is so sparse that
  *  some of these nodes are actually empty.
  */
-int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount,
+int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y, peano1D z, int *nodecount,
                               int *nextfree)
 {
     int i, j, k, n, sub, count;
@@ -1636,6 +1636,20 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * Force multipole treatment instead so the node's contribution is accumulated. */
                 int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
 
+                /* C1: foreign-leaf identity lookup (host sidecar; foreign_slot = no-(maxPart+maxNodes),
+                 * EXPLICIT and bounds-checked -- not the node index no-maxPart). */
+                int    fl_tag = 0, fl_type = -1;
+                double fl_zeta = 0.0, fl_soft = 0.0;
+                if(in_foreign && ForeignLeafTag) {
+                    int fs = no - (maxPart + maxNodes);
+                    if(fs >= 0 && fs < MaxForeignNodes) {
+                        fl_tag  = ForeignLeafTag[fs];
+                        fl_type = ForeignLeafType[fs];
+                        fl_zeta = (double) ForeignLeafZeta[fs];
+                        fl_soft = (double) ForeignLeafSoft[fs];
+                    }
+                }
+
                 mass = nop->u.d.mass;
                 if(mass <= 0) /* nothing in the node */
                 {
@@ -1696,17 +1710,41 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         r2, cen0, cen1, cen2, soft, h, aold, ptype,
                         nop->len, mass, nop->maxsoft,
                         pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
-                    /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign
-                     * node forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid
-                     * dropping its contribution; ACCEPT and OPEN&&foreign fall through to the
-                     * payload load below. */
+                    /* Foreign LET policy (mirrors the GPU walk exactly).  A foreign tagged leaf
+                     * (fl_tag==1) is a TERMINAL leaf source: its nextnode is the DFS CONTINUATION after
+                     * the leaf, NOT a child to descend.  A predicate OPEN on it must mean "accept this
+                     * already-leaf source with leaf semantics" (C1 restores the leaf identity below),
+                     * never "descend".  foreign_force_multipole (the nextnode<0 sentinel) is the other
+                     * terminal that must be accepted.  Both fall through to the accept path; only a
+                     * genuine descendable node takes nextnode.  (Pre-fix the descend guard keyed on
+                     * foreign_force_multipole alone, so a tagged leaf whose continuation resolved to a
+                     * valid >=0 slot was OPENED -> advanced to its continuation -> its mass was never
+                     * summed; the dropped foreign-leaf mass is rank-asymmetric, breaking force
+                     * reciprocity / momentum conservation at np>=2 under adaptive softening.) */
+                    int foreign_real_leaf = (in_foreign && fl_tag == 1);
+                    int must_accept_foreign_terminal = foreign_force_multipole || foreign_real_leaf;
                     if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
-                    if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
+                    if(pred == GRAV_OPEN_NODE && !must_accept_foreign_terminal) {no = nop->u.d.nextnode; continue;}
+                    /* C1 permanent invariant guard (predicate-keyed; mirrors the GPU walk): a
+                     * predicate-OPEN foreign terminal forced to multipole that is NOT a tagged real
+                     * leaf is an unopenable aggregate that would silently downgrade leaf-sensitive
+                     * physics. Hard-surface (controlled stop) until C2/owner-continuation exists. */
+                    if(pred == GRAV_OPEN_NODE && foreign_force_multipole && fl_tag != 1) {
+                        printf("[GRAV-INVARIANT VIOLATION rank=%d] CPU walk: predicate-OPEN foreign-terminal "
+                               "node %d accepted as multipole but not a tagged real leaf (unopenable "
+                               "aggregate in leaf-sensitive support); C2/owner-continuation required. Stopping.\n",
+                               ThisTask, no);
+                        fflush(stdout); endrun(90000087);
+                    }
                 }
 
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
+                /* C1: a tagged real foreign single-particle leaf is consumed with particle-leaf
+                 * secondary semantics -- restore the Type + AGS_zeta the node moment cannot carry,
+                 * via the shared seam (identical to the GPU walk). */
+                if(fl_tag == 1) { grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p); }
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                 gasmass = nop->gasmass;
 #endif
@@ -2486,6 +2524,30 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(90000085);
         return;
     }
+    /* C1: foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
+     * allocator (gpu_tree_alloc_bytes), the SAME discipline as Nodes_base/Extnodes_base/Nextnode --
+     * freed in force_treefree, re-allocated on every force_treebuild retry.  Sized MaxForeignNodes,
+     * indexed by foreign_slot = no - (MaxPart+MaxNodes).  Zero-initialized so every slot defaults to
+     * leaf_tag=0 (node) before any LET exchange installs real foreign leaves. */
+    if(MaxForeignNodes > 0)
+    {
+        ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        if(!ForeignLeafTag || !ForeignLeafType || !ForeignLeafZeta || !ForeignLeafSoft)
+        {
+            printf("Failed to allocate %d foreign-leaf sidecar slots.\n", MaxForeignNodes);
+            endrun(90000086);
+            return;
+        }
+        memset(ForeignLeafTag,  0, (size_t) MaxForeignNodes * sizeof(int));
+        memset(ForeignLeafType, 0, (size_t) MaxForeignNodes * sizeof(int));
+        memset(ForeignLeafZeta, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
+        memset(ForeignLeafSoft, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
+    }
+    else { ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL; }
+
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)
     {
@@ -2564,6 +2626,11 @@ void force_treefree(void)
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
+        /* C1: free the foreign-leaf sidecar (SharedSpace, same allocator as the foreign-node arena). */
+        if(ForeignLeafTag)  {gpu_tree_free_bytes(ForeignLeafTag);  ForeignLeafTag  = NULL;}
+        if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
+        if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
+        if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
         myfree(DomainNodeIndex);
         tree_allocated_flag = 0;
     }

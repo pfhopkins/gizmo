@@ -89,6 +89,26 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 }
 #endif
 
+/* C1 permanent invariant guard (always on; NOT a SPIKE).  A tree-node multipole must never stand in
+ * for a particle leaf where any enabled leaf interaction (AGS softening/zeta, ...) distinguishes
+ * them.  In the one-shot LET that risk is a foreign TERMINAL node the shared opening predicate wanted
+ * to OPEN but cannot descend (nextnode<0): if it is a tagged real single-particle leaf it is routed
+ * through particle-leaf secondary semantics below (legal); otherwise it is an unopenable aggregate
+ * that would be silently downgraded to a multipole, which is ILLEGAL until C2/owner-continuation
+ * exists.  The host hard-surfaces (controlled stop) when g_inv_fterm_aggregate>0 after the walk. */
+/* Device-written (Kokkos::atomic_add inside the walk) + host-read (report/reset/controlled-stop).
+ * On a GPU compiler the storage MUST be device-addressable, so use the same `__managed__` idiom as
+ * gpu_device_error_sentinel.h; on the Mac OpenMP build (no GPU compiler) a plain host static suffices
+ * (the Kokkos lambda runs on host threads).  Plain `static long long` here built on Mac but failed the
+ * Vista nvcc compile (#20096-D: address of a host variable in device code). */
+#if defined(GIZMO_GPU_COMPILER)
+static __managed__ long long g_inv_fleaf_routed    = 0;   /* predicate-OPEN foreign terminal routed as a real leaf */
+static __managed__ long long g_inv_fterm_aggregate = 0;   /* predicate-OPEN foreign terminal, NOT a leaf -> illegal */
+#else
+static long long g_inv_fleaf_routed    = 0;
+static long long g_inv_fterm_aggregate = 0;
+#endif
+
 /* The device replicas of weight_function_for_weighted_motion_smoothing and
  * ags_gravity_kernel_shared_BITFLAG were collapsed into gravtree_force_kernel.h
  * (grav_weight_function_for_weighted_motion_smoothing / gravtree_ags_kernel_shared_bitflag),
@@ -293,7 +313,7 @@ gpu_gravtree_walk_one(int target,
                       Vec3<double> &acc_out,
                       int &ninter_out,
                       double &pot_out,
-                      int &n_foreign_out)  /* Phase 9.3 diag: #foreign node visits */
+                      int &n_foreign_out)   /* Phase 9.3 diag: #foreign node visits */
 {
     Vec3<double> pos = P_dev[target].Pos;
     int ptype = P_dev[target].Type;
@@ -606,6 +626,21 @@ gpu_gravtree_walk_one(int target,
             int in_foreign_n = (no >= maxPart + maxNodes);
             int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
+            /* C1: foreign-leaf identity lookup.  foreign_slot = no-(MaxPart+MaxNodes) = idx-maxNodes
+             * -- the foreign-only sidecar index, EXPLICIT and bounds-checked so it can never be
+             * confused with the per-node SoA index idx (= no-MaxPart). */
+            int    fl_tag = 0, fl_type = -1;
+            double fl_zeta = 0.0, fl_soft = 0.0;
+            if(in_foreign_n && tree_soa->foreign_leaf_tag) {
+                int fs = idx - maxNodes;
+                if(fs >= 0 && fs < tree_soa->foreign_leaf_cap) {
+                    fl_tag  = tree_soa->foreign_leaf_tag[fs];
+                    fl_type = tree_soa->foreign_leaf_type[fs];
+                    fl_zeta = (double) tree_soa->foreign_leaf_zeta[fs];
+                    fl_soft = (double) tree_soa->foreign_leaf_soft[fs];
+                }
+            }
+
             /* empty-node skip (mirrors forcetree.cc:2165): a zero-mass node contributes no
              * force -> advance to the sibling. Not gated on foreign_force_multipole (a skip
              * is never converted to a forced multipole); also avoids descending empty nodes. */
@@ -647,16 +682,44 @@ gpu_gravtree_walk_one(int target,
                     r2, cen0, cen1, cen2, soft, h, aold, ptype,
                     (double)len_node, (double)mass_node, (double)msoft_node,
                     pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
-                /* foreign LET policy applied here: a SKIP is honored always; an OPEN on a foreign node
-                 * forced to multipole (nextnode<0 sentinel) is treated as ACCEPT to avoid dropping its
-                 * contribution; ACCEPT and OPEN&&foreign fall through to the payload load below. */
+                /* Foreign LET policy.  A foreign tagged leaf (fl_tag==1) is a TERMINAL leaf source:
+                 * its nextnode is the DFS CONTINUATION after the leaf, NOT a child to descend.  So a
+                 * predicate OPEN on it cannot mean "descend" (there is nowhere to descend) -- it must
+                 * mean "accept this already-leaf source with leaf semantics" (C1 supplies the leaf
+                 * identity at the payload load below).  foreign_force_multipole (the nextnode<0 sentinel
+                 * case) is the other terminal that must be accepted, not descended.  Both fall through to
+                 * the accept path; only a genuine descendable node takes nextnode.  (Pre-fix the descend
+                 * guard keyed on foreign_force_multipole alone, so a tagged leaf whose continuation
+                 * resolved to a valid >=0 slot was OPENED -> advanced to its continuation -> its mass
+                 * was never summed; the dropped foreign-leaf mass is rank-asymmetric, breaking force
+                 * reciprocity / momentum conservation at np>=2 under adaptive softening.) */
+                int foreign_real_leaf = (in_foreign_n && fl_tag == 1);
+                int must_accept_foreign_terminal = foreign_force_multipole || foreign_real_leaf;
                 if(pred == GRAV_SKIP_NODE) { no = tree_soa->sibling[idx]; continue; }
-                if(pred == GRAV_OPEN_NODE && !foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
+                if(pred == GRAV_OPEN_NODE && !must_accept_foreign_terminal) { no = tree_soa->nextnode[idx]; continue; }
+                /* Permanent invariant guard (predicate-keyed): an OPEN that must_accept a foreign
+                 * terminal is LEGAL when the terminal is a tagged real leaf (fl_tag==1) -- routed
+                 * through particle-leaf semantics at the payload load below.  The ILLEGAL case is an
+                 * untagged forced multipole (foreign_force_multipole && !fl_tag): a non-particle foreign
+                 * terminal accepted as a multipole in leaf-sensitive support -- a silent physics
+                 * downgrade the host controlled-stops on after the walk. */
+                if(pred == GRAV_OPEN_NODE && must_accept_foreign_terminal) {
+                    if(fl_tag == 1) { Kokkos::atomic_add(&g_inv_fleaf_routed, 1LL); }
+                    else            { Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL); }
+                }
             }
 
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
+            /* C1: a tagged real foreign single-particle leaf must be consumed with particle-leaf
+             * secondary-source semantics.  The node payload above already supplied mass/h_p and the
+             * synthesized RT/sink/CR/tidal (singleton-aggregate == particle value); restore the two
+             * leaf-identity fields the node moment cannot carry (Type + AGS_zeta) via the shared seam
+             * so grav_force_pair applies AGS symmetrization/zeta exactly as on the source's home rank. */
+            if(fl_tag == 1) {
+                grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p);
+            }
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this accepted node (mirrors forcetree.cc:2272).
              * d_dm uses the DM CoM s_dm, NOT the total CoM (s_node). */
@@ -1313,6 +1376,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
+    /* C1 invariant guard: reset the per-walk counters. */
+    g_inv_fleaf_routed = g_inv_fterm_aggregate = 0;
+
     double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1349,6 +1415,23 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
+    /* C1 permanent invariant guard.  The routed count is informational (env-gated) -- it is the C1
+     * success signal alongside the np2-np1 force-ledger collapse.  An untagged predicate-OPEN foreign
+     * terminal is an unopenable aggregate that would silently downgrade leaf-sensitive physics to a
+     * multipole; until C2/owner-continuation exists this hard-surfaces as a controlled stop. */
+    if(getenv("GIZMO_GRAV_INVARIANT")) {
+        printf("[INV rank=%d] foreign-leaf routed=%lld | aggregate forced-accept (ILLEGAL)=%lld\n",
+               ThisTask, g_inv_fleaf_routed, g_inv_fterm_aggregate);
+        fflush(stdout);
+    }
+    if(g_inv_fterm_aggregate > 0) {
+        printf("[GRAV-INVARIANT VIOLATION rank=%d] %lld predicate-OPEN foreign-terminal nodes accepted "
+               "as multipoles but NOT tagged real leaves (unopenable aggregates in leaf-sensitive "
+               "support) -- silently downgrades adaptive-softening/zeta physics; C2/owner-continuation "
+               "required. Stopping.\n", ThisTask, g_inv_fterm_aggregate);
+        fflush(stdout);
+        endrun(90000087);
+    }
     double t_grv_post_kernel = my_second();
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
