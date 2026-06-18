@@ -1149,6 +1149,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
     for(int a = 0; a < num_active_total; a++) {
         int i = ActiveParticleList[a];
         if(ProcessedFlag[i]) {continue;}
+#ifdef HERMITE_INTEGRATION
+        /* During a Hermite-only pass the CPU primary loop and finalization
+         * skip particles not flagged for Hermite (their force is neither
+         * recomputed nor scaled by All.G); the GPU pre-pass must use the same
+         * candidate set, or it leaves their GravAccel fresh-written but raw. */
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {continue;}
+#endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         /* Phase 5: exclude particles whose cached GravAccel+Jerk will be
          * extrapolated in the CPU post-loop (gravtree.cc:512-520).  The
@@ -1847,6 +1854,10 @@ extern "C" int gpu_ewald_walk_primary(void)
         int i = ActiveParticleList[a];
         if(P[i].Mass <= 0) continue;
         if(ProcessedFlag[i]) continue;
+#ifdef HERMITE_INTEGRATION
+        /* Selection parity with CPU primary loop + finalization (see primary walk). */
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)) continue;
+#endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         if(!needs_new_treeforce(i)) continue;
 #endif
