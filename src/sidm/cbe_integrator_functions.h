@@ -1812,8 +1812,8 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
  * (Step 4 + Step 8). Same contract as the prior legacy chain so downstream
  * cbe_diagnostics col-8 semantics carry through. */
 KOKKOS_INLINE_FUNCTION
-static void cbe_repair_cell_conservative_basis_states(
-    struct particle_data& pi,
+static void cbe_repair_basis_states_core(
+    double (&moments)[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     double *dT_out)
 {
     double dT_local = 0.0;
@@ -1824,10 +1824,10 @@ static void cbe_repair_cell_conservative_basis_states(
         double M0_probe = 0.0;
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                if(!isfinite(pi.CBE_basis_moments[j][k])) { any_nonfinite = true; break; }
+                if(!isfinite(moments[j][k])) { any_nonfinite = true; break; }
             }
             if(any_nonfinite) break;
-            M0_probe += pi.CBE_basis_moments[j][0];
+            M0_probe += moments[j][0];
         }
         if(any_nonfinite || !(M0_probe > 0)) {
             if(dT_out) *dT_out = 0.0;
@@ -1839,8 +1839,8 @@ static void cbe_repair_cell_conservative_basis_states(
     double M0 = 0.0;
     double P0[3] = {0.0, 0.0, 0.0};
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        M0 += pi.CBE_basis_moments[j][0];
-        for(int a = 0; a < NUMDIMS; a++) P0[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+        M0 += moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P0[a] += cbe_basis_p_r(moments[j], a);
     }
     const double V_bulk[3] = { P0[0] / M0, P0[1] / M0, P0[2] / M0 };
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
@@ -1848,7 +1848,7 @@ static void cbe_repair_cell_conservative_basis_states(
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                T0[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+                T0[a][b] += cbe_basis_T_r(moments[j], a, b);
             }
         }
     }
@@ -1860,7 +1860,7 @@ static void cbe_repair_cell_conservative_basis_states(
     bool is_empty[CBE_INTEGRATOR_NBASIS];
     int empty_count = 0;
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        is_empty[j] = (pi.CBE_basis_moments[j][0] < m_thresh);
+        is_empty[j] = (moments[j][0] < m_thresh);
         if(is_empty[j]) empty_count++;
     }
 
@@ -1873,12 +1873,12 @@ static void cbe_repair_cell_conservative_basis_states(
     if(empty_count > 0 && empty_count < CBE_INTEGRATOR_NBASIS) {
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             if(!is_empty[j]) continue;
-            pi.CBE_basis_moments[j][0] = m_thresh;
-            for(int a = 0; a < NUMDIMS; a++) cbe_basis_p_w(pi.CBE_basis_moments[j], a, 0.0);
+            moments[j][0] = m_thresh;
+            for(int a = 0; a < NUMDIMS; a++) cbe_basis_p_w(moments[j], a, 0.0);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
             for(int a = 0; a < NUMDIMS; a++) {
                 for(int b = a; b < NUMDIMS; b++) {
-                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b, 0.0);
+                    cbe_basis_T_w(moments[j], a, b, 0.0);
                 }
             }
 #endif
@@ -1891,19 +1891,19 @@ static void cbe_repair_cell_conservative_basis_states(
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         if(is_empty[j]) continue;
-        const double m_b = pi.CBE_basis_moments[j][0];
+        const double m_b = moments[j][0];
         if(!(m_b > 0)) continue;
-        double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
+        double v[3]; cbe_basis_v_load_3(moments[j], v);
         double v_dot_v = 0.0;
         for(int a = 0; a < NUMDIMS; a++) v_dot_v += v[a] * v[a];
         const double trace_R_active  = cbe_basis_T_trace_active(
-            pi.CBE_basis_moments[j], 1.0 / m_b);
+            moments[j], 1.0 / m_b);
         const double trace_S_central = trace_R_active - v_dot_v;
         const double trace_S_pos     = DMAX(trace_S_central, MIN_REAL_NUMBER);
         const double eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR * trace_S_pos;
         double dT_basis = 0.0;
         (void)cbe_basis_row_project_central_stress_to_PSD(
-            pi.CBE_basis_moments[j], eigenvalue_floor, &dT_basis);
+            moments[j], eigenvalue_floor, &dT_basis);
         dT_local += dT_basis;
     }
 #endif
@@ -1914,8 +1914,8 @@ static void cbe_repair_cell_conservative_basis_states(
     double M_new = 0.0;
     double P_new[3] = {0.0, 0.0, 0.0};
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        M_new += pi.CBE_basis_moments[j][0];
-        for(int a = 0; a < NUMDIMS; a++) P_new[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+        M_new += moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P_new[a] += cbe_basis_p_r(moments[j], a);
     }
     double res_M    = M0 - M_new;
     double res_P[3] = { P0[0] - P_new[0], P0[1] - P_new[1], P0[2] - P_new[2] };
@@ -1924,7 +1924,7 @@ static void cbe_repair_cell_conservative_basis_states(
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                T_new[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+                T_new[a][b] += cbe_basis_T_r(moments[j], a, b);
             }
         }
     }
@@ -1966,38 +1966,38 @@ static void cbe_repair_cell_conservative_basis_states(
     int    sd_idx = -1; double sd_m = -1.0;
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         is_candidate[j] = cbe_basis_row_is_realizable(
-            pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL);
-        cand_m[j]   = is_candidate[j] ? pi.CBE_basis_moments[j][0] : 0.0;
+            moments[j], CBE_REPAIR_EPS_M_REL);
+        cand_m[j]   = is_candidate[j] ? moments[j][0] : 0.0;
         cand_m_sum += cand_m[j];
-        if(is_candidate[j] && pi.CBE_basis_moments[j][0] > sd_m) {
-            sd_m = pi.CBE_basis_moments[j][0]; sd_idx = j;
+        if(is_candidate[j] && moments[j][0] > sd_m) {
+            sd_m = moments[j][0]; sd_idx = j;
         }
     }
 
     /* saved[]: per-row pre-donation state for revert / bisection restore. */
     double saved[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) saved[j][k] = pi.CBE_basis_moments[j][k];
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) saved[j][k] = moments[j][k];
     }
 
     bool single_ok = false;
     if(sd_idx >= 0 && cand_m_sum > 0) {
-        pi.CBE_basis_moments[sd_idx][0] += res_M;
+        moments[sd_idx][0] += res_M;
         for(int a = 0; a < NUMDIMS; a++)
-            cbe_basis_p_a(pi.CBE_basis_moments[sd_idx], a, res_P[a]);
+            cbe_basis_p_a(moments[sd_idx], a, res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                cbe_basis_T_w(pi.CBE_basis_moments[sd_idx], a, b,
-                    cbe_basis_T_r(pi.CBE_basis_moments[sd_idx], a, b) + res_T[a][b]);
+                cbe_basis_T_w(moments[sd_idx], a, b,
+                    cbe_basis_T_r(moments[sd_idx], a, b) + res_T[a][b]);
             }
         }
 #endif
         single_ok = cbe_basis_row_is_realizable(
-            pi.CBE_basis_moments[sd_idx], CBE_REPAIR_EPS_M_REL);
+            moments[sd_idx], CBE_REPAIR_EPS_M_REL);
         if(!single_ok) {
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                pi.CBE_basis_moments[sd_idx][k] = saved[sd_idx][k];
+                moments[sd_idx][k] = saved[sd_idx][k];
         }
     }
 
@@ -2024,20 +2024,20 @@ static void cbe_repair_cell_conservative_basis_states(
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
                 for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                    pi.CBE_basis_moments[j][k] = saved[j][k];
+                    moments[j][k] = saved[j][k];
             }
             /* Apply weighted share at f_try. */
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
                 const double w = cand_m[j] / cand_m_sum;
-                pi.CBE_basis_moments[j][0] += w * f_try * res_M;
+                moments[j][0] += w * f_try * res_M;
                 for(int a = 0; a < NUMDIMS; a++)
-                    cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_try * res_P[a]);
+                    cbe_basis_p_a(moments[j], a, w * f_try * res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
                 for(int a = 0; a < NUMDIMS; a++) {
                     for(int b = a; b < NUMDIMS; b++) {
-                        cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                            cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_try * res_T[a][b]);
+                        cbe_basis_T_w(moments[j], a, b,
+                            cbe_basis_T_r(moments[j], a, b) + w * f_try * res_T[a][b]);
                     }
                 }
 #endif
@@ -2046,7 +2046,7 @@ static void cbe_repair_cell_conservative_basis_states(
             bool all_ok = true;
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
-                if(!cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL)) {
+                if(!cbe_basis_row_is_realizable(moments[j], CBE_REPAIR_EPS_M_REL)) {
                     all_ok = false; break;
                 }
             }
@@ -2061,16 +2061,16 @@ static void cbe_repair_cell_conservative_basis_states(
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             if(!is_candidate[j]) continue;
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                pi.CBE_basis_moments[j][k] = saved[j][k];
+                moments[j][k] = saved[j][k];
             const double w = cand_m[j] / cand_m_sum;
-            pi.CBE_basis_moments[j][0] += w * f_lo * res_M;
+            moments[j][0] += w * f_lo * res_M;
             for(int a = 0; a < NUMDIMS; a++)
-                cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_lo * res_P[a]);
+                cbe_basis_p_a(moments[j], a, w * f_lo * res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
             for(int a = 0; a < NUMDIMS; a++) {
                 for(int b = a; b < NUMDIMS; b++) {
-                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                        cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_lo * res_T[a][b]);
+                    cbe_basis_T_w(moments[j], a, b,
+                        cbe_basis_T_r(moments[j], a, b) + w * f_lo * res_T[a][b]);
                 }
             }
 #endif
@@ -2139,18 +2139,18 @@ static void cbe_repair_cell_conservative_basis_states(
              * cold/warm Mac smoke; a non-FP magnitude signals upstream
              * pathological cell state surfaced via the dT_out path). */
             double M_cur = 0.0;
-            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) M_cur += pi.CBE_basis_moments[j][0];
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) M_cur += moments[j][0];
             if(M_cur > 0) {
                 for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-                    const double w_j = pi.CBE_basis_moments[j][0] / M_cur;
-                    pi.CBE_basis_moments[j][0] += w_j * unab_M;
+                    const double w_j = moments[j][0] / M_cur;
+                    moments[j][0] += w_j * unab_M;
                     for(int a = 0; a < NUMDIMS; a++)
-                        cbe_basis_p_a(pi.CBE_basis_moments[j], a, w_j * unab_P[a]);
+                        cbe_basis_p_a(moments[j], a, w_j * unab_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
                     for(int a = 0; a < NUMDIMS; a++) {
                         for(int b = a; b < NUMDIMS; b++) {
-                            cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                                cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w_j * unab_T[a][b]);
+                            cbe_basis_T_w(moments[j], a, b,
+                                cbe_basis_T_r(moments[j], a, b) + w_j * unab_T[a][b]);
                         }
                     }
 #endif
@@ -2165,18 +2165,30 @@ static void cbe_repair_cell_conservative_basis_states(
      * preserves m_b individually; trace-delta accumulated into dT_local. */
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        if(cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL))
+        if(cbe_basis_row_is_realizable(moments[j], CBE_REPAIR_EPS_M_REL))
             continue;
-        const double m_b = pi.CBE_basis_moments[j][0];
+        const double m_b = moments[j][0];
         if(!(m_b > 0)) continue;
         double dT_last = 0.0;
         (void)cbe_basis_row_project_central_stress_to_PSD(
-            pi.CBE_basis_moments[j], 0.0, &dT_last);
+            moments[j], 0.0, &dT_last);
         dT_local += dT_last;
     }
 #endif
 
     if(dT_out) *dT_out = dT_local;
+}
+
+/* Thin particle-object wrapper preserving the original conserved-path call
+ * signature: forwards the particle's conserved basis moments to the
+ * array-level core above. The predictor (later) calls the core directly on
+ * the predicted (_pred) storage so conserved state is never touched. */
+KOKKOS_INLINE_FUNCTION
+static void cbe_repair_cell_conservative_basis_states(
+    struct particle_data& pi,
+    double *dT_out)
+{
+    cbe_repair_basis_states_core(pi.CBE_basis_moments, dT_out);
 }
 
 
@@ -2404,6 +2416,71 @@ static int cbe_apply_basis_outflow_budget(
 }
 
 
+/* SSOT frame round-trip used by the conserved CBE drift-kick (and, later,
+ * the predictor). Encapsulates kick Steps 1-5: read RELATIVE basis rows in
+ * the V_old frame, convert to ABSOLUTE, apply the absolute-frame moment rate
+ * scaled by `coeff` (= nfac*dt for the conserved kick), derive V_new from the
+ * updated mass-weighted-mean basis velocity, and convert back to RELATIVE
+ * storage in the V_new frame. `rate` is an ABSOLUTE-frame rate array (e.g.
+ * CBE_basis_moments_dt). In-place use (src_rows == dst_rows) is safe: every
+ * source row is read into locals before any destination row is written.
+ * V_new is computed 3-wide (inactive dims default to 0, or V_old in the
+ * m<=0 fallback); the caller decides which components to write. */
+KOKKOS_INLINE_FUNCTION
+static void cbe_apply_moment_rate_framecorrect(
+    const double src_rows[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double V_old[3],
+    const double rate[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    double coeff,
+    double dst_rows[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    double V_new[3])
+{
+    /* Step 1+2: relative storage (V_old frame) -> absolute per basis. */
+    double m_b_arr[CBE_INTEGRATOR_NBASIS];
+    double p_abs_arr[CBE_INTEGRATOR_NBASIS][3];
+    double T_abs_arr[CBE_INTEGRATOR_NBASIS][3][3];
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_relative_row_to_absolute(src_rows[j], V_old,
+                                     &m_b_arr[j], p_abs_arr[j], T_abs_arr[j]);
+    }
+
+    /* Step 3: apply coeff * absolute-frame rate. */
+    double m_new_total = 0;
+    double p_abs_new_total[3] = {0,0,0};
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        m_b_arr[j] += coeff * rate[j][0];
+        m_new_total += m_b_arr[j];
+        for(int a=0;a<NUMDIMS;a++) {
+            p_abs_arr[j][a] += coeff * cbe_basis_p_r(rate[j], a);
+            p_abs_new_total[a] += p_abs_arr[j][a];
+        }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        for(int a=0;a<NUMDIMS;a++) {
+            T_abs_arr[j][a][a] += coeff * cbe_basis_T_r(rate[j], a, a);
+            for(int b=a+1;b<NUMDIMS;b++) {
+                const double dT_ab = coeff * cbe_basis_T_r(rate[j], a, b);
+                T_abs_arr[j][a][b] += dT_ab; T_abs_arr[j][b][a] += dT_ab;
+            }
+        }
+#endif
+    }
+
+    /* Step 4: V_new = mass-weighted-mean basis velocity (defensive copy of
+     * V_old when total mass is non-positive). */
+    V_new[0] = 0; V_new[1] = 0; V_new[2] = 0;
+    if(m_new_total > 0) {
+        for(int a=0;a<NUMDIMS;a++) V_new[a] = p_abs_new_total[a] / m_new_total;
+    } else {
+        for(int a=0;a<3;a++) V_new[a] = V_old[a];
+    }
+
+    /* Step 5: absolute -> relative storage in the V_new frame. */
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_absolute_to_relative_row(m_b_arr[j], p_abs_arr[j], T_abs_arr[j],
+                                     V_new, dst_rows[j]);
+    }
+}
+
 /* GPU-callable per-particle drift-kick update for the CBE integrator.
  * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
  * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
@@ -2496,53 +2573,16 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
     double nfac = 1.0;
     if(biggest_dm < -0.75) nfac = -0.75 / biggest_dm;
 
-    /* Step 1+2: read relative storage and convert each basis to absolute
-     * using V_old = current pi.Vel. */
+    /* Steps 1-5 via the SSOT frame round-trip helper: read RELATIVE storage
+     * in the V_old=pi.Vel frame, convert to ABSOLUTE, apply the nfac-limited
+     * absolute-frame rate (coeff = nfac*dt), derive V_new from the updated
+     * mass-weighted-mean basis velocity, and convert back to RELATIVE storage
+     * in the V_new frame. In-place (src==dst==pi.CBE_basis_moments) is safe. */
     const double V_old[3] = { pi.Vel[0], pi.Vel[1], pi.Vel[2] };
-    double m_b_arr[CBE_INTEGRATOR_NBASIS];
-    double p_abs_arr[CBE_INTEGRATOR_NBASIS][3];
-    double T_abs_arr[CBE_INTEGRATOR_NBASIS][3][3];
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        cbe_relative_row_to_absolute(pi.CBE_basis_moments[j], V_old,
-                                     &m_b_arr[j], p_abs_arr[j], T_abs_arr[j]);
-    }
-
-    /* Step 3: apply nfac-limited absolute-frame update. dt_accumulator is
-     * in absolute frame post-postgrav (which now does only mass closure). */
-    double m_new_total = 0;
-    double p_abs_new_total[3] = {0,0,0};
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        m_b_arr[j] += nfac * dt * pi.CBE_basis_moments_dt[j][0];
-        m_new_total += m_b_arr[j];
-        for(int a=0;a<NUMDIMS;a++) {
-            p_abs_arr[j][a] += nfac * dt * cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
-            p_abs_new_total[a] += p_abs_arr[j][a];
-        }
-#if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        for(int a=0;a<NUMDIMS;a++) {
-            T_abs_arr[j][a][a] += nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
-            for(int b=a+1;b<NUMDIMS;b++) {
-                const double dT_ab = nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
-                T_abs_arr[j][a][b] += dT_ab; T_abs_arr[j][b][a] += dT_ab;
-            }
-        }
-#endif
-    }
-
-    /* Step 4: derive V_new from new mass-weighted-mean basis velocity. */
-    double V_new[3] = {0,0,0};
-    if(m_new_total > 0) {
-        for(int a=0;a<NUMDIMS;a++) V_new[a] = p_abs_new_total[a] / m_new_total;
-    } else {
-        for(int a=0;a<3;a++) V_new[a] = V_old[a];   /* defensive — m≤0 cell */
-    }
-
-    /* Step 5: convert each basis back to relative storage in V_new frame
-     * via SSOT helper. By construction Σ p_rel = 0 to machine eps. */
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        cbe_absolute_to_relative_row(m_b_arr[j], p_abs_arr[j], T_abs_arr[j],
-                                     V_new, pi.CBE_basis_moments[j]);
-    }
+    double V_new[3];
+    cbe_apply_moment_rate_framecorrect(pi.CBE_basis_moments, V_old,
+                                       pi.CBE_basis_moments_dt, nfac * dt,
+                                       pi.CBE_basis_moments, V_new);
 
     /* Step 6: pi.Vel <- V_new (CBE-induced bulk velocity, derived not
      * GravAccel-injected). Gravity kicks against pi.GravAccel remain
