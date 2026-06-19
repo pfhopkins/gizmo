@@ -257,8 +257,16 @@ void gizmo_mark_kernel_radius_dirty_range(int start, int end);
    Otherwise builds a fresh spatial index internally.
    P_shared must be accessible from GPU (SharedSpace or managed memory).
    active_indices_host: host-side array of source identifiers, size num_active.
-     Default mode (source_positions_host == NULL): these are P[] indices and
-     source positions are read as P[active[aa]].Pos.
+     Default mode (source_positions_host == NULL): these are P[] indices and the
+     source position is read from the cached pool array compact_xyzh[active[aa]],
+     NOT directly from P[active[aa]].Pos. compact_xyzh is built for the search
+     POOL (type_bitmask). WARNING -- INVARIANT: this is valid ONLY when every active index
+     is a POOL MEMBER. On a reused cache, the incremental drift-refresh updates
+     compact positions only for pool members, so a NON-pool active (e.g. a Type-5
+     sink in a gas-only pool) reads a STALE/unrefreshed position → wrong/
+     non-deterministic neighbor set. If active sources may be non-pool, pass
+     explicit source_positions_host. (A debug guard in gpu_ngb_list_build warns
+     when a cached call has actives whose type is outside type_bitmask.)
      Override mode (source_positions_host != NULL): these are caller-defined
      opaque IDs; pass any sentinel (e.g. 0..num_active-1) since the kernel
      reads positions from source_positions_host instead.
@@ -266,14 +274,18 @@ void gizmo_mark_kernel_radius_dirty_range(int start, int end);
    type_bitmask: which particle types to include in the search pool (j-side).
    search_radius_factor: multiplier on per-source radius (default 1.0).
    search_radii_host: optional per-active-source explicit search radii
-     (size num_active). NULL → use P[active[aa]].KernelRadius * search_radius_factor.
+     (size num_active). NULL → use compact_xyzh[active[aa]*4+3] (the cached pool
+     h) * search_radius_factor -- same pool-member INVARIANT as positions above
+     (stale for non-pool actives on a reused cache; runner specs always pass
+     explicit radii, so this fallback is exercised only by direct callers).
      REQUIRED when source_positions_host is non-NULL (override sources have no
      P[] entry to fall back to).
    source_positions_host: optional per-active-source position array (size
-     num_active * 3, doubles, layout pos[aa*3+k] for axis k). NULL → use
-     P[active[aa]].Pos (current behavior). Non-NULL → arbitrary source
-     positions decoupled from any P[] index (e.g. TURB_DRIVING_SPECTRUMGRID
-     grid cell centers). */
+     num_active * 3, doubles, layout pos[aa*3+k] for axis k). NULL → read from
+     compact_xyzh (pool slot; see the pool-member invariant above). Non-NULL →
+     arbitrary source positions decoupled from any P[] index (e.g.
+     TURB_DRIVING_SPECTRUMGRID grid cell centers, or current P[].Pos for
+     non-pool actives). */
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,

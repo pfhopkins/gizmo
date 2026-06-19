@@ -902,6 +902,55 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         fflush(stderr);
         endrun(913006);
     }
+    /* Active-source-in-pool DIAGNOSTIC GUARD (env-gated GIZMO_NLR_DIAG>=1).
+     * Complements the compile-time runner static_assert for DIRECT (non-runner)
+     * callers: when a CACHED SIDX is used with source_positions_host==NULL OR
+     * search_radii_host==NULL, the active source position/radius is read from
+     * compact_xyzh[active_index], which is the gas/pool-only array and is stale
+     * for a non-pool active on a reused cache. Warn (once per caller) if any
+     * active type is outside type_bitmask. See the docstring. */
+    {
+        static const char *g_srcpool_env = getenv("GIZMO_NLR_DIAG");
+        static const int srcpool_diag_on =
+            (g_srcpool_env && g_srcpool_env[0] >= '1' && g_srcpool_env[0] <= '9') ? 1 : 0;
+        if (srcpool_diag_on && cached_idx && cached_idx->valid &&
+            (source_positions_host == NULL || search_radii_host == NULL)) {
+            int n_bad = 0, first_bad = -1;
+            for (int aa = 0; aa < num_active; aa++) {
+                const int i = active_indices_host[aa];
+                const int t = (int)P_shared[i].Type;
+                /* range-check before the shift so malformed/direct-caller usage
+                 * cannot trigger UB in this diagnostic path. */
+                if (t < 0 || t >= 6 || !((1u << (unsigned)t) & (unsigned)type_bitmask)) {
+                    n_bad++; if (first_bad < 0) first_bad = i;
+                }
+            }
+            if (n_bad > 0) {
+                /* First-warning cap: at most one warning per distinct caller label
+                 * (string literals have stable addresses, so pointer identity works). */
+                static const char *seen[32]; static int n_seen = 0; int already = 0;
+                for (int s = 0; s < n_seen; s++) { if (seen[s] == caller_label) { already = 1; break; } }
+                if (!already) {
+                    if (n_seen < 32) seen[n_seen++] = caller_label;
+                    const char *which_arg =
+                        (source_positions_host == NULL && search_radii_host == NULL)
+                            ? "source_positions_host and search_radii_host"
+                            : (source_positions_host == NULL ? "source_positions_host" : "search_radii_host");
+                    const char *which_fix =
+                        (source_positions_host == NULL && search_radii_host == NULL)
+                            ? "source positions and radii"
+                            : (source_positions_host == NULL ? "source positions" : "search radii");
+                    fprintf(stderr,
+                        "[NLR DIAG WARN] gpu_ngb_list_build caller='%s': %d/%d active sources are NOT pool "
+                        "members (type_bitmask=0x%x) but %s==NULL -> they read STALE compact_xyzh on a reused "
+                        "cache. First: idx=%d Type=%d. Pass explicit %s (see gpu_neighbor_list.h).\n",
+                        caller_label ? caller_label : "?", n_bad, num_active, type_bitmask, which_arg,
+                        first_bad, first_bad >= 0 ? (int)P_shared[first_bad].Type : -1, which_fix);
+                    fflush(stderr);
+                }
+            }
+        }
+    }
     /* Phase 0 instrumentation: env-gated, all-ranks, per-call line for
      * Nactive histogram + tiny-N phase-cost decomposition. Off ⇒ no work. */
     static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");

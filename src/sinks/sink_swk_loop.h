@@ -646,6 +646,7 @@ struct SinkSwkSpec {
 
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
+    static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
 
     static constexpr double accum_tolerance = 1e-10;
 

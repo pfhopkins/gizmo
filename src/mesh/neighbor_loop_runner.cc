@@ -2178,12 +2178,18 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         nlr_stage_external_csr_into_gnl(ec, &gnl);
     } else {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
+        /* Active-source-in-pool contract: stage explicit P[active_i].Pos for specs
+         * whose active sources may be non-pool (else nullptr keeps the compact
+         * fast-path). See neighbor_loop_runner.h. Radii are already explicit. */
+        std::vector<double> _nlr_srcpos_storage;
+        const double* _nlr_srcpos = nlr_stage_explicit_source_positions<Spec>(
+            args.P, args.active_list, N, _nlr_srcpos_storage);
         gpu_ngb_list_build(P_gpu, args.num_total,
                            args.active_list, N,
                            Spec::search_mode,
                            (int)nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                            &gnl, sidx,
-                           1.0, radii_uvm, NULL, Spec::loop_name,
+                           1.0, radii_uvm, _nlr_srcpos, Spec::loop_name,
                            nlr_spec_symmetric_j_radius_scale<Spec>(),
                            Spec::radius_policy);
     }
@@ -2509,6 +2515,12 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     static_assert(Spec::write_pattern != WritePattern::NeighborScatter ||
                   std::is_same<typename Spec::AccumData, NoAccum>::value,
         "NeighborScatter requires AccumData == NoAccum");
+
+    /* Active-source-in-pool contract (see neighbor_loop_runner.h). */
+    static_assert(nlr_spec_satisfies_source_pool_contract_v<Spec>,
+        "Cached-SIDX Spec must declare 'static constexpr bool mode_a_active_sources_in_sidx_pool' "
+        "(true = active sources are SIDX-pool members; false = runner stages explicit P[].Pos). "
+        "Prevents the stale gas-only-compact source-position bug for non-pool actives.");
 
     /* POD/device-copy contract — captured by value into Kokkos lambdas
      * and/or staged into UVM arrays. Trivially-copyable is the binding
@@ -3546,12 +3558,18 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             n_compacted * sizeof(double));
         for (int k = 0; k < n_compacted; k++) radii_oversized_uvm[k] = radii_buffered_host_build[k];
 
+        /* Active-source-in-pool contract: stage explicit P[active_i].Pos for specs
+         * whose active sources may be non-pool (else nullptr keeps the compact
+         * fast-path). See neighbor_loop_runner.h. Radii are already explicit. */
+        std::vector<double> _nlr_srcpos_storage;
+        const double* _nlr_srcpos = nlr_stage_explicit_source_positions<Spec>(
+            drv.ctx.P, active_particle_indices_host_build.data(), n_compacted, _nlr_srcpos_storage);
         gpu_ngb_list_build(drv.ctx.P, drv.ctx.num_total,
                            active_particle_indices_host_build.data(), n_compacted,
                            Spec::search_mode,
                            (int)sgr.j_type_bitmask,
                            &drv.mode_a_cached_gnl[sg], sidx,
-                           1.0, radii_oversized_uvm, NULL, Spec::loop_name,
+                           1.0, radii_oversized_uvm, _nlr_srcpos, Spec::loop_name,
                            nlr_spec_symmetric_j_radius_scale<Spec>(),
                            Spec::radius_policy);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oversized_uvm);
@@ -4103,6 +4121,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                   "Use `using IterScratch = NoIterScratch;` for the empty form.");
     static_assert(Spec::max_iters >= 1,
                   "Spec::max_iters must be >= 1.");
+    /* Active-source-in-pool contract (see neighbor_loop_runner.h). */
+    static_assert(nlr_spec_satisfies_source_pool_contract_v<Spec>,
+        "Cached-SIDX Spec must declare 'static constexpr bool mode_a_active_sources_in_sidx_pool' "
+        "(true = active sources are SIDX-pool members; false = runner stages explicit P[].Pos). "
+        "Prevents the stale gas-only-compact source-position bug for non-pool actives.");
     static_assert(Spec::mode_a_csr_buffer_factor > 1.0,
                   "Spec::mode_a_csr_buffer_factor must be > 1.0 "
                   "(legacy DENSITY_H_BUFFER_FACTOR = 1.3).");

@@ -317,9 +317,17 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
     /* Build flat index + radius arrays for the GPU NL builder. */
     std::vector<int>    src_idx_flat;     src_idx_flat.reserve(num_src);
     std::vector<double> src_radii_flat;   src_radii_flat.reserve(num_src);
+    /* Active-source-in-pool contract (see neighbor_loop_runner.h): hii_fb sources are
+     * non-gas (Type 4/5/...) but the cached SIDX (gpu_step_sidx_ptr) is gas-only, so
+     * compact_xyzh[source_index] is stale/unrefreshed for them. Pass explicit current
+     * source positions; radii are already passed explicitly. */
+    std::vector<double> src_pos_flat;     src_pos_flat.reserve((size_t)num_src * 3);
     for(int aa = 0; aa < num_src; aa++) {
         src_idx_flat.push_back(src[aa].i);
         src_radii_flat.push_back(src[aa].R_for_NL);
+        src_pos_flat.push_back((double)P[src[aa].i].Pos[0]);
+        src_pos_flat.push_back((double)P[src[aa].i].Pos[1]);
+        src_pos_flat.push_back((double)P[src[aa].i].Pos[2]);
     }
 
     gpu_neighbor_list_t gnl = {};
@@ -330,7 +338,7 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
         gpu_ngb_list_build(P_gpu, num_all,
                            src_idx_flat.data(), num_src,
                            NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                           &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_flat.data(), NULL, "hii_fb");
+                           &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_flat.data(), src_pos_flat.data(), "hii_fb");
         /* gnl.neighbors lives in DEVICE_SPACE (CudaSpace). The per-source loop
          * below indexes it from host code; deep_copy once to a host buffer.
          * (Host memcpy from CudaSpace segfaults on GH200.) */

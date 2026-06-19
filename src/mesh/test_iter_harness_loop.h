@@ -180,6 +180,7 @@ struct IterHarnessSpec {
     static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_DEFAULT;
     static constexpr WritePattern           write_pattern      = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind          sidx_cache_kind    = SidxCacheKind::AllTypes;
+    static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
     static constexpr double accum_tolerance   = 1e-12;
     static constexpr double radius_tolerance  = 1e-9;
     static constexpr int    max_iters         = 10;
@@ -446,6 +447,7 @@ struct IterHarnessGhostSpec {
     static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_DEFAULT;
     static constexpr WritePattern           write_pattern      = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind          sidx_cache_kind    = SidxCacheKind::AllTypes;
+    static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
     static constexpr double accum_tolerance   = 1e-12;
     static constexpr double radius_tolerance  = 1e-9;
     static constexpr int    max_iters         = 10;
