@@ -60,6 +60,9 @@ struct MechFBCallScalars {
     double CR_global_max_rigidity_in_bin   [N_CR_PARTICLE_BINS];
     double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
 #endif
+#ifdef SINK_WIND_SPAWN
+    MyIDType SpawnedWindCellID;         /* mirrors All.SpawnedWindCellID */
+#endif
 };
 
 /* Ownership-split j-side write target + oracle gate (Phase 4 / Wave 3 / 3e.1).
@@ -379,6 +382,9 @@ static void mechanical_fb_pair_kernel(
 {
     const bool is_ghost = (j >= num_local_particles);
     if(P[j].Type != 0) return;
+#ifdef SINK_WIND_SPAWN
+    if(P[j].ID == scalars.SpawnedWindCellID) return; /* don't couple feedback onto sink-spawned jet cells */
+#endif
     double Mass_j = P[j].Mass;
     if(Mass_j <= 0) return;
     if(r2 <= 0) return;

@@ -244,6 +244,9 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
         scalars->CR_global_rigidity_at_bin_center[k] = host_all->CR_global_rigidity_at_bin_center[k];
     }
 #endif
+#ifdef SINK_WIND_SPAWN
+    scalars->SpawnedWindCellID = host_all->SpawnedWindCellID;
+#endif
 }
 
 MechFBSpec::CallScalars MechFBSpec::populate_call_scalars(
