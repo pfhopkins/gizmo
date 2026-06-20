@@ -193,9 +193,7 @@ struct MechFBSpec {
     /* Aux — host-only per-call state. Owned by mechanical_fb_calc_toplevel
      * (lives on the toplevel stack for the duration of the runner call).
      * Mutable per-iter from reset_per_iter_device_context (advances mode_idx
-     * + refills host_locals_scratch) and from after_iter_global (per-active
-     * n_couplings_thistask increment when accum.M_coupled > 0; production-only
-     * per codex r6). */
+     * + refills host_locals_scratch). */
     struct Aux {
         int                          num_modes;                 /* 3..6 per FIRE flags */
         int                          modes[6];                  /* {-2, -1, 0, 1, 2, 3} */
@@ -204,7 +202,6 @@ struct MechFBSpec {
         struct MechFBGasDelta       *LocalGasMechFBInfoTemp;    /* SharedSpace ptr; owned by toplevel */
         int                          num_local_gas;             /* = N_gas */
         int                          num_local_particles;       /* = NumPart (= ghost_get_num_local()) */
-        int                          n_couplings_thistask;      /* accumulated host-side counter */
 
         /* Milestone 3.5 — ghost-side scratch + ghost-writeback validation counter.
          * Aux is the SOLE OWNER of d_gas_iter: lazy alloc/grow in
@@ -264,7 +261,6 @@ struct MechFBSpec {
      *   mode -2: mech_fb_apply_aws_out for k in [0, 7)
      *   mode -1: mech_fb_apply_aws_out for k in [7, AREA_WEIGHTED_SUM_ELEMENTS)
      *   mode >= 0 (and accum.M_coupled > 0): mech_fb_apply_source_mass_out
-     *     + aux->n_couplings_thistask++
      * Runs ONCE per outer iter (production-only — runner.cc:4310-4313 calls
      * it AFTER both production+oracle after_iter passes and after oracle
      * compare), so oracle dual-walk does not double-apply. */

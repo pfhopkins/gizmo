@@ -15,8 +15,6 @@
 
 #ifdef GALSF_FB_MECHANICAL
 
-int N_Gas_Couplings_ThisTask; // define variable to use below to record if and how many times a coupling to a cell occurs in a timestep per MPI task
-
 int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 int addFB_evaluate_active_check(int i, int fb_loop_iteration)
 {
@@ -135,8 +133,7 @@ static struct MechFBGasDelta *LocalGasMechFBInfoTemp;
 /* subroutine to check for total kinetic energy change and thermal energy change after integrating the effects of all SNe over all cells, and coupling this to particles,  */
 void verify_and_assign_local_mechfb_integrals(void)
 {
-    if(N_Gas_Couplings_ThisTask <= 0) {return;} /* no cells had feedback deposited */
-    int j,k,ndone=0; for(j=0;j<N_gas;j++)
+    int j,k; for(j=0;j<N_gas;j++)
     {
         if(LocalGasMechFBInfoTemp[j].N_injected <= 0) {continue;} /* all mechanisms deposit non-zero mass, so skip if this is not >0*/
         if(P[j].Type==0 && P[j].Mass>0)
@@ -246,8 +243,12 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #endif /* COSMIC_RAY_FLUID */
-            ndone++; /* note another cell accounted for */
-            if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
+            /* apply to every home gas cell with pending deltas (N_injected>0):
+               this buffer is the single source of truth for received feedback,
+               populated by all paths (single/multi-rank, both dispatch modes)
+               before this routine runs, so no source-side coupling count is
+               consulted -- that count was rank-attributed to sources, not
+               receivers, and truncated cross-rank deposits. */
         }
     }
     return;
@@ -282,17 +283,14 @@ void mechanical_fb_calc_toplevel(void)
         if(global_num_active == 0) { return; }
 
         LocalGasMechFBInfoTemp = mechfb_alloc_local_gas_delta(N_gas);
-        N_Gas_Couplings_ThisTask = 0;
         mechfb_zero_local_gas_delta(LocalGasMechFBInfoTemp, N_gas);
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         {int aa = 0; for(int ii : ActiveParticleList) {
             if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
-        int n_coup_gpu = 0;
         mechfb_run_iterative(nl_active, num_active,
-                              LocalGasMechFBInfoTemp, N_gas, &n_coup_gpu);
-        N_Gas_Couplings_ThisTask = n_coup_gpu;
+                              LocalGasMechFBInfoTemp, N_gas);
         myfree(nl_active);
     }
 

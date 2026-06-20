@@ -42,7 +42,7 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars);
 void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas);
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
-                          int n_gas, int *n_couplings_out);
+                          int n_gas);
 
 
 /* ---- radfb_local: radiation_pressure_winds — runner-template ported in

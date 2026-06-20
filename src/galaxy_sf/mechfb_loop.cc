@@ -76,7 +76,6 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
      * neither adds nor removes particles mid-loop). Threaded into
      * mechfb_target_gas_delta as the upper bound for the local-non-gas gap. */
     aux.num_local_particles    = ghost_get_num_local();
-    aux.n_couplings_thistask   = 0;
 
     /* Milestone 3.5 — ghost-side scratch is grown lazily per iter inside
      * reset_per_iter_device_context (when ghost_get_num_ghosts() exceeds
@@ -413,7 +412,6 @@ IterResult MechFBSpec::after_iter(const AfterIterContext<MechFBSpec>& ctx,
  *   - mode -2: mech_fb_apply_aws_out  (writes P[i].Area_weighted_sum[0..6])
  *   - mode -1: mech_fb_apply_aws_out  (writes P[i].Area_weighted_sum[7..])
  *   - mode >=0 (gated on accum.M_coupled > 0): mech_fb_apply_source_mass_out
- *     + aux->n_couplings_thistask++
  *
  * Note: `active_set_size[sg]` shrinks after compaction (last iter all
  * Converged → size becomes 0). But accum_uvm[sg][slot] entries persist at
@@ -457,7 +455,6 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
             mech_fb_apply_aws_out(&accum, i, mode);
         } else if (accum.M_coupled > 0) {
             mech_fb_apply_source_mass_out(P, CellP, i, accum.M_coupled);
-            aux->n_couplings_thistask++;
         }
     }
 }
@@ -807,7 +804,7 @@ void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas) {
  */
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
-                          int n_gas, int *n_couplings_out) {
+                          int n_gas) {
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
      * global_num_active == 0 case. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's
@@ -844,8 +841,6 @@ void mechfb_run_iterative(int *active_list, int num_active,
      * The runner's post-iter fence covers per-iter writes; the toplevel
      * adds this final fence after the call returns. */
     Kokkos::fence();
-
-    if (n_couplings_out) *n_couplings_out = aux.n_couplings_thistask;
 
     /* Milestone 3.5 validation readout — proves the multi-rank Mode A
      * ghost-writeback path was actually exercised. MA-N pass criterion:
