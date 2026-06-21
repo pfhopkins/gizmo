@@ -52,3 +52,22 @@ def test_core(num_mpi_ranks, num_omp_threads):
     # Mass conservation
     mass_err = abs(mass_f.sum() - mass0.sum()) / mass0.sum()
     assert mass_err < 1e-3, f"Mass not conserved: relative error {mass_err:.6f}"
+
+    # ------------------------------------------------------------------
+    # Diagnostic figures + summary table (best-effort; never fails the test).
+    # Documents the collapse against first-principles physics: central-density
+    # runaway and first-core bounce vs the free-fall time, exact adherence to
+    # the forced barotropic EOS, virial ratio, radial profiles (rho, v_r,
+    # v_phi, |B|, dt), div.B cleaning error, momentum/angular-momentum/core-
+    # position conservation, per-particle timestep correctness, the timestep
+    # floor, and face-on/edge-on density slices with the B field overlaid.
+    # Requires the OUTPUT_* diagnostic fields in Config.sh and meshoid; if a
+    # field or dependency is missing the routine degrades gracefully.
+    # ------------------------------------------------------------------
+    try:
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from core_analysis import make_all_core_diagnostics
+        make_all_core_diagnostics(outputdir)  # -> test/core/diag_plots/*.pdf
+    except Exception as e:
+        print(f"[core] diagnostic analysis skipped: {e}")

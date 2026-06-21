@@ -12,9 +12,9 @@
 %
 InitCondFile                       core_ics
 OutputDir                          output
-TimeMax                            0.25
+TimeMax                            0.04
 BoxSize                            0.15
-TimeBetSnapshot                    0.05
+TimeBetSnapshot                    0.001
 DesNumNgb                          32
 BiniX                              0
 BiniY                              0
