@@ -339,6 +339,20 @@ void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_
 }
 
 
+/* Snap the predicted CBE state to the conserved state (pred = conserved). Used
+ * by the second half-kick after the gravity update: the palindromic split runs
+ * the CBE kick before gravity there, so the post-CBE-kick predictor reset is in
+ * the pre-gravity frame; this restores pred==conserved once gravity has advanced
+ * pi.Vel. Writes ONLY the derived _pred fields. */
+void cbe_sync_pred_to_conserved(int i)
+{
+    for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++)
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
+            P[i].CBE_basis_moments_pred[b][k] = P[i].CBE_basis_moments[b][k];
+    for(int k = 0; k < 3; k++) P[i].CBE_VelPred[k] = P[i].Vel[k];
+}
+
+
 /* ---------------------------------------------------------------------------
  * Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
  * 2026-05-24). Gated by CBE_INTEGRATOR_OUTPUT_MOREINFO (or the broader
