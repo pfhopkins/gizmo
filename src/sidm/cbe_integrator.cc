@@ -312,8 +312,30 @@ void do_cbe_initialization(void)
                 }
             }
         }
+
+        /* Predictor seed: initialize the (derived, IO-excluded) predicted CBE
+         * state to the freshly-initialized conserved state. Keeping pred ==
+         * conserved here makes the predictor a no-op until the first drift
+         * advances it; the flux reads pred. */
+        for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
+            for(k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                P[i].CBE_basis_moments_pred[j][k] = P[i].CBE_basis_moments[j][k];
+            }
+        }
+        for(k = 0; k < 3; k++) { P[i].CBE_VelPred[k] = P[i].Vel[k]; }
     }
     return;
+}
+
+
+/* Host shim: advance one particle's predicted CBE state during a drift.
+ * Forwards to the device-callable kernel on P[i] (host context here; the
+ * kernel is equally usable from a future GPU drift pass). The caller
+ * (drift_particle) supplies the drift interval and the gravity-kick factors
+ * from the same get_gravkick_factor machinery as the gas VelPred prediction. */
+void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_gravkick_pm)
+{
+    do_cbe_predict_drift_kernel(P[i], dt_drift, dt_gravkick, dt_gravkick_pm);
 }
 
 

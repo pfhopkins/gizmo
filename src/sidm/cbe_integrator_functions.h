@@ -2595,6 +2595,64 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      * stochastic split-largest) with the single SSOT helper defined
      * above. Operates on the now-frame-consistent relative storage. */
     cbe_repair_cell_conservative_basis_states(pi, dT_out);
+
+    /* Predictor reset: after the conserved kick, snap the predicted state to
+     * the new conserved state; subsequent drifts advance pred from here and
+     * the flux reads pred. Writes ONLY the derived _pred fields (conserved
+     * state untouched). NOTE: pi.Vel here is the current post-kick CBE frame —
+     * do_the_kick has already applied gravity before this CBE kick, and V_new
+     * was derived from that gravity-inclusive frame. So CBE_VelPred starts from
+     * the current gravity-inclusive frame; the predictor adds only the gravity
+     * increment over later drift intervals (no double counting). */
+    for(int jp=0; jp<CBE_INTEGRATOR_NBASIS; jp++)
+        for(int kp=0; kp<CBE_INTEGRATOR_NMOMENTS; kp++)
+            pi.CBE_basis_moments_pred[jp][kp] = pi.CBE_basis_moments[jp][kp];
+    for(int ap=0; ap<3; ap++) pi.CBE_VelPred[ap] = pi.Vel[ap];
+}
+
+/* Predicted-state drift for the adaptive-timestep CBE predictor. Advances the
+ * derived (CBE_basis_moments_pred, CBE_VelPred) over a drift interval so an
+ * active short-dt neighbor reading these sees an estimate of where this cell
+ * WILL be, instead of its stale begin-of-step conserved reservoir (the cause
+ * of the adaptive over-siphon). Mirrors do_cbe_drift_kick_kernel on the _pred
+ * storage: gravity enters via the FRAME velocity V_old_pred (matching
+ * do_the_kick's GravAccel*dt_gravkick update of pi.Vel, which the conserved
+ * CBE kick then reads as V_old), then the SSOT frame round-trip applies the
+ * last-active CBE moment rate over dt_drift, then a realizability repair on the
+ * predicted rows. Writes ONLY the _pred fields; conserved state untouched.
+ * dt_gravkick / dt_gravkick_pm come from the same get_gravkick_factor
+ * machinery as the gas VelPred prediction (predict.cc). */
+KOKKOS_INLINE_FUNCTION
+static void do_cbe_predict_drift_kernel(struct particle_data& pi, double dt_drift,
+                                        double dt_gravkick, double dt_gravkick_pm)
+{
+    if(!(pi.Mass > 0)) return;
+
+    /* Fold the gravity drift into the frame velocity (NOT the relative
+     * moments): a uniform velocity shift leaves each basis's central stress
+     * invariant and only advects the mean. GravAccel*dt_gravkick (no cf_a2inv,
+     * matching do_the_kick); PM long-range piece by analogy to gas VelPred. */
+    double V_old_pred[3];
+    for(int a=0;a<3;a++) V_old_pred[a] = pi.CBE_VelPred[a] + pi.GravAccel[a]*dt_gravkick;
+#ifdef PMGRID
+    for(int a=0;a<3;a++) V_old_pred[a] += pi.GravPM[a]*dt_gravkick_pm;
+#else
+    (void)dt_gravkick_pm;
+#endif
+
+    double V_new_pred[3];
+    double pred_coeff = dt_drift;
+    cbe_apply_moment_rate_framecorrect(pi.CBE_basis_moments_pred, V_old_pred,
+                                       pi.CBE_basis_moments_dt, pred_coeff,
+                                       pi.CBE_basis_moments_pred, V_new_pred);
+    for(int a=0;a<3;a++) pi.CBE_VelPred[a] = V_new_pred[a];
+
+    /* Realizability repair on the PREDICTED rows only (array-level core, never
+     * the conserved-state wrapper). dT is local/discarded — predicted-repair
+     * diagnostics stay out of cbe_diagnostics until the flux consumes pred. */
+    double dT_pred = 0.0;
+    cbe_repair_basis_states_core(pi.CBE_basis_moments_pred, &dT_pred);
+    (void)dT_pred;
 }
 
 /* GPU-callable per-particle post-gravity finalization for the CBE integrator.

@@ -229,9 +229,9 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
             L.U_i, Vel_i_code, L.V_i, cf_a3inv, cf_atime, Q_i);
     }
     {
-        double Vel_j_code[3] = { (double)Pj.Vel[0], (double)Pj.Vel[1], (double)Pj.Vel[2] };
+        double Vel_j_code[3] = { (double)Pj.CBE_VelPred[0], (double)Pj.CBE_VelPred[1], (double)Pj.CBE_VelPred[2] };
         cbe_build_flux_frame_Q_from_stored_moments(
-            Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
+            Pj.CBE_basis_moments_pred, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
     /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Matching API
@@ -430,9 +430,9 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
             L.U_i, Vel_i_code, L.V_i, cf_a3inv, cf_atime, Q_i);
     }
     {
-        double Vel_j_code[3] = { (double)Pj.Vel[0], (double)Pj.Vel[1], (double)Pj.Vel[2] };
+        double Vel_j_code[3] = { (double)Pj.CBE_VelPred[0], (double)Pj.CBE_VelPred[1], (double)Pj.CBE_VelPred[2] };
         cbe_build_flux_frame_Q_from_stored_moments(
-            Pj.CBE_basis_moments, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
+            Pj.CBE_basis_moments_pred, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
     /* Basis matching via SSOT helper. Same comment as the LSQ pair body:
@@ -730,13 +730,17 @@ struct CBEGradSpec {
         L.Mass             = dctx.P[i].Mass;
         L.AGS_KernelRadius = (double)dctx.P[i].AGS_KernelRadius;
         L.Pos              = a.pos;
-        L.Vel[0] = (double)dctx.P[i].Vel[0];
-        L.Vel[1] = (double)dctx.P[i].Vel[1];
-        L.Vel[2] = (double)dctx.P[i].Vel[2];
+        /* Build active-particle gradients from the PREDICTED (drifted) state,
+         * matching hydro (which constructs active gradients from VelPred) and
+         * the predicted flux reconstruction. pred is maintained everywhere by
+         * the predictor (init seed + post-kick reset + per-drift advance). */
+        L.Vel[0] = (double)dctx.P[i].CBE_VelPred[0];
+        L.Vel[1] = (double)dctx.P[i].CBE_VelPred[1];
+        L.Vel[2] = (double)dctx.P[i].CBE_VelPred[2];
         L.V_i    = get_particle_volume_ags_P(i, dctx.P);
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                L.U_i[m][k] = dctx.P[i].CBE_basis_moments[m][k];
+                L.U_i[m][k] = dctx.P[i].CBE_basis_moments_pred[m][k];
 
         /* Mode-B-safe by-value snapshot of the persistent gradient row
          * (design invariant I2). Pass-1 limiter reads this from

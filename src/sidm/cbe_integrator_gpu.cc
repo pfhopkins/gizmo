@@ -46,11 +46,12 @@
  * cbe_drift_kick_evaluate_gpu — first/second half-step CBE drift-kick.
  *
  * Kernel: do_cbe_drift_kick_kernel(pi, dt, dT_out).
- * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] AND pi.Vel[0..2]. The
- *        absolute-update round-trip (codex 2026-06-04) derives V_new from
- *        the post-update mass-weighted-mean basis velocity and writes it
- *        back to pi.Vel directly. The GPU narrow scatter therefore must
- *        copy BOTH fields back from compact_P.
+ * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] AND pi.Vel[0..2], plus the
+ *        predictor reset's pi.CBE_basis_moments_pred / pi.CBE_VelPred (pred =
+ *        post-kick conserved state). The absolute-update round-trip (codex
+ *        2026-06-04) derives V_new from the post-update mass-weighted-mean
+ *        basis velocity and writes it to pi.Vel directly. The GPU narrow
+ *        scatter therefore must copy all of these fields back from compact_P.
  * Reads: All.Time, All.TimeBegin, All.Ti_Current (via the kernel's basis-
  *        resplit branch); All-mirror handles the device read.
  *
@@ -134,15 +135,24 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     /* gizmo_gpu_kernel_launch fences before returning (the narrow scatter
      * below already relies on this); host reads of dT_scratch[a] follow. */
 
-    /* Narrow scatter: kernel writes CBE_basis_moments AND pi.Vel (the
-     * latter from the absolute-update round-trip's V_new = MMV derivation,
-     * codex 2026-06-04). Both must be scattered back to P_host. */
+    /* Narrow scatter: kernel writes CBE_basis_moments AND pi.Vel (the latter
+     * from the absolute-update round-trip's V_new = MMV derivation, codex
+     * 2026-06-04), AND the predictor reset writes CBE_basis_moments_pred /
+     * CBE_VelPred (pred = post-kick conserved state). All must be scattered
+     * back to P_host — the OMP path updates in place, but the GPU path runs on
+     * the compact copy, so dropping the pred fields here would leave host pred
+     * stale on the large-N path. */
     for(int a = 0; a < num_active; a++) {
         int ii = active_indices[a];
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
-            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                P_host[ii].CBE_basis_moments[m][k] = compact_P[a].CBE_basis_moments[m][k];
-        for(int k = 0; k < 3; k++) P_host[ii].Vel[k] = compact_P[a].Vel[k];
+            for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
+                P_host[ii].CBE_basis_moments[m][k]      = compact_P[a].CBE_basis_moments[m][k];
+                P_host[ii].CBE_basis_moments_pred[m][k] = compact_P[a].CBE_basis_moments_pred[m][k];
+            }
+        for(int k = 0; k < 3; k++) {
+            P_host[ii].Vel[k]         = compact_P[a].Vel[k];
+            P_host[ii].CBE_VelPred[k] = compact_P[a].CBE_VelPred[k];
+        }
     }
 
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)

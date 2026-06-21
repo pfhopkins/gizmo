@@ -381,6 +381,13 @@ extern ALIGN(32) struct particle_data
                                                                                        *  -CBE_basis_out_rate_dt[a][0] to get positive mass-out
                                                                                        *  rate per basis. Populated but UNREAD in commit 1
                                                                                        *  (infrastructure only; behavior unchanged). */
+    /* Predicted (drifted) CBE state for the adaptive-timestep predictor.
+     * Derived numerics: NEVER written to snapshots or read from IC (no IO
+     * block). Seeded pred=conserved at init and after every CBE kick;
+     * advanced by do_cbe_predict_drift_kernel each drift. The flux reads
+     * THESE (both sides), not the raw begin-of-step conserved state. */
+    double CBE_basis_moments_pred[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double CBE_VelPred[3];                                          /* predicted bulk velocity (CBE MMV + gravity drift) */
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
     /* Persistent gradient of PRIMITIVE flux-frame basis content (ρ, v_k,
      * S_kl) — NOT of the moment row (m, p_k, T_kl) despite the field

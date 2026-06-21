@@ -184,7 +184,23 @@ void drift_particle(int i, integertime time1)
 #ifdef DM_FUZZY
     do_dm_fuzzy_drift_kick(i, dt_drift, 1);
 #endif
-    
+
+#ifdef CBE_INTEGRATOR
+    /* Advance the predicted CBE state over this drift interval so active
+     * short-dt neighbors sample a drifted estimate of this cell instead of
+     * its stale begin-of-step conserved reservoir. Gravity-kick factors built
+     * the same way as the gas VelPred prediction below. */
+    if(P[i].Mass > 0)
+    {
+        double dt_gravkick_cbe = get_gravkick_factor(time0, time1, i, 0);
+        double dt_gravkick_pm_cbe = 0.0;
+#ifdef PMGRID
+        dt_gravkick_pm_cbe = get_gravkick_factor(time0, time1, -1, 0);
+#endif
+        do_cbe_predict_drift(i, dt_drift, dt_gravkick_cbe, dt_gravkick_pm_cbe);
+    }
+#endif
+
     if((P[i].Type == 0) && (P[i].Mass > 0))
         {
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;

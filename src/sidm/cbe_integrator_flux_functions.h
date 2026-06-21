@@ -69,7 +69,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         Face_Area_Vec[k] = -(kernel.wk_i * wt_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
                            + kernel.wk_j * wt_j * (P[j].NV_T[k][0]*kernel.dp[0] + P[j].NV_T[k][1]*kernel.dp[1] + P[j].NV_T[k][2]*kernel.dp[2])) * All.cf_atime * All.cf_atime;
         Face_Area_Norm += Face_Area_Vec[k] * Face_Area_Vec[k];
-        vface_guess[k] = 0.5 * (local.Vel[k] + P[j].Vel[k]) / All.cf_atime;
+        vface_guess[k] = 0.5 * (local.Vel[k] + P[j].CBE_VelPred[k]) / All.cf_atime;
     }
     Face_Area_Norm = sqrt(Face_Area_Norm);
     if(!(Face_Area_Norm > 0)) { return r; }
@@ -103,12 +103,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     {
+        /* i-side: local.Vel / local.CBE_basis_moments already hold the PREDICTED
+         * state (loaded from CBE_VelPred / CBE_basis_moments_pred in the AGS-force
+         * loader under CBE_INTEGRATOR). j-side: read predicted state directly. */
         double Vel_i_code[3] = { local.Vel[0], local.Vel[1], local.Vel[2] };
-        double Vel_j_code[3] = { P[j].Vel[0],  P[j].Vel[1],  P[j].Vel[2]  };
+        double Vel_j_code[3] = { P[j].CBE_VelPred[0], P[j].CBE_VelPred[1], P[j].CBE_VelPred[2] };
         cbe_build_flux_frame_Q_from_stored_moments(
             local.CBE_basis_moments, Vel_i_code, V_i, All.cf_a3inv, All.cf_atime, Q_i);
         cbe_build_flux_frame_Q_from_stored_moments(
-            P[j].CBE_basis_moments, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
+            P[j].CBE_basis_moments_pred, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
     }
 
     /* Face reconstruction. With CBE_INTEGRATOR_WITHGRADIENTS on, the
