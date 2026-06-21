@@ -880,12 +880,59 @@ double cbe_face_normal_stress_speed_from_Qrow(
  * Cold limit c_x -> 0: F0 branch for u_out > 0, F = 0 for u_out < 0
  * (recovers cold-F0 cleanly when no stress is stored or n.S.n is zero).
  * -------------------------------------------------------------------------- */
+/* Per-basis face-flux scalars (SSOT): mass flux density per unit area F_m, and
+ * the pressure (pstress) and intrinsic-stress (gomega) flux COEFFICIENTS, all
+ * for the SELECTED flux scheme. The single compile switch CBE_INTEGRATOR_RP_GAUSSIAN
+ * flips HLLC <-> exact one-sided Gaussian (kinetic) HERE, in this one place; both
+ * consumers -- the v_F-normal root-find residual and the full flux solver
+ * cbe_flux_hllc_vacuum -- call this, so they can never disagree on the scheme.
+ * Inputs are complete in (rho, u_out, c_x): sigma_x = c_x/sqrt(3), with
+ * sigma_x^2 = n.S.n the normal central stress; u_out is the source-side outward
+ * normal velocity relative to the (moving) face.
+ *
+ * The full flux is assembled identically for either scheme (cbe_flux_hllc_vacuum):
+ *   F_mass   = F_m
+ *   F_mom_k  = v_k F_m + pstress * S_n_k
+ *   F_T_kl   = R_kl F_m + pstress (v_k S_n_l + v_l S_n_k) + gomega S_n_k S_n_l
+ * HLLC:     F_m branched; pstress = F_m / c_x (= prefactor); gomega = 0.
+ * Gaussian: with xi = u_out/sigma_x, Phi = normal CDF, phi = normal PDF,
+ *   F_m = rho (sigma_x phi + u_out Phi);  pstress = rho Phi;  gomega = rho phi / sigma_x.
+ * F_m is monotone non-decreasing in u_out for both (HLLC slopes rho, 3rho/4, 0;
+ * Gaussian slope rho*Phi in [0,rho]) -> the residual stays monotone, bisection
+ * converges.
+ *
+ * This is a flux-SCHEME / coefficient model, not a wrapper around legacy HLLC:
+ * a new scheme (e.g. corrected-HLLC with different pstress/gomega coefficients)
+ * is added as another branch here, and both consumers inherit it for free. The
+ * HLLC branch is FP-EQUIVALENT to the pre-helper inline assembly, not necessarily
+ * bit-identical (the coefficient algebra now lives in one place; -ffast-math may
+ * reorder it). Non-chaotic problems reproduce HLLC to FP floor; a chaotic 3D
+ * collapse amplifies the reorder but the physics is unchanged. */
+struct CbeFaceFluxScalars { double F_m; double pstress; double gomega; };
+
 KOKKOS_INLINE_FUNCTION
-double cbe_hllc_mass_flux_per_unit_area(double rho, double u_out, double c_x)
+CbeFaceFluxScalars cbe_face_flux_scalars(double rho, double u_out, double c_x)
 {
-    if(u_out >= c_x)              return rho * u_out;
-    else if(u_out > -c_x / 3.0)   return 0.25 * rho * (3.0 * u_out + c_x);
-    else                          return 0;
+    CbeFaceFluxScalars s;
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
+    if(c_x <= MIN_REAL_NUMBER) {                       /* cold / zero-stress: F0 free-stream */
+        s.F_m = (u_out > 0.0) ? rho * u_out : 0.0; s.pstress = 0.0; s.gomega = 0.0;
+        return s;
+    }
+    const double sigma_x = c_x / 1.7320508075688772;   /* sqrt(3) */
+    const double xi      = u_out / sigma_x;
+    const double Phi     = 0.5 * erfc(-xi / 1.4142135623730951);    /* normal CDF, /sqrt(2) */
+    const double phi     = exp(-0.5*xi*xi) / 2.5066282746310002;    /* normal PDF, /sqrt(2pi) */
+    s.F_m     = rho * (sigma_x * phi + u_out * Phi);
+    s.pstress = rho * Phi;
+    s.gomega  = rho * phi / sigma_x;
+#else
+    if(u_out >= c_x)            { s.F_m = rho * u_out;                 s.pstress = rho; }
+    else if(u_out > -c_x / 3.0) { s.F_m = 0.25*rho*(3.0*u_out + c_x);  s.pstress = 0.25*rho*(3.0*u_out/c_x + 1.0); }
+    else                        { s.F_m = 0.0;                         s.pstress = 0.0; }
+    s.gomega = 0.0;
+#endif
+    return s;
 }
 
 
@@ -900,10 +947,10 @@ double cbe_hllc_mass_flux_per_unit_area(double rho, double u_out, double c_x)
  * j-side basis outflow (u_out_j = v_F_n - v_alpha_n_j) carries mass in
  * -A_hat. Net flux in +A_hat is therefore
  *
- *   r(v_F_n) = sum_m  F_m_HLLC(K_i[m], u_out_i, c_x_i[m])
- *            - sum_m  F_m_HLLC(K_j[m], u_out_j, c_x_j[m]).
+ *   r(v_F_n) = sum_m  F_m(K_i[m], u_out_i, c_x_i[m])
+ *            - sum_m  F_m(K_j[m], u_out_j, c_x_j[m]).
  *
- * Monotone non-increasing in v_F_n (each per-basis F_m_HLLC is monotone
+ * Monotone non-increasing in v_F_n (each per-basis F_m is monotone
  * non-decreasing in u_out: F0 slope rho, F1 slope 3 rho / 4, F=0 slope 0;
  * u_out_i decreases as v_F_n rises; u_out_j increases as v_F_n rises);
  * bisection in cbe_face_solve_v_F_normal converges to the unique zero.
@@ -923,8 +970,8 @@ double cbe_face_mass_residual_per_unit_area(
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const double u_out_i = v_alpha_n_i[m] - v_F_n;
         const double u_out_j = v_F_n - v_alpha_n_j[m];
-        r += cbe_hllc_mass_flux_per_unit_area(K_i[m], u_out_i, c_x_i[m]);
-        r -= cbe_hllc_mass_flux_per_unit_area(K_j[m], u_out_j, c_x_j[m]);
+        r += cbe_face_flux_scalars(K_i[m], u_out_i, c_x_i[m]).F_m;
+        r -= cbe_face_flux_scalars(K_j[m], u_out_j, c_x_j[m]).F_m;
     }
     return r;
 }
@@ -970,7 +1017,7 @@ double cbe_face_solve_v_F_normal(
     *bracket_ok_out = 1;
     /* Tightened tol_rel to 1e-14 (Wave-CBE Commit 9): the strict-root-found
      * policy means the per-face mass residual at v_F is bounded by
-     * |F_m_HLLC'(v_F)| * (hi - lo), and |F_m'| ~ sum of active basis K's
+     * |F_m'(v_F)| * (hi - lo), and |F_m'| ~ sum of active basis K's
      * times Face_Area_Norm. For Hernquist v_F bracket scale ~200 the
      * 1e-12 rel tol left residuals at ~1e-10 (above the col-2 <= 1e-11
      * gate); 1e-14 brings them solidly below. Extra iterations are cheap
@@ -1704,47 +1751,53 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
 #endif
     const double c_x = cbe_face_normal_stress_speed_from_Qrow(moments, n_hat);
 
-    /* Mass slot via SSOT HLLC helper -- bit-identical to what the v_F
-     * root-find residual sums over, so basis-summed F_m at v_F == 0
-     * exactly implies cell-summed mass conservation. F = 0 vacuum branch
-     * returns short-circuit (no stress / momentum work needed). */
-    const double F_m_per_area = cbe_hllc_mass_flux_per_unit_area(rho, u_out, c_x);
+    /* Mass slot + scheme coefficients via the SSOT helper -- bit-identical to
+     * what the v_F root-find residual sums over (it calls the same helper), so
+     * basis-summed F_m at v_F == 0 exactly implies cell-summed mass
+     * conservation, and the deposited flux can never disagree with the root
+     * solve on the scheme (HLLC vs Gaussian, set by CBE_INTEGRATOR_RP_GAUSSIAN).
+     * F = 0 vacuum branch returns short-circuit (no stress / momentum work). */
+    const CbeFaceFluxScalars fs = cbe_face_flux_scalars(rho, u_out, c_x);
+    const double F_m_per_area = fs.F_m;
     if(F_m_per_area == 0) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
         return (fabs(u_out) + c_x) * A_norm;
     }
     fluxes[0] = F_m_per_area * A_norm;
 
-    /* prefactor and u_or_c are derived from the helper's branching for
-     * use in the momentum + stress slots, which still need the tensor
-     * structure that the scalar helper does not return. */
-    const double prefactor = (u_out >= c_x) ? rho : 0.25 * rho * (3.0 * u_out / c_x + 1.0);
-    const double u_or_c    = (u_out >= c_x) ? u_out : c_x;
+    /* Pressure (pstress) and intrinsic-stress (gomega) flux coefficients from
+     * the same helper. HLLC: pstress = F_m/c_x branch-prefactor, gomega = 0.
+     * Gaussian: pstress = rho*Phi, gomega = rho*phi/sigma_x (the S_n⊗S_n term). */
+    const double pstress_coef = fs.pstress;
+    const double gomega_coef  = fs.gomega;
 
-    /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. The flux row
+    /* Momentum: F_p_k = v_k * F_m + pstress_coef * |A| * S_n_k. The flux row
      * has only NUMDIMS momentum slots in low-D builds; cbe_basis_p_w silently
      * drops writes to non-existent y/z slots. The S_n[k] math stays 3-vector
      * so the rotation-invariant cold limit (S=0 → fluxes[k+1] = v[k]*F_m)
      * collapses cleanly to the existing 1D code path with v_y=v_z=0. */
     for(int k=0; k<3; k++) {
-        cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + prefactor * A_norm * S_n[k]);
+        cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + pstress_coef * A_norm * S_n[k]);
     }
 
-    /* Stress: F_T_ab = R_ab * F_m + prefactor * |A| * (v_a S_n_b + S_n_a v_b).
-     * Active block (a,b < NUMDIMS) with 2*v*S_n on diagonals (the v_a S_n_b
-     * + S_n_a v_b sum collapses to 2 v_a S_n_a when a==b). The R_ab * F_m
-     * piece carries RAW R; the cross piece uses central S contracted with
-     * n_hat (S_n). Writes via cbe_basis_T_w so inactive slots are silently
-     * untouched -- no OOB at any NUMDIMS. */
+    /* Stress: F_T_ab = R_ab * F_m + pstress_coef * |A| * (v_a S_n_b + S_n_a v_b)
+     * + gomega_coef * |A| * S_n_a S_n_b. The S_n⊗S_n term (gomega) is the exact
+     * one-sided third-moment / heat-flux piece of the Gaussian flux; it is 0 in
+     * the HLLC scheme. Active block (a,b < NUMDIMS); the v_a S_n_b + S_n_a v_b
+     * sum collapses to 2 v_a S_n_a when a==b. The R_ab * F_m piece carries RAW
+     * R; the cross piece uses central S contracted with n_hat (S_n). Writes via
+     * cbe_basis_T_w so inactive slots are silently untouched -- no OOB. */
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int a=0; a<NUMDIMS; a++) {
         const double R_aa = cbe_basis_T_r(moments, a, a) * inv_rho;
         cbe_basis_T_w(fluxes, a, a,
-            R_aa * fluxes[0] + prefactor * A_norm * 2.0 * v[a] * S_n[a]);
+            R_aa * fluxes[0] + pstress_coef * A_norm * 2.0 * v[a] * S_n[a]
+            + gomega_coef * A_norm * S_n[a] * S_n[a]);
         for(int b=a+1; b<NUMDIMS; b++) {
             const double R_ab = cbe_basis_T_r(moments, a, b) * inv_rho;
             cbe_basis_T_w(fluxes, a, b,
-                R_ab * fluxes[0] + prefactor * A_norm * (v[a]*S_n[b] + S_n[a]*v[b]));
+                R_ab * fluxes[0] + pstress_coef * A_norm * (v[a]*S_n[b] + S_n[a]*v[b])
+                + gomega_coef * A_norm * S_n[a] * S_n[b]);
         }
     }
 #endif

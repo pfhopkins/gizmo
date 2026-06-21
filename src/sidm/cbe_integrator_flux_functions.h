@@ -359,8 +359,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         vbulk_dot_Ahat = v_F_guess;
     }
 
-    /* Root-find face-normal v_F on the HLLC mass-flux residual (Wave-CBE
-     * Commit 9): bisection in v_F_n until basis-summed F_m_HLLC across both
+    /* Root-find face-normal v_F on the mass-flux residual (Wave-CBE
+     * Commit 9): bisection in v_F_n until basis-summed F_m across both
      * sides vanishes. K=0 rows contribute 0 to the residual, so the root
      * depends only on the active-basis set. Fallback on bracket failure is
      * vbulk_dot_Ahat (bulk-weighted normal velocity over the active set,
@@ -460,11 +460,10 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
             /* Outflow ledger (commit 2 of the aggregate-limiter pair; commit 1
-             * a529fefb declared the field). HLLC mass-flux is unconditionally
-             * >= 0 for finite rho > 0 (cbe_hllc_mass_flux_per_unit_area at
-             * functions.h:735 -- F0 branch rho*u with u>=c>=0; F1 branch
-             * 0.25*rho*(3u+c) with 3u+c>0 in the F1 interval; F=0 branch
-             * explicit zero). Mirroring the loss-side `-= flux[k]` deposit
+             * a529fefb declared the field). The per-basis mass flux is
+             * unconditionally >= 0 for finite rho > 0 (cbe_face_flux_scalars:
+             * HLLC F0/F1/0 branches are each >= 0; Gaussian F_m = rho*(sigma_x*phi
+             * + u_out*Phi) = rho * int_{w>0} w f dw >= 0). Mirroring the loss-side `-= flux[k]` deposit
              * therefore records actual outgoing flux as a negative ledger
              * value; the aggregate-limiter helper reads
              * -CBE_basis_out_rate_dt[a][0] to recover positive mass-out rate.
