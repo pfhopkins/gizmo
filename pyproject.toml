@@ -12,7 +12,10 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-dependencies = ["pytest","h5py","matplotlib","astropy","numpy", "scipy", "meshoid"]
+dependencies = ["pytest","pytest-timeout","h5py","matplotlib","astropy","numpy", "scipy", "meshoid"]
+
+[tool.pytest.ini_options]
+timeout = 300
 
 license = "MIT"
 
