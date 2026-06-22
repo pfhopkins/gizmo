@@ -7,6 +7,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
+#ifdef JACO
+#include "./jaco_tables.h"
+#endif
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
@@ -236,7 +239,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad; /* variables for below showing total change in gas energy from radiation, and placeholder for the hydro work term */
         de_u_work = (cell[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact; /* account for hydro work going into the system as an energy source */
 #ifndef COOLING_OPERATOR_SPLIT
-        de_u_work = DtInternalEnergyEffCGS / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
+        de_u_work = cell[i].DtInternalEnergy / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
 #endif
         double de_u_radabs=0; /* need to collect absorbed photon energy to know how much energy to limit the 'dumped' energy to */
         for(k=0;k<N_RT_FREQ_BINS;k++)

@@ -68,7 +68,9 @@ void jaco_build_cie_table(void) {
     Params pr = {};
     pr.n_Htot = 1.0;
     pr.Delta_t = 1e15;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     pr.y = 0.0994;
+#endif
 #if defined(JACO_MODEL_STARFORGE)
     pr.ISRF = 1.0;
     pr.N_H = 1e20;
@@ -98,6 +100,7 @@ void jaco_build_cie_table(void) {
     pr.grad_v = 1e-14;
 #endif
 
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     /* Sweep with continuation, from HIGH T to LOW T. The (0.9, 0.01, 0.01)
        guess is in the basin of attraction of the physical solution at high T;
        sweeping downward, the previous (mostly-ionized) solution stays in the
@@ -185,8 +188,6 @@ void jaco_build_cie_table(void) {
         xHep = sv.x_Heplus;
         xHepp = sv.x_Heplusplus;
     }
-
-    cie_table_initialized = 1;
     if (ThisTask == 0) {
         printf("JACO: built CIE lookup table (%d points, logT %.1f–%.1f)\n", CIE_TABLE_N, CIE_TABLE_LOG_TMIN,
                CIE_TABLE_LOG_TMAX);
@@ -199,6 +200,8 @@ void jaco_build_cie_table(void) {
             printf("JACO: CIE table written to jaco_cie_table.dat\n");
         }
     }
+#endif /* JACO_MODEL_STARFORGE || JACO_MODEL_PRIMORDIAL || JACO_MODEL_KWH */
+    cie_table_initialized = 1;
 }
 
 /* ---- GIZMO interface layer ---- */
@@ -467,7 +470,7 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
     SolveVars sv = {};
     Params pr = {};
     gizmo_to_jaco(0, &sv, &pr, p, c);
-    int nfeval = jaco_solve(&sv, &pr);
+    int nfeval = jaco_solve(&sv, &pr, 1e-6);
     jaco_to_gizmo(0, &sv, &pr, p, c);
 
 #ifdef _OPENMP
