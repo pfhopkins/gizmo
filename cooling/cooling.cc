@@ -121,6 +121,10 @@ void cooling_parent_routine(void)
     myfree(compact_Cell);
     myfree(compact_P);
 
+#ifdef JACO
+    jaco_report_solve_stats();
+#endif
+
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
   CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); PRINT_STATUS("CHIMES chemistry and cooling finished");
@@ -967,7 +971,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(gJH0/2.29e-10), target, pp, cell);
     if(target >= 0) /* if this is a cell, update some of its thermodynamic stored quantities */
     {
-#if defined(OUTPUT_MOLECULAR_FRACTION)
+#if defined(OUTPUT_MOLECULAR_FRACTION) && !defined(JACO)
         cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell);
 #endif
     }
@@ -1391,7 +1395,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].NetHeatingRateQ = Q;}
 #endif
-#ifdef OUTPUT_MOLECULAR_FRACTION
+#if defined(OUTPUT_MOLECULAR_FRACTION) && !defined(JACO)
     if(target>=0) {cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell);}
 #endif
 
@@ -1760,6 +1764,8 @@ void InitCool(void)
     All.Time = All.TimeBegin;
     set_cosmo_factors_for_current_time();
 #ifdef JACO
+    jaco_init_tables("."); /* load 2D/3D interpolation tables from HDF5 from run directory (no-op if model has none; aborts if files missing) */
+    jaco_build_cie_table(); /* pre-compute CIE ion fractions for initial guess interpolation */
     return;
 #endif
 
