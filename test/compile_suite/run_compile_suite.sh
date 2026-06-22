@@ -13,10 +13,14 @@
 
 set -u
 
-GIZMO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Source tree now lives under src/ (build delegator at repo root). Config.sh,
+# Makefile.systype, config-makefile and GIZMO_config.h all live in src/, and
+# src/Makefile reads Config.sh relative to src/. Operate there directly.
+GIZMO_ROOT="$(cd "$(dirname "$0")/../../src" && pwd)"
 cd "$GIZMO_ROOT"
 
-NJOBS=8
+# Parallel job count overridable via env (e.g. NJOBS=2 for a busy laptop).
+NJOBS="${NJOBS:-8}"
 GPU_MODE=0
 RESUME=0
 for arg in "$@"; do
@@ -369,6 +373,18 @@ for i in "${!CONFIGS[@]}"; do
         } >> "$RESULTS_FILE"
         echo "  --- end diagnostics ---" >> "$RESULTS_FILE"
         FAIL=$((FAIL + 1))
+        # Optional stop-on-first-failure (env-gated). Leaves Config.sh as the
+        # failing config and does NOT restore backups, so the failure can be
+        # reproduced/fixed directly, then resumed with --resume.
+        if [[ "${STOP_ON_FAIL:-0}" -eq 1 ]]; then
+            echo ""
+            echo "[compile_suite] STOP_ON_FAIL: halting at first failure (config $((i+1))/${#CONFIGS[@]})."
+            echo "[compile_suite] Failing flags: $flags"
+            echo "[compile_suite] stderr saved: $GIZMO_ROOT/$errfile"
+            echo "[compile_suite] Config.sh left in place for debugging."
+            rm -f "$DONE_FILE"
+            exit 1
+        fi
     fi
 done
 

@@ -235,8 +235,15 @@ COMPILE_CONFIGS = [
 
 
 def _gizmo_root() -> Path:
-    """Return the GIZMO root directory (2 levels up from this test file)."""
-    return Path(__file__).resolve().parent.parent.parent
+    """Return the GIZMO source dir where the build runs.
+
+    Source now lives under src/ (the repo-root Makefile just delegates
+    ``make -C src``). Config.sh, Makefile.systype, config-makefile and
+    GIZMO_config.h all live in src/, and src/Makefile reads Config.sh
+    relative to src/ -- so each config's Config.sh must be written there
+    and make must run there, not at the repo root.
+    """
+    return Path(__file__).resolve().parent.parent.parent / "src"
 
 
 def _write_config(flags: str, config_path: Path):
