@@ -13,10 +13,6 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = ["pytest","pytest-timeout","h5py","matplotlib","astropy","numpy", "scipy", "meshoid"]
-
-[tool.pytest.ini_options]
-timeout = 300
-
 license = "MIT"
 
 [project.urls]
@@ -27,4 +23,5 @@ Issues = "https://github.com/phopkins/gizmo/issues"
 where = ["python_src"]
 
 [tool.pytest.ini_options]
+timeout = 300
 python_files = ["test_*.py"]
