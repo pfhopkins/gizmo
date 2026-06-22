@@ -95,8 +95,8 @@ def compute_test_statistic(f):
     return {name: binned_statistic(d["r"], d[name], "median", r_bins)[0] for name in stat_names}
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),default_mpi_ranks()*2, default_mpi_ranks()//2))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),default_omp_threads()//2))
 @pytest.mark.parametrize(
     "extra_config_flags",
     [
