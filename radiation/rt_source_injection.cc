@@ -63,8 +63,8 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 #endif
 #endif
     for(k=0; k<N_RT_FREQ_BINS; k++) {if(P[i].Type==0 || active_check==0) {in->Luminosity[k]=0;} else {in->Luminosity[k] = lum[k] * dt;}}
-#ifdef RT_REINJECT_ACCRETED_PHOTONS // if this is enabled, we track how many photons the sink has accreted from gas cells and reinject them here, resetting the photon count
-    if(P[i].Type==5 && active_check) {in->Luminosity[N_RT_FREQ_BINS-1] += P[i].Sink_accreted_photon_energy; P[i].Sink_accreted_photon_energy = 0;} // nominally inject into the last, lowest-energy bin, intended for problems where optically-thick IR is getting advected into the sink
+#ifdef RT_REINJECT_ACCRETED_PHOTONS // if this is enabled, we track how many photons the sink has accreted from gas cells and reinject them here
+    if(P[i].Type==5 && active_check) {in->Luminosity[N_RT_FREQ_BINS-1] += P[i].Sink_accreted_photon_energy;} // do NOT reset here: this function is called twice per exported source (once for local eval, once for export packing), so resetting on the first call would give remote tasks zero reinjection energy; reset happens in a post-loop instead
 #endif
 #if defined(RT_REPROCESS_INJECTED_PHOTONS) && defined(RT_CHEM_PHOTOION)
     in->Dt = dt;
@@ -340,6 +340,9 @@ void rt_source_injection(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#ifdef RT_REINJECT_ACCRETED_PHOTONS
+    {int n_tmp; for(n_tmp=0; n_tmp<NumPart; n_tmp++) {if(P[n_tmp].Type==5) {P[n_tmp].Sink_accreted_photon_energy = 0;}}} /* reset after all injection (local+remote) is complete */
+#endif
     CPU_Step[CPU_RTNONFLUXOPS] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
