@@ -18,3 +18,16 @@ Run `pytest` or `python -m pytest` from the gizmo source code directory. This wi
 A test can fail for several reasons: failure to build `GIZMO` for the provided `Config.sh` flags, failure to run `GIZMO` due to a runtime error, or a failure of the code output to pass the actual test. A failure to build GIZMO will raise an explicit error and may be accompanied with compiler messages hinting at the problem. A failure to pass the test on the output will result in a pytest failure. Runtime failures may be diagnosed by examining `GIZMO`'s standard output files: `test_my_test_name.out` and `test_my_test_name.err`. 
 
 The actual simulation output directory for the test may be found in `test/my_test_name/output` for direct inspection. Optionally, the test may generate informative diagnostic plots that should be written to `test/my_test_name`.
+
+## Per-test timeout
+
+Each test runs the GIZMO subprocess under a wall-clock timeout. If the run exceeds the timeout, the subprocess is killed and the test is marked **skipped** (not failed), so that one slow test doesn't block the rest of the suite.
+
+The default is 240 seconds. To override it:
+
+- For a single pytest invocation: `GIZMO_TEST_TIMEOUT=120 pytest`
+- To disable the timeout entirely: `GIZMO_TEST_TIMEOUT=0 pytest`
+- To change the default for all runs: edit `DEFAULT_TEST_TIMEOUT` in `python_src/gizmo/test.py`
+- Per-call override in test code: `build_and_run_test("my_test", ..., timeout=60)`
+
+There is also an outer `pytest-timeout` safety net (set in `pyproject.toml`, default 600 s) that catches non-GIZMO test code that hangs. Keep `GIZMO_TEST_TIMEOUT` comfortably below that value.

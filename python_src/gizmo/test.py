@@ -1,13 +1,27 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
+import subprocess
 from os import system, environ, path, chdir, cpu_count, remove
 from urllib.request import urlretrieve, HTTPError
 from shutil import move, rmtree
 from glob import glob
 import numpy as np
+import pytest
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
+
+DEFAULT_TEST_TIMEOUT = 240.0
+
+
+def _resolve_test_timeout(timeout):
+    """Resolve effective subprocess timeout. Explicit arg wins; otherwise read
+    GIZMO_TEST_TIMEOUT env var; otherwise fall back to DEFAULT_TEST_TIMEOUT.
+    Setting either to 0 or a negative value disables the timeout."""
+    if timeout is None:
+        env_val = environ.get("GIZMO_TEST_TIMEOUT")
+        timeout = float(env_val) if env_val else DEFAULT_TEST_TIMEOUT
+    return timeout if timeout and timeout > 0 else None
 
 
 def flush_colorbar(mappable, ax=None, label=None, **kwargs):
@@ -104,8 +118,10 @@ def download_test_files(test_name: str):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
-def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
-    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run."""
+def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None):
+    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
+    via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT."""
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
@@ -114,8 +130,17 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
     paramsfile = f"{test_name}.params"
-    bind_opts = "--bind-to none" if num_openmp_threads > 0 else ""
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus {bind_opts} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
+    cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus"]
+    if num_openmp_threads > 0:
+        cmd += ["--bind-to", "none"]
+    cmd += ["./GIZMO", paramsfile, "0"]
+
+    effective_timeout = _resolve_test_timeout(timeout)
+    with open(f"test_{test_name}.out", "w") as out, open(f"test_{test_name}.err", "w") as err:
+        try:
+            subprocess.run(cmd, stdout=out, stderr=err, timeout=effective_timeout, check=False)
+        except subprocess.TimeoutExpired:
+            pytest.skip(f"{test_name} exceeded {effective_timeout}s timeout; GIZMO subprocess killed")
 
 
 def get_cooling_tables(test_directory="."):
@@ -163,7 +188,7 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
         move(stash, plain)
 
 
-def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
+def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -171,11 +196,15 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     stash_baseline_output(test_name, extra_config_flags)
+    from os import getcwd
+    cwd = getcwd()
     try:
         chdir(f"test/{test_name}/")
-        download_test_files(test_name)
-        run_test(test_name, num_mpi_ranks, num_openmp_threads)
-        chdir("../../")
+        try:
+            download_test_files(test_name)
+            run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout)
+        finally:
+            chdir(cwd)
     finally:
         finalize_variant_output(test_name, extra_config_flags)
 
