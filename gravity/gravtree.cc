@@ -7,6 +7,7 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <gsl/gsl_eigen.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -134,10 +135,10 @@ void gravity_tree(void)
        by the tree walk (raw GravAccel, raw GravJerk) to incorrectly take the jerk-skip path (which
        expects G-multiplied GravAccel/GravJerk from a previous step). */
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-    std::vector<int> treeforce_skip_flag(ActiveParticleList.size(), 0);
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {
+    std::vector<int> treeforce_skip_flag(All.MaxPart, 0);
+    for(int ii = 0; ii < ActiveParticleNumber; ii++) {
         int i = ActiveParticleList[ii];
-        if(!needs_new_treeforce(i)) {treeforce_skip_flag[ii] = 1;}
+        if(!needs_new_treeforce(i)) {treeforce_skip_flag[i] = 1;}
     }
 #endif
 
@@ -479,8 +480,8 @@ void gravity_tree(void)
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
-        if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
-            P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
+        if(treeforce_skip_flag[i]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
+            for(j=0;j<3;j++) P[i].GravAccel[j] += P[i].GravJerk[j] * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;
         } else {
