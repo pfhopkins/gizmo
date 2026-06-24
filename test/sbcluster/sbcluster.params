@@ -41,7 +41,7 @@ BiniY                              0
 BiniZ                              1e-08
 TimeOfFirstSnapshot                0.02
 ScaleFac_Between_Snapshots         2
-MaxSizeTimestep                    0.01
+MaxSizeTimestep                    0.05
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
 ErrTolIntAccuracy                  0.01

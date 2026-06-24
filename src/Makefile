@@ -236,6 +236,53 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Frontera_Kokkos")
+## Frontera (CPU-only, Cascade Lake) with Kokkos OpenMP backend.
+## Same Kokkos source path as Vista_CPU (CPU dispatch), Intel compiler + TACC libs.
+## GIZMO_GPU_COMPILER is NOT defined (no nvcc) -> device-mirror blocks skipped,
+## GPU-ported TUs build with mpicxx + Kokkos includes, dispatch to OpenMP threads.
+## Load modules: intel/23.1.0 impi/21.9.0 kokkos/4.6.01-omp fftw3/3.3.10 hdf5/1.14.6 hypre/2.31.0
+## (kokkos/4.6.01-omp sets TACC_KOKKOS_DIR/INC/LIB/BIN)
+CC       =  mpicc
+CXX      =  mpicxx -std=c++17
+OPTIMIZE = -ggdb -O2 -xCORE-AVX2 -Wno-unknown-pragmas -Wall -Wno-format-security
+## OpenMP required for the Kokkos OpenMP backend (unconditional, not gated on OPENMP config)
+OPTIMIZE += -qopenmp
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I$(TACC_SUNDIALS_INC)
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
+endif
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+## hypre module sets TACC_HYPRE_INC + TACC_HYPRE_LIB
+ifdef TACC_HYPRE_INC
+HYPRE_INCL = -I$(TACC_HYPRE_INC)
+HYPRE_LIBS = -L$(TACC_HYPRE_LIB) -lHYPRE
+else ifdef TACC_HYPRE_DIR
+HYPRE_INCL = -I$(TACC_HYPRE_DIR)/include
+HYPRE_LIBS = -L$(TACC_HYPRE_DIR)/lib -lHYPRE
+endif
+endif
+## Kokkos OpenMP backend (TACC module sets TACC_KOKKOS_INC/LIB)
+KOKKOS_INCL     = -I$(TACC_KOKKOS_INC)
+KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
+KOKKOS_LIBS_PATH= -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB)
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
+## GPU-ported TUs: same compiler (mpicxx), just add Kokkos includes
+GPU_CXX    = mpicxx -std=c++17
+GPU_CFLAGS = $(KOKKOS_INCL)
+GPU_LDFLAGS= $(KOKKOS_LIBS_PATH)
+MKL_INCL = #
+MKL_LIBS = #
+FFTW_INCL= -I$(TACC_FFTW3_INC)
+FFTW_LIBS= -L$(TACC_FFTW3_LIB)
+HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
+HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"CaltechHPC")
 CC       =  mpicc
 CXX      =  mpic++

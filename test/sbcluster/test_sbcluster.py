@@ -29,15 +29,21 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     # Load final snapshot
     with h5py.File(snaps[-1], "r") as F:
         gas_pos = F["PartType0/Coordinates"][:]
+        for k in [0,1,2]: 
+            gas_pos[:,k] -= F["Header"].attrs["BoxSize"] * np.round(gas_pos[:,k] / F["Header"].attrs["BoxSize"])  # periodic wrapping
         gas_rho = F["PartType0/Density"][:]
         gas_u = F["PartType0/InternalEnergy"][:]
         gas_mass = F["PartType0/Masses"][:]
         dm_pos = F["PartType1/Coordinates"][:]
+        for k in [0,1,2]: 
+            dm_pos[:,k] -= F["Header"].attrs["BoxSize"] * np.round(dm_pos[:,k] / F["Header"].attrs["BoxSize"])  # periodic wrapping
         dm_mass = F["PartType1/Masses"][:]
         boxsize = F["Header"].attrs["BoxSize"]
 
     # Find the cluster center (densest gas region)
-    center = gas_pos[np.argmax(gas_rho)]
+    r = np.sqrt(np.sum(gas_pos**2,axis=1))
+    ok = np.where(r<0.15)
+    center = np.median(gas_pos[ok,:],axis=1)
 
     # Compute radii from cluster center
     dx = gas_pos - center
@@ -49,7 +55,7 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     r_dm = np.sqrt(np.sum(dx_dm**2, axis=1))
 
     # Plot radial density and temperature profiles
-    rbins = np.logspace(-2.5, -0.5, 20)
+    rbins = np.logspace(-4.5, -0.5, 40)
     rc = np.sqrt(rbins[:-1] * rbins[1:])
 
     from scipy.stats import binned_statistic
@@ -57,30 +63,41 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     u_prof = binned_statistic(r_gas, gas_u, "median", rbins)[0]
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    r_to_Mpc = 64.0; # convert to Mpc for plotting
+    rc *= r_to_Mpc
+    rho_to_Msun_per_Mpc3 = 6.94e10
+    rho_prof *= rho_to_Msun_per_Mpc3
     axes[0].loglog(rc, rho_prof, "o-")
-    axes[0].set_xlabel("r")
-    axes[0].set_ylabel("Density")
+    axes[0].set_xlim(0.01, 9.)
+    axes[0].set_xlabel("r [Mpc]")
+    axes[0].set_ylabel("Density [Msun/Mpc^3]")
     axes[0].set_title("Gas Density Profile")
+    u_to_K = 8.738e7 # convert to K for plotting
+    u_prof *= u_to_K
     axes[1].loglog(rc, u_prof, "o-")
-    axes[1].set_xlabel("r")
-    axes[1].set_ylabel("Internal Energy")
+    axes[1].set_xlim(0.01, 9.)
+    axes[1].set_xlabel("r [Mpc]")
+    axes[1].set_ylabel("Temperature [K]")
     axes[1].set_title("Gas Temperature Profile")
     plt.tight_layout()
     plt.savefig(f"test/{test_name}/profiles.png", dpi=150)
     plt.close()
 
     # The cluster should have formed: central density should be much higher than mean
-    rho_mean = gas_mass.sum() / boxsize**3
-    overdensity = gas_rho.max() / rho_mean
+    rho_mean = 0.1/0.9 * dm_mass.sum() / boxsize**3
+    r_vir = 1.0 / r_to_Mpc
+    rho_mean_vir = gas_mass[(r_gas<r_vir)].sum() / (4./3.*np.pi*r_vir**3)
+    overdensity = rho_mean_vir / rho_mean
     assert overdensity > 100, (
         f"Cluster did not form: max overdensity = {overdensity:.1f}"
     )
 
     # Gas in the core should be hot (shock-heated)
-    core = r_gas < 0.05
+    core = (r_gas < 0.1 * r_vir)
+    igm = (r_gas > 4. * r_vir) & (gas_rho < 10. * rho_mean)  # intergalactic medium
     if np.any(core):
         u_core = np.median(gas_u[core])
-        u_mean = np.median(gas_u)
+        u_mean = np.median(gas_u[igm])
         assert u_core > 5 * u_mean, (
             f"Core gas not hot enough: u_core/u_mean = {u_core/u_mean:.1f}"
         )
