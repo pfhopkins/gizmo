@@ -42,7 +42,7 @@ def test_kh_wengen(num_mpi_ranks, num_omp_threads):
     box_x = boxsize * 32
     box_y = boxsize * 32
     box_z = boxsize * 2
-    M = Meshoid(pos_f, boxsize=boxsize)
+    M = Meshoid(pos_f, boxsize=boxsize * 32)
     center = np.array([box_x / 2, box_y / 2, box_z / 2])
     rho_slice = M.Slice(rho_f, res=1024, plane="z", center=center, size=box_x, order=0)
     fig, ax = plt.subplots(figsize=(8, 8))
