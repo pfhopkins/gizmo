@@ -1,4 +1,7 @@
-% Magneto-rotational instability test (Hopkins & Raives 2016)
+% Magneto-rotational instability test (Hopkins & Raives 2016); 
+%  (note there is a typo there in the text for the units/setup, 
+%   but the problem is correct. This is matched to the 'fiducial'
+%   m=4 mode run in Guan & Gammie 2008)
 %
 %        HYDRO_MESHLESS_FINITE_MASS
 %        BOX_PERIODIC
@@ -16,6 +19,7 @@ BoxSize                            1
 TimeBetSnapshot                    5
 DesNumNgb                          20
 GravityConstantInternal            1
+UnitMagneticField_in_gauss         1
 SofteningGas                       0.05
 Softening_Type1                    0
 Softening_Type2                    0

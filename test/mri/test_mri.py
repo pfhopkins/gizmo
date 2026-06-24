@@ -56,13 +56,14 @@ def test_mri(num_mpi_ranks, num_omp_threads):
 
     # Plot magnetic energy evolution
     plt.figure()
-    plt.semilogy(times, Emag / Emag[0], "o-")
-    plt.semilogy(times, Emag_x / Emag[0], "o-", label="B_x")
-    plt.semilogy(times, Emag_y / Emag[0], "o-", label="B_y")
-    plt.semilogy(times, Emag_z / Emag[0], "o-", label="B_z")
+    Emagnorm = Emag[0]
+    plt.semilogy(times, Emag / Emagnorm, "o-")
+    plt.semilogy(times, Emag_x / Emagnorm, "o-", label="B_x")
+    plt.semilogy(times, Emag_y / Emagnorm, "o-", label="B_y")
+    plt.semilogy(times, Emag_z / Emagnorm, "o-", label="B_z")
     plt.xlim(times[0], times[-1])
-    plt.ylim(1.e-6, 1.1)
-    plt.xlabel("Time")
+    plt.ylim(1.e-4, 300.)
+    plt.xlabel("Time t / Omega^-1")
     plt.ylabel("E_mag / E_mag(0)")
     plt.title("MRI - Magnetic Energy Growth")
     plt.legend()
