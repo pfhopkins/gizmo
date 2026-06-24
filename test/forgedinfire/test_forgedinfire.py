@@ -8,6 +8,11 @@ produces physically reasonable radial profiles.
 Plots: density-temperature diagram, density histogram, and radial profiles
 of gas density, temperature, radiation temperature, dust temperature,
 magnetic energy density, radiation energy density, and thermal energy density.
+
+NOTE: this test's IC is gzip(deflate)-compressed. HDF5 2.0.0 ships no zlib
+filter on some machines (e.g. TACC/Vista) AND blocks GIZMO's fallback filter,
+so the IC read fails. Use HDF5 < 2 (e.g. module swap hdf5/2.0.0 hdf5/1.14.x)
+on such machines. Most other tests use uncompressed ICs and are unaffected.
 """
 
 import pytest

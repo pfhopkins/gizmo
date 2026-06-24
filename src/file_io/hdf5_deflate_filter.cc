@@ -108,7 +108,9 @@ void gizmo_register_hdf5_deflate_filter(void)
         if(ThisTask == 0)
             printf("WARNING: HDF5 lacks the deflate filter and registering the "
                    "GIZMO zlib-backed replacement failed; compressed HDF5 files "
-                   "will not be readable.\n");
+                   "will not be readable. (HDF5 >= 2.0.0 forbids overriding the "
+                   "predefined deflate filter id; if the linked HDF5 also has no "
+                   "builtin zlib, use HDF5 < 2 to read compressed ICs.)\n");
         return;
     }
     if(ThisTask == 0)
