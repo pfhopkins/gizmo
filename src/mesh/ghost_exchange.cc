@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>
 #include <vector>
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"
@@ -495,8 +496,19 @@ static inline int ghost_toptree_leaf(peanokey key)
 static inline int ghost_type_passes(int ptype, unsigned int mask) { return (mask & (1u << (unsigned)ptype)) != 0u; }
 
 /* Forward decls. */
-static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
-static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
+/* Result of a single-backend ghost-exchange discovery attempt. The dispatcher
+ * (ghost_exchange_impl) owns admission policy: a tile attempt that cannot fit
+ * particle slots, or whose counts overflow the int MPI transport representation,
+ * returns WITHOUT materialising ghosts (clean rollback), and the dispatcher
+ * falls back to exact request-driven discovery. */
+enum ghost_exchange_result {
+    GHOST_EXCHANGE_COMPLETED = 0,
+    GHOST_EXCHANGE_PARTICLE_CAPACITY_EXCEEDED,
+    GHOST_EXCHANGE_COUNT_RANGE_EXCEEDED
+};
+
+static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
+static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
 static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
 static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
@@ -571,10 +583,32 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * caller's neighbor lookup. Force request-driven whenever queries
      * are explicit, independent of env / allowlist. */
     const int explicit_queries = (spec && spec->n_queries >= 0);
-    if(explicit_queries || (rd_enabled && caller_safe)) {
+    const int want_request_driven = explicit_queries || (rd_enabled && caller_safe);
+    const char *selected_impl;
+    if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
+        selected_impl = "request_driven";
     } else {
-        ghost_exchange_tile_overlap_impl(spec);
+        ghost_exchange_result result = ghost_exchange_tile_overlap_impl(spec);
+        selected_impl = "tile_overlap";
+        if(result != GHOST_EXCHANGE_COMPLETED) {
+            /* Stage 0A: tile could not fit particle slots (or its counts exceeded
+             * the int transport range) COLLECTIVELY — every rank returns the same
+             * result (Allreduce in the tile impl), so all ranks take this branch
+             * together. Drain any unrelated pending controlled-stop, then fall
+             * back to exact request-driven discovery (changes discovery only, not
+             * the downstream kernel). */
+            const char *reason = (result == GHOST_EXCHANGE_COUNT_RANGE_EXCEEDED)
+                                 ? "count_range" : "particle_capacity";
+            if(ThisTask == 0) {
+                printf("GHOST_ADMIT caller=%s attempted=tile selected=request_driven reason=%s\n",
+                       spec->caller_name ? spec->caller_name : "?", reason);
+                fflush(stdout);
+            }
+            gizmo_exit_bad_stop_if_requested("ghost_exchange:tile_fallback");
+            ghost_exchange_request_driven_impl(spec);
+            selected_impl = "request_driven(fallback)";
+        }
     }
     if(phase0_on) {
         double dt_ghost_import = timediff(t_phase0_start, my_second());
@@ -583,7 +617,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
                "nlocal_pre=%d ghost_added=%d ntotal_post=%d dt_ghost_import=%.6f\n",
                ThisTask, this_phase0_call,
                spec->caller_name ? spec->caller_name : "?",
-               (explicit_queries || (rd_enabled && caller_safe)) ? "request_driven" : "tile_overlap",
+               selected_impl,
                nlocal_pre, ghost_added, NumPart, dt_ghost_import);
         fflush(stdout);
     }
@@ -636,13 +670,21 @@ static inline double ghost_tile_effective_radius(int j, unsigned int supply_mask
     return h;
 }
 
-static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec)
+/* Pure particle-slot fit predicate: do `required` total (local+ghost) particles
+ * fit P[]/CellP[] (All.MaxPart)? Policy (what to do on a miss) lives in the
+ * caller, NOT here — keep this free of multi-space/budget logic. */
+static inline int ghost_particle_slots_fit(long long required)
+{
+    return (required <= (long long)All.MaxPart) ? 1 : 0;
+}
+
+static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec)
 {
     const double safety_factor = spec->safety_factor;
     const unsigned int request_mask = spec->request_type_mask;
     const unsigned int supply_mask  = spec->supply_type_mask;
     const int  search_mode = spec->search_mode;
-    if(NTask <= 1) return;
+    if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
     double t_ghost_start = my_second(), t_ghost_phase;
 
     /* save current state for cleanup */
@@ -1046,19 +1088,29 @@ static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t 
         }
     }
 
-    /* Compute totals and displacements */
-    int total_recv = 0, total_send = 0;
+    /* Compute totals + displacements with CHECKED int64 accumulation. The MPI
+     * pack consumes int counts/displacements; a value exceeding INT_MAX cannot
+     * be represented and must NOT silently wrap into a false "fits" decision.
+     * Such a representation overflow is reported distinctly from a particle-slot
+     * overflow (Stage 0A admission below). Per-peer counts are bounded by one
+     * rank's pool (<= INT_MAX); the prefix sums + totals are the overflow risk. */
     int *recv_disp = (int *) mymalloc("ghost_rd", NTask * sizeof(int));
     int *send_disp = (int *) mymalloc("ghost_sd", NTask * sizeof(int));
-    recv_disp[0] = 0; send_disp[0] = 0;
-    for(task = 0; task < NTask; task++) {
-        total_recv += recv_count[task];
-        total_send += send_count[task];
-        if(task > 0) {
-            recv_disp[task] = recv_disp[task-1] + recv_count[task-1];
-            send_disp[task] = send_disp[task-1] + send_count[task-1];
+    long long total_recv_ll = 0, total_send_ll = 0;
+    int count_range_ok = 1;
+    {
+        long long rdisp = 0, sdisp = 0;
+        for(task = 0; task < NTask; task++) {
+            if(rdisp <= INT_MAX) recv_disp[task] = (int)rdisp; else { recv_disp[task] = 0; count_range_ok = 0; }
+            if(sdisp <= INT_MAX) send_disp[task] = (int)sdisp; else { send_disp[task] = 0; count_range_ok = 0; }
+            rdisp += recv_count[task];
+            sdisp += send_count[task];
         }
+        total_recv_ll = rdisp; total_send_ll = sdisp;
+        if(total_recv_ll > INT_MAX || total_send_ll > INT_MAX) count_range_ok = 0;
     }
+    int total_recv = count_range_ok ? (int)total_recv_ll : 0;
+    int total_send = count_range_ok ? (int)total_send_ll : 0;
 
     int tiles_needed = 0, tiles_sent = 0;
     for(int rt = 0; rt < total_tiles; rt++) tiles_needed += need_from[rt];
@@ -1069,29 +1121,43 @@ static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t 
     double t_ghost_overlap = timediff(t_phase_overlap_start, my_second()); /* steps 3+4 (overlap + schedule) */
     double t_phase_mpi_start = my_second();
 
-    /* Check space: ghost particles are appended to P[]/CellP[] arrays, which are
-       allocated to All.MaxPart = PartAllocFactor * (TotNumPart / NTask).
-       If there isn't enough room, we MUST exit — silently skipping would produce
-       wrong results (incomplete neighbor data near domain boundaries). */
-    if(NumPart + total_recv > All.MaxPart) {
-        double needed_factor = (double)(NumPart + total_recv) / ((double)All.TotNumPart / NTask);
-        printf("\n=======================================================================\n");
-        printf("ERROR: Ghost exchange requires %d ghost particles on task %d,\n", total_recv, ThisTask);
-        printf("  but only %d free slots available (NumPart=%d, MaxPart=%d).\n",
-               All.MaxPart - NumPart, NumPart, All.MaxPart);
-        printf("  Current PartAllocFactor = %.2f\n", All.PartAllocFactor);
-        printf("  Minimum PartAllocFactor needed = %.2f (recommend %.2f for safety)\n",
-               needed_factor, needed_factor * 1.2);
-        printf("  Fix: increase PartAllocFactor in your parameterfile to at least %.1f\n",
-               needed_factor * 1.2);
-        printf("  (or increase the number of MPI ranks to reduce particles per rank)\n");
-        printf("=======================================================================\n");
-        fflush(stdout);
-        gizmo_request_controlled_stop(7701, "ghost_exchange: tile-overlap ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+    /* Frees the pre-materialisation tile scratch ONLY (mymalloc LIFO, then
+     * malloc). ONE free list, shared by the Stage-0A fallback bail and the
+     * normal-completion cleanup; captures only scratch allocated up to here (the
+     * later packing allocs are freed explicitly by the normal path). It does NOT
+     * touch NumGhostParticles: on normal completion that field already holds the
+     * materialised ghost count and MUST survive (ghost-writeback / cleanup /
+     * PreviousGhostCount read it); the fallback bail resets it explicitly. */
+    auto tile_preflight_cleanup = [&]() {
+        myfree(send_disp); myfree(recv_disp);
+        myfree(send_count); myfree(recv_count);
+        free(send_to); free(need_from);
+        free(all_meta); free(tile_disp); free(all_ntiles);
+        free(tile_first); free(local_meta); free(pool);
+    };
+
+    /* === Stage 0A admission: collective particle-slot fit ===
+     * Decide tile-vs-fallback BEFORE materialising any ghosts (NumPart unchanged
+     * to here). Two DISTINCT failure modes — a representation overflow must never
+     * masquerade as a capacity decision:
+     *   2 = COUNT_RANGE — int MPI count/displacement representation overflowed
+     *   1 = CAPACITY    — ghosts would not fit P[]/CellP[] (All.MaxPart)
+     * Either, on ANY rank, makes ALL ranks abandon tile (clean rollback) and
+     * fall back to exact request-driven discovery in the dispatcher. The Allreduce
+     * is a continuing-branch decision, distinct from the terminal controlled-stop
+     * poll (which still drains unrelated stops on the fit path below). */
+    int local_fail = (!count_range_ok) ? 2
+                   : (!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) ? 1 : 0;
+    int global_fail = 0;
+    MPI_Allreduce(&local_fail, &global_fail, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(global_fail != 0) {
+        tile_preflight_cleanup();
+        NumGhostParticles = 0;   /* rollback: no ghosts materialised this call */
+        return (global_fail == 2) ? GHOST_EXCHANGE_COUNT_RANGE_EXCEEDED
+                                  : GHOST_EXCHANGE_PARTICLE_CAPACITY_EXCEEDED;
     }
-    /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
-     * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
-     * collective pack/exchange. Every rank reaches this unconditionally. */
+    /* Tile fits on all ranks. Drain any UNRELATED pending controlled-stop
+     * (preserves the original all-rank poll) before materialising ghosts. */
     gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity");
 
     /* ================================================================
@@ -1284,15 +1350,14 @@ static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t 
                       100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
     }
 
-    /* Cleanup: mymalloc in reverse order, then free malloc'd send metadata */
+    /* Cleanup: later packing allocs (mymalloc LIFO + malloc), then the shared
+     * preflight cleanup frees the discovery scratch (same free list the Stage-0A
+     * fallback bail uses). */
     myfree(task_offset);
     myfree(send_CellP); myfree(send_P);
-    myfree(send_disp); myfree(recv_disp);
-    myfree(send_count); myfree(recv_count);
     free(send_home_idx);
-    free(send_to); free(need_from);
-    free(all_meta); free(tile_disp); free(all_ntiles);
-    free(tile_first); free(local_meta); free(pool);
+    tile_preflight_cleanup();
+    return GHOST_EXCHANGE_COMPLETED;
 }
 
 
@@ -1545,9 +1610,9 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
 }
 
 
-static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
+static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
-    if(NTask <= 1) return;
+    if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
     const double safety_factor = spec->safety_factor;
     const unsigned int request_mask = spec->request_type_mask;
     const unsigned int supply_mask  = spec->supply_type_mask;
@@ -1850,16 +1915,32 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
         send_count[t] = s;
     }
     MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-    int total_send = 0, total_recv = 0;
-    for(int t = 0; t < NTask; t++) { total_send += send_count[t]; total_recv += recv_count[t]; }
-    send_disp[0] = 0; recv_disp[0] = 0;
-    for(int t = 1; t < NTask; t++) {
-        send_disp[t] = send_disp[t-1] + send_count[t-1];
-        recv_disp[t] = recv_disp[t-1] + recv_count[t-1];
+    /* CHECKED int64 totals + prefix displacements (same rationale as the tile
+     * impl). Request-driven is the last-resort Mode-A discovery — there is NO
+     * further fallback — so both a representation overflow and a particle-slot
+     * overflow fail HONESTLY via the collective controlled-stop poll, never a
+     * silent int wrap or OOB append. */
+    long long total_send_ll = 0, total_recv_ll = 0;
+    int count_range_ok = 1;
+    {
+        long long sdisp = 0, rdisp = 0;
+        for(int t = 0; t < NTask; t++) {
+            if(sdisp <= INT_MAX) send_disp[t] = (int)sdisp; else { send_disp[t] = 0; count_range_ok = 0; }
+            if(rdisp <= INT_MAX) recv_disp[t] = (int)rdisp; else { recv_disp[t] = 0; count_range_ok = 0; }
+            sdisp += send_count[t];
+            rdisp += recv_count[t];
+        }
+        total_send_ll = sdisp; total_recv_ll = rdisp;
+        if(total_send_ll > INT_MAX || total_recv_ll > INT_MAX) count_range_ok = 0;
     }
+    int total_send = count_range_ok ? (int)total_send_ll : 0;
+    int total_recv = count_range_ok ? (int)total_recv_ll : 0;
 
-    /* Check space (mirrors legacy guard). */
-    if(NumPart + total_recv > All.MaxPart) {
+    /* Check space (mirrors legacy guard); both failure modes are terminal here. */
+    if(!count_range_ok) {
+        printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
+        gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
+    } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
         gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
@@ -1995,6 +2076,7 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
     free(matched);
     free(all_queries); free(q_disps); free(all_q_counts); free(local_queries);
     (void)from_cache;
+    return GHOST_EXCHANGE_COMPLETED;
 }
 
 /* Public wrappers — each fills a spec, calls the single _impl. New callers
