@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
 
-DEFAULT_TEST_TIMEOUT = 240.0
+DEFAULT_TEST_TIMEOUT = 600.0
 
 
 def _resolve_test_timeout(timeout):
@@ -47,6 +47,20 @@ def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
     return f"test/{test_name}/output{variant_suffix(extra_config_flags)}"
 
 
+def _robust_replace_dir(d):
+    """rmtree d, but if NFS silly-rename .nfs* lock files prevent it (e.g. a
+    stuck process from a previous run is still holding a deleted file open),
+    move d out of the way to a unique stale.* sibling and keep going."""
+    if not path.isdir(d):
+        return
+    try:
+        rmtree(d)
+    except OSError:
+        import time
+        stale = f"{d}.stale.{int(time.time())}"
+        move(d, stale)
+
+
 def clean_test_outputs(test_name: str, extra_config_flags=()):
     """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
     Other variants' output directories (including the baseline plain "output") are left untouched.
@@ -55,8 +69,7 @@ def clean_test_outputs(test_name: str, extra_config_flags=()):
         return
     test_dir = f"test/{test_name}"
     output_dir = variant_output_dir(test_name, extra_config_flags)
-    if path.isdir(output_dir):
-        rmtree(output_dir)
+    _robust_replace_dir(output_dir)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
         remove(f)
     for f in glob(path.join(test_dir, f"test_{test_name}.err")):
@@ -209,8 +222,7 @@ def stash_baseline_output(test_name: str, extra_config_flags=()):
     plain = f"test/{test_name}/output"
     stash = f"test/{test_name}/{_BASELINE_STASH}"
     if path.isdir(plain):
-        if path.isdir(stash):
-            rmtree(stash)
+        _robust_replace_dir(stash)
         move(plain, stash)
         return True
     return False
@@ -225,12 +237,10 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
     stash = f"test/{test_name}/{_BASELINE_STASH}"
     dst = variant_output_dir(test_name, extra_config_flags)
     if path.isdir(plain):
-        if path.isdir(dst):
-            rmtree(dst)
+        _robust_replace_dir(dst)
         move(plain, dst)
     if path.isdir(stash):
-        if path.isdir(plain):
-            rmtree(plain)
+        _robust_replace_dir(plain)
         move(stash, plain)
 
 

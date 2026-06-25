@@ -432,7 +432,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double dt_tidal = 0.5 * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);

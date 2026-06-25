@@ -1,0 +1,49 @@
+% Plummer cluster of equal-mass circular binaries (Type 5 stars).
+% Units: pc - km/s - Msun, so G = 4.302e-3 in code units.
+% N=256 binaries, M_star=1 Msun, M_cluster=512 Msun, a_cluster=1 pc.
+% Half-mass crossing time t_cross ~ 3.24 code time units (~ 3.17 Myr).
+% TimeMax = 32.4 covers ~10 cluster crossings; binary period (100 AU, 2 Msun)
+% is ~7.2e-4 code units, so ~45000 binary orbits over the run.
+% TimeBetSnapshot = t_cross / 10 -> 100 snapshots over the test.
+% Softening = 18 AU = 8.726e-5 pc.
+%
+InitCondFile                       plummer_binaries_ics
+OutputDir                          output
+TimeMax                            32.4
+BoxSize                            300
+TimeBetSnapshot                    0.324
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  0.4
+MaxSizeTimestep                    0.05
+MinSizeTimestep                    1e-12
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+Softening_Type0                    8.726e-5
+Softening_Type1                    8.726e-5
+Softening_Type2                    8.726e-5
+Softening_Type3                    8.726e-5
+Softening_Type4                    8.726e-5
+Softening_Type5                    8.726e-5
+Softening_Type0_MaxPhysLimit       8.726e-5
+Softening_Type1_MaxPhysLimit       8.726e-5
+Softening_Type2_MaxPhysLimit       8.726e-5
+Softening_Type3_MaxPhysLimit       8.726e-5
+Softening_Type4_MaxPhysLimit       8.726e-5
+Softening_Type5_MaxPhysLimit       8.726e-5
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1

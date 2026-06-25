@@ -2581,6 +2581,9 @@ void read_parameter_file(char *fname)
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
 #endif
+#ifdef DEVELOPER_MODE
+                if(strcmp("CourantFac",tag[i])==0) {*((double *)addr[i])=0.2; printf("Tag %s (%s) not set in parameter file: defaulting to standard CFL safety factor (=%g) \n",tag[i],alternate_tag[i],All.CourantFac); continue;}
+#endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
             }
