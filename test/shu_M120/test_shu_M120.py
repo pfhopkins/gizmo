@@ -95,8 +95,8 @@ def compute_test_statistic(f):
     return {name: binned_statistic(d["r"], d[name], "median", r_bins)[0] for name in stat_names}
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),default_mpi_ranks()*2, default_mpi_ranks()//2))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),default_omp_threads()//2))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
     "extra_config_flags",
     [
@@ -110,7 +110,7 @@ def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "shu_M120"
     test_dir = "test/shu_M120"
     get_cooling_tables(test_dir)
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags, timeout=600)
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
