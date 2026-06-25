@@ -326,25 +326,31 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
     if(dEdt < 0)
     {
 	scalefac = 0.9;
+	double Tdust_floor = 2.73 / All.cf_atime; // CMB temperature: dust cannot radiatively cool below the ambient radiation bath, so floor the bracket search here
 	T_upper = DMIN(Tmax,Tdust), dEdt_upper = dEdt_guess;
-	while(dEdt<0) {
-	    Tdust *= scalefac;
+	while(dEdt<0 && Tdust > Tdust_floor && n_iter < MAXITER) {
+	    Tdust *= scalefac; Tdust = DMAX(Tdust,Tdust_floor);
 	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 0.9;
 	    n_iter++;
 	}
+	if(dEdt < 0) { // could not bracket downward: equilibrium dust temp is at/below the radiation-bath floor, or we hit the iteration cap -- return the floored value (warn only on the cap, the floor is a physical outcome)
+	    if(n_iter >= MAXITER) {PRINT_WARNING("Dust temperature bracketing (cooling side) failed to converge: ID=%lld iter=%d T=%g Tdust=%g Tfloor=%g dEdt=%g.\n",(long long)i,n_iter,T,Tdust,Tdust_floor,dEdt);}
+	    return DMAX(Tdust,Tdust_floor);
+	}
 	T_lower = Tdust, dEdt_lower = dEdt;
     } else {
 	T_lower = Tdust, dEdt_lower = dEdt_guess;
 	scalefac = 1.1;
-	while(dEdt>0 && Tdust < Tmax) {
+	while(dEdt>0 && Tdust < Tmax && n_iter < MAXITER) {
 	    Tdust *= scalefac; Tdust = DMIN(Tdust,Tmax);
 	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 1.1;
 	    n_iter++;
 	    }
+	    if(n_iter >= MAXITER && dEdt > 0) {PRINT_WARNING("Dust temperature bracketing (heating side) failed to converge: ID=%lld iter=%d T=%g Tdust=%g dEdt=%g.\n",(long long)i,n_iter,T,Tdust,dEdt); return DMIN(Tdust,Tmax);}
 	    T_upper = Tdust, dEdt_upper = dEdt;
     }
     if(T_upper==Tmax && dEdt_upper > 0) {return Tmax;}
