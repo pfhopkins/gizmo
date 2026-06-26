@@ -532,12 +532,9 @@ void *gravity_primary_loop(void *p)
         for(int b = 0; b < batch_count; b++)
         {
             i = batch[b];
-#ifdef HERMITE_INTEGRATION /* if we are in the Hermite extra loops and a particle is not flagged for this, simply mark it done and move on */
-            if(HermiteOnlyFlag && !eligible_for_hermite(i)) {ProcessedFlag[i]=1; continue;}
-#endif
-#ifdef ADAPTIVE_TREEFORCE_UPDATE
-            if(!needs_new_treeforce(i)) {ProcessedFlag[i]=1; continue;}
-#endif
+            /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce);
+             * non-candidates are marked done so the finalization loop skips them. */
+            if(!gravity_treewalk_candidate_prewalk(i)) {ProcessedFlag[i]=1; continue;}
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             if(Ewald_iter)
@@ -645,3 +642,24 @@ int needs_new_treeforce(int n){
     }
 }
 #endif
+
+/* SSOT pre-walk gravity tree-walk candidacy: true iff active particle i will
+ * receive a real tree-force walk this step (and thus consume the installed LET).
+ * Shared by the CPU primary, GPU primary, and GPU Ewald walk filters (and, later,
+ * the LET-freshness check) so the freshness basis matches the actual LET consumer.
+ * Mass>0 enforces the scheduler contract (Mass<=0 = scheduled-for-deletion, never a
+ * valid gravity target) uniformly -- a defensive parity guard (the Ewald walk
+ * already filtered it; the primary walks relied on the active-list builder and the
+ * device early-return). ProcessedFlag is NOT part of candidacy -- it is per-walk
+ * done-bookkeeping each caller keeps separately. */
+int gravity_treewalk_candidate_prewalk(int i)
+{
+    if(P[i].Mass <= 0) {return 0;}
+#ifdef HERMITE_INTEGRATION
+    if(HermiteOnlyFlag && !eligible_for_hermite(i)) {return 0;}
+#endif
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+    if(!needs_new_treeforce(i)) {return 0;}
+#endif
+    return 1;
+}

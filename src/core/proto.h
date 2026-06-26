@@ -62,6 +62,7 @@ void do_hermite_correction(void);
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
 #endif
+int gravity_treewalk_candidate_prewalk(int i); /* SSOT: active particle i will receive a real gravity tree walk this step (LET consumer) */
 void find_timesteps(void);
 #ifdef GALSF
 void compute_stellar_feedback(void);
