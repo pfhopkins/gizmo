@@ -163,8 +163,7 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
  * ---------------------------------------------------------------------- */
 extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
                                           const uint64_t *active_bitmap,
-                                          int bitmap_n_words,
-                                          int candidate_filter)
+                                          int bitmap_n_words)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
      * This is tighter than the union of particle positions and matches what the
@@ -210,37 +209,24 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
     out->has_sink = 0;
-    /* When the relative opening branch is active, an OldAcc==0 target is MAXIMALLY
-     * aggressive (mass*len^2 > r^4 * 0 always opens), so it must drive min_OldAcc to 0
-     * -- skipping zeros (below) would otherwise leave a positive minimum and make the
-     * export non-conservative for that target.  In BH-only mode OldAcc is irrelevant to
-     * opening, so the historical skip-zeros stays. */
-    int relative_active = gravity_relative_opening_active();
-    int saw_zero_oldacc = 0;
 
-    /* Candidate mode NEVER falls back to a NumPart scan (the no-globals-on-tiny-N
-     * guarantee): an empty ActiveParticleList yields zero iterations, not NumPart. */
-    const int scan_active = (candidate_filter || (active_bitmap && !ActiveParticleList.empty()));
-    int n_iter = scan_active ? (int) ActiveParticleList.size() : NumPart;
+    int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
     for(int kk = 0; kk < n_iter; kk++)
     {
-        int i = scan_active ? ActiveParticleList[kk] : kk;
+        int i = (active_bitmap && !ActiveParticleList.empty()) ? ActiveParticleList[kk] : kk;
         if(i < 0 || i >= NumPart) continue;
         if(P[i].Mass <= 0) continue;
-        /* GRAV_CANDIDATE scope: restrict the per-particle opening bounds to the
-         * particles that will actually consume the gravity LET this step (SSOT with
-         * the walk via gravity_treewalk_candidate_prewalk). */
-        if(candidate_filter && !gravity_treewalk_candidate_prewalk(i)) continue;
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
 
-        /* min(OldAcc) -- relative-criterion worst case.  Relative active: a real zero
-         * drives min_OldAcc to 0 (maximally aggressive; handled via saw_zero_oldacc).
-         * BH-only: OldAcc is irrelevant to opening, so skip zeros (uninitialised / first
-         * step) to avoid biasing the min toward 0 and over-shipping. */
+        /* min(OldAcc) -- relative-criterion worst case.  Skip zeros (uninitialised
+         * particles or first-step where OldAcc isn't yet set) to avoid biasing the
+         * min toward 0, which would force us to ship every node.  If ALL particles
+         * have OldAcc==0 (first step), out->min_OldAcc stays DBL_MAX and the
+         * relative check below will skip; we fall back to BH+softening only,
+         * which is conservative. */
         double oa = (double) P[i].OldAcc;
-        if(relative_active) { if(oa <= 0.0) saw_zero_oldacc = 1; else if(oa < out->min_OldAcc) out->min_OldAcc = oa; }
-        else { if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa; }
+        if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
 
         /* softening kernel radius: track per-type max (relative softening open) and the
          * global min over the cover (non-NEIGHBORS node-softening open t_h < msoft). */
@@ -250,148 +236,10 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
 
         if(t == 5) out->has_sink = 1;
     }
-    /* A real zero-OldAcc target in relative mode forces min_OldAcc=0 (maximally
-     * aggressive); else fall back to 0 when no positive OldAcc was seen. */
-    if(saw_zero_oldacc || out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;
+    if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; relative check disabled */
     if(out->min_soft == DBL_MAX) out->min_soft = 0.0;  /* empty cover; conservative (opens softening) */
     /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
      * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
-}
-
-/* ----------------------------------------------------------------------
- * LET freshness invariant (Step 2): is the installed LET still valid for THIS
- * step's gravity-walk candidates?  The one-shot LET is exported under the opening
- * state at build time; a later walk reusing it under a more-aggressive state would
- * want to open foreign aggregates shipped terminal (the foreign-terminal guard).
- * See OPEN_gravity_let_freshness_design.
- * ---------------------------------------------------------------------- */
-
-/* Installed-LET state, stamped only on a successful let_run_exchange (LET_OK). */
-static struct LETPerRankPayload g_let_installed_payload;
-static int    g_let_installed_state = -1;          /* relative-opening branch active at build */
-static double g_let_installed_errtoltheta = -1.0;  /* numeric BH opening angle at build (hybrid: BH always on) */
-static int    g_let_installed_payload_valid = 0;   /* 0 until a successful exchange stamps it */
-
-/* Is the relative-opening predicate branch active right now?  Non-hybrid: it is the
- * (ErrTolTheta==0) else of the BH test.  Hybrid: BH always runs and the relative
- * branch is added when !is_first_step.  Stored at build + compared at the check, so a
- * BH<->relative (or first-step) flip forces a rebuild. */
-extern "C" int gravity_relative_opening_active(void)
-{
-#ifdef GRAVITY_HYBRID_OPENING_CRIT
-    int is_first = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
-    return is_first ? 0 : 1;
-#else
-    return (All.ErrTolTheta == 0) ? 1 : 0;
-#endif
-}
-
-/* Candidate topleaf bitmap: mirror of let_compute_local_active_bitmap restricted to
- * gravity-walk candidates (gravity_treewalk_candidate_prewalk).  NO empty-list
- * fallback (a candidate-free step yields an empty bitmap, never all topleaves). */
-extern "C" void let_compute_candidate_topleaf_bitmap(uint64_t *bitmap, int n_words,
-                                                     int *count_out, int *unmapped_out)
-{
-    memset(bitmap, 0, (size_t)n_words * sizeof(uint64_t));
-    if(count_out) *count_out = 0;
-    if(unmapped_out) *unmapped_out = 0;
-    if(NTopleaves <= 0 || ActiveParticleList.empty()) return;
-    int *my_tl_lookup = (int *) mymalloc("LET_cand_tl_lookup", (size_t)MaxNodes * sizeof(int));
-    for(int j = 0; j < MaxNodes; j++) my_tl_lookup[j] = -1;
-    for(int t = 0; t < NTopleaves; t++) {
-        if(DomainTask[t] != ThisTask) continue;
-        int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) my_tl_lookup[no - All.MaxPart] = t;
-    }
-    int cnt = 0, unmapped = 0;
-    for(size_t k = 0; k < ActiveParticleList.size(); k++) {
-        int i = ActiveParticleList[k];
-        if(i < 0 || i >= NumPart) continue;
-        if(!gravity_treewalk_candidate_prewalk(i)) continue;
-        cnt++;
-        int no = Father[i];
-        int guard = 0, found = 0;
-        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024) {
-            int tl = my_tl_lookup[no - All.MaxPart];
-            if(tl >= 0) { bitmap[tl >> 6] |= (1ULL << (tl & 63)); found = 1; break; }
-            no = Nodes[no].u.d.father;
-        }
-        if(!found) unmapped++;   /* candidate not under any local topleaf -> cover would be incomplete */
-    }
-    myfree(my_tl_lookup);
-    if(count_out) *count_out = cnt;
-    if(unmapped_out) *unmapped_out = unmapped;
-}
-
-/* Conservative cover test: does the installed (build) payload provably cover the
- * current candidate payload?  Strict, no tolerance -- rebuild unless proven. */
-static int let_payload_covers(const struct LETPerRankPayload *b,
-                              const struct LETPerRankPayload *c,
-                              int build_relative, int cur_relative,
-                              double build_errtoltheta, double cur_errtoltheta)
-{
-    if(build_relative != cur_relative) return 0;          /* opening-branch flip */
-    if(cur_errtoltheta < build_errtoltheta) return 0;     /* smaller BH angle = more opening (hybrid: BH always on) */
-    if(!c->has_cover || !b->has_cover) return 0;
-    for(int k = 0; k < 3; k++) {
-        if(c->bbox_min[k] < b->bbox_min[k]) return 0;
-        if(c->bbox_max[k] > b->bbox_max[k]) return 0;
-    }
-    if(cur_relative) {                                    /* OldAcc only gates the relative branch */
-        if(c->min_OldAcc == 0.0) { if(b->min_OldAcc > 0.0) return 0; }  /* zero = maximally aggressive */
-        else if(c->min_OldAcc < b->min_OldAcc) return 0;
-    }
-    for(int t = 0; t < 6; t++) { if(c->max_soft_by_type[t] > b->max_soft_by_type[t]) return 0; }
-    if(c->min_soft < b->min_soft) return 0;
-    if(c->has_sink && !b->has_sink) return 0;
-    return 1;
-}
-
-/* Collective: returns 1 iff the installed LET is stale for this step's gravity-walk
- * candidates (caller rebuilds tree+LET before walking).  ALL ranks must call it
- * together.  Hard no-op (no topleaf scan, no rebuild) when no rank has candidates. */
-extern "C" int gravity_let_freshness_requires_rebuild(void)
-{
-    if(NTask <= 1 || MaxForeignNodes <= 0) return 0;     /* no foreign nodes -> nothing to be stale about */
-
-    long long local_cand = 0;
-    for(size_t k = 0; k < ActiveParticleList.size(); k++) {
-        int i = ActiveParticleList[k];
-        if(i >= 0 && i < NumPart && gravity_treewalk_candidate_prewalk(i)) local_cand++;
-    }
-    long long global_cand = 0;
-    MPI_Allreduce(&local_cand, &global_cand, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    if(global_cand == 0) return 0;   /* HARD invariant: no LET consumer this step */
-
-    int local_stale = 0;
-    if(local_cand > 0) {
-        int n_words = (NTopleaves + 63) / 64; if(n_words < 1) n_words = 1;
-        uint64_t *cand_bitmap = (uint64_t *) mymalloc("LET_cand_bitmap", (size_t)n_words * sizeof(uint64_t));
-        int cand_cnt = 0, cand_unmapped = 0;
-        let_compute_candidate_topleaf_bitmap(cand_bitmap, n_words, &cand_cnt, &cand_unmapped);
-        struct LETPerRankPayload cur;
-        let_compute_local_payload(&cur, cand_bitmap, n_words, 1);
-        myfree(cand_bitmap);
-        if(cand_unmapped > 0) {
-            /* A candidate's Father[] chain did not resolve to a local topleaf -> the
-             * candidate cover is incomplete and cannot be trusted. Force a rebuild
-             * (recomputes Father[]); the foreign-terminal walk guard is the fatal
-             * backstop if the topology is genuinely broken and a rebuild cannot fix it. */
-            static int s_warned = 0;
-            if(!s_warned) { s_warned = 1;
-                printf("[grav rank=%d] LET freshness: %d/%d candidates unmapped to a local topleaf; forcing rebuild.\n",
-                       ThisTask, cand_unmapped, cand_cnt); fflush(stdout); }
-            local_stale = 1;
-        }
-        else if(!g_let_installed_payload_valid) { local_stale = 1; }
-        else if(!cur.has_cover)                 { local_stale = 1; }  /* candidates exist but no candidate topleaf */
-        else { local_stale = !let_payload_covers(&g_let_installed_payload, &cur,
-                                                  g_let_installed_state, gravity_relative_opening_active(),
-                                                  g_let_installed_errtoltheta, All.ErrTolTheta); }
-    }
-    int any_stale = 0;
-    MPI_Allreduce(&local_stale, &any_stale, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    return any_stale;
 }
 
 /* ----------------------------------------------------------------------
@@ -1446,9 +1294,9 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 
     /* Tighten the cover to MY active topleaves only (may regress TREECOL self-shielding for
      * non-active particles -- that is exactly what the audit gate guards). */
-    let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words, 0);
+    let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
 #else
-    let_compute_local_payload(&my_payload, NULL, 0, 0);
+    let_compute_local_payload(&my_payload, NULL, 0);
 #endif
 
     struct LETPerRankPayload *all_payloads =
@@ -1511,17 +1359,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 #endif
     /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
      * fixable by a larger foreign arena, so it outranks a retryable overflow. */
-    if(g_let_pack_oom) { g_let_installed_payload_valid = 0; return LET_PACK_OOM; }
-    /* Stamp the installed-LET freshness state ONLY on a clean install: my_payload is
-     * the cover this LET was exported under, valid only if the exchange succeeded. */
-    if(exch_status == LET_OK) {
-        g_let_installed_payload = my_payload;
-        g_let_installed_state   = gravity_relative_opening_active();
-        g_let_installed_errtoltheta = All.ErrTolTheta;
-        g_let_installed_payload_valid = 1;
-    } else {
-        g_let_installed_payload_valid = 0;
-    }
+    if(g_let_pack_oom) return LET_PACK_OOM;
     return exch_status;
 }
 
