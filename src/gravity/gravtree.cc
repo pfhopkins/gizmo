@@ -13,6 +13,7 @@
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
+#include "let_data.h"   /* gravity_let_freshness_requires_rebuild (Step-2 LET freshness) */
 
 /*! \file gravtree.c
  *  \brief main driver routines for gravitational (short-range) force computation
@@ -65,6 +66,21 @@ void gravity_tree(void)
      * active -- inputs only mutate during active processing, so the cached
      * value is still correct. */
     compute_all_force_softening(0);
+
+    /* LET freshness (Step 2): when the tree+LET will be REUSED this step, check that
+     * the installed LET still covers this step's gravity-walk candidates (opening
+     * criterion / OldAcc / cover drift); if not, force a rebuild so the walk consumes a
+     * consistent LET instead of tripping the foreign-terminal guard. Collective on all
+     * ranks. When no rank has candidates it does NO topleaf scan and NO rebuild (only a
+     * cheap O(N_active) candidate count). Hermite-only passes are skipped here on
+     * purpose (as is the rebuild below): they walk a SUBSET of the main pass's candidate
+     * set (the extra eligible_for_hermite filter) under the SAME opening state of the
+     * same step, so the LET the preceding non-Hermite gravity_tree already made fresh
+     * covers them. */
+#ifdef HERMITE_INTEGRATION
+    if(!HermiteOnlyFlag)
+#endif
+    if(!TreeReconstructFlag) { if(gravity_let_freshness_requires_rebuild()) {TreeReconstructFlag = 1;} }
 
     /* construct tree if needed */
 #ifdef HERMITE_INTEGRATION

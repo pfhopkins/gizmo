@@ -208,7 +208,18 @@ extern "C" {
  *  density for non-active particles. */
 void let_compute_local_payload(struct LETPerRankPayload *out,
                                const uint64_t *active_bitmap,
-                               int bitmap_n_words);
+                               int bitmap_n_words,
+                               int candidate_filter /* 1: restrict per-particle bounds to gravity-walk candidates */);
+
+/*! LET freshness invariant (Step 2). gravity_let_freshness_requires_rebuild() is
+ *  collective (all ranks call together): returns 1 iff the installed LET is stale
+ *  for this step's gravity-walk candidates. gravity_relative_opening_active()
+ *  reports whether the relative opening branch is active now (stored at build,
+ *  compared at the check). let_compute_candidate_topleaf_bitmap() marks topleaves
+ *  containing gravity-walk candidates (no empty-list fallback). */
+int  gravity_let_freshness_requires_rebuild(void);
+int  gravity_relative_opening_active(void);
+void let_compute_candidate_topleaf_bitmap(uint64_t *bitmap, int n_words, int *count_out, int *unmapped_out);
 
 /*! Phase 9.5: compute this rank's active-topleaf bitmap.  bitmap is sized
  *  n_words = (NTopleaves+63)/64 uint64_t.  Bit tl is set iff topleaf tl is
