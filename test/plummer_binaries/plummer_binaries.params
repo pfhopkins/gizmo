@@ -2,10 +2,11 @@
 % Units: pc - km/s - Msun, so G = 4.302e-3 in code units.
 % N=256 binaries, M_star=1 Msun, M_cluster=512 Msun, a_cluster=1 pc.
 % Half-mass crossing time t_cross ~ 3.24 code time units (~ 3.17 Myr).
-% TimeMax = 32.4 covers ~10 cluster crossings; binary period (100 AU, 2 Msun)
-% is ~7.2e-4 code units, so ~45000 binary orbits over the run.
+% TimeMax = 32.4 covers ~10 cluster crossings; binary period (1000 AU, 2 Msun)
+% is ~0.023 code units, so ~1400 binary orbits over the run.
 % TimeBetSnapshot = t_cross / 10 -> 100 snapshots over the test.
-% Softening = 18 AU = 8.726e-5 pc.
+% Plummer-equivalent softening = 6.43 AU = 3.117e-5 pc (= 18 AU / 2.8), so the
+% actual cubic-spline kernel radius is the desired 18 AU.
 %
 InitCondFile                       plummer_binaries_ics
 OutputDir                          output
@@ -33,17 +34,23 @@ ResubmitCommand                    none
 UnitLength_in_cm                   3.085678e+18
 UnitMass_in_g                      1.989e+33
 UnitVelocity_in_cm_per_s           100000
-Softening_Type0                    8.726e-5
-Softening_Type1                    8.726e-5
-Softening_Type2                    8.726e-5
-Softening_Type3                    8.726e-5
-Softening_Type4                    8.726e-5
-Softening_Type5                    8.726e-5
-Softening_Type0_MaxPhysLimit       8.726e-5
-Softening_Type1_MaxPhysLimit       8.726e-5
-Softening_Type2_MaxPhysLimit       8.726e-5
-Softening_Type3_MaxPhysLimit       8.726e-5
-Softening_Type4_MaxPhysLimit       8.726e-5
-Softening_Type5_MaxPhysLimit       8.726e-5
+Softening_Type0                    3.117e-5
+Softening_Type1                    3.117e-5
+Softening_Type2                    3.117e-5
+Softening_Type3                    3.117e-5
+Softening_Type4                    3.117e-5
+Softening_Type5                    3.117e-5
+Softening_Type0_MaxPhysLimit       3.117e-5
+Softening_Type1_MaxPhysLimit       3.117e-5
+Softening_Type2_MaxPhysLimit       3.117e-5
+Softening_Type3_MaxPhysLimit       3.117e-5
+Softening_Type4_MaxPhysLimit       3.117e-5
+Softening_Type5_MaxPhysLimit       3.117e-5
 AGS_DesNumNgb                      32
 AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+% Cap sink accretion-search at the softening kernel radius (18 AU = 8.726e-5 pc).
+% With no gas in this test the default 5 pc search radius wastes huge amounts of
+% tree-walking; shrinking it to the softening scale eliminates that overhead.
+SinkMaxAccretionRadius             8.726e-5

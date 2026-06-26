@@ -19,15 +19,19 @@ A test can fail for several reasons: failure to build `GIZMO` for the provided `
 
 The actual simulation output directory for the test may be found in `test/my_test_name/output` for direct inspection. Optionally, the test may generate informative diagnostic plots that should be written to `test/my_test_name`.
 
-## Per-test timeout
+## Per-test timeout (opt-in)
 
-Each test runs the GIZMO subprocess under a wall-clock timeout. If the run exceeds the timeout, the subprocess is killed and the test is marked **skipped** (not failed), so that one slow test doesn't block the rest of the suite.
+By default no timeout is applied — each test runs to completion regardless of wall time. This avoids spurious skip/fail noise on the long-running setups (e.g. the binary-cluster tests). When you do want a bound, pick one of:
 
-The default is 240 seconds. To override it:
+**GIZMO subprocess timeout** (kills the simulation and marks the test **skipped** rather than failed):
 
-- For a single pytest invocation: `GIZMO_TEST_TIMEOUT=120 pytest`
-- To disable the timeout entirely: `GIZMO_TEST_TIMEOUT=0 pytest`
-- To change the default for all runs: edit `DEFAULT_TEST_TIMEOUT` in `python_src/gizmo/test.py`
-- Per-call override in test code: `build_and_run_test("my_test", ..., timeout=60)`
+- Per pytest invocation: `GIZMO_TEST_TIMEOUT=120 pytest`
+- Per-call from test code: `build_and_run_test("my_test", ..., timeout=120)`
+- Globally: edit `DEFAULT_TEST_TIMEOUT` in `python_src/gizmo/test.py` (currently `None`)
 
-There is also an outer `pytest-timeout` safety net (set in `pyproject.toml`, default 600 s) that catches non-GIZMO test code that hangs. Keep `GIZMO_TEST_TIMEOUT` comfortably below that value.
+**Outer pytest-timeout** (kills the whole pytest worker and marks the test **failed**; useful for non-GIZMO test code that hangs):
+
+- Per test: decorate with `@pytest.mark.timeout(seconds)`
+- Globally: set `timeout = <seconds>` under `[tool.pytest.ini_options]` in `pyproject.toml` (currently `0` = disabled)
+
+If you set both, keep `GIZMO_TEST_TIMEOUT` below the pytest-timeout so the inner one fires first and you get a skip, not a failure.

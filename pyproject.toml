@@ -23,5 +23,5 @@ Issues = "https://github.com/phopkins/gizmo/issues"
 where = ["python_src"]
 
 [tool.pytest.ini_options]
-timeout = 720
+timeout = 0  # opt-in: no global timeout. Use @pytest.mark.timeout(seconds) per test, or GIZMO_TEST_TIMEOUT=N for the subprocess timeout.
 python_files = ["test_*.py"]

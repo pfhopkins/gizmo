@@ -30,12 +30,44 @@ TEST_NAME = "plummer_binaries"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 
+
+def _physical_cpu_count():
+    """Number of physical CPU cores on this host (counts hyperthreads as 1).
+
+    On Linux we parse /proc/cpuinfo for unique (physical id, core id) pairs;
+    elsewhere we fall back to os.cpu_count() // 2 assuming 2-way SMT.
+    """
+    import os
+    try:
+        with open("/proc/cpuinfo") as f:
+            text = f.read()
+        cores, cur = set(), {}
+        for line in text.splitlines():
+            if not line.strip():
+                if "physical id" in cur and "core id" in cur:
+                    cores.add((cur["physical id"], cur["core id"]))
+                cur = {}
+            elif ":" in line:
+                k, v = line.split(":", 1)
+                cur[k.strip()] = v.strip()
+        if cores:
+            return len(cores)
+    except OSError:
+        pass
+    return max(1, (os.cpu_count() or 4) // 2)
+
+
+# Benchmarked optimum on a 16-physical-core node: 2 MPI ranks x 8 OMP threads.
+# Generalizing: 2 MPI ranks x (N_phys / 2) OMP threads = total threads == N_phys.
+PB_NUM_MPI_RANKS = 2
+PB_NUM_OMP_THREADS = max(1, _physical_cpu_count() // PB_NUM_MPI_RANKS)
+
 # Cluster parameters (in code units: pc - km/s - Msun)
 SCALE_RADIUS = 1.0           # pc
 M_STAR = 1.0                 # Msun (per star)
 N_BINARIES = 256
 M_CLUSTER = 2 * N_BINARIES * M_STAR
-BINARY_SEPARATION_AU = 100.0
+BINARY_SEPARATION_AU = 1000.0
 BOXSIZE = 300.0
 
 LAGRANGE_FRACTIONS = (0.1, 0.5, 0.9)
@@ -87,6 +119,18 @@ def _radii_from_center(pos, boxsize, periodic):
     return np.sqrt(np.sum(dx**2, axis=1))
 
 
+def _radii_from_com(pos, mass):
+    """Radii in the cluster's mass-weighted center-of-mass frame.
+
+    The cluster's COM drifts noticeably over the run (~0.7 pc by t=32.4) due to
+    asymmetric ejections and numerical drift. Measuring radii from the fixed
+    origin would conflate that bulk-translation with real cluster evolution
+    and would inflate Lagrange-radii drift even when the cluster is intact.
+    """
+    com = np.average(pos, axis=0, weights=mass)
+    return np.sqrt(np.sum((pos - com) ** 2, axis=1))
+
+
 def _total_energy(vel, mass, pot):
     ke = 0.5 * np.sum(mass * np.sum(vel**2, axis=1))
     pe = 0.5 * np.sum(mass * pot)
@@ -127,15 +171,37 @@ def _summary_npz_path(variant_id):
 
 
 def _plot_signed_log(ax, x, y, color=None, label=None):
+    """Plot |y| with positive y solid, negative y dashed. Each contiguous same-sign
+    run is plotted as its own Line2D so a transition from positive to negative never
+    visually connects through the zero-crossing."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     valid = (x > 0) & (y != 0)
-    pos = valid & (y > 0)
-    neg = valid & (y < 0)
-    line, = ax.plot(np.where(pos, x, np.nan), np.where(pos, y, np.nan),
-                    "-", color=color, label=label)
-    ax.plot(np.where(neg, x, np.nan), np.where(neg, -y, np.nan),
-            "--", color=line.get_color())
+    if not valid.any():
+        return
+    state = np.where(valid, (y > 0).astype(int), -1)
+    bounds = np.flatnonzero(np.diff(state) != 0) + 1
+    starts = np.concatenate(([0], bounds))
+    ends = np.concatenate((bounds, [len(x)]))
+    line = None
+    labeled = False
+    for s, e in zip(starts, ends):
+        if state[s] < 0:
+            continue
+        seg_x = x[s:e]
+        is_pos = bool(state[s])
+        seg_y = y[s:e] if is_pos else -y[s:e]
+        kwargs = dict(color=color if line is None else line.get_color())
+        if not labeled and label is not None:
+            kwargs["label"] = label
+            labeled = True
+        if len(seg_x) == 1:
+            ln, = ax.plot(seg_x, seg_y, marker=("o" if is_pos else "x"),
+                          linestyle="", **kwargs)
+        else:
+            ln, = ax.plot(seg_x, seg_y, "-" if is_pos else "--", **kwargs)
+        if line is None:
+            line = ln
 
 
 def _plot_summary():
@@ -196,10 +262,10 @@ def _plot_variant_density_evolution(variant_id, snaps):
     cmap = plt.get_cmap("viridis")
     n = len(snaps)
     for i, s in enumerate(snaps):
-        pos, _, mass, _, boxsize = _load_snapshot(s)
+        pos, _, mass, _, _ = _load_snapshot(s)
         with h5py.File(s, "r") as F:
             t = float(F["Header"].attrs["Time"])
-        r = _radii_from_center(pos, boxsize, periodic=False)
+        r = _radii_from_com(pos, mass)
         rho = _radial_density_profile(r, mass, rbins)
         ax.loglog(rc, rho, "-", color=cmap(i / max(n - 1, 1)), label=f"t = {t:.2f}")
     ax.set_xlabel("r [pc]")
@@ -211,9 +277,12 @@ def _plot_variant_density_evolution(variant_id, snaps):
     plt.close()
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize("extra_config_flags", [pytest.param((), id="starforge_defaults")])
+@pytest.mark.parametrize("num_mpi_ranks", (PB_NUM_MPI_RANKS,))
+@pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
+@pytest.mark.parametrize("extra_config_flags", [
+    pytest.param((), id="starforge_defaults"),
+    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="kdk"),
+])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
     clean_test_outputs(TEST_NAME, extra_config_flags)
@@ -227,8 +296,10 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
 
     pos0, vel0, mass0, pot0, boxsize = _load_snapshot(snaps[0])
     posf, velf, massf, potf, _ = _load_snapshot(snaps[-1])
-    r0 = _radii_from_center(pos0, boxsize, periodic=False)
-    rf = _radii_from_center(posf, boxsize, periodic=False)
+    # Use COM-frame radii so the panels reflect cluster evolution, not
+    # COM drift through the box-fixed coordinate frame.
+    r0 = _radii_from_com(pos0, mass0)
+    rf = _radii_from_com(posf, massf)
 
     rbins = np.geomspace(SCALE_RADIUS / 4, 5 * SCALE_RADIUS, 20)
     rc = np.sqrt(rbins[:-1] * rbins[1:])
@@ -259,13 +330,12 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
         ke0=ke0_traj,
     )
     _plot_summary()
-    _plot_variant_density_evolution(variant_id, snaps)
 
     e0, ke0, pe0 = _total_energy(vel0, mass0, pot0)
     ef, _, _ = _total_energy(velf, massf, potf)
     rel_e_err = abs(ef - e0) / abs(ke0)
-    assert rel_e_err < 0.10, (
-        f"Energy not conserved: |dE|/KE_0 = {rel_e_err:.4f} "
+    assert rel_e_err < 0.01, (
+        f"Energy not conserved: |dE|/KE_0 = {rel_e_err:.4f} (>1%)  "
         f"(E0={e0:.4g}, Ef={ef:.4g}, KE0={ke0:.4g}, PE0={pe0:.4g})"
     )
 

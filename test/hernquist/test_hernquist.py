@@ -148,16 +148,37 @@ def _summary_npz_path(variant_id):
 
 def _plot_signed_log(ax, x, y, color=None, label=None):
     """Plot |y| with positive y solid, negative y dashed, single legend entry.
+    Each contiguous same-sign run is plotted as its own Line2D so a transition
+    from positive to negative never visually connects through the zero-crossing.
     Caller sets log scaling on the axes; points where y==0 (or x<=0) are dropped."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     valid = (x > 0) & (y != 0)
-    pos = valid & (y > 0)
-    neg = valid & (y < 0)
-    line, = ax.plot(np.where(pos, x, np.nan), np.where(pos, y, np.nan),
-                    "-", color=color, label=label)
-    ax.plot(np.where(neg, x, np.nan), np.where(neg, -y, np.nan),
-            "--", color=line.get_color())
+    if not valid.any():
+        return
+    state = np.where(valid, (y > 0).astype(int), -1)
+    bounds = np.flatnonzero(np.diff(state) != 0) + 1
+    starts = np.concatenate(([0], bounds))
+    ends = np.concatenate((bounds, [len(x)]))
+    line = None
+    labeled = False
+    for s, e in zip(starts, ends):
+        if state[s] < 0:
+            continue
+        seg_x = x[s:e]
+        is_pos = bool(state[s])
+        seg_y = y[s:e] if is_pos else -y[s:e]
+        kwargs = dict(color=color if line is None else line.get_color())
+        if not labeled and label is not None:
+            kwargs["label"] = label
+            labeled = True
+        if len(seg_x) == 1:
+            ln, = ax.plot(seg_x, seg_y, marker=("o" if is_pos else "x"),
+                          linestyle="", **kwargs)
+        else:
+            ln, = ax.plot(seg_x, seg_y, "-" if is_pos else "--", **kwargs)
+        if line is None:
+            line = ln
 
 
 def _plot_summary():

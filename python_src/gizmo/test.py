@@ -11,17 +11,24 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
 
-DEFAULT_TEST_TIMEOUT = 600.0
+DEFAULT_TEST_TIMEOUT = None  # opt-in: no timeout by default
 
 
 def _resolve_test_timeout(timeout):
     """Resolve effective subprocess timeout. Explicit arg wins; otherwise read
     GIZMO_TEST_TIMEOUT env var; otherwise fall back to DEFAULT_TEST_TIMEOUT.
-    Setting either to 0 or a negative value disables the timeout."""
+    With DEFAULT_TEST_TIMEOUT=None the subprocess runs unbounded unless the
+    caller explicitly passes a timeout (or sets GIZMO_TEST_TIMEOUT in the env).
+    Any value <= 0 also disables the timeout."""
     if timeout is None:
         env_val = environ.get("GIZMO_TEST_TIMEOUT")
-        timeout = float(env_val) if env_val else DEFAULT_TEST_TIMEOUT
-    return timeout if timeout and timeout > 0 else None
+        if env_val:
+            timeout = float(env_val)
+        else:
+            timeout = DEFAULT_TEST_TIMEOUT
+    if timeout is None:
+        return None
+    return timeout if timeout > 0 else None
 
 
 def flush_colorbar(mappable, ax=None, label=None, **kwargs):
