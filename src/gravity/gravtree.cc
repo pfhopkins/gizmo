@@ -279,7 +279,16 @@ void gravity_tree(void)
 
     /* now perform final operations on results [communication loop is done] */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
-    if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS) {if(!(All.Ti_Current == 0 && RestartFlag == 0)) {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}}} else {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}} /* This will switch to the relative opening criterion for the following force computations */
+    /* Switch to the relative opening criterion for the following force computations.
+     * (Second-order ICs keep Barnes-Hut on the very first step.) */
+    double errtol_before = All.ErrTolTheta;
+    int enable_relative_opening =
+        (All.TypeOfOpeningCriterion == 1) &&
+        !(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0);
+    if(enable_relative_opening) { All.ErrTolTheta = 0; }
+    /* The opening criterion just changed; the installed LET was built/exported under the previous
+     * criterion and is not valid for the next walk. Rebuild the tree+LET before it is reused. */
+    if(errtol_before != 0 && All.ErrTolTheta == 0) { TreeReconstructFlag = 1; }
 #endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
