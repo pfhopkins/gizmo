@@ -292,7 +292,7 @@ extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const doub
     int rc = 0;
     for(int i = 0; i < nq; i++) {
         int n = tlr_route_query_hierarchical(TopNodes, ntn, g_tn_center, g_tn_len, DomainTask, NTask,
-                                             &q_pos[(size_t)i * 3], q_h[i],
+                                             &q_pos[(size_t)i * 3], q_h[i], NULL, 0u,
                                              periodic_flags, box_sizes, self_rank, owners_tmp, seen);
         if(n < 0) { rc = -1; break; }    /* hierarchical stack overflow -> fallback */
         for(int k = 0; k < n; k++) {
@@ -309,23 +309,37 @@ extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const doub
     return rc ? -1 : (int)cursor;
 }
 
-/* H1 flat-vs-hierarchical owner-set oracle (ONEWAY): for each query build the
- * flat (leaf-scan) and hierarchical (tree-descent) REMOTE owner sets on the SAME
- * geometry and compare as SETS.  Returns the count of queries whose sets differ
- * (0 = all equal), or a NEGATIVE code if UNAVAILABLE (distinct so the caller can
- * report a reason and FAIL LOUD — a validation oracle must never look green when
- * it could not validate):  -1 = geometry invalid, -2 = scratch alloc fail,
- * -3 = hierarchical stack overflow.  *first_bad = first mismatching query index
- * (or -1).  Pure host check; caller does the collective Allreduce + controlled-stop. Validates
- * the hierarchical traversal + per-topnode geometry against the trusted flat
- * router before the hierarchical constructor is ever made authoritative. */
+/* flat-vs-hierarchical owner-set oracle: for each query build the flat (leaf-scan)
+ * and hierarchical (tree-descent) REMOTE owner sets on the SAME geometry and
+ * compare as SETS.  symmetric==0 => ONEWAY (band=NULL, H1; byte-identical to the
+ * original).  symmetric!=0 => SYMMETRIC (H4b): flat consumes the GLOBAL per-leaf
+ * band g_band, hier consumes the per-topnode band g_tn_band, both reduced over
+ * supply_mask -- requires the collective global band (g_cband_valid).
+ * Returns the count of queries whose sets differ (0 = all equal), or a NEGATIVE
+ * code if UNAVAILABLE (distinct so the caller can report a reason and FAIL LOUD --
+ * a validation oracle must never look green when it could not validate):
+ *   -1 = geometry (or, SYMM, global band) invalid, -2 = scratch alloc fail,
+ *   -3 = hierarchical stack overflow.  *first_bad = first mismatching query index
+ * (or -1).  Pure host check; caller does the collective Allreduce + controlled-stop.
+ * Validates the hierarchical traversal + per-topnode geometry/band against the
+ * trusted flat router before the hierarchical constructor is ever authoritative. */
 extern "C" int topleaf_router_hier_vs_flat_check(
     const double *q_pos, const double *q_h, int nq,
+    unsigned int supply_mask, int symmetric,
     const int periodic_flags[3], const double box_sizes[3], int self_rank,
     int *first_bad)
 {
     if(first_bad) *first_bad = -1;
     if(!g_geom_valid) return -1;
+    /* SYMM consumes the GLOBAL per-leaf band (flat) + per-topnode band (hier);
+     * both must be built+valid or the comparison is meaningless. */
+    const double *flat_band = NULL;
+    const double *node_band = NULL;
+    if(symmetric) {
+        if(!g_cband_valid) return -1;
+        flat_band = g_band;
+        node_band = g_tn_band;
+    }
     const int ntask = NTask;
     int  *flat_owners = (int *)  malloc((size_t)(ntask > 0 ? ntask : 1) * sizeof(int));
     int  *hier_owners = (int *)  malloc((size_t)(ntask > 0 ? ntask : 1) * sizeof(int));
@@ -340,11 +354,11 @@ extern "C" int topleaf_router_hier_vs_flat_check(
     for(int i = 0; i < nq; i++) {
         const double *pos = &q_pos[(size_t)i * 3];
         double h = q_h[i];
-        /* flat (ONEWAY band=NULL); includes self -> filtered below */
+        /* flat: ONEWAY band=NULL / SYMM flat_band=g_band; includes self -> filtered below */
         int nf = tlr_route_query_over_topleaves(g_leaf_center, g_leaf_len, DomainTask, g_geom_ntl, ntask,
-                                                pos, h, NULL, 0u, periodic_flags, box_sizes, flat_owners, seen_f);
+                                                pos, h, flat_band, supply_mask, periodic_flags, box_sizes, flat_owners, seen_f);
         int nh = tlr_route_query_hierarchical(TopNodes, g_tn_count, g_tn_center, g_tn_len, DomainTask, ntask,
-                                              pos, h, periodic_flags, box_sizes, self_rank, hier_owners, seen_h);
+                                              pos, h, node_band, supply_mask, periodic_flags, box_sizes, self_rank, hier_owners, seen_h);
         for(int k = 0; k < nf; k++) seen_f[flat_owners[k]] = 0;   /* reset dedup scratch */
         if(nh >= 0) for(int k = 0; k < nh; k++) seen_h[hier_owners[k]] = 0;
         if(nh < 0) { unavailable = 1; break; }                    /* hier overflow -> bail, not a mismatch */

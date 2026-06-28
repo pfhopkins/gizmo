@@ -152,18 +152,26 @@ tlr_route_query_over_topleaves(const double *leaf_center, const double *leaf_len
     return n;
 }
 
-/* ---- (4) HIERARCHICAL query -> overlapping top-leaf OWNERS (H1) -----------
+/* ---- (4) HIERARCHICAL query -> overlapping top-leaf OWNERS (H1/H4b) ---------
  * Descends the TopNodes octree (`tn[no].Daughter`/`.Leaf`) with the SAME opener
  * as the flat router, pruning whole subtrees -> O(depth x fanout) instead of the
- * flat O(NTopleaves).  ONEWAY only here (reach = rkern at every level; this is
- * conservative because a leaf cube within reach implies all its ancestor cubes
- * are within reach).  SYMMETRIC needs per-NODE bands propagated up the tree (H4).
+ * flat O(NTopleaves).
  *
  *   tn            -- topnode_data tree (Daughter<0 marks a domain leaf).
  *   tn_center [ntn*3], tn_len [ntn] -- per-topnode cube geometry (from
  *                    Nodes[TopNodeNodeIndex[no]]; NOT derived from the PH child).
  *   domain_task   -- [NTopleaves]; owner = domain_task[tn[no].Leaf].
  *   ntask         -- bounds owner id + the dedup scratch (fail-closed OOB).
+ *   node_band [ntn*TLR_NUM_PTYPES] or NULL.  NULL  => ONEWAY (reach = rkern at
+ *                    every level; conservative because a leaf cube within reach
+ *                    implies all ancestor cubes are within reach).  non-NULL =>
+ *                    SYMMETRIC: per-node reach = max(rkern, max over supply_mask
+ *                    types of node_band[no]).  Because node_band is the MAX over a
+ *                    node's subtree leaf bands, the descent reach at any node is
+ *                    >= the reach at every leaf below it, so no leaf the flat SYMM
+ *                    router would export is ever pruned -> hier owner set == flat.
+ *   supply_mask   -- which types contribute to the SYMMETRIC band (ignored if
+ *                    node_band == NULL).
  *   self_rank     -- excluded (ghost import is remote-only).
  *   owners_out    [>= ntask], seen [ntask] ZERO-initialised by caller.
  * Returns distinct remote owners written, or -1 on stack overflow (caller treats
@@ -174,6 +182,7 @@ tlr_route_query_hierarchical(const struct topnode_data *tn, int ntn,
                              const double *tn_center, const double *tn_len,
                              const int *domain_task, int ntask,
                              const double pos_q[3], double rkern,
+                             const double *node_band, unsigned int supply_mask,
                              const int periodic_flags[3], const double box_sizes[3],
                              int self_rank, int *owners_out, char *seen)
 {
@@ -185,8 +194,19 @@ tlr_route_query_hierarchical(const struct topnode_data *tn, int ntn,
     while(sp > 0) {
         int no = stack[--sp];
         if(no < 0 || no >= ntn) continue;  /* defensive */
+        double reach = rkern;
+        if(node_band) {                    /* SYMMETRIC: widen reach by the node band */
+            const double *b = &node_band[(size_t)no * TLR_NUM_PTYPES];
+            double be = 0;
+            for(int t = 0; t < TLR_NUM_PTYPES; t++) {
+                if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+                if(b[t] > be) be = b[t];
+            }
+            if(be > reach) reach = be;
+        }
+        if(reach <= 0) continue;
         if(!tlr_cell_overlaps_query(&tn_center[(size_t)no * 3], tn_len[no],
-                                    pos_q, rkern, periodic_flags, box_sizes)) continue;  /* prune subtree */
+                                    pos_q, reach, periodic_flags, box_sizes)) continue;  /* prune subtree */
         if(tn[no].Daughter < 0) {          /* domain leaf */
             int owner = domain_task[tn[no].Leaf];
             if(owner < 0 || owner >= ntask) continue;   /* fail closed */

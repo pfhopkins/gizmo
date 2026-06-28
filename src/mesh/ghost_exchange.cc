@@ -378,6 +378,23 @@ static int ghost_route_flat_forced(void)
     return forced;
 }
 
+/* TEMPORARY H4b flat-vs-hierarchical SYMMETRIC owner-set oracle gate (stripped
+ * after the hierarchical SYMM router is blessed).  GIZMO_GHOST_ROUTE_SYMM_HIER_ORACLE=1:
+ * for SYMMETRIC callers, collectively acquire geometry + build the GLOBAL supply
+ * band, then verify the hierarchical SYMM owner sets EQUAL the flat SYMM router's;
+ * mismatch => collective controlled stop.  NO transport authority (nothing installs;
+ * pure validation).  Env => uniform per rank. */
+static int ghost_route_symm_hier_oracle_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_HIER_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
  * pool members.  Also rewrites compact_xyzh + pool_types for those members.
  * Used by both full and narrow refit paths. */
@@ -2541,7 +2558,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 hq_pos[i*3+2] = local_queries[i].pos[2];
                 hq_h[i]       = local_queries[i].h;
             }
-            rc = topleaf_router_hier_vs_flat_check(hq_pos, hq_h, hq_n,
+            rc = topleaf_router_hier_vs_flat_check(hq_pos, hq_h, hq_n, 0u, 0,
                                                    periodic_flags, box_sizes, ThisTask, &first_bad);
         }
         free(hq_pos); free(hq_h);
@@ -2583,6 +2600,124 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             fflush(stdout);
         }
         gizmo_exit_bad_stop_if_requested("ghost_exchange:hier_oracle");
+    }
+
+    /* H4b SYMMETRIC flat-vs-hierarchical owner-set oracle (gated; NO transport
+     * authority — nothing installs; pure validation of the hier SYMM traversal +
+     * per-topnode band against the trusted flat SYMM router).  SYMM has no transport
+     * path to piggyback yet, so this is a SELF-CONTAINED collective block: precondition
+     * check -> collective geometry-acquire -> collective band build -> per-query
+     * owner-set compare -> reduce.  Gate = env + SYMMETRIC (both rank-uniform) and
+     * every branch below is taken on a reduced/uniform flag, so all collectives stay
+     * symmetric and exactly one bad-stop drain runs per block. */
+    if(ghost_route_symm_hier_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC) {
+        int symm_skip = 0;
+
+        /* (a) PRECONDITION (SSOT, COVERAGE not equality — mirrors cache_match above,
+         * reusing the live desired_pool_mask): the supply cache MUST correspond to
+         * THIS caller, else the band is built from the wrong pool -> under-route.
+         * NumPart is per-rank (local check); a mismatch on ANY rank is a wiring bug. */
+        struct gx_supply_pool_view sv;
+        int npool = ghost_exchange_supply_pool_view(&sv);
+        int precond_bad_local = 0;
+        if(npool >= 0) {
+            int ok = (sv.numpart_when_built == NumPart)
+                  && (sv.safety_when_built  == safety_factor)
+                  && ((sv.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
+                  && (sv.radius_policy_when_built == (int)spec->radius_policy)
+                  && (sv.j_scale_when_built == spec->j_radius_scale);
+            precond_bad_local = ok ? 0 : 1;
+        }   /* npool<0 (supply not ready) is benign here -> band build reports not-ready */
+        int precond_bad_any = 0;
+        MPI_Allreduce(&precond_bad_local, &precond_bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(precond_bad_any) {
+            if(precond_bad_local)
+                printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s rank=%d PRECONDITION FAIL: supply cache != spec "
+                       "(NumPart/safety/mask-coverage/policy/jscale)]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask);
+            gizmo_request_controlled_stop(7710, "ghost route SYMM oracle: supply cache does not correspond to caller spec (wiring; would under-route)",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            symm_skip = 1;   /* don't validate against a mismatched supply pool */
+        }
+
+        if(!symm_skip) {
+            /* (b) collective geometry acquire (all-or-none, like route_pre_available). */
+            int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+            int geom_ok_all = 0;
+            MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+
+            /* (c) collective GLOBAL band build (its own all-or-none gates inside).
+             * Skipped on ALL ranks when geometry not uniform-available (geom_ok_all
+             * is uniform) -> band_avail stays 0 -> benign UNAVAILABLE below. */
+            int band_avail = 0, band_cfail = 0;
+            if(geom_ok_all)
+                topleaf_router_band_build_collective(&band_avail, &band_cfail);
+
+            if(band_cfail) {
+                /* domain/topology consistency bug surfaced inside the band builder. */
+                gizmo_request_controlled_stop(7709, "ghost route SYMM oracle: band-build consistency failure (owner-map / non-uniform counts / overflow / topnode layout)",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            } else if(!band_avail) {
+                /* benign not-ready (geometry/supply absent): UNAVAILABLE, never OK. */
+                if(ThisTask == 0)
+                    printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s UNAVAILABLE: global band not built (geometry/supply not ready) — nothing validated]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"));
+                fflush(stdout);
+            } else {
+                /* (d) band valid on all ranks: per-query SYMM owner-set compare. */
+                int hq_n = n_local_queries;
+                double *hq_pos = (double *) malloc((size_t)(hq_n > 0 ? hq_n : 1) * 3 * sizeof(double));
+                double *hq_h   = (double *) malloc((size_t)(hq_n > 0 ? hq_n : 1) * sizeof(double));
+                int first_bad = -1;
+                int rc = -2;   /* default: caller-side scratch alloc fail => UNAVAILABLE */
+                if(hq_pos && hq_h) {
+                    for(int i = 0; i < hq_n; i++) {
+                        hq_pos[i*3+0] = local_queries[i].pos[0];
+                        hq_pos[i*3+1] = local_queries[i].pos[1];
+                        hq_pos[i*3+2] = local_queries[i].pos[2];
+                        hq_h[i]       = local_queries[i].h;
+                    }
+                    rc = topleaf_router_hier_vs_flat_check(hq_pos, hq_h, hq_n, supply_mask, 1,
+                                                           periodic_flags, box_sizes, ThisTask, &first_bad);
+                }
+                free(hq_pos); free(hq_h);
+                int local_mismatch = (rc > 0) ? 1 : 0;
+                int local_unavail  = (rc < 0) ? 1 : 0;
+                if(local_mismatch)
+                    printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s rank=%d MISMATCH: %d/%d queries flat!=hier (first q=%d) supply_mask=0x%x policy=%d jscale=%g]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, rc, hq_n, first_bad,
+                           supply_mask, (int)spec->radius_policy, spec->j_radius_scale);
+                if(local_unavail)
+                    printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s rank=%d UNAVAILABLE rc=%d (%s)]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, rc,
+                           (rc == -1 ? "geometry/global-band invalid" : rc == -2 ? "alloc fail" : rc == -3 ? "hier stack overflow" : "unknown"));
+                int red_in[2]  = { local_mismatch, local_unavail };
+                int red_out[2] = { 0, 0 };
+                MPI_Allreduce(red_in, red_out, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                long long covered_local  = (rc >= 0) ? (long long)hq_n : 0;   /* queries actually compared */
+                long long covered_global = 0;
+                MPI_Allreduce(&covered_local, &covered_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                if(red_out[0]) {
+                    gizmo_request_controlled_stop(7708, "ghost route SYMM oracle: hierarchical owner set != flat (SYMM geometry/traversal/band bug)",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                } else if(red_out[1]) {
+                    gizmo_request_controlled_stop(7707, "ghost route SYMM oracle: validation UNAVAILABLE (geometry/global-band/alloc/overflow) — hierarchical SYMM router not provable",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                } else if(ThisTask == 0) {
+                    /* Never call zero-coverage "OK" — prove owner sets were compared. */
+                    if(covered_global > 0)
+                        printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s OK: hierarchical SYMM owner sets == flat over %lld queries (global) supply_mask=0x%x policy=%d jscale=%g]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), covered_global,
+                               supply_mask, (int)spec->radius_policy, spec->j_radius_scale);
+                    else
+                        printf("[GX_SYMM_HIER_ORACLE call=%d caller=%s SKIP: 0 queries compared (nothing to validate this call)]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"));
+                    fflush(stdout);
+                }
+            }
+        }
+        /* Single collective bad-stop drain for this block (7710/7709/7708/7707). */
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_oracle");
     }
 
     double t_step3_walk = timediff(t_step3_walk_start, my_second());
