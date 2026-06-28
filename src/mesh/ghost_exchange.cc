@@ -39,6 +39,7 @@
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
 #include "ghost_exchange_spec.h"
+#include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 
 /*
  * ============================================================================
@@ -226,6 +227,29 @@ extern "C" void ghost_exchange_local_tree_invalidate_drift(void)
 }
 extern "C" void ghost_exchange_local_tree_invalidate_full(void)  { glt_cache_free(); }
 
+/* Read-only view of the owned-local supply pool + its epoch key, for the
+ * top-leaf router band builder.  Returns num_pool, or -1 if the cache is not
+ * safe to read (absent, or dirtied and awaiting refit -> compact_xyzh stale).
+ * EXCLUDES ghosts by construction (the pool is the owned-local set the local
+ * BVH walk uses); compact_xyzh[p*4+3] is the baked gx_policy_scaled_h reach. */
+extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out)
+{
+    if(!out) return -1;
+    if(!g_glt_cache.valid || g_glt_cache.needs_refit) return -1;
+    if(!g_glt_cache.pool || !g_glt_cache.pool_types || !g_glt_cache.compact_xyzh) return -1;
+    out->pool                  = g_glt_cache.pool;
+    out->pool_types            = g_glt_cache.pool_types;
+    out->compact_xyzh          = g_glt_cache.compact_xyzh;
+    out->num_pool              = g_glt_cache.num_pool;
+    out->numpart_when_built    = g_glt_cache.NumPart_when_built;
+    out->ti_when_built         = (long long)g_glt_cache.Ti_when_built;
+    out->safety_when_built     = g_glt_cache.safety_factor_when_built;
+    out->eligible_mask_when_built = g_glt_cache.eligible_type_mask_when_built;
+    out->radius_policy_when_built = (int)g_glt_cache.radius_policy_when_built;
+    out->j_scale_when_built    = g_glt_cache.j_radius_scale_when_built;
+    return g_glt_cache.num_pool;
+}
+
 extern "C" void ghost_exchange_local_tree_mark_h_dirty_indices(const int *indices, int n)
 {
     if(n <= 0 || !indices) return;
@@ -288,6 +312,56 @@ static unsigned int ghost_exchange_eligible_type_mask(void)
     parsed &= GHOST_TYPE_ALL;
     if(parsed) mask = parsed;
     return mask;
+}
+
+/* TEMPORARY top-leaf-router oracle gate (stripped after the router is blessed).
+ * GIZMO_GHOST_ROUTE_ORACLE=1 enables the compute-and-compare oracle in the
+ * request-driven path: broadcast stays authoritative; routed discovery is
+ * computed only to verify it imports the SAME ghost set.  Env => identical on
+ * every rank => collective-safe. */
+static int ghost_route_oracle_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+/* TEMPORARY top-leaf-router TRANSPORT gate (C3; separate from the oracle gate).
+ * GIZMO_GHOST_ROUTE_TRANSPORT=1 makes the ROUTED discovery AUTHORITATIVE (it
+ * installs the ghosts) for ONEWAY callers; broadcast becomes the fallback (and,
+ * with the oracle also on, the compare-before-install check).  Default OFF until
+ * the FIRE transport+oracle gate is green AND timing improves.  Env => uniform on
+ * every rank => the skip/run-broadcast decision is collective-safe. */
+static int ghost_route_transport_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_TRANSPORT");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+/* TEMPORARY H1 flat-vs-hierarchical owner-set oracle gate (stripped after the
+ * hierarchical router is blessed).  GIZMO_GHOST_ROUTE_HIER_ORACLE=1: when routed
+ * transport is active (ONEWAY), also build the hierarchical owner sets and verify
+ * they EQUAL the flat router's; mismatch => collective controlled stop (the new
+ * geometry/traversal is wrong).  Flat stays authoritative — the hierarchical
+ * result is only compared, never installed. */
+static int ghost_route_hier_oracle_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_HIER_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
 }
 
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
@@ -1610,6 +1684,460 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
 }
 
 
+/* ============================================================================
+ * TEMPORARY top-leaf-router oracle (GIZMO_GHOST_ROUTE_ORACLE; stripped after the
+ * router is blessed).  Recomputes ghost discovery via top-leaf-targeted routing
+ * and verifies the resulting imported ghost set is IDENTICAL to the broadcast
+ * one.  Broadcast stays authoritative; routed results are compared, never used.
+ * ONEWAY callers only in this stage (band-free).  Collective-safe: every rank
+ * runs the same collectives (gated on env + ONEWAY, both uniform); per-rank
+ * geometry/route availability is folded into all-or-none Allreduce gates before
+ * any routed collective.  Comparison is on sorted/deduped (home_rank,home_index)
+ * SETS (codex 2026-06-26), not counts; under-route => collective controlled stop.
+ * ========================================================================== */
+struct gx_oracle_id { int rank; int idx; };
+static int gx_oracle_id_cmp(const void *a, const void *b)
+{
+    const struct gx_oracle_id *x = (const struct gx_oracle_id *)a;
+    const struct gx_oracle_id *y = (const struct gx_oracle_id *)b;
+    if(x->rank != y->rank) return (x->rank < y->rank) ? -1 : 1;
+    if(x->idx  != y->idx)  return (x->idx  < y->idx)  ? -1 : 1;
+    return 0;
+}
+/* sort + unique in place; returns the deduped length. */
+static int gx_oracle_sort_unique(struct gx_oracle_id *v, int n)
+{
+    if(n <= 1) return n;
+    qsort(v, (size_t)n, sizeof(struct gx_oracle_id), gx_oracle_id_cmp);
+    int w = 1;
+    for(int i = 1; i < n; i++) {
+        if(gx_oracle_id_cmp(&v[i], &v[w-1]) != 0) v[w++] = v[i];
+    }
+    return w;
+}
+
+/* Checked exclusive-prefix: disp[t]=sum(count[0..t)); returns total, or -1 if any
+ * displacement/total exceeds INT_MAX (oracle buffers can be large at FIRE/224-rank
+ * scale — fail closed, same no-silent-int-wrap rule as the real RD path). */
+static long long gx_oracle_checked_prefix(const int *count, int *disp, int ntask)
+{
+    long long tot = 0;
+    for(int t = 0; t < ntask; t++) {
+        if(tot > (long long)INT_MAX) return -1;
+        disp[t] = (int)tot;
+        tot += count[t];
+    }
+    return (tot > (long long)INT_MAX) ? -1 : tot;
+}
+
+static void ghost_route_oracle_compare(
+    const struct ghost_exchange_spec_t *spec, int this_call,
+    struct gx_query_t *local_queries, int n_local_queries,
+    sfc_tile_t *h_tiles, int ntiles, int *h_pool, int num_pool,
+    int *h_pool_types, float *h_compact_xyzh, tile_bvh_node_t *h_bvh, int bvh_root,
+    unsigned int supply_mask, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3],
+    const int *ghost_home_rank_map, const int *ghost_home_index_map, int total_recv)
+{
+    /* All buffers NULL-initialised so the single cleanup at `done:` is safe on any
+     * fail-closed early exit (free(NULL) is a no-op).  Every exit past a collective
+     * barrier is reached by ALL ranks together (the barrier is an Allreduce), so the
+     * goto-done skips never desync the routed collectives. */
+    const char *cname = spec->caller_name ? spec->caller_name : "?";
+    int    *route_off = NULL, *route_owners = NULL;
+    double *q_pos = NULL, *q_h = NULL;
+    int    *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
+    struct gx_query_t   *rq_send = NULL, *rq_recv = NULL;
+    char   *matched_r = NULL;
+    int    *gid_sc = NULL, *gid_sd = NULL, *gid_rc = NULL, *gid_rd = NULL;
+    struct gx_oracle_id *gid_send = NULL, *gid_recv = NULL, *bcast = NULL;
+    int  oneway = (search_mode == NGB_SEARCH_ONEWAY) ? 1 : 0;
+    int  nq = n_local_queries;
+    long owners_cap = 0;
+    int  aborted = 0, bad_any = 0, skipped = 1;
+    long long rq_ts_ll = 0, rq_tr_ll = 0, gid_ts_ll = 0, gid_tr_ll = 0;
+    int  rq_total_send = 0, rq_total_recv = 0, gid_total_send = 0, gid_total_recv = 0;
+    int  n_routed = 0, n_bcast = 0, local_mismatch = 0, mismatch_any = 0;
+    struct gx_oracle_id first_missing; first_missing.rank = -1; first_missing.idx = -1;
+    double t_oracle_start = my_second();
+
+    /* Barrier 0 — geometry availability (fresh re-acquire covers all rebuild paths). */
+    {
+        int local_ok = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+        int gate = 0;
+        MPI_Allreduce(&local_ok, &gate, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!gate) {
+            if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: geometry unavailable on >=1 rank; broadcast authoritative]\n", this_call, cname);
+            goto done;
+        }
+    }
+
+    /* Stage 1 (local) — routed-query CSR + per-dest send list, all guarded. */
+    if((long long)nq * (long long)NTask > (long long)INT_MAX) aborted = 1;
+    owners_cap   = aborted ? 1 : ((long)(nq > 0 ? nq : 1) * (long)NTask);
+    route_off    = (int *)    malloc((size_t)(nq + 1) * sizeof(int));
+    route_owners = (int *)    malloc((size_t)(owners_cap > 0 ? owners_cap : 1) * sizeof(int));
+    q_pos        = (double *) malloc((size_t)(nq > 0 ? nq : 1) * 3 * sizeof(double));
+    q_h          = (double *) malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double));
+    rq_sc        = (int *)    calloc((size_t)(NTask > 0 ? NTask : 1), sizeof(int));
+    rq_sd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rc        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    if(!route_off || !route_owners || !q_pos || !q_h || !rq_sc || !rq_sd || !rq_rc || !rq_rd) aborted = 1;
+    if(!aborted) {
+        for(int i = 0; i < nq; i++) {
+            q_pos[i*3+0] = local_queries[i].pos[0];
+            q_pos[i*3+1] = local_queries[i].pos[1];
+            q_pos[i*3+2] = local_queries[i].pos[2];
+            q_h[i]       = local_queries[i].h;
+        }
+        int rc = topleaf_router_route_queries(q_pos, q_h, nq, supply_mask, oneway,
+                                              periodic_flags, box_sizes,
+                                              route_off, route_owners, owners_cap, ThisTask);
+        if(rc < 0) aborted = 1;
+    }
+    if(!aborted) {
+        for(int i = 0; i < nq; i++)
+            for(int k = route_off[i]; k < route_off[i+1]; k++) rq_sc[route_owners[k]]++;
+        rq_ts_ll = gx_oracle_checked_prefix(rq_sc, rq_sd, NTask);
+        if(rq_ts_ll < 0) aborted = 1; else rq_total_send = (int)rq_ts_ll;
+    }
+    if(!aborted) {
+        rq_send = (struct gx_query_t *) malloc((size_t)(rq_total_send > 0 ? rq_total_send : 1) * sizeof(struct gx_query_t));
+        int *toff = (int *) malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+        if(!rq_send || !toff) { aborted = 1; free(toff); }
+        else {
+            memcpy(toff, rq_sd, (size_t)NTask * sizeof(int));
+            for(int i = 0; i < nq; i++)
+                for(int k = route_off[i]; k < route_off[i+1]; k++)
+                    rq_send[toff[route_owners[k]]++] = local_queries[i];
+            free(toff);
+        }
+    }
+    /* Barrier 1 */
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) {
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: route/alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        goto done;
+    }
+
+    /* Stage 2 — exchange routed queries. */
+    MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
+    rq_tr_ll = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
+    if(rq_tr_ll < 0) aborted = 1; else rq_total_recv = (int)rq_tr_ll;
+    if(!aborted) {
+        rq_recv = (struct gx_query_t *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(struct gx_query_t));
+        if(!rq_recv) aborted = 1;
+    }
+    /* Barrier 2 */
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) {
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: recv alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        goto done;
+    }
+    gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
+                              sizeof(struct gx_query_t), MPI_COMM_WORLD);
+
+    /* Stage 3 — walk routed queries per source segment -> matched_routed[src][p];
+     * then build the per-dest routed ghost-id (home_rank,home_index) send list. */
+    matched_r = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
+    gid_sc    = (int *)  calloc((size_t)(NTask > 0 ? NTask : 1), sizeof(int));
+    gid_sd    = (int *)  malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    gid_rc    = (int *)  malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    gid_rd    = (int *)  malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    if(!matched_r || !gid_sc || !gid_sd || !gid_rc || !gid_rd) aborted = 1;
+    if(!aborted) {
+        for(int s = 0; s < NTask; s++) {
+            if(s == ThisTask) continue;
+            char *mf = matched_r + (size_t)s * num_pool;
+            for(int qi = 0; qi < rq_rc[s]; qi++) {
+                const struct gx_query_t *q = &rq_recv[rq_rd[s] + qi];
+                gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                                  h_pool_types, supply_mask, h_bvh, bvh_root,
+                                  q->pos, q->h, search_mode, periodic_flags, box_sizes, mf);
+            }
+            int c = 0; for(int p = 0; p < num_pool; p++) if(mf[p]) c++;
+            gid_sc[s] = c;
+        }
+        gid_ts_ll = gx_oracle_checked_prefix(gid_sc, gid_sd, NTask);
+        if(gid_ts_ll < 0) aborted = 1; else gid_total_send = (int)gid_ts_ll;
+    }
+    if(!aborted) {
+        gid_send = (struct gx_oracle_id *) malloc((size_t)(gid_total_send > 0 ? gid_total_send : 1) * sizeof(struct gx_oracle_id));
+        int *toff = (int *) malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+        if(!gid_send || !toff) { aborted = 1; free(toff); }
+        else {
+            memcpy(toff, gid_sd, (size_t)NTask * sizeof(int));
+            for(int s = 0; s < NTask; s++) {
+                if(s == ThisTask) continue;
+                char *mf = matched_r + (size_t)s * num_pool;
+                for(int p = 0; p < num_pool; p++) {
+                    if(!mf[p]) continue;
+                    int off = toff[s]++;
+                    gid_send[off].rank = ThisTask;
+                    gid_send[off].idx  = h_pool[p];
+                }
+            }
+            free(toff);
+        }
+    }
+    /* Barrier 3 */
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) {
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: walk/pack alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        goto done;
+    }
+
+    /* Stage 4 — exchange routed ghost-id pairs. */
+    MPI_Alltoall(gid_sc, 1, MPI_INT, gid_rc, 1, MPI_INT, MPI_COMM_WORLD);
+    gid_tr_ll = gx_oracle_checked_prefix(gid_rc, gid_rd, NTask);
+    if(gid_tr_ll < 0) aborted = 1; else gid_total_recv = (int)gid_tr_ll;
+    if(!aborted) {
+        gid_recv = (struct gx_oracle_id *) malloc((size_t)(gid_total_recv > 0 ? gid_total_recv : 1) * sizeof(struct gx_oracle_id));
+        bcast    = (struct gx_oracle_id *) malloc((size_t)(total_recv > 0 ? total_recv : 1) * sizeof(struct gx_oracle_id));
+        if(!gid_recv || !bcast) aborted = 1;
+    }
+    /* Barrier 4 */
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) {
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: pair recv alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        goto done;
+    }
+    gizmo_mpi_alltoallv_typed(gid_send, gid_sc, gid_sd, gid_recv, gid_rc, gid_rd,
+                              sizeof(struct gx_oracle_id), MPI_COMM_WORLD);
+
+    /* Stage 5 — sorted/deduped set compare: routed ⊆ broadcast always, so any
+     * broadcast pair missing from routed is an UNDER-ROUTE. */
+    skipped  = 0;
+    n_routed = gx_oracle_sort_unique(gid_recv, gid_total_recv);
+    for(int g = 0; g < total_recv; g++) { bcast[g].rank = ghost_home_rank_map[g]; bcast[g].idx = ghost_home_index_map[g]; }
+    n_bcast  = gx_oracle_sort_unique(bcast, total_recv);
+    local_mismatch = (n_routed != n_bcast) ? 1 : 0;
+    {
+        int ir = 0;
+        for(int ib = 0; ib < n_bcast; ib++) {
+            while(ir < n_routed && gx_oracle_id_cmp(&gid_recv[ir], &bcast[ib]) < 0) ir++;
+            if(ir >= n_routed || gx_oracle_id_cmp(&gid_recv[ir], &bcast[ib]) != 0) {
+                local_mismatch = 1;
+                if(first_missing.rank < 0) first_missing = bcast[ib];
+                break;
+            }
+        }
+    }
+    if(local_mismatch) {
+        printf("[GX_ROUTE_ORACLE call=%d caller=%s rank=%d MISMATCH: routed=%d bcast=%d first_missing=(home_rank=%d,home_idx=%d)]\n",
+               this_call, cname, ThisTask, n_routed, n_bcast, first_missing.rank, first_missing.idx);
+        fflush(stdout);
+    }
+    MPI_Allreduce(&local_mismatch, &mismatch_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(mismatch_any) {
+        gizmo_request_controlled_stop(7704, "ghost route oracle: routed ghost set != broadcast (under-route)",
+                                      __FILE__, __LINE__, __FUNCTION__);
+    } else if(ThisTask == 0) {
+        printf("[GX_ROUTE_ORACLE call=%d caller=%s OK: routed==broadcast ghost set]\n", this_call, cname);
+        fflush(stdout);
+    }
+
+done:
+    free(bcast);
+    free(gid_recv); free(gid_rd); free(gid_rc); free(gid_send); free(gid_sd); free(gid_sc);
+    free(matched_r);
+    free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
+    free(q_pos); free(q_h); free(route_off); free(route_owners);
+
+    if(ThisTask == 0) {
+        printf("[GX_ROUTE_ORACLE_TIME call=%d caller=%s oracle=%.4f s %s (diagnostic; GX_RD_TIME is inflated while the oracle is on)]\n",
+               this_call, cname, timediff(t_oracle_start, my_second()), skipped ? "SKIPPED" : "RAN");
+        fflush(stdout);
+    }
+    /* Drain the controlled-stop request collectively (all ranks reach here). */
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:route_oracle");
+}
+
+/* Broadcast discovery walk (extracted verbatim, C3a).  Walks every remote rank's
+ * queries (from the Allgatherv'd all_queries) against the pre-built local supply
+ * snapshot and returns the per-peer match bitmask matched[t*num_pool+p] that the
+ * shared pack/install Steps 4-6 consume.  Pure local walk over already-exchanged
+ * queries -- no routing, no collectives.  CALLER OWNS the returned buffer (free
+ * it).  This is the broadcast `matched` producer; C3b adds a routed producer with
+ * the identical return layout so the install path stays shared. */
+static char *compute_matched_broadcast(
+    const struct gx_query_t *all_queries, const int *q_disps, const int *all_q_counts,
+    const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
+    const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
+    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3])
+{
+    /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
+    char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
+    for(int t = 0; t < NTask; t++) {
+        if(t == ThisTask) continue;
+        int q_start = q_disps[t];
+        int q_count = all_q_counts[t];
+        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
+        for(int qi = 0; qi < q_count; qi++) {
+            const struct gx_query_t *q = &all_queries[q_start + qi];
+            /* q->h already includes safety_factor (set at query-build time).
+             * compact_xyzh[*4+3] also includes safety_factor. So leaf r² check
+             * uses inflated radii on both sides of max(h_q, h_j). */
+            gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                              h_pool_types, supply_mask,
+                              h_bvh, bvh_root,
+                              q->pos, q->h, search_mode,
+                              periodic_flags, box_sizes,
+                              match_for_t);
+        }
+    }
+    return matched;
+}
+
+/* Lazy, idempotent collective broadcast of the local query lists to all ranks
+ * (the legacy Step-2 Allgather/Allgatherv).  Safe to call multiple times: no-op
+ * once *available.  MUST be called collectively (all ranks together).  Fills the
+ * three malloc'd arrays (caller frees) + total_queries.  Enables the C3b late
+ * fallback: if routed discovery fails AFTER Step 2 was skipped, all ranks return
+ * to the same point and run this collectively before the broadcast walk. */
+static void ensure_broadcast_queries(int *available,
+                                     const struct gx_query_t *local_queries, int n_local_queries,
+                                     int **all_q_counts_io, int **q_disps_io,
+                                     struct gx_query_t **all_queries_io, int *total_queries_io)
+{
+    if(*available) return;
+    int *all_q_counts = (int *) malloc(NTask * sizeof(int));
+    MPI_Allgather(&n_local_queries, 1, MPI_INT, all_q_counts, 1, MPI_INT, MPI_COMM_WORLD);
+    int *q_disps = (int *) malloc(NTask * sizeof(int));
+    int total_queries = 0;
+    for(int t = 0; t < NTask; t++) { q_disps[t] = total_queries; total_queries += all_q_counts[t]; }
+    struct gx_query_t *all_queries = (struct gx_query_t *)
+        malloc((size_t)(total_queries > 0 ? total_queries : 1) * sizeof(struct gx_query_t));
+    int *q_byte_counts = (int *) malloc(NTask * sizeof(int));
+    int *q_byte_disps  = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        q_byte_counts[t] = all_q_counts[t] * (int)sizeof(struct gx_query_t);
+        q_byte_disps[t]  = q_disps[t]      * (int)sizeof(struct gx_query_t);
+    }
+    MPI_Allgatherv(local_queries, n_local_queries * (int)sizeof(struct gx_query_t), MPI_BYTE,
+                   all_queries, q_byte_counts, q_byte_disps, MPI_BYTE, MPI_COMM_WORLD);
+    free(q_byte_counts); free(q_byte_disps);
+    *all_q_counts_io = all_q_counts; *q_disps_io = q_disps;
+    *all_queries_io = all_queries;   *total_queries_io = total_queries;
+    *available = 1;
+}
+
+/* Routed `matched` producer (C3b): routes each local query to its overlapping
+ * top-leaf owners, Alltoallv's the routed queries, and walks ONLY the received
+ * queries per source rank -> matched[t*num_pool+p] (IDENTICAL layout to
+ * compute_matched_broadcast).  Geometry must already be acquired+validated by the
+ * caller's collective gate.  Fully fail-closed: on geometry/INT-overflow/alloc
+ * failure on ANY rank, all ranks return NULL together (via Allreduce barriers) so
+ * the caller falls back to broadcast collectively.  ONEWAY in C3 (band-free).
+ * CALLER OWNS the returned buffer (free it). */
+static char *compute_matched_routed(
+    const struct gx_query_t *local_queries, int n_local_queries,
+    const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
+    const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
+    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3])
+{
+    int *route_off = NULL, *route_owners = NULL;
+    double *q_pos = NULL, *q_h = NULL;
+    int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
+    struct gx_query_t *rq_send = NULL, *rq_recv = NULL;
+    char *matched = NULL;
+    int  oneway = (search_mode == NGB_SEARCH_ONEWAY) ? 1 : 0;
+    int  nq = n_local_queries;
+    int  aborted = 0, bad_any = 0;
+    long owners_cap = 0;
+    long long rq_ts = 0, rq_tr = 0;
+    int  rq_total_send = 0, rq_total_recv = 0;
+
+    /* Stage 1 (local): routed-query CSR + per-dest send list (guarded). */
+    if((long long)nq * (long long)NTask > (long long)INT_MAX) aborted = 1;
+    owners_cap   = aborted ? 1 : ((long)(nq > 0 ? nq : 1) * (long)NTask);
+    route_off    = (int *)    malloc((size_t)(nq + 1) * sizeof(int));
+    route_owners = (int *)    malloc((size_t)(owners_cap > 0 ? owners_cap : 1) * sizeof(int));
+    q_pos        = (double *) malloc((size_t)(nq > 0 ? nq : 1) * 3 * sizeof(double));
+    q_h          = (double *) malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double));
+    rq_sc        = (int *)    calloc((size_t)(NTask > 0 ? NTask : 1), sizeof(int));
+    rq_sd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rc        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    if(!route_off || !route_owners || !q_pos || !q_h || !rq_sc || !rq_sd || !rq_rc || !rq_rd) aborted = 1;
+    if(!aborted) {
+        for(int i = 0; i < nq; i++) {
+            q_pos[i*3+0] = local_queries[i].pos[0];
+            q_pos[i*3+1] = local_queries[i].pos[1];
+            q_pos[i*3+2] = local_queries[i].pos[2];
+            q_h[i]       = local_queries[i].h;
+        }
+        int rc = topleaf_router_route_queries(q_pos, q_h, nq, supply_mask, oneway,
+                                              periodic_flags, box_sizes,
+                                              route_off, route_owners, owners_cap, ThisTask);
+        if(rc < 0) aborted = 1;
+    }
+    if(!aborted) {
+        for(int i = 0; i < nq; i++)
+            for(int k = route_off[i]; k < route_off[i+1]; k++) rq_sc[route_owners[k]]++;
+        rq_ts = gx_oracle_checked_prefix(rq_sc, rq_sd, NTask);
+        if(rq_ts < 0) aborted = 1; else rq_total_send = (int)rq_ts;
+    }
+    if(!aborted) {
+        rq_send = (struct gx_query_t *) malloc((size_t)(rq_total_send > 0 ? rq_total_send : 1) * sizeof(struct gx_query_t));
+        int *toff = (int *) malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+        if(!rq_send || !toff) { aborted = 1; free(toff); }
+        else {
+            memcpy(toff, rq_sd, (size_t)NTask * sizeof(int));
+            for(int i = 0; i < nq; i++)
+                for(int k = route_off[i]; k < route_off[i+1]; k++)
+                    rq_send[toff[route_owners[k]]++] = local_queries[i];
+            free(toff);
+        }
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+
+    /* Stage 2: exchange routed queries. */
+    MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
+    rq_tr = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
+    if(rq_tr < 0) aborted = 1; else rq_total_recv = (int)rq_tr;
+    if(!aborted) {
+        rq_recv = (struct gx_query_t *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(struct gx_query_t));
+        if(!rq_recv) aborted = 1;
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+    gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
+                              sizeof(struct gx_query_t), MPI_COMM_WORLD);
+
+    /* Stage 3: walk routed queries per source segment -> matched[src][p]. */
+    matched = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
+    if(!matched) aborted = 1;
+    if(!aborted) {
+        for(int s = 0; s < NTask; s++) {
+            if(s == ThisTask) continue;
+            char *mf = matched + (size_t)s * num_pool;
+            for(int qi = 0; qi < rq_rc[s]; qi++) {
+                const struct gx_query_t *q = &rq_recv[rq_rd[s] + qi];
+                gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                                  h_pool_types, supply_mask, h_bvh, bvh_root,
+                                  q->pos, q->h, search_mode, periodic_flags, box_sizes, mf);
+            }
+        }
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+
+    free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
+    free(q_pos); free(q_h); free(route_off); free(route_owners);
+    return matched;
+
+fail:
+    free(matched);
+    free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
+    free(q_pos); free(q_h); free(route_off); free(route_owners);
+    return NULL;
+}
+
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
@@ -1680,30 +2208,18 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
     double t_step1 = timediff(t_step1_start, my_second());
-    /* === Step 2: Allgather query counts, Allgatherv query records === */
-    double t_step2_start = my_second();
-    int *all_q_counts = (int *) malloc(NTask * sizeof(int));
-    MPI_Allgather(&n_local_queries, 1, MPI_INT, all_q_counts, 1, MPI_INT, MPI_COMM_WORLD);
-    int *q_disps = (int *) malloc(NTask * sizeof(int));
-    int total_queries = 0;
-    for(int t = 0; t < NTask; t++) {
-        q_disps[t] = total_queries;
-        total_queries += all_q_counts[t];
-    }
-    struct gx_query_t *all_queries = (struct gx_query_t *)
-        malloc((size_t)(total_queries > 0 ? total_queries : 1) * sizeof(struct gx_query_t));
-
-    int *q_byte_counts = (int *) malloc(NTask * sizeof(int));
-    int *q_byte_disps  = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        q_byte_counts[t] = all_q_counts[t] * (int)sizeof(struct gx_query_t);
-        q_byte_disps[t]  = q_disps[t]      * (int)sizeof(struct gx_query_t);
-    }
-    MPI_Allgatherv(local_queries, n_local_queries * (int)sizeof(struct gx_query_t), MPI_BYTE,
-                   all_queries,   q_byte_counts, q_byte_disps, MPI_BYTE,
-                   MPI_COMM_WORLD);
-    free(q_byte_counts); free(q_byte_disps);
-    double t_step2 = timediff(t_step2_start, my_second());
+    /* === Step 2: LAZY query distribution (C3b) === The broadcast Allgather/
+     * Allgatherv now runs on demand via ensure_broadcast_queries(): SKIPPED in
+     * routed-production mode, run up-front for the oracle / when routed is
+     * unavailable, and as a collective LATE fallback if routed fails after the
+     * skip.  Declarations only here; the gather (if any) happens after the
+     * supply-snapshot build below, alongside the routed-vs-broadcast selection. */
+    int   *all_q_counts = NULL;
+    int   *q_disps      = NULL;
+    struct gx_query_t *all_queries = NULL;
+    int    total_queries = 0;
+    int    bcast_queries_available = 0;
+    double t_step2 = 0.0;
 
     /* === Step 3: per-rank, walk local BVH against each remote rank's queries ===
      *
@@ -1872,31 +2388,171 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     double t_step3_walk_start = my_second();
 
-    /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
-    char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
-    for(int t = 0; t < NTask; t++) {
-        if(t == ThisTask) continue;
-        int q_start = q_disps[t];
-        int q_count = all_q_counts[t];
-        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
-        for(int qi = 0; qi < q_count; qi++) {
-            const struct gx_query_t *q = &all_queries[q_start + qi];
-            /* q->h already includes safety_factor (set at query-build time).
-             * compact_xyzh[*4+3] also includes safety_factor. So leaf r² check
-             * uses inflated radii on both sides of max(h_q, h_j). */
-            gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
-                              h_pool_types, supply_mask,
-                              h_bvh, bvh_root,
-                              q->pos, q->h, search_mode,
-                              periodic_flags, box_sizes,
-                              match_for_t);
+    /* C3b matched producer selection: ROUTED transport (gated, ONEWAY) installs;
+     * BROADCAST is the fallback (+ compare-before-install oracle).  Broadcast query
+     * gather is LAZY (ensure_broadcast_queries) — skipped in routed production. */
+    int want_routed = ghost_route_transport_enabled() && (search_mode == NGB_SEARCH_ONEWAY);
+    int route_pre_ok_local = want_routed ? ((topleaf_router_geometry_acquire() == 0) ? 1 : 0) : 0;
+    int route_pre_available = 0;
+    if(want_routed)
+        MPI_Allreduce(&route_pre_ok_local, &route_pre_available, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    int oracle_on = ghost_route_oracle_enabled();
+
+    char *matched = NULL;
+    int   used_routed = 0;
+
+    /* Up-front broadcast gather when broadcast is needed regardless of routed
+     * outcome (oracle compare, or routed unavailable). Collective + uniform. */
+    if(oracle_on || !route_pre_available) {
+        double tb = my_second();
+        ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
+                                 &all_q_counts, &q_disps, &all_queries, &total_queries);
+        t_step2 += timediff(tb, my_second());
+    }
+
+    if(route_pre_available) {
+        matched = compute_matched_routed(local_queries, n_local_queries,
+                                         h_compact_xyzh, h_tiles, ntiles,
+                                         h_pool, num_pool, h_pool_types, supply_mask,
+                                         h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+        if(matched) used_routed = 1;   /* NULL => routed failed collectively => fall back */
+    }
+    if(!matched) {
+        /* LATE collective fallback: routed unavailable or failed after the skip. */
+        double tb = my_second();
+        ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
+                                 &all_q_counts, &q_disps, &all_queries, &total_queries);
+        t_step2 += timediff(tb, my_second());
+        matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
+                                            h_compact_xyzh, h_tiles, ntiles,
+                                            h_pool, num_pool, h_pool_types, supply_mask,
+                                            h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+        /* Broadcast is the safety path — its alloc failing is terminal.  Drain
+         * COLLECTIVELY here, BEFORE Step 4 dereferences matched: a per-rank NULL
+         * must become an all-rank controlled stop, never a NULL walk/segfault. */
+        int bcast_fail_local = (matched == NULL) ? 1 : 0;
+        int bcast_fail_any   = 0;
+        MPI_Allreduce(&bcast_fail_local, &bcast_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(bcast_fail_any) {
+            if(bcast_fail_local) {
+                printf("ERROR: request-driven broadcast matched alloc failed on task %d.\n", ThisTask);
+                gizmo_request_controlled_stop(7705, "ghost_exchange (request-driven): broadcast matched alloc failed",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            }
+            gizmo_exit_bad_stop_if_requested("ghost_exchange:broadcast_matched_alloc");
         }
     }
 
+    /* Compare-before-install oracle (transport+oracle): routed must EQUAL broadcast.
+     * Sender-side compare of the exact (dest_rank, home_index=h_pool[p]) send
+     * identities Steps 4-6 will install; routed⊆broadcast so any broadcast send the
+     * routed set lacks is an UNDER-ROUTE.  Stop BEFORE install (drained at the Step-4
+     * poll) so a bad ghost set never reaches downstream physics. */
+    if(used_routed && oracle_on && matched) {
+        char *matched_bcast = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
+                                                        h_compact_xyzh, h_tiles, ntiles,
+                                                        h_pool, num_pool, h_pool_types, supply_mask,
+                                                        h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+        int local_mismatch = (matched_bcast == NULL) ? 1 : 0;
+        int mt = -1, mp = -1;
+        if(matched_bcast) {
+            for(int t = 0; t < NTask && !local_mismatch; t++) {
+                if(t == ThisTask) continue;
+                const char *mr = matched       + (size_t)t * num_pool;
+                const char *mb = matched_bcast + (size_t)t * num_pool;
+                for(int p = 0; p < num_pool; p++) {
+                    if(mb[p] && !mr[p]) { local_mismatch = 1; mt = t; mp = p; break; }
+                }
+            }
+        }
+        if(local_mismatch) {
+            printf("[GX_ROUTE_TRANSPORT call=%d caller=%s rank=%d MISMATCH routed vs broadcast (dest=%d pool=%d home_idx=%d)]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, mt, mp,
+                   (mt >= 0 && mp >= 0) ? h_pool[mp] : -1);
+            fflush(stdout);
+        }
+        int mismatch_any = 0;
+        MPI_Allreduce(&local_mismatch, &mismatch_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(mismatch_any) {
+            gizmo_request_controlled_stop(7704, "ghost route transport: routed ghost set != broadcast (under-route)",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        } else if(ThisTask == 0) {
+            printf("[GX_ROUTE_TRANSPORT call=%d caller=%s OK routed==broadcast]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"));
+            fflush(stdout);
+        }
+        free(matched_bcast);
+    }
+
+    /* H1 flat-vs-hierarchical owner-set oracle (gated; flat stays authoritative).
+     * Only meaningful when routed transport is active (geometry acquired + flat
+     * route exercised).  Builds hierarchical owner sets and verifies they EQUAL
+     * the flat router's; mismatch => collective controlled-stop (new geometry/
+     * traversal wrong).  All ranks enter together (gate = env + used_routed, both
+     * collective-uniform), so the Allreduce stays symmetric. */
+    if(used_routed && ghost_route_hier_oracle_enabled() && search_mode == NGB_SEARCH_ONEWAY) {
+        int hq_n = n_local_queries;
+        double *hq_pos = (double *) malloc((size_t)(hq_n > 0 ? hq_n : 1) * 3 * sizeof(double));
+        double *hq_h   = (double *) malloc((size_t)(hq_n > 0 ? hq_n : 1) * sizeof(double));
+        int first_bad = -1;
+        int rc = -2;   /* default: scratch alloc failure (caller side) => UNAVAILABLE */
+        if(hq_pos && hq_h) {
+            for(int i = 0; i < hq_n; i++) {
+                hq_pos[i*3+0] = local_queries[i].pos[0];
+                hq_pos[i*3+1] = local_queries[i].pos[1];
+                hq_pos[i*3+2] = local_queries[i].pos[2];
+                hq_h[i]       = local_queries[i].h;
+            }
+            rc = topleaf_router_hier_vs_flat_check(hq_pos, hq_h, hq_n,
+                                                   periodic_flags, box_sizes, ThisTask, &first_bad);
+        }
+        free(hq_pos); free(hq_h);
+        /* rc > 0: mismatch count.  rc == 0: all equal.  rc < 0: UNAVAILABLE
+         * (-1 geometry, -2 alloc, -3 stack overflow) — for a validation gate this
+         * is FATAL (not a quiet skip): the hierarchical router could not be proven
+         * correct.  Track mismatch and unavailable SEPARATELY so a "could not
+         * validate" can never masquerade as OK. */
+        int local_mismatch = (rc > 0) ? 1 : 0;
+        int local_unavail  = (rc < 0) ? 1 : 0;
+        if(local_mismatch)
+            printf("[GX_HIER_ORACLE call=%d caller=%s rank=%d MISMATCH: %d/%d queries flat!=hier (first q=%d)]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, rc, hq_n, first_bad);
+        if(local_unavail)
+            printf("[GX_HIER_ORACLE call=%d caller=%s rank=%d UNAVAILABLE rc=%d (%s)]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, rc,
+                   (rc == -1 ? "geometry invalid" : rc == -2 ? "alloc fail" : rc == -3 ? "hier stack overflow" : "unknown"));
+        int red_in[2]  = { local_mismatch, local_unavail };
+        int red_out[2] = { 0, 0 };
+        MPI_Allreduce(red_in, red_out, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        long long covered_local  = (rc >= 0) ? (long long)hq_n : 0;   /* queries actually compared */
+        long long covered_global = 0;
+        MPI_Allreduce(&covered_local, &covered_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(red_out[0]) {
+            gizmo_request_controlled_stop(7706, "ghost route hier oracle: hierarchical owner set != flat (geometry/traversal bug)",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        } else if(red_out[1]) {
+            gizmo_request_controlled_stop(7707, "ghost route hier oracle: validation UNAVAILABLE (geometry/alloc/stack-overflow) — hierarchical router not provable",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        } else if(ThisTask == 0) {
+            /* Never call zero-coverage "OK" — a validation gate must prove it
+             * actually compared owner sets, not that nothing ran. */
+            if(covered_global > 0)
+                printf("[GX_HIER_ORACLE call=%d caller=%s OK: hierarchical owner sets == flat over %lld queries (global)]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), covered_global);
+            else
+                printf("[GX_HIER_ORACLE call=%d caller=%s SKIP: 0 queries compared (nothing to validate this call)]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"));
+            fflush(stdout);
+        }
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:hier_oracle");
+    }
+
     double t_step3_walk = timediff(t_step3_walk_start, my_second());
+    const char *qdist = used_routed ? "routed" : "bcast";
     if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[GX_RD rank=0 step3 build_tiles+bvh+compact=%.4f s walk_all_queries=%.4f s ntiles=%d num_pool=%d total_queries=%d]\n",
-               t_step3_build, t_step3_walk, ntiles, num_pool, total_queries);
+        printf("[GX_RD rank=0 step3 build_tiles+bvh+compact=%.4f s discovery=%.4f s ntiles=%d num_pool=%d total_queries=%d qdist=%s]\n",
+               t_step3_build, t_step3_walk, ntiles, num_pool,
+               (qdist[0] == 'r' ? -1 : total_queries), qdist);
         fflush(stdout);
     }
 
@@ -2022,27 +2678,44 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     memcpy(ghost_wb_send_count, send_count, NTask * sizeof(int));
     memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
 
+    /* TEMPORARY: post-install C2 oracle — ONLY for broadcast-authoritative mode
+     * (!used_routed).  When routed transport installed (used_routed), the
+     * compare-before-install check above (GX_ROUTE_TRANSPORT) already validated
+     * the routed set; re-running this would be redundant + expensive and its
+     * "broadcast authoritative" premise no longer holds.  used_routed is uniform
+     * across ranks (route_pre_available + compute_matched_routed are collective),
+     * so this gate stays collective-safe. */
+    if(ghost_route_oracle_enabled() && search_mode == NGB_SEARCH_ONEWAY && !used_routed) {
+        ghost_route_oracle_compare(spec, this_call, local_queries, n_local_queries,
+                                   h_tiles, ntiles, h_pool, num_pool,
+                                   h_pool_types, h_compact_xyzh, h_bvh, bvh_root,
+                                   supply_mask, search_mode, periodic_flags, box_sizes,
+                                   ghost_home_rank_map, ghost_home_index_map, total_recv);
+    }
+
     double t_step6 = timediff(t_step6_start, my_second());
     double t_ghost_total = timediff(t_ghost_start, my_second());
 
     /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
      * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
     if(gizmo_verbose_diag()) {
-        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
+        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
                ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
                (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
+               (used_routed ? "routed" : "bcast"),
                t_step1, t_step2, t_step3_build, t_step3_walk,
                t_step4, t_step5, t_step6, t_ghost_total,
-               n_local_queries, total_queries, num_pool, ntiles, total_send, total_recv);
+               n_local_queries, (used_routed ? -1 : total_queries), num_pool, ntiles, total_send, total_recv);
         fflush(stdout);
     }
 
     if(ThisTask == 0) {
-        PRINT_STATUS("Ghost exchange (request-driven, %s, %s): %d local + %d ghost  queries=%d total_queries=%d num_pool=%d  [%.4f s]",
+        PRINT_STATUS("Ghost exchange (request-driven, %s, %s, qdist=%s): %d local + %d ghost  queries=%d total_queries=%d num_pool=%d  [%.4f s]",
                      (spec->caller_name ? spec->caller_name : "?"),
                      (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
+                     (used_routed ? "routed" : "bcast"),
                      NumPart_before_ghost, NumGhostParticles,
-                     n_local_queries, total_queries, num_pool, t_ghost_total);
+                     n_local_queries, (used_routed ? -1 : total_queries), num_pool, t_ghost_total);
     }
 
     /* Diagnostic: ghost composition + import-waste ratio (should be ~0% for

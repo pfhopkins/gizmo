@@ -12,6 +12,7 @@
 #include "../core/step_phases.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/topleaf_router.h"   /* topleaf_router_geometry_invalidate (rebuild boundary) */
 #include "../cooling/disk_betacool.h"
 #include "../cooling/planet_heating.h"
 #include "../solids/grain_promotion.h"
@@ -375,6 +376,11 @@ void run(void)
                                      * local-tree cache too — domain_decomp shuffles
                                      * particle indices so cached pool[]/tile assignments
                                      * are stale. Same shape as gpu_step_sidx_invalidate_full. */
+            topleaf_router_geometry_invalidate(); /* top-leaf router: DomainNodeIndex +
+                                     * node geometry rebuilt by the decomposition, so the
+                                     * router's per-leaf {center,len} cache (and the
+                                     * topology-keyed band) are stale — force re-acquire
+                                     * before any routed use (fail closed to broadcast). */
             /* Trigger a cpu.txt summary at the start of the NEXT iteration (when
              * write_cpu_log fires) — domain-decomp steps are inherently expensive,
              * a per-decomp summary is the most informative cheap-cadence sample. */
