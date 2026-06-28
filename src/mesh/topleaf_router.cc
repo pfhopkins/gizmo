@@ -11,6 +11,7 @@
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #include <mpi.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +59,26 @@ static double       g_band_safety  = 0.0;
 static unsigned int g_band_mask    = 0;
 static int          g_band_policy  = -1;
 static double       g_band_jscale  = 0.0;
+
+/* --- per-TOPNODE supply band for the hierarchical SYMM router (H4a) ---
+ * node_band[no][type] = max over the band of every top-leaf in no's subtree,
+ * propagated up the replicated TopNodes octree.  Built by the COLLECTIVE band
+ * builder (topleaf_router_band_build_collective): g_band is first made GLOBAL via
+ * a cross-rank Allreduce(MAX) (each rank fills only the leaves it owns), then
+ * propagated here.  Keyed by its own epoch (g_cband_*) so the collective builder
+ * is independent of the legacy local builder's g_band_* key. */
+static double *g_tn_band      = NULL;   /* SharedSpace [cap*TLR_NUM_PTYPES] */
+static int     g_tn_band_cap  = 0;
+static int     g_cband_valid  = 0;      /* GLOBAL band + node band valid on this rank */
+static int     g_cband_ntl    = 0;
+static int     g_cband_ntn    = 0;
+/* collective-band epoch key (supply-pool-view epoch + topology counts) */
+static int          g_cband_numpart = -1;
+static long long    g_cband_ti      = -1;
+static double       g_cband_safety  = 0.0;
+static unsigned int g_cband_mask    = 0;
+static int          g_cband_policy  = -1;
+static double       g_cband_jscale  = 0.0;
 
 static double *shared_alloc_double(double *old, int old_cap, int new_cap, const char *what)
 {
@@ -149,7 +170,8 @@ extern "C" int topleaf_router_geometry_acquire(void)
     g_geom_ntl   = ntl;
     g_geom_valid = 1;
     /* Geometry changed -> any prior band is keyed to a different topology. */
-    g_band_valid = 0;
+    g_band_valid  = 0;
+    g_cband_valid = 0;
     return 0;
 }
 
@@ -163,24 +185,34 @@ extern "C" void topleaf_router_geometry_release(void)
     g_geom_cap = 0; g_geom_ntl = 0; g_geom_valid = 0;
     if(g_band) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_band); g_band = NULL; }
     g_band_cap = 0; g_band_ntl = 0; g_band_valid = 0;
+    if(g_tn_band) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_tn_band); g_tn_band = NULL; }
+    g_tn_band_cap = 0; g_cband_valid = 0; g_cband_ntl = 0; g_cband_ntn = 0;
 }
 
 /* Mark the geometry cache (and the topology-keyed band) INVALID without freeing
  * storage.  Call from domain/tree rebuild boundaries so a missing re-acquire
  * fails closed to broadcast instead of routing on stale geometry. */
-extern "C" void topleaf_router_geometry_invalidate(void) { g_geom_valid = 0; g_band_valid = 0; }
+extern "C" void topleaf_router_geometry_invalidate(void) { g_geom_valid = 0; g_band_valid = 0; g_cband_valid = 0; }
 
 extern "C" int           topleaf_router_geometry_valid(void)  { return g_geom_valid; }
 extern "C" const double *topleaf_router_leaf_center(void)      { return g_geom_valid ? g_leaf_center : NULL; }
 extern "C" const double *topleaf_router_leaf_len(void)         { return g_geom_valid ? g_leaf_len    : NULL; }
 extern "C" int           topleaf_router_ntopleaves(void)       { return g_geom_ntl; }
 
-extern "C" void topleaf_router_band_invalidate(void) { g_band_valid = 0; }
+extern "C" void topleaf_router_band_invalidate(void) { g_band_valid = 0; g_cband_valid = 0; }
 extern "C" int  topleaf_router_band_valid(void)      { return g_band_valid; }
 extern "C" const double *topleaf_router_band(int *ntl_out)
 {
     if(ntl_out) *ntl_out = g_band_ntl;
     return g_band_valid ? g_band : NULL;
+}
+
+/* GLOBAL band + per-topnode node band validity (collective builder). */
+extern "C" int topleaf_router_global_band_valid(void) { return g_cband_valid; }
+extern "C" const double *topleaf_router_node_band(int *ntn_out)
+{
+    if(ntn_out) *ntn_out = g_cband_valid ? g_cband_ntn : 0;
+    return g_cband_valid ? g_tn_band : NULL;
 }
 
 /* Route a batch of queries to their overlapping top-leaf owners (excl self).
@@ -328,10 +360,11 @@ extern "C" int topleaf_router_hier_vs_flat_check(
     return unavailable ? -3 : mismatch;   /* -3 = hierarchical stack overflow */
 }
 
-/* Build the per-top-leaf supply reach band hmax_by_type[] for SYMMETRIC callers,
- * from the owned-local supply pool via gx_policy_scaled_h (already baked into
- * compact_xyzh[p*4+3]).  Epoch-keyed to the supply cache: a no-op fast return
- * when the epoch is unchanged.  Returns 0 if valid, nonzero if unavailable. */
+/* LEGACY local-only band builder.  Builds the per-top-leaf supply reach band
+ * hmax_by_type[] from the OWNED-LOCAL supply pool only -- correct just for leaves
+ * this rank owns.  SUPERSEDED for routing by topleaf_router_band_build_collective
+ * (which exchanges the band cross-rank so a query can route to remote leaves);
+ * uncalled.  Retire in cleanup once the collective builder is wired + validated. */
 extern "C" int topleaf_router_band_build(void)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -397,4 +430,195 @@ extern "C" int topleaf_router_band_build(void)
     g_band_jscale  = v.j_scale_when_built;
     g_band_valid   = 1;
     return 0;
+}
+
+/* COLLECTIVE per-top-leaf GLOBAL band + per-topnode propagation (H4a), the SSOT
+ * band producer for SYMMETRIC routing.
+ *
+ * Collective-safe by construction: every rank runs the SAME sequence of MPI
+ * collectives regardless of its local data; the only branches are on already-
+ * reduced all-or-none flags, so no rank returns (or skips a collective) before a
+ * collective that other ranks will enter.  Caller MUST invoke it collectively
+ * (all ranks, same step) behind a rank-uniform gate (env + search_mode SYMMETRIC).
+ *
+ *   *available        = 1  -> GLOBAL g_band + node band g_tn_band valid on ALL ranks
+ *   *available        = 0  -> unavailable on >=1 rank; ALL ranks fall back to broadcast
+ *   *consistency_fail = 1  -> the unavailability was a DOMAIN/TOPOLOGY CONSISTENCY BUG
+ *                             (owner-map mismatch, non-uniform top-tree counts,
+ *                             INT-count overflow, or topnode-layout violation), NOT a
+ *                             benign not-ready (geometry/supply absent, alloc/OOM).
+ * The caller picks policy: production may fall back on either; a VALIDATION oracle
+ * MUST controlled-stop on consistency_fail (a real bug), and must not print OK on
+ * any *available==0 (it could not validate).
+ *
+ * PRECONDITION (binding; asserted at the H4b call site, not here): the owned-local
+ * supply cache (g_glt_cache, surfaced by ghost_exchange_supply_pool_view) MUST have
+ * been (re)built for THE CALLER'S spec this step -- its eligible mask / radius policy
+ * / safety / j-scale must correspond to this caller.  The band stores all 6 types per
+ * leaf (the consumer masks by supply_mask at routing time), so it is spec-independent
+ * EXCEPT through which particles populate the supply pool; a stale/superset/subset
+ * supply cache would silently UNDER-ROUTE.  The epoch key below captures those supply
+ * fields so a spec change forces a rebuild ONLY IF the supply cache was refreshed first.
+ *
+ * Band source is SSOT: per-leaf max of compact_xyzh[p*4+3] = the same baked
+ * gx_policy_scaled_h the receiver walk uses.  The per-leaf band is made GLOBAL via
+ * one Allreduce(MAX) (each rank fills only leaves it owns; others contribute 0),
+ * then propagated up the replicated TopNodes octree (node_band = max over subtree
+ * leaves).  Epoch-keyed: a collective near-no-op when topology + supply epoch are
+ * unchanged. */
+extern "C" void topleaf_router_band_build_collective(int *available, int *consistency_fail)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    if(available)        *available = 0;
+    if(consistency_fail) *consistency_fail = 0;
+
+    /* --- Gate 1: geometry + supply present on ALL ranks (benign not-ready) --- */
+    struct gx_supply_pool_view v;
+    int num_pool   = ghost_exchange_supply_pool_view(&v);
+    int avail_local = (g_geom_valid && num_pool >= 0) ? 1 : 0;
+    int avail_all   = 0;
+    MPI_Allreduce(&avail_local, &avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!avail_all) {
+        if(!avail_local)
+            printf("topleaf_router: SYMM band not ready rank %d (geom_valid=%d num_pool=%d) -> all fall back to broadcast\n",
+                   ThisTask, g_geom_valid, num_pool);
+        return;   /* avail_all uniform -> all ranks return together (consistency_fail=0) */
+    }
+
+    const int ntl = g_geom_ntl;
+    const int ntn = g_tn_count;
+
+    /* --- Gate 2: epoch freshness (all-or-none collective skip) --- */
+    int fresh_local = (g_cband_valid && g_cband_ntl == ntl && g_cband_ntn == ntn &&
+                       g_cband_numpart == v.numpart_when_built &&
+                       g_cband_ti      == v.ti_when_built &&
+                       g_cband_safety  == v.safety_when_built &&
+                       g_cband_mask    == v.eligible_mask_when_built &&
+                       g_cband_policy  == v.radius_policy_when_built &&
+                       g_cband_jscale  == v.j_scale_when_built) ? 1 : 0;
+    int fresh_all = 0;
+    MPI_Allreduce(&fresh_local, &fresh_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(fresh_all) { if(available) *available = 1; return; }   /* band + node band already valid */
+
+    /* --- Gate 3: top-tree counts MUST be globally uniform + INT-count-safe.
+     * The band Allreduce below uses ntl*6 as its MPI count; a non-uniform ntl/ntn
+     * across ranks makes that collective malformed (UB/hang) and itself signals a
+     * domain-topology consistency bug.  Overflow means the band exceeds an int MPI
+     * count.  Both are HARD failures, surfaced loud -- never route on mismatched
+     * counts.  All ranks see the SAME reduced dims -> all branch identically. */
+    {
+        int dims_local[2] = { ntl, ntn };
+        int dims_min[2] = {0, 0}, dims_max[2] = {0, 0};
+        MPI_Allreduce(dims_local, dims_min, 2, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(dims_local, dims_max, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        int nonuniform = (dims_min[0] != dims_max[0]) || (dims_min[1] != dims_max[1]);
+        int overflow   = ((long)ntl * TLR_NUM_PTYPES > (long)INT_MAX) ||
+                         ((long)ntn * TLR_NUM_PTYPES > (long)INT_MAX);
+        if(nonuniform || overflow) {
+            if(ThisTask == 0)
+                printf("topleaf_router: SYMM band HARD FAIL (ntl[%d,%d] ntn[%d,%d] nonuniform=%d overflow=%d) -> all fall back\n",
+                       dims_min[0], dims_max[0], dims_min[1], dims_max[1], nonuniform, overflow);
+            if(consistency_fail) *consistency_fail = 1;
+            return;
+        }
+    }
+
+    /* --- rebuild: (re)alloc caches; alloc failure folded into the fail reduce --- */
+    int alloc_fail_local = 0;
+    if(g_band_cap < ntl) {
+        g_band = shared_alloc_double(g_band, g_band_cap, ntl * TLR_NUM_PTYPES, "band");
+        if(!g_band) { g_band_cap = 0; alloc_fail_local = 1; } else g_band_cap = ntl;
+    }
+    if(!alloc_fail_local && g_tn_band_cap < ntn) {
+        g_tn_band = shared_alloc_double(g_tn_band, g_tn_band_cap, ntn * TLR_NUM_PTYPES, "tn_band");
+        if(!g_tn_band) { g_tn_band_cap = 0; alloc_fail_local = 1; } else g_tn_band_cap = ntn;
+    }
+
+    long n_owner_mismatch = 0;
+    if(!alloc_fail_local) {
+        for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band[k] = 0.0;
+        const double corner[3] = { DomainCorner[0], DomainCorner[1], DomainCorner[2] };
+        const double inv_dlen  = (DomainLen > 0.0) ? (1.0 / DomainLen) : 0.0;
+        const int    bits      = BITS_PER_DIMENSION;
+        for(int p = 0; p < num_pool; p++) {
+            int j = v.pool[p];
+            if(j < 0 || j >= NumPart) continue;
+            int type = v.pool_types[p];
+            if(type < 0 || type >= TLR_NUM_PTYPES) continue;
+            double pos[3] = { P[j].Pos[0], P[j].Pos[1], P[j].Pos[2] };
+            int leaf = tlr_point_to_topleaf(TopNodes, pos, corner, inv_dlen, bits);
+            if(leaf < 0 || leaf >= ntl) continue;
+            /* owned-local supply MUST map to a leaf this rank owns -- a mismatch is a
+             * routing-consistency BUG (reported via consistency_fail), not a warning. */
+            if(!DomainTask || DomainTask[leaf] != ThisTask) { n_owner_mismatch++; continue; }
+            double  h    = (double)v.compact_xyzh[(size_t)p * 4 + 3];
+            double *slot = &g_band[(size_t)leaf * TLR_NUM_PTYPES + type];
+            if(h > *slot) *slot = h;
+        }
+    }
+
+    /* --- Gate 4: alloc fail (resource, benign) OR owner-map mismatch (consistency
+     * BUG) on ANY rank.  Reduce both the overall-fail and the consistency subset so
+     * the caller/oracle can stop-loud on the bug vs benign-fallback on OOM. --- */
+    int flags_local[2] = { (alloc_fail_local || n_owner_mismatch > 0) ? 1 : 0,
+                           (n_owner_mismatch > 0) ? 1 : 0 };
+    int flags_any[2] = {0, 0};
+    MPI_Allreduce(flags_local, flags_any, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(flags_any[0]) {
+        if(alloc_fail_local || n_owner_mismatch > 0)
+            printf("topleaf_router: SYMM band rank %d FAIL (alloc_fail=%d owner_mismatch=%ld) -> all fall back\n",
+                   ThisTask, alloc_fail_local, n_owner_mismatch);
+        if(consistency_fail) *consistency_fail = flags_any[1];
+        g_cband_valid = 0;
+        return;   /* flags_any uniform -> all return together */
+    }
+
+    /* --- cross-rank exchange: GLOBAL per-leaf band = MAX over owners --- */
+    MPI_Allreduce(MPI_IN_PLACE, g_band, ntl * TLR_NUM_PTYPES, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    /* --- propagate up the replicated TopNodes octree: node_band = max(children).
+     * Reverse-index sweep relies on Daughter+c > no (children appended after the
+     * parent in force_create_empty_nodes); the child<=no guard makes a layout
+     * change FAIL LOUD instead of reading an uncomputed slot. */
+    int prop_fail_local = 0;
+    for(int k = 0; k < ntn * TLR_NUM_PTYPES; k++) g_tn_band[k] = 0.0;
+    for(int no = ntn - 1; no >= 0 && !prop_fail_local; no--) {
+        double *nb = &g_tn_band[(size_t)no * TLR_NUM_PTYPES];
+        if(TopNodes[no].Daughter < 0) {                 /* domain leaf */
+            int leaf = TopNodes[no].Leaf;
+            if(leaf < 0 || leaf >= ntl) { prop_fail_local = 1; break; }
+            const double *lb = &g_band[(size_t)leaf * TLR_NUM_PTYPES];
+            for(int t = 0; t < TLR_NUM_PTYPES; t++) nb[t] = lb[t];
+        } else {                                        /* internal node */
+            for(int c = 0; c < 8; c++) {
+                int child = TopNodes[no].Daughter + c;
+                if(child <= no || child >= ntn) { prop_fail_local = 1; break; }
+                const double *cb = &g_tn_band[(size_t)child * TLR_NUM_PTYPES];
+                for(int t = 0; t < TLR_NUM_PTYPES; t++) if(cb[t] > nb[t]) nb[t] = cb[t];
+            }
+        }
+    }
+    int prop_fail_any = 0;
+    MPI_Allreduce(&prop_fail_local, &prop_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(prop_fail_any) {
+        if(prop_fail_local)
+            printf("topleaf_router: SYMM node-band propagation FAIL rank %d (topnode layout) -> all fall back\n", ThisTask);
+        if(consistency_fail) *consistency_fail = 1;
+        g_cband_valid = 0;
+        return;
+    }
+
+    g_cband_ntl     = ntl;
+    g_cband_ntn     = ntn;
+    g_cband_numpart = v.numpart_when_built;
+    g_cband_ti      = v.ti_when_built;
+    g_cband_safety  = v.safety_when_built;
+    g_cband_mask    = v.eligible_mask_when_built;
+    g_cband_policy  = v.radius_policy_when_built;
+    g_cband_jscale  = v.j_scale_when_built;
+    g_cband_valid   = 1;
+    /* Keep the flat-band accessor consistent: g_band now holds the GLOBAL band. */
+    g_band_ntl   = ntl;
+    g_band_valid = 1;
+    if(available) *available = 1;
 }

@@ -108,10 +108,26 @@ int topleaf_router_hier_vs_flat_check(const double *q_pos, const double *q_h, in
                                       int self_rank, int *first_bad);
 
 /* --- per-top-leaf supply band (SYMMETRIC callers) --- */
-int  topleaf_router_band_build(void);           /* 0 = built & valid; nonzero = unavailable */
+int  topleaf_router_band_build(void);           /* LEGACY local-only (superseded; uncalled) */
 int  topleaf_router_band_valid(void);
-const double *topleaf_router_band(int *ntl_out); /* [NTopleaves*6] or NULL */
+const double *topleaf_router_band(int *ntl_out); /* GLOBAL band [NTopleaves*6] or NULL */
 void topleaf_router_band_invalidate(void);
+
+/* COLLECTIVE SSOT band builder for SYMMETRIC routing (H4a).  MUST be called by ALL
+ * ranks together behind a rank-uniform gate (env + search_mode SYMMETRIC), AND only
+ * after the owned-local supply cache has been (re)built for THIS caller's spec (see
+ * the .cc PRECONDITION).  Builds the GLOBAL per-leaf band (cross-rank Allreduce MAX)
+ * + propagates it up the TopNodes octree (node_band = max over subtree leaves).
+ * All-or-none, no rank returns before a collective others enter:
+ *   *available        = 1 iff valid on every rank; 0 => ALL ranks fall back to broadcast.
+ *   *consistency_fail = 1 iff the unavailability was a domain/topology BUG (owner-map
+ *                       mismatch, non-uniform top-tree counts, INT overflow, layout
+ *                       violation) vs benign not-ready (geometry/supply absent, OOM).
+ *                       A validation oracle MUST controlled-stop on this; production
+ *                       may fall back.  Either pointer may be NULL. */
+void topleaf_router_band_build_collective(int *available, int *consistency_fail);
+int  topleaf_router_global_band_valid(void);          /* 1 if GLOBAL band + node band valid */
+const double *topleaf_router_node_band(int *ntn_out); /* [NTopnodes*6] or NULL */
 
 #ifdef __cplusplus
 }
