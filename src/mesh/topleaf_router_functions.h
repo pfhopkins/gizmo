@@ -105,6 +105,41 @@ tlr_cell_overlaps_query(const double center[3], double len,
     return 1;
 }
 
+/* ---- (2b) AABB-vs-top-leaf-cube overlap (SYMM band attribution) -----------
+ * Returns 1 iff the top-leaf cube (center,len) overlaps the axis-aligned box
+ * [aabb_lo,aabb_hi] inflated by `reach`, under the SAME legacy opener margins +
+ * minimum-image convention as tlr_cell_overlaps_query.  It is exactly that point
+ * opener generalized from a point to a box: the per-axis cube-centre-to-box
+ * separation is the point separation reduced by the box half-width, so a
+ * degenerate box (lo==hi) reproduces tlr_cell_overlaps_query bit-for-bit.
+ * Conservative by construction.  Used to attach a supply tile's reach to the
+ * R-OWNED routing leaves it can reach (the walker-rank band invariant). */
+KOKKOS_INLINE_FUNCTION int
+tlr_cell_overlaps_aabb(const double center[3], double len,
+                       const double aabb_lo[3], const double aabb_hi[3], double reach,
+                       const int periodic_flags[3], const double box_sizes[3])
+{
+    const double dist0 = reach + 0.5 * len;
+    const double dist1 = dist0 + CUBE_EDGEFACTOR_1 * len;
+    double d[3];
+    for(int k = 0; k < 3; k++) {
+        double tc  = 0.5 * (aabb_lo[k] + aabb_hi[k]);   /* box centre */
+        double thw = 0.5 * (aabb_hi[k] - aabb_lo[k]);   /* box half-width (>=0) */
+        double dd = center[k] - tc;
+        if(periodic_flags[k]) {
+            double b = box_sizes[k], h = 0.5 * b;
+            if(dd > h) dd -= b; else if(dd < -h) dd += b;
+        }
+        double ad = (dd > 0) ? dd : -dd;
+        ad -= thw;                      /* nearest-surface separation cube-centre <-> box */
+        if(ad < 0) ad = 0;              /* cube centre within the box's axis extent */
+        if(ad > dist0) return 0;        /* per-axis box gate */
+        d[k] = ad;
+    }
+    if(d[0]*d[0] + d[1]*d[1] + d[2]*d[2] > dist1 * dist1) return 0;   /* enclosing-sphere gate */
+    return 1;
+}
+
 /* ---- (3) query -> overlapping top-leaf OWNERS (FLAT reference) ------------
  * Exports to every overlapping leaf owner, deduped -- NOT just the containing
  * leaf.  FLAT O(ntl)-per-query scan: correct but a diagnostic/reference; the

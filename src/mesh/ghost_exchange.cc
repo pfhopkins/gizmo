@@ -241,6 +241,8 @@ extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out)
     out->pool_types            = g_glt_cache.pool_types;
     out->compact_xyzh          = g_glt_cache.compact_xyzh;
     out->num_pool              = g_glt_cache.num_pool;
+    out->tiles                 = g_glt_cache.tiles;
+    out->ntiles                = g_glt_cache.ntiles;
     out->numpart_when_built    = g_glt_cache.NumPart_when_built;
     out->ti_when_built         = (long long)g_glt_cache.Ti_when_built;
     out->safety_when_built     = g_glt_cache.safety_factor_when_built;
@@ -2651,7 +2653,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
              * is uniform) -> band_avail stays 0 -> benign UNAVAILABLE below. */
             int band_avail = 0, band_cfail = 0;
             if(geom_ok_all)
-                topleaf_router_band_build_collective(&band_avail, &band_cfail);
+                topleaf_router_band_build_collective(periodic_flags, box_sizes, 1, &band_avail, &band_cfail);
 
             if(band_cfail) {
                 /* domain/topology consistency bug surfaced inside the band builder. */

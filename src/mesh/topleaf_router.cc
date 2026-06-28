@@ -480,7 +480,8 @@ extern "C" int topleaf_router_band_build(void)
  * then propagated up the replicated TopNodes octree (node_band = max over subtree
  * leaves).  Epoch-keyed: a collective near-no-op when topology + supply epoch are
  * unchanged. */
-extern "C" void topleaf_router_band_build_collective(int *available, int *consistency_fail)
+extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3], const double box_sizes[3],
+                                                     int collect_diag, int *available, int *consistency_fail)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
     if(available)        *available = 0;
@@ -548,43 +549,106 @@ extern "C" void topleaf_router_band_build_collective(int *available, int *consis
         if(!g_tn_band) { g_tn_band_cap = 0; alloc_fail_local = 1; } else g_tn_band_cap = ntn;
     }
 
-    long n_owner_mismatch = 0;
+    /* --- TILE-BASED owned-leaf band attribution (walker-rank invariant).
+     * For each owned-local supply TILE, attach its per-type reach to every leaf
+     * THIS RANK OWNS whose cube overlaps the tile bbox inflated by the tile reach
+     * (tlr_cell_overlaps_aabb).  The routing destination is DomainTask[leaf]==ThisTask
+     * = the rank that actually walks the tile's particles, so a particle that drifted
+     * across a top-leaf boundary still inflates THIS rank's nearby owned leaves (no
+     * under-route) -- unlike a per-particle current-leaf band, which loses walker-rank
+     * identity after drift.  ~ntiles x (owned leaves) work (tiles ~ num_pool/TILE_TARGET
+     * _SIZE), cheaper than the per-particle build.  Conservative (may over-attribute
+     * near boundaries; bounded by the diagnostics below + proven no-under-route only by
+     * the H4c routed-vs-broadcast ghost-set oracle -- NOT by this owner-set layer). */
+    long band_writes = 0, sum_leaves_per_tile = 0, max_leaves_per_tile = 0;
+    long n_owned_leaves = 0, tile_leaf_tests = 0;
+    long zero_leaf_tiles = 0, zero_leaf_tiles_pos_h = 0;
     if(!alloc_fail_local) {
         for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band[k] = 0.0;
+        /* OWNED-leaf list once (this rank's routing cells): loop only these per tile
+         * -- O(ntiles x owned), not O(ntiles x NTopleaves). */
+        int *owned_leaves = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
+        if(!owned_leaves) {
+            alloc_fail_local = 1;
+        } else {
+            for(int leaf = 0; leaf < ntl; leaf++)
+                if(DomainTask && DomainTask[leaf] == ThisTask) owned_leaves[n_owned_leaves++] = leaf;
+            for(int t = 0; t < v.ntiles; t++) {
+                const struct sfc_tile_t *tile = &v.tiles[t];
+                if(tile->count <= 0) continue;
+                double reach = tile->hmax;            /* max-type reach for the overlap gate */
+                long leaves_this_tile = 0;
+                for(long li = 0; li < n_owned_leaves; li++) {
+                    int leaf = owned_leaves[li];
+                    if(!tlr_cell_overlaps_aabb(&g_leaf_center[(size_t)leaf * 3], g_leaf_len[leaf],
+                                               tile->lo, tile->hi, reach, periodic_flags, box_sizes)) continue;
+                    double *slot = &g_band[(size_t)leaf * TLR_NUM_PTYPES];
+                    for(int ty = 0; ty < TLR_NUM_PTYPES; ty++)
+                        if(tile->hmax_by_type[ty] > slot[ty]) slot[ty] = tile->hmax_by_type[ty];
+                    leaves_this_tile++;
+                    band_writes++;
+                }
+                tile_leaf_tests += n_owned_leaves;
+                sum_leaves_per_tile += leaves_this_tile;
+                if(leaves_this_tile > max_leaves_per_tile) max_leaves_per_tile = leaves_this_tile;
+                /* A nonempty owned-local supply tile that reaches NO walker-owned routing
+                 * leaf is a possible UNDER-ROUTE: its particles are walked by THIS rank, but
+                 * no routing cell carries their band.  With positive reach this is exactly
+                 * the failure mode the walker-rank invariant must exclude (drift exceeded
+                 * reach+margin, or geometry is wrong) -> a hard consistency fail (Gate 4b). */
+                if(leaves_this_tile == 0) {
+                    zero_leaf_tiles++;
+                    if(reach > 0.0) zero_leaf_tiles_pos_h++;
+                }
+            }
+            free(owned_leaves);
+        }
+    }
+
+    /* --- drift DIAGNOSTIC (collect_diag only; load-bearing perf/correctness
+     * instrumentation): count owned-local supply whose current-position top-leaf is
+     * owned by ANOTHER rank (= drifted across a boundary since the last decomp).  This
+     * is NO LONGER a failure -- the tile band handles it by construction -- but the
+     * magnitude (vs top-leaf size) tells us whether the band reach is sufficient. */
+    long n_drift_local = 0;
+    if(collect_diag && !alloc_fail_local) {
         const double corner[3] = { DomainCorner[0], DomainCorner[1], DomainCorner[2] };
         const double inv_dlen  = (DomainLen > 0.0) ? (1.0 / DomainLen) : 0.0;
         const int    bits      = BITS_PER_DIMENSION;
         for(int p = 0; p < num_pool; p++) {
             int j = v.pool[p];
             if(j < 0 || j >= NumPart) continue;
-            int type = v.pool_types[p];
-            if(type < 0 || type >= TLR_NUM_PTYPES) continue;
             double pos[3] = { P[j].Pos[0], P[j].Pos[1], P[j].Pos[2] };
             int leaf = tlr_point_to_topleaf(TopNodes, pos, corner, inv_dlen, bits);
             if(leaf < 0 || leaf >= ntl) continue;
-            /* owned-local supply MUST map to a leaf this rank owns -- a mismatch is a
-             * routing-consistency BUG (reported via consistency_fail), not a warning. */
-            if(!DomainTask || DomainTask[leaf] != ThisTask) { n_owner_mismatch++; continue; }
-            double  h    = (double)v.compact_xyzh[(size_t)p * 4 + 3];
-            double *slot = &g_band[(size_t)leaf * TLR_NUM_PTYPES + type];
-            if(h > *slot) *slot = h;
+            if(!DomainTask || DomainTask[leaf] != ThisTask) n_drift_local++;
         }
     }
 
-    /* --- Gate 4: alloc fail (resource, benign) OR owner-map mismatch (consistency
-     * BUG) on ANY rank.  Reduce both the overall-fail and the consistency subset so
-     * the caller/oracle can stop-loud on the bug vs benign-fallback on OOM. --- */
-    int flags_local[2] = { (alloc_fail_local || n_owner_mismatch > 0) ? 1 : 0,
-                           (n_owner_mismatch > 0) ? 1 : 0 };
-    int flags_any[2] = {0, 0};
-    MPI_Allreduce(flags_local, flags_any, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(flags_any[0]) {
-        if(alloc_fail_local || n_owner_mismatch > 0)
-            printf("topleaf_router: SYMM band rank %d FAIL (alloc_fail=%d owner_mismatch=%ld) -> all fall back\n",
-                   ThisTask, alloc_fail_local, n_owner_mismatch);
-        if(consistency_fail) *consistency_fail = flags_any[1];
+    /* --- Gate 4: alloc fail (resource, benign OOM) on ANY rank -> all fall back. --- */
+    int alloc_fail_any = 0;
+    MPI_Allreduce(&alloc_fail_local, &alloc_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(alloc_fail_any) {
+        if(alloc_fail_local)
+            printf("topleaf_router: SYMM band rank %d alloc FAIL -> all fall back to broadcast\n", ThisTask);
         g_cband_valid = 0;
-        return;   /* flags_any uniform -> all return together */
+        return;   /* alloc_fail_any uniform -> all return (consistency_fail=0; OOM is benign) */
+    }
+
+    /* --- Gate 4b: UNDER-ROUTE guard.  A positive-reach owned-local supply tile that
+     * attributed to ZERO walker-owned routing leaves means the tile band is
+     * insufficient for those particles -> CONSISTENCY fail (a real correctness signal,
+     * not benign).  Cheap and catches exactly the failure mode the tile band is meant
+     * to exclude.  (alloc passed uniformly -> all ranks reach this reduce.) --- */
+    long zlt_pos_any = 0;
+    MPI_Allreduce(&zero_leaf_tiles_pos_h, &zlt_pos_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+    if(zlt_pos_any > 0) {
+        if(zero_leaf_tiles_pos_h > 0)
+            printf("topleaf_router: SYMM band rank %d UNDER-ROUTE risk: %ld positive-reach supply tiles "
+                   "attributed to 0 walker-owned leaves -> consistency fail\n", ThisTask, zero_leaf_tiles_pos_h);
+        if(consistency_fail) *consistency_fail = 1;
+        g_cband_valid = 0;
+        return;
     }
 
     /* --- cross-rank exchange: GLOBAL per-leaf band = MAX over owners --- */
@@ -635,4 +699,26 @@ extern "C" void topleaf_router_band_build_collective(int *available, int *consis
     g_band_ntl   = ntl;
     g_band_valid = 1;
     if(available) *available = 1;
+
+    /* --- DIAGNOSTICS (collect_diag, success path only): drift signal + over-route
+     * guardrails.  collect_diag is rank-uniform and we only reach here on the uniform
+     * success path, so these collectives stay symmetric.  band_writes / leaves-per-tile
+     * bound the over-attribution (the SYMM perf risk); drifted_supply confirms the
+     * boundary-drift magnitude the tile band absorbs. */
+    if(collect_diag) {
+        long diag_local[8] = { band_writes, sum_leaves_per_tile, max_leaves_per_tile,
+                               n_drift_local, (long)v.ntiles, n_owned_leaves,
+                               tile_leaf_tests, zero_leaf_tiles };
+        long diag_sum[8] = {0,0,0,0,0,0,0,0}, diag_max[8] = {0,0,0,0,0,0,0,0};
+        MPI_Allreduce(diag_local, diag_sum, 8, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(diag_local, diag_max, 8, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(ThisTask == 0) {
+            double avg_lpt = (diag_sum[4] > 0) ? (double)diag_sum[1] / (double)diag_sum[4] : 0.0;
+            printf("[SYMM_BAND_DIAG ntl=%d ntn=%d tiles(sum)=%ld owned_leaves(sum)=%ld leaf_tests(sum)=%ld "
+                   "band_writes(sum)=%ld leaves/tile avg=%.2f max=%ld zero_leaf_tiles(sum)=%ld drifted_supply(sum)=%ld]\n",
+                   ntl, ntn, diag_sum[4], diag_sum[5], diag_sum[6], diag_sum[0], avg_lpt, diag_max[2],
+                   diag_sum[7], diag_sum[3]);
+            fflush(stdout);
+        }
+    }
 }

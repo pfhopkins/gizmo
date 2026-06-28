@@ -48,11 +48,17 @@ extern "C" {
  * baked gx_policy_scaled_h supply reach for pool[p].  pool[p] is the particle
  * index j (use P[j].Pos for the leaf mapping -- float compact pos must NOT be
  * used for bucketing).  Returns num_pool, or -1 if the supply cache is invalid. */
+struct sfc_tile_t;              /* defined in sfc_tiles.h (plain struct; bbox + hmax_by_type) */
 struct gx_supply_pool_view {
     const int   *pool;          /* [num_pool] owned-local particle indices j */
     const int   *pool_types;    /* [num_pool] P[j].Type                      */
     const float *compact_xyzh;  /* [num_pool*4]; [3] = gx_policy_scaled_h(j) */
     int          num_pool;
+    /* owned-local supply TILES (SFC-grouped; bbox lo/hi + hmax_by_type, same SSOT
+     * gx_policy_scaled_h reach).  ~num_pool/TILE_TARGET_SIZE of them -- the coarse
+     * structure the SYMM band attribution walks instead of every particle. */
+    const struct sfc_tile_t *tiles;
+    int          ntiles;
     /* epoch key (any change => band must rebuild) */
     int          numpart_when_built;
     long long    ti_when_built;
@@ -128,7 +134,11 @@ void topleaf_router_band_invalidate(void);
  *                       violation) vs benign not-ready (geometry/supply absent, OOM).
  *                       A validation oracle MUST controlled-stop on this; production
  *                       may fall back.  Either pointer may be NULL. */
-void topleaf_router_band_build_collective(int *available, int *consistency_fail);
+/* periodic_flags/box_sizes: the routing/opener convention (SSOT with the receiver
+ * walk).  collect_diag != 0 emits one bounded [SYMM_BAND_DIAG ...] line (drift +
+ * over-route guardrails) -- pass 0 on any production (non-oracle) path. */
+void topleaf_router_band_build_collective(const int periodic_flags[3], const double box_sizes[3],
+                                          int collect_diag, int *available, int *consistency_fail);
 int  topleaf_router_global_band_valid(void);          /* 1 if GLOBAL band + node band valid */
 const double *topleaf_router_node_band(int *ntn_out); /* [NTopnodes*6] or NULL */
 
