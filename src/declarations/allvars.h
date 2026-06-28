@@ -243,6 +243,13 @@ extern int *DomainCount;
 extern int *DomainCountGas;
 extern int *DomainTask;
 extern int *DomainNodeIndex;
+/* Top-leaf-router geometry SSOT: TopNodeNodeIndex[topnode] -> Nodes[] slot for
+ * EVERY topnode (internal + leaf), populated in force_create_empty_nodes.  Lets
+ * the hierarchical router read each topnode's exact center/len from
+ * Nodes[TopNodeNodeIndex[no]] instead of (wrongly) deriving it from the
+ * Peano-Hilbert child offset.  For leaves, TopNodeNodeIndex[leaf] ==
+ * DomainNodeIndex[TopNodes[leaf].Leaf] by construction (asserted). */
+extern int *TopNodeNodeIndex;
 extern int *DomainList, DomainNumChanged;
 extern peanokey *Key, *KeySorted;
 
