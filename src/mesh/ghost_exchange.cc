@@ -364,6 +364,20 @@ static int ghost_route_hier_oracle_enabled(void)
     return enabled;
 }
 
+/* H2: routed transport uses the HIERARCHICAL constructor by default; set
+ * GIZMO_GHOST_ROUTE_FLAT=1 to force the (slow) flat constructor — a perf A/B
+ * knob, NOT for production.  Env => uniform per rank. */
+static int ghost_route_flat_forced(void)
+{
+    static int initialized = 0;
+    static int forced = 0;
+    if(initialized) return forced;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_FLAT");
+    forced = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return forced;
+}
+
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
  * pool members.  Also rewrites compact_xyzh + pool_types for those members.
  * Used by both full and narrow refit paths. */
@@ -2037,7 +2051,9 @@ static char *compute_matched_routed(
     const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
     const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
     const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
-    const int periodic_flags[3], const double box_sizes[3])
+    const int periodic_flags[3], const double box_sizes[3],
+    int use_hier,
+    double *t_route_construct, double *t_route_alltoallv, double *t_route_walk)
 {
     int *route_off = NULL, *route_owners = NULL;
     double *q_pos = NULL, *q_h = NULL;
@@ -2050,6 +2066,14 @@ static char *compute_matched_routed(
     long owners_cap = 0;
     long long rq_ts = 0, rq_tr = 0;
     int  rq_total_send = 0, rq_total_recv = 0;
+    /* Split route timing (codex H2 req): construct / query-Alltoallv / walk, so
+     * the FIRE perf gate proves the flat O(nq x NTopleaves) cost actually leaves
+     * the construct bucket (and doesn't reappear elsewhere).  Decls at top so the
+     * goto-fail never jumps over an initialised automatic. */
+    double tc0 = my_second(), ta0 = 0.0, tw0 = 0.0;
+    if(t_route_construct) *t_route_construct = 0.0;
+    if(t_route_alltoallv) *t_route_alltoallv = 0.0;
+    if(t_route_walk)      *t_route_walk      = 0.0;
 
     /* Stage 1 (local): routed-query CSR + per-dest send list (guarded). */
     if((long long)nq * (long long)NTask > (long long)INT_MAX) aborted = 1;
@@ -2070,9 +2094,15 @@ static char *compute_matched_routed(
             q_pos[i*3+2] = local_queries[i].pos[2];
             q_h[i]       = local_queries[i].h;
         }
-        int rc = topleaf_router_route_queries(q_pos, q_h, nq, supply_mask, oneway,
-                                              periodic_flags, box_sizes,
-                                              route_off, route_owners, owners_cap, ThisTask);
+        /* H2: hierarchical TopNodes descent by default; flat is the A/B fallback
+         * (GIZMO_GHOST_ROUTE_FLAT) and the reference for the flat-vs-hier oracle. */
+        int rc = use_hier
+            ? topleaf_router_route_queries_hier(q_pos, q_h, nq, supply_mask, oneway,
+                                                periodic_flags, box_sizes,
+                                                route_off, route_owners, owners_cap, ThisTask)
+            : topleaf_router_route_queries     (q_pos, q_h, nq, supply_mask, oneway,
+                                                periodic_flags, box_sizes,
+                                                route_off, route_owners, owners_cap, ThisTask);
         if(rc < 0) aborted = 1;
     }
     if(!aborted) {
@@ -2095,8 +2125,10 @@ static char *compute_matched_routed(
     }
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
+    if(t_route_construct) *t_route_construct = timediff(tc0, my_second());
 
     /* Stage 2: exchange routed queries. */
+    ta0 = my_second();
     MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
     rq_tr = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
     if(rq_tr < 0) aborted = 1; else rq_total_recv = (int)rq_tr;
@@ -2108,8 +2140,10 @@ static char *compute_matched_routed(
     if(bad_any) goto fail;
     gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
                               sizeof(struct gx_query_t), MPI_COMM_WORLD);
+    if(t_route_alltoallv) *t_route_alltoallv = timediff(ta0, my_second());
 
     /* Stage 3: walk routed queries per source segment -> matched[src][p]. */
+    tw0 = my_second();
     matched = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
     if(!matched) aborted = 1;
     if(!aborted) {
@@ -2126,6 +2160,7 @@ static char *compute_matched_routed(
     }
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
+    if(t_route_walk) *t_route_walk = timediff(tw0, my_second());
 
     free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
     free(q_pos); free(q_h); free(route_off); free(route_owners);
@@ -2400,6 +2435,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
     char *matched = NULL;
     int   used_routed = 0;
+    int   use_hier = !ghost_route_flat_forced();   /* H2: hierarchical route by default */
+    double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
     /* Up-front broadcast gather when broadcast is needed regardless of routed
      * outcome (oracle compare, or routed unavailable). Collective + uniform. */
@@ -2414,7 +2451,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         matched = compute_matched_routed(local_queries, n_local_queries,
                                          h_compact_xyzh, h_tiles, ntiles,
                                          h_pool, num_pool, h_pool_types, supply_mask,
-                                         h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+                                         h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
+                                         use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk);
         if(matched) used_routed = 1;   /* NULL => routed failed collectively => fall back */
     }
     if(!matched) {
@@ -2699,11 +2737,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
      * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
     if(gizmo_verbose_diag()) {
-        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
+        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
                ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
                (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
                (used_routed ? "routed" : "bcast"),
+               (used_routed ? (use_hier ? "hier" : "flat") : "-"),
                t_step1, t_step2, t_step3_build, t_step3_walk,
+               t_route_construct, t_route_alltoallv, t_route_walk,
                t_step4, t_step5, t_step6, t_ghost_total,
                n_local_queries, (used_routed ? -1 : total_queries), num_pool, ntiles, total_send, total_recv);
         fflush(stdout);

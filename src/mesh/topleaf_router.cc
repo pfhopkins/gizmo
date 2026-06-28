@@ -232,6 +232,51 @@ extern "C" int topleaf_router_route_queries(const double *q_pos, const double *q
     return rc ? -1 : (int)cursor;
 }
 
+/* HIERARCHICAL routed-query CSR (H2): same output contract as
+ * topleaf_router_route_queries(), but descends the TopNodes octree
+ * (O(depth x fanout)) instead of the flat O(NTopleaves) leaf scan.  ONEWAY only
+ * (SYMM needs per-node band propagation, H4): oneway==0 returns -1 so the caller
+ * falls back.  The hierarchical helper already excludes self and dedups; returns
+ * -1 on stack/cap overflow or invalid geometry -> caller collective-fallback. */
+extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const double *q_h, int nq,
+                                                 unsigned int supply_mask, int oneway,
+                                                 const int periodic_flags[3], const double box_sizes[3],
+                                                 int *off, int *owners, long owners_cap, int self_rank)
+{
+    (void)supply_mask;                 /* ONEWAY: no band */
+    if(!g_geom_valid) return -1;
+    if(!oneway) return -1;             /* SYMM hierarchical needs per-node bands (H4) */
+    const int ntn = g_tn_count;
+    if(ntn <= 0) { if(off) off[0] = 0; return 0; }
+    if(nq <= 0)  { if(off) off[0] = 0; return 0; }
+
+    char *seen       = (char *) malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(char));
+    int  *owners_tmp = (int *)  malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    if(!seen || !owners_tmp) { free(seen); free(owners_tmp); return -1; }
+    for(int t = 0; t < NTask; t++) seen[t] = 0;
+
+    long cursor = 0;
+    off[0] = 0;
+    int rc = 0;
+    for(int i = 0; i < nq; i++) {
+        int n = tlr_route_query_hierarchical(TopNodes, ntn, g_tn_center, g_tn_len, DomainTask, NTask,
+                                             &q_pos[(size_t)i * 3], q_h[i],
+                                             periodic_flags, box_sizes, self_rank, owners_tmp, seen);
+        if(n < 0) { rc = -1; break; }    /* hierarchical stack overflow -> fallback */
+        for(int k = 0; k < n; k++) {
+            int owner = owners_tmp[k];
+            seen[owner] = 0;             /* reset dedup scratch (self already excluded by helper) */
+            if(cursor >= owners_cap) { rc = -1; }
+            else owners[cursor++] = owner;
+        }
+        off[i + 1] = (int)cursor;
+        if(rc) break;
+    }
+
+    free(seen); free(owners_tmp);
+    return rc ? -1 : (int)cursor;
+}
+
 /* H1 flat-vs-hierarchical owner-set oracle (ONEWAY): for each query build the
  * flat (leaf-scan) and hierarchical (tree-descent) REMOTE owner sets on the SAME
  * geometry and compare as SETS.  Returns the count of queries whose sets differ

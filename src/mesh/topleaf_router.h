@@ -87,6 +87,15 @@ int topleaf_router_route_queries(const double *q_pos, const double *q_h, int nq,
                                  const int periodic_flags[3], const double box_sizes[3],
                                  int *off, int *owners, long owners_cap, int self_rank);
 
+/* HIERARCHICAL routed-query CSR (H2): identical output contract to
+ * topleaf_router_route_queries, but descends the TopNodes octree
+ * (O(depth x fanout)) instead of the flat O(NTopleaves) scan.  ONEWAY only
+ * (oneway==0 => -1).  Returns total owner entries, or -1 (caller fallback). */
+int topleaf_router_route_queries_hier(const double *q_pos, const double *q_h, int nq,
+                                      unsigned int supply_mask, int oneway,
+                                      const int periodic_flags[3], const double box_sizes[3],
+                                      int *off, int *owners, long owners_cap, int self_rank);
+
 /* H1 flat-vs-hierarchical owner-set oracle (ONEWAY).  Returns #queries whose
  * remote-owner sets differ between the flat leaf-scan and the hierarchical
  * tree-descent (0 = all equal), or a NEGATIVE code if UNAVAILABLE:
