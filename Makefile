@@ -316,6 +316,30 @@ HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
 
+#----------------------------
+# PSMN (ENS Lyon) - Debian 13, e5-2667v4 nodes
+# Compiler: system OpenMPI 5.0.7 (Debian); libs: EasyBuild gompi-2025a toolchain
+ifeq ($(SYSTYPE),"PSMN")
+CC       =  mpicc
+CXX      =  mpicxx
+FC       =  mpifort
+OPTIMIZE = -O2 -g -Wall -funroll-loops -finline-functions
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+GSL_INCL = -I/usr/include
+GSL_LIBS = -L/usr/lib/x86_64-linux-gnu -Wl,-rpath,/usr/lib/x86_64-linux-gnu -lgsl -lgslcblas
+FFTW_BASE= /applis/PSMN/debian13/E5/software/FFTW.MPI/3.3.10-gompi-2025a
+FFTW_INCL= -I$(FFTW_BASE)/include
+FFTW_LIBS= -L$(FFTW_BASE)/lib -Wl,-rpath,$(FFTW_BASE)/lib
+HDF5_BASE= /applis/PSMN/debian13/E5/software/HDF5/1.14.6-gompi-2025a
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Wl,-rpath,$(HDF5_BASE)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DDISABLE_ALIGNED_ALLOC
+endif
+
+
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
