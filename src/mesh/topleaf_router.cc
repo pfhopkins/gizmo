@@ -270,20 +270,25 @@ extern "C" int topleaf_router_route_queries(const double *q_pos, const double *q
     return rc ? -1 : (int)cursor;
 }
 
-/* HIERARCHICAL routed-query CSR (H2): same output contract as
+/* HIERARCHICAL routed-query CSR (H2/H4c): same output contract as
  * topleaf_router_route_queries(), but descends the TopNodes octree
- * (O(depth x fanout)) instead of the flat O(NTopleaves) leaf scan.  ONEWAY only
- * (SYMM needs per-node band propagation, H4): oneway==0 returns -1 so the caller
- * falls back.  The hierarchical helper already excludes self and dedups; returns
- * -1 on stack/cap overflow or invalid geometry -> caller collective-fallback. */
+ * (O(depth x fanout)) instead of the flat O(NTopleaves) leaf scan.  ONEWAY uses
+ * reach=h_q (band-free); SYMMETRIC (oneway==0) uses the per-topnode band g_tn_band
+ * (reach=max(h_q, node_band)), which requires the collective GLOBAL band
+ * (g_cband_valid) -- else returns -1 so the caller collective-falls-back to
+ * broadcast.  The hierarchical helper excludes self + dedups; returns -1 on
+ * stack/cap overflow or invalid geometry/band -> caller collective-fallback. */
 extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const double *q_h, int nq,
                                                  unsigned int supply_mask, int oneway,
                                                  const int periodic_flags[3], const double box_sizes[3],
                                                  int *off, int *owners, long owners_cap, int self_rank)
 {
-    (void)supply_mask;                 /* ONEWAY: no band */
     if(!g_geom_valid) return -1;
-    if(!oneway) return -1;             /* SYMM hierarchical needs per-node bands (H4) */
+    const double *node_band = NULL;
+    if(!oneway) {
+        if(!g_cband_valid) return -1;  /* SYMM hierarchical needs the propagated node band */
+        node_band = g_tn_band;
+    }
     const int ntn = g_tn_count;
     if(ntn <= 0) { if(off) off[0] = 0; return 0; }
     if(nq <= 0)  { if(off) off[0] = 0; return 0; }
@@ -298,7 +303,7 @@ extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const doub
     int rc = 0;
     for(int i = 0; i < nq; i++) {
         int n = tlr_route_query_hierarchical(TopNodes, ntn, g_tn_center, g_tn_len, DomainTask, NTask,
-                                             &q_pos[(size_t)i * 3], q_h[i], NULL, 0u,
+                                             &q_pos[(size_t)i * 3], q_h[i], node_band, supply_mask,
                                              periodic_flags, box_sizes, self_rank, owners_tmp, seen);
         if(n < 0) { rc = -1; break; }    /* hierarchical stack overflow -> fallback */
         for(int k = 0; k < n; k++) {

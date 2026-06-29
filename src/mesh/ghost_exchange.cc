@@ -397,6 +397,24 @@ static int ghost_route_symm_hier_oracle_enabled(void)
     return enabled;
 }
 
+/* TEMPORARY H4c routed-vs-broadcast SYMMETRIC ghost-SET oracle gate.
+ * GIZMO_GHOST_ROUTE_SYMM_TRANSPORT_ORACLE=1: for SYMMETRIC callers, additionally
+ * compute the routed ghost set (hierarchical SYMM band routing -> Alltoallv ->
+ * source-segment walk with the SYMM predicate) and verify it EXACTLY equals the
+ * broadcast ghost set that is being installed (both directions).  Broadcast stays
+ * AUTHORITATIVE -- this only compares, never installs.  Reports query->owner fanout
+ * (the fire-wall metric).  Env => uniform per rank. */
+static int ghost_route_symm_transport_oracle_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_TRANSPORT_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
  * pool members.  Also rewrites compact_xyzh + pool_types for those members.
  * Used by both full and narrow refit paths. */
@@ -2072,8 +2090,12 @@ static char *compute_matched_routed(
     const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
     const int periodic_flags[3], const double box_sizes[3],
     int use_hier,
-    double *t_route_construct, double *t_route_alltoallv, double *t_route_walk)
+    double *t_route_construct, double *t_route_alltoallv, double *t_route_walk,
+    long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out)
 {
+    if(fanout_owner_sum) *fanout_owner_sum = 0;
+    if(fanout_owner_max) *fanout_owner_max = 0;
+    if(total_recv_out)   *total_recv_out   = 0;
     int *route_off = NULL, *route_owners = NULL;
     double *q_pos = NULL, *q_h = NULL;
     int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
@@ -2129,6 +2151,13 @@ static char *compute_matched_routed(
             for(int k = route_off[i]; k < route_off[i+1]; k++) rq_sc[route_owners[k]]++;
         rq_ts = gx_oracle_checked_prefix(rq_sc, rq_sd, NTask);
         if(rq_ts < 0) aborted = 1; else rq_total_send = (int)rq_ts;
+        /* query->owner fanout (H4c perf metric): owners per query = route_off deltas. */
+        if(fanout_owner_sum || fanout_owner_max) {
+            long fsum = 0, fmax = 0;
+            for(int i = 0; i < nq; i++) { long f = route_off[i+1] - route_off[i]; fsum += f; if(f > fmax) fmax = f; }
+            if(fanout_owner_sum) *fanout_owner_sum = fsum;
+            if(fanout_owner_max) *fanout_owner_max = fmax;
+        }
     }
     if(!aborted) {
         rq_send = (struct gx_query_t *) malloc((size_t)(rq_total_send > 0 ? rq_total_send : 1) * sizeof(struct gx_query_t));
@@ -2150,7 +2179,7 @@ static char *compute_matched_routed(
     ta0 = my_second();
     MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
     rq_tr = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
-    if(rq_tr < 0) aborted = 1; else rq_total_recv = (int)rq_tr;
+    if(rq_tr < 0) aborted = 1; else { rq_total_recv = (int)rq_tr; if(total_recv_out) *total_recv_out = rq_total_recv; }
     if(!aborted) {
         rq_recv = (struct gx_query_t *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(struct gx_query_t));
         if(!rq_recv) aborted = 1;
@@ -2471,7 +2500,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                          h_compact_xyzh, h_tiles, ntiles,
                                          h_pool, num_pool, h_pool_types, supply_mask,
                                          h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
-                                         use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk);
+                                         use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk,
+                                         NULL, NULL, NULL);
         if(matched) used_routed = 1;   /* NULL => routed failed collectively => fall back */
     }
     if(!matched) {
@@ -2720,6 +2750,118 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         }
         /* Single collective bad-stop drain for this block (7710/7709/7708/7707). */
         gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_oracle");
+    }
+
+    /* H4c SYMMETRIC routed-vs-broadcast GHOST-SET oracle (gated; broadcast stays
+     * AUTHORITATIVE -- `matched` is the broadcast set being installed; this only
+     * compares, never installs).  Computes the routed ghost set on the SAME pre-install
+     * supply snapshot (hierarchical SYMM band routing -> Alltoallv -> source-segment walk
+     * with the SYMM predicate) and verifies EXACT set equality vs broadcast, both
+     * directions.  matched[t*num_pool+p] is the unique installed-ghost identity
+     * (dest=t, source=ThisTask, source pool index p), so element-wise compare == full
+     * ghost-identity set equality.  Reports query->owner fanout (the fire-wall metric).
+     * All branches gate on reduced/uniform flags; one bad-stop drain per block. */
+    if(ghost_route_symm_transport_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC && matched) {
+        int symm_skip = 0;
+        /* (a) precondition: supply cache must correspond to THIS caller (coverage). */
+        struct gx_supply_pool_view sv;
+        int npool = ghost_exchange_supply_pool_view(&sv);
+        int precond_bad_local = 0;
+        if(npool >= 0) {
+            int ok = (sv.numpart_when_built == NumPart)
+                  && (sv.safety_when_built  == safety_factor)
+                  && ((sv.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
+                  && (sv.radius_policy_when_built == (int)spec->radius_policy)
+                  && (sv.j_scale_when_built == spec->j_radius_scale);
+            precond_bad_local = ok ? 0 : 1;
+        }
+        int precond_bad_any = 0;
+        MPI_Allreduce(&precond_bad_local, &precond_bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(precond_bad_any) {
+            if(precond_bad_local)
+                printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s rank=%d PRECONDITION FAIL: supply cache != spec]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask);
+            gizmo_request_controlled_stop(7710, "ghost route SYMM ghost-set oracle: supply cache does not correspond to caller spec",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            symm_skip = 1;
+        }
+
+        if(!symm_skip) {
+            int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+            int geom_ok_all = 0;
+            MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            int band_avail = 0, band_cfail = 0;
+            if(geom_ok_all)
+                topleaf_router_band_build_collective(periodic_flags, box_sizes, 0, &band_avail, &band_cfail);
+
+            if(band_cfail) {
+                gizmo_request_controlled_stop(7709, "ghost route SYMM ghost-set oracle: band-build consistency failure",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            } else if(!band_avail) {
+                if(ThisTask == 0)
+                    printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: band not built (geometry/supply not ready)]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"));
+                fflush(stdout);
+            } else {
+                /* Routed ghost set on the SAME pre-install snapshot (collective). */
+                long fanout_sum = 0, fanout_max = 0; int recv_this = 0;
+                double tc = 0, ta = 0, tw = 0;
+                char *matched_routed = compute_matched_routed(local_queries, n_local_queries,
+                                           h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool, h_pool_types,
+                                           supply_mask, h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
+                                           !ghost_route_flat_forced(), &tc, &ta, &tw,
+                                           &fanout_sum, &fanout_max, &recv_this);
+                if(!matched_routed) {
+                    if(ThisTask == 0)
+                        printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: routed producer failed collectively]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"));
+                    fflush(stdout);
+                } else {
+                    /* EXACT set equality vs broadcast `matched`, both directions. */
+                    long n_missing = 0, n_extra = 0;
+                    for(int t = 0; t < NTask; t++) {
+                        if(t == ThisTask) continue;
+                        const char *mb = matched        + (size_t)t * num_pool;
+                        const char *mr = matched_routed + (size_t)t * num_pool;
+                        for(int p = 0; p < num_pool; p++) {
+                            if(mb[p] && !mr[p]) n_missing++;       /* routed misses a broadcast ghost -> UNDER-ROUTE */
+                            else if(mr[p] && !mb[p]) n_extra++;    /* routed has an extra match -> predicate/snapshot bug */
+                        }
+                    }
+                    free(matched_routed);
+                    long set_in[2] = { n_missing, n_extra };
+                    long set_any[2] = { 0, 0 };
+                    MPI_Allreduce(set_in, set_any, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                    long fan_in[3]  = { fanout_sum, (long)n_local_queries, fanout_max };
+                    long fan_sum[3] = { 0, 0, 0 }, fan_max[3] = { 0, 0, 0 };
+                    MPI_Allreduce(fan_in, fan_sum, 3, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                    long recv_max_l = recv_this, recv_max = 0;
+                    MPI_Allreduce(&recv_max_l, &recv_max, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&fanout_max, &fan_max[0], 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                    if(set_any[0] > 0) {
+                        if(n_missing > 0)
+                            printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s rank=%d UNDER-ROUTE: %ld broadcast ghosts missing from routed]\n",
+                                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_missing);
+                        gizmo_request_controlled_stop(7711, "ghost route SYMM ghost-set oracle: routed ghost set missing broadcast ghosts (UNDER-ROUTE)",
+                                                      __FILE__, __LINE__, __FUNCTION__);
+                    } else if(set_any[1] > 0) {
+                        if(n_extra > 0)
+                            printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s rank=%d EXTRA-MATCH: %ld routed ghosts not in broadcast (predicate/snapshot mismatch)]\n",
+                                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_extra);
+                        gizmo_request_controlled_stop(7712, "ghost route SYMM ghost-set oracle: routed ghost set has matches broadcast lacks (predicate/snapshot bug)",
+                                                      __FILE__, __LINE__, __FUNCTION__);
+                    } else if(ThisTask == 0) {
+                        double mean_fanout = (fan_sum[1] > 0) ? (double)fan_sum[0] / (double)fan_sum[1] : 0.0;
+                        printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s OK routed==broadcast over %ld queries | "
+                               "fanout owners/query mean=%.2f max=%ld | NTask=%d | max_recv_queries=%ld]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), fan_sum[1],
+                               mean_fanout, fan_max[0], NTask, recv_max);
+                        fflush(stdout);
+                    }
+                }
+            }
+        }
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_ghost_oracle");
     }
 
     double t_step3_walk = timediff(t_step3_walk_start, my_second());
