@@ -793,3 +793,65 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
         }
     }
 }
+
+static int tlr_cmp_double(const void *a, const void *b)
+{
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+/* Per-leaf GLOBAL band distribution for a SYMM caller's supply_mask -- answers
+ * "is the over-route a few giant leaves (tail) or many moderately-inflated leaves
+ * (broad)?".  The global band is identical on every rank (post Allreduce MAX), so
+ * rank 0 reports; NO collective.  band_eff[leaf] = max over supply_mask types;
+ * the load-bearing signal is band_eff / leaf_len (how far the band reaches beyond
+ * its own cube) -- percentiles + threshold counts + which type dominates. */
+extern "C" void topleaf_router_band_distribution_report(unsigned int supply_mask, const char *caller, int this_call)
+{
+    if(ThisTask != 0) return;
+    if(!g_cband_valid) return;
+    const int ntl = g_cband_ntl;
+    if(ntl <= 0) return;
+    double *band_eff = (double *) malloc((size_t)ntl * sizeof(double));
+    double *norm     = (double *) malloc((size_t)ntl * sizeof(double));
+    if(!band_eff || !norm) { free(band_eff); free(norm); return; }
+    long type_dom[TLR_NUM_PTYPES] = {0,0,0,0,0,0};
+    long c1 = 0, c4 = 0, c16 = 0, c64 = 0;
+    int nv = 0;
+    for(int leaf = 0; leaf < ntl; leaf++) {
+        const double *b = &g_band[(size_t)leaf * TLR_NUM_PTYPES];
+        double be = 0; int dom = -1;
+        for(int t = 0; t < TLR_NUM_PTYPES; t++) {
+            if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+            if(b[t] > be) { be = b[t]; dom = t; }
+        }
+        if(be <= 0) continue;                       /* leaf carries no band for this mask */
+        double len = g_leaf_len[leaf];
+        double nrm = (len > 0) ? be / len : 0.0;
+        band_eff[nv] = be;
+        norm[nv]     = nrm;
+        nv++;
+        if(dom >= 0) type_dom[dom]++;
+        if(nrm > 1.0)  c1++;
+        if(nrm > 4.0)  c4++;
+        if(nrm > 16.0) c16++;
+        if(nrm > 64.0) c64++;
+    }
+    if(nv <= 0) { free(band_eff); free(norm); return; }
+    qsort(band_eff, (size_t)nv, sizeof(double), tlr_cmp_double);
+    qsort(norm,     (size_t)nv, sizeof(double), tlr_cmp_double);
+    #define TLR_PCT(arr, p) ((arr)[(int)((p) * (double)(nv - 1))])
+    printf("[SYMM_BAND_DIST call=%d caller=%s mask=0x%x leaves_with_band=%d/%d | "
+           "band p50=%.3g p90=%.3g p99=%.3g p99.9=%.3g max=%.3g | "
+           "band/len p50=%.2f p90=%.2f p99=%.2f p99.9=%.2f max=%.2f | "
+           ">1x=%ld >4x=%ld >16x=%ld >64x=%ld | "
+           "type_dom=[%ld,%ld,%ld,%ld,%ld,%ld]]\n",
+           this_call, (caller ? caller : "?"), supply_mask, nv, ntl,
+           TLR_PCT(band_eff, 0.50), TLR_PCT(band_eff, 0.90), TLR_PCT(band_eff, 0.99), TLR_PCT(band_eff, 0.999), band_eff[nv-1],
+           TLR_PCT(norm, 0.50), TLR_PCT(norm, 0.90), TLR_PCT(norm, 0.99), TLR_PCT(norm, 0.999), norm[nv-1],
+           c1, c4, c16, c64,
+           type_dom[0], type_dom[1], type_dom[2], type_dom[3], type_dom[4], type_dom[5]);
+    fflush(stdout);
+    #undef TLR_PCT
+    free(band_eff); free(norm);
+}

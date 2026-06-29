@@ -415,6 +415,21 @@ static int ghost_route_symm_transport_oracle_enabled(void)
     return enabled;
 }
 
+/* TEMPORARY per-leaf band-DISTRIBUTION diagnostic gate.  GIZMO_GHOST_ROUTE_SYMM_BAND_DIST=1:
+ * when the SYMM owner-set oracle has built the band, print its per-leaf distribution
+ * (percentiles / band-over-leaf-size / type dominance) to diagnose the H4c over-route
+ * (few giant leaves vs broad inflation).  Rank-0 print, no collective. */
+static int ghost_route_symm_band_dist_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_BAND_DIST");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
  * pool members.  Also rewrites compact_xyzh + pool_types for those members.
  * Used by both full and narrow refit paths. */
@@ -2727,6 +2742,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                            this_call, (spec->caller_name ? spec->caller_name : "?"));
                 fflush(stdout);
             } else {
+                /* Optional band-DISTRIBUTION diagnostic (rank-0, no collective). */
+                if(ghost_route_symm_band_dist_enabled())
+                    topleaf_router_band_distribution_report(supply_mask, spec->caller_name, this_call);
                 /* (d) band valid on all ranks: per-query SYMM owner-set compare. */
                 int hq_n = n_local_queries;
                 double *hq_pos = (double *) malloc((size_t)(hq_n > 0 ? hq_n : 1) * 3 * sizeof(double));

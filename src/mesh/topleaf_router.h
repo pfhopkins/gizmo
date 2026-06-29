@@ -142,6 +142,12 @@ void topleaf_router_band_build_collective(const int periodic_flags[3], const dou
 int  topleaf_router_global_band_valid(void);          /* 1 if GLOBAL band + node band valid */
 const double *topleaf_router_node_band(int *ntn_out); /* [NTopnodes*6] or NULL */
 
+/* Per-leaf GLOBAL band distribution for a SYMM caller (rank-0 print, no collective):
+ * band percentiles + band/leaf_len percentiles + threshold counts + per-type
+ * dominance -- to tell whether the over-route is tail-dominated (few giant leaves)
+ * or broad.  Diagnostic-only; caller gates it. */
+void topleaf_router_band_distribution_report(unsigned int supply_mask, const char *caller, int this_call);
+
 #ifdef __cplusplus
 }
 #endif
