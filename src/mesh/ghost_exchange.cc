@@ -1671,7 +1671,11 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                               const tile_bvh_node_t *bvh, int bvh_root,
                               const double pos_q[3], double h_q, int search_mode,
                               const int periodic_flags[3], const double box_sizes[3],
-                              char *match_bitmask /* size num_pool */)
+                              char *match_bitmask /* size num_pool */,
+                              long *n_exact_hits /* optional (NULL in production): count EXACT matches
+                                                  * this call would produce, computing r2 even for
+                                                  * already-set slots so the per-query count is
+                                                  * unbiased by the dedup skip (over-route diagnostic) */)
 {
     (void)ntiles;
     double h_q2 = h_q * h_q;
@@ -1700,7 +1704,8 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
             for(int s = 0; s < tile->count; s++) {
                 int pool_pos = tile->first + s;
                 if(pool_pos < 0 || pool_pos >= num_pool) continue;
-                if(match_bitmask[pool_pos]) continue;
+                int already = match_bitmask[pool_pos];
+                if(already && !n_exact_hits) continue;   /* dedup-skip (production); diagnostic counts all hits */
                 /* Supply-mask filter at leaf: skip particles of a type the
                  * caller didn't ask for (no-op when tree was built with the
                  * same mask, but required when tree is shared across callers). */
@@ -1724,7 +1729,10 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                     double h_max = (h_q > h_j) ? h_q : h_j;
                     thresh2 = h_max * h_max;
                 }
-                if(r2 < thresh2) match_bitmask[pool_pos] = 1;
+                if(r2 < thresh2) {
+                    if(n_exact_hits) (*n_exact_hits)++;
+                    if(!already) match_bitmask[pool_pos] = 1;
+                }
             }
         } else {
             if(sp + 2 > TILE_BVH_STACK_SIZE) break;  /* defensive — shouldn't happen */
@@ -1905,7 +1913,7 @@ static void ghost_route_oracle_compare(
                 const struct gx_query_t *q = &rq_recv[rq_rd[s] + qi];
                 gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
                                   h_pool_types, supply_mask, h_bvh, bvh_root,
-                                  q->pos, q->h, search_mode, periodic_flags, box_sizes, mf);
+                                  q->pos, q->h, search_mode, periodic_flags, box_sizes, mf, NULL);
             }
             int c = 0; for(int p = 0; p < num_pool; p++) if(mf[p]) c++;
             gid_sc[s] = c;
@@ -2036,7 +2044,7 @@ static char *compute_matched_broadcast(
                               h_bvh, bvh_root,
                               q->pos, q->h, search_mode,
                               periodic_flags, box_sizes,
-                              match_for_t);
+                              match_for_t, NULL);
         }
     }
     return matched;
@@ -2091,11 +2099,16 @@ static char *compute_matched_routed(
     const int periodic_flags[3], const double box_sizes[3],
     int use_hier,
     double *t_route_construct, double *t_route_alltoallv, double *t_route_walk,
-    long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out)
+    long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out,
+    long *diag_pairs, long *diag_pairs_nonzero, long *diag_hit_sum, long *diag_hit_max)
 {
     if(fanout_owner_sum) *fanout_owner_sum = 0;
     if(fanout_owner_max) *fanout_owner_max = 0;
     if(total_recv_out)   *total_recv_out   = 0;
+    if(diag_pairs)         *diag_pairs         = 0;
+    if(diag_pairs_nonzero) *diag_pairs_nonzero = 0;
+    if(diag_hit_sum)       *diag_hit_sum       = 0;
+    if(diag_hit_max)       *diag_hit_max       = 0;
     int *route_off = NULL, *route_owners = NULL;
     double *q_pos = NULL, *q_h = NULL;
     int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
@@ -2195,16 +2208,34 @@ static char *compute_matched_routed(
     matched = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
     if(!matched) aborted = 1;
     if(!aborted) {
+        /* Over-route diagnostic (H4c): per received (query,owner=this-rank) pair, count
+         * EXACT matches so we can report what fraction of routed pairs return zero ghosts
+         * = the conservative band's wasted routing.  Only when the caller asks (oracle). */
+        int  want_diag = (diag_pairs_nonzero != NULL);
+        long d_pairs = 0, d_pairs_nz = 0, d_hit_sum = 0, d_hit_max = 0;
         for(int s = 0; s < NTask; s++) {
             if(s == ThisTask) continue;
             char *mf = matched + (size_t)s * num_pool;
             for(int qi = 0; qi < rq_rc[s]; qi++) {
                 const struct gx_query_t *q = &rq_recv[rq_rd[s] + qi];
-                gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
-                                  h_pool_types, supply_mask, h_bvh, bvh_root,
-                                  q->pos, q->h, search_mode, periodic_flags, box_sizes, mf);
+                if(want_diag) {
+                    long hits = 0;
+                    gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                                      h_pool_types, supply_mask, h_bvh, bvh_root,
+                                      q->pos, q->h, search_mode, periodic_flags, box_sizes, mf, &hits);
+                    d_pairs++;
+                    if(hits > 0) { d_pairs_nz++; d_hit_sum += hits; if(hits > d_hit_max) d_hit_max = hits; }
+                } else {
+                    gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                                      h_pool_types, supply_mask, h_bvh, bvh_root,
+                                      q->pos, q->h, search_mode, periodic_flags, box_sizes, mf, NULL);
+                }
             }
         }
+        if(diag_pairs)         *diag_pairs         = d_pairs;
+        if(diag_pairs_nonzero) *diag_pairs_nonzero = d_pairs_nz;
+        if(diag_hit_sum)       *diag_hit_sum       = d_hit_sum;
+        if(diag_hit_max)       *diag_hit_max       = d_hit_max;
     }
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
@@ -2501,7 +2532,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                          h_pool, num_pool, h_pool_types, supply_mask,
                                          h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
                                          use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk,
-                                         NULL, NULL, NULL);
+                                         NULL, NULL, NULL, NULL, NULL, NULL, NULL);
         if(matched) used_routed = 1;   /* NULL => routed failed collectively => fall back */
     }
     if(!matched) {
@@ -2805,12 +2836,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             } else {
                 /* Routed ghost set on the SAME pre-install snapshot (collective). */
                 long fanout_sum = 0, fanout_max = 0; int recv_this = 0;
+                long d_pairs = 0, d_pairs_nz = 0, d_hit_sum = 0, d_hit_max = 0;  /* over-route diag */
                 double tc = 0, ta = 0, tw = 0;
                 char *matched_routed = compute_matched_routed(local_queries, n_local_queries,
                                            h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool, h_pool_types,
                                            supply_mask, h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
                                            !ghost_route_flat_forced(), &tc, &ta, &tw,
-                                           &fanout_sum, &fanout_max, &recv_this);
+                                           &fanout_sum, &fanout_max, &recv_this,
+                                           &d_pairs, &d_pairs_nz, &d_hit_sum, &d_hit_max);
                 if(!matched_routed) {
                     if(ThisTask == 0)
                         printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: routed producer failed collectively]\n",
@@ -2838,6 +2871,15 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                     long recv_max_l = recv_this, recv_max = 0;
                     MPI_Allreduce(&recv_max_l, &recv_max, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
                     MPI_Allreduce(&fanout_max, &fan_max[0], 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                    /* OVER-ROUTE diagnostic: of the routed (query,owner) pairs (= queries received
+                     * across owners), how many returned ZERO ghosts.  High zero-match fraction =>
+                     * the conservative band over-routes (tightenable); low => fanout is physically
+                     * required under the current decomposition. */
+                    long diag_in[3]  = { d_pairs, d_pairs_nz, d_hit_sum };
+                    long diag_sum[3] = { 0, 0, 0 };
+                    MPI_Allreduce(diag_in, diag_sum, 3, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                    long hitmax_g = 0;
+                    MPI_Allreduce(&d_hit_max, &hitmax_g, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
                     if(set_any[0] > 0) {
                         if(n_missing > 0)
                             printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s rank=%d UNDER-ROUTE: %ld broadcast ghosts missing from routed]\n",
@@ -2852,10 +2894,16 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                                       __FILE__, __LINE__, __FUNCTION__);
                     } else if(ThisTask == 0) {
                         double mean_fanout = (fan_sum[1] > 0) ? (double)fan_sum[0] / (double)fan_sum[1] : 0.0;
+                        double zero_frac   = (diag_sum[0] > 0) ? (1.0 - (double)diag_sum[1] / (double)diag_sum[0]) : 0.0;
+                        double mean_hits   = (diag_sum[1] > 0) ? (double)diag_sum[2] / (double)diag_sum[1] : 0.0;
                         printf("[GX_SYMM_GHOST_ORACLE call=%d caller=%s OK routed==broadcast over %ld queries | "
                                "fanout owners/query mean=%.2f max=%ld | NTask=%d | max_recv_queries=%ld]\n",
                                this_call, (spec->caller_name ? spec->caller_name : "?"), fan_sum[1],
                                mean_fanout, fan_max[0], NTask, recv_max);
+                        printf("[GX_SYMM_OVERROUTE call=%d caller=%s routed_pairs=%ld nonzero_pairs=%ld zero_match_frac=%.3f | "
+                               "matches/nonzero_pair mean=%.2f max=%ld | total_routed_matches=%ld]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), diag_sum[0], diag_sum[1],
+                               zero_frac, mean_hits, hitmax_g, diag_sum[2]);
                         fflush(stdout);
                     }
                 }
