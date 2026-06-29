@@ -187,6 +187,48 @@ tlr_route_query_over_topleaves(const double *leaf_center, const double *leaf_len
     return n;
 }
 
+/* ---- (3b) HIERARCHICAL tile-AABB -> overlapping OWNED top-leaves (H4b-perf) -
+ * Descends the TopNodes octree collecting the leaves owned by self_rank whose cube
+ * overlaps the box [aabb_lo,aabb_hi] inflated by `reach` (tlr_cell_overlaps_aabb).
+ * The SYMM band attribution's cheap form: O(depth x fanout) per tile instead of the
+ * flat O(NTopleaves) owned-leaf scan.  PROVABLY non-pruning: a parent topnode cube
+ * contains its child cubes, so if the inflated box reaches any descendant leaf it
+ * also overlaps the parent -> the parent is never pruned; the leaf-level test is the
+ * SAME tlr_cell_overlaps_aabb the flat scan applies -> identical owned-leaf set.
+ *   leaves_out [>= leaves_cap], leaves_cap = max leaves to collect (>= n_owned).
+ * Returns #owned leaves written, or -1 on stack/buffer overflow (caller falls back). */
+#define TLR_HIER_STACK 512   /* >> 8 x realistic TopNodes depth; overflow -> -1 */
+KOKKOS_INLINE_FUNCTION int
+tlr_collect_owned_leaves_for_aabb(const struct topnode_data *tn, int ntn,
+                                  const double *tn_center, const double *tn_len,
+                                  const int *domain_task, int self_rank,
+                                  const double aabb_lo[3], const double aabb_hi[3], double reach,
+                                  const int periodic_flags[3], const double box_sizes[3],
+                                  int *leaves_out, int leaves_cap)
+{
+    int n = 0;
+    int stack[TLR_HIER_STACK];
+    int sp = 0;
+    if(ntn <= 0) return 0;
+    stack[sp++] = 0;                       /* root topnode */
+    while(sp > 0) {
+        int no = stack[--sp];
+        if(no < 0 || no >= ntn) continue;  /* defensive */
+        if(!tlr_cell_overlaps_aabb(&tn_center[(size_t)no * 3], tn_len[no],
+                                   aabb_lo, aabb_hi, reach, periodic_flags, box_sizes)) continue;  /* prune subtree */
+        if(tn[no].Daughter < 0) {          /* domain leaf */
+            int leaf = tn[no].Leaf;
+            if(domain_task[leaf] != self_rank) continue;   /* OWNED leaves only */
+            if(n >= leaves_cap) return -1;                  /* buffer overflow -> caller fallback */
+            leaves_out[n++] = leaf;
+        } else {
+            if(sp + 8 > TLR_HIER_STACK) return -1;          /* stack overflow -> caller fallback */
+            for(int c = 0; c < 8; c++) stack[sp++] = tn[no].Daughter + c;
+        }
+    }
+    return n;
+}
+
 /* ---- (4) HIERARCHICAL query -> overlapping top-leaf OWNERS (H1/H4b) ---------
  * Descends the TopNodes octree (`tn[no].Daughter`/`.Leaf`) with the SAME opener
  * as the flat router, pruning whole subtrees -> O(depth x fanout) instead of the
@@ -211,7 +253,6 @@ tlr_route_query_over_topleaves(const double *leaf_center, const double *leaf_len
  *   owners_out    [>= ntask], seen [ntask] ZERO-initialised by caller.
  * Returns distinct remote owners written, or -1 on stack overflow (caller treats
  * as error -> oracle reports unavailable, never a false mismatch). */
-#define TLR_HIER_STACK 512   /* >> 8 x realistic TopNodes depth; overflow -> -1 */
 KOKKOS_INLINE_FUNCTION int
 tlr_route_query_hierarchical(const struct topnode_data *tn, int ntn,
                              const double *tn_center, const double *tn_len,

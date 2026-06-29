@@ -52,6 +52,10 @@ static double *g_band        = NULL;   /* SharedSpace [cap*TLR_NUM_PTYPES] */
 static int     g_band_cap    = 0;
 static int     g_band_ntl    = 0;
 static int     g_band_valid  = 0;
+/* flat-fill reference band: built ONLY in band-oracle mode to validate the
+ * production hierarchical fill (g_band) against the trusted flat owned-leaf scan. */
+static double *g_band_flat    = NULL;
+static int     g_band_flat_cap = 0;
 /* band epoch key (mirrors the supply-pool-view epoch) */
 static int          g_band_numpart = -1;
 static long long    g_band_ti      = -1;
@@ -187,6 +191,8 @@ extern "C" void topleaf_router_geometry_release(void)
     g_band_cap = 0; g_band_ntl = 0; g_band_valid = 0;
     if(g_tn_band) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_tn_band); g_tn_band = NULL; }
     g_tn_band_cap = 0; g_cband_valid = 0; g_cband_ntl = 0; g_cband_ntn = 0;
+    if(g_band_flat) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_band_flat); g_band_flat = NULL; }
+    g_band_flat_cap = 0;
 }
 
 /* Mark the geometry cache (and the topology-keyed band) INVALID without freeing
@@ -446,6 +452,19 @@ extern "C" int topleaf_router_band_build(void)
     return 0;
 }
 
+/* Band-oracle gate: when set (AND collect_diag), the collective builder ALSO builds
+ * the trusted flat owned-leaf scan and validates the production hierarchical fill
+ * against it (hier<flat => fatal under-cover).  Diagnostic-only; default off. */
+static int tlr_symm_band_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_BAND_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
 /* COLLECTIVE per-top-leaf GLOBAL band + per-topnode propagation (H4a), the SSOT
  * band producer for SYMMETRIC routing.
  *
@@ -550,60 +569,85 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
     }
 
     /* --- TILE-BASED owned-leaf band attribution (walker-rank invariant).
-     * For each owned-local supply TILE, attach its per-type reach to every leaf
-     * THIS RANK OWNS whose cube overlaps the tile bbox inflated by the tile reach
-     * (tlr_cell_overlaps_aabb).  The routing destination is DomainTask[leaf]==ThisTask
-     * = the rank that actually walks the tile's particles, so a particle that drifted
-     * across a top-leaf boundary still inflates THIS rank's nearby owned leaves (no
-     * under-route) -- unlike a per-particle current-leaf band, which loses walker-rank
-     * identity after drift.  ~ntiles x (owned leaves) work (tiles ~ num_pool/TILE_TARGET
-     * _SIZE), cheaper than the per-particle build.  Conservative (may over-attribute
-     * near boundaries; bounded by the diagnostics below + proven no-under-route only by
-     * the H4c routed-vs-broadcast ghost-set oracle -- NOT by this owner-set layer). */
+     * Each owned-local supply TILE attaches its per-type reach to every leaf THIS RANK
+     * OWNS whose cube overlaps the tile bbox inflated by the tile reach.  Routing
+     * destination DomainTask[leaf]==ThisTask = the rank that actually walks the tile's
+     * particles, so a particle that drifted across a top-leaf boundary still inflates
+     * THIS rank's nearby owned leaves (no under-route) -- unlike a per-particle
+     * current-leaf band, which loses walker-rank identity after drift.
+     *
+     * PRODUCTION fill = HIERARCHICAL: descend the TopNodes octree per tile to the
+     * overlapping owned leaves (O(depth x fanout)), replacing the flat O(ntiles x
+     * owned-leaves) scan that cost ~100M overlap tests/call at FIRE scale.  In
+     * band-oracle mode the flat scan is ALSO built (g_band_flat) and compared
+     * per-leaf/per-type to validate the hierarchical fill before it is trusted:
+     * hier<flat = UNDER-COVER (fatal, Gate 4c), hier>flat = over-cover (reported).
+     * Conservative; proven no-under-route only by the H4c ghost-set oracle. */
     long band_writes = 0, sum_leaves_per_tile = 0, max_leaves_per_tile = 0;
     long n_owned_leaves = 0, tile_leaf_tests = 0;
     long zero_leaf_tiles = 0, zero_leaf_tiles_pos_h = 0;
+    long band_overflow_local = 0, n_band_missing = 0, n_band_extra = 0;
+    int band_oracle = (collect_diag && tlr_symm_band_oracle_enabled()) ? 1 : 0;
+    int *owned_leaves = NULL, *hier_buf = NULL;
     if(!alloc_fail_local) {
-        for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band[k] = 0.0;
-        /* OWNED-leaf list once (this rank's routing cells): loop only these per tile
-         * -- O(ntiles x owned), not O(ntiles x NTopleaves). */
-        int *owned_leaves = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
-        if(!owned_leaves) {
+        owned_leaves = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
+        hier_buf     = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
+        if(band_oracle && g_band_flat_cap < ntl) {
+            g_band_flat = shared_alloc_double(g_band_flat, g_band_flat_cap, ntl * TLR_NUM_PTYPES, "band_flat");
+            if(!g_band_flat) g_band_flat_cap = 0; else g_band_flat_cap = ntl;
+        }
+        if(!owned_leaves || !hier_buf || (band_oracle && !g_band_flat)) {
             alloc_fail_local = 1;
         } else {
             for(int leaf = 0; leaf < ntl; leaf++)
                 if(DomainTask && DomainTask[leaf] == ThisTask) owned_leaves[n_owned_leaves++] = leaf;
-            for(int t = 0; t < v.ntiles; t++) {
+
+            /* PRODUCTION: hierarchical fill into g_band. */
+            for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band[k] = 0.0;
+            for(int t = 0; t < v.ntiles && !band_overflow_local; t++) {
                 const struct sfc_tile_t *tile = &v.tiles[t];
                 if(tile->count <= 0) continue;
-                double reach = tile->hmax;            /* max-type reach for the overlap gate */
-                long leaves_this_tile = 0;
-                for(long li = 0; li < n_owned_leaves; li++) {
-                    int leaf = owned_leaves[li];
-                    if(!tlr_cell_overlaps_aabb(&g_leaf_center[(size_t)leaf * 3], g_leaf_len[leaf],
-                                               tile->lo, tile->hi, reach, periodic_flags, box_sizes)) continue;
-                    double *slot = &g_band[(size_t)leaf * TLR_NUM_PTYPES];
+                double reach = tile->hmax;
+                int n = tlr_collect_owned_leaves_for_aabb(TopNodes, g_tn_count, g_tn_center, g_tn_len,
+                                                          DomainTask, ThisTask, tile->lo, tile->hi, reach,
+                                                          periodic_flags, box_sizes, hier_buf, ntl);
+                if(n < 0) { band_overflow_local = 1; break; }   /* descent overflow -> benign fallback */
+                for(int k = 0; k < n; k++) {
+                    double *slot = &g_band[(size_t)hier_buf[k] * TLR_NUM_PTYPES];
                     for(int ty = 0; ty < TLR_NUM_PTYPES; ty++)
                         if(tile->hmax_by_type[ty] > slot[ty]) slot[ty] = tile->hmax_by_type[ty];
-                    leaves_this_tile++;
                     band_writes++;
                 }
-                tile_leaf_tests += n_owned_leaves;
-                sum_leaves_per_tile += leaves_this_tile;
-                if(leaves_this_tile > max_leaves_per_tile) max_leaves_per_tile = leaves_this_tile;
-                /* A nonempty owned-local supply tile that reaches NO walker-owned routing
-                 * leaf is a possible UNDER-ROUTE: its particles are walked by THIS rank, but
-                 * no routing cell carries their band.  With positive reach this is exactly
-                 * the failure mode the walker-rank invariant must exclude (drift exceeded
-                 * reach+margin, or geometry is wrong) -> a hard consistency fail (Gate 4b). */
-                if(leaves_this_tile == 0) {
-                    zero_leaf_tiles++;
-                    if(reach > 0.0) zero_leaf_tiles_pos_h++;
+                sum_leaves_per_tile += n;
+                if((long)n > max_leaves_per_tile) max_leaves_per_tile = n;
+                if(n == 0) { zero_leaf_tiles++; if(reach > 0.0) zero_leaf_tiles_pos_h++; }
+            }
+
+            /* BAND ORACLE: trusted flat scan into g_band_flat + per-leaf/per-type compare. */
+            if(band_oracle && !band_overflow_local) {
+                for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band_flat[k] = 0.0;
+                for(int t = 0; t < v.ntiles; t++) {
+                    const struct sfc_tile_t *tile = &v.tiles[t];
+                    if(tile->count <= 0) continue;
+                    double reach = tile->hmax;
+                    for(long li = 0; li < n_owned_leaves; li++) {
+                        int leaf = owned_leaves[li];
+                        if(!tlr_cell_overlaps_aabb(&g_leaf_center[(size_t)leaf * 3], g_leaf_len[leaf],
+                                                   tile->lo, tile->hi, reach, periodic_flags, box_sizes)) continue;
+                        double *slot = &g_band_flat[(size_t)leaf * TLR_NUM_PTYPES];
+                        for(int ty = 0; ty < TLR_NUM_PTYPES; ty++)
+                            if(tile->hmax_by_type[ty] > slot[ty]) slot[ty] = tile->hmax_by_type[ty];
+                    }
+                    tile_leaf_tests += n_owned_leaves;   /* the flat-scan cost the hier fill eliminates */
+                }
+                for(long i = 0; i < (long)ntl * TLR_NUM_PTYPES; i++) {
+                    if(g_band[i] < g_band_flat[i]) n_band_missing++;      /* hier UNDER-covers -> fatal */
+                    else if(g_band[i] > g_band_flat[i]) n_band_extra++;   /* hier OVER-covers -> report */
                 }
             }
-            free(owned_leaves);
         }
     }
+    free(owned_leaves); free(hier_buf);
 
     /* --- drift DIAGNOSTIC (collect_diag only; load-bearing perf/correctness
      * instrumentation): count owned-local supply whose current-position top-leaf is
@@ -625,14 +669,33 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
         }
     }
 
-    /* --- Gate 4: alloc fail (resource, benign OOM) on ANY rank -> all fall back. --- */
-    int alloc_fail_any = 0;
-    MPI_Allreduce(&alloc_fail_local, &alloc_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(alloc_fail_any) {
-        if(alloc_fail_local)
-            printf("topleaf_router: SYMM band rank %d alloc FAIL -> all fall back to broadcast\n", ThisTask);
+    /* --- Gate 4: benign resource fail (alloc OOM or hierarchical-descent overflow) on
+     * ANY rank -> all fall back to broadcast (consistency_fail=0; not a correctness bug). --- */
+    int benign_fail_local = (alloc_fail_local || band_overflow_local) ? 1 : 0;
+    int benign_fail_any = 0;
+    MPI_Allreduce(&benign_fail_local, &benign_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(benign_fail_any) {
+        if(benign_fail_local)
+            printf("topleaf_router: SYMM band rank %d FALLBACK (alloc_fail=%d hier_overflow=%ld) -> broadcast\n",
+                   ThisTask, alloc_fail_local, band_overflow_local);
         g_cband_valid = 0;
-        return;   /* alloc_fail_any uniform -> all return (consistency_fail=0; OOM is benign) */
+        return;   /* benign_fail_any uniform -> all return together */
+    }
+
+    /* --- Gate 4c: BAND-ORACLE equivalence.  The hierarchical fill must COVER the
+     * trusted flat scan -- any leaf/type where hier band < flat band is an UNDER-COVER
+     * (the descent wrongly pruned a leaf the flat scan attributes) => consistency fail.
+     * hier>flat (over-cover) is reported in the diag, not fatal.  Only runs in band-
+     * oracle mode (n_band_missing=0 otherwise), so the reduce is collective-uniform. --- */
+    long band_missing_any = 0;
+    MPI_Allreduce(&n_band_missing, &band_missing_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+    if(band_missing_any > 0) {
+        if(n_band_missing > 0)
+            printf("topleaf_router: SYMM band rank %d HIER<FLAT under-cover: %ld leaf/type slots where the "
+                   "hierarchical fill is below the flat reference -> consistency fail\n", ThisTask, n_band_missing);
+        if(consistency_fail) *consistency_fail = 1;
+        g_cband_valid = 0;
+        return;
     }
 
     /* --- Gate 4b: UNDER-ROUTE guard.  A positive-reach owned-local supply tile that
@@ -706,18 +769,21 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
      * bound the over-attribution (the SYMM perf risk); drifted_supply confirms the
      * boundary-drift magnitude the tile band absorbs. */
     if(collect_diag) {
-        long diag_local[8] = { band_writes, sum_leaves_per_tile, max_leaves_per_tile,
+        long diag_local[9] = { band_writes, sum_leaves_per_tile, max_leaves_per_tile,
                                n_drift_local, (long)v.ntiles, n_owned_leaves,
-                               tile_leaf_tests, zero_leaf_tiles };
-        long diag_sum[8] = {0,0,0,0,0,0,0,0}, diag_max[8] = {0,0,0,0,0,0,0,0};
-        MPI_Allreduce(diag_local, diag_sum, 8, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(diag_local, diag_max, 8, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                               tile_leaf_tests, zero_leaf_tiles, n_band_extra };
+        long diag_sum[9] = {0,0,0,0,0,0,0,0,0}, diag_max[9] = {0,0,0,0,0,0,0,0,0};
+        MPI_Allreduce(diag_local, diag_sum, 9, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(diag_local, diag_max, 9, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
         if(ThisTask == 0) {
             double avg_lpt = (diag_sum[4] > 0) ? (double)diag_sum[1] / (double)diag_sum[4] : 0.0;
-            printf("[SYMM_BAND_DIAG ntl=%d ntn=%d tiles(sum)=%ld owned_leaves(sum)=%ld leaf_tests(sum)=%ld "
-                   "band_writes(sum)=%ld leaves/tile avg=%.2f max=%ld zero_leaf_tiles(sum)=%ld drifted_supply(sum)=%ld]\n",
+            /* leaf_tests/band_oracle_extra are nonzero ONLY in band-oracle mode (the flat
+             * scan + flat-vs-hier compare); band_writes is the hierarchical production fill. */
+            printf("[SYMM_BAND_DIAG ntl=%d ntn=%d tiles(sum)=%ld owned_leaves(sum)=%ld flat_leaf_tests(sum)=%ld "
+                   "band_writes(sum)=%ld leaves/tile avg=%.2f max=%ld zero_leaf_tiles(sum)=%ld drifted_supply(sum)=%ld "
+                   "band_oracle_over_cover(sum)=%ld]\n",
                    ntl, ntn, diag_sum[4], diag_sum[5], diag_sum[6], diag_sum[0], avg_lpt, diag_max[2],
-                   diag_sum[7], diag_sum[3]);
+                   diag_sum[7], diag_sum[3], diag_sum[8]);
             fflush(stdout);
         }
     }
