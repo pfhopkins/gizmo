@@ -53,18 +53,20 @@
  * abort because no writeback is registered).
  *
  * By design (matching the legacy CPU path), HII heating only ionizes gas
- * particles owned by THIS rank — never ghosts. Sources can sit anywhere, but
- * radiation only crosses a domain boundary if the gas on the other side is
- * imported as a local cell, never via ghost write-back. The pre-walk filter at
- * `if(j_cand >= local_count) continue;` enforces this. The ghost import that
- * gizmo_density_prep_ghosts performs (in the GPU-NL path) is only there to give
- * the GPU NL builder a consistent num_all-sized arena (and to pad the search
- * radius for sources near the boundary so they find their nearest LOCAL gas
- * correctly); the imported ghosts are then skipped before any ionization is
- * applied.
+ * particles owned by THIS rank — never ghosts. It accepts a small accuracy loss
+ * at domain boundaries in exchange for speed: cross-domain ionization is
+ * intentionally outside this routine's semantics. The pre-walk filter at
+ * `if(j_cand >= local_count) continue;` enforces local-only.
  *
- * Phil has confirmed this is intentional. If you find yourself thinking
- * "shouldn't we add ghost_writeback_hii?" — the answer is NO. */
+ * THEREFORE THIS ROUTINE MUST NOT IMPORT GHOSTS. The GPU candidate builder
+ * (hii_gpu_path) searches the LOCAL gas pool only (num_all = local_count). A
+ * prior version imported a broad all-types ghost pool via gizmo_density_prep_ghosts
+ * and then discarded every ghost here — pure wasted work that dominated the FIRE
+ * "HII" wall (the all_types ghost-discovery elephant). Removed 2026-06-29.
+ * Radiation-pressure feedback is a SEPARATE loop (radfb_rp_loop.cc) that
+ * legitimately uses ghosts/writeback — do not conflate the two.
+ *
+ * If you find yourself thinking "shouldn't we add ghost_writeback_hii?" — NO. */
 
 /* ============================================================================
  * Tiny-N surgical refactor (2026-05-17): HII_heating_singledomain now dispatches
@@ -292,27 +294,18 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
 {
     int num_src = (int)src.size();
 
-    /* DEADLOCK FIX: ghost_exchange (inside gizmo_density_prep_ghosts) is an MPI
-     * collective — ALL ranks must call it together. With the active-aware ghost
-     * exchange, one rank may have received 0 ghosts from density (e.g. after a
-     * redo that converged to smaller h) while another rank has ghosts. The
-     * ghost_exchange call below is collective: all ranks must call it or all
-     * must skip. Decide globally via MPI_Allreduce. */
-    int imported_ghosts = 0;
-    int local_count = 0, num_all = 0;
-    {
-        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
-        int need_import = 0;
-        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(need_import) {
-            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup(); /* clear asymmetric stale ghosts */
-            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-            imported_ghosts = 1;
-        }
-    }
-    local_count = ghost_get_num_local();
-    num_all = local_count + ghost_get_num_ghosts();
-    if(num_all <= 0) num_all = NumPart;
+    /* SINGLEDOMAIN: no ghost import (see file-top NOTE).  The GPU candidate
+     * builder searches LOCAL gas only; any ghosts present from an earlier loop
+     * lie at [local_count, NumPart) and are excluded by num_all = local_count
+     * (and re-checked by the j_cand >= local_count filter below).  No MPI
+     * collective here, so no cross-rank deadlock risk.  Particles are already
+     * drifted to the current time by density()/force_update before this call
+     * (core/accel.cc), so no re-drift is needed (matches hii_local_path). */
+    int local_count = ghost_get_num_local();
+    int num_all = local_count;   /* singledomain: LOCAL pool only.  ghost_get_num_local()
+                                  * already returns NumPart when no ghost pool is present;
+                                  * never fall back to a ghost-inclusive count (would
+                                  * re-admit ghosts, violating the local-only invariant). */
 
     /* Build flat index + radius arrays for the GPU NL builder. */
     std::vector<int>    src_idx_flat;     src_idx_flat.reserve(num_src);
@@ -377,7 +370,7 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
         gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
         gpu_particles_arena_invalidate();
     }
-    if(imported_ghosts) ghost_exchange_cleanup();
+    /* No ghost import (singledomain) -> nothing to clean up here. */
 }
 
 /* Tiny-N path: per-source tree walk on the existing Nodes[] (valid + h-refreshed
