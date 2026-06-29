@@ -183,14 +183,19 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
         return
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
+    else:
+        environ.setdefault("OMP_NUM_THREADS", "1")
     # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
     # in MHD_MODIFIED_GRADIENT) don't introduce nondeterministic/non-reproducible
     # results that get amplified by the divergence-cleaning feedback loop.
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
     paramsfile = f"{test_name}.params"
-    cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus"]
-    if num_openmp_threads > 0:
+    if environ.get("SLURM_JOB_ID"):
+        cmd = ["srun", "-n", str(num_mpi_ranks), "--cpu-bind=none"]
+    else:
+        cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus", "--oversubscribe"]
+    if num_openmp_threads > 0 and not environ.get("SLURM_JOB_ID"):
         cmd += ["--bind-to", "none"]
     cmd += ["./GIZMO", paramsfile, "0"]
 

@@ -7,7 +7,7 @@
 #############
 
 #SYSTYPE="github-ubuntu"
-SYSTYPE="Frontera"
+#SYSTYPE="Frontera"
 #SYSTYPE="MacBookCellar"
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"
