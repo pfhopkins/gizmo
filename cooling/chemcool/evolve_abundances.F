@@ -22,12 +22,14 @@ c
       REAL    column_est
       REAL    t_start, t_end, dt_est, dt, t_in, t_out
       REAL    tdust_old
+      REAL    co_pool, eps_ctrl
       integer new_step
 c
       integer nstep
       parameter (nstep = NSTEP)
 c
       REAL safety(nspec)
+      REAL ctrl_floor(nspec)
       integer used_for_stepsize_control(nspec)
 #if CHEMISTRYNETWORK == 5
       DATA safety /1d-1, 1d-1, 1d-1, DTCOOL_SCALE_FACTOR/
@@ -152,6 +154,31 @@ c
 #endif
       new_step = 1
 c
+c Step-size control floor.  A species may control the integration timestep
+c (via safety*y/|ydot|) only if its abundance exceeds max(atol, eps*pool),
+c where pool is the elemental reservoir it draws from.  Without the pool
+c term, a trace species sitting in the "death band" just above its atol --
+c e.g. D+ at ~1e-14 with ATOL_DP=1e-14, nine orders below abundD -- pins
+c dt to ~1e3 s in cold dense gas and exhausts the step budget (DVODE wedge).
+c Pools are per-particle (set in chemcool.cc common blocks), so compute here.
+c
+      eps_ctrl = 1d-6
+      do J = 1, nspec
+        ctrl_floor(J) = atol(J)
+      enddo
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
+      co_pool = min(abundc, abundo)
+      ctrl_floor(ico) = max(atol(ico), eps_ctrl * co_pool)
+#endif
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+      co_pool = min(abundc, abundo)
+      ctrl_floor(ico)   = max(atol(ico),   eps_ctrl * co_pool)
+      ctrl_floor(idp)   = max(atol(idp),   eps_ctrl * abundD)
+      ctrl_floor(ihd)   = max(atol(ihd),   eps_ctrl * abundD)
+      ctrl_floor(ihep)  = max(atol(ihep),  eps_ctrl * abhe)
+      ctrl_floor(ihepp) = max(atol(ihepp), eps_ctrl * abhe)
+#endif
+c
       do I = 1, nstep
 c        print*, "step", I, new_step, tdust, y(itmp)
 c
@@ -189,7 +216,7 @@ c
             if (used_for_stepsize_control(J) .eq. 1) then
               if (ydot(J)   .ne. 0d0 .and.
      $            safety(J) .ne. 0d0 .and.
-     $            y(J)      .gt. atol(J)) then
+     $            y(J)      .gt. ctrl_floor(J)) then
                 dt_est = min(dt_est, abs(safety(J) * y(J) / ydot(J)))
               endif
             endif
@@ -250,6 +277,10 @@ c
             print*, "dl, divv = ", dl, divv
             print*, "y = ", y
 	    print*, "ydot = ", ydot
+            print*, "pools: abundc, abundo, abundD = ",
+     $        abundc, abundo, abundD
+            print*, "pools: abhe, dgr, tdust = ",
+     $        abhe, dust_to_gas_ratio, tdust
 #ifdef TREE_RAD
             print*, "Tree rad totals: ", column_density_projection
 #endif
@@ -276,12 +307,16 @@ c
         endif
       enddo
 c
-      write(*,'(A)') 'EVOLVE_ABUNDANCES: nstep exceeded,' 
+      write(*,'(A)') 'EVOLVE_ABUNDANCES: nstep exceeded,'
       print*, id_current
       print*, dt
       print*, rpar
       print*, y
       print*, ydot
+      print*, "pools: abundc, abundo, abundD = ",
+     $  abundc, abundo, abundD
+      print*, "pools: abhe, dgr, tdust = ",
+     $  abhe, dust_to_gas_ratio, tdust
       ABORT(0)
       return
 

@@ -583,6 +583,9 @@ void calculate_non_standard_physics(void)
     MBARY_STEP("pre_imf_accrete");
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
     MBARY_STEP("post_imf_accrete");
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    recompute_resolvedism_fuv_luminosities(); // BUGFIX: re-evaluate stellar FUV/LW at current age each step (else stuck at PMS-zero -> G0 floor)
+#endif
 #endif
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
     MCBAL_LOG("post_starform_FB");

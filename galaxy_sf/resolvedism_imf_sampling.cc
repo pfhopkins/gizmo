@@ -159,6 +159,65 @@ void finalize_sampled_star(int i, double M_drawn)
 }
 
 
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+/* Per-step recompute of FUV/LW (and NUV/OPT) band luminosities for LIVING stars.
+ *
+ * BUGFIX 2026-06-29: these were set only ONCE, in finalize_sampled_star at formation,
+ * where the star age ~0 < t_PMS so the "PMS" branch leaves them at 0. They were never
+ * updated as the star reached the main sequence, so every star kept UV_luminosity =
+ * LW_luminosity = 0 for its whole life -> tree-walk FUV = 0 -> G0 collapsed to the
+ * uniform floor in every cell. Here we re-evaluate them from the stellar tables at the
+ * star's CURRENT age, every step. (Lyman_photons_per_sec is recomputed separately each
+ * step in resolvedism_photoionize(), so it is intentionally NOT touched here.)
+ * Body mirrors the band-luminosity logic in finalize_sampled_star(). */
+void recompute_resolvedism_fuv_luminosities(void)
+{
+    int i;
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        if(P[i].Type != 4) continue;
+        if(P[i].sampled != 1) continue;             /* only finalized stars */
+        double M_drawn = P[i].MstarSampleIMF[0];     /* ZAMS mass (table index) */
+
+        P[i].UV_luminosity = 0;
+        P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+        P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+        P[i].OPT_luminosity = 0;
+#endif
+        if(M_drawn <= All.IMFSampleStellarMassCut) continue;
+        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        if(star_age_yr >= get_lifetime(M_drawn, P[i].BirthMetallicity)) continue; /* dead */
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+        double logM = log10(M_drawn);
+        double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
+        double table_age = star_age_yr - stellar_t_PMS(logM, logZ);
+        if(table_age > 0) {
+            double log_age = log10(DMAX(table_age, 100.0));
+#if defined(RADTRANSFER)
+            P[i].UV_luminosity = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
+#else
+            P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
+#endif
+            P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            P[i].NUV_luminosity = pow(10., stellar_log_L_NUV(logM, logZ, log_age));
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#endif
+        } /* else PMS: stays 0 */
+#else
+        P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
+        P[i].LW_luminosity = P[i].UV_luminosity;
+#endif
+    }
+}
+#endif
+
+
 /* =========================================================================== */
 /*  Accretion walk via code_block_xchange framework.                           */
 /*  Equal-fraction mass removal from all gas cells within R_acc.               */

@@ -173,8 +173,21 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
      *   Σ Met[1..27] = 1 by construction. */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     {
-        /* Number abundances n_X/n_H = (X_mass_frac / A_X) / X_H */
+        /* Number abundances n_X/n_H = (X_mass_frac / A_X) / X_H.
+         * X_H MUST match the hydrogen reference used for yn (see ~line 425/428), else
+         * n_X = abundX * yn is internally inconsistent:
+         *   variable mode -> per-cell H mass fraction   (yn = rho * X_H_cell / m_p)
+         *   fixed mode    -> 1/(1+4*ABHE)               (yn = rho / ((1+4*ABHE)*m_p))
+         * Using per-cell H in fixed mode inflates metal number abundances by
+         * X_H_fixed/X_H_cell in H-depleted enriched cells (spurious ~6x in the
+         * 55 Zsun tail -> abundc ~132x instead of ~20x -> excess net-17 stiffness).
+         * (Pre-fix this matched gadget_tnt_new, which gets away with per-cell H only
+         *  because its mild enrichment keeps X_H_cell ~ 1/(1+4*ABHE).) */
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
         double X_H = DMAX(P[target].Metallicity[MET_OF(ELEM_H)], 1e-10);
+#else
+        double X_H = 1.0 / (1.0 + 4.0 * ABHE);
+#endif
 #ifdef GALSF_RESOLVEDISM_DUST
         /* Gas-phase abundances: total metal minus metal locked in dust */
         double C_gas  = DMAX(P[target].Metallicity[MET_OF(ELEM_C)]  - CellP[target].Dust[0], 0);
@@ -205,6 +218,33 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         COOLR.Zmass[10] = P[target].Metallicity[MET_OF(ELEM_Ca)]; /* Ca */
         COOLR.Zmass[11] = P[target].Metallicity[MET_OF(ELEM_Zn)]; /* Zn */
 #endif
+
+        /* --- Chemistry-input metallicity cap ---------------------------------------
+         * Decouple the chemistry/cooling solver from FB over-concentration. Clustered
+         * single-star feedback piles several SNe of ejecta into individual cells,
+         * spiking a handful (~tens of 1e7) to >>10 Zsun (max seen ~55 Zsun). The network
+         * (esp. net-17 trace species) was never validated there and goes stiff -> wedge.
+         * Cap ONLY the abundances handed to the solver at CHEM_ZMAX_SOLAR * solar;
+         * the stored Metallicity[]/Dust[] are untouched (mass conservation & enrichment
+         * bookkeeping unaffected). Uniform scale preserves abundance ratios (incl. CO=min(C,O)). */
+        {
+            const double Z_solar_chem = 0.0134;
+            const double Zmax_chem    = 10.0 * Z_solar_chem;   /* CHEM_ZMAX_SOLAR = 10 */
+            double Zcell = P[target].Metallicity[0];           /* total metal mass fraction */
+            if(Zcell > Zmax_chem) {
+                double s = Zmax_chem / Zcell;
+                COOLR.abundc  *= s;
+                COOLR.abundo  *= s;
+                COOLR.abundsi *= s;
+                COOLR.abundN  *= s;
+#ifdef WSS_CIE_COOL
+                COOLR.Zmass[1] *= s; COOLR.Zmass[2] *= s; COOLR.Zmass[3]  *= s;
+                COOLR.Zmass[4] *= s; COOLR.Zmass[5] *= s; COOLR.Zmass[7]  *= s;
+                COOLR.Zmass[8] *= s; COOLR.Zmass[9] *= s; COOLR.Zmass[10] *= s;
+                COOLR.Zmass[11] *= s;   /* scale metals only; leave He(0) and H(6) */
+#endif
+            }
+        }
     }
 #else
     /* Fallback: WNM values (Sembach+ 2000) scaled by global metallicity */
@@ -547,6 +587,90 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif
                 COOLR.abundc, COOLR.abundo, yn);
         }
+#ifdef GALSF_CHEMCOOL_DEBUG_INPUT
+        /* Entry validation: catch unphysical compositions handed TO the solver,
+         * i.e. species exceeding their elemental pools.  These arise upstream
+         * (FB mass injection changes n_H without diluting per-H TracAbund
+         * ratios; diffusion moves elements while ratios stay; dust locks
+         * gas-phase metals) and are the root cause of DVODE wedging — catch
+         * them here with full context instead of inside a 9e6-step retry loop. */
+        {
+            int viol = 0; double rtol = 1.0e-3;
+            double co_pool = (COOLR.abundc < COOLR.abundo) ? COOLR.abundc : COOLR.abundo;
+#if CHEMISTRYNETWORK != 4
+            if(abundances[ICO] > co_pool * (1.0 + rtol) + 1e-20) viol |= 1;
+#endif
+            if(2.0*abundances[IH2] + abundances[IHP] > 1.0 + rtol) viol |= 2;
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+            if(abundances[IHEP] + abundances[IHEPP] > CHEM_COMP.abhe * (1.0 + rtol) + 1e-20) viol |= 4;
+            if(abundances[IDP] + abundances[IHD] > COOLR.abundD * (1.0 + rtol) + 1e-20) viol |= 8;
+#endif
+            if(viol) {
+                int ionized_flag = -1;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                ionized_flag = (int)CellP[target].Ionized;
+#endif
+                printf("CHEMCOOL_INPUT_VIOLATION: ID=%llu viol=%d yn=%.4e T=%.4e Ionized=%d\n",
+                    (unsigned long long)P[target].ID, viol, yn, temp, ionized_flag);
+                printf("CHEMCOOL_INPUT_VIOLATION: pools abundc=%.6e abundo=%.6e abhe=%.6e abundD=%.6e dgr=%.4e tdust=%.4e\n",
+                    COOLR.abundc, COOLR.abundo, CHEM_COMP.abhe, COOLR.abundD,
+                    COOLR.dust_to_gas_ratio, COOLR.tdust);
+                printf("CHEMCOOL_INPUT_VIOLATION: y H2=%.6e H+=%.6e CO=%.6e",
+                    abundances[IH2], abundances[IHP],
+#if CHEMISTRYNETWORK != 4
+                    abundances[ICO]
+#else
+                    0.0
+#endif
+                );
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+                printf(" He+=%.6e He++=%.6e D+=%.6e HD=%.6e",
+                    abundances[IHEP], abundances[IHEPP], abundances[IDP], abundances[IHD]);
+#endif
+                printf("\n");
+                fflush(stdout);
+            }
+        }
+#endif
+
+        /* ---- Enforce physical species-vs-pool consistency on solver input ----
+         * Molecular/ionic species cannot exceed the elemental reservoir they
+         * draw from.  Upstream operations (FB mass injection changing n_H
+         * without diluting per-H ratios; turbulent diffusion of elements but
+         * not ratios; dust grain condensation locking gas-phase metals) can
+         * leave a cell with e.g. CO > available gas-phase C, which the rate
+         * equation cannot relax -> DVODE rejects every step and wedges (one
+         * rank stop()s -> silent MPI hang).  Clamp here so the solver always
+         * receives a consistent composition.  Amounts clamped are tiny
+         * (trace species near their floors) so conservation is unaffected. */
+#if CHEMISTRYNETWORK != 4
+        {
+            double co_pool = (COOLR.abundc < COOLR.abundo) ? COOLR.abundc : COOLR.abundo;
+            if(co_pool < 0) co_pool = 0;
+            if(abundances[ICO] > co_pool) abundances[ICO] = co_pool;  /* CO <= min(C_gas, O_gas) */
+        }
+#endif
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        {
+            /* He+ + He++ <= abhe (He pool); D+ + HD <= abundD (D pool).
+             * Rescale the pair down proportionally if the sum overshoots
+             * (e.g. PI HII reset loads He+ exactly at abhe, then DVODE
+             * tolerance drift tips the sum ~0.1% over -> check_abundances veto). */
+            double abhe_pool = CHEM_COMP.abhe;
+            double he_sum = abundances[IHEP] + abundances[IHEPP];
+            if(he_sum > abhe_pool && he_sum > 0) {
+                double f = abhe_pool / he_sum;
+                abundances[IHEP]  *= f;
+                abundances[IHEPP] *= f;
+            }
+            double d_sum = abundances[IDP] + abundances[IHD];
+            if(d_sum > COOLR.abundD && d_sum > 0) {
+                double f = COOLR.abundD / d_sum;
+                abundances[IDP] *= f;
+                abundances[IHD] *= f;
+            }
+        }
+#endif
         EVOLVE_ABUNDANCES(&timestep, &dl, &yn, &divv, &energy, abundances, &column_est);
     }
 
