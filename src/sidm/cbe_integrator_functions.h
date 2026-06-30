@@ -690,61 +690,77 @@ double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
-/* Free-slot row-fallback transform on an NBASIS x NBASIS cost matrix.
+/* Calibrated constants for the two-cost free-slot gate (cbe_apply_fs_gate).
+ * Method constants (not runtime or compile-time configuration options). */
+static const double CBE_FSGATE_TAU    = 0.04;    /* free-slot-open threshold on the continuation cost */
+static const double CBE_FSGATE_DELTA  = 0.02;    /* smoothstep half-width */
+static const double CBE_FSGATE_FFF    = 1.0e-2;  /* reliability mass scale f_FS (q_b = m_b/(m_b+f_FS*m_cell)) */
+static const double CBE_FSGATE_VFLOOR = 0.02;    /* velocity floor in C_cont = |dv|^2/(|dv|^2 + S_src + vfloor^2) */
+
+/* Two-cost free-slot gate on an NBASIS x NBASIS cost matrix. Replaces the old
+ * always-on psi reweight: the free-slot fallback fires ONLY when a source has
+ * no reliable existing CONTINUATION. Density-amplitude continuity (C_rho, the
+ * C2 route cost) must NOT decide that — it is reconstruction/limiter-sensitive
+ * (a same-stream like-match across a steep density edge has a small velocity
+ * gap but large C_rho). So the trigger is velocity-based and independent of the
+ * route cost:
+ *   trigger (continuation): C_cont(a,b) = |dv|^2 / (|dv|^2 + S_src + vfloor^2)
+ *     velocity-center gap normalized by SOURCE dispersion S_src (a broad target
+ *     cannot absorb a cold source's gap; same-center heating stays closed).
+ *   reliability:  q_b = m_b / (m_b + f_FS * m_cell_tgt)   (no hard empty cutoff)
+ *   C_fit(a) = min_b [ C_cont(a,b) + eta*(1-q_b) ];  eta = tau
+ *   w_FS(a)  = smoothstep( (C_fit - (tau-Delta)) / (2 Delta) )  in [0,1]
+ *   C_eff(a,b) = C_route(a,b) * ( 1 - w_FS(a)*(1 - psi_ab) ),  psi=m_b/(m_a+m_b)
+ * C (= C_route) is the caller's cost matrix (C_c + lambda*C_rho); routing keeps
+ * C_rho. Reliability/routing masses are the cell-centered row masses Q[m][0]
+ * (src_masses/target_masses), NOT reconstructed face densities. Direction is
+ * asymmetric: caller passes (Q_src,Q_tgt,src_masses,target_masses) for the build
+ * direction. The old always-on psi reweight is the w_FS==1 limit of this gate.
  *
- * Fix #3 from reference_cbe_method_fix_list.md (harness 2026-05-30):
- *
- * For every source basis alpha with nonfloor mass (rho_a[alpha] > eps_rho),
- * apply the cost reweight
- *     C[alpha][beta] *= target_masses[beta] / (source_masses[alpha]
- *                                              + target_masses[beta] + eps_rho)
- * where eps_rho = 1e-8 * (sum_source rho + sum_target rho) is a relative
- * regularizer. The multiplicative prefactor naturally biases the argmin
- * toward empty / lightly-occupied target slots only when no exact-match
- * basis exists (its C_W^2[alpha,beta] ≈ 0 already dominates the argmin).
- *
- * The PRIOR median(C) gate (Wave-CBE Commit 6a) is REMOVED — the harness
- * docstring catches it: row C[alpha] = [1,4,9,16] has median(C)=1 and the
- * gate "1 > 1" is False, so the reweighting silently never fires on the
- * perturbation IC. All three cost choices collapse to plain W^2 and the
- * perturbation routes into the dominant +1 slot instead of the empty -2
- * slot. Always-reweighting (gated only by source mass nonfloor) is the
- * production form per python_harness/cbe1d/pairing.py:cost_free_slot_fallback.
- *
- * The source-mass eps_rho skip is ESSENTIAL: floor-mass sources have
- * v_alpha = p_alpha / m_alpha dominated by FP noise; allowing them to
- * drive routing decisions destabilizes pairing.
- *
- * fired_count_inout is NULLABLE. When non-null, increments by 1 per
- * alpha-row that passed the source-mass gate and applied the reweight.
- * Per-face increment bounded by 2*NBASIS (two cost matrices per face).
- *
- * Direction is asymmetric. Caller passes (source_masses, target_masses)
- * matching the cost-matrix BUILD direction. For an a->b matrix
- *   C[alpha_on_a][beta_on_b] = cost(Q_a[alpha], Q_b[beta]):
- *     source_masses[i] = Q_a[i][0]        // mass density of a-side basis i
- *     target_masses[j] = Q_b[j][0]        // mass density of b-side basis j
- * The b->a direction (separately built C') requires its own free-slot
- * call with source = Q_b masses, target = Q_a masses. It is NOT a
- * transpose of this transform. */
+ * fired_count_inout is NULLABLE; when non-null, increments once per source row
+ * that opens the gate (w_FS > 0.5). Bounded by 2*NBASIS per face. */
 KOKKOS_INLINE_FUNCTION
-void cbe_apply_free_slot_fallback(
+void cbe_apply_fs_gate(
     double C[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS],
-    const double source_masses[CBE_INTEGRATOR_NBASIS],
+    const double Q_src[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double Q_tgt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double src_masses[CBE_INTEGRATOR_NBASIS],
     const double target_masses[CBE_INTEGRATOR_NBASIS],
     int *fired_count_inout)
 {
     const int N = CBE_INTEGRATOR_NBASIS;
-    double sum_rho = 0.0;
-    for(int m=0; m<N; m++) { sum_rho += source_masses[m] + target_masses[m]; }
+    const double tau = CBE_FSGATE_TAU, Delta = DMAX(CBE_FSGATE_DELTA, 1.0e-6);
+    const double eta = CBE_FSGATE_TAU, f_FS = CBE_FSGATE_FFF;
+    const double vfloor2 = CBE_FSGATE_VFLOOR * CBE_FSGATE_VFLOOR;
+    double m_cell_tgt = 0.0, sum_rho = 0.0;
+    for(int j=0; j<N; j++) { m_cell_tgt += target_masses[j]; sum_rho += src_masses[j] + target_masses[j]; }
     const double eps_rho = 1.0e-8 * sum_rho;
+    double q[CBE_INTEGRATOR_NBASIS];
+    for(int j=0; j<N; j++) q[j] = target_masses[j] / (target_masses[j] + f_FS*m_cell_tgt + MIN_REAL_NUMBER);
     for(int m=0; m<N; m++) {
-        if(source_masses[m] <= eps_rho) continue;   /* floor-mass source: skip */
-        for(int p=0; p<N; p++) {
-            const double denom = source_masses[m] + target_masses[p] + eps_rho;
-            C[m][p] *= target_masses[p] / denom;
+        if(src_masses[m] <= eps_rho) continue;   /* floor-mass source: skip (orthogonal) */
+        /* source basis velocity + dispersion (absolute frame), for C_cont */
+        double inv_a = 1.0 / DMAX(Q_src[m][0], MIN_REAL_NUMBER);
+        double va[3] = {0,0,0}, S_src = 0.0;
+        for(int k=0; k<NUMDIMS; k++) va[k] = cbe_basis_p_r(Q_src[m], k) * inv_a;
+        for(int k=0; k<NUMDIMS; k++) { double s = cbe_basis_T_r(Q_src[m], k, k) * inv_a - va[k]*va[k]; S_src += DMAX(s, 0.0); }
+        /* C_fit = min over reliable targets of C_cont + eta*(1-q) */
+        double Cfit = 1.0e30;
+        for(int b=0; b<N; b++) {
+            double inv_b = 1.0 / DMAX(Q_tgt[b][0], MIN_REAL_NUMBER), dv2 = 0.0;
+            for(int k=0; k<NUMDIMS; k++) { double vb = cbe_basis_p_r(Q_tgt[b], k) * inv_b; dv2 += (va[k]-vb)*(va[k]-vb); }
+            double Ccont = dv2 / (dv2 + S_src + vfloor2);
+            double c = Ccont + eta*(1.0 - q[b]);
+            if(c < Cfit) Cfit = c;
         }
-        if(fired_count_inout) { (*fired_count_inout)++; }
+        double tt = (Cfit - (tau - Delta)) / (2.0*Delta);
+        tt = (tt < 0.0) ? 0.0 : ((tt > 1.0) ? 1.0 : tt);
+        double wFS = tt*tt*(3.0 - 2.0*tt);
+        for(int p=0; p<N; p++) {
+            double psi = target_masses[p] / (src_masses[m] + target_masses[p] + eps_rho);
+            C[m][p] *= (1.0 - wFS*(1.0 - psi));
+        }
+        if(fired_count_inout && wFS > 0.5) { (*fired_count_inout)++; }
     }
 }
 
@@ -783,8 +799,8 @@ void cbe_apply_free_slot_fallback(
  *                            limiter call sites). Flux passes a real
  *                            pointer (both directions needed).
  *   free_slot_fired_count_inout: nullable counter (see
- *                            cbe_apply_free_slot_fallback). Flux call
- *                            site (in C6c) passes &out.cbe_pairing_free_
+ *                            cbe_apply_fs_gate). Flux call
+ *                            site passes &out.cbe_pairing_free_
  *                            slot_count; gradient and BJ-limiter call
  *                            sites pass NULL since pre-pass matching is
  *                            not a flux-pairing decision.
@@ -831,8 +847,8 @@ void cbe_build_pair_matching(
             src_masses[m] = Q_a[m][0];
             tgt_masses[m] = Q_b[m][0];
         }
-        cbe_apply_free_slot_fallback(C_ab, src_masses, tgt_masses,
-                                     free_slot_fired_count_inout);
+        cbe_apply_fs_gate(C_ab, Q_a, Q_b, src_masses, tgt_masses,
+                          free_slot_fired_count_inout);
     }
 #else
     (void)free_slot_fired_count_inout;
@@ -861,8 +877,8 @@ void cbe_build_pair_matching(
                 src_masses[m] = Q_b[m][0];
                 tgt_masses[m] = Q_a[m][0];
             }
-            cbe_apply_free_slot_fallback(C_ba, src_masses, tgt_masses,
-                                         free_slot_fired_count_inout);
+            cbe_apply_fs_gate(C_ba, Q_b, Q_a, src_masses, tgt_masses,
+                              free_slot_fired_count_inout);
         }
 #endif
         cbe_assign_outgoing_greedy(C_ba, alpha_of_beta_for_b);

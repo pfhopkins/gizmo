@@ -389,9 +389,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * are still skipped (no thermal channel; trivially zero flux). */
 
     /* Basis-pair matching via SSOT helper. Selectors per harness §4.4:
-     * CBE_COST_TRACE_W2 cost + CBE_PAIRING_USE_FREE_SLOT=1 with the
-     * source-mass eps_rho free-slot fallback (Fix #3, see
-     * cbe_apply_free_slot_fallback in cbe_integrator_functions.h). The
+     * CBE_COST_TRACE_W2 cost + CBE_PAIRING_USE_FREE_SLOT=1 with the two-cost
+     * free-slot gate (see cbe_apply_fs_gate in cbe_integrator_functions.h). The
      * free-slot fire-count is accumulated per face into a local int (bound:
      * 2*NBASIS<=16 per face) gated by the diagnostic compile flag, then
      * folded into out.cbe_pairing_free_slot_count for the standard
