@@ -384,6 +384,15 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         }
 
+#if defined(CBE_INTEGRATOR)
+        if(P[p].Type == 1)
+        {   /* CBE moment-flux acceleration enters the accel timestep like HydroAccel does for gas;
+             * reduces to the hydro acceleration when all bases are identical isotropic Gaussians */
+            double a_cbe[3]; cbe_particle_moment_accel(p, a_cbe);
+            ax += a_cbe[0]; ay += a_cbe[1]; az += a_cbe[2];
+        }
+#endif
+
         ac = sqrt(ax * ax + ay * ay + az * az);	/* this is now the physical acceleration */
         *aphys = ac;
     }
@@ -402,6 +411,9 @@ integertime get_timestep(int p,		/*!< particle index */
         return flag;
     }
     {double h_for_accel_dt = KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p);
+#if defined(CBE_INTEGRATOR)
+    if(P[p].Type == 1) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
+#endif
 #ifdef GRAIN_FLUID
     if(((1 << P[p].Type) & (GRAIN_PTYPES)) && (h_for_accel_dt <= 0)) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* for grain particles without gravity, use the inter-particle spacing as the characteristic length scale */
 #endif
@@ -523,6 +535,20 @@ integertime get_timestep(int p,		/*!< particle index */
         double dt_cour = 2. * All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig); // can be generous here, really the signal velocity isn't that important in the collisionless case, but it is important with some of the physics above //
 #if defined(CBE_INTEGRATOR)
         if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
+        if(need_cbe_agscfl)
+        {   /* CBE mass-depletion criterion: cap the per-basis fractional mass change per step.
+             * Surgical -- only near-empty fast-stream bases (large |dm/dt| relative to m_b) bind.
+             * Softened mass m_eff (same floor as cbe_particle_moment_accel) limits depletion of
+             * dynamically meaningful basis mass, not the trace mass of empty free-slots. */
+            for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++)
+            {
+                const double m_b = P[p].CBE_basis_moments[b][0];
+                if(!(m_b > 0)) continue;
+                const double m_eff = m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC * P[p].Mass;
+                const double rate_m = DMAX(fabs(P[p].CBE_basis_out_rate_dt[b][0]), fabs(P[p].CBE_basis_moments_dt[b][0]));
+                if(rate_m > MIN_REAL_NUMBER) {double dt_m = 0.1 * m_eff / rate_m; if(dt_m < dt) {dt = dt_m;}}
+            }
+        }
 #endif
         if(dt_cour < dt) {dt = dt_cour;}
     }

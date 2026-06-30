@@ -174,6 +174,16 @@
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
 #endif
+/* Softened-mass floor (fraction of cell mass) for the CBE acceleration and
+ * mass-depletion timestep criteria: m_eff = m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC*m_cell.
+ * Dividing the per-basis acceleration / mass-depletion rate by m_eff (not bare m_b)
+ * limits depletion/acceleration of DYNAMICALLY MEANINGFUL basis mass, not the
+ * maintained numerical trace mass of empty free-slots (~1e-8 of the cell).
+ * Dangerous draining bases (~1e-3 of the cell at collapse onset) sit far above
+ * this floor and are essentially unsoftened. */
+#ifndef CBE_TIMESTEP_MASS_FLOOR_FRAC
+#define CBE_TIMESTEP_MASS_FLOOR_FRAC 1.0e-5
+#endif
 /* Loud guards against silently-ignored selector values. cbe_build_pair_
  * matching dispatches on CBE_PAIRING_COST via a single #if/#else and on
  * CBE_PAIRING_USE_FREE_SLOT via #if; any unsupported value silently

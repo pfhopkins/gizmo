@@ -342,6 +342,33 @@ void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_
 }
 
 
+/* Strongest-basis CBE moment acceleration a_b = (dp_b/dt - v_b dm_b/dt)/m_eff,
+ * for the accel timestep criterion. v_b uses the real basis mass; the
+ * acceleration denominator uses the softened mass m_eff = m_b +
+ * CBE_TIMESTEP_MASS_FLOOR_FRAC*m_cell, so the maintained numerical trace mass of
+ * empty free-slots (m_b ~ 1e-8 m_cell) does not produce a spurious huge accel.
+ * Returns the max-magnitude basis acceleration (3-vector). */
+void cbe_particle_moment_accel(int i, double a_out[3])
+{
+    a_out[0] = a_out[1] = a_out[2] = 0;
+    double amax2 = 0;
+    for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++) {
+        const double m_b = P[i].CBE_basis_moments[b][0];
+        if(!(m_b > 0)) continue;
+        const double inv_m = 1.0 / m_b, dm = P[i].CBE_basis_moments_dt[b][0];
+        const double inv_meff = 1.0 / (m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC * P[i].Mass);
+        double a_b[3] = {0,0,0}, a2 = 0;
+        for(int k = 0; k < NUMDIMS; k++) {
+            const double v_k  = cbe_basis_p_r(P[i].CBE_basis_moments[b], k) * inv_m;   /* real basis velocity */
+            const double dp_k = cbe_basis_p_r(P[i].CBE_basis_moments_dt[b], k);
+            a_b[k] = (dp_k - v_k * dm) * inv_meff;   /* regularized acceleration (softened mass) */
+            a2 += a_b[k] * a_b[k];
+        }
+        if(a2 > amax2) { amax2 = a2; a_out[0]=a_b[0]; a_out[1]=a_b[1]; a_out[2]=a_b[2]; }
+    }
+}
+
+
 /* Snap the predicted CBE state to the conserved state (pred = conserved). Used
  * by the second half-kick after the gravity update: the palindromic split runs
  * the CBE kick before gravity there, so the post-CBE-kick predictor reset is in

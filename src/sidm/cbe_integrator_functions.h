@@ -1772,6 +1772,13 @@ void cbe_face_K_and_vn_from_Q(
  * DEFENSIVE GUARD: if rho is non-positive or non-finite or A_norm_sq <= 0
  * the function zeros the flux and returns 0. Device-safe (no endrun);
  * caller's clamp helpers should already filter these cases. */
+
+/* Signal-speed prefactor on the normal velocity dispersion in the CBE timestep
+ * estimate: vsig = |u_out| + CBE_SIGNAL_SIGMA_PREFAC * sigma_x, with
+ * sigma_x = c_x/sqrt(3) = sqrt(n.S.n). Method constant from the timestep survey
+ * (was sqrt(3)); hardens the CBE timestep, may relax toward 3 after broader
+ * tests. This affects ONLY the returned vsig estimate, not the flux physics. */
+static const double CBE_SIGNAL_SIGMA_PREFAC = 5.0;
 KOKKOS_INLINE_FUNCTION
 double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
                             const double vface[3],
@@ -1831,7 +1838,7 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
     const double F_m_per_area = fs.F_m;
     if(F_m_per_area == 0) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
-        return (fabs(u_out) + c_x) * A_norm;
+        return (fabs(u_out) + CBE_SIGNAL_SIGMA_PREFAC * (c_x * (1.0/1.7320508075688772))) * A_norm;
     }
     fluxes[0] = F_m_per_area * A_norm;
 
@@ -1872,7 +1879,7 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
     }
 #endif
 
-    return (fabs(u_out) + c_x) * A_norm;
+    return (fabs(u_out) + CBE_SIGNAL_SIGMA_PREFAC * (c_x * (1.0/1.7320508075688772))) * A_norm;
 }
 
 
