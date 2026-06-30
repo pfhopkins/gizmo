@@ -14,7 +14,7 @@ InitCondFile                       core_ics
 OutputDir                          output
 TimeMax                            0.05
 BoxSize                            0.15
-TimeBetSnapshot                    0.05
+TimeBetSnapshot                    0.005
 DesNumNgb                          32
 BiniX                              0
 BiniY                              0
@@ -44,6 +44,7 @@ ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
 MaxMemSize                         3000
+PartAllocFactor			   5.0
 MaxNumNgbDeviation                 0.1
 ResubmitOn                         0
 ResubmitCommand                    none
