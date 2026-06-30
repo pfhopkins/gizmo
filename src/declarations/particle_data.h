@@ -409,6 +409,11 @@ extern ALIGN(32) struct particle_data
      * first-order-moment bypass for scratch rows
      * (ρ ≤ cbe_rho_active_floor()). */
     double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS][3];
+    /* Previous-step gradient, snapshotted at the top of the gradient pass
+     * before it is overwritten. The pairing cost (density-continuity term)
+     * reconstructs face densities from this prior-step gradient — the one a
+     * matching decision actually has available before the current grad update. */
+    double Gradients_CBE_basis_moments_prev[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS][3];
 #endif
 #endif
 

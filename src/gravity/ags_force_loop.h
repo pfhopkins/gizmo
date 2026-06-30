@@ -126,6 +126,10 @@ struct AgsForceLocalIn {
      * particles retain prior-step values (hydro semantics). */
     double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS]
                                       [CBE_INTEGRATOR_NMOMENTS][3];
+    /* Prev-step (stale) gradient snapshot, same load path; consumed by the
+     * flux body's density-continuity matching cost. */
+    double Gradients_CBE_basis_moments_prev[CBE_INTEGRATOR_NBASIS]
+                                           [CBE_INTEGRATOR_NMOMENTS][3];
 #endif
 #if defined(DM_SIDM)
     double dtime_sidm;
@@ -579,9 +583,12 @@ struct AgsForceSpec {
          * (natural P[] ghost import). */
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                for(int d = 0; d < 3; d++)
+                for(int d = 0; d < 3; d++) {
                     L.Gradients_CBE_basis_moments[m][k][d] =
                         dctx.P[i].Gradients_CBE_basis_moments[m][k][d];
+                    L.Gradients_CBE_basis_moments_prev[m][k][d] =
+                        dctx.P[i].Gradients_CBE_basis_moments_prev[m][k][d];
+                }
 #endif
 #if defined(DM_SIDM)
         L.dtime_sidm = dctx.P[i].dtime_sidm;

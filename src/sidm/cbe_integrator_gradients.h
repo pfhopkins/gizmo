@@ -120,6 +120,9 @@ struct CBEGradLocalIn {
      * Pass 1 limiter reads this; pass 0 LSQ does not consume it. */
     double         Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS]
                                               [CBE_INTEGRATOR_NMOMENTS][3];
+    /* Prev-step (stale) gradient snapshot, for the density-continuity matching cost. */
+    double         Gradients_CBE_basis_moments_prev[CBE_INTEGRATOR_NBASIS]
+                                                   [CBE_INTEGRATOR_NMOMENTS][3];
 };
 
 /* Per-active accumulator. Both passes share one POD:
@@ -243,9 +246,32 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
      * limiter pass and the flux body. Q-cell vs Q-face matching split
      * is unchanged. Single-direction; fired-count NULL. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
+    /* Stale-gradient reconstructed face densities for the density-continuity
+     * matching cost. Gradient pass: vF=0 (no face velocity in the stencil).
+     * NULL when gradients are not compiled in -> base velocity/trace cost. */
+    const double *gcrho_a = (const double*)0, *gcrho_b = (const double*)0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    double gcrho_fi[CBE_INTEGRATOR_NBASIS], gcrho_fj[CBE_INTEGRATOR_NBASIS];
+    {
+        double h_j_c = (double)Pj.AGS_KernelRadius; double pden = h_i + h_j_c;
+        double psi_i = (pden > 0) ? h_j_c/pden : 0.5; double psi_j = 1.0 - psi_i;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            double gi = L.Gradients_CBE_basis_moments_prev[m][0][0]*dp[0]
+                      + L.Gradients_CBE_basis_moments_prev[m][0][1]*dp[1]
+                      + L.Gradients_CBE_basis_moments_prev[m][0][2]*dp[2];
+            double gj = Pj.Gradients_CBE_basis_moments_prev[m][0][0]*dp[0]
+                      + Pj.Gradients_CBE_basis_moments_prev[m][0][1]*dp[1]
+                      + Pj.Gradients_CBE_basis_moments_prev[m][0][2]*dp[2];
+            gcrho_fi[m] = Q_i[m][0] - psi_i*gi;
+            gcrho_fj[m] = Q_j[m][0] + psi_j*gj;
+        }
+        gcrho_a = gcrho_fi; gcrho_b = gcrho_fj;
+    }
+#endif
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
-                            /*free_slot_fired_count_inout=*/NULL);
+                            /*free_slot_fired_count_inout=*/NULL,
+                            gcrho_a, gcrho_b, /*vF=*/0.0);
 
     /* Primitive-gradient swap: convert Q_i, Q_j to primitive rows once per
      * basis. The LSQ delta below is on PRIMITIVE slots — the persistent
@@ -440,9 +466,30 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
      * primitive content internally, so the primitive-gradient swap does
      * not require any matching-API change. Single-direction; counter NULL. */
     int matched_j_for_i[CBE_INTEGRATOR_NBASIS];
+    /* Stale-gradient reconstructed face densities for the density-continuity
+     * matching cost (gradient pass: vF=0). psi_i = h_j/(h_i+h_j) from above.
+     * NULL when gradients are not compiled in -> base velocity/trace cost. */
+    const double *gcrho_a = (const double*)0, *gcrho_b = (const double*)0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    double gcrho_fi[CBE_INTEGRATOR_NBASIS], gcrho_fj[CBE_INTEGRATOR_NBASIS];
+    {
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            double gi = L.Gradients_CBE_basis_moments_prev[m][0][0]*dp[0]
+                      + L.Gradients_CBE_basis_moments_prev[m][0][1]*dp[1]
+                      + L.Gradients_CBE_basis_moments_prev[m][0][2]*dp[2];
+            double gj = Pj.Gradients_CBE_basis_moments_prev[m][0][0]*dp[0]
+                      + Pj.Gradients_CBE_basis_moments_prev[m][0][1]*dp[1]
+                      + Pj.Gradients_CBE_basis_moments_prev[m][0][2]*dp[2];
+            gcrho_fi[m] = Q_i[m][0] - psi_i*gi;
+            gcrho_fj[m] = Q_j[m][0] + (1.0 - psi_i)*gj;
+        }
+        gcrho_a = gcrho_fi; gcrho_b = gcrho_fj;
+    }
+#endif
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
-                            /*free_slot_fired_count_inout=*/NULL);
+                            /*free_slot_fired_count_inout=*/NULL,
+                            gcrho_a, gcrho_b, /*vF=*/0.0);
 
     /* Primitive-gradient swap (Phase 1b — Phil + codex 2026-06-06):
      * COMPONENT-SEPARATED limiter. The realizability constraint factorizes
@@ -749,9 +796,12 @@ struct CBEGradSpec {
          * branch-free. */
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                for(int d = 0; d < 3; d++)
+                for(int d = 0; d < 3; d++) {
                     L.Gradients_CBE_basis_moments[m][k][d] =
                         dctx.P[i].Gradients_CBE_basis_moments[m][k][d];
+                    L.Gradients_CBE_basis_moments_prev[m][k][d] =
+                        dctx.P[i].Gradients_CBE_basis_moments_prev[m][k][d];
+                }
         return a;
     }
 

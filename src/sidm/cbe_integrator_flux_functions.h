@@ -399,18 +399,42 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
     double vsig = 0;
+    /* Stale-gradient reconstructed face densities (mass slot) for the
+     * density-continuity matching cost. NULL when gradients are not compiled
+     * in -> base velocity/trace cost. vF = face-normal velocity. */
+    const double *crho_pa = (const double*)0; const double *crho_pb = (const double*)0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    double crho_rho_fi[CBE_INTEGRATOR_NBASIS], crho_rho_fj[CBE_INTEGRATOR_NBASIS];
+    {
+        double pden = kernel.h_i + kernel.h_j;
+        double psi_i = (pden > 0) ? kernel.h_j/pden : 0.5; double psi_j = 1.0 - psi_i;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            double gi = local.Gradients_CBE_basis_moments_prev[m][0][0]*kernel.dp[0]
+                      + local.Gradients_CBE_basis_moments_prev[m][0][1]*kernel.dp[1]
+                      + local.Gradients_CBE_basis_moments_prev[m][0][2]*kernel.dp[2];
+            double gj = P[j].Gradients_CBE_basis_moments_prev[m][0][0]*kernel.dp[0]
+                      + P[j].Gradients_CBE_basis_moments_prev[m][0][1]*kernel.dp[1]
+                      + P[j].Gradients_CBE_basis_moments_prev[m][0][2]*kernel.dp[2];
+            crho_rho_fi[m] = Q_i[m][0] - psi_i*gi;
+            crho_rho_fj[m] = Q_j[m][0] + psi_j*gj;
+        }
+        crho_pa = crho_rho_fi; crho_pb = crho_rho_fj;
+    }
+#endif
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
     int free_slot_fired_this_face = 0;
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
-                            &free_slot_fired_this_face);
+                            &free_slot_fired_this_face,
+                            crho_pa, crho_pb, v_F_normal);
     out.cbe_pairing_free_slot_count += (long long)free_slot_fired_this_face;
 #else
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
-                            /*free_slot_fired_count_inout=*/NULL);
+                            /*free_slot_fired_count_inout=*/NULL,
+                            crho_pa, crho_pb, v_F_normal);
 #endif
 
     /* Flux loop. Wave-CBE Commit 8 (Fix #1, 2026-05-30) — sign convention

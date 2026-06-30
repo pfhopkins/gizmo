@@ -651,6 +651,45 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
+/* Calibrated weight for the density-continuity term in the pairing cost.
+ * Method constant (not a runtime or compile-time configuration option). */
+static const double CBE_CRHO_LAMBDA = 0.5;
+
+/* Pairing cost with phase-space-sheet (density) continuity, used when
+ * stale-gradient reconstructed face densities are available:
+ *   C_c   = normalized face-centric velocity distance
+ *           |du|^2 / (|ua|^2 + |ub|^2 + 2|ua.ub| + trS_a + trS_b)
+ *   C_rho = |rho_fa - rho_fb| / (|rho_fa| + |rho_fb| + 1e-3*rho_cell)
+ *   C     = C_c + CBE_CRHO_LAMBDA * C_rho
+ * rho_fa/rho_fb are the stale-gradient reconstructed face densities of the two
+ * bases; vF is the face-normal velocity (1D: subtract from the normal k=0). */
+KOKKOS_INLINE_FUNCTION
+double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
+                        const double Qb[CBE_INTEGRATOR_NMOMENTS],
+                        double rho_fa, double rho_fb, double vF, double rho_cell)
+{
+    const double eps = 1.0e-12;
+    double inv_a = 1.0 / DMAX(Qa[0], MIN_REAL_NUMBER);
+    double inv_b = 1.0 / DMAX(Qb[0], MIN_REAL_NUMBER);
+    double du2 = 0, na = 0, nb = 0, dot = 0, trSa = 0, trSb = 0;
+    for(int k=0; k<NUMDIMS; k++) {
+        double va = cbe_basis_p_r(Qa, k) * inv_a;
+        double vb = cbe_basis_p_r(Qb, k) * inv_b;
+        double ua = va - ((k==0) ? vF : 0.0);   /* face-centric: normal=k0 in 1D */
+        double ub = vb - ((k==0) ? vF : 0.0);
+        du2 += (ua-ub)*(ua-ub); na += ua*ua; nb += ub*ub; dot += ua*ub;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        double Sa = cbe_basis_T_r(Qa, k, k) * inv_a - va*va;
+        double Sb = cbe_basis_T_r(Qb, k, k) * inv_b - vb*vb;
+        trSa += DMAX(Sa, 0.0); trSb += DMAX(Sb, 0.0);
+#endif
+    }
+    double Cc   = du2 / (na + nb + 2.0*fabs(dot) + trSa + trSb + eps);
+    double Crho = fabs(rho_fa - rho_fb) / (fabs(rho_fa) + fabs(rho_fb) + 1.0e-3*rho_cell + eps);
+    return Cc + CBE_CRHO_LAMBDA * Crho;
+}
+
+
 /* Free-slot row-fallback transform on an NBASIS x NBASIS cost matrix.
  *
  * Fix #3 from reference_cbe_method_fix_list.md (harness 2026-05-30):
@@ -748,25 +787,39 @@ void cbe_apply_free_slot_fallback(
  *                            site (in C6c) passes &out.cbe_pairing_free_
  *                            slot_count; gradient and BJ-limiter call
  *                            sites pass NULL since pre-pass matching is
- *                            not a flux-pairing decision. */
+ *                            not a flux-pairing decision.
+ *   rho_face_a/rho_face_b:   per-basis stale-gradient reconstructed face
+ *                            densities (NBASIS each). When both non-NULL, the
+ *                            cost includes the density-continuity term
+ *                            (cbe_cost_cc_crho); NULL on either side falls back
+ *                            to the velocity/trace cost. vF is the face-normal
+ *                            velocity used by the face-centric velocity cost. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_pair_matching(
     const double Q_a[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     const double Q_b[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     int beta_of_alpha_for_a[CBE_INTEGRATOR_NBASIS],
     int alpha_of_beta_for_b[CBE_INTEGRATOR_NBASIS],
-    int *free_slot_fired_count_inout)
+    int *free_slot_fired_count_inout,
+    const double *rho_face_a, const double *rho_face_b, double vF)
 {
     const int N = CBE_INTEGRATOR_NBASIS;
+    /* Density-continuity cost is used iff the caller supplied stale-gradient
+     * reconstructed face densities for both sides (gradient/flux passes with
+     * gradients on). Otherwise fall back to the velocity/trace cost. */
+    const bool use_crho = (rho_face_a != (const double*)0 && rho_face_b != (const double*)0);
+    double rho_cell_a = 0.0, rho_cell_b = 0.0;
+    if(use_crho) { for(int m=0;m<N;m++){ rho_cell_a += Q_a[m][0]; rho_cell_b += Q_b[m][0]; } }
 
     /* a->b cost matrix. */
     double C_ab[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
     for(int m=0; m<N; m++) {
         for(int n=0; n<N; n++) {
+            if(use_crho) { C_ab[m][n] = cbe_cost_cc_crho(Q_a[m], Q_b[n], rho_face_a[m], rho_face_b[n], vF, rho_cell_a); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
-            C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
+            else C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
 #else
-            C_ab[m][n] = cbe_cost_v_only(Q_a[m], Q_b[n]);
+            else C_ab[m][n] = cbe_cost_v_only(Q_a[m], Q_b[n]);
 #endif
         }
     }
@@ -792,10 +845,11 @@ void cbe_build_pair_matching(
         double C_ba[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
         for(int m=0; m<N; m++) {
             for(int n=0; n<N; n++) {
+                if(use_crho) { C_ba[m][n] = cbe_cost_cc_crho(Q_b[m], Q_a[n], rho_face_b[m], rho_face_a[n], vF, rho_cell_b); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
-                C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
+                else C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
 #else
-                C_ba[m][n] = cbe_cost_v_only(Q_b[m], Q_a[n]);
+                else C_ba[m][n] = cbe_cost_v_only(Q_b[m], Q_a[n]);
 #endif
             }
         }
