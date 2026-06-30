@@ -262,6 +262,15 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
     }
 }
 
+/* Gravity-tree freshness generations (see forcetree.h). Plain host counters,
+ * SSOT in this TU; force_update_hmax (forcetree_update.cc) bumps the hmax one
+ * via force_bump_hmax_refresh_generation(). */
+static long g_force_treebuild_generation = 0;
+static long g_force_hmax_refresh_generation = 0;
+long force_treebuild_generation(void)        { return g_force_treebuild_generation; }
+long force_hmax_refresh_generation(void)      { return g_force_hmax_refresh_generation; }
+void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation++; }
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
@@ -405,6 +414,7 @@ let_build_attempt:
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     }
     TimeOfLastTreeConstruction = All.Time;
+    g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
     return Numnodestree;
 }
 

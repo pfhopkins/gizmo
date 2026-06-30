@@ -69,6 +69,18 @@ void   force_treeallocate(int maxnodes, int maxpart);
  * over-opening here is correct (extra candidates filter at leaf). Capped at
  * All.MaxKernelRadius to match the legacy band semantics. */
 double force_hmax_per_type_particle_radius(int i);
+
+/* Monotonic gravity-tree freshness generations.  treebuild_generation bumps on
+ * every successful force_treebuild (topology + Father[] + node structure changed);
+ * hmax_refresh_generation bumps at the end of force_update_hmax (ancestor node
+ * boxes re-drifted + per-type bands re-seeded after density).  Consumers that
+ * cache anything derived from the tree geometry (e.g. the ghost-route fine band)
+ * key on BOTH plus All.Ti_Current; a mismatch means rebuild / fail-closed.  These
+ * are NOT a substitute for the per-data epoch keys, only the tree-side half. */
+long   force_treebuild_generation(void);
+long   force_hmax_refresh_generation(void);
+void   force_bump_hmax_refresh_generation(void);   /* called by force_update_hmax (separate TU) */
+
 int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);

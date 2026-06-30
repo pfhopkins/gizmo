@@ -38,6 +38,7 @@
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
+#include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
 #include "ghost_exchange_spec.h"
 #include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 
@@ -137,6 +138,10 @@ struct ghost_local_tree_cache_t {
 static struct ghost_local_tree_cache_t g_glt_cache = {0,-1,-1,0.0,GHOST_TYPE_ALL,0,0,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL,
                                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
 
+/* L3.2 fine-band (defined below) is keyed to the supply cache; free it whenever
+ * the supply cache is freed so a stale band never outlives its pool. */
+static void gx_fineband_free(void);
+
 /* gx_policy_scaled_h — SSOT supply-side reach inside ghost_exchange.cc.
  *
  * Single helper used at every site that writes a per-particle supply h into
@@ -202,6 +207,7 @@ static void glt_cache_free(void)
     if(g_glt_cache.compact_xyzh) { free(g_glt_cache.compact_xyzh); g_glt_cache.compact_xyzh = NULL; }
     if(g_glt_cache.pool_types)   { free(g_glt_cache.pool_types);   g_glt_cache.pool_types = NULL; }
     if(g_glt_cache.j_to_pool)    { free(g_glt_cache.j_to_pool);    g_glt_cache.j_to_pool = NULL; }
+    gx_fineband_free();   /* band is keyed to this pool — drop it with the cache */
     g_glt_cache.valid = 0;
     g_glt_cache.NumPart_when_built = -1;
     g_glt_cache.Ti_when_built = -1;
@@ -428,6 +434,219 @@ static int ghost_route_symm_band_dist_enabled(void)
     const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_BAND_DIST");
     enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
     return enabled;
+}
+
+/* ============================================================================
+ * L3.2 fine_band — uncapped per-caller per-fine-node SYMMETRIC supply band.
+ *
+ * The uncapped, caller-specific analogue of Extnodes[no].hmax_per_type[]: for the
+ * current caller's supply pool (g_glt_cache, owned-local + type-masked), seed each
+ * particle's EXACT receiver reach (compact_xyzh[p*4+3] == gx_policy_scaled_h(j))
+ * into its containing fine node Father[j], then propagate the per-type max up the
+ * father chain.  Unlike Extnodes' band it is NOT capped at MaxKernelRadius and uses
+ * the caller's policy/scale/safety, so band[node] >= every contained supply
+ * particle's reach -> a bounded fine-tree receiver walk opening nodes by this band
+ * can never under-route.
+ *
+ * Conservatism between rebuilds is the SAME invariant Mode B already relies on:
+ * Father[j] is structural membership since the last force_treebuild;
+ * force_drift_node grows node boxes (len += 2*vmax*dt) so a drifted box still
+ * contains migrated members.  If this breaks, Mode B is already broken.
+ *
+ * ORACLE-ONLY (GIZMO_GHOST_FINEBAND_ORACLE): builds + self-verifies; NOTHING
+ * consumes it for routing yet.  Stale/unavailable => loud skip (NOT a physics
+ * failure); a seeding/propagation consistency bug => fatal controlled stop.  The
+ * env gates here are TEMPORARY validation scaffolding (like GIZMO_NLR_ORACLE) and
+ * must be torn down when the bounded fine-tree walk lands as production.
+ * ========================================================================== */
+#if TILE_NUM_PTYPES != 6
+#error "fine_band hardcodes 6 particle types; TILE_NUM_PTYPES disagrees"
+#endif
+#define FINEBAND_NTYPES 6
+
+static int ghost_route_fineband_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_FINEBAND_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+/* Separate, EXPENSIVE gate (O(num_pool * tree_depth)) — local/small problems
+ * only; do NOT enable on large FIRE all-active steps.  Independent recomputation
+ * of the band via per-particle ancestor walks, compared to the propagated band. */
+static int ghost_route_fineband_flatcheck_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_FINEBAND_FLATCHECK");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+struct gx_fineband_t {
+    int          valid;
+    double      *band;            /* [nnodes*6] host malloc; index (no-MaxPart)*6+t */
+    int          nnodes;          /* Numnodestree at build */
+    int          maxpart;         /* All.MaxPart at build */
+    long         band_cap;        /* allocated doubles */
+    /* tree-side freshness (forcetree.h generations + time) */
+    long         treebuild_gen;
+    long         hmax_refresh_gen;
+    integertime  ti;
+    /* supply-pool epoch (mirror of gx_supply_pool_view) */
+    int          numpart;
+    long long    pool_ti;
+    double       safety;
+    unsigned int eligible_mask;
+    int          radius_policy;
+    double       j_scale;
+};
+static struct gx_fineband_t g_fineband = {0,NULL,0,0,0, 0,0,-1, -1,-1,0.0,0,-1,0.0};
+
+static void gx_fineband_free(void)
+{
+    if(g_fineband.band) { free(g_fineband.band); g_fineband.band = NULL; }
+    g_fineband.valid = 0; g_fineband.band_cap = 0; g_fineband.nnodes = 0;
+}
+
+struct gx_fineband_diag {
+    long num_pool, seeded, father_oob, type_oob, jbad, inv_viol, flat_mismatch;
+    double max_band[FINEBAND_NTYPES];
+};
+
+/* Build + self-verify the fine band for `spec` over the CURRENT supply pool.
+ * Oracle-only; NO routing consumption.  Returns: 0 ok; <0 stale/unavailable
+ * (caller does an all-or-none collective skip); >0 consistency/propagation bug
+ * (caller fatals).  Fills *diag for rank-0 reporting. */
+static int gx_fineband_build_and_verify(const struct ghost_exchange_spec_t *spec,
+                                        unsigned int desired_pool_mask,
+                                        double safety_factor,
+                                        struct gx_fineband_diag *diag)
+{
+    memset(diag, 0, sizeof(*diag));
+    diag->flat_mismatch = -1;   /* -1 = flatcheck not run */
+
+    struct gx_supply_pool_view v;
+    int num_pool = ghost_exchange_supply_pool_view(&v);
+    if(num_pool < 0) return -1;                              /* supply cache stale/unavailable */
+    /* The supply pool must correspond to THIS caller's spec, else the band would
+     * be seeded from the wrong pool -> unavailable (collective skip), NOT a bug. */
+    if(!((v.numpart_when_built == NumPart)
+       && (v.safety_when_built == safety_factor)
+       && ((v.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
+       && (v.radius_policy_when_built == (int)spec->radius_policy)
+       && (v.j_scale_when_built == spec->j_radius_scale)))
+        return -1;
+    const int maxpart = All.MaxPart;
+    const int nnodes  = Numnodestree;
+    if(nnodes <= 0 || Nodes == NULL || Father == NULL) return -1;
+    diag->num_pool = num_pool;
+
+    /* Capture tree-side freshness generations for the validity key. */
+    long tb_gen = force_treebuild_generation();
+    long hm_gen = force_hmax_refresh_generation();
+
+    long need = (long)nnodes * FINEBAND_NTYPES;
+    if(g_fineband.band == NULL || g_fineband.band_cap < need) {
+        if(g_fineband.band) free(g_fineband.band);
+        g_fineband.band = (double *) malloc((size_t)(need > 0 ? need : 1) * sizeof(double));
+        if(!g_fineband.band) { g_fineband.band_cap = 0; g_fineband.valid = 0; return -1; }
+        g_fineband.band_cap = need;
+    }
+    double *band = g_fineband.band;
+    for(long k = 0; k < need; k++) band[k] = 0.0;
+
+    /* Step 2: leaf seed from supply pool via Father[j] (structural particle->node). */
+    for(int p = 0; p < num_pool; p++) {
+        int j = v.pool[p];
+        if(j < 0 || j >= maxpart) { diag->jbad++; continue; }      /* pool entry must be a local index */
+        int no = Father[j];
+        if(no < maxpart || no >= maxpart + nnodes) { diag->father_oob++; continue; }
+        int t = v.pool_types[p];
+        if(t < 0 || t >= FINEBAND_NTYPES) { diag->type_oob++; continue; }
+        double h = (double)v.compact_xyzh[(size_t)p*4+3];
+        long idx = (long)(no - maxpart) * FINEBAND_NTYPES + t;
+        if(h > band[idx]) band[idx] = h;
+        diag->seeded++;
+    }
+
+    /* Step 3: bottom-up max-over-children via father chain.  Children are always
+     * at higher indices than parents, so reverse iteration = children-before-parent
+     * (mirrors force_refresh_hmax_per_type_host, forcetree.cc:251-262).  STOP at the
+     * top-level boundary: a BITFLAG_TOPLEVEL node receives from its children but does
+     * NOT forward to its parent, so the band is defined exactly over each top-leaf
+     * subtree (the bounded receiver walk's consumption domain) and is not
+     * cross-top-leaf contaminated above it.  Matches the flatcheck's top-level stop. */
+    for(int no = maxpart + nnodes - 1; no >= maxpart; no--) {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) continue;  /* don't cross the boundary upward */
+        int f = Nodes[no].u.d.father;
+        if(f < maxpart || f >= maxpart + nnodes) continue;
+        const double *cb = &band[(long)(no - maxpart) * FINEBAND_NTYPES];
+        double       *fb = &band[(long)(f  - maxpart) * FINEBAND_NTYPES];
+        for(int t = 0; t < FINEBAND_NTYPES; t++) if(cb[t] > fb[t]) fb[t] = cb[t];
+    }
+
+    /* Cheap invariant: every NON-top-level child's band <= its parent's band per
+     * type (top-level children don't propagate upward, so they are exempt — same
+     * boundary rule as Step 3). */
+    for(int no = maxpart; no < maxpart + nnodes; no++) {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) continue;
+        int f = Nodes[no].u.d.father;
+        if(f < maxpart || f >= maxpart + nnodes) continue;
+        const double *cb = &band[(long)(no - maxpart) * FINEBAND_NTYPES];
+        const double *fb = &band[(long)(f  - maxpart) * FINEBAND_NTYPES];
+        for(int t = 0; t < FINEBAND_NTYPES; t++) if(cb[t] > fb[t]) diag->inv_viol++;
+    }
+    for(int t = 0; t < FINEBAND_NTYPES; t++) {
+        double m = 0.0;
+        for(int no = 0; no < nnodes; no++) { double b = band[(long)no*FINEBAND_NTYPES+t]; if(b > m) m = b; }
+        diag->max_band[t] = m;
+    }
+
+    /* Optional EXPENSIVE flat reference (separate gate): recompute the band by
+     * walking each supply particle's father chain to the top-level boundary,
+     * maxing its reach into every ancestor.  O(num_pool * depth).  Must equal the
+     * propagated band exactly. */
+    if(ghost_route_fineband_flatcheck_enabled()) {
+        double *flat = (double *) malloc((size_t)(need > 0 ? need : 1) * sizeof(double));
+        if(flat) {
+            for(long k = 0; k < need; k++) flat[k] = 0.0;
+            for(int p = 0; p < num_pool; p++) {
+                int j = v.pool[p];
+                if(j < 0 || j >= maxpart) continue;
+                int t = v.pool_types[p];
+                if(t < 0 || t >= FINEBAND_NTYPES) continue;
+                double h = (double)v.compact_xyzh[(size_t)p*4+3];
+                int no = Father[j];
+                while(no >= maxpart && no < maxpart + nnodes) {
+                    long idx = (long)(no - maxpart) * FINEBAND_NTYPES + t;
+                    if(h > flat[idx]) flat[idx] = h;
+                    if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) break;  /* stop at top-level boundary */
+                    no = Nodes[no].u.d.father;
+                }
+            }
+            long mm = 0;
+            for(long k = 0; k < need; k++) if(band[k] != flat[k]) mm++;
+            diag->flat_mismatch = mm;
+            free(flat);
+        }
+    }
+
+    /* Install validity key. */
+    g_fineband.nnodes = nnodes; g_fineband.maxpart = maxpart;
+    g_fineband.treebuild_gen = tb_gen; g_fineband.hmax_refresh_gen = hm_gen;
+    g_fineband.ti = All.Ti_Current;
+    g_fineband.numpart = v.numpart_when_built; g_fineband.pool_ti = v.ti_when_built;
+    g_fineband.safety = v.safety_when_built; g_fineband.eligible_mask = v.eligible_mask_when_built;
+    g_fineband.radius_policy = v.radius_policy_when_built; g_fineband.j_scale = v.j_scale_when_built;
+    g_fineband.valid = 1;
+
+    long bug = diag->father_oob + diag->type_oob + diag->jbad + diag->inv_viol
+             + (diag->flat_mismatch > 0 ? diag->flat_mismatch : 0);
+    return (bug > 0) ? 1 : 0;
 }
 
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
@@ -1693,7 +1912,6 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                                                   * unbiased by the dedup skip (over-route diagnostic) */)
 {
     (void)ntiles;
-    double h_q2 = h_q * h_q;
     int stack[TILE_BVH_STACK_SIZE];
     int sp = 0;
     stack[sp++] = bvh_root;
@@ -1729,22 +1947,14 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                     if(pt < 0 || pt >= TILE_NUM_PTYPES) continue;
                     if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
                 }
-                double dx = pos_q[0] - (double)compact_xyzh[pool_pos*4+0];
-                double dy = pos_q[1] - (double)compact_xyzh[pool_pos*4+1];
-                double dz = pos_q[2] - (double)compact_xyzh[pool_pos*4+2];
-                if(periodic_flags[0]) { double b=box_sizes[0], h=0.5*b; if(dx>h) dx-=b; else if(dx<-h) dx+=b; }
-                if(periodic_flags[1]) { double b=box_sizes[1], h=0.5*b; if(dy>h) dy-=b; else if(dy<-h) dy+=b; }
-                if(periodic_flags[2]) { double b=box_sizes[2], h=0.5*b; if(dz>h) dz-=b; else if(dz<-h) dz+=b; }
-                double r2 = dx*dx + dy*dy + dz*dz;
-                double thresh2;
-                if(search_mode == NGB_SEARCH_ONEWAY) {
-                    thresh2 = h_q2;
-                } else {
-                    double h_j = (double)compact_xyzh[pool_pos*4+3];
-                    double h_max = (h_q > h_j) ? h_q : h_j;
-                    thresh2 = h_max * h_max;
-                }
-                if(r2 < thresh2) {
+                /* Geometric accept is the shared SSOT predicate; supply-mask
+                 * filter + dedup bookkeeping stay caller-side (above/here). */
+                if(gx_pair_accept(pos_q, h_q,
+                                  (double)compact_xyzh[pool_pos*4+0],
+                                  (double)compact_xyzh[pool_pos*4+1],
+                                  (double)compact_xyzh[pool_pos*4+2],
+                                  (double)compact_xyzh[pool_pos*4+3],
+                                  search_mode, periodic_flags, box_sizes)) {
                     if(n_exact_hits) (*n_exact_hits)++;
                     if(!already) match_bitmask[pool_pos] = 1;
                 }
@@ -2799,6 +3009,47 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         }
         /* Single collective bad-stop drain for this block (7710/7709/7708/7707). */
         gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_oracle");
+    }
+
+    /* L3.2 fine-band oracle (gated, SYMMETRIC only; NO routing consumption).
+     * Builds + self-verifies the uncapped per-caller fine band; consistency bug =>
+     * fatal, stale/unavailable => loud collective skip.  All branches gate on
+     * reduced/uniform flags (env uniform per rank).  TEMPORARY validation
+     * scaffolding — torn down when the bounded fine-tree walk lands. */
+    if(ghost_route_fineband_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC) {
+        struct gx_fineband_diag fb;
+        int rc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &fb);
+        int bug_local = (rc > 0) ? 1 : 0, bug_any = 0;
+        int unavail_local = (rc < 0) ? 1 : 0, unavail_any = 0;
+        MPI_Allreduce(&bug_local,     &bug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&unavail_local, &unavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(bug_any) {
+            if(bug_local)
+                printf("[GX_FINEBAND_ORACLE call=%d caller=%s rank=%d BUG: father_oob=%ld type_oob=%ld jbad=%ld inv_viol=%ld flat_mismatch=%ld seeded=%ld/%ld]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask,
+                       fb.father_oob, fb.type_oob, fb.jbad, fb.inv_viol, fb.flat_mismatch, fb.seeded, fb.num_pool);
+            gizmo_request_controlled_stop(7714, "ghost route fine-band oracle: seeding/propagation consistency bug",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        } else if(unavail_any) {
+            if(ThisTask == 0)
+                printf("[GX_FINEBAND_ORACLE call=%d caller=%s UNAVAILABLE: supply/tree not fresh — nothing built]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"));
+            fflush(stdout);
+        } else {
+            long long seeded_g = 0, pool_g = 0; { long long t = fb.seeded; MPI_Allreduce(&t, &seeded_g, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD); }
+            { long long t = fb.num_pool; MPI_Allreduce(&t, &pool_g, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD); }
+            double maxb_g[FINEBAND_NTYPES];
+            MPI_Allreduce(fb.max_band, maxb_g, FINEBAND_NTYPES, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            long long flat_g = 0; { long long t = (fb.flat_mismatch >= 0 ? fb.flat_mismatch : 0); MPI_Allreduce(&t, &flat_g, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD); }
+            if(ThisTask == 0) {
+                printf("[GX_FINEBAND_ORACLE call=%d caller=%s OK: seeded=%lld/%lld maxband[%.3g %.3g %.3g %.3g %.3g %.3g] flatcheck=%s mismatch=%lld]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), seeded_g, pool_g,
+                       maxb_g[0], maxb_g[1], maxb_g[2], maxb_g[3], maxb_g[4], maxb_g[5],
+                       (fb.flat_mismatch >= 0 ? "on" : "off"), flat_g);
+                fflush(stdout);
+            }
+        }
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:fineband_oracle");
     }
 
     /* H4c SYMMETRIC routed-vs-broadcast GHOST-SET oracle (gated; broadcast stays
