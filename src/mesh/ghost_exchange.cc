@@ -1875,18 +1875,24 @@ static inline int gx_bbox_overlaps_sphere(const double bbox_lo[3], const double 
 {
     double dist2 = 0;
     for(int k = 0; k < 3; k++) {
-        double c = 0.5 * (bbox_lo[k] + bbox_hi[k]);
-        double hw = 0.5 * (bbox_hi[k] - bbox_lo[k]);
-        double d = pos[k] - c;
-        if(periodic_flags[k]) {
-            double bsize = box_sizes[k];
-            double bhalf = 0.5 * bsize;
-            if(d > bhalf) d -= bsize;
-            else if(d < -bhalf) d += bsize;
+        /* Direct point-to-interval gap from lo/hi (a true lower bound on the
+         * point-to-contained-particle distance).  This avoids the center/half-width
+         * decomposition (0.5*(lo+hi), 0.5*(hi-lo)) whose rounding could make the gap
+         * marginally NON-conservative at the search boundary and prune a reachable
+         * particle.  Periodic axes: test the nearest images (tile width < box) and
+         * take the minimum, so the gap is the true min-image distance — at least as
+         * conservative as the prior center/min-image form. */
+        double lo = bbox_lo[k], hi = bbox_hi[k], p = pos[k];
+        double gap = (p < lo) ? (lo - p) : ((p > hi) ? (p - hi) : 0.0);
+        if(periodic_flags[k] && gap > 0.0) {
+            double L = box_sizes[k];
+            double pm = p - L, pp = p + L;
+            double gm = (pm < lo) ? (lo - pm) : ((pm > hi) ? (pm - hi) : 0.0);
+            double gp = (pp < lo) ? (lo - pp) : ((pp > hi) ? (pp - hi) : 0.0);
+            if(gm < gap) gap = gm;
+            if(gp < gap) gap = gp;
         }
-        double a = (d > 0) ? d : -d;
-        double gap = a - hw;
-        if(gap <= 0) continue;            /* this axis overlaps */
+        if(gap <= 0.0) continue;          /* this axis overlaps */
         if(gap > search_r) return 0;      /* prune fast */
         dist2 += gap * gap;
     }
@@ -1962,13 +1968,23 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                     if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
                 }
                 /* Geometric accept is the shared SSOT predicate; supply-mask
-                 * filter + dedup bookkeeping stay caller-side (above/here). */
+                 * filter + dedup bookkeeping stay caller-side (above/here).
+                 * BOTH position AND reach are DOUBLE: P[j].Pos (float absolute
+                 * coordinates are invalid for GIZMO's dynamic range) and the double
+                 * gx_policy_scaled_h reach (the node/tile hmax the opener prunes with
+                 * is built from this same double reach, so the opener conservatively
+                 * dominates the leaf — a float leaf h would let the opener under-prune
+                 * boundary pairs).  Recompute here for the host path; the production
+                 * GPU path needs a double h cache to avoid the per-candidate recompute.
+                 * The pool walked here is always g_glt_cache's, so its build-time
+                 * policy/scale/safety reproduce the cached double reach exactly. */
+                int j_neighbor = pool[pool_pos];
+                double hj_dbl = gx_policy_scaled_h(j_neighbor, g_glt_cache.radius_policy_when_built,
+                                                   g_glt_cache.j_radius_scale_when_built,
+                                                   g_glt_cache.safety_factor_when_built);
                 if(gx_pair_accept(pos_q, h_q,
-                                  (double)compact_xyzh[pool_pos*4+0],
-                                  (double)compact_xyzh[pool_pos*4+1],
-                                  (double)compact_xyzh[pool_pos*4+2],
-                                  (double)compact_xyzh[pool_pos*4+3],
-                                  search_mode, periodic_flags, box_sizes)) {
+                                  P[j_neighbor].Pos[0], P[j_neighbor].Pos[1], P[j_neighbor].Pos[2],
+                                  hj_dbl, search_mode, periodic_flags, box_sizes)) {
                     if(n_exact_hits) (*n_exact_hits)++;
                     if(!already) match_bitmask[pool_pos] = 1;
                 }
