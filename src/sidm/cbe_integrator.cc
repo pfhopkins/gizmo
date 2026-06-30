@@ -332,7 +332,10 @@ void do_cbe_initialization(void)
  * Forwards to the device-callable kernel on P[i] (host context here; the
  * kernel is equally usable from a future GPU drift pass). The caller
  * (drift_particle) supplies the drift interval and the gravity-kick factors
- * from the same get_gravkick_factor machinery as the gas VelPred prediction. */
+ * from the same get_gravkick_factor machinery as the gas VelPred prediction.
+ * CURRENTLY UNUSED: the call in drift_particle is suppressed (the implemented
+ * CBE-moment predictor degraded accuracy); retained as a placeholder for a
+ * future corrected revival. */
 void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_gravkick_pm)
 {
     do_cbe_predict_drift_kernel(P[i], dt_drift, dt_gravkick, dt_gravkick_pm);
