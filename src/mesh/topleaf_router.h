@@ -93,6 +93,15 @@ int topleaf_router_route_queries(const double *q_pos, const double *q_h, int nq,
                                  const int periodic_flags[3], const double box_sizes[3],
                                  int *off, int *owners, long owners_cap, int self_rank);
 
+/* Receiver local-start derivation: per query, the fine-tree start nodes
+ * (DomainNodeIndex[leaf]) for the top-leaves THIS rank owns that the query opens.
+ * 0 ok (*n_starts set); -1 geometry/band unavailable (fallback); -2 overflow. */
+int topleaf_router_local_starts_for_query(const double pos_q[3], double h_q,
+                                          unsigned int supply_mask, int oneway,
+                                          const int periodic_flags[3], const double box_sizes[3],
+                                          int self_rank, int *starts_out, int starts_cap,
+                                          int *n_starts);
+
 /* HIERARCHICAL routed-query CSR (H2): identical output contract to
  * topleaf_router_route_queries, but descends the TopNodes octree
  * (O(depth x fanout)) instead of the flat O(NTopleaves) scan.  ONEWAY only

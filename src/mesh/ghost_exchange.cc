@@ -39,6 +39,7 @@
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
 #include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
+#include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
 #include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 
@@ -482,6 +483,19 @@ static int ghost_route_fineband_flatcheck_enabled(void)
     if(initialized) return enabled;
     initialized = 1;
     const char *e = getenv("GIZMO_GHOST_FINEBAND_FLATCHECK");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+/* L3.3 local receiver-equality gate: per local query, compare gx_walk_local_bvh
+ * (whole-pool) vs gx_walk_fine_tree (bounded) over the SAME local pool — the local
+ * correctness check before the cross-rank ghost-set oracle (L3.4).  Temporary
+ * validation scaffolding. */
+static int ghost_route_fineband_walk_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_FINEBAND_WALK_ORACLE");
     enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
     return enabled;
 }
@@ -1967,6 +1981,111 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
     }
 }
 
+/* Conservative sphere-vs-node-cube overlap (cube bounded by its half-diagonal
+ * sphere len*sqrt(3)/2) — mirrors mode_b_local_walker.cc:sphere_aabb_overlap but
+ * with the receiver's explicit periodic convention.  Over-opens; the exact filter
+ * is gx_pair_accept at the leaf. */
+static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NODE *nop, double R,
+                                         const int periodic_flags[3], const double box_sizes[3])
+{
+    double dx = (double)nop->center[0] - pos_q[0];
+    double dy = (double)nop->center[1] - pos_q[1];
+    double dz = (double)nop->center[2] - pos_q[2];
+    if(periodic_flags[0]) { double b=box_sizes[0], h=0.5*b; if(dx>h) dx-=b; else if(dx<-h) dx+=b; }
+    if(periodic_flags[1]) { double b=box_sizes[1], h=0.5*b; if(dy>h) dy-=b; else if(dy<-h) dy+=b; }
+    if(periodic_flags[2]) { double b=box_sizes[2], h=0.5*b; if(dz>h) dz-=b; else if(dz<-h) dz+=b; }
+    const double SQRT3_OVER_2 = 0.86602540378443864676;
+    double r_max = R + (double)nop->len * SQRT3_OVER_2;
+    return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
+}
+
+/* L3.3 bounded fine-tree receiver walk (Candidate L).  For ONE received query,
+ * walk the local fine subtrees rooted at the query's opened top-leaves (start
+ * nodes re-derived locally), bounded to each (stop at the next top-level boundary),
+ * opening internal nodes by the supply-mask-reduced fine_band and accepting local
+ * supply particles via the shared gx_pair_accept.  Sets matched[pool_pos]=1 (same
+ * layout as gx_walk_local_bvh).  Reads the L3.2 fine band (g_fineband) which MUST
+ * be valid for this caller (checked by the caller).  Returns 0; -1 if start
+ * derivation was unavailable/overflowed (caller broadcast-fallback).
+ *
+ * POSITIONS ARE DOUBLE: the leaf accept reads P[no].Pos (double) and the SSOT
+ * double reach gx_policy_scaled_h(no) — NOT the float compact_xyzh.  GIZMO uses
+ * double positions because of its dynamic range (Mpc box + AU zoom); float
+ * ABSOLUTE positions collapse/perturb separations and must never decide neighbour
+ * inclusion. j_to_pool maps a matched particle into the ghost pool slot only. */
+static int gx_walk_fine_tree(const double pos_q[3], double h_q,
+                             int search_mode, unsigned int supply_mask,
+                             const int periodic_flags[3], const double box_sizes[3],
+                             mode_b_radius_policy_t radius_policy, double j_scale, double safety,
+                             const int *j_to_pool, int jtop_len,
+                             int num_pool, char *matched)
+{
+    const int maxpart     = All.MaxPart;
+    const int nnodes      = g_fineband.nnodes;
+    const int num_local   = ghost_get_num_local();
+    const int pseudo_start = maxpart + MaxNodes + MaxForeignNodes;
+    const int oneway      = (search_mode == NGB_SEARCH_ONEWAY);
+
+    int starts[4096];
+    int n_starts = 0;
+    if(topleaf_router_local_starts_for_query(pos_q, h_q, supply_mask, oneway,
+                                             periodic_flags, box_sizes, ThisTask,
+                                             starts, (int)(sizeof(starts)/sizeof(starts[0])),
+                                             &n_starts) != 0)
+        return -1;   /* unavailable / overflow -> caller fallback */
+
+    for(int si = 0; si < n_starts; si++) {
+        const int start_node = starts[si];
+        int no = start_node;
+        while(no >= 0) {
+            if(no < maxpart) {
+                /* Particle leaf: only domain-owned local particles in this caller's pool. */
+                if(no < num_local) {
+                    int pool_pos = (no < jtop_len) ? j_to_pool[no] : -1;
+                    if(pool_pos >= 0 && pool_pos < num_pool) {
+                        /* Supply-mask filter (pool may over-cover types) + DOUBLE-position
+                         * accept against P[no].Pos and the SSOT double reach. */
+                        int pt = (int)P[no].Type;
+                        if(pt >= 0 && pt < TILE_NUM_PTYPES &&
+                           (supply_mask & (1u << (unsigned)pt)) != 0u) {
+                            double hj = gx_policy_scaled_h(no, radius_policy, j_scale, safety);
+                            if(gx_pair_accept(pos_q, h_q,
+                                              P[no].Pos[0], P[no].Pos[1], P[no].Pos[2],
+                                              hj, search_mode, periodic_flags, box_sizes))
+                                matched[pool_pos] = 1;
+                        }
+                    }
+                }
+                no = Nextnode[no];
+            } else if(no < pseudo_start) {
+                /* Internal (or foreign) node.  STOP at the next top-level boundary
+                 * (but never skip the start node itself if it is top-level). */
+                if(no != start_node && (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {
+                    no = Nodes[no].u.d.sibling;
+                    continue;
+                }
+                if(Nodes[no].Ti_current != All.Ti_Current) force_drift_node(no, All.Ti_Current);
+                double R_eff = h_q;
+                if(!oneway && no >= maxpart && no < maxpart + nnodes) {
+                    const double *bb = &g_fineband.band[(long)(no - maxpart) * FINEBAND_NTYPES];
+                    double be = 0;
+                    for(int t = 0; t < FINEBAND_NTYPES; t++) {
+                        if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+                        if(bb[t] > be) be = bb[t];
+                    }
+                    if(be > R_eff) R_eff = be;
+                }
+                int do_open = gx_node_sphere_overlap(pos_q, &Nodes[no], R_eff, periodic_flags, box_sizes);
+                no = do_open ? Nodes[no].u.d.nextnode : Nodes[no].u.d.sibling;
+            } else {
+                /* Pseudo-particle node (LET/cross-rank): skip via the shifted Nextnode. */
+                no = Nextnode[no - MaxNodes - MaxForeignNodes];
+            }
+        }
+    }
+    return 0;
+}
+
 
 /* ============================================================================
  * TEMPORARY top-leaf-router oracle (GIZMO_GHOST_ROUTE_ORACLE; stripped after the
@@ -3047,6 +3166,99 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                        maxb_g[0], maxb_g[1], maxb_g[2], maxb_g[3], maxb_g[4], maxb_g[5],
                        (fb.flat_mismatch >= 0 ? "on" : "off"), flat_g);
                 fflush(stdout);
+            }
+
+            /* L3.3 local receiver-equality: for each LOCAL query, the bounded
+             * fine-tree walk must find the SAME local-pool neighbours as the
+             * whole-pool BVH walk (both over g_glt_cache; band just verified above).
+             * fine_missing>0 => fine-tree under-walked (would under-route) = bug;
+             * fine_extra>0 => impossible (fine-tree visits a subset) = bug.  This is
+             * the local check before the cross-rank ghost-set oracle. */
+            /* The bounded walk re-derives its start top-leaves from the replicated
+             * top-tree geometry + the per-top-leaf SYMM band, so acquire both
+             * collectively (all-or-none) before the per-query comparison.  Without
+             * them every query would hit the start-derivation fallback (vacuous). */
+            int walk_run = ghost_route_fineband_walk_oracle_enabled() ? 1 : 0;
+            int geom_ok_all = 0, band_avail = 0, band_cfail = 0;
+            if(walk_run) {
+                int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+                MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+                if(geom_ok_all)
+                    topleaf_router_band_build_collective(periodic_flags, box_sizes, 0, &band_avail, &band_cfail);
+                if(band_cfail)
+                    gizmo_request_controlled_stop(7709, "ghost route fine-band walk oracle: top-leaf band-build consistency failure",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                if(!band_avail) {
+                    if(ThisTask == 0)
+                        printf("[GX_FINEBAND_WALK call=%d caller=%s UNAVAILABLE: top-tree geometry/band not ready — nothing compared]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"));
+                    fflush(stdout);
+                    walk_run = 0;   /* skip the comparison this call */
+                }
+            }
+            if(walk_run) {
+                int np = g_glt_cache.num_pool;
+                char *m_fine  = (char *) malloc((size_t)(np > 0 ? np : 1));
+                char *m_brute = (char *) malloc((size_t)(np > 0 ? np : 1));
+                /* Ground truth = brute force (exhaustive gx_pair_accept over the pool,
+                 * DOUBLE P[j].Pos + SSOT double reach).  The bounded fine-tree walk MUST
+                 * equal it: fine_miss = under-walk, fine_xtra = false positive — both
+                 * fatal.  (No float-compact path here: float absolute positions are not a
+                 * valid neighbour predicate for GIZMO's dynamic range.) */
+                long wn_q = 0, w_fallback = 0, fine_miss = 0, fine_xtra = 0;
+                if(m_fine && m_brute) {
+                    for(int qi = 0; qi < n_local_queries; qi++) {
+                        memset(m_fine,  0, (size_t)(np > 0 ? np : 1));
+                        memset(m_brute, 0, (size_t)(np > 0 ? np : 1));
+                        const double *qp = local_queries[qi].pos;
+                        double qh = local_queries[qi].h;
+                        for(int p = 0; p < np; p++) {
+                            int j = g_glt_cache.pool[p];
+                            int pt = (int)P[j].Type;
+                            if(pt < 0 || pt >= TILE_NUM_PTYPES) continue;
+                            if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
+                            double hj = gx_policy_scaled_h(j, g_glt_cache.radius_policy_when_built,
+                                                           g_glt_cache.j_radius_scale_when_built,
+                                                           g_glt_cache.safety_factor_when_built);
+                            if(gx_pair_accept(qp, qh, P[j].Pos[0], P[j].Pos[1], P[j].Pos[2],
+                                              hj, search_mode, periodic_flags, box_sizes))
+                                m_brute[p] = 1;
+                        }
+                        int rcw = gx_walk_fine_tree(qp, qh, search_mode, supply_mask, periodic_flags, box_sizes,
+                                                    g_glt_cache.radius_policy_when_built,
+                                                    g_glt_cache.j_radius_scale_when_built,
+                                                    g_glt_cache.safety_factor_when_built,
+                                                    g_glt_cache.j_to_pool,
+                                                    g_glt_cache.NumPart_when_built, np, m_fine);
+                        if(rcw != 0) { w_fallback++; continue; }   /* start derivation unavailable */
+                        wn_q++;
+                        for(int p = 0; p < np; p++) {
+                            if(m_brute[p] && !m_fine[p]) fine_miss++;
+                            if(m_fine[p]  && !m_brute[p]) fine_xtra++;
+                        }
+                    }
+                }
+                free(m_fine); free(m_brute);
+                int wbug_local = (fine_miss + fine_xtra > 0) ? 1 : 0, wbug_any = 0;
+                MPI_Allreduce(&wbug_local, &wbug_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                long long wq_g=0, fmiss_g=0, fxtra_g=0, wfb_g=0;
+                { long long t=wn_q;      MPI_Allreduce(&t,&wq_g,   1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD); }
+                { long long t=fine_miss; MPI_Allreduce(&t,&fmiss_g,1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD); }
+                { long long t=fine_xtra; MPI_Allreduce(&t,&fxtra_g,1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD); }
+                { long long t=w_fallback;MPI_Allreduce(&t,&wfb_g,  1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD); }
+                if(wbug_any) {
+                    if(wbug_local)
+                        printf("[GX_FINEBAND_WALK call=%d caller=%s rank=%d FINE!=BRUTE: fine_miss=%ld fine_xtra=%ld over %ld queries]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask,
+                               fine_miss, fine_xtra, wn_q);
+                    gizmo_request_controlled_stop(7715, "ghost route fine-band walk oracle: bounded fine-tree walk != brute-force ground truth",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                } else if(ThisTask == 0) {
+                    printf("[GX_FINEBAND_WALK call=%d caller=%s OK: fine-tree==brute over %lld queries (fine_miss=%lld fine_xtra=%lld); start-derive-fallback=%lld]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"),
+                           wq_g, fmiss_g, fxtra_g, wfb_g);
+                    fflush(stdout);
+                }
             }
         }
         gizmo_exit_bad_stop_if_requested("ghost_exchange:fineband_oracle");

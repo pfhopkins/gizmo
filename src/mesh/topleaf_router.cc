@@ -270,6 +270,60 @@ extern "C" int topleaf_router_route_queries(const double *q_pos, const double *q
     return rc ? -1 : (int)cursor;
 }
 
+/* Receiver local-start derivation (Candidate L bounded fine-tree walk).  For ONE
+ * received query, return the fine-tree START NODES = DomainNodeIndex[leaf] for
+ * every top-leaf THIS rank owns that the query opens, using the SAME opener +
+ * band the router routed it with (SSOT).  Local-only: nothing is shipped; the
+ * receiver re-derives its own opened top-leaves.  The bounded walk continues from
+ * each start node into the local fine subtree (stopping at the next top-level
+ * boundary), replacing the whole-root receiver walk.
+ *   oneway != 0  -> reach = h_q (band-free); oneway == 0 -> reach = max(h_q, per-
+ *                   leaf SYMM band over supply_mask) (needs a topology-matched band).
+ * Returns 0 on success (*n_starts set); -1 geometry/band unavailable (caller
+ * collective-falls-back to broadcast); -2 start buffer overflow (fallback, NEVER
+ * truncate).  An out-of-range DomainNodeIndex despite valid geometry fails closed
+ * (-1) rather than silently dropping a region. */
+extern "C" int topleaf_router_local_starts_for_query(const double pos_q[3], double h_q,
+                                                     unsigned int supply_mask, int oneway,
+                                                     const int periodic_flags[3], const double box_sizes[3],
+                                                     int self_rank, int *starts_out, int starts_cap,
+                                                     int *n_starts)
+{
+    if(n_starts) *n_starts = 0;
+    if(!g_geom_valid) return -1;
+    if(DomainNodeIndex == NULL || DomainTask == NULL || Nodes == NULL) return -1;
+    const int ntl = g_geom_ntl;
+    const double *band = NULL;
+    if(!oneway) { int bn = 0; band = topleaf_router_band(&bn); if(!band || bn != ntl) return -1; }
+    const int maxpart = All.MaxPart;
+    const int nnodes  = Numnodestree;
+    if(nnodes <= 0) return -1;
+
+    int n = 0;
+    for(int leaf = 0; leaf < ntl; leaf++) {
+        if(DomainTask[leaf] != self_rank) continue;          /* local opened leaves only */
+        double reach = h_q;
+        if(band) {
+            const double *b = &band[(size_t)leaf * TLR_NUM_PTYPES];
+            double be = 0;
+            for(int t = 0; t < TLR_NUM_PTYPES; t++) {
+                if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+                if(b[t] > be) be = b[t];
+            }
+            if(be > reach) reach = be;
+        }
+        if(reach <= 0) continue;
+        if(!tlr_cell_overlaps_query(&g_leaf_center[(size_t)leaf * 3], g_leaf_len[leaf],
+                                    pos_q, reach, periodic_flags, box_sizes)) continue;
+        int node = DomainNodeIndex[leaf];
+        if(node < maxpart || node >= maxpart + nnodes) return -1;   /* fail closed, not a silent skip */
+        if(n >= starts_cap) return -2;                              /* overflow -> caller fallback */
+        starts_out[n++] = node;
+    }
+    if(n_starts) *n_starts = n;
+    return 0;
+}
+
 /* HIERARCHICAL routed-query CSR (H2/H4c): same output contract as
  * topleaf_router_route_queries(), but descends the TopNodes octree
  * (O(depth x fanout)) instead of the flat O(NTopleaves) leaf scan.  ONEWAY uses
