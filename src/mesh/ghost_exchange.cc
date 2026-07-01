@@ -42,6 +42,7 @@
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
 #include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
+#include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
 
 /*
  * ============================================================================
@@ -679,6 +680,177 @@ static int gx_fineband_build_and_verify(const struct ghost_exchange_spec_t *spec
     long bug = diag->father_oob + diag->type_oob + diag->jbad + diag->inv_viol
              + (diag->flat_mismatch > 0 ? diag->flat_mismatch : 0);
     return (bug > 0) ? 1 : 0;
+}
+
+/* L4 S2a device fine-tree SIDECAR oracle (OPEN §45).  Gated GIZMO_GHOST_FINE_SIDECAR_ORACLE,
+ * SYMM only, temporary validation scaffolding (teardown ledger §39).  Builds the host
+ * SSOT supply substrate (double positions from P[pool[p]].Pos, reach from gx_policy_scaled_h,
+ * type from P[j].Type) + j_to_pool + fine_band, uploads to the DEVICE sidecar, then reads
+ * the device arrays back and compares against a FRESHLY recomputed host DOUBLE reference —
+ * NEVER against the host float compact_xyzh.  PASSIVE: nothing consumes the device arrays
+ * (the bounded device walk is S2b); this only proves alloc/deep_copy/index integrity.
+ * Collective-safe: rank-uniform all-or-none reduces (no per-rank cache — num_pool differs
+ * per rank, so a per-rank skip would desync the reduces). */
+static int ghost_fine_sidecar_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_FINE_SIDECAR_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, int this_call,
+                                      unsigned int desired_pool_mask, double safety_factor)
+{
+    const char *cname = spec->caller_name ? spec->caller_name : "?";
+
+    /* Build/verify the SSOT band first (populates g_fineband + validates the
+     * supply pool corresponds to this caller).  Same all-or-none gating as the
+     * fine-band oracle so every rank takes the same collective path. */
+    struct gx_fineband_diag fb;
+    int rc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &fb);
+    int bug_local = (rc > 0) ? 1 : 0, bug_any = 0;
+    int unavail_local = (rc < 0) ? 1 : 0, unavail_any = 0;
+    MPI_Allreduce(&bug_local,     &bug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&unavail_local, &unavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bug_any) {
+        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: fine-band build consistency bug",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(unavail_any) {
+        if(ThisTask == 0)
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s UNAVAILABLE: supply/tree not fresh]\n", this_call, cname);
+        fflush(stdout);
+        return;
+    }
+
+    /* Supply pool view (owned-local supply this caller matches against). */
+    struct gx_supply_pool_view v;
+    int num_pool = ghost_exchange_supply_pool_view(&v);
+    long band_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
+    int  numpart  = NumPart;
+
+    /* Host double staging (SSOT: position + reach + type from one live particle). */
+    double *sx = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+    double *sy = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+    double *sz = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+    double *sh = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+    int    *st = (int *)    malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(int));
+    int alloc_ok = (sx && sy && sz && sh && st);
+    if(alloc_ok) {
+        for(int p = 0; p < num_pool; p++) {
+            int j = v.pool[p];
+            sx[p] = P[j].Pos[0]; sy[p] = P[j].Pos[1]; sz[p] = P[j].Pos[2];
+            sh[p] = gx_policy_scaled_h(j, spec->radius_policy, spec->j_radius_scale, safety_factor);
+            st[p] = (int)P[j].Type;
+        }
+    }
+
+    struct gx_fine_sidecar_key_t key;
+    memset(&key, 0, sizeof(key));
+    key.numpart          = numpart;
+    key.maxpart          = All.MaxPart;
+    key.numnodestree     = Numnodestree;
+    key.fb_maxpart       = g_fineband.maxpart;
+    key.fb_nnodes        = g_fineband.nnodes;
+    key.num_pool         = num_pool;
+    key.eligible_mask    = g_fineband.eligible_mask;
+    key.radius_policy    = (int)spec->radius_policy;
+    key.j_scale          = spec->j_radius_scale;
+    key.safety           = safety_factor;
+    key.treebuild_gen    = force_treebuild_generation();
+    key.hmax_refresh_gen = force_hmax_refresh_generation();
+    key.ti               = (long long)All.Ti_Current;
+    key.pool_ti          = (long long)g_fineband.pool_ti;
+    key.soa_drift_ti     = GX_FINE_SIDECAR_SOA_DRIFT_UNCERTIFIED;   /* fails closed until Step 3 */
+
+    int up_rc = alloc_ok ? gpu_fine_sidecar_upload(sx, sy, sz, sh, st, num_pool,
+                                                   g_glt_cache.j_to_pool, numpart,
+                                                   g_fineband.band, band_len, &key)
+                         : -99;
+
+    /* Fail-closed proof: even a byte-perfect upload must NOT be trusted for the
+     * device walk while the SoA-drift stamp is uncertified.  is_valid() must reject
+     * this key (soa_drift_ti == UNCERTIFIED); if it validates, the fail-closed guard
+     * is broken (a real bug — Step 3 would trust un-drift-certified geometry). */
+    int drift_guard_bug = (up_rc == 0 && gpu_fine_sidecar_is_valid(&key)) ? 1 : 0;
+
+    /* Readback + compare against a FRESH host DOUBLE reference (never float compact). */
+    long mism_supply = 0, mism_j2p = 0, mism_band = 0;
+    int  readback_fail = (up_rc != 0) ? 1 : 0;
+    double *rsx = NULL, *rsy = NULL, *rsz = NULL, *rsh = NULL, *rb = NULL;
+    int    *rst = NULL, *rj = NULL;
+    if(!readback_fail) {
+        rsx = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+        rsy = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+        rsz = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+        rsh = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
+        rst = (int *)    malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(int));
+        rj  = (int *)    malloc((size_t)(numpart  > 0 ? numpart  : 1) * sizeof(int));
+        rb  = (double *) malloc((size_t)(band_len > 0 ? band_len : 1) * sizeof(double));
+        if(rsx && rsy && rsz && rsh && rst && rj && rb &&
+           gpu_fine_sidecar_readback(rsx, rsy, rsz, rsh, rst, num_pool, rj, numpart, rb, band_len) == 0) {
+            for(int p = 0; p < num_pool; p++) {
+                int j = v.pool[p];
+                double refh = gx_policy_scaled_h(j, spec->radius_policy, spec->j_radius_scale, safety_factor);
+                if(rsx[p] != P[j].Pos[0] || rsy[p] != P[j].Pos[1] || rsz[p] != P[j].Pos[2] ||
+                   rsh[p] != refh || rst[p] != (int)P[j].Type)
+                    mism_supply++;
+            }
+            for(int j = 0; j < numpart; j++) if(rj[j] != g_glt_cache.j_to_pool[j]) mism_j2p++;
+            for(long k = 0; k < band_len; k++) if(rb[k] != g_fineband.band[k]) mism_band++;
+        } else {
+            readback_fail = 1;
+        }
+    }
+    free(rsx); free(rsy); free(rsz); free(rsh); free(rst); free(rj); free(rb);
+    free(sx);  free(sy);  free(sz);  free(sh);  free(st);
+
+    /* Rank-uniform reduce: any upload/readback failure, drift-guard breach, or
+     * mismatch is loud. */
+    long mism_local = mism_supply + mism_j2p + mism_band, mism_any = 0;
+    int  fail_any = 0, drift_bug_any = 0;
+    MPI_Allreduce(&mism_local,     &mism_any,      1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&readback_fail,  &fail_any,      1, MPI_INT,  MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&drift_guard_bug,&drift_bug_any, 1, MPI_INT,  MPI_MAX, MPI_COMM_WORLD);
+    if(drift_bug_any) {
+        if(drift_guard_bug)
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s rank=%d DRIFT-GUARD BREACH: is_valid accepted an uncertified sidecar]\n",
+                   this_call, cname, ThisTask);
+        fflush(stdout);
+        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: fail-closed drift guard did not reject uncertified sidecar",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(fail_any) {
+        if(readback_fail)
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s rank=%d UPLOAD/READBACK FAIL (up_rc=%d)]\n",
+                   this_call, cname, ThisTask, up_rc);
+        fflush(stdout);
+        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: device upload/readback failed",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(mism_any > 0) {
+        if(mism_local > 0)
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s rank=%d MISMATCH supply=%ld j2p=%ld band=%ld]\n",
+                   this_call, cname, ThisTask, mism_supply, mism_j2p, mism_band);
+        fflush(stdout);
+        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: device sidecar != host double reference",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(ThisTask == 0) {
+        long long np_g = 0; { long long t = num_pool; MPI_Reduce(&t, &np_g, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD); }
+        printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s OK: device==host num_pool_g=%lld band_len=%ld]\n",
+               this_call, cname, np_g, band_len);
+        fflush(stdout);
+    } else {
+        long long t = num_pool, np_g = 0; MPI_Reduce(&t, &np_g, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    }
 }
 
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
@@ -3330,6 +3502,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * fatal, stale/unavailable => loud collective skip.  All branches gate on
      * reduced/uniform flags (env uniform per rank).  TEMPORARY validation
      * scaffolding — torn down when the bounded fine-tree walk lands. */
+    /* L4 S2a device fine-tree sidecar oracle (passive; device arrays uploaded +
+     * verified against a fresh host double reference; no consumer yet).  Own gate,
+     * SYMM only, collective-safe. */
+    if(ghost_fine_sidecar_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC) {
+        ghost_fine_sidecar_oracle(spec, this_call, desired_pool_mask, safety_factor);
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:fine_sidecar_oracle");
+    }
+
     if(ghost_route_fineband_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC) {
         struct gx_fineband_diag fb;
         int rc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &fb);
