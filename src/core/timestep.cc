@@ -385,7 +385,7 @@ integertime get_timestep(int p,		/*!< particle index */
         }
 
 #if defined(CBE_INTEGRATOR)
-        if(P[p].Type == 1)
+        if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type))
         {   /* CBE moment-flux acceleration enters the accel timestep like HydroAccel does for gas;
              * reduces to the hydro acceleration when all bases are identical isotropic Gaussians */
             double a_cbe[3]; cbe_particle_moment_accel(p, a_cbe);
@@ -412,7 +412,7 @@ integertime get_timestep(int p,		/*!< particle index */
     }
     {double h_for_accel_dt = KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p);
 #if defined(CBE_INTEGRATOR)
-    if(P[p].Type == 1) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
+    if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type)) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
 #endif
 #ifdef GRAIN_FLUID
     if(((1 << P[p].Type) & (GRAIN_PTYPES)) && (h_for_accel_dt <= 0)) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* for grain particles without gravity, use the inter-particle spacing as the characteristic length scale */
@@ -518,14 +518,14 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef DM_SIDM
     if((1 << P[p].Type) & (DM_SIDM)) {need_agscfl = 1;}
 #endif
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-    if(P[p].Type == 1)
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type))
     {
         need_agscfl = 1;
-#if defined(CBE_INTEGRATOR)
         need_cbe_agscfl = 1; /* CBE-moment-flux particle: gets the stricter factor below */
-#endif
     }
+#elif defined(DM_FUZZY)
+    if(P[p].Type == 1) {need_agscfl = 1;}
 #endif
     if(need_agscfl)
     {

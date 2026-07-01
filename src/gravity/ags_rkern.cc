@@ -63,7 +63,9 @@ int ags_density_isactive(int i)
 #ifdef DM_SIDM
     if((1 << P[i].Type) & (DM_SIDM)) {default_to_return = 1;}
 #endif
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) {default_to_return = 1;}
+#elif defined(DM_FUZZY)
     if(P[i].Type == 1) {default_to_return = 1;}
 #endif
     if(P[i].TimeBin < 0) {default_to_return = 0;} /* check our 'marker' for particles which have finished iterating to an KernelRadius solution (if they have, dont do them again) */
@@ -201,7 +203,9 @@ int AGSForce_isactive(int i)
 #ifdef DM_SIDM
     if((1 << P[i].Type) & (DM_SIDM)) return 1;
 #endif
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) return 1;
+#elif defined(DM_FUZZY)
     if(P[i].Type == 1) return 1;
 #endif
     return 0; // default to no-action, need to affirm calculation above //

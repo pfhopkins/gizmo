@@ -141,6 +141,14 @@
 
 #if defined(CBE_INTEGRATOR)
 #define CBE_INTEGRATOR_NBASIS CBE_INTEGRATOR
+/* Particle types carrying a CBE moment distribution (bitmask over Type, like
+ * DM_SIDM / GRAIN_PTYPES). Default = Type 1 only. CBE_basis_moments exist on
+ * every particle but are only meaningful for these types; all CBE kick/flux/
+ * timestep paths gate on CBE_INTEGRATOR_DOES_TYPE. */
+#ifndef CBE_INTEGRATOR_PARTICLETYPES
+#define CBE_INTEGRATOR_PARTICLETYPES 2 /* (1<<1) = Type 1 */
+#endif
+#define CBE_INTEGRATOR_DOES_TYPE(t) (((1<<(t)) & (CBE_INTEGRATOR_PARTICLETYPES)) != 0)
 /* CBE + self-gravity: default the active type to adaptive softening (skip if SELFGRAVITY_OFF). */
 #if !defined(ADAPTIVE_GRAVSOFT_FORALL) && !defined(SELFGRAVITY_OFF)
 #define ADAPTIVE_GRAVSOFT_FORALL 2

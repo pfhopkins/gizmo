@@ -69,7 +69,7 @@ void do_first_halfstep_kick(void)
         int k = 0;
         for(int _a = 0; _a < n; _a++) {
             int ii = ActiveParticleList[_a];
-            if(P[ii].Mass > 0) {
+            if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
                 cbe_active[k] = ii;
                 cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
                 k++;
@@ -100,7 +100,7 @@ void do_second_halfstep_kick(void)
         int k = 0;
         for(int _a = 0; _a < n; _a++) {
             int ii = ActiveParticleList[_a];
-            if(P[ii].Mass > 0) {
+            if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
                 cbe_active[k] = ii;
                 cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
                 k++;
@@ -149,7 +149,7 @@ void do_second_halfstep_kick(void)
      * at the end of the step. */
     for(int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
         int i = ActiveParticleList[_apl];
-        if(P[i].Mass > 0) cbe_sync_pred_to_conserved(i);
+        if(P[i].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) cbe_sync_pred_to_conserved(i);
     }
 #endif
 
@@ -163,8 +163,10 @@ void do_second_halfstep_kick(void)
 int eligible_for_hermite(int i)
 {
     if(!(HERMITE_INTEGRATION & (1<<P[i].Type))) {return 0;} // hermite flag said to not include these types
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-    if(P[i].Type==1) {return 0;} // not compatible with these flags for these types
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) {return 0;} // CBE moment particles: not compatible with Hermite
+#elif defined(DM_FUZZY)
+    if(P[i].Type==1) {return 0;} // fuzzy-DM: not compatible with Hermite
 #endif
 #if defined(GRAIN_FLUID)
     if((1 << P[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
