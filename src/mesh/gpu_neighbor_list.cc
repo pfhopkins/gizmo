@@ -115,7 +115,7 @@ static int env_int_or_default(const char *name, int def)
     return atoi(e);
 }
 
-static double ngl_periodic_pair_r2_host(const float *compact_xyzh,
+static double ngl_periodic_pair_r2_host(const double *compact_xyzh,
                                         const double pos_i[3], int j)
 {
     MyDouble xtmp = 0; (void)xtmp;
@@ -128,7 +128,7 @@ static double ngl_periodic_pair_r2_host(const float *compact_xyzh,
     return adx * adx + ady * ady + adz * adz;
 }
 
-static int ngl_pair_accepts_host(const float *compact_xyzh,
+static int ngl_pair_accepts_host(const double *compact_xyzh,
                                  const double pos_i[3], double h_i,
                                  int j, int search_mode, double *r2_out,
                                  double *cut2_out, double j_radius_scale)
@@ -411,7 +411,7 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     int *h_pool = idx->h_pool;
     int ntiles = idx->ntiles;
     const double *orig_extent = idx->h_tile_orig_max_extent;
-    float *pos_buf = idx->h_pos_buf;
+    double *pos_buf = idx->h_pos_buf;
     double max_ratio = 0.0;
     /* SSOT per-particle reach under the cached policy (LEGACY for non-runner
      * callers → byte-equivalent to legacy P[j].KernelRadius aggregation). */
@@ -443,7 +443,7 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
             int t0 = (int)P_shared[j0].Type;
             if(t0 >= 0 && t0 < TILE_NUM_PTYPES && hmax > hbt[t0]) hbt[t0] = hmax;
         }
-        if(pos_buf) { pos_buf[j0*3+0] = (float)x0; pos_buf[j0*3+1] = (float)y0; pos_buf[j0*3+2] = (float)z0; }
+        if(pos_buf) { pos_buf[j0*3+0] = x0; pos_buf[j0*3+1] = y0; pos_buf[j0*3+2] = z0; }
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
             double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
@@ -457,7 +457,7 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
             if(h > hmax) hmax = h;
             int tj = (int)P_shared[j].Type;
             if(tj >= 0 && tj < TILE_NUM_PTYPES && h > hbt[tj]) hbt[tj] = h;
-            if(pos_buf) { pos_buf[j*3+0] = (float)x; pos_buf[j*3+1] = (float)y; pos_buf[j*3+2] = (float)z; }
+            if(pos_buf) { pos_buf[j*3+0] = x; pos_buf[j*3+1] = y; pos_buf[j*3+2] = z; }
         }
         tile->lo[0] = lo0; tile->hi[0] = hi0;
         tile->lo[1] = lo1; tile->hi[1] = hi1;
@@ -500,12 +500,12 @@ static void sidx_refresh_compact_positions_device(gpu_spatial_index_t *idx)
      * cudaMemcpy under the hood; pages are migrated as one transfer rather
      * than fault-by-fault on first device read. */
     using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
-    Kokkos::View<float*, Kokkos::HostSpace, UV>            h_v(idx->h_pos_buf, 3 * num_total);
-    Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_v(idx->d_pos_buf, 3 * num_total);
+    Kokkos::View<double*, Kokkos::HostSpace, UV>            h_v(idx->h_pos_buf, 3 * num_total);
+    Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_v(idx->d_pos_buf, 3 * num_total);
     Kokkos::deep_copy(d_v, h_v);
 
-    float *compact = idx->d_compact_xyzh;
-    float *pos_buf = idx->d_pos_buf;
+    double *compact = idx->d_compact_xyzh;
+    double *pos_buf = idx->d_pos_buf;
     Kokkos::parallel_for("compact_xyzh_pos_scatter", num_total, KOKKOS_LAMBDA(int i) {
         compact[i*4+0] = pos_buf[i*3+0];
         compact[i*4+1] = pos_buf[i*3+1];
@@ -711,23 +711,25 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     }
     double t_si3 = my_second(); /* DIAG: after staging tiles/BVH/pool to DEVICE_SPACE */
 
-    /* Build compact float4 position+h array for cache-efficient GPU BVH traversal.
-       32MB for 2M particles vs 800MB for full P_shared — fits in H100 L2 (50MB),
-       eliminating the random-access cache misses that dominate the GPU count/fill passes.
+    /* Build compact double4 position+h array for cache-efficient GPU BVH traversal.
+       DOUBLE positions: float ABSOLUTE positions are invalid for GIZMO's ~1e11
+       dynamic range (see §37/§38) — they must NOT decide neighbour inclusion.
+       ~64MB for 2M particles vs 800MB for full P_shared. h (slot 3) is a relative
+       reach; kept double so the leaf accept stays consistent with the double opener.
        In DEVICE_SPACE so the BVH-walk kernels read from HBM directly. */
-    idx->d_compact_xyzh = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(float));
+    idx->d_compact_xyzh = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(double));
     {
-        float *compact = idx->d_compact_xyzh;
-        float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* lazy-drift slack: see SIDX_H_SLACK comment */
+        double *compact = idx->d_compact_xyzh;
+        double h_inflate = 1.0 + SIDX_H_SLACK; /* lazy-drift slack: see SIDX_H_SLACK comment */
         const mode_b_radius_policy_t policy_capture = radius_policy;
         Kokkos::parallel_for("compact_xyzh_build", num_total, KOKKOS_LAMBDA(int i) {
-            compact[i*4+0] = (float)P_shared[i].Pos[0];
-            compact[i*4+1] = (float)P_shared[i].Pos[1];
-            compact[i*4+2] = (float)P_shared[i].Pos[2];
+            compact[i*4+0] = P_shared[i].Pos[0];
+            compact[i*4+1] = P_shared[i].Pos[1];
+            compact[i*4+2] = P_shared[i].Pos[2];
             /* SSOT per-particle reach under policy_capture — see nlr_radius_policy.h.
              * LEGACY default policy recovers raw P[j].KernelRadius for every type. */
             double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
-            compact[i*4+3] = (float)(h_j * (double)h_inflate);
+            compact[i*4+3] = h_j * h_inflate;
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("compact_xyzh_build", num_total);
@@ -757,14 +759,14 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
     /* Drift-refresh staging buffers: h_pos_buf is filled per-pool-member by the
      * host bbox-recompute loop; bulk deep_copy to d_pos_buf; device scatter
-     * into d_compact_xyzh. Sized 3*num_total floats so each pool index can
+     * into d_compact_xyzh. Sized 3*num_total doubles so each pool index can
      * write directly to h_pos_buf[j*3+0..2] without remapping. Non-pool
      * entries stay uninitialized in h_pos_buf and their stale d_compact_xyzh
      * positions are never read by BVH queries (BVH only visits tiles, tiles
      * only contain pool members). */
     int pos_buf_count = (num_total > 0 ? num_total : 1);
-    idx->h_pos_buf = (float *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(3 * pos_buf_count * sizeof(float));
-    idx->d_pos_buf = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(3 * pos_buf_count * sizeof(float));
+    idx->h_pos_buf = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(3 * pos_buf_count * sizeof(double));
+    idx->d_pos_buf = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(3 * pos_buf_count * sizeof(double));
 
     /* Snapshot per-tile original max-axis extent for the drift refresh's
      * extent-ratio diagnostic (sidx_drift_max_extent_ratio). */
@@ -840,6 +842,45 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
         gpu_dirty_tracker_unregister(idx->dirty_handle);
         idx->dirty_handle = -1;
     }
+}
+
+
+/* ---- L4 Step-1a device neighbour-inclusion precision oracle (DIAGNOSTIC) ----
+ * Gate GIZMO_NGB_PRECISION_ORACLE (SPIKE/test only; teardown ledger). Quantifies
+ * device neighbour under/over-inclusion caused by the single-precision ABSOLUTE
+ * compact positions (invalid for GIZMO's ~1e11 dynamic range) against a
+ * double-precision physical-truth reference. NOT production; the real fix is the
+ * Step-1b compact-DOUBLE device arrays. Report tag [NGL_PRECISION_ORACLE ...]. */
+
+/* SSOT predicted-double side buffers — built in ONE place, consumed by BOTH the
+ * host double-truth loop AND the device double-leaf kernel (no second prediction
+ * path). For each particle j:
+ *   position = P[j].Pos + P[j].Vel * drift_factor(Ti_current -> time1)  (predicted-at-time1,
+ *              matching the SIDX bbox/compact refresh convention above)
+ *   reach    = nlr_particle_symmetric_radius(P[j], policy)              (PHYSICAL, no SIDX slack)
+ * Buffers are SHARED_SPACE (managed) so host + device read the same memory. */
+static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int num_total,
+                                            mode_b_radius_policy_t radius_policy,
+                                            double **out_pos_dbl, double **out_h_dbl,
+                                            long *out_n_dt_nonzero)
+{
+    integertime time1 = gizmo_host_ti_current();
+    size_t nt = (size_t)(num_total > 0 ? num_total : 1);
+    double *pos_dbl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nt * 3 * sizeof(double));
+    double *h_dbl   = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nt * sizeof(double));
+    long n_dt_nonzero = 0;
+    #pragma omp parallel for reduction(+:n_dt_nonzero) schedule(static)
+    for(int j = 0; j < num_total; j++) {
+        double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+        if(dt != 0.0) n_dt_nonzero++;
+        pos_dbl[j*3+0] = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
+        pos_dbl[j*3+1] = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
+        pos_dbl[j*3+2] = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
+        h_dbl[j]       = nlr_particle_symmetric_radius(P_shared[j], radius_policy);
+    }
+    *out_pos_dbl = pos_dbl;
+    *out_h_dbl   = h_dbl;
+    *out_n_dt_nonzero = n_dt_nonzero;
 }
 
 
@@ -1117,8 +1158,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(do_refresh) {
         HDBG(refresh_all ? "compact_h_refresh_all_start" : "compact_h_refresh_idx_start");
         did_refresh = 1;
-        float *compact = idx->d_compact_xyzh;
-        float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* see SIDX_H_SLACK — lazy-drift over-search slack */
+        double *compact = idx->d_compact_xyzh;
+        double h_inflate = 1.0 + SIDX_H_SLACK; /* see SIDX_H_SLACK — lazy-drift over-search slack */
         /* SSOT per-j reach under the cached policy.  HARD-ABORT above guarantees
          * cached_idx->cache_radius_policy == caller's radius_policy. */
         const mode_b_radius_policy_t policy_capture = idx->cache_radius_policy;
@@ -1126,7 +1167,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         if(refresh_all) {
             Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
                 double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
-                compact[i*4+3] = (float)(h_j * (double)h_inflate);
+                compact[i*4+3] = h_j * h_inflate;
             });
             /* Drain the bitset (no kernel use; just clear it). */
             struct {} dummy;
@@ -1152,7 +1193,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             Kokkos::parallel_for("compact_h_refresh_idx", n_dirty, KOKKOS_LAMBDA(int k) {
                 int i = d_dirty[k];
                 double h_j = nlr_particle_symmetric_radius(P_shared[i], policy_capture);
-                compact[i*4+3] = (float)(h_j * (double)h_inflate);
+                compact[i*4+3] = h_j * h_inflate;
             });
             Kokkos::fence();
             gizmo_gpu_check_last_error("compact_h_refresh_idx", n_dirty);
@@ -1247,7 +1288,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double j_rad_scale = j_kernel_radius_scale;
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
-        const float *compact_xyzh = gnl->d_compact_xyzh;
+        const double *compact_xyzh = gnl->d_compact_xyzh;
         HDBG("fused_launch_start");
         t_fused_launch_in = my_second();
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
@@ -1272,6 +1313,135 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_fused", num_active);
         HDBG("fused_fence_done");
+
+        /* L4 Step-1b validation oracle (DIAGNOSTIC; gate GIZMO_NGB_PRECISION_ORACLE;
+         * SYMMETRIC + num_active>0). Validates the double-position substrate: the
+         * PRODUCTION device CSR must contain every host DOUBLE physical-truth
+         * neighbour — MISSING = under-inclusion RED-ALERT (must be 0). EXTRA = the
+         * SIDX_H_SLACK candidate margin, acceptable ONLY for consumers that re-gate
+         * the exact predicate (verified density_loop.h / gradient_functions.h; NOT
+         * assumed universal). Per-rank, no MPI collective. Sample cap
+         * GIZMO_NGB_PRECISION_ORACLE_NMAX (default 128; brute is O(sampled x pool)).
+         * Report tag [NGL_PRECISION_ORACLE]. Teardown ledger §39. */
+        if(const char *prec_env = getenv("GIZMO_NGB_PRECISION_ORACLE");
+           prec_env && atoi(prec_env) != 0 && smode == NGB_SEARCH_SYMMETRIC && num_active > 0) {
+            const char *lbl = caller_label ? caller_label : "?";
+            if(idx->num_pool <= 0 || !idx->h_pool) {
+                if(ThisTask == 0)
+                    printf("[NGL_PRECISION_ORACLE] caller=%s mode=SYMM UNAVAILABLE (empty supply pool)\n", lbl);
+            } else {
+                int num_pool = idx->num_pool;
+                const int *h_pool = idx->h_pool;
+
+                /* SSOT predicted-double physical truth: pos = Pos+Vel*drift(->time1),
+                 * reach = nlr_particle_symmetric_radius (physical, NO slack). Used for
+                 * BOTH the query (when src_pos absent) and the supply. */
+                double *j_pos_dbl = NULL, *j_h_dbl = NULL; long n_dt_nonzero = 0;
+                ngl_precision_build_ref_buffers(P_shared, num_total, radius_policy,
+                                                &j_pos_dbl, &j_h_dbl, &n_dt_nonzero);
+                if(!j_pos_dbl || !j_h_dbl) endrun(919231);
+
+                /* Pull production CSR + compact pool to host. */
+                using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+                std::vector<int> h_prod_sc((size_t)num_active * NGL_SCRATCH_STRIDE), h_prod_ct(num_active);
+                std::vector<double> h_compact(4 * (size_t)num_total);
+                Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, UV>(h_prod_sc.data(), (size_t)num_active*NGL_SCRATCH_STRIDE),
+                                  Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(scratch, (size_t)num_active*NGL_SCRATCH_STRIDE));
+                Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, UV>(h_prod_ct.data(), num_active),
+                                  Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(counts, num_active));
+                Kokkos::deep_copy(Kokkos::View<double*, Kokkos::HostSpace, UV>(h_compact.data(), 4*(size_t)num_total),
+                                  Kokkos::View<const double*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(compact_xyzh, 4*(size_t)num_total));
+
+                const char *nmax_env = getenv("GIZMO_NGB_PRECISION_ORACLE_NMAX");
+                int n_max = nmax_env ? atoi(nmax_env) : 128;   /* brute truth is O(n_max x pool); raise for tiny synthetics */
+                if(n_max < 1) n_max = 1;
+                int n_cap = (num_active < n_max) ? num_active : n_max;
+
+                /* SET-compare per sampled active: production CSR vs host double truth.
+                 * r via the SAME NGB_PERIODIC_BOX_LONG convention as the device leaf. */
+                long tot_truth=0, tot_prod=0, miss=0, extra=0, ovf_rows=0;
+                #pragma omp parallel for schedule(dynamic) reduction(+:tot_truth,tot_prod,miss,extra,ovf_rows)
+                for(int aa = 0; aa < n_cap; aa++) {
+                    /* Overflow guard: search_neighbors_sfc_gpu counts ALL matches but only
+                     * writes the first NGL_SCRATCH_STRIDE. A truncated device row would
+                     * report FALSE missing (oracle runs BEFORE production's overflow
+                     * re-walk into the final CSR). Skip + count LOUD. */
+                    if(h_prod_ct[aa] > NGL_SCRATCH_STRIDE) { ovf_rows++; continue; }
+                    MyDouble xtmp = 0;
+                    int i = active[aa];
+                    /* query: production's own double query where present, else the physical
+                     * double for particle i (the double version of the SAME P[i] query the
+                     * production kernel reads from the double compact substrate). */
+                    double pos_i[3];
+                    if(src_pos) { pos_i[0]=src_pos[aa*3+0]; pos_i[1]=src_pos[aa*3+1]; pos_i[2]=src_pos[aa*3+2]; }
+                    else        { pos_i[0]=j_pos_dbl[i*3+0]; pos_i[1]=j_pos_dbl[i*3+1]; pos_i[2]=j_pos_dbl[i*3+2]; }
+                    double h_i = (radii ? radii[aa] : j_h_dbl[i]) * sr_fac;
+                    std::vector<int> truth;
+                    for(int p = 0; p < num_pool; p++) {
+                        int j = h_pool[p];
+                        double dxr = pos_i[0]-j_pos_dbl[j*3+0], dyr = pos_i[1]-j_pos_dbl[j*3+1], dzr = pos_i[2]-j_pos_dbl[j*3+2];
+                        double adx = NGB_PERIODIC_BOX_LONG_X(dxr,dyr,dzr,1), ady = NGB_PERIODIC_BOX_LONG_Y(dxr,dyr,dzr,1), adz = NGB_PERIODIC_BOX_LONG_Z(dxr,dyr,dzr,1);
+                        double r2 = adx*adx + ady*ady + adz*adz;
+                        double h_j = j_h_dbl[j] * j_rad_scale;
+                        double cut = (h_i > h_j) ? h_i : h_j;
+                        if(r2 < cut*cut) truth.push_back(j);
+                    }
+                    std::sort(truth.begin(), truth.end());
+                    int pc = h_prod_ct[aa];
+                    std::vector<int> prod(h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE, h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE+pc);
+                    std::sort(prod.begin(), prod.end());
+                    tot_truth += (long)truth.size(); tot_prod += (long)prod.size();
+                    std::vector<int> t;
+                    std::set_difference(truth.begin(),truth.end(), prod.begin(),prod.end(), std::back_inserter(t)); miss  += (long)t.size();
+                    t.clear(); std::set_difference(prod.begin(),prod.end(), truth.begin(),truth.end(), std::back_inserter(t)); extra += (long)t.size();
+                }
+
+                /* First-few production-missing examples (single-threaded rescan; detail). */
+                const int KMISS = 8; int nmiss = 0;
+                for(int aa = 0; aa < n_cap && nmiss < KMISS; aa++) {
+                    if(h_prod_ct[aa] > NGL_SCRATCH_STRIDE) continue;
+                    MyDouble xtmp = 0;
+                    int i = active_indices_host[aa];   /* host source list — human-readable identity */
+                    double pos_i[3];
+                    if(src_pos) { pos_i[0]=src_pos[aa*3+0]; pos_i[1]=src_pos[aa*3+1]; pos_i[2]=src_pos[aa*3+2]; }
+                    else        { pos_i[0]=j_pos_dbl[i*3+0]; pos_i[1]=j_pos_dbl[i*3+1]; pos_i[2]=j_pos_dbl[i*3+2]; }
+                    double h_i = (radii ? radii[aa] : j_h_dbl[i]) * sr_fac;
+                    int pc = h_prod_ct[aa];
+                    std::vector<int> prod(h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE, h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE+pc);
+                    std::sort(prod.begin(), prod.end());
+                    for(int p = 0; p < num_pool && nmiss < KMISS; p++) {
+                        int j = h_pool[p];
+                        double dxr = pos_i[0]-j_pos_dbl[j*3+0], dyr = pos_i[1]-j_pos_dbl[j*3+1], dzr = pos_i[2]-j_pos_dbl[j*3+2];
+                        double adx = NGB_PERIODIC_BOX_LONG_X(dxr,dyr,dzr,1), ady = NGB_PERIODIC_BOX_LONG_Y(dxr,dyr,dzr,1), adz = NGB_PERIODIC_BOX_LONG_Z(dxr,dyr,dzr,1);
+                        double r = sqrt(adx*adx + ady*ady + adz*adz);
+                        double h_j = j_h_dbl[j] * j_rad_scale;
+                        double cut = (h_i > h_j) ? h_i : h_j;
+                        if(r < cut && !std::binary_search(prod.begin(), prod.end(), j)) {   /* physical neighbour, production missed */
+                            double dtj = get_drift_factor_omp_safe(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
+                            printf("  [NGL_PRECISION_ORACLE rank=%d] miss caller=%s i.ID=%lld j.ID=%lld r=%.10g cutoff=%.10g margin=%.3g dt_j=%.3g "
+                                   "compact_xyzh=(%.10g,%.10g,%.10g;%.6g) truth_xyzh=(%.10g,%.10g,%.10g;%.6g)\n",
+                                   ThisTask, lbl, (long long)P_shared[i].ID, (long long)P_shared[j].ID, r, cut, r-cut, dtj,
+                                   h_compact[j*4+0],h_compact[j*4+1],h_compact[j*4+2],h_compact[j*4+3],
+                                   j_pos_dbl[j*3+0],j_pos_dbl[j*3+1],j_pos_dbl[j*3+2],j_h_dbl[j]);
+                            nmiss++;
+                        }
+                    }
+                }
+
+                /* Per-rank LOCAL report (NO MPI collective — inside the per-rank
+                 * num_active>0 gate; a collective would deadlock 0-active ranks). */
+                printf("[NGL_PRECISION_ORACLE rank=%d] caller=%s mode=SYMM sampled=%d/%d%s pool=%d overflow_rows_skipped=%ld\n"
+                       "  truth=%ld prod=%ld  MISSING(truth\\prod)=%ld EXTRA(prod\\truth)=%ld\n"
+                       "  [MISSING=under-inclusion RED-ALERT (must be 0); EXTRA=SIDX_H_SLACK candidate margin, consumers re-gate exact predicate]\n"
+                       "  dt_j!=0: %ld/%d (%.4f)  [stale-vs-predicted regime; slack must cover raw-vs-predicted when >0]\n",
+                       ThisTask, lbl, n_cap, num_active, (num_active > n_cap) ? " CAPPED" : "", num_pool, ovf_rows,
+                       tot_truth, tot_prod, miss, extra,
+                       n_dt_nonzero, num_total, num_total > 0 ? (double)n_dt_nonzero/(double)num_total : 0.0);
+                fflush(stdout);
+                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(j_pos_dbl);
+                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(j_h_dbl);
+            }
+        }
 
         /* MICROBENCHMARK PROBE — fires once per process when GIZMO_NGB_MICROBENCH=1
          * env var is set and we hit a small-N cached call. Re-launches the SAME
@@ -1317,13 +1487,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                     Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ha(h_active.data(), num_active);
                     Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> da(active, num_active);
                     Kokkos::deep_copy(ha, da);
-                    std::vector<float> h_compact(4 * (size_t)num_total);
-                    Kokkos::View<float*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hc(h_compact.data(), 4 * num_total);
-                    Kokkos::View<const float*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dc(compact_xyzh, 4 * num_total);
+                    std::vector<double> h_compact(4 * (size_t)num_total);
+                    Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hc(h_compact.data(), 4 * num_total);
+                    Kokkos::View<const double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dc(compact_xyzh, 4 * num_total);
                     Kokkos::deep_copy(hc, dc);
                     for(int aa = 0; aa < num_active; aa++) {
                         int i = h_active[aa];
-                        float x = h_compact[i*4+0], y = h_compact[i*4+1], z = h_compact[i*4+2], h = h_compact[i*4+3];
+                        double x = h_compact[i*4+0], y = h_compact[i*4+1], z = h_compact[i*4+2], h = h_compact[i*4+3];
                         printf("[NGB_MICROBENCH]   active aa=%2d i=%d  pos=(%.4g,%.4g,%.4g)  h=%.4g  h/box=(%.4f,%.4f,%.4f)\n",
                                aa, i, x, y, z, h, h/bs0, h/bs1, h/bs2);
                     }
@@ -1507,7 +1677,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double j_rad_scale = j_kernel_radius_scale;
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
-        const float *compact_xyzh = gnl->d_compact_xyzh;
+        const double *compact_xyzh = gnl->d_compact_xyzh;
         HDBG("compact_kernel_start");
         t_compact_launch_in = my_second();
         Kokkos::parallel_for("ngb_compact", num_active, KOKKOS_LAMBDA(int aa) {
@@ -1572,11 +1742,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                     num_active, num_total, idx->num_pool, search_mode, type_bitmask,
                     (long long)gnl->total_pairs, oracle_active, oracle_active_pos,
                     (cached_idx && cached_idx->valid) ? 1 : 0);
-            std::vector<float> compact_host((size_t)num_total * 4);
+            std::vector<double> compact_host((size_t)num_total * 4);
             {
                 using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
-                Kokkos::View<float*, Kokkos::HostSpace, UV> hv(compact_host.data(), (size_t)num_total * 4);
-                Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, UV> dv(idx->d_compact_xyzh, (size_t)num_total * 4);
+                Kokkos::View<double*, Kokkos::HostSpace, UV> hv(compact_host.data(), (size_t)num_total * 4);
+                Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, UV> dv(idx->d_compact_xyzh, (size_t)num_total * 4);
                 Kokkos::deep_copy(hv, dv);
             }
             std::vector<int> walker_host;
@@ -1874,15 +2044,15 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                      * walker actually used at acceptance; we capture that too. */
                     if(gnl->total_pairs > 0) {
                         /* Stage compact_xyzh from device to host once. */
-                        std::vector<float> compact_host(num_total * 4);
-                        Kokkos::View<float*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                        std::vector<double> compact_host(num_total * 4);
+                        Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                             hv(compact_host.data(), num_total * 4);
-                        Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                        Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                             dv(idx->d_compact_xyzh, num_total * 4);
                         Kokkos::deep_copy(hv, dv);
                         for(int64_t p = 0; p < gnl->total_pairs; p++) {
                             int j = ngb_host[p];
-                            double pos[3], hk; float ch;
+                            double pos[3], hk; double ch;
                             if(j >= 0 && j < num_total) {
                                 pos[0] = (double)P_shared[j].Pos[0];
                                 pos[1] = (double)P_shared[j].Pos[1];
@@ -1890,11 +2060,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                                 hk = (double)P_shared[j].KernelRadius;
                                 ch = compact_host[j * 4 + 3];
                             } else {
-                                pos[0] = pos[1] = pos[2] = 0.0; hk = 0.0; ch = 0.0f;
+                                pos[0] = pos[1] = pos[2] = 0.0; hk = 0.0; ch = 0.0;
                             }
                             fwrite(pos, sizeof(double), 3, f);
                             fwrite(&hk, sizeof(double), 1, f);
-                            fwrite(&ch, sizeof(float), 1, f);
+                            fwrite(&ch, sizeof(double), 1, f);   /* compact reach is now double */
                         }
                     }
                 }

@@ -61,17 +61,26 @@ int bbox_overlaps_sphere_gpu(const double box_lo[3], const double box_hi[3],
  * after consuming the CSR list. (Existing callers don't filter; this matches
  * the legacy ngb_treefind_* semantic that returns self when source is a
  * particle and the same particle is in the search pool.) */
-/* compact_xyzh[j*4+0..3] = x,y,z,h for particle j (float, ~32MB for 2M parts).
- * Using compact float array instead of P[j].Pos/KernelRadius reduces BVH
- * traversal memory traffic by ~12× (32 vs 400 bytes/particle), allowing the
- * array to fit in GPU L2 cache and eliminate random-access cache misses. */
+/* compact_xyzh[j*4+0..3] = x,y,z,h for particle j (DOUBLE positions + reach).
+ * Positions are DOUBLE: float ABSOLUTE positions are invalid for GIZMO's ~1e11
+ * dynamic range (they must not decide neighbour inclusion — §37/§38). Slot 3 is
+ * the supply reach = physical KernelRadius * (1+SIDX_H_SLACK): the leaf accept
+ * is a CONSERVATIVE CANDIDATE test (over-searches by the lazy-drift slack), so
+ * this returns a CANDIDATE LIST, not an exact neighbour list. CONTRACT: every
+ * consumer MUST re-apply the exact physical predicate (r < max(h_i,h_j)). All
+ * FIRE-active consumers VERIFIED to re-gate: density_loop.h:569, gradient_
+ * functions.h:232, hydro_functions.h:82 (hydro_force), cellcorrections_loop.h:115,
+ * HII (density-style), merge_split (exact per-candidate r). AUDIT PENDING only for
+ * non-FIRE consumers when their flags enable (turb_powerspectra, twopoint,
+ * mg_gradient_correction, ags, dm_dispersion). Do NOT treat the CSR as exact
+ * without that re-gate. */
 /* j_radius_scale: multiplier applied to the j-side kernel radius in SYMMETRIC
  * mode (1.0 = legacy behavior). Scaled-symmetric callers (TURB_DIFF_DYNAMIC
  * wide-filter loops) pass All.TurbDynamicDiffFac so the pair reach becomes
  * max(h_i, fac*h_j) — see OPEN_3d_difffilter_design.md §3. Applied at query
  * time; the cached compact_xyzh / SIDX hmax stay keyed on raw radii. */
 KOKKOS_INLINE_FUNCTION
-int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], double h_i, double h2_i,
+int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], double h_i, double h2_i,
                              double j_radius_scale,
                              sfc_tile_t *tile, int *pool, int search_mode,
                              int *store_neighbors, int count, int max_store,
@@ -104,9 +113,9 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
             if(pt < 0 || pt >= 6) continue;
             if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
         }
-        double dx_raw = pos_i[0] - (double)compact_xyzh[j*4+0];
-        double dy_raw = pos_i[1] - (double)compact_xyzh[j*4+1];
-        double dz_raw = pos_i[2] - (double)compact_xyzh[j*4+2];
+        double dx_raw = pos_i[0] - compact_xyzh[j*4+0];
+        double dy_raw = pos_i[1] - compact_xyzh[j*4+1];
+        double dz_raw = pos_i[2] - compact_xyzh[j*4+2];
         double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
         double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
         double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
@@ -115,7 +124,7 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
         if(search_mode == NGB_SEARCH_ONEWAY) {
             pair_search_r2 = h2_i;
         } else {
-            double h_j = (double)compact_xyzh[j*4+3] * j_radius_scale;
+            double h_j = compact_xyzh[j*4+3] * j_radius_scale;
             double h_max = (h_i > h_j) ? h_i : h_j;
             pair_search_r2 = h_max * h_max;
         }
@@ -145,7 +154,7 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
  * (per-particle h_j at the leaf, per-node hmax at the BVH opener) in
  * SYMMETRIC mode. 1.0 = legacy. */
 KOKKOS_INLINE_FUNCTION
-int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], double h_i,
+int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], double h_i,
                              double j_radius_scale,
                              sfc_tile_t *tiles, int ntiles,
                              int *pool, int search_mode,
