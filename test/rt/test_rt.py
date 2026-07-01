@@ -62,6 +62,23 @@ def test_rt(num_mpi_ranks, num_omp_threads):
     fig.savefig(f"test/{test_name}/Density_2D.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
+    # Also render each snapshot individually (snapshot_00N -> density_00N)
+    for i, snap in enumerate(snaps):
+        with h5py.File(snap, "r") as F:
+            rho_i = F["PartType0/Density"][:]
+            pos_i = F["PartType0/Coordinates"][:]
+            t_i = F["Header"].attrs["Time"]
+        M = Meshoid(pos_i, boxsize=1.0)
+        rho_slice = M.Slice(rho_i, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=0)
+        fig, ax = plt.subplots(figsize=(4, 8))
+        im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 0.5, 0, 1.0])
+        flush_colorbar(im, ax=ax, label="Density")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title(f"Rayleigh-Taylor  t={t_i:g}")
+        fig.savefig(f"test/{test_name}/density_{i:03d}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
     # Mass conservation
     mass_err = abs(mass_f.sum() - mass0.sum()) / mass0.sum()
     assert mass_err < 1e-3, f"Mass not conserved: relative error {mass_err:.6f}"

@@ -14,7 +14,6 @@
 %   MAGNETIC
 %   MHD_BATTERY_MECHANISMS=1
 %   SELFGRAVITY_OFF
-%   GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 %
 InitCondFile                       biermann_growth_ics
 OutputDir                          output

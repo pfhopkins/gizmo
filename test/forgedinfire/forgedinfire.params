@@ -27,6 +27,11 @@ Effective_Kernel_NeighborNumber   32
 Output_Directory                  output
 MaxSimulationWallTime_in_Seconds  1.72e9
 CpuTimeBetRestartFile             3350
+% CONVENTION: on batch systems set TimeLimitCPU (seconds) <~ your SLURM wall-time
+%  so GIZMO self-stops gracefully (drains to a phase boundary, writes restart,
+%  MPI_Finalize) at 0.85*TimeLimitCPU BEFORE the scheduler hard-kills the job.
+%  An external SLURM timeout kill cannot be caught and risks leaving nodes in CG.
+%  Left unset here (defaults to 24h) since each run/queue needs its own value.
 ParticleNumberMemoryImbalance_Limit 1.9
 SofteningHalo                     2.e6
 SofteningDisk                     2.e7

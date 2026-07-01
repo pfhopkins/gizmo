@@ -69,14 +69,14 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     rho_prof *= rho_to_Msun_per_Mpc3
     axes[0].loglog(rc, rho_prof, "o-")
     axes[0].set_xlim(0.01, 9.)
-    axes[0].set_xlabel("r [Mpc]")
-    axes[0].set_ylabel("Density [Msun/Mpc^3]")
+    axes[0].set_xlabel("Radius [Mpc]")
+    axes[0].set_ylabel(r'Density [$M_\odot$/Mpc$^3$]')
     axes[0].set_title("Gas Density Profile")
     u_to_K = 8.738e7 # convert to K for plotting
     u_prof *= u_to_K
     axes[1].loglog(rc, u_prof, "o-")
     axes[1].set_xlim(0.01, 9.)
-    axes[1].set_xlabel("r [Mpc]")
+    axes[1].set_xlabel("Radius [Mpc]")
     axes[1].set_ylabel("Temperature [K]")
     axes[1].set_title("Gas Temperature Profile")
     plt.tight_layout()

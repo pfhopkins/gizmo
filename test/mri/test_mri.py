@@ -63,7 +63,7 @@ def test_mri(num_mpi_ranks, num_omp_threads):
     plt.semilogy(times, Emag_z / Emagnorm, "o-", label="B_z")
     plt.xlim(times[0], times[-1])
     plt.ylim(1.e-4, 300.)
-    plt.xlabel("Time t / Omega^-1")
+    plt.xlabel("Time $t / \Omega^{-1}$")
     plt.ylabel("E_mag / E_mag(0)")
     plt.title("MRI - Magnetic Energy Growth")
     plt.legend()

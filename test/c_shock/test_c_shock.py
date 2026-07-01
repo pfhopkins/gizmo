@@ -144,29 +144,28 @@ def plot_c_shock_overview(snap1, snap2, output_dir, label1="Reference", label2="
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(4),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize("num_mpi_ranks", (1,))
+@pytest.mark.parametrize("num_omp_threads", (1,))
 def test_c_shock(num_mpi_ranks, num_omp_threads):
     test_name = "c_shock"
-    if(2==0):
-        clean_test_outputs(test_name)
+    clean_test_outputs(test_name)
 
-        # Patch eos.cc with C-shock non-ideal MHD coefficients, build, then restore
-        patched = False
-        try:
-            patched = _patch_eos()
-            build_gizmo_for_test(test_name, num_omp_threads)
-        finally:
-            if patched:
-                _restore_eos()
+    # Patch eos.cc with C-shock non-ideal MHD coefficients, build, then restore
+    patched = False
+    try:
+        patched = _patch_eos()
+        build_gizmo_for_test(test_name, num_omp_threads)
+    finally:
+        if patched:
+            _restore_eos()
 
-        # Download ICs and reference if not present, then run
-        from os import chdir
-        chdir(f"test/{test_name}/")
-        _download_if_missing("c_shock_ics.hdf5")
-        _download_if_missing("c_shock_exact.hdf5")
-        run_test(test_name, num_mpi_ranks, num_omp_threads)
-        chdir("../../")
+    # Download ICs and reference if not present, then run
+    from os import chdir
+    chdir(f"test/{test_name}/")
+    _download_if_missing("c_shock_ics.hdf5")
+    _download_if_missing("c_shock_exact.hdf5")
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
+    chdir("../../")
 
     # Verify the simulation completed
     final_snap = get_final_snapshot(test_name)

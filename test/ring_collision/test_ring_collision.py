@@ -28,24 +28,24 @@ def test_ring_collision(num_mpi_ranks, num_omp_threads):
         raise RuntimeError("GIZMO did not run successfully.")
     assert_final_time(snaps[-1], test_name)
 
-    # Plot each snapshot using Meshoid slice interpolation
-    for snap in snaps:
+    # Plot each snapshot as a scatter of the resolution elements, coloured by
+    # density. The elastic material occupies only the two thin ring bands, with
+    # vacuum around them; a slice/kernel interpolation of the density onto a
+    # grid smears the (sparse) particles across the surrounding empty space and
+    # produces spurious "wedge" structure, so we render the particles directly.
+    for i, snap in enumerate(snaps):
         with h5py.File(snap, "r") as F:
             pos = F["PartType0/Coordinates"][:]
             rho = F["PartType0/Density"][:]
             t = F["Header"].attrs["Time"]
-        center = np.array([pos[:, 0].mean(), pos[:, 1].mean(), pos[:, 2].mean() if pos.shape[1] > 2 else 0.])
-        size = max(pos[:, 0].max() - pos[:, 0].min(), pos[:, 1].max() - pos[:, 1].min()) * 1.1
-        M = Meshoid(pos)
-        rho_slice = M.Slice(rho, res=1024, plane="z", center=center, size=size, order=0)
         fig, ax = plt.subplots(figsize=(6, 6))
-        extent = [center[0] - size/2, center[0] + size/2, center[1] - size/2, center[1] + size/2]
-        im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=extent)
-        flush_colorbar(im, ax=ax, label="Density")
+        sc = ax.scatter(pos[:, 0], pos[:, 1], c=rho, s=6, cmap="viridis", edgecolors="none")
+        ax.set_aspect("equal")
+        flush_colorbar(sc, ax=ax, label="Density")
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_title(f"Ring Collision t={t:.0f}")
-        fig.savefig(f"test/{test_name}/snapshot_t{t:.0f}.png", dpi=150, bbox_inches="tight")
+        fig.savefig(f"test/{test_name}/density_{i:03d}.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
 
     # Load initial and final snapshots

@@ -12,7 +12,7 @@ n_e cancels out, so the prediction is independent of the mean density.
 This is the *sign-anchor* test — Squire-Hopkins 2018 streaming-instability
 gives the gold-standard signed-growth-rate cross-check, but Biermann growth in
 this controlled IC is enough to catch sign bugs and order-of-magnitude
-prefactor errors (which is what we need for commit 7/N).
+prefactor errors.
 """
 
 import os

@@ -100,7 +100,7 @@ def plot_mhd_blast_divB_panels(test_name):
             rho = F["PartType0/Density"][:]
         Bmag = np.sqrt(np.sum(B**2, axis=1))
         h = (mass / rho) ** (1.0 / 3.0)
-        field = np.log10(np.abs(divB) * h / np.maximum(Bmag, 1e-30) + 1e-10)
+        field = np.log10(np.abs(divB) * h / np.maximum(Bmag, 1e-1) + 1e-10)
         M = Meshoid(pos, boxsize=1.0)
         sl = M.Slice(field, res=2048, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1.0, order=0)
         label = vdir.split("/output", 1)[1].lstrip("_") or "baseline"
@@ -109,6 +109,8 @@ def plot_mhd_blast_divB_panels(test_name):
         return
     vmin = min(np.nanmin(sl) for _, sl in panels)
     vmax = max(np.nanmax(sl) for _, sl in panels)
+    #vmin = -6
+    #vmax = 0.1
     fig, axes = plt.subplots(2, 2, figsize=(10, 10))
     for ax, (label, sl) in zip(axes.flat, panels):
         im = ax.imshow(sl.T, origin="lower", cmap="inferno", extent=[0, 1, 0, 1], vmin=vmin, vmax=vmax)
