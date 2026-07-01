@@ -141,6 +141,11 @@
 
 #if defined(CBE_INTEGRATOR)
 #define CBE_INTEGRATOR_NBASIS CBE_INTEGRATOR
+/* CBE: always output the gravitational potential — the CBE virial diagnostic
+ * (2K/|W|) needs Potential in every snapshot. */
+#ifndef OUTPUT_POTENTIAL
+#define OUTPUT_POTENTIAL
+#endif
 /* Particle types carrying a CBE moment distribution (bitmask over Type, like
  * DM_SIDM / GRAIN_PTYPES). Default = Type 1 only. CBE_basis_moments exist on
  * every particle but are only meaningful for these types; all CBE kick/flux/
