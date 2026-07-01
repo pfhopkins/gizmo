@@ -595,7 +595,10 @@ static int gx_fineband_build_and_verify(const struct ghost_exchange_spec_t *spec
         if(no < maxpart || no >= maxpart + nnodes) { diag->father_oob++; continue; }
         int t = v.pool_types[p];
         if(t < 0 || t >= FINEBAND_NTYPES) { diag->type_oob++; continue; }
-        double h = (double)v.compact_xyzh[(size_t)p*4+3];
+        /* Seed the opener band with the SAME double reach the leaf accept uses
+         * (gx_policy_scaled_h), not the float-rounded compact reach: the opener
+         * and the leaf predicate must share one double-precision reach truth. */
+        double h = gx_policy_scaled_h(j, spec->radius_policy, spec->j_radius_scale, safety_factor);
         long idx = (long)(no - maxpart) * FINEBAND_NTYPES + t;
         if(h > band[idx]) band[idx] = h;
         diag->seeded++;
@@ -647,7 +650,8 @@ static int gx_fineband_build_and_verify(const struct ghost_exchange_spec_t *spec
                 if(j < 0 || j >= maxpart) continue;
                 int t = v.pool_types[p];
                 if(t < 0 || t >= FINEBAND_NTYPES) continue;
-                double h = (double)v.compact_xyzh[(size_t)p*4+3];
+                /* Same double reach SSOT as the builder seed and the leaf accept. */
+                double h = gx_policy_scaled_h(j, spec->radius_policy, spec->j_radius_scale, safety_factor);
                 int no = Father[j];
                 while(no >= maxpart && no < maxpart + nnodes) {
                     long idx = (long)(no - maxpart) * FINEBAND_NTYPES + t;
