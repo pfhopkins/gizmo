@@ -102,7 +102,7 @@ def test_cbe_harmonic_1d(num_mpi_ranks, num_omp_threads):
     outputdir = f"test/{TEST_NAME}/output"
     final = get_final_snapshot(TEST_NAME)
 
-    assert_final_time(final, 30.0)  # reached TimeMax; no collapse to the dt floor
+    assert_final_time(final, TEST_NAME)  # reached TimeMax (30); no collapse to the dt floor
 
     snaps = sorted(glob.glob(f"{outputdir}/snapshot_*.hdf5"))
     snap0 = read_snapshot(snaps[0])
