@@ -1,0 +1,53 @@
+% cbe_harmonic_1d — 1D hot Gaussian in a fixed analytic harmonic potential.
+% External potential a = -Omega^2 (x - x_c) (Omega=1, x_c = BoxSize/2). The
+% breathing IC (xwidth_factor=0.7) oscillates at 2*Omega; the test checks the
+% envelope is preserved to TimeMax with mass + second moment bounded.
+
+InitCondFile                       cbe_harmonic_1d_breathe_nb2_ics
+OutputDir                          output_long
+
+TimeBegin                          0.0
+TimeMax                            90.0
+TimeBetSnapshot                    0.15
+TimeBetStatistics                  0.5
+
+BoxSize                            12.0
+
+% Neighbour targets — CBE rides the AGS kernel/volume solve on Type=1.
+AGS_DesNumNgb                      8
+AGS_MaxNumNgbDeviation             0.5
+DesNumNgb                          8
+MaxNumNgbDeviation                 0.5
+
+% Softening — adaptive AGS kernel; these only bound it (force off: SELFGRAVITY_OFF).
+Softening_Type0                    0.01
+Softening_Type1                    0.01
+Softening_Type2                    0.01
+Softening_Type3                    0.01
+Softening_Type4                    0.01
+Softening_Type5                    0.01
+Softening_Type0_MaxPhysLimit       0.1
+Softening_Type1_MaxPhysLimit       0.1
+Softening_Type2_MaxPhysLimit       0.1
+Softening_Type3_MaxPhysLimit       0.1
+Softening_Type4_MaxPhysLimit       0.1
+Softening_Type5_MaxPhysLimit       0.1
+
+% Code units (arbitrary)
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% Timestepping
+MaxSizeTimestep                    0.01
+MinSizeTimestep                    1e-6
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+
+% Misc
+MaxMemSize                         1000
+ResubmitOn                         0
+ResubmitCommand                    none
