@@ -499,6 +499,20 @@ static int ghost_route_fineband_walk_oracle_enabled(void)
     enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
     return enabled;
 }
+/* L3.4 cross-rank ghost-set gate: the bounded fine-tree ROUTED producer
+ * (gx_walk_fine_tree on received queries) vs the authoritative BROADCAST set,
+ * EXACT both-direction compare per caller.  Broadcast stays authoritative; the
+ * fine routed set is compared, never installed.  Temporary validation
+ * scaffolding (teardown ledger, OPEN_topleaf_router_design.md §39). */
+static int ghost_route_fine_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_ROUTE_FINE_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
 
 struct gx_fineband_t {
     int          valid;
@@ -2034,7 +2048,7 @@ static int gx_walk_fine_tree(const double pos_q[3], double h_q,
                              const int periodic_flags[3], const double box_sizes[3],
                              mode_b_radius_policy_t radius_policy, double j_scale, double safety,
                              const int *j_to_pool, int jtop_len,
-                             int num_pool, char *matched)
+                             int num_pool, char *matched, int *n_starts_out)
 {
     const int maxpart     = All.MaxPart;
     const int nnodes      = g_fineband.nnodes;
@@ -2042,6 +2056,7 @@ static int gx_walk_fine_tree(const double pos_q[3], double h_q,
     const int pseudo_start = maxpart + MaxNodes + MaxForeignNodes;
     const int oneway      = (search_mode == NGB_SEARCH_ONEWAY);
 
+    if(n_starts_out) *n_starts_out = 0;
     int starts[4096];
     int n_starts = 0;
     if(topleaf_router_local_starts_for_query(pos_q, h_q, supply_mask, oneway,
@@ -2049,6 +2064,7 @@ static int gx_walk_fine_tree(const double pos_q[3], double h_q,
                                              starts, (int)(sizeof(starts)/sizeof(starts[0])),
                                              &n_starts) != 0)
         return -1;   /* unavailable / overflow -> caller fallback */
+    if(n_starts_out) *n_starts_out = n_starts;
 
     for(int si = 0; si < n_starts; si++) {
         const int start_node = starts[si];
@@ -2596,6 +2612,165 @@ static char *compute_matched_routed(
         if(diag_pairs_nonzero) *diag_pairs_nonzero = d_pairs_nz;
         if(diag_hit_sum)       *diag_hit_sum       = d_hit_sum;
         if(diag_hit_max)       *diag_hit_max       = d_hit_max;
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+    if(t_route_walk) *t_route_walk = timediff(tw0, my_second());
+
+    free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
+    free(q_pos); free(q_h); free(route_off); free(route_owners);
+    return matched;
+
+fail:
+    free(matched);
+    free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
+    free(q_pos); free(q_h); free(route_off); free(route_owners);
+    return NULL;
+}
+
+/* L3.4 FINE routed `matched` producer (oracle-only): identical route + Alltoallv
+ * transport as compute_matched_routed (hierarchical by default), but Stage 3 walks
+ * each received query with the BOUNDED FINE-TREE receiver walk (gx_walk_fine_tree)
+ * instead of the whole-pool BVH.  The receiver RE-DERIVES its opened top-leaf start
+ * nodes for each received query (topleaf_router_local_starts_for_query, same opener/
+ * band SSOT as the router) and continues into the local fine subtree.  Output layout
+ * is IDENTICAL (matched[t*num_pool+p]) so the H4c set compare against the broadcast
+ * set is element-wise.  Positions are DOUBLE inside the walk (post-4f10837e); the
+ * fine band (g_fineband) MUST be valid for this caller (caller verifies first).
+ *
+ * Fail-closed: route/exchange failure on ANY rank -> all return NULL (Allreduce
+ * barriers).  A bounded-walk start-derivation failure (gx_walk_fine_tree<0) does NOT
+ * break collective symmetry (Stage-3 has no collectives); it is COUNTED into
+ * *start_fail_out and the CALLER reduces it -> reports UNAVAILABLE and skips the
+ * compare (a partial routed set would read as false under-route).  Never silently
+ * treated as a successful fallback.  CALLER OWNS the returned buffer. */
+static char *compute_matched_routed_fine(
+    const struct gx_query_t *local_queries, int n_local_queries,
+    int num_pool, unsigned int supply_mask, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3], int use_hier,
+    mode_b_radius_policy_t radius_policy, double j_scale, double safety,
+    const int *j_to_pool, int jtop_len,
+    double *t_route_construct, double *t_route_alltoallv, double *t_route_walk,
+    long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out,
+    long *start_fail_out, long *start_sum_out, long *start_max_out)
+{
+    if(fanout_owner_sum) *fanout_owner_sum = 0;
+    if(fanout_owner_max) *fanout_owner_max = 0;
+    if(total_recv_out)   *total_recv_out   = 0;
+    if(start_fail_out)   *start_fail_out   = 0;
+    if(start_sum_out)    *start_sum_out    = 0;
+    if(start_max_out)    *start_max_out    = 0;
+    int *route_off = NULL, *route_owners = NULL;
+    double *q_pos = NULL, *q_h = NULL;
+    int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
+    struct gx_query_t *rq_send = NULL, *rq_recv = NULL;
+    char *matched = NULL;
+    int  oneway = (search_mode == NGB_SEARCH_ONEWAY) ? 1 : 0;
+    int  nq = n_local_queries;
+    int  aborted = 0, bad_any = 0;
+    long owners_cap = 0;
+    long long rq_ts = 0, rq_tr = 0;
+    int  rq_total_send = 0, rq_total_recv = 0;
+    double tc0 = my_second(), ta0 = 0.0, tw0 = 0.0;
+    if(t_route_construct) *t_route_construct = 0.0;
+    if(t_route_alltoallv) *t_route_alltoallv = 0.0;
+    if(t_route_walk)      *t_route_walk      = 0.0;
+
+    /* Stage 1 (local): routed-query CSR + per-dest send list (guarded). */
+    if((long long)nq * (long long)NTask > (long long)INT_MAX) aborted = 1;
+    owners_cap   = aborted ? 1 : ((long)(nq > 0 ? nq : 1) * (long)NTask);
+    route_off    = (int *)    malloc((size_t)(nq + 1) * sizeof(int));
+    route_owners = (int *)    malloc((size_t)(owners_cap > 0 ? owners_cap : 1) * sizeof(int));
+    q_pos        = (double *) malloc((size_t)(nq > 0 ? nq : 1) * 3 * sizeof(double));
+    q_h          = (double *) malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double));
+    rq_sc        = (int *)    calloc((size_t)(NTask > 0 ? NTask : 1), sizeof(int));
+    rq_sd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rc        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    rq_rd        = (int *)    malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+    if(!route_off || !route_owners || !q_pos || !q_h || !rq_sc || !rq_sd || !rq_rc || !rq_rd) aborted = 1;
+    if(!aborted) {
+        for(int i = 0; i < nq; i++) {
+            q_pos[i*3+0] = local_queries[i].pos[0];
+            q_pos[i*3+1] = local_queries[i].pos[1];
+            q_pos[i*3+2] = local_queries[i].pos[2];
+            q_h[i]       = local_queries[i].h;
+        }
+        int rc = use_hier
+            ? topleaf_router_route_queries_hier(q_pos, q_h, nq, supply_mask, oneway,
+                                                periodic_flags, box_sizes,
+                                                route_off, route_owners, owners_cap, ThisTask)
+            : topleaf_router_route_queries     (q_pos, q_h, nq, supply_mask, oneway,
+                                                periodic_flags, box_sizes,
+                                                route_off, route_owners, owners_cap, ThisTask);
+        if(rc < 0) aborted = 1;
+    }
+    if(!aborted) {
+        for(int i = 0; i < nq; i++)
+            for(int k = route_off[i]; k < route_off[i+1]; k++) rq_sc[route_owners[k]]++;
+        rq_ts = gx_oracle_checked_prefix(rq_sc, rq_sd, NTask);
+        if(rq_ts < 0) aborted = 1; else rq_total_send = (int)rq_ts;
+        if(fanout_owner_sum || fanout_owner_max) {
+            long fsum = 0, fmax = 0;
+            for(int i = 0; i < nq; i++) { long f = route_off[i+1] - route_off[i]; fsum += f; if(f > fmax) fmax = f; }
+            if(fanout_owner_sum) *fanout_owner_sum = fsum;
+            if(fanout_owner_max) *fanout_owner_max = fmax;
+        }
+    }
+    if(!aborted) {
+        rq_send = (struct gx_query_t *) malloc((size_t)(rq_total_send > 0 ? rq_total_send : 1) * sizeof(struct gx_query_t));
+        int *toff = (int *) malloc((size_t)(NTask > 0 ? NTask : 1) * sizeof(int));
+        if(!rq_send || !toff) { aborted = 1; free(toff); }
+        else {
+            memcpy(toff, rq_sd, (size_t)NTask * sizeof(int));
+            for(int i = 0; i < nq; i++)
+                for(int k = route_off[i]; k < route_off[i+1]; k++)
+                    rq_send[toff[route_owners[k]]++] = local_queries[i];
+            free(toff);
+        }
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+    if(t_route_construct) *t_route_construct = timediff(tc0, my_second());
+
+    /* Stage 2: exchange routed queries. */
+    ta0 = my_second();
+    MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
+    rq_tr = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
+    if(rq_tr < 0) aborted = 1; else { rq_total_recv = (int)rq_tr; if(total_recv_out) *total_recv_out = rq_total_recv; }
+    if(!aborted) {
+        rq_recv = (struct gx_query_t *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(struct gx_query_t));
+        if(!rq_recv) aborted = 1;
+    }
+    MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bad_any) goto fail;
+    gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
+                              sizeof(struct gx_query_t), MPI_COMM_WORLD);
+    if(t_route_alltoallv) *t_route_alltoallv = timediff(ta0, my_second());
+
+    /* Stage 3: BOUNDED FINE-TREE walk of routed queries per source segment. */
+    tw0 = my_second();
+    matched = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
+    if(!matched) aborted = 1;
+    if(!aborted) {
+        long s_fail = 0, s_sum = 0, s_max = 0;
+        for(int s = 0; s < NTask; s++) {
+            if(s == ThisTask) continue;
+            char *mf = matched + (size_t)s * num_pool;
+            for(int qi = 0; qi < rq_rc[s]; qi++) {
+                const struct gx_query_t *q = &rq_recv[rq_rd[s] + qi];
+                int n_starts = 0;
+                int rcw = gx_walk_fine_tree(q->pos, q->h, search_mode, supply_mask,
+                                            periodic_flags, box_sizes,
+                                            radius_policy, j_scale, safety,
+                                            j_to_pool, jtop_len, num_pool, mf, &n_starts);
+                if(rcw != 0) { s_fail++; continue; }   /* start-derivation unavailable/overflow */
+                s_sum += n_starts;
+                if(n_starts > s_max) s_max = n_starts;
+            }
+        }
+        if(start_fail_out) *start_fail_out = s_fail;
+        if(start_sum_out)  *start_sum_out  = s_sum;
+        if(start_max_out)  *start_max_out  = s_max;
     }
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
@@ -3245,7 +3420,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                                     g_glt_cache.j_radius_scale_when_built,
                                                     g_glt_cache.safety_factor_when_built,
                                                     g_glt_cache.j_to_pool,
-                                                    g_glt_cache.NumPart_when_built, np, m_fine);
+                                                    g_glt_cache.NumPart_when_built, np, m_fine, NULL);
                         if(rcw != 0) { w_fallback++; continue; }   /* start derivation unavailable */
                         wn_q++;
                         for(int p = 0; p < np; p++) {
@@ -3407,6 +3582,180 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             }
         }
         gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_ghost_oracle");
+    }
+
+    /* L3.4 FINE-TREE routed-vs-broadcast GHOST-SET oracle (gated; broadcast stays
+     * AUTHORITATIVE -- compares the BOUNDED FINE-TREE routed producer against the
+     * installed broadcast `matched`, never installs).  Same H4c contract as the BVH
+     * SYMM oracle above, but the routed Stage-3 walk is gx_walk_fine_tree (double
+     * positions, receiver-re-derived starts) instead of the whole-pool BVH.  This is
+     * the cross-rank proof that the bounded fine-tree producer == broadcast set, both
+     * directions, per caller.  All branches gate on reduced/uniform flags; one bad-
+     * stop drain per block. */
+    if(ghost_route_fine_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC && matched) {
+        int fine_skip = 0;
+        /* (a) precondition.  Two distinct outcomes, collective:
+         *   supply view unavailable on ANY rank (cache stale/not built) => benign
+         *     UNAVAILABLE skip (not a bug) — must take precedence so a not-ready rank
+         *     never lets others fatal on a spec compare against an absent cache;
+         *   supply cache present but != THIS caller's spec on any rank => FATAL. */
+        struct gx_supply_pool_view fv;
+        int fnpool = ghost_exchange_supply_pool_view(&fv);
+        int fview_unavail_local = (fnpool < 0) ? 1 : 0;
+        int fprecond_bad_local  = 0;
+        if(fnpool >= 0) {
+            int ok = (fv.numpart_when_built == NumPart)
+                  && (fv.safety_when_built  == safety_factor)
+                  && ((fv.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
+                  && (fv.radius_policy_when_built == (int)spec->radius_policy)
+                  && (fv.j_scale_when_built == spec->j_radius_scale)
+                  && (fv.num_pool == num_pool);
+            fprecond_bad_local = ok ? 0 : 1;
+        }
+        int red_in[2] = { fview_unavail_local, fprecond_bad_local };
+        int red_out[2] = { 0, 0 };
+        MPI_Allreduce(red_in, red_out, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(red_out[0]) {                          /* benign: supply view not ready somewhere */
+            if(ThisTask == 0)
+                printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: supply view not ready (cache stale/not built)]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"));
+            fflush(stdout);
+            fine_skip = 1;
+        } else if(red_out[1]) {                   /* fatal: cache present but != caller spec */
+            if(fprecond_bad_local)
+                printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d PRECONDITION FAIL: supply cache != spec]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask);
+            gizmo_request_controlled_stop(7710, "ghost route FINE ghost-set oracle: supply cache does not correspond to caller spec",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            fine_skip = 1;
+        }
+
+        /* (b) geometry + GLOBAL SYMM band (collective, all-or-none). */
+        int fband_avail = 0, fband_cfail = 0;
+        if(!fine_skip) {
+            int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+            int geom_ok_all = 0;
+            MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            if(geom_ok_all)
+                topleaf_router_band_build_collective(periodic_flags, box_sizes, 0, &fband_avail, &fband_cfail);
+            if(fband_cfail) {
+                gizmo_request_controlled_stop(7709, "ghost route FINE ghost-set oracle: band-build consistency failure",
+                                              __FILE__, __LINE__, __FUNCTION__);
+                fine_skip = 1;
+            } else if(!fband_avail) {
+                if(ThisTask == 0)
+                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: band not built (geometry/supply not ready)]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"));
+                fflush(stdout);
+                fine_skip = 1;
+            }
+        }
+
+        /* (c) fine band valid for THIS caller (the gx_walk_fine_tree node-open SSOT).
+         * Rebuild+verify; consistency bug => fatal, stale/unavailable => collective skip. */
+        if(!fine_skip) {
+            struct gx_fineband_diag ffb;
+            int frc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &ffb);
+            int fbug_local = (frc > 0) ? 1 : 0, fbug_any = 0;
+            int funavail_local = (frc < 0) ? 1 : 0, funavail_any = 0;
+            MPI_Allreduce(&fbug_local,     &fbug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(&funavail_local, &funavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(fbug_any) {
+                gizmo_request_controlled_stop(7714, "ghost route FINE ghost-set oracle: fine-band seeding/propagation consistency bug",
+                                              __FILE__, __LINE__, __FUNCTION__);
+                fine_skip = 1;
+            } else if(funavail_any) {
+                if(ThisTask == 0)
+                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: fine band not fresh -- nothing compared]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"));
+                fflush(stdout);
+                fine_skip = 1;
+            }
+        }
+
+        if(!fine_skip) {
+            /* (d) FINE routed ghost set on the SAME pre-install supply snapshot. */
+            long ffanout_sum = 0, ffanout_max = 0; int frecv_this = 0;
+            long fstart_fail = 0, fstart_sum = 0, fstart_max = 0;
+            double ftc = 0, fta = 0, ftw = 0;
+            char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
+                                       num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
+                                       !ghost_route_flat_forced(),
+                                       g_glt_cache.radius_policy_when_built,
+                                       g_glt_cache.j_radius_scale_when_built,
+                                       g_glt_cache.safety_factor_when_built,
+                                       g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
+                                       &ftc, &fta, &ftw,
+                                       &ffanout_sum, &ffanout_max, &frecv_this,
+                                       &fstart_fail, &fstart_sum, &fstart_max);
+            /* Any cross-rank start-derivation failure => the routed set is incomplete;
+             * a compare would read as false UNDER-ROUTE.  Report loudly + skip the
+             * compare (fail closed, never a silent fallback). */
+            long fstart_fail_any = 0;
+            { long t = fstart_fail; MPI_Allreduce(&t, &fstart_fail_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD); }
+            if(!matched_fine) {
+                if(ThisTask == 0)
+                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: fine routed producer failed collectively]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"));
+                fflush(stdout);
+            } else if(fstart_fail_any > 0) {
+                long fsf_g = 0; { long t = fstart_fail; MPI_Allreduce(&t, &fsf_g, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); }
+                if(ThisTask == 0)
+                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: %ld received queries failed start derivation (overflow/OOB) -- compare skipped]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), fsf_g);
+                fflush(stdout);
+                free(matched_fine);
+            } else {
+                /* (e) EXACT set equality vs broadcast `matched`, both directions. */
+                long n_missing = 0, n_extra = 0;
+                for(int t = 0; t < NTask; t++) {
+                    if(t == ThisTask) continue;
+                    const char *mb = matched      + (size_t)t * num_pool;
+                    const char *mr = matched_fine + (size_t)t * num_pool;
+                    for(int p = 0; p < num_pool; p++) {
+                        if(mb[p] && !mr[p]) n_missing++;       /* fine misses a broadcast ghost -> UNDER-ROUTE */
+                        else if(mr[p] && !mb[p]) n_extra++;    /* fine has an extra match -> predicate/snapshot bug */
+                    }
+                }
+                free(matched_fine);
+                long set_in[2] = { n_missing, n_extra }, set_any[2] = { 0, 0 };
+                MPI_Allreduce(set_in, set_any, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                long fan_in[3]  = { ffanout_sum, (long)n_local_queries, ffanout_max };
+                long fan_sum[3] = { 0, 0, 0 }, fan_max1 = 0;
+                MPI_Allreduce(fan_in, fan_sum, 3, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&ffanout_max, &fan_max1, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                long ss_in[2] = { fstart_sum, fstart_max }, ss_sum = 0, ss_max = 0;
+                MPI_Allreduce(&ss_in[0], &ss_sum, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&ss_in[1], &ss_max, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                long recv_in = frecv_this, recv_sum = 0, recv_max = 0;
+                MPI_Allreduce(&recv_in, &recv_sum, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&recv_in, &recv_max, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                double ftw_max = 0; MPI_Allreduce(&ftw, &ftw_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                if(set_any[0] > 0) {
+                    if(n_missing > 0)
+                        printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d UNDER-ROUTE: %ld broadcast ghosts missing from fine routed]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_missing);
+                    gizmo_request_controlled_stop(7716, "ghost route FINE ghost-set oracle: bounded fine-tree routed set missing broadcast ghosts (UNDER-ROUTE)",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                } else if(set_any[1] > 0) {
+                    if(n_extra > 0)
+                        printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d EXTRA-MATCH: %ld fine routed ghosts not in broadcast (predicate/snapshot mismatch)]\n",
+                               this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_extra);
+                    gizmo_request_controlled_stop(7717, "ghost route FINE ghost-set oracle: bounded fine-tree routed set has matches broadcast lacks (predicate/snapshot bug)",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                } else if(ThisTask == 0) {
+                    double mean_fanout = (fan_sum[1] > 0) ? (double)fan_sum[0] / (double)fan_sum[1] : 0.0;
+                    double mean_starts = (recv_sum > 0)   ? (double)ss_sum / (double)recv_sum : 0.0;
+                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s OK fine_routed==broadcast over %ld queries | "
+                           "fanout owners/query mean=%.2f max=%ld | start-fails=0 starts/recv-query mean=%.2f max=%ld | "
+                           "recv_queries max=%ld | fine-walk=%.4fs | NTask=%d]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), fan_sum[1],
+                           mean_fanout, fan_max1, mean_starts, ss_max, recv_max, ftw_max, NTask);
+                    fflush(stdout);
+                }
+            }
+        }
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:fine_ghost_oracle");
     }
 
     double t_step3_walk = timediff(t_step3_walk_start, my_second());
