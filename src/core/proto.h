@@ -781,11 +781,12 @@ void run(void);
  * failed object, mutating a table/global with the invalid value, or
  * launching invalid device work (else add a tiny local return/break).
  *
- * gizmo_emergency_hold_reviewed() is the SSOT last-resort termination home. As of
- * 2026-06-04 its DEFAULT path no longer calls MPI_Abort (print + best-effort fence
- * + controlled scancel-killable host hold; MPI_Abort only behind the env-gated
- * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG). It is a Vista GPU quarantine, NOT the
- * target -- prefer converting the caller to graceful controlled-stop + poll.
+ * gizmo_fatal_hard_exit_reviewed() (core/gizmo_fatal.cc) is the SSOT last-resort
+ * termination home. Its DEFAULT path is a no-cleanup fail-fast _exit -- NO
+ * MPI_Abort, NO fence, NO finalize, NO hold (the former infinite scancel-wait
+ * hold + device fence was itself a GH200 node-lock amplifier and is retired;
+ * see OPEN_vista_fatal_policy_design). It is a last resort, NOT the target --
+ * prefer converting the caller to graceful controlled-stop + poll.
  * Use ONLY for the rare audited cases where no collective poll
  * is reachable: mid-protocol MPI transport corruption, and residual incidental
  * allocator capacity failures with no preflight coverage. NOTE on allocation:
@@ -810,8 +811,13 @@ const char *gizmo_controlled_stop_local_reason(void);
 int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
-[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+/* Vista never-hang fatal policy (fail-fast, cleanup-forbidden) -- core/gizmo_fatal.{h,cc}. */
+[[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
+[[noreturn]] void gizmo_fatal_fast_exit(int code, const char *reason_static);
+void gizmo_install_fatal_signal_handlers(void);
+void gizmo_install_mpi_error_handler(void);
+void gizmo_mpi_set_failfast_errhandler(MPI_Comm comm);
 void savepositions(int num);
 double my_second(void);
 void set_softenings(void);
@@ -1067,5 +1073,5 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
-void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (emergency-hold path) */
+void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 void gizmo_gpu_sync_all(void);

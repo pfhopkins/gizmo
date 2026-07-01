@@ -44,7 +44,7 @@ int allocate_memory(int do_collective_preflight)
 
   NTaskTimesThreads = maxThreads * NTask;
 
-  /* GRACEFUL-OOM (codex 2026-06-04): allocate_memory() never emergency-holds on a
+  /* GRACEFUL-OOM (codex 2026-06-04): allocate_memory() never fatal hard-exits on a
    * capacity failure -- it requests a SOFT controlled-stop and RETURNS a nonzero code;
    * the caller drains it at its own all-rank poll. do_collective_preflight only selects
    * the arena preflight's fit-check:
@@ -138,7 +138,7 @@ int allocate_memory(int do_collective_preflight)
     }
 
   /* UVM/STL allocation failure handler -- SOFT bad-stop + return for BOTH callers (no
-   * emergency-hold, no MPI here). The caller owns the drain: read_ic's all-rank poll, or
+   * fatal hard-exit, no MPI here). The caller owns the drain: read_ic's all-rank poll, or
    * restart's per-turn poll after it skips this rank's payload reads (goto finish_turn).
    * In every case the poll runs BEFORE any P/CellP is dereferenced, so the NULL arrays
    * here are never read. This is the graceful OOM exit. */

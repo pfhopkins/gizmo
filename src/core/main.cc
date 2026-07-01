@@ -42,6 +42,13 @@ int main(int argc, char **argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &ThisTask);
   MPI_Comm_size(MPI_COMM_WORLD, &NTask);
+  /* Vista never-hang fatal policy: install fail-fast handlers as early as rank is
+     known and BEFORE Kokkos/CUDA init, so an involuntary fault (fabric/UCX abort,
+     signal) or a reported MPI error becomes an immediate no-cleanup _exit rather
+     than an abrupt-kill with a live CUDA context (which wedges GH200 nodes in
+     SLURM CG). See core/gizmo_fatal.h. */
+  gizmo_install_fatal_signal_handlers();
+  gizmo_install_mpi_error_handler();
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
   /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
      On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).

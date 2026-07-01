@@ -22,6 +22,10 @@
 #include <mpi.h>
 #include <stddef.h>
 
+/* Fail-fast SSOT (core/gizmo_fatal.{h,cc}); forward-declared so this header is
+ * self-contained. Matches the core/proto.h declaration. */
+[[noreturn]] void gizmo_fatal_fast_exit(int code, const char *reason_static);
+
 /* sendbuf / recvbuf       — same buffers as MPI_Alltoallv(MPI_BYTE)
  * sendcount[t], recvcount[t]   — element counts (NOT bytes) for peer t
  * senddisp[t], recvdisp[t]     — element displacements (NOT byte offsets)
@@ -41,13 +45,21 @@ static inline void gizmo_mpi_alltoallv_typed(const void *sendbuf,
                                              size_t      elem_size,
                                              MPI_Comm    comm)
 {
+    /* Return-checked: type ops route to MPI_COMM_SELF's errhandler (impl-defined),
+     * so check explicitly and fail-fast on any error -- never continue past a
+     * transport/type failure, never attempt cleanup. Fatal decl in core/proto.h. */
     MPI_Datatype t;
-    MPI_Type_contiguous((int)elem_size, MPI_BYTE, &t);
-    MPI_Type_commit(&t);
-    MPI_Alltoallv((void *)sendbuf, (int *)sendcount, (int *)senddisp, t,
-                  recvbuf,         (int *)recvcount, (int *)recvdisp, t,
-                  comm);
-    MPI_Type_free(&t);
+    int rc;
+    if((rc = MPI_Type_contiguous((int)elem_size, MPI_BYTE, &t)) != MPI_SUCCESS)
+        gizmo_fatal_fast_exit(rc, "gizmo_mpi_alltoallv_typed: MPI_Type_contiguous failed");
+    if((rc = MPI_Type_commit(&t)) != MPI_SUCCESS)
+        gizmo_fatal_fast_exit(rc, "gizmo_mpi_alltoallv_typed: MPI_Type_commit failed");
+    if((rc = MPI_Alltoallv((void *)sendbuf, (int *)sendcount, (int *)senddisp, t,
+                           recvbuf,         (int *)recvcount, (int *)recvdisp, t,
+                           comm)) != MPI_SUCCESS)
+        gizmo_fatal_fast_exit(rc, "gizmo_mpi_alltoallv_typed: MPI_Alltoallv failed");
+    if((rc = MPI_Type_free(&t)) != MPI_SUCCESS)
+        gizmo_fatal_fast_exit(rc, "gizmo_mpi_alltoallv_typed: MPI_Type_free failed");
 }
 
 #endif /* MPI_ALLTOALLV_TYPED_H */

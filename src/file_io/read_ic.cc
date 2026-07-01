@@ -101,7 +101,7 @@ void read_ic(char *fname)
 #endif
 
         /* All-rank preflight + allocate. allocate_memory(1) sets a SOFT bad-stop (not an
-         * emergency-hold) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena
+         * fatal hard-exit) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena
          * preflight (it is now in an all-rank phase). The poll below reconciles any of these
          * across ranks and finalizes cleanly BEFORE any P/CellP/CommBuffer is dereferenced. */
         (void) allocate_memory(1);

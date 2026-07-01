@@ -853,7 +853,7 @@ int force_exchange_pseudodata_complete(void)
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
      * double-complete): symmetric control-flow invariant. Soft bad-stop + status-return
      * (1) so the caller skips the foreign-moment scatter/finalize/resum -- which would run
-     * on un-exchanged moments and could itself emergency-hold in let_finalize -- and
+     * on un-exchanged moments and could itself fatal hard-exit in let_finalize -- and
      * drains at the next poll. */
     if(DomainMoment_pending == NULL) {endrun(90000076); return 1;}
     struct DomainNODE *DomainMoment = DomainMoment_pending;

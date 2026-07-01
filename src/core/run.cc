@@ -139,79 +139,11 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
     exit(1);                  /* small fixed nonzero; full code/reason printed above */
 }
 
-/* ---------------------------------------------------------------------------
- * Reviewed emergency HOLD — SSOT last-resort termination. The DEFAULT path does
- * NOT call MPI_Abort (it wedges GPU nodes -> SLURM CG-stuck); MPI_Abort survives
- * only behind the env-gated GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG branch.
- *
- * Use ONLY where a graceful bad-stop cannot reach a collective poll: mid-protocol
- * MPI transport corruption; residual allocator capacity floors with no preflight;
- * and myrealloc* invariants (a bad-stop+return would hand back a falsely-resized
- * buffer until the domain.cc / mpi_util.cc callers are guarded). NOT large
- * symmetric allocations (caller-side preflight) and NOT myfree* invariants
- * (bad-stop + local return, safe to drain).
- *
- * Default: print an actionable diagnostic (incl. `scancel`), best-effort device
- * fence, then a controlled host hold with no further MPI -- every rank stays
- * scancel-killable instead of MPI_Abort-wedging. Always prefer converting the
- * CALLING site to gizmo_request_controlled_stop() + a phase-boundary poll. Env:
- * GIZMO_EMERGENCY_HOLD_USE_STD_EXIT, GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE,
- * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG.
- * ------------------------------------------------------------------------- */
-[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
-                                            const char *file, int line, const char *func)
-{
-    char buf[MAX_PATH_BUFFERSIZE_TOUSE];
-    snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE,
-             "EMERGENCY HOLD (reviewed, NO MPI_Abort) on task=%d, function '%s()', file '%s', "
-             "line %d: code %d: %s\n",
-             ThisTask, func ? func : "(?)", file ? file : "(?)", line, code,
-             reason ? reason : "(no reason given)");
-    fflush(stdout);
-    printf("%s", buf);
-    printf("  This rank cannot drain to an all-rank poll; the run is INTENTIONALLY HALTED to\n"
-           "  avoid an MPI_Abort GPU-node wedge. Release the allocation with:  scancel $SLURM_JOB_ID\n");
-    fflush(stdout);
-
-    /* Best-effort device drain so we halt in a cleanly-killable host state. Env-skippable in
-     * case a broken device makes the fence itself hang. */
-    if(getenv("GIZMO_EMERGENCY_HOLD_SKIP_KOKKOS_FENCE") == NULL) { gizmo_kokkos_fence(); }
-
-    /* TEST MODE (Vista de-wedge experiment, default OFF): clean libc exit, no MPI_Abort -- this
-     * is AthenaK's standard per-site fatal pattern (print + std::exit(EXIT_FAILURE)). If a Vista
-     * test shows single-rank exit releases the node cleanly, this can replace the hold below. */
-    if(getenv("GIZMO_EMERGENCY_HOLD_USE_STD_EXIT") != NULL) {
-        printf("  [GIZMO_EMERGENCY_HOLD_USE_STD_EXIT] exiting via exit(EXIT_FAILURE)\n");
-        fflush(stdout);
-        exit(EXIT_FAILURE);
-    }
-
-    /* DEBUG ONLY, explicitly UNSAFE (default OFF): the old MPI_Abort path. Known to wedge GPU
-     * nodes on Vista (SLURM CG-stuck). Use only for local crash/core-dump debugging. */
-    if(getenv("GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG") != NULL) {
-        printf("  [GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG] calling MPI_Abort (UNSAFE on GPU nodes)\n");
-        fflush(stdout);
-        MPI_Abort(MPI_COMM_WORLD, code);
-        exit(code ? code : 1);  /* defensive: MPI_Abort must not return */
-    }
-
-    /* DEFAULT: controlled host hold. NO further MPI calls (MPI may itself be the corrupt
-     * subsystem here). Peers block at their next collective (MPI_Wait -- killable); a single
-     * `scancel $SLURM_JOB_ID` then tears the whole job down cleanly, WITHOUT the MPI_Abort
-     * node-wedge. Sparse heartbeat so this reads as an intentional hold, not a silent stall.
-     *
-     * THIS IS NOT NORMAL FATAL-EXIT DESIGN and NOT a reference-code pattern (AthenaK uses
-     * print+exit, SPH-EXA/Shamrock use exceptions; none sleep). It is a last-resort Vista GPU
-     * quarantine for sites not yet proven to reach a clean controlled-stop drain. The target is
-     * always to convert the CALLING site to graceful gizmo_request_controlled_stop + the
-     * phase-boundary poll. See OPEN_endrun_audit_memo / STATE_2026-06-04_stage4_pass_a §9a. */
-    for(long long held_min = 5; ; held_min += 5) {
-        sleep(300);
-        printf("  [EMERGENCY HOLD ~%lld min] task=%d code=%d at %s:%d -- scancel $SLURM_JOB_ID to release\n",
-               held_min, ThisTask, code, file ? file : "(?)", line);
-        fflush(stdout);
-    }
-}
+/* The reviewed last-resort termination (formerly gizmo_emergency_hold_reviewed,
+ * an infinite scancel-wait hold + device fence -- itself a GH200 node-lock
+ * amplifier) is now gizmo_fatal_hard_exit_reviewed in core/gizmo_fatal.cc: a
+ * no-cleanup fail-fast _exit. This function's graceful (collective) counterpart
+ * gizmo_exit_bad_stop_if_requested() above is the ONLY path that finalizes. */
 
 
 /*! This routine contains the main simulation loop that iterates over
