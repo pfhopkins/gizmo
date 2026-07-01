@@ -185,6 +185,14 @@ int gpu_gravity_tree_valid(void);
 int gpu_force_drift_nodes(integertime time1);
 void gpu_force_drift_release(void);
 
+/* L4 S2b-1: certify the SoA node geometry is drifted to `ti` (drifting if needed).
+ * Returns 1 if certified current, 0 if UNAVAILABLE (SoA absent/unusable/undriftable
+ * -> caller uses authoritative broadcast, never an alternate tree).  Owned here (the
+ * SoA owner) so it is independent of the gravity force walk (works SELFGRAVITY_OFF
+ * too when force_treebuild populated a usable SoA).  Stamp keyed on ti + treebuild
+ * generation; invalidated on SoA realloc/free/rebuild. */
+int gpu_gravity_soa_ensure_drifted(integertime time1);
+
 /* Phase 6.2: GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
  * payloads) directly on the device, using dependency-counter atomics on

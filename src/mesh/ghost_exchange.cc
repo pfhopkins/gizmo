@@ -43,6 +43,7 @@
 #include "ghost_exchange_spec.h"
 #include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 #include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
+#include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
 
 /*
  * ============================================================================
@@ -765,18 +766,25 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
     key.hmax_refresh_gen = force_hmax_refresh_generation();
     key.ti               = (long long)All.Ti_Current;
     key.pool_ti          = (long long)g_fineband.pool_ti;
-    key.soa_drift_ti     = GX_FINE_SIDECAR_SOA_DRIFT_UNCERTIFIED;   /* fails closed until Step 3 */
+    /* S2b-1: certify the device gravity-SoA node geometry is drifted to the current
+     * Ti (drifts if needed).  Certified => the sidecar may be trusted for the device
+     * walk; UNAVAILABLE => fail closed (broadcast authoritative).  Opportunistic: this
+     * may certify even under SELFGRAVITY_OFF iff force_treebuild populated a usable SoA. */
+    int drift_certified  = gpu_gravity_soa_ensure_drifted(All.Ti_Current);
+    key.soa_drift_ti     = drift_certified ? (long long)All.Ti_Current
+                                           : GX_FINE_SIDECAR_SOA_DRIFT_UNCERTIFIED;
 
     int up_rc = alloc_ok ? gpu_fine_sidecar_upload(sx, sy, sz, sh, st, num_pool,
                                                    g_glt_cache.j_to_pool, numpart,
                                                    g_fineband.band, band_len, &key)
                          : -99;
 
-    /* Fail-closed proof: even a byte-perfect upload must NOT be trusted for the
-     * device walk while the SoA-drift stamp is uncertified.  is_valid() must reject
-     * this key (soa_drift_ti == UNCERTIFIED); if it validates, the fail-closed guard
-     * is broken (a real bug — Step 3 would trust un-drift-certified geometry). */
-    int drift_guard_bug = (up_rc == 0 && gpu_fine_sidecar_is_valid(&key)) ? 1 : 0;
+    /* Fail-closed guard proof: is_valid() must reflect the drift certification EXACTLY
+     * — accept iff certified, reject iff uncertified.  A mismatch means the fail-closed
+     * gate is broken (the device walk would trust un-drift-certified geometry, or refuse
+     * a legitimately-current one). */
+    int drift_guard_bug = (up_rc == 0 &&
+                           (gpu_fine_sidecar_is_valid(&key) ? 1 : 0) != (drift_certified ? 1 : 0)) ? 1 : 0;
 
     /* Readback + compare against a FRESH host DOUBLE reference (never float compact). */
     long mism_supply = 0, mism_j2p = 0, mism_band = 0;
@@ -812,14 +820,15 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
     /* Rank-uniform reduce: any upload/readback failure, drift-guard breach, or
      * mismatch is loud. */
     long mism_local = mism_supply + mism_j2p + mism_band, mism_any = 0;
-    int  fail_any = 0, drift_bug_any = 0;
+    int  fail_any = 0, drift_bug_any = 0, drift_all = 0;
     MPI_Allreduce(&mism_local,     &mism_any,      1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&readback_fail,  &fail_any,      1, MPI_INT,  MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&drift_guard_bug,&drift_bug_any, 1, MPI_INT,  MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&drift_certified,&drift_all,     1, MPI_INT,  MPI_MIN, MPI_COMM_WORLD);   /* 1 iff ALL ranks certified */
     if(drift_bug_any) {
         if(drift_guard_bug)
-            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s rank=%d DRIFT-GUARD BREACH: is_valid accepted an uncertified sidecar]\n",
-                   this_call, cname, ThisTask);
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s rank=%d DRIFT-GUARD BREACH: is_valid disagrees with drift certification (certified=%d)]\n",
+                   this_call, cname, ThisTask, drift_certified);
         fflush(stdout);
         gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: fail-closed drift guard did not reject uncertified sidecar",
                                       __FILE__, __LINE__, __FUNCTION__);
@@ -845,8 +854,11 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
     }
     if(ThisTask == 0) {
         long long np_g = 0; { long long t = num_pool; MPI_Reduce(&t, &np_g, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD); }
-        printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s OK: device==host num_pool_g=%lld band_len=%ld]\n",
-               this_call, cname, np_g, band_len);
+        /* drift=CERTIFIED means every rank certified the SoA geometry at this Ti (the
+         * sidecar is is_valid-trusted for the device walk); UNCERTIFIED means at least
+         * one rank fell back (broadcast authoritative for that rank) — both are OK. */
+        printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s OK: device==host num_pool_g=%lld band_len=%ld drift=%s]\n",
+               this_call, cname, np_g, band_len, drift_all ? "CERTIFIED" : "UNCERTIFIED");
         fflush(stdout);
     } else {
         long long t = num_pool, np_g = 0; MPI_Reduce(&t, &np_g, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
