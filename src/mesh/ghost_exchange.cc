@@ -501,6 +501,21 @@ static int ghost_route_fineband_walk_oracle_enabled(void)
     enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
     return enabled;
 }
+/* L4 S2b-2 gate: the DEVICE bounded fine-tree walk (Kokkos twin of gx_walk_fine_tree
+ * over the gravity SoA + sidecar) vs the HOST fine-tree walk, EXACT both-direction
+ * per-query compare.  Runs INSIDE the fine-band walk oracle (so the host walk is
+ * proven == brute FIRST) and gates on the collective drift certification + sidecar
+ * validity.  Broadcast stays authoritative; the device set is compared, never
+ * installed.  Temporary validation scaffolding (teardown ledger §39). */
+static int ghost_fine_devwalk_oracle_enabled(void)
+{
+    static int initialized = 0, enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_FINE_DEVWALK_ORACLE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
 /* L3.4 cross-rank ghost-set gate: the bounded fine-tree ROUTED producer
  * (gx_walk_fine_tree on received queries) vs the authoritative BROADCAST set,
  * EXACT both-direction compare per caller.  Broadcast stays authoritative; the
@@ -702,39 +717,22 @@ static int ghost_fine_sidecar_oracle_enabled(void)
     return enabled;
 }
 
-static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, int this_call,
-                                      unsigned int desired_pool_mask, double safety_factor)
+/* S2b-2b: single shared SSOT stager for the device fine-sidecar substrate.  Stages
+ * the double supply arrays from the live SSOTs ONLY (P[j].Pos, gx_policy_scaled_h,
+ * P[j].Type over v->pool; g_glt_cache.j_to_pool; g_fineband.band), builds the
+ * freshness key, certifies gravity-SoA drift, and uploads to the device sidecar.
+ * Returns the upload rc (0 ok; <0 fail; -99 host-alloc fail) and fills *key_out +
+ * *drift_certified_out.  No caching, no per-rank skip — every rank stages+uploads
+ * identically (num_pool differs per rank, but the collective all-or-none reduces
+ * live in the callers).  Both the S2a readback oracle and the S2b-2 device-walk
+ * oracle call this so the staged substrate is one truth. */
+static int gx_fine_sidecar_stage_and_upload(const struct ghost_exchange_spec_t *spec,
+                                            double safety_factor,
+                                            const struct gx_supply_pool_view *v, int num_pool,
+                                            long band_len, int numpart,
+                                            struct gx_fine_sidecar_key_t *key_out,
+                                            int *drift_certified_out)
 {
-    const char *cname = spec->caller_name ? spec->caller_name : "?";
-
-    /* Build/verify the SSOT band first (populates g_fineband + validates the
-     * supply pool corresponds to this caller).  Same all-or-none gating as the
-     * fine-band oracle so every rank takes the same collective path. */
-    struct gx_fineband_diag fb;
-    int rc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &fb);
-    int bug_local = (rc > 0) ? 1 : 0, bug_any = 0;
-    int unavail_local = (rc < 0) ? 1 : 0, unavail_any = 0;
-    MPI_Allreduce(&bug_local,     &bug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&unavail_local, &unavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(bug_any) {
-        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: fine-band build consistency bug",
-                                      __FILE__, __LINE__, __FUNCTION__);
-        return;
-    }
-    if(unavail_any) {
-        if(ThisTask == 0)
-            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s UNAVAILABLE: supply/tree not fresh]\n", this_call, cname);
-        fflush(stdout);
-        return;
-    }
-
-    /* Supply pool view (owned-local supply this caller matches against). */
-    struct gx_supply_pool_view v;
-    int num_pool = ghost_exchange_supply_pool_view(&v);
-    long band_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
-    int  numpart  = NumPart;
-
-    /* Host double staging (SSOT: position + reach + type from one live particle). */
     double *sx = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
     double *sy = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
     double *sz = (double *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(double));
@@ -743,7 +741,7 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
     int alloc_ok = (sx && sy && sz && sh && st);
     if(alloc_ok) {
         for(int p = 0; p < num_pool; p++) {
-            int j = v.pool[p];
+            int j = v->pool[p];
             sx[p] = P[j].Pos[0]; sy[p] = P[j].Pos[1]; sz[p] = P[j].Pos[2];
             sh[p] = gx_policy_scaled_h(j, spec->radius_policy, spec->j_radius_scale, safety_factor);
             st[p] = (int)P[j].Type;
@@ -778,6 +776,52 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
                                                    g_glt_cache.j_to_pool, numpart,
                                                    g_fineband.band, band_len, &key)
                          : -99;
+    free(sx); free(sy); free(sz); free(sh); free(st);
+
+    if(key_out)            *key_out = key;
+    if(drift_certified_out) *drift_certified_out = drift_certified;
+    return up_rc;
+}
+
+static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, int this_call,
+                                      unsigned int desired_pool_mask, double safety_factor)
+{
+    const char *cname = spec->caller_name ? spec->caller_name : "?";
+
+    /* Build/verify the SSOT band first (populates g_fineband + validates the
+     * supply pool corresponds to this caller).  Same all-or-none gating as the
+     * fine-band oracle so every rank takes the same collective path. */
+    struct gx_fineband_diag fb;
+    int rc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &fb);
+    int bug_local = (rc > 0) ? 1 : 0, bug_any = 0;
+    int unavail_local = (rc < 0) ? 1 : 0, unavail_any = 0;
+    MPI_Allreduce(&bug_local,     &bug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&unavail_local, &unavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(bug_any) {
+        gizmo_request_controlled_stop(7718, "ghost fine-sidecar oracle: fine-band build consistency bug",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(unavail_any) {
+        if(ThisTask == 0)
+            printf("[GX_FINE_SIDECAR_ORACLE call=%d caller=%s UNAVAILABLE: supply/tree not fresh]\n", this_call, cname);
+        fflush(stdout);
+        return;
+    }
+
+    /* Supply pool view (owned-local supply this caller matches against). */
+    struct gx_supply_pool_view v;
+    int num_pool = ghost_exchange_supply_pool_view(&v);
+    long band_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
+    int  numpart  = NumPart;
+
+    /* Stage + upload the device sidecar substrate via the single shared SSOT stager
+     * (the same helper the S2b-2 device-walk oracle uses).  Certifies drift + builds
+     * the freshness key; returns the upload rc. */
+    struct gx_fine_sidecar_key_t key;
+    int drift_certified = 0;
+    int up_rc = gx_fine_sidecar_stage_and_upload(spec, safety_factor, &v, num_pool,
+                                                 band_len, numpart, &key, &drift_certified);
 
     /* Fail-closed guard proof: is_valid() must reflect the drift certification EXACTLY
      * — accept iff certified, reject iff uncertified.  A mismatch means the fail-closed
@@ -815,7 +859,6 @@ static void ghost_fine_sidecar_oracle(const struct ghost_exchange_spec_t *spec, 
         }
     }
     free(rsx); free(rsy); free(rsz); free(rsh); free(rst); free(rj); free(rb);
-    free(sx);  free(sy);  free(sz);  free(sh);  free(st);
 
     /* Rank-uniform reduce: any upload/readback failure, drift-guard breach, or
      * mismatch is loud. */
@@ -2199,22 +2242,16 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
     }
 }
 
-/* Conservative sphere-vs-node-cube overlap (cube bounded by its half-diagonal
- * sphere len*sqrt(3)/2) — mirrors mode_b_local_walker.cc:sphere_aabb_overlap but
- * with the receiver's explicit periodic convention.  Over-opens; the exact filter
- * is gx_pair_accept at the leaf. */
+/* Conservative sphere-vs-node-cube overlap — trivial pass-through to the shared
+ * scalar predicate gx_node_sphere_overlap_center_len (ghost_exchange_functions.h),
+ * the SSOT the device fine-tree walk also uses.  Extracts Nodes[] center/len here so
+ * the shared helper stays geometry-only (no NODE/globals). */
 static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NODE *nop, double R,
                                          const int periodic_flags[3], const double box_sizes[3])
 {
-    double dx = (double)nop->center[0] - pos_q[0];
-    double dy = (double)nop->center[1] - pos_q[1];
-    double dz = (double)nop->center[2] - pos_q[2];
-    if(periodic_flags[0]) { double b=box_sizes[0], h=0.5*b; if(dx>h) dx-=b; else if(dx<-h) dx+=b; }
-    if(periodic_flags[1]) { double b=box_sizes[1], h=0.5*b; if(dy>h) dy-=b; else if(dy<-h) dy+=b; }
-    if(periodic_flags[2]) { double b=box_sizes[2], h=0.5*b; if(dz>h) dz-=b; else if(dz<-h) dz+=b; }
-    const double SQRT3_OVER_2 = 0.86602540378443864676;
-    double r_max = R + (double)nop->len * SQRT3_OVER_2;
-    return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
+    return gx_node_sphere_overlap_center_len(pos_q, (double)nop->center[0], (double)nop->center[1],
+                                             (double)nop->center[2], (double)nop->len, R,
+                                             periodic_flags, box_sizes);
 }
 
 /* L3.3 bounded fine-tree receiver walk (Candidate L).  For ONE received query,
@@ -3645,6 +3682,177 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                            this_call, (spec->caller_name ? spec->caller_name : "?"),
                            wq_g, fmiss_g, fxtra_g, wfb_g);
                     fflush(stdout);
+                }
+                /* S2b-2c: DEVICE bounded fine-tree walk vs the HOST fine-tree walk,
+                 * EXACT per-query both-direction compare.  Runs only after the host walk
+                 * is proven == brute (wbug_any==0) and gates on the COLLECTIVE drift
+                 * certification + sidecar validity (all-or-none).  Broadcast authoritative;
+                 * the device set is compared, never installed.  All MPI reductions live
+                 * OUTSIDE the rank-varying batch loop. */
+                if(ghost_fine_devwalk_oracle_enabled() && wbug_any == 0) {
+                    struct gx_supply_pool_view v;
+                    int  dnp = ghost_exchange_supply_pool_view(&v);
+                    long dband_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
+                    struct gx_fine_sidecar_key_t dkey;
+                    int  drift_certified = 0;
+                    /* spec->* == g_glt_cache.*_when_built here (cache-validity contract), so the
+                     * staged device reach == the host fine walk leaf reach by construction. */
+                    int  up_rc = gx_fine_sidecar_stage_and_upload(spec, safety_factor, &v, dnp,
+                                                                  dband_len, NumPart, &dkey, &drift_certified);
+                    int  sc_valid = (up_rc == 0 && gpu_fine_sidecar_is_valid(&dkey)) ? 1 : 0;
+                    int  avail_local = (sc_valid && drift_certified && dnp > 0) ? 1 : 0, avail_all = 0;
+                    MPI_Allreduce(&avail_local, &avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+                    if(!avail_all) {
+                        if(ThisTask == 0)
+                            printf("[GX_FINE_DEVWALK call=%d caller=%s UNAVAILABLE: drift/sidecar not certified on all ranks]\n",
+                                   this_call, (spec->caller_name ? spec->caller_name : "?"));
+                        fflush(stdout);
+                    } else {
+                        const int d_oneway = (search_mode == NGB_SEARCH_ONEWAY);
+                        const unsigned int topflag = (1u << BITFLAG_TOPLEVEL);
+                        const int dnum_local = ghost_get_num_local();
+                        /* Memory-capped batching: bound device+host scratch to CAP bytes. */
+                        const long GX_DEVWALK_CAP_BYTES = 32L * 1024 * 1024;
+                        int batch_n = (int)(GX_DEVWALK_CAP_BYTES / (long)(dnp > 0 ? dnp : 1));
+                        if(batch_n > 4096) batch_n = 4096;
+                        if(batch_n < 1)    batch_n = 1;
+                        double *bq_pos   = (double *) malloc((size_t)batch_n * 3 * sizeof(double));
+                        double *bq_h     = (double *) malloc((size_t)batch_n * sizeof(double));
+                        int    *bq_soff  = (int *)    malloc((size_t)(batch_n + 1) * sizeof(int));
+                        char   *bq_valid = (char *)   malloc((size_t)batch_n);
+                        char   *host_mf  = (char *)   malloc((size_t)batch_n * (dnp > 0 ? dnp : 1));
+                        char   *dev_mf   = (char *)   malloc((size_t)batch_n * (dnp > 0 ? dnp : 1));
+                        int    *bq_starts = NULL; long bq_starts_cap = 0;
+                        int  alloc_ok = (bq_pos && bq_h && bq_soff && bq_valid && host_mf && dev_mf);
+                        long dev_miss = 0, dev_xtra = 0, q_compared = 0;
+                        long pseudo_tot = 0, foreign_tot = 0, badidx_tot = 0;
+                        int  walk_fail = alloc_ok ? 0 : 1;
+                        if(alloc_ok) {
+                            for(int b = 0; b < n_local_queries; b += batch_n) {
+                                int bn = n_local_queries - b; if(bn > batch_n) bn = batch_n;
+                                long soff_len = 0;
+                                for(int k = 0; k < bn; k++) {
+                                    int qi = b + k;
+                                    const double *qp = local_queries[qi].pos;
+                                    double qh = local_queries[qi].h;
+                                    bq_pos[k*3+0] = qp[0]; bq_pos[k*3+1] = qp[1]; bq_pos[k*3+2] = qp[2];
+                                    bq_h[k] = qh;
+                                    bq_soff[k] = (int)soff_len;
+                                    memset(host_mf + (long)k * dnp, 0, (size_t)dnp);
+                                    int tmpstarts[4096]; int n_starts = 0;
+                                    int src = topleaf_router_local_starts_for_query(qp, qh, supply_mask, d_oneway,
+                                                                                    periodic_flags, box_sizes, ThisTask,
+                                                                                    tmpstarts, 4096, &n_starts);
+                                    if(src == 0) {
+                                        long need = soff_len + n_starts;
+                                        if(need > bq_starts_cap) {
+                                            long ncap = (bq_starts_cap > 0) ? bq_starts_cap * 2 : 4096;
+                                            while(ncap < need) ncap *= 2;
+                                            int *rp = (int *) realloc(bq_starts, (size_t)ncap * sizeof(int));
+                                            if(!rp) { walk_fail = 1; bq_valid[k] = 0; break; }
+                                            bq_starts = rp; bq_starts_cap = ncap;
+                                        }
+                                        memcpy(bq_starts + soff_len, tmpstarts, (size_t)n_starts * sizeof(int));
+                                        soff_len += n_starts;
+                                        int rcw = gx_walk_fine_tree(qp, qh, search_mode, supply_mask,
+                                                                    periodic_flags, box_sizes,
+                                                                    g_glt_cache.radius_policy_when_built,
+                                                                    g_glt_cache.j_radius_scale_when_built,
+                                                                    g_glt_cache.safety_factor_when_built,
+                                                                    g_glt_cache.j_to_pool,
+                                                                    g_glt_cache.NumPart_when_built, dnp,
+                                                                    host_mf + (long)k * dnp, NULL);
+                                        bq_valid[k] = (rcw == 0) ? 1 : 0;
+                                    } else {
+                                        bq_valid[k] = 0;   /* start-derive fallback -> not compared (host falls back too) */
+                                    }
+                                }
+                                if(walk_fail) break;
+                                bq_soff[bn] = (int)soff_len;
+                                long ps = 0, fn = 0, bi = 0;
+                                int wrc = gpu_fine_sidecar_walk(bq_pos, bq_h, bn, bq_soff, bq_starts, soff_len,
+                                                                search_mode, supply_mask, periodic_flags, box_sizes,
+                                                                topflag, FINEBAND_NTYPES, TILE_NUM_PTYPES,
+                                                                All.MaxPart, MaxNodes, MaxForeignNodes, dnum_local,
+                                                                NumPart, g_fineband.nnodes,
+                                                                dev_mf, &ps, &fn, &bi);
+                                if(wrc != 0) { walk_fail = 1; break; }
+                                pseudo_tot += ps; foreign_tot += fn; badidx_tot += bi;
+                                /* Compare this batch ONLY if fully clean.  A pseudo/foreign/bad-index
+                                 * hit means the device deliberately stopped those queries early, so
+                                 * their dev_mf is INCOMPLETE -- comparing would fabricate dev_miss.
+                                 * Such calls are resolved as UNAVAILABLE / hard-stop in the decision
+                                 * order below, never as a fake device!=host mismatch. */
+                                if(ps == 0 && fn == 0 && bi == 0) {
+                                    for(int k = 0; k < bn; k++) {
+                                        if(!bq_valid[k]) continue;
+                                        const char *hr = host_mf + (long)k * dnp;
+                                        const char *dr = dev_mf  + (long)k * dnp;
+                                        for(int p = 0; p < dnp; p++) {
+                                            if(hr[p] && !dr[p]) dev_miss++;
+                                            if(dr[p] && !hr[p]) dev_xtra++;
+                                        }
+                                        q_compared++;
+                                    }
+                                }
+                            }
+                        }
+                        free(bq_pos); free(bq_h); free(bq_soff); free(bq_valid);
+                        free(host_mf); free(dev_mf); free(bq_starts);
+
+                        long mm_local = dev_miss + dev_xtra, mm_any = 0;
+                        long bi_local = badidx_tot, bi_any = 0;
+                        long pf_local = pseudo_tot + foreign_tot, pf_any = 0;
+                        int  wf_any = 0;
+                        long long qc_g = 0;
+                        MPI_Allreduce(&mm_local,  &mm_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                        MPI_Allreduce(&bi_local,  &bi_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                        MPI_Allreduce(&pf_local,  &pf_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                        MPI_Allreduce(&walk_fail, &wf_any, 1, MPI_INT,  MPI_MAX, MPI_COMM_WORLD);
+                        { long long t = q_compared; MPI_Allreduce(&t, &qc_g, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD); }
+                        /* Decision order: bad-index (hard stop, index-convention bug) -> walk_fail
+                         * (UNAVAILABLE) -> pseudo/foreign (UNAVAILABLE, unsupported path reached) ->
+                         * true device!=host (hard stop) -> OK/SKIP.  pseudo/foreign/bad-index batches
+                         * were NOT compared above, so mm_* is a clean-batch mismatch only. */
+                        if(bi_any > 0) {
+                            if(bi_local > 0)
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s rank=%d BAD-INDEX: bad_index=%ld (SoA index-convention bug)]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, badidx_tot);
+                            fflush(stdout);
+                            gizmo_request_controlled_stop(7719, "ghost fine-tree DEVICE walk oracle: device walk out-of-range SoA index (bad-index tripwire)",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(wf_any) {
+                            if(ThisTask == 0)
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s UNAVAILABLE: device walk/scratch failed on a rank]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"));
+                            fflush(stdout);
+                        } else if(pf_any > 0) {
+                            /* Not a mismatch: the TOPLEVEL-bounded local-start walk was expected never
+                             * to reach pseudo/foreign nodes.  Declare UNAVAILABLE (broadcast
+                             * authoritative) and surface -- the "unreachable" assumption would be false. */
+                            if(pf_local > 0)
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s rank=%d UNAVAILABLE: pseudo=%ld foreign=%ld reached from a local start]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask,
+                                       pseudo_tot, foreign_tot);
+                            fflush(stdout);
+                        } else if(mm_any > 0) {
+                            if(mm_local > 0)
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s rank=%d DEVICE!=HOST: dev_miss=%ld dev_xtra=%ld over %ld queries]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask,
+                                       dev_miss, dev_xtra, q_compared);
+                            fflush(stdout);
+                            gizmo_request_controlled_stop(7719, "ghost fine-tree DEVICE walk oracle: device walk != host fine-tree walk",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(ThisTask == 0) {
+                            if(qc_g > 0)
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s OK: device==host_fine over %lld queries (pseudo=0 foreign=0 bad_index=0)]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"), qc_g);
+                            else
+                                printf("[GX_FINE_DEVWALK call=%d caller=%s SKIP: 0 queries compared]\n",
+                                       this_call, (spec->caller_name ? spec->caller_name : "?"));
+                            fflush(stdout);
+                        }
+                    }
                 }
             }
         }

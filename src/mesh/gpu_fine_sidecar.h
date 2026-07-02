@@ -80,6 +80,35 @@ int gpu_fine_sidecar_readback(double *sx, double *sy, double *sz, double *sh,
                               int *j_to_pool, int numpart,
                               double *band, long band_len);
 
+/* S2b-2c: device bounded fine-tree walk = Kokkos twin of host gx_walk_fine_tree
+ * (ghost_exchange.cc) over the gravity SoA geometry + this sidecar's supply/band
+ * arrays.  ONE device thread per query; per-query stackless DFS from the host-derived
+ * start nodes (starts_off/starts CSR), stopping at the TOPLEVEL boundary, opening
+ * nodes by the supply-mask-reduced fine band, accepting supply particles via the
+ * SHARED gx_pair_accept.  Writes matched_out[nq*num_pool] (1 = query qi matched pool
+ * slot p).  Positions/reach are DOUBLE (sidecar SSOT); geometry is read from the
+ * drift-certified SoA (caller MUST have certified drift + sidecar validity first).
+ *
+ * PSEUDO/FOREIGN are NOT continued this step (§47): reaching a pseudo or foreign node
+ * from a local start stops that query and bumps the matching counter; the caller
+ * treats any pseudo/foreign hit as UNAVAILABLE (broadcast authoritative), and any
+ * bad_index hit as a hard stop.  All three counters are expected 0.
+ *
+ * Returns 0 on success; <0 if the sidecar is invalid, the gravity SoA is
+ * absent/unusable, or device scratch allocation failed (caller => UNAVAILABLE).
+ * num_pool is taken from the last successful upload (matched_out must be sized
+ * nq*num_pool).  Oracle-only; the caller bounds nq so nq*num_pool stays within the
+ * device scratch cap. */
+int gpu_fine_sidecar_walk(const double *q_pos, const double *q_h, int nq,
+                          const int *starts_off, const int *starts, long starts_len,
+                          int search_mode, unsigned int supply_mask,
+                          const int periodic_flags[3], const double box_sizes[3],
+                          unsigned int topflag_mask, int fineband_ntypes, int num_ptypes,
+                          int maxpart, int maxnodes, int maxforeign, int num_local,
+                          int numpart, int nnodes,
+                          char *matched_out,
+                          long *pseudo_hits, long *foreign_node_visits, long *bad_index_hits);
+
 #ifdef __cplusplus
 }
 #endif

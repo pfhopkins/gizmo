@@ -66,4 +66,32 @@ int gx_pair_accept(const double pos_q[3], double h_q,
     return r2 < thresh2;
 }
 
+/* Conservative sphere-vs-node-cube overlap: query sphere of radius R vs the node
+ * cube bounded by its half-diagonal sphere (len*sqrt(3)/2).  Over-opens; the exact
+ * filter is gx_pair_accept at the leaf.  Geometry ONLY — scalar center/len in, no
+ * NODE/globals/P[]/Nodes[] — so host (tree-owner) and device (SoA) callers share one
+ * predicate.  Host wrappers pass Nodes[no].center[]/len; device passes soa->center/len.
+ *   pos_q[3]        query position
+ *   cx,cy,cz        node geometric center
+ *   len             node sidelength
+ *   R               query search radius (already band-reduced by the caller)
+ *   periodic_flags  per-axis 0/1 wrap flag
+ *   box_sizes       per-axis box length (used only where periodic_flags set) */
+GX_EXCHANGE_INLINE
+int gx_node_sphere_overlap_center_len(const double pos_q[3],
+                                      double cx, double cy, double cz, double len, double R,
+                                      const int periodic_flags[3],
+                                      const double box_sizes[3])
+{
+    double dx = cx - pos_q[0];
+    double dy = cy - pos_q[1];
+    double dz = cz - pos_q[2];
+    if(periodic_flags[0]) { double b=box_sizes[0], h=0.5*b; if(dx>h) dx-=b; else if(dx<-h) dx+=b; }
+    if(periodic_flags[1]) { double b=box_sizes[1], h=0.5*b; if(dy>h) dy-=b; else if(dy<-h) dy+=b; }
+    if(periodic_flags[2]) { double b=box_sizes[2], h=0.5*b; if(dz>h) dz-=b; else if(dz<-h) dz+=b; }
+    const double SQRT3_OVER_2 = 0.86602540378443864676;
+    double r_max = R + len * SQRT3_OVER_2;
+    return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
+}
+
 #endif /* GIZMO_GHOST_EXCHANGE_FUNCTIONS_H */
