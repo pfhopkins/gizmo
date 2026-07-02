@@ -2877,7 +2877,12 @@ static char *compute_matched_routed_fine(
     const int *j_to_pool, int jtop_len,
     double *t_route_construct, double *t_route_alltoallv, double *t_route_walk,
     long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out,
-    long *start_fail_out, long *start_sum_out, long *start_max_out)
+    long *start_fail_out, long *start_sum_out, long *start_max_out,
+    /* S4 optional DEVICE Stage-3 (matched_device_out NULL => host-only, unchanged).
+     * The device branch is best-effort + ISOLATED: its failures set ONLY these
+     * out-params, never `aborted`/the host return. */
+    char *matched_device_out, long *device_pseudo_out, long *device_foreign_out,
+    long *device_bad_index_out, long *device_start_fail_out, int *device_walk_fail_out)
 {
     if(fanout_owner_sum) *fanout_owner_sum = 0;
     if(fanout_owner_max) *fanout_owner_max = 0;
@@ -2885,6 +2890,11 @@ static char *compute_matched_routed_fine(
     if(start_fail_out)   *start_fail_out   = 0;
     if(start_sum_out)    *start_sum_out    = 0;
     if(start_max_out)    *start_max_out    = 0;
+    if(device_pseudo_out)     *device_pseudo_out     = 0;
+    if(device_foreign_out)    *device_foreign_out    = 0;
+    if(device_bad_index_out)  *device_bad_index_out  = 0;
+    if(device_start_fail_out) *device_start_fail_out = 0;
+    if(device_walk_fail_out)  *device_walk_fail_out  = 0;
     int *route_off = NULL, *route_owners = NULL;
     double *q_pos = NULL, *q_h = NULL;
     int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
@@ -2997,6 +3007,84 @@ static char *compute_matched_routed_fine(
         if(start_sum_out)  *start_sum_out  = s_sum;
         if(start_max_out)  *start_max_out  = s_max;
     }
+
+    /* S4 DEVICE Stage-3 over the SAME received queries (best-effort, ISOLATED: sets
+     * only device out-params, never `aborted`).  Per-source-rank OR-aggregation into
+     * matched_device_out (producer owns + zeroes the layout).  MPI-free. */
+    if(!aborted && matched_device_out) {
+        memset(matched_device_out, 0, (size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1));
+        const unsigned int topflag = (1u << BITFLAG_TOPLEVEL);
+        const int dnum_local = ghost_get_num_local();
+        const long GX_DEVWALK_CAP_BYTES = 32L * 1024 * 1024;
+        int batch_n = (int)(GX_DEVWALK_CAP_BYTES / (long)(num_pool > 0 ? num_pool : 1));
+        if(batch_n > 4096) batch_n = 4096;
+        if(batch_n < 1)    batch_n = 1;
+        /* received-index -> source rank (self routes to no one; skip defensively). */
+        int *src_of = (int *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(int));
+        double *dq_pos  = (double *) malloc((size_t)batch_n * 3 * sizeof(double));
+        double *dq_h    = (double *) malloc((size_t)batch_n * sizeof(double));
+        int    *dq_soff = (int *)    malloc((size_t)(batch_n + 1) * sizeof(int));
+        char   *dq_valid= (char *)   malloc((size_t)batch_n);
+        char   *dq_m    = (char *)   malloc((size_t)batch_n * (size_t)(num_pool > 0 ? num_pool : 1));
+        int    *dq_starts = NULL; long dq_starts_cap = 0;
+        long d_pseudo = 0, d_foreign = 0, d_badidx = 0, d_sfail = 0;
+        int  d_wfail = (src_of && dq_pos && dq_h && dq_soff && dq_valid && dq_m) ? 0 : 1;
+        if(!d_wfail) {
+            for(int s = 0; s < NTask; s++)
+                for(int qi = 0; qi < rq_rc[s]; qi++) src_of[rq_rd[s] + qi] = s;
+            for(int b = 0; b < rq_total_recv && !d_wfail; b += batch_n) {
+                int bn = rq_total_recv - b; if(bn > batch_n) bn = batch_n;
+                long soff_len = 0;
+                for(int k = 0; k < bn; k++) {
+                    const struct gx_query_t *q = &rq_recv[b + k];
+                    dq_pos[k*3+0] = q->pos[0]; dq_pos[k*3+1] = q->pos[1]; dq_pos[k*3+2] = q->pos[2];
+                    dq_h[k] = q->h;
+                    dq_soff[k] = (int)soff_len;
+                    if(src_of[b + k] == ThisTask) { dq_valid[k] = 0; continue; }   /* self (should not occur) */
+                    int tmpstarts[4096]; int n_starts = 0;
+                    int src = topleaf_router_local_starts_for_query(q->pos, q->h, supply_mask, oneway,
+                                                                    periodic_flags, box_sizes, ThisTask,
+                                                                    tmpstarts, 4096, &n_starts);
+                    if(src != 0) { d_sfail++; dq_valid[k] = 0; continue; }   /* device start-derive fail */
+                    long need = soff_len + n_starts;
+                    if(need > dq_starts_cap) {
+                        long ncap = (dq_starts_cap > 0) ? dq_starts_cap * 2 : 4096;
+                        while(ncap < need) ncap *= 2;
+                        int *rp = (int *) realloc(dq_starts, (size_t)ncap * sizeof(int));
+                        if(!rp) { d_wfail = 1; dq_valid[k] = 0; break; }
+                        dq_starts = rp; dq_starts_cap = ncap;
+                    }
+                    memcpy(dq_starts + soff_len, tmpstarts, (size_t)n_starts * sizeof(int));
+                    soff_len += n_starts;
+                    dq_valid[k] = 1;
+                }
+                if(d_wfail) break;
+                dq_soff[bn] = (int)soff_len;
+                long ps = 0, fn = 0, bi = 0;
+                int wrc = gpu_fine_sidecar_walk(dq_pos, dq_h, bn, dq_soff, dq_starts, soff_len,
+                                                search_mode, supply_mask, periodic_flags, box_sizes,
+                                                topflag, FINEBAND_NTYPES, TILE_NUM_PTYPES,
+                                                All.MaxPart, MaxNodes, MaxForeignNodes, dnum_local,
+                                                NumPart, g_fineband.nnodes,
+                                                dq_m, &ps, &fn, &bi);
+                if(wrc != 0) { d_wfail = 1; break; }
+                d_pseudo += ps; d_foreign += fn; d_badidx += bi;
+                for(int k = 0; k < bn; k++) {
+                    if(!dq_valid[k]) continue;
+                    const char *mr = dq_m + (long)k * num_pool;
+                    char *md = matched_device_out + (size_t)src_of[b + k] * num_pool;
+                    for(int p = 0; p < num_pool; p++) if(mr[p]) md[p] = 1;
+                }
+            }
+        }
+        free(src_of); free(dq_pos); free(dq_h); free(dq_soff); free(dq_valid); free(dq_m); free(dq_starts);
+        if(device_pseudo_out)     *device_pseudo_out     = d_pseudo;
+        if(device_foreign_out)    *device_foreign_out    = d_foreign;
+        if(device_bad_index_out)  *device_bad_index_out  = d_badidx;
+        if(device_start_fail_out) *device_start_fail_out = d_sfail;
+        if(device_walk_fail_out)  *device_walk_fail_out  = d_wfail;
+    }
+
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
     if(t_route_walk) *t_route_walk = timediff(tw0, my_second());
@@ -4082,6 +4170,27 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             long ffanout_sum = 0, ffanout_max = 0; int frecv_this = 0;
             long fstart_fail = 0, fstart_sum = 0, fstart_max = 0;
             double ftc = 0, fta = 0, ftw = 0;
+            /* S4: optional DEVICE-routed producer.  Stage+upload the sidecar (shared
+             * stager) + certify drift; the device Stage-3 runs ONLY if EVERY rank has a
+             * valid sidecar + certified drift + local alloc (all-or-none).  Device
+             * failures are ISOLATED -- host-routed (matched_fine) is unaffected. */
+            int dev_enabled = ghost_fine_devwalk_oracle_enabled() ? 1 : 0;
+            int dev_avail_all = 0;
+            char *matched_device = NULL;
+            long d_pseudo = 0, d_foreign = 0, d_badidx = 0, d_sfail = 0; int d_wfail = 0;
+            if(dev_enabled) {
+                struct gx_supply_pool_view dv;
+                int dnp = ghost_exchange_supply_pool_view(&dv);
+                long dband_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
+                struct gx_fine_sidecar_key_t dkey; int drift_cert = 0;
+                int up_rc = gx_fine_sidecar_stage_and_upload(spec, safety_factor, &dv, dnp,
+                                                             dband_len, NumPart, &dkey, &drift_cert);
+                if(up_rc == 0 && gpu_fine_sidecar_is_valid(&dkey) && drift_cert && dnp > 0)
+                    matched_device = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), 1);
+                int avail_local = (matched_device != NULL) ? 1 : 0;
+                MPI_Allreduce(&avail_local, &dev_avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+                if(!dev_avail_all && matched_device) { free(matched_device); matched_device = NULL; }
+            }
             char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
                                        num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
                                        !ghost_route_flat_forced(),
@@ -4091,7 +4200,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                        g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
                                        &ftc, &fta, &ftw,
                                        &ffanout_sum, &ffanout_max, &frecv_this,
-                                       &fstart_fail, &fstart_sum, &fstart_max);
+                                       &fstart_fail, &fstart_sum, &fstart_max,
+                                       matched_device, &d_pseudo, &d_foreign, &d_badidx, &d_sfail, &d_wfail);
             /* Any cross-rank start-derivation failure => the routed set is incomplete;
              * a compare would read as false UNDER-ROUTE.  Report loudly + skip the
              * compare (fail closed, never a silent fallback). */
@@ -4102,6 +4212,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                     printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: fine routed producer failed collectively]\n",
                            this_call, (spec->caller_name ? spec->caller_name : "?"));
                 fflush(stdout);
+                free(matched_device);
             } else if(fstart_fail_any > 0) {
                 long fsf_g = 0; { long t = fstart_fail; MPI_Allreduce(&t, &fsf_g, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); }
                 if(ThisTask == 0)
@@ -4109,19 +4220,31 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                            this_call, (spec->caller_name ? spec->caller_name : "?"), fsf_g);
                 fflush(stdout);
                 free(matched_fine);
+                free(matched_device);
             } else {
-                /* (e) EXACT set equality vs broadcast `matched`, both directions. */
+                /* (e) EXACT set equality vs broadcast `matched`, both directions (host).
+                 * S4: same per-source-rank layout gives the DEVICE compares for free --
+                 * device-routed vs broadcast + device-routed vs host-routed. */
                 long n_missing = 0, n_extra = 0;
+                long dn_missing = 0, dn_extra = 0, dh_diff = 0;
+                const int dev_cmp = (matched_device != NULL) ? 1 : 0;
                 for(int t = 0; t < NTask; t++) {
                     if(t == ThisTask) continue;
-                    const char *mb = matched      + (size_t)t * num_pool;
-                    const char *mr = matched_fine + (size_t)t * num_pool;
+                    const char *mb = matched       + (size_t)t * num_pool;
+                    const char *mr = matched_fine  + (size_t)t * num_pool;
+                    const char *md = dev_cmp ? (matched_device + (size_t)t * num_pool) : NULL;
                     for(int p = 0; p < num_pool; p++) {
-                        if(mb[p] && !mr[p]) n_missing++;       /* fine misses a broadcast ghost -> UNDER-ROUTE */
-                        else if(mr[p] && !mb[p]) n_extra++;    /* fine has an extra match -> predicate/snapshot bug */
+                        if(mb[p] && !mr[p]) n_missing++;       /* host fine misses a broadcast ghost -> UNDER-ROUTE */
+                        else if(mr[p] && !mb[p]) n_extra++;    /* host fine has an extra match -> predicate/snapshot bug */
+                        if(dev_cmp) {
+                            if(mb[p] && !md[p]) dn_missing++;      /* device misses a broadcast ghost */
+                            else if(md[p] && !mb[p]) dn_extra++;   /* device has an extra */
+                            if((md[p] != 0) != (mr[p] != 0)) dh_diff++;   /* device != host-routed */
+                        }
                     }
                 }
                 free(matched_fine);
+                free(matched_device);
                 long set_in[2] = { n_missing, n_extra }, set_any[2] = { 0, 0 };
                 MPI_Allreduce(set_in, set_any, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
                 long fan_in[3]  = { ffanout_sum, (long)n_local_queries, ffanout_max };
@@ -4135,27 +4258,82 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 MPI_Allreduce(&recv_in, &recv_sum, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
                 MPI_Allreduce(&recv_in, &recv_max, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
                 double ftw_max = 0; MPI_Allreduce(&ftw, &ftw_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                /* device reductions (fixed count, all-rank). */
+                long dev_in[3] = { dn_missing, dn_extra, dh_diff }, dev_any[3] = { 0, 0, 0 };
+                MPI_Allreduce(dev_in, dev_any, 3, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                long dcnt_in[4] = { d_pseudo, d_foreign, d_badidx, d_sfail }, dcnt[4] = { 0, 0, 0, 0 };
+                MPI_Allreduce(dcnt_in, dcnt, 4, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                int dwf_any = 0; MPI_Allreduce(&d_wfail, &dwf_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                const char *cn = (spec->caller_name ? spec->caller_name : "?");
+                /* Decision: host outcomes first, then (host-green) the device verdict. */
                 if(set_any[0] > 0) {
                     if(n_missing > 0)
                         printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d UNDER-ROUTE: %ld broadcast ghosts missing from fine routed]\n",
-                               this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_missing);
+                               this_call, cn, ThisTask, n_missing);
                     gizmo_request_controlled_stop(7716, "ghost route FINE ghost-set oracle: bounded fine-tree routed set missing broadcast ghosts (UNDER-ROUTE)",
                                                   __FILE__, __LINE__, __FUNCTION__);
                 } else if(set_any[1] > 0) {
                     if(n_extra > 0)
                         printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d EXTRA-MATCH: %ld fine routed ghosts not in broadcast (predicate/snapshot mismatch)]\n",
-                               this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, n_extra);
+                               this_call, cn, ThisTask, n_extra);
                     gizmo_request_controlled_stop(7717, "ghost route FINE ghost-set oracle: bounded fine-tree routed set has matches broadcast lacks (predicate/snapshot bug)",
                                                   __FILE__, __LINE__, __FUNCTION__);
-                } else if(ThisTask == 0) {
-                    double mean_fanout = (fan_sum[1] > 0) ? (double)fan_sum[0] / (double)fan_sum[1] : 0.0;
-                    double mean_starts = (recv_sum > 0)   ? (double)ss_sum / (double)recv_sum : 0.0;
-                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s OK fine_routed==broadcast over %ld queries | "
-                           "fanout owners/query mean=%.2f max=%ld | start-fails=0 starts/recv-query mean=%.2f max=%ld | "
-                           "recv_queries max=%ld | fine-walk=%.4fs | NTask=%d]\n",
-                           this_call, (spec->caller_name ? spec->caller_name : "?"), fan_sum[1],
-                           mean_fanout, fan_max1, mean_starts, ss_max, recv_max, ftw_max, NTask);
-                    fflush(stdout);
+                } else {
+                    /* host-routed == broadcast.  DEVICE verdict (§48 order). */
+                    if(dev_enabled) {
+                        if(!dev_avail_all) {
+                            if(ThisTask == 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s UNAVAILABLE: drift/sidecar not certified on all ranks]\n", this_call, cn);
+                            fflush(stdout);
+                        } else if(dcnt[2] > 0) {                 /* bad_index -> real index-convention bug */
+                            if(d_badidx > 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s rank=%d BAD-INDEX: bad_index=%ld]\n", this_call, cn, ThisTask, d_badidx);
+                            fflush(stdout);
+                            gizmo_request_controlled_stop(7719, "ghost route DEVICE ghost-set oracle: device routed walk out-of-range SoA index (bad-index tripwire)",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(dwf_any || dcnt[3] > 0) {      /* device walk-fail or device start-derive fail */
+                            if(ThisTask == 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s UNAVAILABLE: device walk/scratch failed or start-derive fail on a rank]\n", this_call, cn);
+                            fflush(stdout);
+                        } else if(dcnt[0] + dcnt[1] > 0) {       /* pseudo/foreign reached -> device set incomplete */
+                            if(d_pseudo + d_foreign > 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s rank=%d UNAVAILABLE: pseudo=%ld foreign=%ld reached from a local start]\n",
+                                       this_call, cn, ThisTask, d_pseudo, d_foreign);
+                            fflush(stdout);
+                        } else if(dev_any[0] > 0) {              /* device-routed misses broadcast ghosts */
+                            if(dn_missing > 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s rank=%d DEVICE UNDER-ROUTE: %ld broadcast ghosts missing from device routed]\n",
+                                       this_call, cn, ThisTask, dn_missing);
+                            gizmo_request_controlled_stop(7720, "ghost route DEVICE ghost-set oracle: device routed set missing broadcast ghosts (UNDER-ROUTE)",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(dev_any[1] > 0) {              /* device-routed has extras vs broadcast */
+                            if(dn_extra > 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s rank=%d DEVICE EXTRA-MATCH: %ld device routed ghosts not in broadcast]\n",
+                                       this_call, cn, ThisTask, dn_extra);
+                            gizmo_request_controlled_stop(7721, "ghost route DEVICE ghost-set oracle: device routed set has matches broadcast lacks (predicate/snapshot bug)",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(dev_any[2] > 0) {              /* device-routed != host-routed (isolates device Stage-3) */
+                            if(dh_diff > 0)
+                                printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s rank=%d DEVICE!=HOST_ROUTED: %ld differing slots]\n",
+                                       this_call, cn, ThisTask, dh_diff);
+                            gizmo_request_controlled_stop(7722, "ghost route DEVICE ghost-set oracle: device routed set != host fine-tree routed set (device Stage-3 bug)",
+                                                          __FILE__, __LINE__, __FUNCTION__);
+                        } else if(ThisTask == 0) {
+                            printf("[GX_FINE_DEVWALK_ROUTED call=%d caller=%s OK: device_routed==broadcast==host_routed over %ld queries (pseudo=0 foreign=0 bad_index=0)]\n",
+                                   this_call, cn, fan_sum[1]);
+                            fflush(stdout);
+                        }
+                    }
+                    if(ThisTask == 0) {
+                        double mean_fanout = (fan_sum[1] > 0) ? (double)fan_sum[0] / (double)fan_sum[1] : 0.0;
+                        double mean_starts = (recv_sum > 0)   ? (double)ss_sum / (double)recv_sum : 0.0;
+                        printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s OK fine_routed==broadcast over %ld queries | "
+                               "fanout owners/query mean=%.2f max=%ld | start-fails=0 starts/recv-query mean=%.2f max=%ld | "
+                               "recv_queries max=%ld | fine-walk=%.4fs | NTask=%d]\n",
+                               this_call, cn, fan_sum[1],
+                               mean_fanout, fan_max1, mean_starts, ss_max, recv_max, ftw_max, NTask);
+                        fflush(stdout);
+                    }
                 }
             }
         }
