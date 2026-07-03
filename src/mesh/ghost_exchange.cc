@@ -407,6 +407,28 @@ struct gx_routed_fine_result {
     int    device_walk_fail;
 };
 
+/* Step-5 SYMM device-fine routed AUTHORITY gate (rollout scaffolding; §39 teardown
+ * ledger, folded into the permanent adaptive selector at 5d).  GIZMO_GHOST_SYMM_DEVICE_FINE=1
+ * lets a SYMMETRIC caller INSTALL the device-routed fine-tree ghost set (broadcast collapses
+ * unless the oracle is also on or a fallback is needed).  Default OFF. */
+static int ghost_symm_device_fine_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if(initialized) return enabled;
+    initialized = 1;
+    const char *e = getenv("GIZMO_GHOST_SYMM_DEVICE_FINE");
+    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+/* Conservative not-tiny-N guard for the SYMM device-fine authority arm: the routed-fine
+ * apparatus (geometry acquire, band epoch, drift cert, sidecar epoch) has fixed per-call
+ * collective overheads, so gate it out for small calls.  Decided rank-uniformly + EARLY
+ * via ONE O(NTask) reduce of the global query count (never O(Ntot)).  A 5a/5b measurement
+ * guard; the permanent in-code selector at 5d subsumes it. */
+static const long GX_SYMM_DEVICE_FINE_MIN_QUERIES_SUM = 8192;
+
 /* TEMPORARY H1 flat-vs-hierarchical owner-set oracle gate (stripped after the
  * hierarchical router is blessed).  GIZMO_GHOST_ROUTE_HIER_ORACLE=1: when routed
  * transport is active (ONEWAY), also build the hierarchical owner sets and verify
@@ -3029,11 +3051,14 @@ static char *compute_matched_routed_fine(
                               sizeof(struct gx_query_t), MPI_COMM_WORLD);
     if(res) res->t_route_alltoallv = timediff(ta0, my_second());
 
-    /* Stage 3: BOUNDED FINE-TREE walk of routed queries per source segment. */
+    /* Stage 3: BOUNDED FINE-TREE walk of routed queries per source segment.
+     * DEVICE_ONLY_AUTHORITY skips the host walk entirely -- the host walk is the oracle
+     * cost the perf path removes; the caller installs the device set (res->matched_device),
+     * so `matched` stays a zeroed buffer here (returned but unused by the authority caller). */
     tw0 = my_second();
     matched = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
     if(!matched) aborted = 1;
-    if(!aborted) {
+    if(!aborted && mode != GX_PRODUCER_DEVICE_ONLY_AUTHORITY) {
         long s_fail = 0, s_sum = 0, s_max = 0;
         for(int s = 0; s < NTask; s++) {
             if(s == ThisTask) continue;
@@ -3173,6 +3198,16 @@ static int gx_fine_device_produce(
     *matched_fine_out   = NULL;
     *matched_device_out = NULL;
     *dev_avail_all_out  = 0;
+    /* Zero ALL result fields up front so every early return (readiness skip, device-required
+     * unavailable) leaves fres_out fully defined -- the caller reads afr.device_* + counters
+     * before checking `produced`, so garbage here would spuriously trip the bad-index stop. */
+    fres_out->t_route_construct = fres_out->t_route_alltoallv = fres_out->t_route_walk = 0.0;
+    fres_out->fanout_owner_sum = fres_out->fanout_owner_max = 0;
+    fres_out->total_recv = 0;
+    fres_out->start_fail = fres_out->start_sum = fres_out->start_max = 0;
+    fres_out->matched_device = NULL;
+    fres_out->device_pseudo = fres_out->device_foreign = fres_out->device_bad_index = fres_out->device_start_fail = 0;
+    fres_out->device_walk_fail = 0;
     const char *cnm = (spec->caller_name ? spec->caller_name : "?");
     int fine_skip = 0;
 
@@ -3275,6 +3310,12 @@ static int gx_fine_device_produce(
         MPI_Allreduce(&avail_local, &dev_avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         if(!dev_avail_all && matched_device) { free(matched_device); matched_device = NULL; }
     }
+    /* DEVICE-REQUIRED for the authority path: if DEVICE_ONLY_AUTHORITY is requested but the
+     * device set is not available on all ranks, DO NOT host-route as a silent fallback --
+     * report UNAVAILABLE (produced=0) so the caller drops to broadcast.  dev_avail_all is
+     * reduced (rank-uniform), so all ranks return together (collective-safe). */
+    if(device_mode == GX_PRODUCER_DEVICE_ONLY_AUTHORITY && !dev_avail_all)
+        return 0;
     /* device_mode iff a device buffer is available on all ranks; else HOST_ONLY.
      * matched_device is caller-owned; the producer fills but never allocates/frees it. */
     fres_out->matched_device = matched_device;
@@ -3559,9 +3600,23 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int   use_hier = !ghost_route_flat_forced();   /* H2: hierarchical route by default */
     double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
-    /* Up-front broadcast gather when broadcast is needed regardless of routed
-     * outcome (oracle compare, or routed unavailable). Collective + uniform. */
-    if(oracle_on || !route_pre_available) {
+    /* Step-5 SYMM device-fine authority SELECTION (cheap + rank-uniform, BEFORE any heavy
+     * collective): env gate + SYMMETRIC + not-tiny-N via ONE O(NTask) global-query reduce.
+     * NO geometry/band/sidecar work here -- that is READINESS, done inside the arm below. */
+    int symm_selected = 0;
+    if(ghost_symm_device_fine_enabled() && search_mode == NGB_SEARCH_SYMMETRIC) {
+        long nq_local = (long)n_local_queries, nq_global = 0;
+        MPI_Allreduce(&nq_local, &nq_global, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(nq_global >= GX_SYMM_DEVICE_FINE_MIN_QUERIES_SUM) symm_selected = 1;
+    }
+    int symm_ready = 0;                  /* set to 1 iff the device set actually installs */
+    const char *symm_fallback = "none";  /* telemetry: none|unavail|producer_fail */
+
+    /* Up-front broadcast gather when broadcast is needed regardless of routed outcome
+     * (oracle compare, or routed unavailable). Collective + uniform.  SKIPPED for a SYMM
+     * device-fine candidate with the oracle OFF -- that is the broadcast collapse (perf
+     * win); a late gather runs only if the device arm falls back. */
+    if((oracle_on || !route_pre_available) && !(symm_selected && !oracle_on)) {
         double tb = my_second();
         ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
                                  &all_q_counts, &q_disps, &all_queries, &total_queries);
@@ -3577,6 +3632,127 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                          NULL, NULL, NULL, NULL, NULL, NULL, NULL);
         if(matched) { used_routed = 1; installed_producer = GX_INSTALLED_ONEWAY_ROUTED_BVH; }   /* NULL => routed failed collectively => fall back */
     }
+
+    /* Step-5 SYMM device-fine routed AUTHORITY arm.  For a selected SYMMETRIC candidate,
+     * PRODUCE the device-routed fine-tree ghost set (readiness+produce via the shared helper)
+     * and INSTALL it, collapsing broadcast.  oracle-ON pays broadcast as a guard + exact
+     * both-way compare-before-install; oracle-OFF installs the device set directly.  Fail-
+     * closed to broadcast on any producer outcome; bad-index and oracle mismatch are HARD
+     * STOPS, never fallback.  Rank-uniform: symm_selected + every gate below is reduced. */
+    if(symm_selected && !matched) {
+        int arm_oracle = oracle_on;   /* guard + compare-before-install iff transport oracle on */
+
+        /* oracle-ON guard: compute the broadcast set NOW (compare reference + fallback-keep).
+         * The up-front gather already built all_queries (oracle_on took that path). */
+        if(arm_oracle) {
+            double tb = my_second();
+            matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
+                                                h_compact_xyzh, h_tiles, ntiles,
+                                                h_pool, num_pool, h_pool_types, supply_mask,
+                                                h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+            t_step2 += timediff(tb, my_second());
+            int bfail_local = (matched == NULL) ? 1 : 0, bfail_any = 0;
+            MPI_Allreduce(&bfail_local, &bfail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(bfail_any) {
+                if(bfail_local) {
+                    printf("ERROR: SYMM device-fine oracle broadcast guard alloc failed on task %d.\n", ThisTask);
+                    gizmo_request_controlled_stop(7705, "ghost_exchange (SYMM device-fine): broadcast guard alloc failed",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                }
+                gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_device_fine_guard");
+            }
+            installed_producer = GX_INSTALLED_BROADCAST;   /* provisional until the device set installs */
+        }
+
+        /* PRODUCE the device set.  DEVICE_ONLY_AUTHORITY (oracle-off) skips the host walk +
+         * is device-required (helper returns UNAVAILABLE rather than host-routing);
+         * HOST_AND_DEVICE_VALIDATE (oracle-on) also runs the host walk (unused for install). */
+        enum gx_producer_mode dmode = arm_oracle ? GX_PRODUCER_HOST_AND_DEVICE_VALIDATE
+                                                  : GX_PRODUCER_DEVICE_ONLY_AUTHORITY;
+        char *mfine = NULL, *mdev = NULL;
+        struct gx_routed_fine_result afr;
+        int davail = 0;
+        int produced = gx_fine_device_produce(spec, this_call, safety_factor, desired_pool_mask,
+                                              local_queries, n_local_queries, num_pool, supply_mask,
+                                              search_mode, periodic_flags, box_sizes, /*dev_enabled=*/1,
+                                              dmode, "GX_SYMM_DEVICE_FINE",
+                                              &mfine, &mdev, &afr, &davail);
+        /* Drain any helper-raised readiness consistency stop (7709/7710/7714) IMMEDIATELY --
+         * a fatal readiness bug must not proceed into fallback/install work first (mirrors the
+         * S4 oracle's caller-drain discipline).  Raised on reduced/uniform conditions -> all
+         * ranks reach this drain together. */
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_device_fine_readiness");
+
+        /* (1) bad-index -> HARD STOP (index-convention bug), checked FIRST, before fallback. */
+        long badidx_local = afr.device_bad_index, badidx_any = 0;
+        MPI_Allreduce(&badidx_local, &badidx_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(badidx_any > 0) {
+            if(badidx_local > 0)
+                printf("[GX_SYMM_DEVICE_FINE call=%d caller=%s rank=%d BAD-INDEX: bad_index=%ld]\n",
+                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, badidx_local);
+            fflush(stdout);
+            gizmo_request_controlled_stop(7719, "ghost route SYMM device-fine authority: device routed walk out-of-range SoA index (bad-index tripwire)",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        }
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_device_fine_badidx");
+
+        /* (2) producer-outcome fallback (all-or-none): readiness unavailable, device
+         * unavailable, or any device walk/start/pseudo/foreign failure -> fall back. */
+        int fallback_local = (!produced || !davail || (mdev == NULL)
+                              || afr.device_walk_fail || (afr.device_start_fail > 0)
+                              || ((afr.device_pseudo + afr.device_foreign) > 0)) ? 1 : 0;
+        int device_ok_all = 0, ok_local = fallback_local ? 0 : 1;
+        MPI_Allreduce(&ok_local, &device_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+
+        /* (3) oracle-ON: exact BOTH-WAY compare device vs broadcast BEFORE install.
+         * missing (under-route) AND extra are BOTH hard stops -- never silently installed. */
+        if(device_ok_all && arm_oracle) {
+            long under_local = 0, extra_local = 0;
+            for(int t = 0; t < NTask; t++) {
+                if(t == ThisTask) continue;
+                const char *mb = matched + (size_t)t * num_pool;   /* broadcast guard */
+                const char *md = mdev    + (size_t)t * num_pool;   /* device routed */
+                for(int p = 0; p < num_pool; p++) {
+                    if(mb[p] && !md[p]) under_local++;
+                    else if(md[p] && !mb[p]) extra_local++;
+                }
+            }
+            long uv_in[2] = { under_local, extra_local }, uv_any[2] = { 0, 0 };
+            MPI_Allreduce(uv_in, uv_any, 2, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+            if(uv_any[0] > 0) {
+                if(under_local > 0)
+                    printf("[GX_SYMM_DEVICE_FINE call=%d caller=%s rank=%d DEVICE UNDER-ROUTE: %ld broadcast ghosts missing from device routed]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, under_local);
+                gizmo_request_controlled_stop(7720, "ghost route SYMM device-fine authority: device routed set missing broadcast ghosts (UNDER-ROUTE)",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            } else if(uv_any[1] > 0) {
+                if(extra_local > 0)
+                    printf("[GX_SYMM_DEVICE_FINE call=%d caller=%s rank=%d DEVICE EXTRA-MATCH: %ld device routed ghosts not in broadcast]\n",
+                           this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, extra_local);
+                gizmo_request_controlled_stop(7721, "ghost route SYMM device-fine authority: device routed set has matches broadcast lacks (predicate/snapshot bug)",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            }
+            gizmo_exit_bad_stop_if_requested("ghost_exchange:symm_device_fine_compare");
+        }
+
+        /* (4) INSTALL or FALLBACK.  device_ok_all is rank-uniform; a compare mismatch already
+         * drained/exited above, so reaching here with device_ok_all means the set is proven
+         * (oracle-on) or trusted (oracle-off) -> install. */
+        if(device_ok_all) {
+            if(matched) free(matched);            /* drop the oracle-ON broadcast guard */
+            matched = mdev; mdev = NULL;           /* OWNERSHIP TRANSFER: device set installs */
+            used_routed = 1;
+            installed_producer = GX_INSTALLED_SYMM_DEVICE_FINE;
+            symm_ready = 1;
+        } else {
+            /* Fallback: oracle-ON keeps matched=broadcast (installed above); oracle-OFF leaves
+             * matched==NULL for the late-broadcast fallback below. */
+            symm_fallback = (!produced || !davail) ? "unavail" : "producer_fail";
+        }
+        free(mfine);
+        free(mdev);
+    }
+
     if(!matched) {
         /* LATE collective fallback: routed unavailable or failed after the skip. */
         double tb = my_second();
@@ -3608,7 +3784,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * identities Steps 4-6 will install; routed⊆broadcast so any broadcast send the
      * routed set lacks is an UNDER-ROUTE.  Stop BEFORE install (drained at the Step-4
      * poll) so a bad ghost set never reaches downstream physics. */
-    if(used_routed && oracle_on && matched) {
+    if(installed_producer == GX_INSTALLED_ONEWAY_ROUTED_BVH && oracle_on && matched) {
         char *matched_bcast = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                                         h_compact_xyzh, h_tiles, ntiles,
                                                         h_pool, num_pool, h_pool_types, supply_mask,
@@ -4277,8 +4453,11 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * positions, receiver-re-derived starts) instead of the whole-pool BVH.  This is
      * the cross-rank proof that the bounded fine-tree producer == broadcast set, both
      * directions, per caller.  All branches gate on reduced/uniform flags; one bad-
-     * stop drain per block. */
-    if(ghost_route_fine_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC && matched) {
+     * stop drain per block.  Skipped when the SYMM device-fine arm already INSTALLED the
+     * device set (installed==symm_device_fine) -- `matched` is then the device set, so a
+     * device-vs-device compare is meaningless; the arm's own compare-before-install validated it. */
+    if(ghost_route_fine_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC && matched
+       && installed_producer != GX_INSTALLED_SYMM_DEVICE_FINE) {
         int dev_enabled = ghost_fine_devwalk_oracle_enabled() ? 1 : 0;
         char *matched_fine = NULL, *matched_device = NULL;
         struct gx_routed_fine_result fres;
@@ -4589,13 +4768,16 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
      * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
     if(gizmo_verbose_diag()) {
-        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s installed=%s bcast_gather=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
+        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s installed=%s bcast_gather=%s selected=%s ready=%s fallback=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
                ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
                (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
                (used_routed ? "routed" : "bcast"),
                (used_routed ? (use_hier ? "hier" : "flat") : "-"),
                gx_installed_producer_name(installed_producer),
                (bcast_queries_available ? "gathered" : "skipped"),
+               (symm_selected ? "symm_device_fine" : "-"),
+               (symm_ready ? "y" : "n"),
+               symm_fallback,
                t_step1, t_step2, t_step3_build, t_step3_walk,
                t_route_construct, t_route_alltoallv, t_route_walk,
                t_step4, t_step5, t_step6, t_ghost_total,
