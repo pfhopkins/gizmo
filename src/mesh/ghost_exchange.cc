@@ -358,6 +358,39 @@ static int ghost_route_transport_enabled(void)
     return enabled;
 }
 
+/* Stage-3 producer mode (Step 5).  Selects HOW the matched ghost set is produced;
+ * Stages 1-2 (route CSR -> Alltoall -> Alltoallv -> received queries) are shared
+ * SSOT regardless of mode.  HOST_ONLY = current host walk; HOST_AND_DEVICE_VALIDATE
+ * = host + device Stage-3 compared (the Step-4 oracle); DEVICE_ONLY_AUTHORITY =
+ * production device Stage-3 with NO host walk / NO broadcast / NO compare.  Defined
+ * here in 5a-i as plumbing; wired into compute_matched_routed_fine at 5a-ii and the
+ * SYMM authority arm at 5a-iii. */
+enum gx_producer_mode {
+    GX_PRODUCER_HOST_ONLY = 0,
+    GX_PRODUCER_HOST_AND_DEVICE_VALIDATE,
+    GX_PRODUCER_DEVICE_ONLY_AUTHORITY
+};
+
+/* Which producer actually INSTALLED the ghost set this call (telemetry only; the
+ * installer downstream is producer-agnostic).  broadcast = Allgatherv+global walk;
+ * oneway_routed_bvh = the existing ONEWAY routed BVH arm; symm_device_fine = the
+ * Step-5 SYMM device-fine routed arm (reserved; not installed until 5a-iii). */
+enum gx_installed_producer {
+    GX_INSTALLED_BROADCAST = 0,
+    GX_INSTALLED_ONEWAY_ROUTED_BVH,
+    GX_INSTALLED_SYMM_DEVICE_FINE
+};
+
+static const char *gx_installed_producer_name(enum gx_installed_producer p)
+{
+    switch(p) {
+        case GX_INSTALLED_ONEWAY_ROUTED_BVH: return "oneway_routed_bvh";
+        case GX_INSTALLED_SYMM_DEVICE_FINE:  return "symm_device_fine";
+        case GX_INSTALLED_BROADCAST:         return "broadcast";
+    }
+    return "broadcast";
+}
+
 /* TEMPORARY H1 flat-vs-hierarchical owner-set oracle gate (stripped after the
  * hierarchical router is blessed).  GIZMO_GHOST_ROUTE_HIER_ORACLE=1: when routed
  * transport is active (ONEWAY), also build the hierarchical owner sets and verify
@@ -3362,6 +3395,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
     char *matched = NULL;
     int   used_routed = 0;
+    enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry (5a-i) */
     int   use_hier = !ghost_route_flat_forced();   /* H2: hierarchical route by default */
     double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
@@ -3381,7 +3415,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                          h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
                                          use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk,
                                          NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-        if(matched) used_routed = 1;   /* NULL => routed failed collectively => fall back */
+        if(matched) { used_routed = 1; installed_producer = GX_INSTALLED_ONEWAY_ROUTED_BVH; }   /* NULL => routed failed collectively => fall back */
     }
     if(!matched) {
         /* LATE collective fallback: routed unavailable or failed after the skip. */
@@ -4492,11 +4526,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
      * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
     if(gizmo_verbose_diag()) {
-        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
+        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s installed=%s bcast_gather=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
                ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
                (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
                (used_routed ? "routed" : "bcast"),
                (used_routed ? (use_hier ? "hier" : "flat") : "-"),
+               gx_installed_producer_name(installed_producer),
+               (bcast_queries_available ? "gathered" : "skipped"),
                t_step1, t_step2, t_step3_build, t_step3_walk,
                t_route_construct, t_route_alltoallv, t_route_walk,
                t_step4, t_step5, t_step6, t_ghost_total,
