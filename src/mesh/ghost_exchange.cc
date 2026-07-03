@@ -360,11 +360,10 @@ static int ghost_route_transport_enabled(void)
 
 /* Stage-3 producer mode (Step 5).  Selects HOW the matched ghost set is produced;
  * Stages 1-2 (route CSR -> Alltoall -> Alltoallv -> received queries) are shared
- * SSOT regardless of mode.  HOST_ONLY = current host walk; HOST_AND_DEVICE_VALIDATE
- * = host + device Stage-3 compared (the Step-4 oracle); DEVICE_ONLY_AUTHORITY =
- * production device Stage-3 with NO host walk / NO broadcast / NO compare.  Defined
- * here in 5a-i as plumbing; wired into compute_matched_routed_fine at 5a-ii and the
- * SYMM authority arm at 5a-iii. */
+ * SSOT regardless of mode.  HOST_ONLY = host walk only; HOST_AND_DEVICE_VALIDATE =
+ * host walk + device Stage-3 compared (the Step-4 oracle); DEVICE_ONLY_AUTHORITY =
+ * production device Stage-3 with NO host walk / NO broadcast / NO compare (reserved
+ * for the device-routed install arm; no caller uses it yet). */
 enum gx_producer_mode {
     GX_PRODUCER_HOST_ONLY = 0,
     GX_PRODUCER_HOST_AND_DEVICE_VALIDATE,
@@ -390,6 +389,23 @@ static const char *gx_installed_producer_name(enum gx_installed_producer p)
     }
     return "broadcast";
 }
+
+/* Optional telemetry/result bundle for compute_matched_routed_fine (Step 5).
+ * Replaces the earlier pile of trailing out-pointers.  res == NULL => the producer
+ * returns the host matched set only, writes nothing back, and runs no device Stage-3.
+ * The producer zeroes all SCALAR fields at entry; matched_device is CALLER-OWNED
+ * (caller allocates/frees the [NTask*num_pool] buffer) and is NEVER touched here
+ * except to fill it in the device Stage-3.  Device fields are populated only when the
+ * mode requests device work AND matched_device != NULL. */
+struct gx_routed_fine_result {
+    double t_route_construct, t_route_alltoallv, t_route_walk;
+    long   fanout_owner_sum, fanout_owner_max;
+    int    total_recv;
+    long   start_fail, start_sum, start_max;
+    char  *matched_device;   /* caller-owned [NTask*num_pool] or NULL */
+    long   device_pseudo, device_foreign, device_bad_index, device_start_fail;
+    int    device_walk_fail;
+};
 
 /* TEMPORARY H1 flat-vs-hierarchical owner-set oracle gate (stripped after the
  * hierarchical router is blessed).  GIZMO_GHOST_ROUTE_HIER_ORACLE=1: when routed
@@ -2899,7 +2915,7 @@ fail:
  * Fail-closed: route/exchange failure on ANY rank -> all return NULL (Allreduce
  * barriers).  A bounded-walk start-derivation failure (gx_walk_fine_tree<0) does NOT
  * break collective symmetry (Stage-3 has no collectives); it is COUNTED into
- * *start_fail_out and the CALLER reduces it -> reports UNAVAILABLE and skips the
+ * res->start_fail and the CALLER reduces it -> reports UNAVAILABLE and skips the
  * compare (a partial routed set would read as false under-route).  Never silently
  * treated as a successful fallback.  CALLER OWNS the returned buffer. */
 static char *compute_matched_routed_fine(
@@ -2908,26 +2924,26 @@ static char *compute_matched_routed_fine(
     const int periodic_flags[3], const double box_sizes[3], int use_hier,
     mode_b_radius_policy_t radius_policy, double j_scale, double safety,
     const int *j_to_pool, int jtop_len,
-    double *t_route_construct, double *t_route_alltoallv, double *t_route_walk,
-    long *fanout_owner_sum, long *fanout_owner_max, int *total_recv_out,
-    long *start_fail_out, long *start_sum_out, long *start_max_out,
-    /* S4 optional DEVICE Stage-3 (matched_device_out NULL => host-only, unchanged).
-     * The device branch is best-effort + ISOLATED: its failures set ONLY these
-     * out-params, never `aborted`/the host return. */
-    char *matched_device_out, long *device_pseudo_out, long *device_foreign_out,
-    long *device_bad_index_out, long *device_start_fail_out, int *device_walk_fail_out)
+    /* Stage-3 producer mode: HOST_ONLY = host walk only; HOST_AND_DEVICE_VALIDATE = host
+     * walk + device Stage-3 (the S4 oracle).  DEVICE_ONLY_AUTHORITY is reserved for the
+     * device-routed install arm and is NOT passed by any caller yet; when it lands, this
+     * producer MUST skip the host Stage-3 walk under that mode -- the host walk is exactly
+     * the oracle cost the authority path removes, so leaving it in would defeat the perf
+     * goal.  Device Stage-3 runs iff mode != HOST_ONLY AND res->matched_device != NULL;
+     * it stays best-effort + ISOLATED (fills only res device fields, never `aborted`/the
+     * host return). */
+    enum gx_producer_mode mode, struct gx_routed_fine_result *res)
 {
-    if(fanout_owner_sum) *fanout_owner_sum = 0;
-    if(fanout_owner_max) *fanout_owner_max = 0;
-    if(total_recv_out)   *total_recv_out   = 0;
-    if(start_fail_out)   *start_fail_out   = 0;
-    if(start_sum_out)    *start_sum_out    = 0;
-    if(start_max_out)    *start_max_out    = 0;
-    if(device_pseudo_out)     *device_pseudo_out     = 0;
-    if(device_foreign_out)    *device_foreign_out    = 0;
-    if(device_bad_index_out)  *device_bad_index_out  = 0;
-    if(device_start_fail_out) *device_start_fail_out = 0;
-    if(device_walk_fail_out)  *device_walk_fail_out  = 0;
+    if(res) {
+        res->t_route_construct = res->t_route_alltoallv = res->t_route_walk = 0.0;
+        res->fanout_owner_sum = res->fanout_owner_max = 0;
+        res->total_recv = 0;
+        res->start_fail = res->start_sum = res->start_max = 0;
+        res->device_pseudo = res->device_foreign = res->device_bad_index = res->device_start_fail = 0;
+        res->device_walk_fail = 0;
+        /* res->matched_device is CALLER-OWNED -- never zeroed/allocated/freed here. */
+    }
+    int want_device = (res && res->matched_device && mode != GX_PRODUCER_HOST_ONLY) ? 1 : 0;
     int *route_off = NULL, *route_owners = NULL;
     double *q_pos = NULL, *q_h = NULL;
     int *rq_sc = NULL, *rq_sd = NULL, *rq_rc = NULL, *rq_rd = NULL;
@@ -2940,9 +2956,7 @@ static char *compute_matched_routed_fine(
     long long rq_ts = 0, rq_tr = 0;
     int  rq_total_send = 0, rq_total_recv = 0;
     double tc0 = my_second(), ta0 = 0.0, tw0 = 0.0;
-    if(t_route_construct) *t_route_construct = 0.0;
-    if(t_route_alltoallv) *t_route_alltoallv = 0.0;
-    if(t_route_walk)      *t_route_walk      = 0.0;
+    /* timing fields already zeroed in the res block above. */
 
     /* Stage 1 (local): routed-query CSR + per-dest send list (guarded). */
     if((long long)nq * (long long)NTask > (long long)INT_MAX) aborted = 1;
@@ -2977,11 +2991,11 @@ static char *compute_matched_routed_fine(
             for(int k = route_off[i]; k < route_off[i+1]; k++) rq_sc[route_owners[k]]++;
         rq_ts = gx_oracle_checked_prefix(rq_sc, rq_sd, NTask);
         if(rq_ts < 0) aborted = 1; else rq_total_send = (int)rq_ts;
-        if(fanout_owner_sum || fanout_owner_max) {
+        if(res) {
             long fsum = 0, fmax = 0;
             for(int i = 0; i < nq; i++) { long f = route_off[i+1] - route_off[i]; fsum += f; if(f > fmax) fmax = f; }
-            if(fanout_owner_sum) *fanout_owner_sum = fsum;
-            if(fanout_owner_max) *fanout_owner_max = fmax;
+            res->fanout_owner_sum = fsum;
+            res->fanout_owner_max = fmax;
         }
     }
     if(!aborted) {
@@ -2998,13 +3012,13 @@ static char *compute_matched_routed_fine(
     }
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
-    if(t_route_construct) *t_route_construct = timediff(tc0, my_second());
+    if(res) res->t_route_construct = timediff(tc0, my_second());
 
     /* Stage 2: exchange routed queries. */
     ta0 = my_second();
     MPI_Alltoall(rq_sc, 1, MPI_INT, rq_rc, 1, MPI_INT, MPI_COMM_WORLD);
     rq_tr = gx_oracle_checked_prefix(rq_rc, rq_rd, NTask);
-    if(rq_tr < 0) aborted = 1; else { rq_total_recv = (int)rq_tr; if(total_recv_out) *total_recv_out = rq_total_recv; }
+    if(rq_tr < 0) aborted = 1; else { rq_total_recv = (int)rq_tr; if(res) res->total_recv = rq_total_recv; }
     if(!aborted) {
         rq_recv = (struct gx_query_t *) malloc((size_t)(rq_total_recv > 0 ? rq_total_recv : 1) * sizeof(struct gx_query_t));
         if(!rq_recv) aborted = 1;
@@ -3013,7 +3027,7 @@ static char *compute_matched_routed_fine(
     if(bad_any) goto fail;
     gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
                               sizeof(struct gx_query_t), MPI_COMM_WORLD);
-    if(t_route_alltoallv) *t_route_alltoallv = timediff(ta0, my_second());
+    if(res) res->t_route_alltoallv = timediff(ta0, my_second());
 
     /* Stage 3: BOUNDED FINE-TREE walk of routed queries per source segment. */
     tw0 = my_second();
@@ -3036,15 +3050,15 @@ static char *compute_matched_routed_fine(
                 if(n_starts > s_max) s_max = n_starts;
             }
         }
-        if(start_fail_out) *start_fail_out = s_fail;
-        if(start_sum_out)  *start_sum_out  = s_sum;
-        if(start_max_out)  *start_max_out  = s_max;
+        if(res) { res->start_fail = s_fail; res->start_sum = s_sum; res->start_max = s_max; }
     }
 
-    /* S4 DEVICE Stage-3 over the SAME received queries (best-effort, ISOLATED: sets
-     * only device out-params, never `aborted`).  Per-source-rank OR-aggregation into
-     * matched_device_out (producer owns + zeroes the layout).  MPI-free. */
-    if(!aborted && matched_device_out) {
+    /* DEVICE Stage-3 over the SAME received queries (best-effort, ISOLATED: sets
+     * only res device fields, never `aborted`).  Per-source-rank OR-aggregation into
+     * res->matched_device (caller-owned buffer; producer zeroes only the ghost-set
+     * layout, never the pointer).  MPI-free.  Runs iff mode != HOST_ONLY. */
+    if(!aborted && want_device) {
+        char *matched_device_out = res->matched_device;   /* caller-owned buffer */
         memset(matched_device_out, 0, (size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1));
         const unsigned int topflag = (1u << BITFLAG_TOPLEVEL);
         const int dnum_local = ghost_get_num_local();
@@ -3111,16 +3125,16 @@ static char *compute_matched_routed_fine(
             }
         }
         free(src_of); free(dq_pos); free(dq_h); free(dq_soff); free(dq_valid); free(dq_m); free(dq_starts);
-        if(device_pseudo_out)     *device_pseudo_out     = d_pseudo;
-        if(device_foreign_out)    *device_foreign_out    = d_foreign;
-        if(device_bad_index_out)  *device_bad_index_out  = d_badidx;
-        if(device_start_fail_out) *device_start_fail_out = d_sfail;
-        if(device_walk_fail_out)  *device_walk_fail_out  = d_wfail;
+        res->device_pseudo     = d_pseudo;   /* res non-NULL: want_device implies it */
+        res->device_foreign    = d_foreign;
+        res->device_bad_index  = d_badidx;
+        res->device_start_fail = d_sfail;
+        res->device_walk_fail  = d_wfail;
     }
 
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) goto fail;
-    if(t_route_walk) *t_route_walk = timediff(tw0, my_second());
+    if(res) res->t_route_walk = timediff(tw0, my_second());
 
     free(rq_recv); free(rq_rd); free(rq_rc); free(rq_send); free(rq_sd); free(rq_sc);
     free(q_pos); free(q_h); free(route_off); free(route_owners);
@@ -4225,6 +4239,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 MPI_Allreduce(&avail_local, &dev_avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
                 if(!dev_avail_all && matched_device) { free(matched_device); matched_device = NULL; }
             }
+            /* HOST_AND_DEVICE_VALIDATE iff a device buffer is available (all-or-none);
+             * else HOST_ONLY.  matched_device is caller-owned; the producer fills but
+             * never allocates/frees it. */
+            struct gx_routed_fine_result fres;
+            fres.matched_device = matched_device;
+            enum gx_producer_mode fmode = matched_device ? GX_PRODUCER_HOST_AND_DEVICE_VALIDATE
+                                                         : GX_PRODUCER_HOST_ONLY;
             char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
                                        num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
                                        !ghost_route_flat_forced(),
@@ -4232,10 +4253,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                        g_glt_cache.j_radius_scale_when_built,
                                        g_glt_cache.safety_factor_when_built,
                                        g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
-                                       &ftc, &fta, &ftw,
-                                       &ffanout_sum, &ffanout_max, &frecv_this,
-                                       &fstart_fail, &fstart_sum, &fstart_max,
-                                       matched_device, &d_pseudo, &d_foreign, &d_badidx, &d_sfail, &d_wfail);
+                                       fmode, &fres);
+            ftc = fres.t_route_construct; fta = fres.t_route_alltoallv; ftw = fres.t_route_walk;
+            ffanout_sum = fres.fanout_owner_sum; ffanout_max = fres.fanout_owner_max; frecv_this = fres.total_recv;
+            fstart_fail = fres.start_fail; fstart_sum = fres.start_sum; fstart_max = fres.start_max;
+            d_pseudo = fres.device_pseudo; d_foreign = fres.device_foreign; d_badidx = fres.device_bad_index;
+            d_sfail = fres.device_start_fail; d_wfail = fres.device_walk_fail;
             /* Any cross-rank start-derivation failure => the routed set is incomplete;
              * a compare would read as false UNDER-ROUTE.  Report loudly + skip the
              * compare (fail closed, never a silent fallback). */
