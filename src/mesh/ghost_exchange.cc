@@ -3147,6 +3147,152 @@ fail:
     return NULL;
 }
 
+/* Shared readiness + fine-device produce for the routed fine-tree path (Step 5).
+ * Runs the collective precondition / geometry+band / fine-band gates, stages the device
+ * sidecar, and calls compute_matched_routed_fine.  Does NOT compare against broadcast and
+ * does NOT install: the caller OWNS the returned matched_fine and matched_device buffers
+ * (BOTH caller-freed) and decides compare/verdict (oracle) or install (authority).  Inputs
+ * never reference an already-computed broadcast `matched`, so this is callable from the
+ * pre-broadcast producer phase.  Consistency bugs issue their own controlled-stop (drained
+ * by the caller's gizmo_exit_bad_stop_if_requested).  Returns 1 if produce ran (outputs
+ * valid; inspect fres + dev_avail_all for producer outcomes), 0 if readiness UNAVAILABLE/
+ * skip (outputs NULL/zeroed).  device_mode = mode to request when the device sidecar is
+ * available on all ranks (HOST_AND_DEVICE_VALIDATE for the oracle; DEVICE_ONLY_AUTHORITY
+ * for the install arm); HOST_ONLY when device unavailable or dev_enabled==0.  diag_tag
+ * prefixes the readiness UNAVAILABLE/precondition prints so each caller labels its own. */
+static int gx_fine_device_produce(
+    const struct ghost_exchange_spec_t *spec, int this_call, double safety_factor,
+    unsigned int desired_pool_mask,
+    const struct gx_query_t *local_queries, int n_local_queries,
+    int num_pool, unsigned int supply_mask, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3],
+    int dev_enabled, enum gx_producer_mode device_mode, const char *diag_tag,
+    char **matched_fine_out, char **matched_device_out,
+    struct gx_routed_fine_result *fres_out, int *dev_avail_all_out)
+{
+    *matched_fine_out   = NULL;
+    *matched_device_out = NULL;
+    *dev_avail_all_out  = 0;
+    const char *cnm = (spec->caller_name ? spec->caller_name : "?");
+    int fine_skip = 0;
+
+    /* (a) precondition.  Two distinct outcomes, collective:
+     *   supply view unavailable on ANY rank (cache stale/not built) => benign UNAVAILABLE
+     *     skip (not a bug) — must take precedence so a not-ready rank never lets others
+     *     fatal on a spec compare against an absent cache;
+     *   supply cache present but != THIS caller's spec on any rank => FATAL. */
+    struct gx_supply_pool_view fv;
+    int fnpool = ghost_exchange_supply_pool_view(&fv);
+    int fview_unavail_local = (fnpool < 0) ? 1 : 0;
+    int fprecond_bad_local  = 0;
+    if(fnpool >= 0) {
+        int ok = (fv.numpart_when_built == NumPart)
+              && (fv.safety_when_built  == safety_factor)
+              && ((fv.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
+              && (fv.radius_policy_when_built == (int)spec->radius_policy)
+              && (fv.j_scale_when_built == spec->j_radius_scale)
+              && (fv.num_pool == num_pool);
+        fprecond_bad_local = ok ? 0 : 1;
+    }
+    int red_in[2] = { fview_unavail_local, fprecond_bad_local };
+    int red_out[2] = { 0, 0 };
+    MPI_Allreduce(red_in, red_out, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(red_out[0]) {                          /* benign: supply view not ready somewhere */
+        if(ThisTask == 0)
+            printf("[%s call=%d caller=%s UNAVAILABLE: supply view not ready (cache stale/not built)]\n",
+                   diag_tag, this_call, cnm);
+        fflush(stdout);
+        fine_skip = 1;
+    } else if(red_out[1]) {                   /* fatal: cache present but != caller spec */
+        if(fprecond_bad_local)
+            printf("[%s call=%d caller=%s rank=%d PRECONDITION FAIL: supply cache != spec]\n",
+                   diag_tag, this_call, cnm, ThisTask);
+        gizmo_request_controlled_stop(7710, "ghost route FINE ghost-set oracle: supply cache does not correspond to caller spec",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        fine_skip = 1;
+    }
+
+    /* (b) geometry + GLOBAL SYMM band (collective, all-or-none). */
+    int fband_avail = 0, fband_cfail = 0;
+    if(!fine_skip) {
+        int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
+        int geom_ok_all = 0;
+        MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(geom_ok_all)
+            topleaf_router_band_build_collective(periodic_flags, box_sizes, 0, &fband_avail, &fband_cfail);
+        if(fband_cfail) {
+            gizmo_request_controlled_stop(7709, "ghost route FINE ghost-set oracle: band-build consistency failure",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            fine_skip = 1;
+        } else if(!fband_avail) {
+            if(ThisTask == 0)
+                printf("[%s call=%d caller=%s UNAVAILABLE: band not built (geometry/supply not ready)]\n",
+                       diag_tag, this_call, cnm);
+            fflush(stdout);
+            fine_skip = 1;
+        }
+    }
+
+    /* (c) fine band valid for THIS caller (the gx_walk_fine_tree node-open SSOT).
+     * Rebuild+verify; consistency bug => fatal, stale/unavailable => collective skip. */
+    if(!fine_skip) {
+        struct gx_fineband_diag ffb;
+        int frc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &ffb);
+        int fbug_local = (frc > 0) ? 1 : 0, fbug_any = 0;
+        int funavail_local = (frc < 0) ? 1 : 0, funavail_any = 0;
+        MPI_Allreduce(&fbug_local,     &fbug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&funavail_local, &funavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(fbug_any) {
+            gizmo_request_controlled_stop(7714, "ghost route FINE ghost-set oracle: fine-band seeding/propagation consistency bug",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            fine_skip = 1;
+        } else if(funavail_any) {
+            if(ThisTask == 0)
+                printf("[%s call=%d caller=%s UNAVAILABLE: fine band not fresh -- nothing compared]\n",
+                       diag_tag, this_call, cnm);
+            fflush(stdout);
+            fine_skip = 1;
+        }
+    }
+    if(fine_skip) return 0;
+
+    /* (d) FINE routed ghost set on the SAME pre-install supply snapshot.  Optional DEVICE-
+     * routed producer: stage+upload the sidecar + certify drift; the device Stage-3 runs
+     * ONLY if EVERY rank has a valid sidecar + certified drift + local alloc (all-or-none).
+     * Device failures are ISOLATED -- host-routed (matched_fine) is unaffected. */
+    int dev_avail_all = 0;
+    char *matched_device = NULL;
+    if(dev_enabled) {
+        struct gx_supply_pool_view dv;
+        int dnp = ghost_exchange_supply_pool_view(&dv);
+        long dband_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
+        struct gx_fine_sidecar_key_t dkey; int drift_cert = 0;
+        int up_rc = gx_fine_sidecar_stage_and_upload(spec, safety_factor, &dv, dnp,
+                                                     dband_len, NumPart, &dkey, &drift_cert);
+        if(up_rc == 0 && gpu_fine_sidecar_is_valid(&dkey) && drift_cert && dnp > 0)
+            matched_device = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), 1);
+        int avail_local = (matched_device != NULL) ? 1 : 0;
+        MPI_Allreduce(&avail_local, &dev_avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!dev_avail_all && matched_device) { free(matched_device); matched_device = NULL; }
+    }
+    /* device_mode iff a device buffer is available on all ranks; else HOST_ONLY.
+     * matched_device is caller-owned; the producer fills but never allocates/frees it. */
+    fres_out->matched_device = matched_device;
+    enum gx_producer_mode fmode = matched_device ? device_mode : GX_PRODUCER_HOST_ONLY;
+    char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
+                               num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
+                               !ghost_route_flat_forced(),
+                               g_glt_cache.radius_policy_when_built,
+                               g_glt_cache.j_radius_scale_when_built,
+                               g_glt_cache.safety_factor_when_built,
+                               g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
+                               fmode, fres_out);
+    *matched_fine_out   = matched_fine;
+    *matched_device_out = matched_device;
+    *dev_avail_all_out  = dev_avail_all;
+    return 1;
+}
+
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
@@ -4133,132 +4279,26 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * directions, per caller.  All branches gate on reduced/uniform flags; one bad-
      * stop drain per block. */
     if(ghost_route_fine_oracle_enabled() && search_mode == NGB_SEARCH_SYMMETRIC && matched) {
-        int fine_skip = 0;
-        /* (a) precondition.  Two distinct outcomes, collective:
-         *   supply view unavailable on ANY rank (cache stale/not built) => benign
-         *     UNAVAILABLE skip (not a bug) — must take precedence so a not-ready rank
-         *     never lets others fatal on a spec compare against an absent cache;
-         *   supply cache present but != THIS caller's spec on any rank => FATAL. */
-        struct gx_supply_pool_view fv;
-        int fnpool = ghost_exchange_supply_pool_view(&fv);
-        int fview_unavail_local = (fnpool < 0) ? 1 : 0;
-        int fprecond_bad_local  = 0;
-        if(fnpool >= 0) {
-            int ok = (fv.numpart_when_built == NumPart)
-                  && (fv.safety_when_built  == safety_factor)
-                  && ((fv.eligible_mask_when_built & desired_pool_mask) == desired_pool_mask)
-                  && (fv.radius_policy_when_built == (int)spec->radius_policy)
-                  && (fv.j_scale_when_built == spec->j_radius_scale)
-                  && (fv.num_pool == num_pool);
-            fprecond_bad_local = ok ? 0 : 1;
-        }
-        int red_in[2] = { fview_unavail_local, fprecond_bad_local };
-        int red_out[2] = { 0, 0 };
-        MPI_Allreduce(red_in, red_out, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(red_out[0]) {                          /* benign: supply view not ready somewhere */
-            if(ThisTask == 0)
-                printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: supply view not ready (cache stale/not built)]\n",
-                       this_call, (spec->caller_name ? spec->caller_name : "?"));
-            fflush(stdout);
-            fine_skip = 1;
-        } else if(red_out[1]) {                   /* fatal: cache present but != caller spec */
-            if(fprecond_bad_local)
-                printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s rank=%d PRECONDITION FAIL: supply cache != spec]\n",
-                       this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask);
-            gizmo_request_controlled_stop(7710, "ghost route FINE ghost-set oracle: supply cache does not correspond to caller spec",
-                                          __FILE__, __LINE__, __FUNCTION__);
-            fine_skip = 1;
-        }
-
-        /* (b) geometry + GLOBAL SYMM band (collective, all-or-none). */
-        int fband_avail = 0, fband_cfail = 0;
-        if(!fine_skip) {
-            int geom_ok_local = (topleaf_router_geometry_acquire() == 0) ? 1 : 0;
-            int geom_ok_all = 0;
-            MPI_Allreduce(&geom_ok_local, &geom_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(geom_ok_all)
-                topleaf_router_band_build_collective(periodic_flags, box_sizes, 0, &fband_avail, &fband_cfail);
-            if(fband_cfail) {
-                gizmo_request_controlled_stop(7709, "ghost route FINE ghost-set oracle: band-build consistency failure",
-                                              __FILE__, __LINE__, __FUNCTION__);
-                fine_skip = 1;
-            } else if(!fband_avail) {
-                if(ThisTask == 0)
-                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: band not built (geometry/supply not ready)]\n",
-                           this_call, (spec->caller_name ? spec->caller_name : "?"));
-                fflush(stdout);
-                fine_skip = 1;
-            }
-        }
-
-        /* (c) fine band valid for THIS caller (the gx_walk_fine_tree node-open SSOT).
-         * Rebuild+verify; consistency bug => fatal, stale/unavailable => collective skip. */
-        if(!fine_skip) {
-            struct gx_fineband_diag ffb;
-            int frc = gx_fineband_build_and_verify(spec, desired_pool_mask, safety_factor, &ffb);
-            int fbug_local = (frc > 0) ? 1 : 0, fbug_any = 0;
-            int funavail_local = (frc < 0) ? 1 : 0, funavail_any = 0;
-            MPI_Allreduce(&fbug_local,     &fbug_any,     1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-            MPI_Allreduce(&funavail_local, &funavail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-            if(fbug_any) {
-                gizmo_request_controlled_stop(7714, "ghost route FINE ghost-set oracle: fine-band seeding/propagation consistency bug",
-                                              __FILE__, __LINE__, __FUNCTION__);
-                fine_skip = 1;
-            } else if(funavail_any) {
-                if(ThisTask == 0)
-                    printf("[GX_FINE_GHOST_ORACLE call=%d caller=%s UNAVAILABLE: fine band not fresh -- nothing compared]\n",
-                           this_call, (spec->caller_name ? spec->caller_name : "?"));
-                fflush(stdout);
-                fine_skip = 1;
-            }
-        }
-
-        if(!fine_skip) {
-            /* (d) FINE routed ghost set on the SAME pre-install supply snapshot. */
-            long ffanout_sum = 0, ffanout_max = 0; int frecv_this = 0;
-            long fstart_fail = 0, fstart_sum = 0, fstart_max = 0;
-            double ftc = 0, fta = 0, ftw = 0;
-            /* S4: optional DEVICE-routed producer.  Stage+upload the sidecar (shared
-             * stager) + certify drift; the device Stage-3 runs ONLY if EVERY rank has a
-             * valid sidecar + certified drift + local alloc (all-or-none).  Device
-             * failures are ISOLATED -- host-routed (matched_fine) is unaffected. */
-            int dev_enabled = ghost_fine_devwalk_oracle_enabled() ? 1 : 0;
-            int dev_avail_all = 0;
-            char *matched_device = NULL;
-            long d_pseudo = 0, d_foreign = 0, d_badidx = 0, d_sfail = 0; int d_wfail = 0;
-            if(dev_enabled) {
-                struct gx_supply_pool_view dv;
-                int dnp = ghost_exchange_supply_pool_view(&dv);
-                long dband_len = (long)g_fineband.nnodes * FINEBAND_NTYPES;
-                struct gx_fine_sidecar_key_t dkey; int drift_cert = 0;
-                int up_rc = gx_fine_sidecar_stage_and_upload(spec, safety_factor, &dv, dnp,
-                                                             dband_len, NumPart, &dkey, &drift_cert);
-                if(up_rc == 0 && gpu_fine_sidecar_is_valid(&dkey) && drift_cert && dnp > 0)
-                    matched_device = (char *) calloc((size_t)(NTask > 0 ? NTask : 1) * (size_t)(num_pool > 0 ? num_pool : 1), 1);
-                int avail_local = (matched_device != NULL) ? 1 : 0;
-                MPI_Allreduce(&avail_local, &dev_avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-                if(!dev_avail_all && matched_device) { free(matched_device); matched_device = NULL; }
-            }
-            /* HOST_AND_DEVICE_VALIDATE iff a device buffer is available (all-or-none);
-             * else HOST_ONLY.  matched_device is caller-owned; the producer fills but
-             * never allocates/frees it. */
-            struct gx_routed_fine_result fres;
-            fres.matched_device = matched_device;
-            enum gx_producer_mode fmode = matched_device ? GX_PRODUCER_HOST_AND_DEVICE_VALIDATE
-                                                         : GX_PRODUCER_HOST_ONLY;
-            char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
-                                       num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
-                                       !ghost_route_flat_forced(),
-                                       g_glt_cache.radius_policy_when_built,
-                                       g_glt_cache.j_radius_scale_when_built,
-                                       g_glt_cache.safety_factor_when_built,
-                                       g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
-                                       fmode, &fres);
-            ftc = fres.t_route_construct; fta = fres.t_route_alltoallv; ftw = fres.t_route_walk;
-            ffanout_sum = fres.fanout_owner_sum; ffanout_max = fres.fanout_owner_max; frecv_this = fres.total_recv;
-            fstart_fail = fres.start_fail; fstart_sum = fres.start_sum; fstart_max = fres.start_max;
-            d_pseudo = fres.device_pseudo; d_foreign = fres.device_foreign; d_badidx = fres.device_bad_index;
-            d_sfail = fres.device_start_fail; d_wfail = fres.device_walk_fail;
+        int dev_enabled = ghost_fine_devwalk_oracle_enabled() ? 1 : 0;
+        char *matched_fine = NULL, *matched_device = NULL;
+        struct gx_routed_fine_result fres;
+        int dev_avail_all = 0;
+        /* Shared readiness + fine-device produce (no broadcast dependency, no install).
+         * Oracle mode = HOST_AND_DEVICE_VALIDATE; the compare vs the installed broadcast
+         * `matched` + the verdict stay below (caller frees matched_fine/matched_device). */
+        int produced = gx_fine_device_produce(spec, this_call, safety_factor, desired_pool_mask,
+                                              local_queries, n_local_queries, num_pool, supply_mask,
+                                              search_mode, periodic_flags, box_sizes, dev_enabled,
+                                              GX_PRODUCER_HOST_AND_DEVICE_VALIDATE, "GX_FINE_GHOST_ORACLE",
+                                              &matched_fine, &matched_device, &fres, &dev_avail_all);
+        if(produced) {
+            long ffanout_sum = fres.fanout_owner_sum, ffanout_max = fres.fanout_owner_max;
+            int  frecv_this  = fres.total_recv;
+            long fstart_fail = fres.start_fail, fstart_sum = fres.start_sum, fstart_max = fres.start_max;
+            double ftw = fres.t_route_walk;
+            long d_pseudo = fres.device_pseudo, d_foreign = fres.device_foreign;
+            long d_badidx = fres.device_bad_index, d_sfail = fres.device_start_fail;
+            int  d_wfail = fres.device_walk_fail;
             /* Any cross-rank start-derivation failure => the routed set is incomplete;
              * a compare would read as false UNDER-ROUTE.  Report loudly + skip the
              * compare (fail closed, never a silent fallback). */
