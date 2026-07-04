@@ -486,6 +486,14 @@ c Networks 5 & 6:
         UNUSED_PARAM(fshield_CO)
 #endif
 #endif
+c ---- M1 RT: HI photoionization + heating for net-5/6 (2026-07-04) ----
+c The HI photoion/heat block further below (phrates(38)/(42) + the rt_phot_HI
+c add at line ~535) is SKIPPED by this 'goto 212'. Without replicating the HI
+c terms here, M1 ionizing photons never reach net-5's chemistry (x_HII stuck
+c at 0 in the sn20_rmhd M1 test). net-5/6 have no He/H2 photoionization states,
+c so only the HI terms apply; rt_phot_HI/rt_heat_HI are 0 unless RADTRANSFER.
+        phrates(38) = phtab(38) * G0 + rt_phot_HI
+        phrates(42) = phtab(42) * G0 + rt_heat_HI
         goto 212
       endif
 

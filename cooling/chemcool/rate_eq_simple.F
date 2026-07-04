@@ -55,7 +55,11 @@ c
      $     dtch6   , dtch11  , dtch13  , dtch25  ,
      $     dtch34  , dtch35
 c
-      REAL cdex, rdex, fpheat 
+      REAL cdex, rdex, fpheat
+c M1 RT photoionization (ph38) + photoheating (ph42) of HI; mirrors net-17.
+c Both are 0 unless RADTRANSFER is active (calc_photo adds the C-side rates
+c into phrates(38)/phrates(42)), so subgrid-net-5 behaviour is unchanged.
+      REAL ph38, ph42
 c
       REAL mh
       parameter (mh  = PROTONMASS)
@@ -216,6 +220,9 @@ c      endif
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
       gamma_co = phrates(10)
       gamma_chx = 2.94d-10 * G_dust
+c M1 RT ionizing-band rates (HI photoionization + heating), 0 without RADTRANSFER
+      ph38 = phrates(38)
+      ph42 = phrates(42)
 #endif
 c
 c Rates for recombination on grain surfaces. These rates must be 
@@ -271,6 +278,7 @@ c
      $          -  h_gr * abhp  * 1d0) * yn     ! Grain H recomb.
      $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
      $          + cr10  * abh2
+     $          + ph38  * abHI                  ! M1 RT photoionization: H + gamma(>13.6eV)
 c
 c Molecular hydrogen
 c
@@ -407,6 +415,7 @@ c
 c
       ylam_chem = rates_chem(1)  + rates_chem(2)  + rates_chem(3)  +
      $            rates_chem(4)  + rates_chem(5)  + rates_chem(6)
+     $          - (ph42 * abHI) * yn        ! M1 RT photoheating (neg = heating)
 
 
 c#ifdef OUTPUT_INDIVIDUAL_COOLRATES

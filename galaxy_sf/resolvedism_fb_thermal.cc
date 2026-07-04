@@ -312,7 +312,17 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     double dEcr = wk * local.Esne * cr_frac;
                     double v_ej = (local.Mej > 0) ? sqrt(2.0 * local.Esne / local.Mej) : 3000.0/UNIT_VEL_IN_KMS;
                     double crdir[3]; for(k=0;k<3;k++) {crdir[k] = -kernel.dp[k] / kernel.r;}
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    { static int crdbg=0; if(crdbg<40 && dEcr>0) { crdbg++;
+                        double ecr_before=CellP[j].CosmicRayEnergy[0];
+                        inject_cosmic_rays(dEcr, v_ej, 0, j, crdir);
+                        printf("CRDBG cell=%llu Esne=%.4e cr_frac=%.4e wk=%.4e dEcr_in=%.4e v_ej=%.4e | CR_egy[0] %.4e->%.4e (d=%.4e)\n",
+                            (unsigned long long)P[j].ID, local.Esne, cr_frac, wk, dEcr, v_ej,
+                            ecr_before, CellP[j].CosmicRayEnergy[0], CellP[j].CosmicRayEnergy[0]-ecr_before);
+                        fflush(stdout); } else { inject_cosmic_rays(dEcr, v_ej, 0, j, crdir); } }
+#else
                     inject_cosmic_rays(dEcr, v_ej, 0, j, crdir);
+#endif
 #endif
                 }
 

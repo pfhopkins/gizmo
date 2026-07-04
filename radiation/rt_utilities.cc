@@ -861,6 +861,12 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             dt_e_gamma_band += (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * (-VolP_dotdot_GradV); // account for RSOL term here as usual
 #endif
             total_de_dt = CellP[i].Rad_Je[kf] + dt_e_gamma_band;
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(RT_CHEM_PHOTOION)
+            if(kf==RT_FREQ_BIN_H0 && mode==0 && CellP[i].Rad_Je[kf]>0) { static int rtdbg_nf=0; if(rtdbg_nf<60) { rtdbg_nf++;
+                printf("RTDBG_FIELD cell=%llu e0=%.4e Rad_Je=%.4e dtE_adv=%.4e a0_abs=%.4e dt_entr=%.4e absfrac/step=%.4e\n",
+                    (unsigned long long)P[i].ID, e0, CellP[i].Rad_Je[kf], dt_e_gamma_band, a0_abs, dt_entr,
+                    (a0_abs!=0 && dt_entr>0) ? 1.-exp(a0_abs*dt_entr) : 0.); fflush(stdout); } }
+#endif
 
 #ifdef RT_INFRARED
             if(kf == RT_FREQ_BIN_INFRARED)
@@ -916,6 +922,11 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             if(e0_postabs+de_postabs < f_min*e0_postabs) {slabfac *= fabs((1.-f_min)*e0_postabs)/(fabs(de_postabs)+MIN_REAL_NUMBER);}
             
             double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
+            /* NaN-source split (2026-07-04): which BAND (kf) and which TERM of
+             * total_de_dt = Rad_Je[kf] + dt_e_gamma_band is the NaN. */
+            if(isnan(ef)) {PRINT_WARNING("\n RTNANSPLIT cell=%llu kf=%d Rad_Je=%g dt_e_gamma_band=%g Rad_Kappa=%g Rad_E_gamma=%g\n",
+                (unsigned long long) P[i].ID, kf, (double)CellP[i].Rad_Je[kf], (double)dt_e_gamma_band,
+                (double)CellP[i].Rad_Kappa[kf], (double)CellP[i].Rad_E_gamma[kf]);}
 #ifdef RT_INFRARED
             if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g Trad=%g Tdust=%g\n", (unsigned long long) P[i].ID,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac,CellP[i].Radiation_Temperature,CellP[i].Dust_Temperature);}
 #else
@@ -1153,6 +1164,9 @@ void get_background_isrf_urad(int i, double *urad){
     }
 }
 
+#ifdef RT_INFRARED  /* guard added 2026-07-04: uses All.InitRadiationTemp (an RT_INFRARED-only
+                     * parameter) and both callers set Radiation_Temperature (IR-only field);
+                     * unguarded, any RADTRANSFER build WITHOUT the IR band failed to compile. */
 double background_isrf_cmb_Teff(){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
@@ -1161,6 +1175,7 @@ double background_isrf_cmb_Teff(){
     double urad_CMB_CGS_eV = fac_uCMB * 0.262, Trad_CMB = 2.73 * fac_TCMB;
     return (urad_ISRF_CGS_eV * Trad_ISRF + urad_CMB_CGS_eV * Trad_CMB) / (urad_ISRF_CGS_eV + urad_CMB_CGS_eV); // weighting by SED energy
 }
+#endif
 
 #endif
 

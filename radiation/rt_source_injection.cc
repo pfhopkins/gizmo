@@ -63,6 +63,27 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 #endif
 #endif
     for(k=0; k<N_RT_FREQ_BINS; k++) {if(P[i].Type==0 || active_check==0) {in->Luminosity[k]=0;} else {in->Luminosity[k] = lum[k] * dt;}}
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    if(P[i].Type==4 && active_check) { static int rtdbg_np=0; if(rtdbg_np<50) { rtdbg_np++;
+        printf("RTDBG_PACK star=%llu active=%d dt=%.6e lum[0]=%.6e Lum_in[0]=%.6e KernelSum=%.6e KernelRadius=%.6e\n",
+            (unsigned long long)P[i].ID, active_check, dt, lum[0], in->Luminosity[0],
+            P[i].KernelSum_Around_RT_Source, in->KernelRadius);
+        { /* smoking gun: exact interp inputs + direct table result + bin map + full vector */
+          double Mst=0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+          if(P[i].sampled) Mst = P[i].MstarSampleIMF[0];
+#endif
+          double lgM=log10(DMAX(Mst,1e-10)), lgZ=log10(DMAX(P[i].BirthMetallicity,1e-10));
+          double age_yr=evaluate_stellar_age_Gyr(i)*1.0e9, lga=log10(DMAX(age_yr,100.));
+          printf("RTDBG_LUM inputs: logM=%.4f logZ=%.4f log_age=%.4f | stellar_log_L_ion_tot=%.4f UNIT_LUM=%.4e",
+              lgM, lgZ, lga, stellar_log_L_ion_tot(lgM,lgZ,lga), (double)UNIT_LUM_IN_CGS);
+#if defined(RT_CHEM_PHOTOION)
+          printf(" | RT_FREQ_BIN_H0=%d", (int)RT_FREQ_BIN_H0);
+#endif
+          printf(" | lumvec:"); int kk; for(kk=0;kk<N_RT_FREQ_BINS;kk++) printf(" [%d]=%.3e",kk,lum[kk]);
+          printf("\n"); fflush(stdout);
+        } } }
+#endif
 #ifdef RT_REINJECT_ACCRETED_PHOTONS // if this is enabled, we track how many photons the sink has accreted from gas cells and reinject them here, resetting the photon count
     if(P[i].Type==5 && active_check) {in->Luminosity[N_RT_FREQ_BINS-1] += P[i].Sink_accreted_photon_energy; P[i].Sink_accreted_photon_energy = 0;} // nominally inject into the last, lowest-energy bin, intended for problems where optically-thick IR is getting advected into the sink
 #endif
@@ -192,7 +213,13 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 #endif
 
                 /* now actually apply the photon coupling for each RHD bin */
-                for(k=0;k<N_RT_FREQ_BINS;k++) 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                { static int rtdbg_nd=0; if(rtdbg_nd<50 && local.Luminosity[0]>0) { rtdbg_nd++;
+                    printf("RTDBG_DEPOSIT cell=%llu r=%.4e h=%.4e wk=%.6e L0=%.6e dE0(rate)=%.6e\n",
+                        (unsigned long long)P[j].ID, r, local.KernelRadius, wk,
+                        local.Luminosity[0], wk*local.Luminosity[0]); fflush(stdout); } }
+#endif
+                for(k=0;k<N_RT_FREQ_BINS;k++)
                 {
                     double dE=0; dE = wk * local.Luminosity[k]; int kv; kv=0;
                     double dfluxes[3]; dfluxes[0]=dfluxes[1]=dfluxes[2]=0;

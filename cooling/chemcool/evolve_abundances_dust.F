@@ -23,7 +23,8 @@ c
       REAL    abe, abh2, yntot, ekn, temp, gamma
       REAL    t_start, t_end, dt_est, dt, t_in, t_out
       REAL    tdust_old
-      integer new_step
+      REAL    yntot_byp, ekn_byp, temp_byp, gam_byp, dt_byp
+      integer new_step, nbyp
 c
       integer nstep
       parameter (nstep = NSTEP)
@@ -143,6 +144,47 @@ c
       t_end    = time
 #endif
       new_step = 1
+c
+c
+c Hot-gas equilibrium-cooling bypass (Uli 2026-07-04): see
+c evolve_abundances.F for the full rationale.  Above T_NOCHEM
+c (default 3d4 K, override -DCHEMCOOL_TNOCHEM): zero molecules,
+c freeze ions, sub-cycle only the energy equation; hand over to
+c DVODE below if the gas cools past the threshold.
+c
+#ifndef CHEMCOOL_TNOCHEM
+#define CHEMCOOL_TNOCHEM 5d5
+#endif
+      yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+      ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+      call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp, gam_byp)
+      if (temp_byp .gt. CHEMCOOL_TNOCHEM) then
+        y(ih2) = 0d0
+        y(ico) = 0d0
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        y(ihd) = 0d0
+#endif
+        do nbyp = 1, 100000
+          call rate_eq(nspec, t_start, y, ydot, rpar, ipar)
+          ipar(1) = 0
+          if (abs(ydot(itmp)) .gt. 0d0) then
+            dt_byp = min(t_end - t_start,
+     $                   1d-1 * abs(y(itmp) / ydot(itmp)))
+          else
+            dt_byp = t_end - t_start
+          endif
+          y(itmp) = y(itmp) + dt_byp * ydot(itmp)
+          t_start = t_start + dt_byp
+          if (t_start .ge. t_end) goto 100
+          yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+          ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+          call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp,
+     $                           gam_byp)
+          if (temp_byp .le. CHEMCOOL_TNOCHEM) goto 90
+        enddo
+        goto 100
+      endif
+90    continue
 c
       do I = 1, nstep
 c        print*, "step", I, new_step, tdust, y(itmp)

@@ -23,7 +23,8 @@ c
       REAL    t_start, t_end, dt_est, dt, t_in, t_out
       REAL    tdust_old
       REAL    co_pool, eps_ctrl
-      integer new_step
+      REAL    yntot_byp, ekn_byp, temp_byp, gam_byp, dt_byp
+      integer new_step, nbyp
 c
       integer nstep
       parameter (nstep = NSTEP)
@@ -178,6 +179,57 @@ c
       ctrl_floor(ihep)  = max(atol(ihep),  eps_ctrl * abhe)
       ctrl_floor(ihepp) = max(atol(ihepp), eps_ctrl * abhe)
 #endif
+c
+c
+c Hot-gas equilibrium-cooling bypass (Uli 2026-07-04, both networks):
+c above T_NOCHEM the molecular species are physically extinct
+c and the ionization states are effectively frozen over a hydro step,
+c while the cooling is already the (equilibrium) WSS CIE + atomic
+c rates via cool_func.  Integrating the full stiff network there is
+c meaningless and wedges DVODE (post-PISN 1e7 K bubbles: molecular
+c abundances at denormal levels defeat the error test -> nstep
+c exceeded -> abort).  Here: zero the molecules, freeze the ions,
+c sub-cycle ONLY the energy equation (explicit, dt = 0.1 e/|edot|).
+c If the gas cools below T_NOCHEM mid-step, hand over to the normal
+c DVODE path below for the remaining time -- fully continuous.
+c T_NOCHEM defaults to 3d4 K (Uli design); override at compile time
+c with -DCHEMCOOL_TNOCHEM=... for cutoff-sensitivity studies.
+c
+#ifndef CHEMCOOL_TNOCHEM
+#define CHEMCOOL_TNOCHEM 5d5
+#endif
+      yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+      ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+      call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp, gam_byp)
+      if (temp_byp .gt. CHEMCOOL_TNOCHEM) then
+        y(ih2) = 0d0
+        y(ico) = 0d0
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        y(ihd) = 0d0
+#endif
+        do nbyp = 1, 100000
+          call rate_eq(nspec, t_start, y, ydot, rpar, ipar)
+          ipar(1) = 0
+          if (abs(ydot(itmp)) .gt. 0d0) then
+            dt_byp = min(t_end - t_start,
+     $                   1d-1 * abs(y(itmp) / ydot(itmp)))
+          else
+            dt_byp = t_end - t_start
+          endif
+          y(itmp) = y(itmp) + dt_byp * ydot(itmp)
+          t_start = t_start + dt_byp
+          if (t_start .ge. t_end) goto 100
+          yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+          ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+          call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp,
+     $                           gam_byp)
+          if (temp_byp .le. CHEMCOOL_TNOCHEM) goto 90
+        enddo
+c   sub-cycle budget exhausted while still hot: accept the state --
+c   this is a smooth explicit integration, not an error path.
+        goto 100
+      endif
+90    continue
 c
       do I = 1, nstep
 c        print*, "step", I, new_step, tdust, y(itmp)

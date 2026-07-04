@@ -264,15 +264,32 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
 #endif
+#endif  /* close GALSF_RESOLVEDISM_G0_VARIABLE for the subgrid HEALPix flux arrays */
+    /* G0 / G0_LW are set by EITHER the subgrid G0_VARIABLE path OR the M1 RADTRANSFER
+       path (2026-07-04). Keep them alive in both branches so the M1 FUV/LW field is
+       stored + output, not thrown away — required to validate M1 FUV-heating/LW-H2
+       against the subgrid (TREE_RAD) reference. */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
     MyFloat G0;                           /*!< FUV radiation field in Habing units, 8-13.6 eV */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat G0_NUV;                       /*!< NUV radiation field in Habing units, 3.4-8 eV */
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat G0_OPT;                       /*!< OPT radiation field in Habing units, 0.4-3.4 eV */
 #endif
-    MyFloat CR_ionization_rate;           /*!< cosmic ray ionization rate [s^-1] */
+#endif  /* GALSF_RESOLVEDISM_G0_VARIABLE (subgrid radiation fields end here) */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+    /* CR ionization rate [s^-1] handed to CHEMCOOL, driving the CR HEATING term
+     * in cool_func (= COOLR.cosmic_ray_ion_rate).  CR ionization is INDEPENDENT
+     * of the radiation solver, so this must live in BOTH the subgrid-G0 and the
+     * M1/RADTRANSFER chemistry paths (Uli 2026-07-04) -- it was mis-scoped inside
+     * the G0_VARIABLE-only block above, which failed to compile any M1 build.
+     * (Snapshot I/O of this field remains G0_VARIABLE-only for now; the value is
+     * recomputed every step from the CR source, so M1 runs lose only the diag.) */
+    MyFloat CR_ionization_rate;
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
     MyFloat MetalMassFrom[4];             /*!< metal mass fraction by channel: [0]=SN, [1]=AGB, [2]=Wind, [3]=Ia */

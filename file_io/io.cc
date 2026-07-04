@@ -1035,7 +1035,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_RESOLVEDISM_G0:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1046,7 +1046,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_RESOLVEDISM_G0_LW:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -2372,6 +2372,16 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+            /* alive under subgrid OR M1 -- must set bytes here too, else the writer
+               divides n_bytes by 0 when the block is present under M1 (2026-07-04) */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_RESOLVEDISM_G0_NUV:
         case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
@@ -3601,6 +3611,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+            /* G0/G0_LW are written by the subgrid path OR the M1 path (2026-07-04) */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+            return 1;
+#endif
+            break;
+
         case IO_RESOLVEDISM_G0_NUV:
         case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:

@@ -127,22 +127,29 @@ static inline double interp3d(const float *arr, double logM, double logZ, double
     stbl_idx_M(logM, &im, &fm);
     stbl_idx_age(log_age, &ia, &fa);
 
-    double v000 = arr[IDX3(iz,   im,   ia  )];
-    double v001 = arr[IDX3(iz,   im,   ia+1)];
-    double v010 = arr[IDX3(iz,   im+1, ia  )];
-    double v011 = arr[IDX3(iz,   im+1, ia+1)];
-    double v100 = arr[IDX3(iz+1, im,   ia  )];
-    double v101 = arr[IDX3(iz+1, im,   ia+1)];
-    double v110 = arr[IDX3(iz+1, im+1, ia  )];
-    double v111 = arr[IDX3(iz+1, im+1, ia+1)];
-
-    double c00 = v000*(1-fa) + v001*fa;
-    double c01 = v010*(1-fa) + v011*fa;
-    double c10 = v100*(1-fa) + v101*fa;
-    double c11 = v110*(1-fa) + v111*fa;
-    double c0  = c00*(1-fm)  + c01*fm;
-    double c1  = c10*(1-fm)  + c11*fm;
-    return c0*(1-fz) + c1*fz;
+    /* Trilinear interpolation with DEAD-NODE (-99 sentinel) exclusion
+     * (2026-07-04): the log-luminosity tables flag dead/no-emission nodes
+     * with -99, and naive blending lets a single dead stencil corner crater
+     * the result: 0.974*37.9 + 0.026*(-99) = 34.3 -> a young 20 Msun star's
+     * L_ion came out 4400x low -> no HII region in the M1 run (caught by
+     * RTDBG traces on sn20_rmhd).  Exclude corners < -90 and renormalize by
+     * the surviving weight; only if ALL corners are dead return -99 (a truly
+     * dead star).  Non-log tables (yields, remnant masses -- >= 0 everywhere)
+     * never contain the sentinel, so their interpolation is unchanged. */
+    const double v[8] = {
+        arr[IDX3(iz,   im,   ia  )], arr[IDX3(iz,   im,   ia+1)],
+        arr[IDX3(iz,   im+1, ia  )], arr[IDX3(iz,   im+1, ia+1)],
+        arr[IDX3(iz+1, im,   ia  )], arr[IDX3(iz+1, im,   ia+1)],
+        arr[IDX3(iz+1, im+1, ia  )], arr[IDX3(iz+1, im+1, ia+1)] };
+    const double w[8] = {
+        (1-fz)*(1-fm)*(1-fa), (1-fz)*(1-fm)*fa,
+        (1-fz)*fm*(1-fa),     (1-fz)*fm*fa,
+        fz*(1-fm)*(1-fa),     fz*(1-fm)*fa,
+        fz*fm*(1-fa),         fz*fm*fa };
+    double vsum = 0, wsum = 0; int k;
+    for(k = 0; k < 8; k++) { if(v[k] > -90.0) { vsum += w[k]*v[k]; wsum += w[k]; } }
+    if(wsum <= 0) return -99.0;   /* every corner dead -> dead star */
+    return vsum / wsum;
 }
 
 /* ========================================================================
@@ -366,6 +373,8 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.logR_cm,         n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
     MPI_Bcast(StellarTbl.log_L_NUV,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_NUV_lo,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_FUV_M1,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD); /* 2026-07-04: was MISSING from bcast -> non-root ranks read 0 -> M1 FUV field (G0) dead on any star not on rank 0 */
     MPI_Bcast(StellarTbl.log_L_OPT_NIR,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
 #ifdef RADTRANSFER

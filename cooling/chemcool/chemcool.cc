@@ -82,6 +82,18 @@ extern "C" {
 
 
 /* Initialization of chemcool */
+/* Target of the Fortran ABORT() macro (cool.h): clean, LOUD abort.
+ * A bare Fortran 'stop' killed one rank silently and deadlocked the rest in
+ * the next MPI collective (zombie jobs; pisn200 2026-07-04).  endrun() ->
+ * MPI_Abort kills the WHOLE job immediately and visibly. */
+extern "C" void chemcool_fatal_(int *code)
+{
+    printf("CHEMCOOL FATAL: solver failure code %d (particle id_current=%d, task=%d) -- clean abort.\n",
+           *code, COOLI.id_current, ThisTask);
+    fflush(stdout);
+    endrun(78100 + *code);
+}
+
 void chemcool_init(void)
 {
     if(ThisTask == 0) {
@@ -280,6 +292,20 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     COOLR.dust_to_gas_ratio = All.DGRnormalized;
 #endif
 #endif
+    /* --- Chemistry-input DGR cap (2026-07-04) -----------------------------------
+     * Companion to the CHEM_ZMAX metal-abundance cap above, which protected
+     * abundc/abundo/abundsi/abundN from FB over-concentration but FORGOT the DGR.
+     * In the no-dust-model (production) branch DGR scales with the RAW cell Z:
+     * post-SN/PISN ejecta cells hit Z~0.5-0.7 (unmixed ejecta) -> DGR ~ 40-50x
+     * solar (absolute ~0.5!) -> the dust-coupled terms (h_gr, gas_dust, dust
+     * cooling, all prop. to DGR) overstiffen -> the recurring net-17 DVODE
+     * 'nstep exceeded' wedge class; metal diffusion then spreads the spike
+     * neighborhood-wide.  Cap the SOLVER INPUT at 10x solar = exactly the domain
+     * certified by the one-zone sweeps (Z<=10 Zsun, DGR<=10, 1080/1080 clean on
+     * net5+net17).  Stored Metallicity[]/Dust[] untouched; the DGR~Z proxy is
+     * unphysical in fresh ejecta anyway (no condensation yet). Applies to the
+     * evolved-dust branch too (same certified-domain argument). */
+    if(COOLR.dust_to_gas_ratio > 10.0) {COOLR.dust_to_gas_ratio = 10.0;}
 
 
 
@@ -387,6 +413,14 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
            Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
            role is carried by the M1 IR/dust solver, not here. */
         COOLR.G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, 1e-6);
+
+        /* Store the M1 FUV/LW field back to the cell so it is OUTPUT and inspectable,
+           mirroring the subgrid G0_VARIABLE path (CellP.G0/.G0_LW at lines 345/347).
+           Without this the M1 G0/G0_LW were computed, fed to the chemistry, and thrown
+           away — invisible in snapshots and impossible to validate against TREE_RAD
+           (2026-07-04). Fields live under G0_VARIABLE||RADTRANSFER (cell_data.h). */
+        CellP[target].G0    = COOLR.G0;
+        CellP[target].G0_LW = COOLR.G0_LW;
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
@@ -506,6 +540,18 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
     CALC_TEMP(&abh2, &ekn, &temp);
     if(mode == 2) return temp;
+
+    /* --- Hot-gas dust zero (2026-07-04, Uli) --------------------------------
+     * The DGR~Z proxy is an ISM (high-column) relation and must not hand the
+     * network dust in HOT gas: fresh SN/PISN ejecta has no condensed dust yet,
+     * and in the hot phase grains are sputtered/sublimated away.  Zero the
+     * chemistry-input DGR for T > 1e5 K (matches the network's own temp<1d5
+     * dust-block gate).  NOTE deliberately a GAS-temperature threshold in the
+     * sputtering regime, NOT T_sub~1.5e3 K: WNM at ~8e3 K carries COLD dust
+     * (T_dust~15 K; sublimation is a dust-temperature criterion), and its
+     * grain-assisted recombination must survive.  Below 1e5 K the 10x-MW
+     * certified-domain cap above still applies.  Stored fields untouched. */
+    if(temp > 1.0e5) {COOLR.dust_to_gas_ratio = 0;}
 
 
 #ifdef TREE_RAD
@@ -734,6 +780,31 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         for(i = 0; i < TRAC_NUM; i++) {
             CellP[target].TracAbund[i] = abundances[i];
         }
+#if defined(RADTRANSFER)
+        /* Write the H ionization state + electron abundance from CHEMCOOL back to
+         * the cell (2026-07-04). Two reasons, both M1-critical:
+         *  (a) the M1 ionizing-band OPACITY reads CellP[].HI (rt_absorption_rate,
+         *      rt_utilities.cc:151) -- if it stays fully-neutral, the ionizing
+         *      photons are always absorbed at the neutral rate and the HII region
+         *      can never break through (ionization capped, sn20_rmhd);
+         *  (b) snapshots (NeutralHydrogenAbundance/ElectronAbundance) otherwise
+         *      show stale defaults, disconnected from the chemistry.
+         * Under subgrid GALSF_RESOLVEDISM_PHOTOION the PI module sets these; under
+         * M1 nothing did, so CHEMCOOL (the chemistry solver) must. */
+        {
+            double abh2_c = abundances[IH2], abhp_c = abundances[IHP];
+            double abHI_c = 1.0 - 2.0*abh2_c - abhp_c; if(abHI_c < 0) abHI_c = 0;
+            CellP[target].HI  = abHI_c;                              /* neutral H fraction n_HI/n_H */
+            CellP[target].HII = abhp_c;                             /* ionized H fraction n_HII/n_H */
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+            /* nets with explicit He states: electrons include He+ and 2x He++ */
+            CellP[target].Ne  = abhp_c + abundances[IHEP] + 2.0*abundances[IHEPP]
+                                + COOLR.abundc + COOLR.abundsi;
+#else
+            CellP[target].Ne  = abhp_c + COOLR.abundc + COOLR.abundsi; /* electrons: H+ plus fixed metal pools */
+#endif
+        }
+#endif
         CellP[target].InternalEnergy = energy / rho;
         CellP[target].InternalEnergyPred = CellP[target].InternalEnergy;
         CellP[target].Temp = temp;
@@ -774,15 +845,19 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
             CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = Lambda_IR / nH2_loc;
 #endif
 #ifdef RT_NUV
-            /* If Radiation_Temperature > 1e4, redirect NUV → IR (same as standard solver) */
-            if(CellP[target].Radiation_Temperature > 1.e4) {
 #ifdef RT_INFRARED
+            /* If Radiation_Temperature > 1e4, redirect NUV → IR (same as standard solver).
+               (Radiation_Temperature is an RT_INFRARED-only field; guard added 2026-07-04 —
+               without the IR band there is no redirect target, NUV keeps its own cooling.) */
+            if(CellP[target].Radiation_Temperature > 1.e4) {
                 CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += Lambda_NUV / nH2_loc;
-#endif
                 CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV] = 0;
             } else {
                 CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV] = Lambda_NUV / nH2_loc;
             }
+#else
+            CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV] = Lambda_NUV / nH2_loc;
+#endif
 #elif defined(RT_INFRARED)
             CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += Lambda_NUV / nH2_loc;
 #endif

@@ -12,7 +12,13 @@ c /*from param.h in ZEUSMP for FORTRAN files*/
 #endif
 
 #define UNUSED_PARAM(x)  x = x
-#define ABORT(x) stop
+c ABORT used to be a bare Fortran 'stop': ONE rank died silently and the
+c rest deadlocked in the next MPI collective -> zombie jobs sitting
+c "RUNNING" for hours (pisn200, 2026-07-04). Now routes to chemcool_fatal_
+c (chemcool.cc) -> endrun() -> MPI_Abort: the WHOLE job dies immediately
+c and visibly, with failure code + particle id in the log. (Uli: clean
+c abort, no zombies.)
+#define ABORT(x) call chemcool_fatal(x)
 
 #include "chemcool_consts.h"
 #ifdef CHEMCOOL
