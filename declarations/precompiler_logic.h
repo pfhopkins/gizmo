@@ -1220,20 +1220,25 @@
 #ifndef METALS
 #define METALS
 #endif
-/* undef FIRE feedback flags to avoid conflicts */
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
-#undef GALSF_FB_FIRE_RT_HIIHEATING
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-#undef GALSF_FB_FIRE_RT_LONGRANGE
-#endif
-#ifdef GALSF_FB_FIRE_RT_LOCALRP
-#undef GALSF_FB_FIRE_RT_LOCALRP
-#endif
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
-#undef GALSF_FB_FIRE_STELLAREVOLUTION
-#endif
+/* NOTE (2026-07-04): we deliberately do NOT silently #undef the FIRE feedback
+ * flags here. Silently disabling them hid genuine misconfigurations. FIRE +
+ * Stella exclusivity is now enforced LOUDLY by the #error block below (Uli:
+ * "we don't wanna [silently] set those"). */
 #endif /* GALSF_RESOLVEDISM */
+
+/* Stella's resolved-ISM feedback (resolvedism_fb_*) fully REPLACES the FIRE-2/3
+   feedback modules. Running both double-counts SN energy/momentum/mass/metals and
+   CR injection, and duplicates the radiation feedback. The FIRE routines are gated by
+   their own flags and Stella's by GALSF_RESOLVEDISM_FB, with nothing preventing both
+   from being enabled — enforce the mutual exclusivity at compile time. */
+#ifdef GALSF_RESOLVEDISM_FB
+#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_MECHANICAL / GALSF_FB_THERMAL: Stella provides all SN/wind/thermal feedback via resolvedism_fb_*; the FIRE-2/3 modules would double-count. Disable them."
+#endif
+#if defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with the FIRE-2/3 GALSF_FB_FIRE_* modules: Stella handles radiation feedback + stellar evolution via GALSF_RESOLVEDISM_G0_VARIABLE/PHOTOION/RADPRESSURE/STELLAR_TABLES (or M1 RT). Disable the FIRE flags."
+#endif
+#endif /* GALSF_RESOLVEDISM_FB mutual exclusivity */
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #ifdef RADTRANSFER

@@ -213,6 +213,16 @@ void recompute_resolvedism_fuv_luminosities(void)
         P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
         P[i].LW_luminosity = P[i].UV_luminosity;
 #endif
+        /* Defensive guard: never let a non-finite/negative luminosity reach the
+         * gravity-tree FUV walk (rare transient edge case ~1e-6 of stars). */
+        if(!isfinite(P[i].UV_luminosity) || P[i].UV_luminosity < 0) P[i].UV_luminosity = 0;
+        if(!isfinite(P[i].LW_luminosity) || P[i].LW_luminosity < 0) P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+        if(!isfinite(P[i].NUV_luminosity) || P[i].NUV_luminosity < 0) P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+        if(!isfinite(P[i].OPT_luminosity) || P[i].OPT_luminosity < 0) P[i].OPT_luminosity = 0;
+#endif
     }
 }
 #endif
@@ -639,13 +649,15 @@ void assign_stellar_masses(void)
         /* We need a temporary to capture THIS pass's accreted mass */
         double *IMF_PassMass = (double *) mymalloc("IMF_PassMass", NumPart * sizeof(double));
         memset(IMF_PassMass, 0, NumPart * sizeof(double));
-        memset(IMF_MomAccreted, 0, NumPart * 3 * sizeof(double));
-#ifdef METALS
-        memset(IMF_MetalAccreted, 0, NumPart * sizeof(double));
-#endif
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        memset(IMF_ElemAccreted, 0, NumPart * NUM_RESOLVEDISM_ELEMENTS * sizeof(double));
-#endif
+        /* BUGFIX 2026-06-30: do NOT zero Mom/Metal/Elem accumulators per pass.
+         * Accretion is iterative (radius expands over up to 10 passes). These are
+         * accreted ONLY in the removal pass (mode 1) and must accumulate across all
+         * passes, just like the mass running-total below (IMF_MassAccreted += PassMass).
+         * Previously memset here every pass -> multi-pass stars kept only the LAST
+         * pass's metals/momentum, divided by the FULL accreted mass -> near-pure-H
+         * stars with BirthMetallicity=0 (68% of stars), corrupting every
+         * metallicity-dependent lookup (lifetimes, luminosities, yields, remnants).
+         * They are zeroed once before the do-loop, so accumulation is correct. */
         double *save2 = IMF_MassAccreted;
         IMF_MassAccreted = IMF_PassMass;
         assign_stellar_masses_xchange();

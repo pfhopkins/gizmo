@@ -1294,8 +1294,12 @@ void energy_statistics(void)
 #endif
 
 #if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
-  /* Conservation budget: mass and energy tracking (only on domain decomp steps to avoid expense) */
-  if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+  /* Conservation budget: mass and energy tracking.
+   * BUGFIX 2026-07-03: this used to ALSO require HighestActiveTimeBin==HighestOccupiedTimeBin,
+   * but energy_statistics() is triggered by the TimeBetStatistics threshold, which is almost
+   * always crossed on a small-timebin substep — the full-step condition then skipped the write
+   * while the cadence marker advanced anyway, so ENERGYinfo.txt got ONE row per run (t=0 only).
+   * The cadence itself already bounds the cost; write whenever we're called. */
   {
     compute_global_quantities_of_system(); /* ensure SysState is populated for conservation budget */
     double cool_glob = 0;

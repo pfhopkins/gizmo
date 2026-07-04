@@ -221,6 +221,9 @@ int resolvedismFB_thermal_active_check(int i)
     if(P[i].Type != 4) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
+    /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
+     * when the token is set, only that single event is active in this walk */
+    if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
     if(P[i].SNe_ThisTimeStep == 1 || P[i].SNe_ThisTimeStep == 4) return 1;
     return 0;
 }
@@ -316,12 +319,22 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 /* ---- Mass + metals injection ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    /* SINGLE SOURCE OF TRUTH for total-Z: the summed METAL part of the
+                     * SAME ElemYields[] the per-element blend consumes below.  Using the
+                     * donor's independently-packed MetalMass scalar here let any
+                     * MetalMass-vs-ΣElemYields mismatch (~0.6% in the wind channel) leak
+                     * into ΣEA≠1 through the X_H=1−Z−He force (pisn200, 2026-07-04). */
+                    double yield_metals = 0; for(k = 2; k < NUM_RESOLVEDISM_ELEMENTS; k++) {yield_metals += local.ElemYields[k];}
+#else
+                    double yield_metals = local.MetalMass;
+#endif
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
                         #pragma omp atomic read
                         Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
-                        double dMZ = wk * local.MetalMass;
+                        double dMZ = wk * yield_metals;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
@@ -333,7 +346,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                             double F_old;
                             #pragma omp atomic read
                             F_old = CellP[j].MetalMassFrom[c];
-                            double dMZ_c = (c == ch) ? wk * local.MetalMass : 0;
+                            double dMZ_c = (c == ch) ? wk * yield_metals : 0;
                             double dF = (dMZ_c - F_old * dM) / Mnew_j;
                             #pragma omp atomic
                             CellP[j].MetalMassFrom[c] += dF;
@@ -372,9 +385,37 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic read
                         Y_now = P[j].Metallicity[MET_OF(ELEM_He)];
                         double X_H_new = 1.0 - Z_now - Y_now;
-                        if(X_H_new < 0) X_H_new = 0;
-                        #pragma omp atomic write
-                        P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                        if(X_H_new >= 0) {
+                            #pragma omp atomic write
+                            P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                        } else {
+                            /* metal-dominated pathological case (massive ejecta >> cell
+                             * mass): the old X_H=0 clamp left ΣX = He+Σmetals > 1 (the
+                             * April ΣEA=1.83 clip bug).  Renormalize all non-H slots AND
+                             * total Z so ΣX = 1 with X_H = 0: element ratios and the
+                             * slot0 == Σmetals invariant are both preserved. */
+                            int mH = MET_OF(ELEM_H), mm;
+                            double snorm = 0;
+                            for(mm = 1; mm < NUM_METAL_SPECIES; mm++) {
+                                if(mm == mH) continue;
+                                double xv;
+                                #pragma omp atomic read
+                                xv = P[j].Metallicity[mm];
+                                snorm += xv;
+                            }
+                            if(snorm > 0) {
+                                double inv = 1.0 / snorm;
+                                for(mm = 1; mm < NUM_METAL_SPECIES; mm++) {
+                                    if(mm == mH) continue;
+                                    #pragma omp atomic
+                                    P[j].Metallicity[mm] *= inv;
+                                }
+                                #pragma omp atomic
+                                P[j].Metallicity[0] *= inv;
+                                #pragma omp atomic write
+                                P[j].Metallicity[mH] = 0;
+                            }
+                        }
                     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     {

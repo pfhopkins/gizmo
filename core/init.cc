@@ -265,26 +265,11 @@ void init(void)
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
         if(RestartFlag == 0) {P[i].ProtoStellarStage = 0;}
 #endif
-#ifdef GALSF_RESOLVEDISM_DUST
-        if(RestartFlag == 0 && P[i].Type == 0) {
-            /* Initialize dust mass fractions from DGR scaled to local metallicity (MW-like mixture).
-             * Dust[k] = mass fraction of dust species k relative to gas cell mass. */
-            double Z_gas = 0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            Z_gas = P[i].Metallicity[0];  /* total Z in slot 0 (28-slot FIRE-pattern) */
-#else
-            Z_gas = All.InitMetallicityinSolar * 0.014;
-#endif
-            double DGR = 0.01 * (Z_gas / 0.014); /* DGR_solar=0.01, linear with Z */
-            double C_frac = 0.3, sil_frac = 0.7; /* MW: 30% carbonaceous, 70% silicate */
-            CellP[i].Dust[0] = C_frac * DGR; /* C dust mass fraction */
-            double sil_DGR = sil_frac * DGR;
-            CellP[i].Dust[1] = sil_DGR * (64.0 / 172.0);  /* O in silicate */
-            CellP[i].Dust[2] = sil_DGR * (24.0 / 172.0);  /* Mg in silicate */
-            CellP[i].Dust[3] = sil_DGR * (28.0 / 172.0);  /* Si in silicate */
-            CellP[i].Dust[4] = sil_DGR * (56.0 / 172.0);  /* Fe in silicate */
-        }
-#endif
+        /* (GALSF_RESOLVEDISM_DUST init MOVED below the Metallicity[] construction —
+         * it reads P[i].Metallicity[0], which is only built ~150 lines further down.
+         * Reading it here returned Z=0 for fresh starts -> Dust[]=0 forever ->
+         * DGR_around=0 -> radiation pressure silently dead. Found by the sn20
+         * isolated-star test bench, 2026-07-03.) */
 
         if(RestartFlag != 1)
         {
@@ -469,6 +454,29 @@ void init(void)
             /* H from conservation: X_H = 1 − Z − Y, stored at Met[1] */
             P[i].Metallicity[MET_OF(ELEM_H)] = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
         } // Metallicity[] init
+#endif
+
+#ifdef GALSF_RESOLVEDISM_DUST
+        if(RestartFlag == 0 && P[i].Type == 0) {
+            /* Initialize dust mass fractions from DGR scaled to local metallicity (MW-like mixture).
+             * Dust[k] = mass fraction of dust species k relative to gas cell mass.
+             * MUST run AFTER Metallicity[] is built above (ordering bug fixed 2026-07-03:
+             * previously read Metallicity[0] before construction -> Z=0 -> Dust=0 -> radp dead). */
+            double Z_gas = 0;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            Z_gas = P[i].Metallicity[0];  /* total Z in slot 0 (28-slot FIRE-pattern) */
+#else
+            Z_gas = All.InitMetallicityinSolar * 0.014;
+#endif
+            double DGR = 0.01 * (Z_gas / 0.014); /* DGR_solar=0.01, linear with Z */
+            double C_frac = 0.3, sil_frac = 0.7; /* MW: 30% carbonaceous, 70% silicate */
+            CellP[i].Dust[0] = C_frac * DGR; /* C dust mass fraction */
+            double sil_DGR = sil_frac * DGR;
+            CellP[i].Dust[1] = sil_DGR * (64.0 / 172.0);  /* O in silicate */
+            CellP[i].Dust[2] = sil_DGR * (24.0 / 172.0);  /* Mg in silicate */
+            CellP[i].Dust[3] = sil_DGR * (28.0 / 172.0);  /* Si in silicate */
+            CellP[i].Dust[4] = sil_DGR * (56.0 / 172.0);  /* Fe in silicate */
+        }
 #endif
 
 #if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)

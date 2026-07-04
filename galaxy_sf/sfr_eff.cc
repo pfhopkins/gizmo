@@ -454,11 +454,14 @@ void star_formation_parent_routine(void)
             if(CellP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
             if(All.ComovingIntegrationOn) {if(CellP[i].Density < All.OverDensThresh) {flag = 1;}} // (additional density check for cosmological runs) //
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-            /* Isolated SN/wind test: only the central particle (ID=1, untouched by prior SF) is eligible for SF.
-               After the first SF event, P[i].ID_generation increments and the gate closes — exactly ONE star per run.
-               Mass is set via the IMF override below (= All.TestStarMass). All other gas particles never form stars. */
+            /* Isolated SN/wind test: only the designated site particles (IDs 1..TestNumStars,
+               untouched by prior SF) are eligible for SF; each gate closes after its first SF
+               event via ID_generation — exactly TestNumStars stars per run (default 1; >1 =
+               clustered-event tests, e.g. simultaneous overlapping SNe for the per-event
+               FB-serialization regression). Mass set via the IMF override below. */
             if(All.TestStarMass > 0) {
-                if(P[i].ID == 1 && P[i].ID_generation == 0) {flag = 0;}
+                int n_sites = (All.TestNumStars > 0) ? All.TestNumStars : 1;
+                if(P[i].ID >= 1 && P[i].ID <= (MyIDType)n_sites && P[i].ID_generation == 0) {flag = 0;}
                 else {flag = 1;}
             }
 #endif
@@ -503,11 +506,16 @@ void star_formation_parent_routine(void)
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-                /* Override IMF draw with the user-specified test star mass for the central particle (one-shot) */
-                if(All.TestStarMass > 0 && P[i].ID == 1 && P[i].ID_generation == 0) {
-                    M_drawn_imf = All.TestStarMass;
-                    m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
-                    prob = 2.0; /* always succeeds the random check below */
+                /* Override IMF draw with the user-specified test star mass for the site particles (one-shot each) */
+                {
+                    int n_sites = (All.TestNumStars > 0) ? All.TestNumStars : 1;
+                    if(All.TestStarMass > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)n_sites && P[i].ID_generation == 0) {
+                        M_drawn_imf = All.TestStarMass;  /* per-site masses: staggered lifetimes -> subsequent-injection tests */
+                        if(P[i].ID == 2 && All.TestStarMass2 > 0) {M_drawn_imf = All.TestStarMass2;}
+                        if(P[i].ID == 3 && All.TestStarMass3 > 0) {M_drawn_imf = All.TestStarMass3;}
+                        m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+                        prob = 2.0; /* always succeeds the random check below */
+                    }
                 }
 #endif
 #endif

@@ -575,10 +575,12 @@ c
 c Exponentially reduce rate at high temperature
       h_gr = h_gr * dexp(-temp / 3d4)
 c
-#if defined(RADTRANSFER)
-c     M1 solver owns the dust temperature; skip optically-thin solve.
-c     tdust was set from CellP.Dust_Temperature on entry in chemcool.cc.
-c     We still need RH2 and Rdust for H2 formation on dust.
+#if defined(RT_INFRARED)
+c     M1 IR solver owns the dust temperature (chemcool.cc set tdust from
+c     CellP.Dust_Temperature on entry); skip the optically-thin solve but
+c     still compute RH2 and Rdust for H2 formation on dust. NOTE: gate is
+c     RT_INFRARED (not RADTRANSFER) -- without the IR band nobody updates
+c     Dust_Temperature and skipping here would freeze tdust.
       call calc_dust_temp(yn, chi_isrf, temp, abHI, RH2, Rdust, 1)
 #else
       call calc_dust_temp(yn, chi_isrf, temp, abHI, RH2, Rdust, 0)

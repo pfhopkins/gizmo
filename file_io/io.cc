@@ -1094,7 +1094,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) P[pindex].UV_luminosity;
+                    *fp++ = (MyOutputFloat) (P[pindex].UV_luminosity > 0 ? log10(P[pindex].UV_luminosity) : -100.0); /* log10(erg/s); float32 output would overflow the raw ~1e38-1e40 value */
                     n++;
                 }
 #endif
@@ -1105,7 +1105,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) P[pindex].LW_luminosity;
+                    *fp++ = (MyOutputFloat) (P[pindex].LW_luminosity > 0 ? log10(P[pindex].LW_luminosity) : -100.0); /* log10(erg/s) */
                     n++;
                 }
 #endif
@@ -1116,7 +1116,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) P[pindex].Lyman_photons_per_sec;
+                    *fp++ = (MyOutputFloat) (P[pindex].Lyman_photons_per_sec > 0 ? log10(P[pindex].Lyman_photons_per_sec) : -100.0); /* log10(photons/s); raw ~1e49 always overflows float32 */
                     n++;
                 }
 #endif

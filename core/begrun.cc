@@ -2317,6 +2317,18 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "TestStarMass");
       addr[nt] = &All.TestStarMass;
       id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestNumStars");
+      addr[nt] = &All.TestNumStars;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "TestStarMass2");
+      addr[nt] = &All.TestStarMass2;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestStarMass3");
+      addr[nt] = &All.TestStarMass3;
+      id[nt++] = REAL;
 #endif
 
 #ifdef TREE_RAD
@@ -2508,6 +2520,11 @@ void read_parameter_file(char *fname)
             if(*tag[i])
             {
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume this is a NON-cosmological (static-spacetime) simulation (=%d) \n",tag[i],alternate_tag[i],All.ComovingIntegrationOn); continue;}
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                if(strcmp("TestNumStars",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to a single test star (ID=1) (=%d) \n",tag[i],alternate_tag[i],All.TestNumStars); continue;}
+                if(strcmp("TestStarMass2",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set: site 2 uses TestStarMass \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("TestStarMass3",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set: site 3 uses TestStarMass \n",tag[i],alternate_tag[i]); continue;}
+#endif
                 if(strcmp("OutputListOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume the snapshots will be output at user-specified intervals rather than adopting a list from a given file (=%d) \n",tag[i],alternate_tag[i],All.OutputListOn); continue;}
                 if(strcmp("BufferSize",tag[i])==0) {*((double *)addr[i])=100; printf("Tag %s (%s) not set in parameter file: defaulting to 100MB MPI Buffer allocation (adjust if needed for your machine) (=%g) \n",tag[i],alternate_tag[i],All.BufferSize); continue;}
             }

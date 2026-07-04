@@ -34,6 +34,15 @@
         
         int k_species;
         double rho_i = local.Density*All.cf_a3inv, rho_j = CellP[j].Density*All.cf_a3inv, rho_ij = 0.5*(rho_i+rho_j); // physical
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        /* Buffer the 28 Metallicity-slot fluxes: each slot passes through several
+         * INDEPENDENT nonlinear limiters below (MINMODs, overshoot-zeroing, zlim,
+         * pair cap), so Σ slot-fluxes ≠ 0 and slot0-flux ≠ Σ metal-fluxes at sharp
+         * composition fronts → per-cell ΣX and Z0≡Σmetals drift at 1e-6..1e-5 per
+         * step (pisn200 reproducer, 2026-07-04) even though pairwise (global)
+         * conservation holds.  We close the system after the loop. */
+        double cmag_slotbuf[NUM_METAL_SPECIES]; {int kb; for(kb=0;kb<NUM_METAL_SPECIES;kb++) {cmag_slotbuf[kb]=0;}}
+#endif
         for(k_species=0;k_species<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k_species++)
         {
             cmag = 0.0; double grad_dot_x_ij = 0.0; double Z_j = 0;
@@ -92,10 +101,40 @@
                  * The pending buffer lets the j-side write survive across timebins:
                  * an inactive cell j accumulates contributions from active neighbors'
                  * walks until j eventually unpacks.  Bit-exact pair conservation. */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                if(k_species < NUM_METAL_SPECIES) {cmag_slotbuf[k_species] = cmag;} else {
+                    out.Dyield[k_species]               += 0.5 * cmag;
+                    CellP[j].Dyield_pending[k_species]  -= 0.5 * cmag;
+                }
+#else
                 out.Dyield[k_species]               += 0.5 * cmag;
                 CellP[j].Dyield_pending[k_species]  -= 0.5 * cmag;
+#endif
             }
         }
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        /* ---- Closure corrections (2026-07-04), RESOLVEDISM 28-slot layout only
+         * ([0]=Ztot, [1]=H, [2]=He, [3..27]=metals; ΣMet[1..27]=1 convention):
+         *   (I2) slot0 flux := Σ metal-slot fluxes  → Z0 ≡ Σmetals preserved
+         *   (I1) residual of element-slot fluxes absorbed into H (the ~0.7
+         *        reservoir; residual is O(1e-6) of the fluxes) → Σ fluxes = 0
+         *        → per-cell ΣX = 1 preserved through the unpack.
+         * Both ride the same antisymmetric ±0.5·cmag scatter, so pairwise and
+         * global per-element conservation remain bit-exact. */
+        {
+            int kk; double sum_metal = 0, resid = 0;
+            for(kk = 3; kk < NUM_METAL_SPECIES; kk++) {sum_metal += cmag_slotbuf[kk];}
+            cmag_slotbuf[0] = sum_metal;
+            for(kk = 1; kk < NUM_METAL_SPECIES; kk++) {resid += cmag_slotbuf[kk];}
+            cmag_slotbuf[1] -= resid;
+            for(kk = 0; kk < NUM_METAL_SPECIES; kk++) {
+                if(cmag_slotbuf[kk] != 0) {
+                    out.Dyield[kk]              += 0.5 * cmag_slotbuf[kk];
+                    CellP[j].Dyield_pending[kk] -= 0.5 * cmag_slotbuf[kk];
+                }
+            }
+        }
+#endif
     }
 #endif
 }

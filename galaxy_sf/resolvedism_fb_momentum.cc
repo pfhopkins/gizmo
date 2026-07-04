@@ -73,20 +73,27 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     /* ---- Radiation pressure (loop_iteration == 1) ---- */
     if(loop_iteration == 1) {
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        /* throttled gate-trace: which return fires? (FBDBG_RP, parsed by test suite) */
+        static int rp_dbg_count = 0; int rp_dbg = (P[i].ID <= 8 && rp_dbg_count < 40); if(rp_dbg) rp_dbg_count++;
+        #define RP_TRACE(reason, val) do { if(rp_dbg) {printf("FBDBG_RP_GATE star=%llu gate=%s val=%.6e\n", (unsigned long long)P[i].ID, reason, (double)(val)); fflush(stdout);} } while(0)
+#else
+        #define RP_TRACE(reason, val) do {} while(0)
+#endif
         double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
-        if(star_age_yr <= 0) return;
+        if(star_age_yr <= 0) {RP_TRACE("age<=0", star_age_yr); return;}
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
-        if(star_age_yr >= lifetime_yr) return;
+        if(star_age_yr >= lifetime_yr) {RP_TRACE("dead", star_age_yr); return;}
         double table_age = get_star_table_age(star_age_yr, logM, logZ);
-        if(table_age <= 0) return; /* PMS: no radiation pressure */
+        if(table_age <= 0) {RP_TRACE("pms", table_age); return;} /* PMS: no radiation pressure */
 
         double log_age = log10(DMAX(table_age, 100.0));
         double log_Lbol = stellar_log_L_bol(logM, logZ, log_age);
         double Lbol_cgs = pow(10.0, log_Lbol);
-        if(Lbol_cgs <= 0) return;
+        if(Lbol_cgs <= 0) {RP_TRACE("Lbol<=0", Lbol_cgs); return;}
 
         double dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
-        if(dt <= 0) return;
+        if(dt <= 0) {RP_TRACE("dt<=0", dt); return;}
         double dt_cgs = dt * UNIT_TIME_IN_CGS;
 
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -104,9 +111,10 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         double sigma_dust = 2.0e-21 * DGR;
         double tau_UV = sigma_dust * NH;
         double f_abs = 1.0 - exp(-tau_UV);
-        if(f_abs < 1.0e-6) return;
+        if(f_abs < 1.0e-6) {RP_TRACE("f_abs", f_abs); RP_TRACE("f_abs.DGR", DGR); RP_TRACE("f_abs.NH", NH); return;}
 
         double dp_cgs = f_abs * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
+        RP_TRACE("FIRING.dp_cgs", dp_cgs);
         double Sigma_cgs = rho_phys * UNIT_DENSITY_IN_CGS * h_phys * UNIT_LENGTH_IN_CGS;
         double kappa_IR = 5.0 * DGR;
         double tau_IR = kappa_IR * Sigma_cgs;
@@ -199,19 +207,28 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         in->WindMomentum = Mej_solar * 30.0 * SOLAR_MASS_CGS * 1.0e5 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
     }
 
-    /* AGB yields: absolute element ejecta from table (all ≥0, Σ_k = Mej by construction) */
+    /* AGB yields: the table gives the ejecta COMPOSITION; rescale it to the physical
+     * ejecta mass Mej_solar = M_particle - rem_mass so we never remove more than the
+     * star currently has. BUGFIX 2026-07-02: previously in->Mej was overwritten with the
+     * ZAMS-envelope table sum Mej_table_solar, which for a wind-stripped star exceeds the
+     * current mass -> out2particle clip -> mass non-conservation (the test_FULL leak).
+     * Mirror the SN thermal path: current-mass Mej, table composition. */
     double metal_mass_solar = 0;
     double Mej_table_solar = 0;
     for(k = 0; k < STBL_NELEM; k++) {
         double m_k = stellar_elem_ej_AGB(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
+        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR; /* table-absolute; rescaled below */
 #endif
         Mej_table_solar += m_k;
         if(k >= ELEM_C) metal_mass_solar += m_k;
     }
-    in->Mej = Mej_table_solar / UNIT_MASS_IN_SOLAR;
-    in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+    double zscale = (Mej_table_solar > 0) ? (Mej_solar / Mej_table_solar) : 0.0;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    for(k = 0; k < STBL_NELEM; k++) in->ElemYields[k] *= zscale;
+#endif
+    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;                     /* current-mass ejecta (not table sum) */
+    in->MetalMass = metal_mass_solar * zscale / UNIT_MASS_IN_SOLAR;
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     {
@@ -279,6 +296,11 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
     /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure.  STARFORGE pattern:
      * the weighting pre-pass uses the same active_check criterion as its injection. */
     if(loop_iteration == 0 || loop_iteration == -1) {
+        /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
+         * when the token is set, only that single event is active. Radpressure pair
+         * (-2,1) below is deliberately NOT gated — it stays batched (momentum-only,
+         * many low-rate sources; runs with the token released). */
+        if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
         /* AGB (2) and wind (3) */
         if(P[i].SNe_ThisTimeStep == 2 || P[i].SNe_ThisTimeStep == 3) return 1;
     }
@@ -357,12 +379,22 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 /* ---- Mass + metals injection (wind and AGB ejecta) ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    /* SINGLE SOURCE OF TRUTH for total-Z: the summed METAL part of the
+                     * SAME ElemYields[] the per-element blend consumes below.  Using the
+                     * donor's independently-packed MetalMass scalar here let any
+                     * MetalMass-vs-ΣElemYields mismatch (~0.6% in the wind channel) leak
+                     * into ΣEA≠1 through the X_H=1−Z−He force (pisn200, 2026-07-04). */
+                    double yield_metals = 0; for(k = 2; k < NUM_RESOLVEDISM_ELEMENTS; k++) {yield_metals += local.ElemYields[k];}
+#else
+                    double yield_metals = local.MetalMass;
+#endif
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
                         #pragma omp atomic read
                         Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
-                        double dMZ = wk * local.MetalMass;
+                        double dMZ = wk * yield_metals;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
@@ -374,7 +406,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                             double F_old;
                             #pragma omp atomic read
                             F_old = CellP[j].MetalMassFrom[c];
-                            double dMZ_c = (c == ch) ? wk * local.MetalMass : 0;
+                            double dMZ_c = (c == ch) ? wk * yield_metals : 0;
                             double dF = (dMZ_c - F_old * dM) / Mnew_j;
                             #pragma omp atomic
                             CellP[j].MetalMassFrom[c] += dF;
@@ -410,9 +442,37 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         #pragma omp atomic read
                         Y_now = P[j].Metallicity[MET_OF(ELEM_He)];
                         double X_H_new = 1.0 - Z_now - Y_now;
-                        if(X_H_new < 0) X_H_new = 0;
-                        #pragma omp atomic write
-                        P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                        if(X_H_new >= 0) {
+                            #pragma omp atomic write
+                            P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                        } else {
+                            /* metal-dominated pathological case (massive ejecta >> cell
+                             * mass): the old X_H=0 clamp left ΣX = He+Σmetals > 1 (the
+                             * April ΣEA=1.83 clip bug).  Renormalize all non-H slots AND
+                             * total Z so ΣX = 1 with X_H = 0: element ratios and the
+                             * slot0 == Σmetals invariant are both preserved. */
+                            int mH = MET_OF(ELEM_H), mm;
+                            double snorm = 0;
+                            for(mm = 1; mm < NUM_METAL_SPECIES; mm++) {
+                                if(mm == mH) continue;
+                                double xv;
+                                #pragma omp atomic read
+                                xv = P[j].Metallicity[mm];
+                                snorm += xv;
+                            }
+                            if(snorm > 0) {
+                                double inv = 1.0 / snorm;
+                                for(mm = 1; mm < NUM_METAL_SPECIES; mm++) {
+                                    if(mm == mH) continue;
+                                    #pragma omp atomic
+                                    P[j].Metallicity[mm] *= inv;
+                                }
+                                #pragma omp atomic
+                                P[j].Metallicity[0] *= inv;
+                                #pragma omp atomic write
+                                P[j].Metallicity[mH] = 0;
+                            }
+                        }
                     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     {

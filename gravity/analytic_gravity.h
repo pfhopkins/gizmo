@@ -29,6 +29,7 @@ void GravAccel_RDITestProblem(void);
 void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
 void GravAccel_GMCTurbInit(void);
 void GravAccel_FilamentTurbInit(void);
+void GravAccel_HuTallbox(void);
 
 /* parent routine which decides which (if any) analytic gravitational forces are applied */
 void add_analytic_gravitational_forces()
@@ -61,6 +62,9 @@ void add_analytic_gravitational_forces()
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     GravAccel_RDITestProblem();           // vertical gravity+external acceleration for grain-RDI-wind tests
+#endif
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+    GravAccel_HuTallbox();                // Hu, Sternberg & van Dishoeck 2021 MW-like static vertical potential (stellar disk tanh + vertical NFW) for the stratified-ISM tallbox
 #endif
 }
 
@@ -154,6 +158,35 @@ void GravAccel_RayleighTaylorTest()
 {
     int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
         {if(P[i].ID != 0) {P[i].GravAccel[1]=-0.5;}} /* now add the constant vertical field */
+}
+
+/* Hu, Sternberg & van Dishoeck 2021 (arXiv:2103.03889) MW-like fixed external
+ * potential for the stratified-ISM tallbox.  Two vertical (z-only) terms, ADDED
+ * to the tree self-gravity of the gas: a fixed stellar disk and a vertical NFW
+ * halo, evaluated at the solar cylindrical radius R0.  Height z is measured from
+ * the box midplane (boxHalf_Z, periodic x/y + long/outflow z).  All constants in
+ * Stella code units (kpc, 1e10 Msun, km/s); this potential is for NON-comoving
+ * runs only (the tallbox is a physical-coordinate patch). */
+void GravAccel_HuTallbox()
+{
+    const double Sigma_star = 4.0e-3;   /* Sigma_* = 40 Msun/pc^2  = 4e-3 (1e10Msun)/kpc^2 */
+    const double z_star     = 0.25;     /* stellar scale height H_* [kpc] */
+    const double rho_s      = 9.5e-4;   /* NFW rho_s = 9.5e-3 Msun/pc^3 = 9.5e-4 code */
+    const double r_s        = 17.0;     /* NFW scale radius [kpc] */
+    const double R0         = 8.0;      /* solar cylindrical radius [kpc] */
+    const double two_piG_Sig      = 2.0 * M_PI * All.G * Sigma_star;
+    const double fourpiG_rhos_rs3 = 4.0 * M_PI * All.G * rho_s * r_s * r_s * r_s;
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        double zc = P[i].Pos[2] - boxHalf_Z;                 /* height above midplane [kpc] */
+        /* stellar disk (Hu+21 eq. 4): a_z = -2 pi G Sigma_* tanh(z/H_*) */
+        double a_disk = -two_piG_Sig * tanh(zc / z_star);
+        /* vertical NFW (Hu+21 eq. 5): a_z = -G M(<r) z / r^3, r = sqrt(z^2 + R0^2) */
+        double r = sqrt(zc*zc + R0*R0), x = r / r_s;
+        double GM = fourpiG_rhos_rs3 * (log(1.0 + x) - x / (1.0 + x));  /* = G * M(<r) */
+        double a_dm = -GM * zc / (r*r*r);
+        P[i].GravAccel[2] += a_disk + a_dm;
+    }
 }
 
 

@@ -959,6 +959,16 @@ c          endif
 #endif
 
           tdust_new = tdust - F_nr / dF_nr
+c
+c Bound the Newton iterate to a physical dust-temperature range [tmin, ~1500 K].
+c Grains sublimate above ~1500 K, so a higher tdust is unphysical; without this
+c cap the solver (dust_cool ~ tdust^6, gas-grain heating from hot gas) can run
+c away to tdust >> 1e4 K, which massively overstiffens the chemistry network
+c (the net-17 DVODE "nstep exceeded" wedge showed tdust ~ 1e8 K at temp ~ 1e5 K).
+c NaN guard included.
+          if (tdust_new .ne. tdust_new) tdust_new = tmin
+          if (tdust_new .lt. tmin)   tdust_new = tmin
+          if (tdust_new .gt. 1.5d3)  tdust_new = 1.5d3
           if (abs((tdust_new - tdust)/tdust) .lt. 1d-2) then
             goto 101
           endif
@@ -977,9 +987,14 @@ c
       else
         RH2   = 0d0
         Rdust = 0d0
-        tdust = temp
+c Hot/dust-free branch (temp >= 1e5 K or DGR ~ 0): dust rates are off, but do NOT
+c set tdust = temp — grains never reach the gas temperature (they sublimate at
+c ~1.5e3 K), and the unbounded value (up to ~1e8 K in SN bubbles) leaked into
+c DustTemp / diagnostics / dust_evolve inputs. Cap at the sublimation bound,
+c consistent with the Newton-branch clamp above. (2026-07-03)
+        tdust = min(temp, 1.5d3)
       endif
-c     
+c
  101  continue
 c
       if (tdust .eq. 0d0) then

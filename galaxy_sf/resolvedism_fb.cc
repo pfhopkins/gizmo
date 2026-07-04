@@ -252,6 +252,21 @@ void resolvedism_determine_SNe(void)
                 if(kk == ELEM_Si) ySi_log = me;
                 if(kk == ELEM_Fe) yFe_log = me;
             }
+            /* LEDGER FIX (2026-07-03): log what fb_thermal ACTUALLY injects, not the raw
+             * table values. The injector rescales all yields by
+             *   scale = (M_pre - rem_mass) / Mej_table
+             * (heavy-fallback remnants at low Z swallow most of the nominal ejecta:
+             * rem ~ M_star for 25-60 Msun at Z~1e-3 -> scale ~ 0 for FSN). Logging the
+             * unscaled table values made the metal ledger over-count by ~20% vs the
+             * double-precision M_Z tracker. Mirror fb_thermal.cc exactly. */
+            {
+                double M_pre_log = P[i].M_at_SN_trigger; /* Msun, pre-walk */
+                double rem_log = rem_mass;
+                double Mej_actual_log = DMAX(M_pre_log - rem_log, 0);
+                double scale_log = (mej_log > 0) ? Mej_actual_log / mej_log : 0;
+                mej_log *= scale_log; zej_log *= scale_log;
+                yC_log *= scale_log; yO_log *= scale_log; ySi_log *= scale_log; yFe_log *= scale_log;
+            }
 #endif
             sn_mej[n_logged] = mej_log;
             sn_zej[n_logged] = zej_log;
@@ -505,6 +520,80 @@ void resolvedism_determine_SNe(void)
  *  removed — now in resolvedism_fb_thermal.cc and resolvedism_fb_momentum.cc) */
 
 
+/* Per-event serialization token: when nonzero, the momentum (wind/AGB) and thermal
+ * (SN/Ia) active_checks admit ONLY the star with this ID, so each event runs its own
+ * weighting pre-pass against the CURRENT neighbor masses immediately before its own
+ * injection. 0 = no restriction (radpressure and any legacy batched passes). */
+MyIDType FB_SerialEventID = 0;
+
+/* Serialized weight+inject driver for one FB pass (2026-07-03).
+ * WHY: the batched pattern (weight ALL donors, then inject ALL donors) leaves
+ * Σwk != 1 whenever two same-step events share neighbors: the later event's weights
+ * were measured before the earlier event's mass landed. Measured over 190 Myr in
+ * test_SN_PI_G0 this mis-deposited ~16% of SN metals (remnants absorb the closure
+ * error; PISN remnant kept 48 Msun with rem_table=0). Serializing per event makes
+ * Σwk = 1 exact at each event's own injection time. Cost: ~2 collective walks +
+ * 1 allreduce per event, at O(1-3) events/step.
+ * BUBBLE RETRY: if the weight walk measures wt_sum <= 0 (no gas in kernel — star
+ * inside an evacuated superbubble), grow the kernel x1.4 and re-measure (<=3 tries).
+ * MPI SAFETY: every rank executes the identical sequence of collective calc() calls;
+ * the per-iteration winner and retry decisions are agreed by MPI_Allreduce. */
+static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int flagB)
+{
+    int ii;
+    /* collect local candidates (flagged donors eligible for this pass) */
+    int ncand = 0, ccap = 256;
+    int *cand = (int *)mymalloc("fbser_cand", ccap * sizeof(int));
+    for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) {
+        if(P[ii].Type != 4) continue;
+        if(P[ii].SNe_ThisTimeStep != flagA && P[ii].SNe_ThisTimeStep != flagB) continue;
+        if(P[ii].KernelRadius <= 0 || P[ii].NumNgb <= 0) continue;
+        if(ncand >= ccap) {ccap *= 2; cand = (int *)myrealloc_movable(cand, ccap * sizeof(int));}
+        cand[ncand++] = ii;
+    }
+    char *done = (char *)mymalloc("fbser_done", (ncand > 0 ? ncand : 1) * sizeof(char));
+    memset(done, 0, (ncand > 0 ? ncand : 1) * sizeof(char));
+
+    while(1)
+    {
+        /* pick globally-smallest unprocessed event ID (sentinel = max) */
+        unsigned long long my_min = ~0ULL, glob_min = ~0ULL; int my_idx = -1;
+        for(ii = 0; ii < ncand; ii++) {
+            if(done[ii]) continue;
+            if((unsigned long long)P[cand[ii]].ID < my_min) {my_min = (unsigned long long)P[cand[ii]].ID; my_idx = ii;}
+        }
+        MPI_Allreduce(&my_min, &glob_min, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+        if(glob_min == ~0ULL) break; /* no events left anywhere */
+        FB_SerialEventID = (MyIDType)glob_min;
+        int i_owner = (my_idx >= 0 && (unsigned long long)P[cand[my_idx]].ID == glob_min) ? cand[my_idx] : -1;
+
+        /* fresh weighting for THIS event against current neighbor masses,
+         * with bubble retry (kernel growth) if no gas weight was found */
+        int try_num, ok_local, ok_glob;
+        for(try_num = 0; try_num < 4; try_num++) {
+            for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) {
+                if(P[ii].Type == 4) P[ii].FB_Area_weighted_sum = 0;
+            }
+            calc_fn(-1); /* weighting pre-pass (collective) */
+            ok_local = 1;
+            if(i_owner >= 0 && P[i_owner].FB_Area_weighted_sum <= 0) {ok_local = 0;}
+            MPI_Allreduce(&ok_local, &ok_glob, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            if(ok_glob) break;
+            if(i_owner >= 0) {
+                P[i_owner].KernelRadius *= 1.4; /* star in an evacuated bubble: widen and retry */
+                printf("RESOLVEDISM FB: event ID=%llu found no gas in kernel; growing KernelRadius to %g (try %d)\n",
+                       (unsigned long long)glob_min, P[i_owner].KernelRadius, try_num + 1);
+            }
+        }
+        calc_fn(0); /* injection for this single event (collective) */
+
+        if(i_owner >= 0) {done[my_idx] = 1;} /* owner retires the event */
+    }
+    FB_SerialEventID = 0; /* release: subsequent passes see all particles */
+    myfree(done);
+    myfree(cand);
+}
+
 void resolvedism_inject_fb_energy(void)
 {
     int ii;
@@ -513,25 +602,21 @@ void resolvedism_inject_fb_energy(void)
      *      onto P[i].FB_Area_weighted_sum
      *   2. Injection pass uses that measured sum as denominator → Σwk = 1 exactly
      *   → all per-event sums (Mej, Esne, p_ejecta, yields[k]) conserve bit-exact.
-     * FB_ZERO_AWS() zeros the accumulator before each weighting pass to ensure
-     * the measurement is fresh (neighbor masses shift between passes when wind/AGB
-     * deposits ahead of SN/Ia). */
+     * SERIALIZED PER EVENT (2026-07-03): each event re-measures its weights against
+     * the current neighbor masses immediately before its own injection, so same-step
+     * events sharing neighbors no longer break Σwk = 1 (see
+     * resolvedism_fb_serialized_pass above). */
     #define FB_ZERO_AWS() do { for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) { if(P[ii].Type == 4) P[ii].FB_Area_weighted_sum = 0; } } while(0)
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
-     *      winds happen before the star explodes as SN. ---- */
-    FB_ZERO_AWS();
+     *      winds happen before the star explodes as SN. Serialized per event. ---- */
     MBARY_STEP("pre_fb_mom_p0");
-    resolvedism_fb_momentum_calc(-1);   /* weighting pre-pass for wind/AGB */
-    resolvedism_fb_momentum_calc(0);    /* injection */
+    resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 3);
     MBARY_STEP("post_fb_mom_p0");
 
-    /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals).  Re-measure AWS
-     *      because wind/AGB may have shifted neighbor masses. ---- */
-    FB_ZERO_AWS();
+    /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals). Serialized per event. ---- */
     MBARY_STEP("pre_fb_thermal");
-    resolvedism_fb_thermal_calc(-1);    /* weighting pre-pass for SN/Ia */
-    resolvedism_fb_thermal_calc(0);     /* injection */
+    resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     MBARY_STEP("post_fb_thermal");
 
     /* Budget tracking: local accumulators for [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia */

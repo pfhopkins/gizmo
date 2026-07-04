@@ -33,7 +33,9 @@
 
 #define HEALPIX_NSIDE 1
 #define HEALPIX_NPIX  12
-#define MAX_PI_NGBS 4096
+/* MAX_PI_NGBS removed 2026-07-04: the fixed-cap neighbor buffer silently
+ * dropped cells beyond 4096 (see Phase-1 comment in the evaluate kernel);
+ * the buffer is now heap-allocated and growable. */
 
 /* case B recombination coefficient at T=10^4 K [cm^3/s] */
 #define PI_ALPHA_B 2.6e-13
@@ -214,8 +216,18 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
 
     double h2 = local.SearchRadius * local.SearchRadius;
 
-    /* Phase 1: Collect all gas neighbors from tree walk */
-    struct pi_ngb_entry ngb_buf[MAX_PI_NGBS];
+    /* Phase 1: Collect all gas neighbors from tree walk.
+     * HEAP-ALLOCATED and GROWABLE (2026-07-04): the old fixed stack buffer
+     * (MAX_PI_NGBS=4096) silently dropped every neighbor beyond the cap in
+     * arbitrary tree-encounter order — pi_shadow: 25600 cells in the search
+     * sphere -> 84% dropped -> the dense cloud was never charged its
+     * recombination cost -> no shadow/anisotropy, and in production any HII
+     * region enclosing >4096 cells was under-recombined (front too large)
+     * and angularly biased.  malloc/realloc are thread-safe (libc) and this
+     * kernel runs once per active star, so the cost is negligible. */
+    int ngb_cap = 16384;
+    struct pi_ngb_entry *ngb_buf = (struct pi_ngb_entry *) malloc(ngb_cap * sizeof(struct pi_ngb_entry));
+    if(ngb_buf == NULL) return -2;
     int n_collected = 0;
 
     if(mode == 0) {startnode = All.MaxPart;}
@@ -226,7 +238,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
         while(startnode >= 0)
         {
             numngb_inbox = ngb_treefind_variable_threads(local.Pos, local.SearchRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
-            if(numngb_inbox < 0) {return -2;}
+            if(numngb_inbox < 0) {free(ngb_buf); return -2;}
             for(n = 0; n < numngb_inbox; n++)
             {
                 j = ngblist[n];
@@ -245,12 +257,16 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 vec2pix_ring(HEALPIX_NSIDE, vec, &ipix);
                 if(ipix < 0 || ipix >= HEALPIX_NPIX) ipix = 0;
 
-                if(n_collected < MAX_PI_NGBS) {
-                    ngb_buf[n_collected].index = j;
-                    ngb_buf[n_collected].dist2 = r2;
-                    ngb_buf[n_collected].pixel = (int)ipix;
-                    n_collected++;
+                if(n_collected >= ngb_cap) {   /* grow — NEVER silently drop */
+                    ngb_cap *= 2;
+                    struct pi_ngb_entry *nb2 = (struct pi_ngb_entry *) realloc(ngb_buf, (size_t)ngb_cap * sizeof(struct pi_ngb_entry));
+                    if(nb2 == NULL) {free(ngb_buf); return -2;}
+                    ngb_buf = nb2;
                 }
+                ngb_buf[n_collected].index = j;
+                ngb_buf[n_collected].dist2 = r2;
+                ngb_buf[n_collected].pixel = (int)ipix;
+                n_collected++;
             }
         }
         if(mode == 1)
@@ -318,6 +334,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
     }
 
 done:
+    free(ngb_buf);
     if(mode == 0) {out2particle_resolvedismPI(&out, target, 0, loop_iteration);} else {DATARESULT_NAME[target] = out;}
     return 0;
 }

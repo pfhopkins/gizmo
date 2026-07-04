@@ -810,6 +810,7 @@ void resolvedism_determine_SNe(void);
 void resolvedism_inject_fb_energy(void);
 void resolvedism_fb_thermal_calc(int loop_iteration);
 void resolvedism_fb_momentum_calc(int fb_loop_iteration);
+extern MyIDType FB_SerialEventID; /* per-event FB serialization token (resolvedism_fb.cc); 0 = unrestricted */
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 void resolvedism_photoionize(void);

@@ -474,7 +474,10 @@ extern struct global_data_all_processes
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-  double TestStarMass;          /*!< Msun: convert ID=1 gas particle to a star of this mass at startup; SF disabled */
+  double TestStarMass;          /*!< Msun: convert ID=1..TestNumStars gas particles to stars of this mass at startup; SF disabled */
+  double TestStarMass2;         /*!< optional mass for site ID=2 (0 -> use TestStarMass); staggered-lifetime tests */
+  double TestStarMass3;         /*!< optional mass for site ID=3 (0 -> use TestStarMass) */
+  int TestNumStars;             /*!< number of promotion sites (IDs 1..N); default 1; >1 enables clustered/subsequent-event tests */
 #endif
 #ifdef TREE_RAD
   double ShieldingLength;       /*!< maximum distance for column density integration in tree walk */

@@ -354,7 +354,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         double rho_code = CellP[target].Density * All.cf_a3inv;
         /* Habing normalizations for M1 RT bands [erg/cm^3].
            FUV = 8-13.6 eV (narrower than tree-ray 6-13.6), LW = 11.2-13.6 eV */
-        double u_Hab_FUV_M1 = 5.03e-14, u_Hab_LW = 2.11e-14;
+        double u_Hab_FUV_M1 = 5.03e-14, u_Hab_LW = 2.11e-14, u_Hab_NUV = 3.85e-14; /* NUV(3.4-8eV): std ISRF = 0.024 eV/cm^3 */
 
         /* Convert Rad_E_gamma (extensive: total energy per particle) to physical energy density (erg/cm^3):
            u_rad = Rad_E_gamma / V_i = Rad_E_gamma * Density / Mass  [code energy/volume]
@@ -371,11 +371,22 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #else
         double u_LW_cgs  = 0;
 #endif
-        /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units */
+#if defined(RT_NUV)
+        double u_NUV_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_NUV] * fac_to_cgs;
+#else
+        double u_NUV_cgs = 0;
+#endif
+        /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
+           molecular photochemistry (H2/CO dissociation, C ionization). */
         COOLR.G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, 1e-6);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units */
         COOLR.G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.0);
-        COOLR.G0_dust = COOLR.G0;
+        /* G0_dust: GRAIN photoelectric heating field (Bakes & Tielens gas PE heating in
+           cool_func) = FUV(8-13.6) + NUV(3.4-8), each with its own Habing conversion.
+           NUV photons above the grain work function eject grain photoelectrons -> heat gas.
+           Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
+           role is carried by the M1 IR/dust solver, not here. */
+        COOLR.G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, 1e-6);
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
@@ -409,10 +420,18 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif /* RT_PHOTOION_MULTIFREQUENCY */
 #endif /* RT_CHEM_PHOTOION */
 
-        /* CR ionization from CR fluid (already set above if COSMIC_RAY_FLUID) or scale with G0 */
-#if !defined(COSMIC_RAY_FLUID) && defined(CR_SCALE_WITH_G0)
+        /* CR ionization in M1 mode: the GALSF_RESOLVEDISM_G0_VARIABLE block that
+           normally couples the CR fluid to the chemistry is compiled OUT under
+           RADTRANSFER (mutually exclusive), so it MUST be replicated here — otherwise
+           the network silently falls back to the fixed default CosmicRayIonRate. */
+#if defined(COSMIC_RAY_FLUID)
+        { double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* [erg cm^-3] */
+          COOLR.cosmic_ray_ion_rate = 3e-17 * (ecr_cgs / 1.602e-12); /* zeta from e_CR [eV cm^-3] */
+          COOLR.cr_energy_density = ecr_cgs; }
+#elif defined(CR_SCALE_WITH_G0)
         COOLR.cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (COOLR.G0 / 1.7) * All.CosmicRayIonRate));
 #endif
+        CellP[target].CR_ionization_rate = COOLR.cosmic_ray_ion_rate;
     }
 #endif /* RADTRANSFER */
 
@@ -497,7 +516,17 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #else
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
 #endif
+#if defined(RADTRANSFER)
+        /* M1 RT: the radiation transport already applies dust attenuation to the FUV/LW
+           bands, so the field handed to the chemistry (Rad_E_gamma -> G0) is ALREADY
+           dust-attenuated. The total-H column drives ONLY the dust f_dust in calc_photo
+           (iphoto=6, lines 304/307); zero it here so dust is not double-counted. The H2
+           and CO self-shielding columns (populated below) are KEPT — M1 continuum
+           transport does not capture line self-shielding, so the chemistry must still do it. */
+        PROJECT.column_density_projection[i] = 0.0;
+#else
         PROJECT.column_density_projection[i] = NH;
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         PROJECT.fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
 #endif
