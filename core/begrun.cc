@@ -2327,6 +2327,14 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.TestNumStars;
       id[nt++] = INT;
 
+      strcpy(tag[nt], "TestSNTime0");
+      addr[nt] = &All.TestSNTime0;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestSNSpacing");
+      addr[nt] = &All.TestSNSpacing;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "TestStarMass2");
       addr[nt] = &All.TestStarMass2;
       id[nt++] = REAL;
@@ -2527,6 +2535,8 @@ void read_parameter_file(char *fname)
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume this is a NON-cosmological (static-spacetime) simulation (=%d) \n",tag[i],alternate_tag[i],All.ComovingIntegrationOn); continue;}
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                 if(strcmp("TestNumStars",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to a single test star (ID=1) (=%d) \n",tag[i],alternate_tag[i],All.TestNumStars); continue;}
+                if(strcmp("TestSNTime0",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (natural table lifetimes; no forced SN times) \n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("TestSNSpacing",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 \n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("TestStarMass2",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set: site 2 uses TestStarMass \n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("TestStarMass3",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set: site 3 uses TestStarMass \n",tag[i],alternate_tag[i]); continue;}
 #endif
@@ -2779,6 +2789,12 @@ void read_parameter_file(char *fname)
                 if(strcmp("AgeTracerBinStart",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: left-edge of first age-tracer bin is early in stellar evolution (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinStart); continue;}
                 if(strcmp("AgeTracerBinEnd",tag[i])==0) {*((double *)addr[i])=14000.; printf("Tag %s (%s) not set in parameter file: right-edge of last age-tracer bin is at ~t_Hubble (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinEnd); continue;}
 #endif
+#endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                /* second-pass defaults (the first-pass chain above only runs in loop 1;
+                 * any tag not matched HERE hits the error below — 2026-07-05) */
+                if(strcmp("TestSNTime0",tag[i])==0) {continue;}   /* value already defaulted in loop 1 */
+                if(strcmp("TestSNSpacing",tag[i])==0) {continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;

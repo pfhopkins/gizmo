@@ -100,6 +100,20 @@ void resolvedism_determine_SNe(void)
         P[i].WindMassAccum = dM_pending;                /* pending mass to inject */
         P[i].WindMomentumAccum = dM_pending * v_w;      /* matching momentum (v at current age) */
 
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+        /* TRUE CONTINUOUS wind injection (2026-07-05): fire every active step with
+         * whatever dM = int Mdot dt accumulated since the last step. Momentum uses
+         * v_w at the CURRENT age each step -> p = int Mdot(t) v_w(t) dt exact (the
+         * chunked mode below applies fire-time v_w to the whole accumulated chunk —
+         * wrong when v_w evolves, e.g. MS 3000 km/s -> LBV few 100 km/s). Injection
+         * goes through ONE batched walk pair per step for all wind stars together
+         * (see inject_fb_energy), not the per-event serialized pass — wind parcels
+         * are tiny, stale-weight error nil, and cluster runs stay O(1) walks/step. */
+        if(dM_pending > 1.0e-10) {
+            P[i].SNe_ThisTimeStep = 3;
+            n_wind_local++;
+        }
+#else
         /* Trigger: mass-dependent fractional threshold. Low-mass (8 Msun): 1%; high-mass (300 Msun): ~15%. */
         double wind_frac = 0.01 + 0.19 * DMAX(0, (Mstar - 8.0)) / (350.0 - 8.0);
         if(wind_frac > 0.20) wind_frac = 0.20;
@@ -107,6 +121,7 @@ void resolvedism_determine_SNe(void)
             P[i].SNe_ThisTimeStep = 3;
             n_wind_local++;
         }
+#endif
     }
 #endif
 
@@ -157,6 +172,17 @@ void resolvedism_determine_SNe(void)
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
 #ifdef GALSF_RESOLVEDISM_INSTANT_SN
         if(All.Time < All.TimeInstantSN && Mstar >= 8.0) {lifetime_yr = 0;}
+#endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        /* Clustered-SN test (2026-07-05): force star ID=k to explode at
+         * TestSNTime0+(k-1)*TestSNSpacing, bypassing table lifetimes. Only the
+         * designated test sites (ID<=TestNumStars, first generation) are affected. */
+        if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars>0)?All.TestNumStars:1)
+           && P[i].ID_generation == 0) {
+            double t_forced = All.TestSNTime0 + ((double)P[i].ID - 1.0) * All.TestSNSpacing;
+            if(All.Time < t_forced) continue;   /* not yet */
+            /* fall through: dies now */
+        } else
 #endif
         if(star_age_yr <= lifetime_yr) continue;
 
@@ -424,6 +450,11 @@ void resolvedism_determine_SNe(void)
             double dt_Gyr = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i) * UNIT_TIME_IN_GYR;
             if(dt_Gyr <= 0) continue;
             double P_Ia = (IA_DTD_NORM / star_age_Gyr) * P[i].M_drawn_Ia * dt_Gyr;
+#ifdef GALSF_RESOLVEDISM_IA_DTD_BOOST
+            /* TEST-ONLY rate multiplier (ia_dtd case): pure scaling of the hazard so a
+             * ~100-WD box yields O(20) events in 0.5 Gyr; the checker divides it out. */
+            P_Ia *= (double)GALSF_RESOLVEDISM_IA_DTD_BOOST;
+#endif
 
             /* Stochastic check */
             double rn = get_random_number(P[i].ID + 7 * ThisTask + 13 * All.NumCurrentTiStep);
@@ -528,6 +559,9 @@ void resolvedism_determine_SNe(void)
  * weighting pre-pass against the CURRENT neighbor masses immediately before its own
  * injection. 0 = no restriction (radpressure and any legacy batched passes). */
 MyIDType FB_SerialEventID = 0;
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars, batch mode */
+#endif
 
 /* Serialized weight+inject driver for one FB pass (2026-07-03).
  * WHY: the batched pattern (weight ALL donors, then inject ALL donors) leaves
@@ -585,7 +619,14 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         int try_num, ok_local, ok_glob;
         for(try_num = 0; try_num < 4; try_num++) {
             for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) {
-                if(P[ii].Type == 4) P[ii].FB_Area_weighted_sum = 0;
+                if(P[ii].Type == 4) {P[ii].FB_Area_weighted_sum = 0;
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+                    P[ii].FB_KernelGasMass = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                    {int hp_; for(hp_=0;hp_<12;hp_++) {P[ii].FB_HpxCount[hp_] = 0;}}
+#endif
+                }
             }
             calc_fn(-1); /* weighting pre-pass (collective) */
             ok_local = 1;
@@ -598,6 +639,52 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                        (unsigned long long)glob_min, P[i_owner].KernelRadius, try_num + 1);
             }
         }
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+        /* ---- SN ejecta-spawn decision (prototype, 2026-07-05) ----
+         * If the weight walk found less gas in the kernel than f*Mej (f = flag value),
+         * kernel deposition would couple across a cavity to a distant shell. Instead:
+         * store the payload (Mej + THERMAL E + yields) on the star; a new gas cell is
+         * created at the next merge/split phase and the split machinery + hydro do the
+         * rest. Thermal SN pass only (flagA==1, explosive remnants). Collective skip. */
+        int spawn_this = 0;
+        if(flagA == 1 && i_owner >= 0 && P[i_owner].SNe_ThisTimeStep == 1) {
+            double Mstar_sp = P[i_owner].MstarSampleIMF[0];
+            double Zbirth_sp = (P[i_owner].BirthMetallicity > 0) ? P[i_owner].BirthMetallicity : All.InitMetallicityinSolar*0.0134;
+            double logM_sp = log10(DMAX(Mstar_sp, 0.1)), logZ_sp = log10(DMAX(Zbirth_sp, 1e-8));
+            int rt_sp = stellar_remnant_type(logM_sp, logZ_sp);
+            double rem_sp = stellar_remnant_mass(logM_sp, logZ_sp);
+            if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
+                double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
+                double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
+                double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
+                if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
+                    /* payload: yields scaled to Mej (same single-source logic as fb_thermal) */
+                    int ksp; double m_k_sp[STBL_NELEM], Mej_tab_sp = 0;
+                    for(ksp = 0; ksp < STBL_NELEM; ksp++) {
+                        m_k_sp[ksp] = stellar_elem_ej_SN(logM_sp, logZ_sp, ksp);
+#ifndef GALSF_RESOLVEDISM_WINDS
+                        {double t_end_sp = stellar_lifetime(logM_sp, logZ_sp);
+                         m_k_sp[ksp] += stellar_elem_ej_wind_cumulative(logM_sp, logZ_sp, log10(DMAX(t_end_sp,100.)), ksp);}
+#endif
+                        if(m_k_sp[ksp] < 0) m_k_sp[ksp] = 0; Mej_tab_sp += m_k_sp[ksp];
+                    }
+                    double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
+                    for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
+                    P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
+                    P[i_owner].SpawnEjEnergy = (MyFloat)(1.0e51/UNIT_ENERGY_IN_CGS);
+                    P[i_owner].SN_SpawnPending = 1;
+                    P[i_owner].SNe_ThisTimeStep = -1;      /* retired: no kernel injection */
+                    P[i_owner].M_at_SN_trigger = -1;
+                    printf("SPAWNSN_DECIDE: star=%llu Mkern=%.3e Msun < %.2f*Mej=%.3e -> payload stored (rem=%.3f)\n",
+                        (unsigned long long)P[i_owner].ID, P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR,
+                        f_thresh, Mej_sp, rem_sp); fflush(stdout);
+                    spawn_this = 1;
+                }
+            }
+        }
+        {int sp_glob=0; MPI_Allreduce(&spawn_this, &sp_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+         if(sp_glob) {if(i_owner >= 0) {done[my_idx] = 1;} continue;}}  /* all ranks skip injection for this event */
+#endif
         calc_fn(0); /* injection for this single event (collective) */
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
@@ -633,12 +720,28 @@ void resolvedism_inject_fb_energy(void)
      * the current neighbor masses immediately before its own injection, so same-step
      * events sharing neighbors no longer break Σwk = 1 (see
      * resolvedism_fb_serialized_pass above). */
+    #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    #define FB_ZERO_AWS() do { for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) { if(P[ii].Type == 4) {P[ii].FB_Area_weighted_sum = 0; int hp_; for(hp_=0;hp_<12;hp_++) {P[ii].FB_HpxCount[hp_] = 0;}} } } while(0)
+#else
     #define FB_ZERO_AWS() do { for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) { if(P[ii].Type == 4) P[ii].FB_Area_weighted_sum = 0; } } while(0)
+#endif
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
     MBARY_STEP("pre_fb_mom_p0");
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+    /* AGB deaths (big single dumps) stay serialized; WINDS batch: one collective
+     * walk pair per step for ALL wind stars together (tiny parcels, stale-weight
+     * error nil; O(1) walks/step regardless of the number of blowing stars). */
+    resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 2);
+    FB_WindBatchOnly = 1;
+    FB_ZERO_AWS();
+    resolvedism_fb_momentum_calc(-1);
+    resolvedism_fb_momentum_calc(0);
+    FB_WindBatchOnly = 0;
+#else
     resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 3);
+#endif
     MBARY_STEP("post_fb_mom_p0");
 
     /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals). Serialized per event. ---- */

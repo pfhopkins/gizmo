@@ -478,6 +478,8 @@ extern struct global_data_all_processes
   double TestStarMass2;         /*!< optional mass for site ID=2 (0 -> use TestStarMass); staggered-lifetime tests */
   double TestStarMass3;         /*!< optional mass for site ID=3 (0 -> use TestStarMass) */
   int TestNumStars;             /*!< number of promotion sites (IDs 1..N); default 1; >1 enables clustered/subsequent-event tests */
+  double TestSNTime0;           /*!< code time: if >0, FORCE star ID=k to explode at TestSNTime0+(k-1)*TestSNSpacing (clustered-SN test; bypasses lifetimes) */
+  double TestSNSpacing;         /*!< code time between forced explosions (see TestSNTime0) */
 #endif
 #ifdef TREE_RAD
   double ShieldingLength;       /*!< maximum distance for column density integration in tree walk */

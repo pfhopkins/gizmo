@@ -608,7 +608,11 @@ c
 
       if (yn * dust_to_gas_ratio .gt. 1d10) then
         if (iflag_cmb .eq. 0) then
-          tdust = temp
+c Cap at the grain-sublimation bound, consistent with calc_dust_temp (cool_util.F):
+c this parallel branch was missed by the 2026-07-02 fix and leaked tdust=temp
+c (up to ~1e5 K) into the tdust^6 dust-cooling rate (found via edge_mej_gt_kernel
+c DVODE failure dump showing tdust=11213 K, 2026-07-05).
+          tdust = min(temp, 1.5d3)
           rates(1) = 4.68d-31 * tdust**6 * yn * dust_to_gas_ratio
         endif
       else

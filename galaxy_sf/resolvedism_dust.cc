@@ -119,6 +119,42 @@ void resolvedism_dust_evolve(void)
             CellP[i].Dust[4] *= fac_Sil;
         }
 
+#ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION
+        /* ---- Shock-tracked SN dust destruction (2026-07-05) ----
+         * Replaces the injection-kernel McKee 1989 hook (see fb_thermal.cc), which is
+         * an UNRESOLVED-SNR estimator: in Stella's resolved regime it saturates at
+         * frac=1 over the ~32-cell kernel (measured 0.032 Msun vs ~1 Msun McKee intent
+         * in the n=1 A/B test), while thermal sputtering alone captures only ~0.008
+         * Msun (the bubble goes radiative in ~1 Myr; the real destroyer is KINETIC/
+         * betatron sputtering + shattering in the radiative shock, not modeled by the
+         * Nozawa thermal rates). Here we destroy grains IN CELLS THE RESOLVED SHOCK
+         * ACTUALLY SWEEPS: compression (divv<0) + signal-velocity excess over sound.
+         * Efficiency per shock crossing: saturating Slavin+2015-like form,
+         *   eps_sil(v_s) = 0.4 v_s^2/(v_s^2+100^2),  eps_C = 0.5 eps_sil
+         * applied as a rate over the kernel-crossing time h/v_s. Total destroyed =
+         * swept mass x DGR x eps -> the McKee-intended budget emerges from the
+         * resolved blast, with the correct spatial/anisotropic distribution. */
+        {
+            double cs_kms   = Get_Gas_effective_soundspeed_i(i) * UNIT_VEL_IN_KMS;
+            double vsig_kms = CellP[i].MaxSignalVel * UNIT_VEL_IN_KMS;
+            double divv     = P[i].Particle_DivVel;   /* code 1/time; <0 = compression */
+            double v_shock  = 0.5 * (vsig_kms - 2.0 * cs_kms); /* pairwise approach speed */
+            if(divv < 0 && v_shock > 50.0)
+            {
+                double v2 = v_shock * v_shock;
+                double eps_sil = 0.4 * v2 / (v2 + 100.0*100.0);
+                double eps_C   = 0.5 * eps_sil;
+                double h_code  = Get_Particle_Size(i) * All.cf_atime;
+                double t_cross = h_code / (v_shock / UNIT_VEL_IN_KMS); /* code time for shock to cross the cell */
+                double fac_sil = exp(-dt * eps_sil / t_cross);
+                double fac_C   = exp(-dt * eps_C   / t_cross);
+                CellP[i].Dust[0] *= fac_C;
+                CellP[i].Dust[1] *= fac_sil; CellP[i].Dust[2] *= fac_sil;
+                CellP[i].Dust[3] *= fac_sil; CellP[i].Dust[4] *= fac_sil;
+            }
+        }
+#endif
+
         /* ---- ISM grain growth (accretion of gas-phase metals onto grains) ---- */
         /* Sticking efficiency S(T_gas, T_dust) = 1 / (1 + 0.04*sqrt(T_gas + T_dust))
            (Hirashita 2000).  Smoothly transitions from S~1 at low T to S~0 at high T. */
@@ -208,11 +244,26 @@ void resolvedism_dust_condensation(int sne_flag, double *metal_yields, double *d
     int k;
     for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) dust_yields[k] = 0;
 
-    if(sne_flag == 1) {
-        /* ---- Core-collapse SN (Choban+ 2022 condensation efficiencies) ---- */
-        double C_cond  = 0.15;
-        double Si_cond = 0.00035;  /* key element for silicate formation */
-        double Fe_cond = 0.001;
+    /* Per-channel condensation efficiencies — VERIFIED against Choban+2022 Table 1
+     * ("Species" implementation; arXiv:2201.12369) on 2026-07-05:
+     *   delta_SNII = 0.15 (carbon), 0.00035 (silicate), 0.001 (iron); Ia = 0.005 iron;
+     *   AGB C/O>1: 1.0 C; AGB C/O<1: 0.8 O/Mg/Si/Fe.   All match this code.
+     * The tiny SN silicate efficiency is DELIBERATE (calibrated to presolar-grain
+     * abundances: SN silicate grains are rare in meteorites).  Silicates are built
+     * by ISM accretion in cold clouds (resolvedism_dust_evolve growth term), NOT by
+     * SN condensation.  (Known literature tension: ejecta-condensation models and
+     * SN 1987A suggest higher; we follow Choban+22.)
+     * SN subtypes have their own named constants (flags 5=PISN/PPISN, 6=ECSN),
+     * currently = CCSN values; Choban+22 has no PISN/ECSN — future lit pass. */
+    double CCSN_C_cond  = 0.15,  CCSN_Si_cond  = 0.00035, CCSN_Fe_cond  = 0.001;
+    double PISN_C_cond  = 0.15,  PISN_Si_cond  = 0.00035, PISN_Fe_cond  = 0.001; /* no PISN in Choban+22 */
+    double ECSN_C_cond  = 0.15,  ECSN_Si_cond  = 0.00035, ECSN_Fe_cond  = 0.001; /* no ECSN in Choban+22 */
+
+    if(sne_flag == 1 || sne_flag == 5 || sne_flag == 6) {
+        /* ---- SN channels: CCSN (1), PISN/PPISN (5), ECSN (6) ---- */
+        double C_cond  = (sne_flag==5) ? PISN_C_cond  : (sne_flag==6) ? ECSN_C_cond  : CCSN_C_cond;
+        double Si_cond = (sne_flag==5) ? PISN_Si_cond : (sne_flag==6) ? ECSN_Si_cond : CCSN_Si_cond;
+        double Fe_cond = (sne_flag==5) ? PISN_Fe_cond : (sne_flag==6) ? ECSN_Fe_cond : CCSN_Fe_cond;
 
         /* Carbonaceous dust */
         dust_yields[0] = C_cond * DMAX(metal_yields[ELEM_C], 0);
@@ -235,8 +286,15 @@ void resolvedism_dust_condensation(int sne_flag, double *metal_yields, double *d
         dust_yields[3] = Sil_total * DUST_SIL_FRAC_SI;
         dust_yields[4] = DMAX(Fe_cond * DMAX(metal_yields[ELEM_Fe], 0), Sil_total * DUST_SIL_FRAC_FE);
 
-    } else if(sne_flag == 2) {
-        /* ---- AGB: C/O ratio determines carbon-rich vs oxygen-rich ---- */
+    } else if(sne_flag == 2 || sne_flag == 3) {
+        /* ---- AGB death (2) and slow/cool WINDS (3): C/O-driven condensation ----
+         * DUST FIX #1 (2026-07-05): the wind channel previously produced ZERO dust.
+         * With WINDS on, the AGB superwind AND the at-death envelope force-dump all
+         * leave through flag 3, so the flag-2 C/O logic below only ever saw the last
+         * <=1e-6 Msun scraps -> AGB dust (the dominant galactic dust source) was
+         * effectively zero in production-config builds.  The caller gates flag-3
+         * condensation on wind speed (v_w < 100 km/s: AGB/RSG regime); fast hot
+         * MS/WR winds do not condense here (WC carbon dust: known omission, lit pass). */
         double C_yield = DMAX(metal_yields[ELEM_C], 0);
         double O_yield = DMAX(metal_yields[ELEM_O], 0);
 
@@ -277,8 +335,60 @@ void resolvedism_dust_condensation(int sne_flag, double *metal_yields, double *d
         double Fe_cond = 0.005;
         dust_yields[4] = Fe_cond * DMAX(metal_yields[ELEM_Fe], 0);
     }
-    /* sne_flag == 3 (winds): no dust production */
+    /* sne_flag == 3 handled above with the AGB C/O logic (caller gates on v_wind) */
 }
+
+
+#ifdef GALSF_RESOLVEDISM_DUST_SELFTEST
+/* Physics self-test for the resolvedism dust model (2026-07-05).
+ * Feeds REAL stellar-table metal yields into the condensation/destruction/rate
+ * functions and dumps a table the python checkers validate against the analytic
+ * physics.  Mirrors the code's own channel-flag logic (SN->flag 1, AGB->2, Ia->4),
+ * so it exposes what the model ACTUALLY does — including PISN/ECSN using the CCSN
+ * condensation prescription.  Runs at startup (after tables + units are up), gated. */
+void resolvedism_dust_selftest(void)
+{
+    if(ThisTask != 0) return;
+    printf("DUSTTEST_BEGIN\n");
+    printf("DUSTTEST_SILFRAC O=%.6f Mg=%.6f Si=%.6f Fe=%.6f\n", DUST_SIL_FRAC_O, DUST_SIL_FRAC_MG, DUST_SIL_FRAC_SI, DUST_SIL_FRAC_FE);
+    printf("DUSTTEST_CONDEFF CCSN_C=0.15 CCSN_Si=0.00035 CCSN_Fe=0.001 AGB_Osil=0.8 Ia_Fe=0.005\n");
+    /* --- condensation with real table yields, across the mass spectrum --- */
+    double masses[] = {1.2, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 40.0, 60.0, 100.0, 150.0, 200.0, 300.0};
+    double Zs[] = {0.001, 0.02};
+    int nm = sizeof(masses)/sizeof(double), nz = sizeof(Zs)/sizeof(double), im, iz, k;
+    for(iz = 0; iz < nz; iz++) for(im = 0; im < nm; im++) {
+        double M = masses[im], Z = Zs[iz], logM = log10(M), logZ = log10(Z);
+        int rt = stellar_remnant_type(logM, logZ);
+        double rem = stellar_remnant_mass(logM, logZ);
+        double my[STBL_NELEM]; double Mej = 0, Zmet = 0;
+        int flag = (rt == REM_WD) ? 2 : (rt == REM_PISN || rt == REM_PPISN) ? 5 : (rt == REM_ECSN) ? 6 : 1; /* mirror fb_thermal/fb_momentum mapping */
+        for(k = 0; k < STBL_NELEM; k++) {
+            my[k] = (flag == 2) ? stellar_elem_ej_AGB(logM, logZ, k) : stellar_elem_ej_SN(logM, logZ, k);
+            if(my[k] < 0) my[k] = 0; Mej += my[k]; if(k >= ELEM_C) Zmet += my[k]; }
+        double dy[NUM_RESOLVEDISM_DUST]; resolvedism_dust_condensation(flag, my, dy);
+        double dust_tot = 0; for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) dust_tot += dy[k];
+        printf("DUSTTEST_COND M=%.1f Z=%.4f remtype=%d flag=%d Mej=%.4e Zmet=%.4e Cy=%.4e Oy=%.4e Mgy=%.4e Siy=%.4e Fey=%.4e dC=%.4e dOsil=%.4e dMg=%.4e dSi=%.4e dFe=%.4e dusttot=%.4e d2m=%.5f\n",
+            M, Z, rt, flag, Mej, Zmet, my[ELEM_C], my[ELEM_O], my[ELEM_Mg], my[ELEM_Si], my[ELEM_Fe],
+            dy[0], dy[1], dy[2], dy[3], dy[4], dust_tot, (Zmet > 0 ? dust_tot/Zmet : 0));
+    }
+    /* --- SN shock destruction fraction sweep --- */
+    double E51 = 1.0e51 / UNIT_ENERGY_IN_CGS;
+    double n0s[] = {0.1, 1.0, 100.0, 1.0e4}; double Ms[] = {1.0, 10.0, 100.0};
+    for(int a = 0; a < 4; a++) for(int b = 0; b < 3; b++) {
+        double rho_code = n0s[a] / (UNIT_DENSITY_IN_NHCGS * All.cf_a3inv);
+        double frac = resolvedism_dust_sn_destruction_frac(rho_code, E51, Ms[b] / UNIT_MASS_IN_SOLAR);
+        printf("DUSTTEST_DESTR n0=%.4e Mcell=%.1f frac=%.6e\n", n0s[a], Ms[b], frac);
+    }
+    /* --- sputtering + growth yield functions over T --- */
+    double Ts[] = {1.0e4, 3.0e4, 1.0e5, 3.0e5, 1.0e6, 1.0e7, 1.0e8};
+    for(int a = 0; a < 7; a++) {
+        double T = Ts[a], stick = 1.0/(1.0 + 0.04*sqrt(T + 20.0));
+        printf("DUSTTEST_RATE T=%.4e sputY_C=%.6e sputY_Sil=%.6e sticking=%.6e\n",
+            T, get_yield_therSput_C(T), get_yield_therSput_Sil(T), stick);
+    }
+    printf("DUSTTEST_END\n"); fflush(stdout);
+}
+#endif
 
 
 /* ---- SN shock destruction fraction (McKee 1989 + Cioffi 1988) ---- */

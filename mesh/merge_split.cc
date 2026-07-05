@@ -414,6 +414,73 @@ void merge_and_split_particles(void)
     myfree(Ptmp);
     myfree(Ngblist);
     MPI_Allreduce(&n_particles_merged, &MPI_n_particles_merged, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#if defined(GALSF_RESOLVEDISM_SN_SPAWN) && defined(GALSF_RESOLVEDISM_FB)
+    /* ---- SN ejecta-spawn executor (prototype, 2026-07-05) ----
+     * Pending payloads (stored by the FB serialized pass when the kernel held less
+     * gas than f*Mej) become NEW gas cells here, at the same safe point where splits
+     * create particles (rearrange_particle_sequence follows immediately). The cell:
+     * clone of the nearest local gas (all chemistry/RT fields sane), overridden with
+     * ejecta mass + THERMAL energy + yields, at the star, moving with the star. The
+     * split routine then regularizes it to local resolution; hydro drives the blast. */
+    {
+        int i_sp, NumPart_fixed = NumPart;
+        for(i_sp = 0; i_sp < NumPart_fixed; i_sp++) {
+            if(P[i_sp].Type != 4 || P[i_sp].SN_SpawnPending != 1) continue;
+            if(NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) {
+                printf("SPAWNSN: out of particle headroom on task %d — deferring\n", ThisTask); break;}
+            int tmpl = -1, q; double r2b = 1.e30;
+            for(q = 0; q < N_gas; q++) {
+                if(P[q].Type != 0 || P[q].Mass <= 0) continue;
+                double dq[3]; int kq; double r2 = 0;
+                for(kq = 0; kq < 3; kq++) {dq[kq] = P[i_sp].Pos[kq] - P[q].Pos[kq];}
+                NEAREST_XYZ(dq[0], dq[1], dq[2], 1);
+                for(kq = 0; kq < 3; kq++) {r2 += dq[kq]*dq[kq];}
+                if(r2 < r2b) {r2b = r2; tmpl = q;}
+            }
+            if(tmpl < 0) {continue;} /* no local gas: retry next merge/split phase */
+            long j_sp = NumPart + n_particles_split;
+            P[j_sp] = P[tmpl];
+            CellP[j_sp] = CellP[tmpl];
+            P[j_sp].Type = 0;
+            /* unique ID: split's child/generation convention applied to the template */
+            P[j_sp].ID = P[tmpl].ID;
+            P[j_sp].ID_child_number = P[tmpl].ID_child_number + (MyIDType)(1 << ((int)P[tmpl].ID_generation));
+            P[tmpl].ID_generation = P[tmpl].ID_generation + 1; if(P[tmpl].ID_generation > 30) {P[tmpl].ID_generation = 0;}
+            P[j_sp].ID_generation = P[tmpl].ID_generation;
+            /* state: at the star (tiny deterministic offset), star velocity, hot */
+            int kk_sp; double phi_sp = 2.0*M_PI*get_random_number(i_sp+1+ThisTask), cth_sp = 2.0*(get_random_number(i_sp+3+2*ThisTask)-0.5);
+            double dr_sp = 0.05 * P[tmpl].KernelRadius;
+            double nvec_sp[3] = {sqrt(1.-cth_sp*cth_sp)*cos(phi_sp), sqrt(1.-cth_sp*cth_sp)*sin(phi_sp), cth_sp};
+            for(kk_sp = 0; kk_sp < 3; kk_sp++) {
+                P[j_sp].Pos[kk_sp] = P[i_sp].Pos[kk_sp] + dr_sp*nvec_sp[kk_sp];
+                P[j_sp].Vel[kk_sp] = P[i_sp].Vel[kk_sp];
+                CellP[j_sp].VelPred[kk_sp] = P[i_sp].Vel[kk_sp];
+                CellP[j_sp].HydroAccel[kk_sp] = 0;
+            }
+            P[j_sp].Mass = P[i_sp].SpawnEjMass;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            CellP[j_sp].MassTrue = P[j_sp].Mass; CellP[j_sp].dMass = 0; CellP[j_sp].DtMass = 0;
+#endif
+            double u_sp = (P[j_sp].Mass > 0) ? (P[i_sp].SpawnEjEnergy / P[j_sp].Mass) : 0;
+            CellP[j_sp].InternalEnergy = CellP[j_sp].InternalEnergyPred = u_sp;
+            CellP[j_sp].DtInternalEnergy = 0;
+            /* metallicity: ejecta composition (slot0 = total Z; slots 1..27 = elements) */
+            {double minv_sp = 1./DMAX(P[j_sp].Mass, 1e-30), zs_sp = 0; int ke_sp;
+             for(ke_sp = 0; ke_sp < NUM_RESOLVEDISM_ELEMENTS; ke_sp++) {
+                 double X_sp = P[i_sp].SpawnEjZ[ke_sp]*minv_sp;
+                 P[j_sp].Metallicity[ke_sp+1] = X_sp; if(ke_sp >= 2) {zs_sp += X_sp;} }
+             P[j_sp].Metallicity[0] = zs_sp;}
+            /* star bookkeeping: mass moves star -> new cell atomically here */
+            P[i_sp].Mass -= P[i_sp].SpawnEjMass; if(P[i_sp].Mass < 0) {P[i_sp].Mass = 0;}
+            P[i_sp].SN_SpawnPending = 0;
+            printf("SPAWNSN_EXEC: star=%llu -> cell m=%.4e Msun u=%.4e (T~%.2e K) tmpl_dist=%.3e kpc task=%d\n",
+                (unsigned long long)P[i_sp].ID, P[j_sp].Mass*UNIT_MASS_IN_SOLAR, u_sp,
+                u_sp*UNIT_ENERGY_IN_CGS/UNIT_MASS_IN_CGS*(2./3.)*PROTONMASS_CGS/BOLTZMANN_CGS*0.6, sqrt(r2b), ThisTask);
+            fflush(stdout);
+            n_particles_split++; n_particles_gas_split++;
+        }
+    }
+#endif
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&n_particles_gas_split, &MPI_n_particles_gas_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)

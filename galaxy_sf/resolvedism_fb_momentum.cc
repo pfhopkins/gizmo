@@ -5,6 +5,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+#include "../gravity/healpix_utils.h"
+#endif
 #include "../mesh/kernel.h"
 #include "resolvedism_fb_shared.h"
 
@@ -43,6 +46,9 @@ struct INPUT_STRUCT_NAME
     MyDouble DustYields[NUM_RESOLVEDISM_DUST];
 #endif
     int NodeList[NODELISTLENGTH];
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    MyFloat HpxCount[12];
+#endif
 }
 *DATAIN_NAME, *DATAGET_NAME;
 
@@ -53,6 +59,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
     /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
     in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    {int hp_; for(hp_=0;hp_<12;hp_++) {in->HpxCount[hp_] = P[i].FB_HpxCount[hp_];}}
+#endif
     in->StarID = P[i].ID;
     in->StarMass = P[i].MstarSampleIMF[0];
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
@@ -169,6 +178,33 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
             if(k >= ELEM_C) metal_mass_solar += m_k;
         }
+
+#ifdef GALSF_RESOLVEDISM_DUST
+        /* DUST FIX #1 (2026-07-05): condense dust in the WIND channel (was zero).
+         * C/O-driven condensation (flag 3 == AGB logic) applied to the wind-ejecta
+         * composition, gated on wind speed: only slow cool winds condense
+         * (v_w < 100 km/s: AGB superwind / RSG).  This resurrects the dominant
+         * AGB dust channel in WINDS-on builds, where the superwind AND the at-death
+         * envelope force-dump leave via flag 3.  Fast hot winds (MS, WR) do not
+         * condense here — WC carbon dust is a documented omission pending lit pass. */
+        {
+            double v_w_eff = (P[i].WindMassAccum > 0) ? (P[i].WindMomentumAccum / P[i].WindMassAccum) : 1.0e10; /* km/s */
+            if(v_w_eff < 100.0) {
+                double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
+                int kk; for(kk = 0; kk < STBL_NELEM; kk++) metal_yields_solar[kk] = in->ElemYields[kk] * UNIT_MASS_IN_SOLAR;
+                resolvedism_dust_condensation(3, metal_yields_solar, dust_yields_solar);
+                for(kk = 0; kk < NUM_RESOLVEDISM_DUST; kk++) in->DustYields[kk] = dust_yields_solar[kk] / UNIT_MASS_IN_SOLAR;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                { double dsum=0; for(kk=0;kk<NUM_RESOLVEDISM_DUST;kk++) dsum+=dust_yields_solar[kk];
+                  double nC=metal_yields_solar[ELEM_C]/12.0, nO=metal_yields_solar[ELEM_O]/16.0;
+                  printf("FBDBG_WINDDUST star=%llu vW=%.2fkm/s dM=%.4e C=%.4e O=%.4e nC/nO=%.3f branch=%s dust:C=%.4e sil=%.4e tot=%.4e\n",
+                    (unsigned long long)P[i].ID, v_w_eff, P[i].WindMassAccum,
+                    metal_yields_solar[ELEM_C], metal_yields_solar[ELEM_O], (nO>0?nC/nO:99.),
+                    (nC>nO?"C-rich":"O-rich"), dust_yields_solar[0], dust_yields_solar[1]+dust_yields_solar[2]+dust_yields_solar[3]+dust_yields_solar[4], dsum); fflush(stdout); }
+#endif
+            }
+        }
+#endif
         in->Mej = dM_wind_solar / UNIT_MASS_IN_SOLAR;
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
@@ -266,6 +302,9 @@ struct OUTPUT_STRUCT_NAME
     MyFloat M_coupled;
     /* Weighting-pass accumulator: Σ_j (Mass_j × kernel.wk) over neighbors walked. */
     MyDouble FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    MyFloat HpxCount[12];
+#endif
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -274,6 +313,9 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
     if(loop_iteration < 0) {
         /* Weighting pass: accumulate measured kernel sum onto the star. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+        {int hp_; for(hp_=0;hp_<12;hp_++) {P[i].FB_HpxCount[hp_] += out->HpxCount[hp_];}}
+#endif
         return;
     }
     /* Injection pass: recoil + mass subtraction.  With Σwk=1 from the weighting pre-pass,
@@ -288,9 +330,15 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
     }
 }
 
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+extern int FB_WindBatchOnly;
+#endif
 int resolvedismFB_momentum_active_check(int i, int loop_iteration);
 int resolvedismFB_momentum_active_check(int i, int loop_iteration)
 {
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+    if(FB_WindBatchOnly && P[i].SNe_ThisTimeStep != 3) {return 0;}   /* batch pass: winds only */
+#endif
     if(P[i].Type != 4) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
@@ -373,10 +421,23 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                  * as the bit-exact normalizer → Σ wk_j = 1 by construction. */
                 if(loop_iteration < 0) {
                     out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                {double v_hp[3]; long ip_hp; v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
+                 vec2pix_ring(1, v_hp, &ip_hp); out.HpxCount[(int)ip_hp] += 1;}
+#endif
                     continue;
                 }
                 /* STARFORGE-style normalizer with MIN_REAL_NUMBER+fabs() guard. */
                 double wk = (Mass_j * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                /* solid-angle-uniform weight: 1/(N_occupied_pixels * N_gas_in_this_pixel) */
+                {double v_hp[3]; long ip_hp; int hp_, nocc_=0;
+                 v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
+                 vec2pix_ring(1, v_hp, &ip_hp);
+                 for(hp_=0;hp_<12;hp_++) {if(local.HpxCount[hp_] > 0) {nocc_++;}}
+                 if(nocc_ > 0 && local.HpxCount[(int)ip_hp] > 0) {wk = 1.0/((double)nocc_ * (double)local.HpxCount[(int)ip_hp]);}
+                 else {wk = 0;}}
+#endif
 
                 /* ---- Mass + metals injection (wind and AGB ejecta) ---- */
                 if(local.Mej > 0) {
@@ -515,6 +576,25 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #endif
 
                 /* ---- Momentum kick (wind, AGB, radpressure) ---- */
+#ifdef GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY
+                /* PURE THERMAL wind mode (bracketing experiment, GRIFFIN fig.3 right
+                 * column; 2026-07-05): NO momentum kick — the FULL wind kinetic
+                 * luminosity wk * 1/2 Mej v_w^2 is deposited as heat (mass+metals
+                 * still deposited as usual). Brackets the physical answer from the
+                 * opposite side of momentum-only. Mutually exclusive w/ WINDS_THERMAL. */
+                if(local.WindMomentum > 0 && local.Mej > 0) {
+                    double dM_w0 = wk * local.Mej;
+                    double v_w0  = local.WindMomentum / local.Mej;
+                    double dE_full = 0.5 * (wk * local.Mej) * v_w0 * v_w0;
+                    double du_full = dE_full / (Mass_j + dM_w0);
+                    #pragma omp atomic
+                    CellP[j].InternalEnergy += du_full;
+                    #pragma omp atomic
+                    CellP[j].InternalEnergyPred += du_full;
+                    P[j].wakeup = -1;
+                    NeedToWakeupParticles_local = 1;
+                }
+#else
                 if(local.WindMomentum > 0) {
                     double dp_share = wk * local.WindMomentum;
                     double dM_wind = (local.Mej > 0) ? wk * local.Mej : 0;
@@ -531,6 +611,32 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         out.MomentumInjected[k] += dp_k;
                         dv_mag2 += dv_k * dv_k;
                     }
+#ifdef GALSF_RESOLVEDISM_WINDS_THERMAL
+                    /* GRIFFIN-style inelastic residual (Lahen+23 eq. 3, 2026-07-05):
+                     * the momentum kick transfers only ~dM/m of the wind KE to bulk
+                     * motion; the remainder physically thermalizes at the (unresolved)
+                     * reverse shock. Deposit it as heat. Default OFF: momentum-only is
+                     * the deliberate anti-overcooling choice; this flag enables the
+                     * energy-conserving variant for A/B testing (wind35 Weaver slope,
+                     * cluster pre-SN pressurization). At Z~0.1 Zsun this is ~1% of an
+                     * SN for 12-25 Msun stars but 0.2-0.7 SN-equiv for 60-100 Msun. */
+                    if(local.Mej > 0 && local.WindMomentum > 0) {
+                        double dM_w = wk * local.Mej;
+                        double v_w  = local.WindMomentum / local.Mej;  /* wind speed, code units */
+                        double dvrel2 = 0; int kk_w;
+                        for(kk_w = 0; kk_w < 3; kk_w++) {
+                            double vw_k = v_w * (-kernel.dp[kk_w] / kernel.r);  /* radial wind vector */
+                            double dvr = vw_k - P[j].Vel[kk_w]/All.cf_atime;
+                            dvrel2 += dvr*dvr;
+                        }
+                        double dE_th = 0.5 * (Mass_j*dM_w/(Mass_j+dM_w)) * dvrel2; /* inelastic residual */
+                        double du_th = dE_th / (Mass_j + dM_w);
+                        #pragma omp atomic
+                        CellP[j].InternalEnergy += du_th;
+                        #pragma omp atomic
+                        CellP[j].InternalEnergyPred += du_th;
+                    }
+#endif
                     /* diagnostic: flag extreme kicks (>500 km/s in code velocity units) */
                     {
                         double dv_mag = sqrt(dv_mag2);
@@ -551,6 +657,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
+#endif /* GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY (kick block ends here) */
 
                 /* NaN sanity check */
                 {

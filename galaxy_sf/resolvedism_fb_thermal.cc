@@ -5,6 +5,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+#include "../gravity/healpix_utils.h"
+#endif
 #include "../mesh/kernel.h"
 #include "resolvedism_fb_shared.h"
 
@@ -41,6 +44,9 @@ struct INPUT_STRUCT_NAME
     MyDouble DustYields[NUM_RESOLVEDISM_DUST];
 #endif
     int NodeList[NODELISTLENGTH];
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    MyFloat HpxCount[12];
+#endif
 }
 *DATAIN_NAME, *DATAGET_NAME;
 
@@ -51,6 +57,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
     /* Load measured AWS from prior weighting pass (or 0 if this is the weighting pass). */
     in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    {int hp_; for(hp_=0;hp_<12;hp_++) {in->HpxCount[hp_] = P[i].FB_HpxCount[hp_];}}
+#endif
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
@@ -186,7 +195,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     {
         double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
         for(k = 0; k < STBL_NELEM; k++) metal_yields_solar[k] = in->ElemYields[k] * UNIT_MASS_IN_SOLAR;
-        resolvedism_dust_condensation(1, metal_yields_solar, dust_yields_solar);
+        /* DUST FIX #3: per-subtype condensation (was: all subtypes -> CCSN flag 1) */
+        int dust_flag = (rem_type == REM_PISN || rem_type == REM_PPISN) ? 5 : (rem_type == REM_ECSN) ? 6 : 1;
+        resolvedism_dust_condensation(dust_flag, metal_yields_solar, dust_yields_solar);
         for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = dust_yields_solar[k] / UNIT_MASS_IN_SOLAR;
     }
 #endif
@@ -205,8 +216,14 @@ struct OUTPUT_STRUCT_NAME
      * over neighbors walked on this rank/iteration.  Out2particle sums these across all
      * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
     MyDouble FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+    MyDouble KernelGasMass;      /* plain gas mass in kernel (spawn-criterion input) */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     MyDouble SumWK; int Nrecv;   /* injection-walk diagnostics (2026-07-05) */
+#endif
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    MyFloat HpxCount[12];
 #endif
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
@@ -218,6 +235,12 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
          * mode=0 (local walk) AND mode=1 (per-remote-rank import return) — both
          * contributions sum into P[i].FB_Area_weighted_sum for the upcoming injection. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+        {int hp_; for(hp_=0;hp_<12;hp_++) {P[i].FB_HpxCount[hp_] += out->HpxCount[hp_];}}
+#endif
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+        P[i].FB_KernelGasMass += out->KernelGasMass;
+#endif
         return;
     }
     /* Injection pass: subtract M_coupled.  With Σwk=1 from the weighting pre-pass,
@@ -300,10 +323,26 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  * uses that measured sum as denominator → Σ wk_j = 1 by construction. */
                 if(loop_iteration < 0) {
                     out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                {double v_hp[3]; long ip_hp; v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
+                 vec2pix_ring(1, v_hp, &ip_hp); out.HpxCount[(int)ip_hp] += 1;}
+#endif
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+                out.KernelGasMass += Mass_j;
+#endif
                     continue;
                 }
                 /* STARFORGE-style normalizer with MIN_REAL_NUMBER+fabs() guard. */
                 double wk = (Mass_j * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                /* solid-angle-uniform weight: 1/(N_occupied_pixels * N_gas_in_this_pixel) */
+                {double v_hp[3]; long ip_hp; int hp_, nocc_=0;
+                 v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
+                 vec2pix_ring(1, v_hp, &ip_hp);
+                 for(hp_=0;hp_<12;hp_++) {if(local.HpxCount[hp_] > 0) {nocc_++;}}
+                 if(nocc_ > 0 && local.HpxCount[(int)ip_hp] > 0) {wk = 1.0/((double)nocc_ * (double)local.HpxCount[(int)ip_hp]);}
+                 else {wk = 0;}}
+#endif
 
                 /* ---- Thermal energy injection ---- */
                 if(local.Esne > 0) {
@@ -477,7 +516,15 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
-                /* SN shock destruction of pre-existing dust */
+#if !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)
+                /* SN shock destruction of pre-existing dust.
+                 * REGIME NOTE (2026-07-05): McKee 1989 is an SNR-lifetime-integrated
+                 * estimator for an UNRESOLVED remnant. Stella resolves the Sedov phase,
+                 * and the resolved hot bubble sputters dust explicitly (dust_evolve)
+                 * -> potential double-count. Also: per-cell application saturates at
+                 * frac=1 in ~Msun cells (kernel holds far less than the 984*wk Msun the
+                 * formula wants to shock). GALSF_RESOLVEDISM_DUST_NO_MCKEE disables this
+                 * hook for the destruction-accounting A/B test (dust_mckee_on/off). */
                 if(local.Esne > 0) {
                     double E_into_cell = wk * local.Esne;
                     double Rho_j;
@@ -491,6 +538,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         }
                     }
                 }
+#endif /* !GALSF_RESOLVEDISM_DUST_NO_MCKEE */
                 /* Inject new dust from SN/Ia ejecta */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;

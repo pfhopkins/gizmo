@@ -831,6 +831,9 @@ void resolvedism_free_stellar_tables(void);
 void resolvedism_dust_evolve(void);
 void resolvedism_dust_condensation(int sne_flag, double *metal_yields, double *dust_yields);
 double resolvedism_dust_sn_destruction_frac(double rho_code, double E_sne_code, double mass_code);
+#ifdef GALSF_RESOLVEDISM_DUST_SELFTEST
+void resolvedism_dust_selftest(void);
+#endif
 #endif
 void count_hot_phase(void);
 void delete_node(int i);

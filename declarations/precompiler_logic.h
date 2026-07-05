@@ -1421,3 +1421,6 @@
 #endif
 #endif
 
+#if defined(GALSF_RESOLVEDISM_WINDS_THERMAL) && defined(GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY)
+#error "GALSF_RESOLVEDISM_WINDS_THERMAL and _THERMAL_ONLY are mutually exclusive wind energy modes"
+#endif

@@ -220,6 +220,11 @@ void init(void)
 
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+        P[i].SN_SpawnPending = 0; P[i].SpawnEjMass = 0; P[i].SpawnEjEnergy = 0; P[i].FB_KernelGasMass = 0;
+        {int ksp0; for(ksp0=0;ksp0<NUM_RESOLVEDISM_ELEMENTS;ksp0++) P[i].SpawnEjZ[ksp0]=0;}
+#endif
+
         for(j = 0; j < 3; j++) {P[i].GravAccel[j] = 0;}
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */

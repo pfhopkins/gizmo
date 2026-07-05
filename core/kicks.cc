@@ -198,8 +198,25 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     int j;
     double dp[3], dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;
-    mass_old = mass_pred = mass_new = P[i].Mass;    
-    
+    mass_old = mass_pred = mass_new = P[i].Mass;
+
+#ifdef GALSF_RESOLVEDISM_FROZEN_TEST_STARS
+    /* FUV-field test ONLY (gated flag, set exclusively in the fuv_*_build Config, never
+     * in production): pin the single-star sources so TREE_RAD — whose column/source walk
+     * rides the gravity-tree force loop and therefore needs SELFGRAVITY *on* — can be
+     * tested against a static source configuration. Zero the star's accel + velocity so
+     * it never drifts; gas is left free. */
+    if(P[i].Type == 4)
+    {
+        for(j = 0; j < 3; j++) {P[i].GravAccel[j] = 0; P[i].Vel[j] = 0;
+#ifdef PMGRID
+            P[i].GravPM[j] = 0;
+#endif
+        }
+        return;
+    }
+#endif
+
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* need to do the slightly more complicated update scheme to maintain exact mass conservation */
     if(P[i].Type==0)

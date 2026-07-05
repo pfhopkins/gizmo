@@ -218,6 +218,14 @@ void run(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
 
+#ifdef GALSF_RESOLVEDISM_DUST_SELFTEST
+    /* dump the resolvedism dust physics table (real table yields -> condensation/
+     * destruction/rates) and exit cleanly; a python checker validates it. */
+    resolvedism_dust_selftest();
+    MPI_Barrier(MPI_COMM_WORLD);
+    endrun(0);
+#endif
+
     if(RestartFlag != 1)		/* need to compute forces at initial synchronization time, unless we restarted from restart files */
     {
         output_log_messages();

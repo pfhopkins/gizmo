@@ -781,7 +781,10 @@ void star_formation_parent_routine(void)
 #endif
                             }
 #endif // SINGLE_STAR_SINK_DYNAMICS			   
-                            if(P[i].Type != 5) {P[i].Type = 4;} // if we didn't set to type 5 above, default to type 4
+                            if(P[i].Type != 5) {P[i].Type = 4;
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+                P[i].SN_SpawnPending = 0;
+#endif} // if we didn't set to type 5 above, default to type 4
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
                             if(P[i].Type == 4) { /* stochastic IMF: probabilistically assign a single massive-star mass */
                                 double mass_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;

@@ -156,6 +156,26 @@ extern ALIGN(32) struct particle_data
      * actual ejecta mass (M_at_SN_trigger - rem_mass) rather than the post-walk
      * residual (~0).  Reset to -1 when bookkeeping is done. */
     MyFloat M_at_SN_trigger;
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+    /* SN ejecta-spawn prototype (2026-07-05): when the FB kernel holds less gas than
+     * ~f*Mej (f = flag value), the SN is NOT kernel-deposited; instead the payload is
+     * stored here and a new gas cell (mass+THERMAL energy+yields; v=v_star) is created
+     * in merge_split_routine's safe phase; the split/merge machinery then regularizes
+     * it to local resolution and hydro drives the blast. Inert without the flag. */
+    int SN_SpawnPending;                              /*!< 1 = payload waiting to spawn */
+    MyFloat SpawnEjMass;                              /*!< code-mass ejecta */
+    MyFloat SpawnEjEnergy;                            /*!< code thermal energy (1e51 erg) */
+    MyFloat SpawnEjZ[NUM_RESOLVEDISM_ELEMENTS];       /*!< code-mass yields per element */
+    MyFloat FB_KernelGasMass;                         /*!< gas mass measured in FB weight walk */
+#endif
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    /* GRIFFIN-style solid-angle-uniform FB injection (Lahen+23; 2026-07-05): the
+     * weighting walk counts gas neighbors per 12 HEALPix base pixels around the star;
+     * the injection walk then weights each receiver 1/(N_occupied_pix * N_in_pixel)
+     * instead of kernel wk — isotropic deposition, no funnelling into the nearest
+     * dense clump (Lahen+23 fig. 4). Sum of weights = 1 exactly by construction. */
+    MyFloat FB_HpxCount[12];
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     MyFloat M_drawn_Ia;          /*!< original drawn mass for Type Ia DTD [Msun], >0 = WD eligible */

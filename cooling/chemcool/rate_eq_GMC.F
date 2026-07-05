@@ -687,7 +687,7 @@ c
       else
         RH2   = 0d0
         Rdust = 0d0
-        tdust = temp
+        tdust = min(temp, 1.5d3)  ! sublimation cap, consistent w/ cool_util.F (2026-07-05)
         h_gr   = 0d0
         heii_gr = 0d0
         cii_gr = 0d0
