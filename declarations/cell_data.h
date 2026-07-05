@@ -272,6 +272,10 @@ extern struct gas_cell_data
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
     MyFloat G0;                           /*!< FUV radiation field in Habing units, 8-13.6 eV */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
+    MyFloat G0_atten;                     /*!< ATTENUATED FUV = G0 x f_dust: the effective FUV the chemistry
+                                               sees. M1 (f_dust=1) -> = G0 already-attenuated field; TREE_RAD
+                                               -> = G0_unatten x f_dust. Directly comparable across schemes. */
+    MyFloat ShieldFacDust;                /*!< dust shielding factor f_dust used this step (1 under M1) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE

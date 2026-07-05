@@ -111,30 +111,37 @@ void rt_get_sigma(void)
             }
 #endif
         }
-        rt_nu_eff_eV[i] = sum_energy / n_photon_sum;
-        rt_ion_precalc_stellar_luminosity_fraction[i] = sum_energy;
+        /* Guard 0/0 (2026-07-04): a band with no stellar photons above its threshold
+         * (e.g. He1/He2 for a cool star) gives n_photon_sum=0 -> nu_eff=NaN -> poisons
+         * the whole M1 field (net-17 multifreq crashed at step 1; single-bin was fine).
+         * Fall back to the band's minimum frequency when there are no photons. */
+        rt_nu_eff_eV[i] = (n_photon_sum > 0) ? (sum_energy / n_photon_sum) : rt_ion_nu_min[i];
+        if(!isfinite(rt_nu_eff_eV[i]) || rt_nu_eff_eV[i] <= 0) {rt_nu_eff_eV[i] = rt_ion_nu_min[i];}
+        rt_ion_precalc_stellar_luminosity_fraction[i] = (sum_energy > 0) ? sum_energy : 0;
 
+        /* All the /sum_* normalizations below are 0/0 when a band has no photons above
+         * its threshold (2026-07-04): guard every one, else NaN sigma/G poisons M1. */
         if(rt_ion_nu_min[i] >= 13.6)
         {
-            rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;
-            rt_ion_G_HI[i] *= fac_two / sum_HI_G;
+            if(sum_HI_sigma > 0) {rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;} else {rt_ion_sigma_HI[i] = 0;}
+            if(sum_HI_G > 0)     {rt_ion_G_HI[i] *= fac_two / sum_HI_G;}     else {rt_ion_G_HI[i] = 0;}
         }
 #ifdef RT_CHEM_PHOTOION_HE
         if(rt_ion_nu_min[i] >= 24.6)
         {
-            rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;
-            rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;
+            if(sum_HeI_sigma > 0) {rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;} else {rt_ion_sigma_HeI[i] = 0;}
+            if(sum_HeI_G > 0)     {rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;}     else {rt_ion_G_HeI[i] = 0;}
         }
         if(rt_ion_nu_min[i] >= 54.4)
         {
-            rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;
-            rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;
+            if(sum_HeII_sigma > 0) {rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;} else {rt_ion_sigma_HeII[i] = 0;}
+            if(sum_HeII_G > 0)     {rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;}     else {rt_ion_G_HeII[i] = 0;}
         }
 #endif
          sum_egy_allbands += sum_energy;
     }
 
-    for(i = 0; i < N_RT_FREQ_BINS; i++) {rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
+    if(sum_egy_allbands > 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}} /* guard 0/0 (2026-07-04) */
     
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",rt_ion_sigma_HI[i]/fac, rt_ion_G_HI[i]/fac_two,rt_ion_sigma_HeI[i]/fac, rt_ion_G_HeI[i]/fac_two,rt_ion_sigma_HeII[i]/fac, rt_ion_G_HeII[i]/fac_two);}}
 #endif

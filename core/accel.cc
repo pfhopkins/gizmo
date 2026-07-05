@@ -139,7 +139,11 @@ void compute_stellar_feedback(void)
 #ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
     if(All.Dt_Since_LastFBCalc_Gyr > All.Dt_Min_Between_FBCalc_Gyr) {All.Dt_Since_LastFBCalc_Gyr = 0;}
     All.Dt_Since_LastFBCalc_Gyr += All.TimeStep / All.cf_hubble_a * UNIT_TIME_IN_GYR; // augment by timestep
-    if(All.Dt_Since_LastFBCalc_Gyr < All.Dt_Min_Between_FBCalc_Gyr) {return;}
+    if(All.Dt_Since_LastFBCalc_Gyr < All.Dt_Min_Between_FBCalc_Gyr) {
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        { static long nthr=0; if((nthr++%200)==0 && ThisTask==0) {printf("FBTL_THROTTLE skipped (n=%ld) t=%g\n", nthr, All.Time); fflush(stdout);} }
+#endif
+        return;}
 #endif
 
 #ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */

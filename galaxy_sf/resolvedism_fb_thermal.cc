@@ -73,8 +73,11 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
          * particle mass guarantees the star is fully disrupted to 0 and no excess
          * mass is created.  Yields are rescaled by the actual-to-Chandrasekhar
          * ratio so Σ yields = actual ejecta mass (preserves Fe-peak composition). */
-        in->Mej = P[i].Mass;
-        double Mej_actual_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+        /* same export-repack freeze as the SN path (2026-07-05) */
+        double MIa_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
+                                                      : P[i].Mass * UNIT_MASS_IN_SOLAR;
+        in->Mej = MIa_solar / UNIT_MASS_IN_SOLAR;
+        double Mej_actual_solar = MIa_solar;
         double yield_rescale = Mej_actual_solar / IA_EJECTA_MASS;
         double metal_mass_solar = 0;
         for(int k = 0; k < STBL_NELEM; k++) {
@@ -131,7 +134,15 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     /* Mass-conservation fix: inject Mej_actual = (current particle mass) - rem_mass.
        This makes mass-removed-from-star = mass-injected-to-gas exactly.
        Per-element shape comes from the table; rescale so total = Mej_actual. */
-    double M_pre_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    /* EXPORT-REPACK FIX (2026-07-05, found by check_twin_sn + FBOUT ledger):
+     * particle2in is called AGAIN when packing the EXPORT buffer, AFTER out2particle
+     * has already reduced P[i].Mass by the locally-deposited mass -> every REMOTE
+     * receiver got Mej scaled by (1 - local_fraction) (measured: all imports at
+     * exactly 0.9166x). Any event with remote receivers under-deposited and the
+     * clip parked the shortfall on the star (remnants 2-6 Msun instead of 1.62 in
+     * 7 edge cases). Freeze to the pre-walk snapshot so every pack is identical. */
+    double M_pre_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
+                                                    : P[i].Mass * UNIT_MASS_IN_SOLAR;
     double Mej_actual = M_pre_solar - rem_mass;
     if(Mej_actual < 0) Mej_actual = 0;
 
@@ -194,6 +205,9 @@ struct OUTPUT_STRUCT_NAME
      * over neighbors walked on this rank/iteration.  Out2particle sums these across all
      * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
     MyDouble FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    MyDouble SumWK; int Nrecv;   /* injection-walk diagnostics (2026-07-05) */
+#endif
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -213,6 +227,13 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
     }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    if(out->M_coupled != 0 || out->Nrecv > 0) {
+        printf("FBOUT task=%d donor=%llu mode=%d Nrecv=%d SumWK=%.8e Mcoupled=%.8e Mass_now=%.8e\n",
+               ThisTask, (unsigned long long)P[i].ID, mode, out->Nrecv,
+               (double)out->SumWK, (double)out->M_coupled, (double)P[i].Mass); fflush(stdout);
+    }
+#endif
 }
 
 int resolvedismFB_thermal_active_check(int i);
@@ -326,6 +347,11 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #endif
                 }
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                { static long fbw_ev=-1; static double fbw_sum=0; static int fbw_n=0;
+                  if((long)FB_SerialEventID != fbw_ev) { if(fbw_ev>=0 && fbw_n>0) {printf("FBWK event=%ld task=%d Sum_wk=%.8e n_recv=%d\n", fbw_ev, ThisTask, fbw_sum, fbw_n); fflush(stdout);} fbw_ev=(long)FB_SerialEventID; fbw_sum=0; fbw_n=0; }
+                  fbw_sum += wk; fbw_n++; }
+#endif
                 /* ---- Mass + metals injection ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
@@ -443,6 +469,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     /* Accumulate actual deposition for measured-coupling reduction
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    out.SumWK += wk; out.Nrecv++;
+#endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }

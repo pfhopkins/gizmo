@@ -64,6 +64,16 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 #endif
     for(k=0; k<N_RT_FREQ_BINS; k++) {if(P[i].Type==0 || active_check==0) {in->Luminosity[k]=0;} else {in->Luminosity[k] = lum[k] * dt;}}
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    /* NaN CAUSE-FINDER (2026-07-04): if any band luminosity is non-finite, print the
+     * band index + full vector at the moment it is packed — finds the SOURCE of the
+     * Rad_Je NaN chain (not a guard; we want the cause). */
+    if(P[i].Type!=0 && active_check) { int kbad=-1; for(k=0;k<N_RT_FREQ_BINS;k++) {if(!isfinite(lum[k])) {kbad=k; break;}}
+        if(kbad>=0) { static int nansrc=0; if(nansrc<20) { nansrc++;
+            printf("RT_NANSRC star=%llu BAD_BAND=%d lumvec:", (unsigned long long)P[i].ID, kbad);
+            for(k=0;k<N_RT_FREQ_BINS;k++) {printf(" [%d]=%g", k, lum[k]);}
+            printf("\n"); fflush(stdout); } } }
+#endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     if(P[i].Type==4 && active_check) { static int rtdbg_np=0; if(rtdbg_np<50) { rtdbg_np++;
         printf("RTDBG_PACK star=%llu active=%d dt=%.6e lum[0]=%.6e Lum_in[0]=%.6e KernelSum=%.6e KernelRadius=%.6e\n",
             (unsigned long long)P[i].ID, active_check, dt, lum[0], in->Luminosity[0],

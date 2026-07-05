@@ -403,16 +403,21 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         double u_NUV_cgs = 0;
 #endif
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
-           molecular photochemistry (H2/CO dissociation, C ionization). */
-        COOLR.G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, 1e-6);
-        /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units */
-        COOLR.G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.0);
+           molecular photochemistry (H2/CO dissociation, C ionization).
+           FLOOR (2026-07-04, Uli): use the SAME floor as the TREE_RAD/G0_VARIABLE path
+           (0.324e-2 * All.G0 = 5.508e-3 for All.G0=1.7; see UV_flux_min_pix above), so
+           M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
+           the diffuse field is represented by this floor, identically in both schemes. */
+        double G0_floor_treerad = 0.324e-2 * All.G0;
+        COOLR.G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, G0_floor_treerad);
+        /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; TREE_RAD floors LW at 10% of the FUV floor */
+        COOLR.G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.1 * G0_floor_treerad);
         /* G0_dust: GRAIN photoelectric heating field (Bakes & Tielens gas PE heating in
            cool_func) = FUV(8-13.6) + NUV(3.4-8), each with its own Habing conversion.
            NUV photons above the grain work function eject grain photoelectrons -> heat gas.
            Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
            role is carried by the M1 IR/dust solver, not here. */
-        COOLR.G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, 1e-6);
+        COOLR.G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, G0_floor_treerad); /* same TREE_RAD floor (G0_dust=G0_tot there) */
 
         /* Store the M1 FUV/LW field back to the cell so it is OUTPUT and inspectable,
            mirroring the subgrid G0_VARIABLE path (CellP.G0/.G0_LW at lines 345/347).
@@ -809,6 +814,19 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         CellP[target].InternalEnergyPred = CellP[target].InternalEnergy;
         CellP[target].Temp = temp;
         CellP[target].DustTemp = COOLR.tdust;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+        /* Attenuated FUV field the chemistry actually used = G0 x f_dust (2026-07-04).
+         * M1: f_dust=1 (dust column zeroed, transport did the attenuation) -> G0_atten=G0.
+         * TREE_RAD: G0 is UNATTENUATED and f_dust=exp(-AV...) applies the dust attenuation,
+         * so G0_atten is the effective FUV -> directly comparable to M1's G0. */
+#ifdef OUTPUT_SHIELD_FAC
+        CellP[target].ShieldFacDust = COOLR.fac_shield_dust;
+        CellP[target].G0_atten      = CellP[target].G0 * COOLR.fac_shield_dust;
+#else
+        CellP[target].ShieldFacDust = 1.0;
+        CellP[target].G0_atten      = CellP[target].G0;
+#endif
+#endif
 #ifdef OUTPUT_COOLRATE
         CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
 #endif
@@ -821,6 +839,23 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         {
             double nHcgs_loc = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[target].Density * All.cf_a3inv / PROTONMASS_CGS;
             double nH2_loc = nHcgs_loc * nHcgs_loc;
+
+            /* Guard against NaN/Inf in individual CHEMCOOL cooling terms before they are
+             * redistributed into RT bins (2026-07-04). A single NaN term (e.g. net-17
+             * HeI/HeII / WSS_CIE_COOL tables returning NaN at some T) poisons Rad_Je[NUV]
+             * -> ef energy NaN -> hydro Riemann NaN -> crash at step 1. Zero any bad term
+             * (it did not contribute to the gas energy update either) and trace it once. */
+            for(int jl = 0; jl < 28; jl++) {
+                if(!isfinite(COOLR.lambda[jl])) {
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    static int lnan = 0;
+                    if(lnan < 8) { lnan++;
+                        printf("LAMNAN lambda[%d]=%g temp=%g nH=%g abh2=%g abe=%g\n",
+                               jl, (double)COOLR.lambda[jl], temp, nHcgs_loc, abh2, abe); fflush(stdout); }
+#endif
+                    COOLR.lambda[jl] = 0.0;
+                }
+            }
 
             /* Molecular + fine-structure → IR:
                R2=H2, R4=H2O rot, R5=H2O vib, R6=H2O18 vib,

@@ -384,7 +384,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#ifdef CR_DYNAMICAL_INJECTION_IN_SNE
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE) || defined(COSMIC_RAY_FLUID) /* 2026-07-04: match the tag registration guard */
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
@@ -1384,7 +1384,12 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 
-#ifdef CR_DYNAMICAL_INJECTION_IN_SNE
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE) || defined(COSMIC_RAY_FLUID)
+        /* 2026-07-04: also register under plain COSMIC_RAY_FLUID — the resolvedism SN
+         * feedback (fb_thermal.cc) injects E_CR = f_CR*E_SN whenever the CR fluid is
+         * active. Without this the tag was silently IGNORED (guarded by the FIRE-only
+         * CR_DYNAMICAL_INJECTION_IN_SNE) -> All.CosmicRay_SNeFraction stayed 0 ->
+         * SNe produced ZERO cosmic rays in every Stella CRMHD run (found in sn20_crmhd). */
         strcpy(tag[nt], "CosmicRay_SNeFraction");
         strcpy(alternate_tag[nt], "CosmicRay_SNeEnergyFraction");
         addr[nt] = &All.CosmicRay_SNeFraction;

@@ -1056,6 +1056,20 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0_ATTEN:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) { *fp++ = (MyOutputFloat) CellP[pindex].G0_atten; n++; }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) { *fp++ = (MyOutputFloat) CellP[pindex].ShieldFacDust; n++; }
+#endif
+            break;
+
         case IO_RESOLVEDISM_G0_NUV:
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             for(n = 0; n < pc; pindex++)
@@ -2372,6 +2386,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_ATTEN:
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
             /* alive under subgrid OR M1 -- must set bytes here too, else the writer
                divides n_bytes by 0 when the block is present under M1 (2026-07-04) */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
@@ -2835,6 +2851,8 @@ int get_values_per_blockelement(enum iofields blocknr)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_ATTEN:
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
         case IO_RESOLVEDISM_G0_NUV:
         case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
@@ -3202,6 +3220,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_ATTEN:
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
         case IO_RESOLVEDISM_G0_NUV:
         case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
@@ -3611,7 +3631,9 @@ int blockpresent(enum iofields blocknr)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
-            /* G0/G0_LW are written by the subgrid path OR the M1 path (2026-07-04) */
+        case IO_RESOLVEDISM_G0_ATTEN:
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
+            /* G0/G0_LW/G0_atten/ShieldFacDust written by the subgrid path OR the M1 path (2026-07-04) */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
             return 1;
 #endif
@@ -4302,6 +4324,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_RESOLVEDISM_G0_LW:
             strncpy(label, "G0LW", 4);
             break;
+        case IO_RESOLVEDISM_G0_ATTEN:
+            strncpy(label, "G0AT", 4);
+            break;
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
+            strncpy(label, "SHFD", 4);
+            break;
         case IO_RESOLVEDISM_G0_NUV:
             strncpy(label, "GNUV", 4);
             break;
@@ -4819,6 +4847,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_RESOLVEDISM_G0_LW:
             strcpy(buf, "G0_LW");
+            break;
+        case IO_RESOLVEDISM_G0_ATTEN:
+            strcpy(buf, "G0_FUV_atten");
+            break;
+        case IO_RESOLVEDISM_SHIELDFAC_DUST:
+            strcpy(buf, "ShieldFac_Dust");
             break;
         case IO_RESOLVEDISM_G0_NUV:
             strcpy(buf, "G0_NUV");

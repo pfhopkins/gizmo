@@ -197,7 +197,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     int rem_type = stellar_remnant_type(logM, logZ);
     double rem_mass = stellar_remnant_mass(logM, logZ);
 
-    double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    /* same export-repack freeze as the SN thermal path (2026-07-05) */
+    double M_particle_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
+                                                         : P[i].Mass * UNIT_MASS_IN_SOLAR;
     double Mej_solar = M_particle_solar - rem_mass;
     if(Mej_solar < 0) Mej_solar = 0;
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;

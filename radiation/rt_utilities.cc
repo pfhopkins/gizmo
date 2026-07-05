@@ -57,6 +57,14 @@ int rt_get_source_luminosity(int i, int mode, double *lum)
     if(!((1 << P[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion
     int active_check = 0; // default to inactive //
+    /* CRITICAL (2026-07-04): zero the output vector at entry. Callers pass an
+     * UNINITIALIZED stack array (e.g. rt_source_injection_initial_operations_preloop),
+     * and the gas branch only does lum[k] += Rad_Je[k] (rt_get_lum_gas is a no-op
+     * without RT_FREEFREE) -> stack garbage flowed straight into CellP.Rad_Je for
+     * every gas cell each step. Whether the garbage was benign zeros (net-5 builds)
+     * or NaN bit-patterns (net-17 multifreq builds -> instant step-1 Riemann crash)
+     * depended purely on stack-layout luck. */
+    {int k0; for(k0=0;k0<N_RT_FREQ_BINS;k0++) {lum[k0]=0;}}
     
 #if defined(GALSF)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)

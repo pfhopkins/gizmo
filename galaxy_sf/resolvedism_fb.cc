@@ -212,6 +212,9 @@ void resolvedism_determine_SNe(void)
             n_agb_local++;
         } else {
             P[i].SNe_ThisTimeStep = 1; /* SN: energy+mass+metals */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            printf("FBTL_DET task=%d ID=%llu flag=1 set (t=%g)\n", ThisTask, (unsigned long long)P[i].ID, All.Time); fflush(stdout);
+#endif
             n_sne_local++;
         }
         /* Snapshot pre-walk mass for bookkeeping in resolvedism_inject_fb_energy().
@@ -551,6 +554,16 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         if(ncand >= ccap) {ccap *= 2; cand = (int *)myrealloc_movable(cand, ccap * sizeof(int));}
         cand[ncand++] = ii;
     }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { int nflag=0, ntot=0; for(ii = FirstActiveParticle; ii >= 0; ii = NextActiveParticle[ii]) {
+        if(P[ii].Type != 4) continue; ntot++;
+        if(P[ii].SNe_ThisTimeStep == flagA || P[ii].SNe_ThisTimeStep == flagB) { nflag++;
+            printf("FBSER_CAND task=%d ID=%llu flag=%g KernelR=%g NumNgb=%g -> cand=%d\n", ThisTask,
+                (unsigned long long)P[ii].ID, (double)P[ii].SNe_ThisTimeStep,
+                (double)P[ii].KernelRadius, (double)P[ii].NumNgb,
+                (P[ii].KernelRadius>0 && P[ii].NumNgb>0)?1:0); fflush(stdout); } }
+      if(nflag>0) {printf("FBSER_ENTRY task=%d flags=%d/%d ncand=%d (pass %d/%d)\n", ThisTask, nflag, ntot, ncand, flagA, flagB); fflush(stdout);} }
+#endif
     char *done = (char *)mymalloc("fbser_done", (ncand > 0 ? ncand : 1) * sizeof(char));
     memset(done, 0, (ncand > 0 ? ncand : 1) * sizeof(char));
 
@@ -587,6 +600,14 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         }
         calc_fn(0); /* injection for this single event (collective) */
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        if(i_owner >= 0) { /* FBSER trace (2026-07-04, twin-SN clip hunt): AWS + post-injection mass */
+            printf("FBSER event=%llu task=%d AWS=%.8e KernelR=%.6e NumNgb=%g M_after=%.8e\n",
+                   (unsigned long long)glob_min, ThisTask, (double)P[i_owner].FB_Area_weighted_sum,
+                   (double)P[i_owner].KernelRadius, (double)P[i_owner].NumNgb, (double)P[i_owner].Mass);
+            fflush(stdout);
+        }
+#endif
         if(i_owner >= 0) {done[my_idx] = 1;} /* owner retires the event */
     }
     FB_SerialEventID = 0; /* release: subsequent passes see all particles */
@@ -597,6 +618,12 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
 void resolvedism_inject_fb_energy(void)
 {
     int ii;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { int q; for(q=0;q<NumPart;q++) { if(P[q].Type==4 && P[q].SNe_ThisTimeStep != 0 && P[q].SNe_ThisTimeStep != -1) {
+        int act=0, aa; for(aa=FirstActiveParticle; aa>=0; aa=NextActiveParticle[aa]) {if(aa==q){act=1;break;}}
+        printf("FBTL_INJ task=%d ID=%llu flag=%g active=%d t=%g\n", ThisTask,
+               (unsigned long long)P[q].ID, (double)P[q].SNe_ThisTimeStep, act, All.Time); fflush(stdout); } } }
+#endif
     /* STARFORGE two-pass pattern (adapted from mechanical_fb_calc_toplevel):
      *   1. Weighting pre-pass walks neighbors and measures Σ_j (Mass_j × kernel.wk)
      *      onto P[i].FB_Area_weighted_sum
