@@ -44,6 +44,10 @@ void sum_top_level_node_costfactors(void);
  *  tree is used.  Elements are only exported to other processors when needed. */
 void gravity_tree(void)
 {
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+    if(ThisTask==0) {printf("G0DBG_WALK t=%g root_uv=%g\n", All.Time, (double)Nodes[All.MaxPart].uv_luminosity); fflush(stdout);}
+#endif
+
     /* initialize variables */
     long long n_exported = 0; int i, j, maxnumnodes, iter; i = 0; j = 0; iter = 0; maxnumnodes=0;
     double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timetree, timewait, timecomm;

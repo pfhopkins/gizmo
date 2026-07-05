@@ -329,7 +329,23 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     
     /* now compute the multipole moments recursively */
     last = -1;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE)
+    /* G0-FIX (2026-07-06): stellar FUV/LW luminosities MUST be current when node
+     * moments are summed. The per-step recompute (run.cc, SF section) runs AFTER
+     * some tree builds -> node uv/lw moments summed ZERO stellar luminosity ->
+     * G0 far field dead beyond each cell's node-opening radius of a star (~50-70pc)
+     * -> 74% of production gas floor-pinned (found via single-star N^2-vs-tree
+     * radial test + G0DBG root-node prints; SL and MPI exonerated by experiment).
+     * Refresh here so EVERY build (initial, domain-decomp, SF-triggered) is fresh. */
+    recompute_resolvedism_fuv_luminosities();
+#endif
     force_update_node_recursive(All.MaxPart, -1, -1);
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+    { /* G0DBG: root node must carry the total stellar FUV of the local tree */
+      double plum=0; int ip_; for(ip_=0;ip_<NumPart;ip_++) {if(P[ip_].Type==4||P[ip_].Type==5) plum+=P[ip_].UV_luminosity;}
+      printf("G0DBG_BUILD task=%d t=%g root_uv=%g sumP_uv=%g\n", ThisTask, All.Time,
+             (double)Nodes[All.MaxPart].uv_luminosity, plum); fflush(stdout); }
+#endif
     
     if(last >= All.MaxPart)
     {
@@ -1031,6 +1047,19 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
         MyFloat stellar_lum[N_RT_FREQ_BINS];
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+        /* G0-FIX 2026-07-05: these were MISSING from the cross-domain pseudo-node
+         * exchange -> every off-rank top-level node carried ZERO FUV/LW luminosity
+         * -> tree-G0 far field ~11x low in production (74% of gas floor-pinned).
+         * M1's stellar_lum[] was exchanged; the G0 bands were not. */
+        MyFloat uv_luminosity, lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+        MyFloat nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+        MyFloat opt_luminosity;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
         double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS];
         double chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS];
@@ -1100,6 +1129,16 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            DomainMoment[i].uv_luminosity = Nodes[no].uv_luminosity;
+            DomainMoment[i].lw_luminosity = Nodes[no].lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            DomainMoment[i].nuv_luminosity = Nodes[no].nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            DomainMoment[i].opt_luminosity = Nodes[no].opt_luminosity;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
             for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
             {
@@ -1201,6 +1240,16 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
                     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+                    Nodes[no].uv_luminosity = DomainMoment[i].uv_luminosity;
+                    Nodes[no].lw_luminosity = DomainMoment[i].lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                    Nodes[no].nuv_luminosity = DomainMoment[i].nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                    Nodes[no].opt_luminosity = DomainMoment[i].opt_luminosity;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
                     for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
                     {
@@ -1277,6 +1326,15 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
     MyFloat stellar_lum[N_RT_FREQ_BINS]={0};
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    MyFloat uv_luminosity_tp=0, lw_luminosity_tp=0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    MyFloat nuv_luminosity_tp=0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    MyFloat opt_luminosity_tp=0;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
     double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS]={0}, chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS]={0};
 #endif
@@ -1355,6 +1413,16 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            uv_luminosity_tp += Nodes[p].uv_luminosity;
+            lw_luminosity_tp += Nodes[p].lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            nuv_luminosity_tp += Nodes[p].nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            opt_luminosity_tp += Nodes[p].opt_luminosity;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
             for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
             {
@@ -1510,6 +1578,16 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    Nodes[no].uv_luminosity = uv_luminosity_tp;
+    Nodes[no].lw_luminosity = lw_luminosity_tp;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    Nodes[no].nuv_luminosity = nuv_luminosity_tp;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    Nodes[no].opt_luminosity = opt_luminosity_tp;
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES
     for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
     {
