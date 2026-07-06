@@ -1077,6 +1077,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
+#ifdef INPUT_READ_COSMICRAYENERGY
+                   && blocknr != IO_COSMICRAY_ENERGY
+#endif
 #ifdef EOS_CARRIES_TEMPERATURE
                    && blocknr != IO_EOSTEMP
 #endif

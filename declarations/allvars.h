@@ -1586,6 +1586,7 @@ extern ALIGN(32) struct NODE
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
   MyFloat uv_luminosity;        /*!< total FUV luminosity in tree node, 8-13.6 eV */
+  MyFloat lum_s[3];             /*!< UV-luminosity-weighted position sum (Sum L*pos, unnormalized): flux from an accepted node is evaluated at the LUMINOSITY centroid, not the mass COM — a gas-dominated node's mass center can sit tens of pc from its stars, giving systematic 1/r^2 errors (measured 0.67x at 113 pc, windres) */
   MyFloat lw_luminosity;        /*!< total LW luminosity in tree node, 11.2-13.6 eV (subset of FUV) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
   MyFloat nuv_luminosity;       /*!< total NUV luminosity in tree node, 3.4-8 eV */

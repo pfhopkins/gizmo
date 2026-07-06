@@ -43,6 +43,38 @@
 static std::unordered_map<MyIDType, double> region_previous_cost;
 
 /* ============================================================
+ *  MSTAR NATURAL UNITS (2026-07-06, after the Stella port)
+ *  MSTAR's GBS error control is not scale-free: fed Stella host units
+ *  (kpc / 1e10 Msun), a trivial 1000 AU circular binary has code mass 1e-10
+ *  and orbital energy ~1e-11 and the integrator grinds through >1e5 steps per
+ *  call at dE/E ~ 1e-6, while the identical system in pc / Msun / km/s runs
+ *  in O(100) steps at dE/E ~ 1e-13.  We therefore integrate in NATURAL N-body
+ *  units (pc, Msun, km/s) regardless of host units: the state is converted in
+ *  place at integrate_region entry and back-converted at scatter_results entry
+ *  (ps is freshly host-filled by setup/setup_reuse before every integration,
+ *  so exactly one round trip per step).  Everything outside the MSTAR interface
+ *  stays in host units.
+ * ============================================================ */
+#define KJ_LEN_TO_NAT  (All.UnitLength_in_cm / 3.085678e18)      /* host length unit in pc  */
+#define KJ_MASS_TO_NAT (All.UnitMass_in_g   / 1.989e33)          /* host mass unit in Msun  */
+#define KJ_VEL_TO_NAT  (All.UnitVelocity_in_cm_per_s / 1.0e5)    /* host vel unit in km/s   */
+#define KJ_TIME_TO_NAT (KJ_LEN_TO_NAT / KJ_VEL_TO_NAT)           /* host time unit in pc/(km/s) */
+
+static void kj_state_change_units(struct ketju_system_physical_state *ps, int n, int to_natural)
+{
+    double fL = KJ_LEN_TO_NAT, fM = KJ_MASS_TO_NAT, fV = KJ_VEL_TO_NAT;
+    if(!to_natural) { fL = 1./fL; fM = 1./fM; fV = 1./fV; }
+    for(int i = 0; i < n; i++) {
+        ps->mass[i] *= fM;
+        for(int j = 0; j < 3; j++) { ps->pos[i][j] *= fL; ps->vel[i][j] *= fV; }
+#ifdef SINK_PARTICLES
+        for(int j = 0; j < 3; j++) { ps->spin[i][j] *= fL * fM * fV; }
+#endif
+    }
+    ps->time *= (to_natural ? (fL/fV) : (fL/fV)); /* fL,fV already inverted in host branch */
+}
+
+/* ============================================================
  *  Lightweight particle data for MPI communication
  * ============================================================ */
 struct ketju_mpi_particle {
@@ -167,6 +199,7 @@ struct KetjuRegion {
     double com_vel[3];           /* region CoM velocity; added back to MSTAR-relative velocities at scatter */
     integertime ti_step;     /* integer timestep for this region */
 
+    int state_in_natural_units = 0;  /* 1 while ps holds MSTAR natural units (pc/Msun/km-s); guards against double conversion when integrate_region runs more than once before scatter */
     KetjuRegion() : total_particle_count(0), num_pn_particles(0), integrator(NULL), ti_step(0) {
         for(int j = 0; j < 3; j++) { com_pos[j] = 0; com_vel[j] = 0; }
         compute_info.compute_sequence_position = 0;
@@ -1077,11 +1110,12 @@ static void setup_integrator(KetjuRegion &reg)
         ketju_create_system(reg.integrator, reg.num_pn_particles, n_other, reg.compute_tasks.comm);
 
         /* set units */
-        reg.integrator->constants->G = All.G;
+        /* natural units (see KJ_* above): G and c in pc / Msun / km/s */
+        reg.integrator->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
 #if defined(C_LIGHT_CODE)
         reg.integrator->constants->c = C_LIGHT_CODE;
 #else
-        reg.integrator->constants->c = 2.9979e10 / All.UnitVelocity_in_cm_per_s;
+        reg.integrator->constants->c = 2.9979e10 / 1.0e5; /* km/s: natural velocity unit */
 #endif
 
         /* set options */
@@ -1095,7 +1129,7 @@ static void setup_integrator(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
             if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
 #endif
-            reg.integrator->options->star_star_softening = h;
+            reg.integrator->options->star_star_softening = h * KJ_LEN_TO_NAT; /* natural (pc) */
         }
 
         /* fill particle data (relative to CoM, converted to physical coordinates) */
@@ -1283,11 +1317,12 @@ static void setup_integrator_reuse(KetjuRegion &reg)
         int n_other = reg.total_particle_count - reg.num_pn_particles;
         ketju_create_system(reg.integrator, reg.num_pn_particles, n_other, reg.compute_tasks.comm);
 
-        reg.integrator->constants->G = All.G;
+        /* natural units (see KJ_* above): G and c in pc / Msun / km/s */
+        reg.integrator->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
 #if defined(C_LIGHT_CODE)
         reg.integrator->constants->c = C_LIGHT_CODE;
 #else
-        reg.integrator->constants->c = 2.9979e10 / All.UnitVelocity_in_cm_per_s;
+        reg.integrator->constants->c = 2.9979e10 / 1.0e5; /* km/s: natural velocity unit */
 #endif
         reg.integrator->options->PN_flags = parse_pn_terms();
         reg.integrator->options->gbs_relative_tolerance = All.KetjuIntegrationTolerance;
@@ -1299,7 +1334,7 @@ static void setup_integrator_reuse(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
             if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
 #endif
-            reg.integrator->options->star_star_softening = h;
+            reg.integrator->options->star_star_softening = h * KJ_LEN_TO_NAT; /* natural (pc) */
         }
 
         reg.extra_data.resize(reg.total_particle_count);
@@ -1381,8 +1416,8 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
 
-    /* softening: use the star softening (comoving -> physical), matching the tree */
-    double h = All.ForceSoftening[4] * All.cf_atime;
+    /* softening: use the star softening (comoving -> physical), matching the tree; natural (pc) for MSTAR state */
+    double h = All.ForceSoftening[4] * All.cf_atime * KJ_LEN_TO_NAT;
 #ifdef SINK_PARTICLES
     if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
 #endif
@@ -1399,7 +1434,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
             double r = sqrt(r2);
             if(r == 0) continue;
             /* +G m_j softened(r) dr_ij = -internal_accel_i: undoes the internal part of the host kick */
-            double fac = kick_factor * All.G * softened_force_factor(r, h);
+            double fac = kick_factor * reg.integrator->constants->G * softened_force_factor(r, h); /* natural units */
             for(int k = 0; k < 3; k++) {
                 dv[3*i + k] += ps->mass[j] * fac * dr[k];
                 dv[3*j + k] -= ps->mass[i] * fac * dr[k];
@@ -1438,7 +1473,7 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
                 dv[k] = ps->vel[i][k] - ps->vel[j][k];
                 r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
             }
-            double GM = All.G * (ps->mass[i] + ps->mass[j]);
+            double GM = reg.integrator->constants->G * (ps->mass[i] + ps->mass[j]); /* natural units */
             double E = 0.5 * v2 - GM / sqrt(r2);
             if(E >= 0) continue; /* unbound */
             double a = -GM / (2.0 * E);
@@ -1461,7 +1496,7 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
                 dv[k] = ps->vel[i][k] - ps->vel[j][k];
                 r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
             }
-            double GM = All.G * (ps->mass[i] + ps->mass[j]);
+            double GM = reg.integrator->constants->G * (ps->mass[i] + ps->mass[j]); /* natural units */
             double E = 0.5 * v2 - GM / sqrt(r2);
             if(E >= 0) continue;
             double a = -GM / (2.0 * E);
@@ -1506,7 +1541,7 @@ static void ketju_trace_energy(KetjuRegion &reg, const char *label)
         dr2 += dx*dx; dv2 += dv*dv; vcom2 += vc*vc;
     }
     double mu = ps->mass[0]*ps->mass[1]/mtot;
-    double Eint = 0.5*mu*dv2 - All.G*ps->mass[0]*ps->mass[1]/sqrt(dr2);
+    double Eint = 0.5*mu*dv2 - reg.integrator->constants->G*ps->mass[0]*ps->mass[1]/sqrt(dr2); /* natural units */
     printf("KETRACE %-10s E_int=%.14g  r=%.8g  v_com=%.8g\n", label, Eint, sqrt(dr2), sqrt(vcom2));
     fflush(stdout);
 }
@@ -1518,6 +1553,25 @@ static void ketju_trace_energy(KetjuRegion &reg, const char *label)
 static void integrate_region(KetjuRegion &reg, double dt_physical)
 {
     if(dt_physical <= 0) return;
+
+    /* enter MSTAR natural units: state in place, dt scaled (see KJ_* layer above).
+     * scatter_results converts the state back to host units. */
+    if(reg.compute_tasks.is_member() && reg.integrator && !reg.state_in_natural_units) {
+        kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
+        reg.state_in_natural_units = 1;
+    }
+    dt_physical *= KJ_TIME_TO_NAT;
+#ifdef KETJU_UNITS_DEBUG
+    if(reg.compute_tasks.is_root() && reg.integrator && reg.integrator->num_particles >= 2) {
+        struct ketju_system_physical_state *psd = reg.integrator->physical_state;
+        double dr0 = psd->pos[0][0]-psd->pos[1][0], dr1 = psd->pos[0][1]-psd->pos[1][1], dr2v = psd->pos[0][2]-psd->pos[1][2];
+        printf("KJUNITS: G=%g c=%g m0=%g sep=%g dt=%g tol=%g maxstep=%d\n",
+               reg.integrator->constants->G, reg.integrator->constants->c, psd->mass[0],
+               sqrt(dr0*dr0+dr1*dr1+dr2v*dr2v), dt_physical,
+               reg.integrator->options->gbs_relative_tolerance, reg.integrator->options->max_step_count);
+        fflush(stdout);
+    }
+#endif
 
     /* Pure-MSTAR coupling: the host applies NO gravity kick to chain members (see kicks.cc),
      * so there is no internal tree force to remove here — MSTAR integrates the members in full
@@ -1838,6 +1892,14 @@ static void scatter_results(KetjuRegion &reg)
 
     if(reg.compute_tasks.is_root() && reg.integrator) {
         struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        /* leave MSTAR natural units: back-convert the state to host units before ANY
+         * host-side use (positions/velocities/masses, incl. post-merger masses).
+         * The captured true end-of-step velocities are natural too. */
+        if(reg.state_in_natural_units) {
+            kj_state_change_units(ps, reg.integrator->num_particles, 0);
+            for(size_t kv = 0; kv < reg.mstar_end_vel.size(); kv++) { reg.mstar_end_vel[kv] /= KJ_VEL_TO_NAT; }
+            reg.state_in_natural_units = 0;
+        }
         scatter_buf.resize(n);
 
         for(int i = 0; i < n; i++) {

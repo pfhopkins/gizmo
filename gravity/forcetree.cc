@@ -501,6 +501,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         MyFloat uv_luminosity = 0;
         MyFloat lw_luminosity = 0;
+        MyFloat lum_s[3] = {0,0,0};
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         MyFloat nuv_luminosity = 0;
 #endif
@@ -597,6 +598,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                         uv_luminosity += Nodes[p].uv_luminosity;
                         lw_luminosity += Nodes[p].lw_luminosity;
+                        {int kl; for(kl=0;kl<3;kl++) lum_s[kl] += Nodes[p].lum_s[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                         nuv_luminosity += Nodes[p].nuv_luminosity;
 #endif
@@ -703,6 +705,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     if(pa->Type == 4 || pa->Type == 5) {uv_luminosity += P[p].UV_luminosity; lw_luminosity += P[p].LW_luminosity;
+                        {int kl; for(kl=0;kl<3;kl++) lum_s[kl] += (P[p].UV_luminosity + P[p].LW_luminosity) * P[p].Pos[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                         nuv_luminosity += P[p].NUV_luminosity;
 #endif
@@ -910,6 +913,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity = uv_luminosity;
         Nodes[no].lw_luminosity = lw_luminosity;
+        {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = lum_s[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         Nodes[no].nuv_luminosity = nuv_luminosity;
 #endif
@@ -1047,12 +1051,23 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
         MyFloat stellar_lum[N_RT_FREQ_BINS];
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        /* TREE_RAD-FIX 2026-07-06: column node masses were also missing from the
+         * pseudo-node exchange (same bug class as the G0 fields below) — remote/top
+         * nodes carried ZERO gas/H2/CO mass for the treecol column integrals. */
+        MyFloat gasmass;
+#ifdef TREE_RAD_H2
+        MyFloat h2mass, comass;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         /* G0-FIX 2026-07-05: these were MISSING from the cross-domain pseudo-node
          * exchange -> every off-rank top-level node carried ZERO FUV/LW luminosity
          * -> tree-G0 far field ~11x low in production (74% of gas floor-pinned).
          * M1's stellar_lum[] was exchanged; the G0 bands were not. */
         MyFloat uv_luminosity, lw_luminosity;
+        MyFloat lum_s[3];
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         MyFloat nuv_luminosity;
 #endif
@@ -1060,6 +1075,7 @@ void force_exchange_pseudodata(void)
         MyFloat opt_luminosity;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
         double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS];
         double chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS];
@@ -1129,9 +1145,17 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            DomainMoment[i].gasmass = Nodes[no].gasmass;
+#ifdef TREE_RAD_H2
+            DomainMoment[i].h2mass = Nodes[no].h2mass; DomainMoment[i].comass = Nodes[no].comass;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             DomainMoment[i].uv_luminosity = Nodes[no].uv_luminosity;
             DomainMoment[i].lw_luminosity = Nodes[no].lw_luminosity;
+            {int kl; for(kl=0;kl<3;kl++) DomainMoment[i].lum_s[kl] = Nodes[no].lum_s[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             DomainMoment[i].nuv_luminosity = Nodes[no].nuv_luminosity;
 #endif
@@ -1139,6 +1163,7 @@ void force_exchange_pseudodata(void)
             DomainMoment[i].opt_luminosity = Nodes[no].opt_luminosity;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
             for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
             {
@@ -1240,9 +1265,17 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
                     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+                    Nodes[no].gasmass = DomainMoment[i].gasmass;
+#ifdef TREE_RAD_H2
+                    Nodes[no].h2mass = DomainMoment[i].h2mass; Nodes[no].comass = DomainMoment[i].comass;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     Nodes[no].uv_luminosity = DomainMoment[i].uv_luminosity;
                     Nodes[no].lw_luminosity = DomainMoment[i].lw_luminosity;
+                    {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = DomainMoment[i].lum_s[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                     Nodes[no].nuv_luminosity = DomainMoment[i].nuv_luminosity;
 #endif
@@ -1250,6 +1283,7 @@ void force_exchange_pseudodata(void)
                     Nodes[no].opt_luminosity = DomainMoment[i].opt_luminosity;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
                     for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
                     {
@@ -1326,8 +1360,15 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
     MyFloat stellar_lum[N_RT_FREQ_BINS]={0};
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MyFloat gasmass_tp=0;
+#ifdef TREE_RAD_H2
+    MyFloat h2mass_tp=0, comass_tp=0;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyFloat uv_luminosity_tp=0, lw_luminosity_tp=0;
+    MyFloat uv_luminosity_tp=0, lw_luminosity_tp=0, lum_s_tp[3]={0,0,0};
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat nuv_luminosity_tp=0;
 #endif
@@ -1335,6 +1376,7 @@ void force_treeupdate_pseudos(int no)
     MyFloat opt_luminosity_tp=0;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
     double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS]={0}, chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS]={0};
 #endif
@@ -1413,9 +1455,17 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            gasmass_tp += Nodes[p].gasmass;
+#ifdef TREE_RAD_H2
+            h2mass_tp += Nodes[p].h2mass; comass_tp += Nodes[p].comass;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             uv_luminosity_tp += Nodes[p].uv_luminosity;
             lw_luminosity_tp += Nodes[p].lw_luminosity;
+            {int kl; for(kl=0;kl<3;kl++) lum_s_tp[kl] += Nodes[p].lum_s[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             nuv_luminosity_tp += Nodes[p].nuv_luminosity;
 #endif
@@ -1423,6 +1473,7 @@ void force_treeupdate_pseudos(int no)
             opt_luminosity_tp += Nodes[p].opt_luminosity;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
             for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
             {
@@ -1578,9 +1629,17 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[no].gasmass = gasmass_tp;
+#ifdef TREE_RAD_H2
+    Nodes[no].h2mass = h2mass_tp; Nodes[no].comass = comass_tp;
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     Nodes[no].uv_luminosity = uv_luminosity_tp;
     Nodes[no].lw_luminosity = lw_luminosity_tp;
+    {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = lum_s_tp[kl];}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     Nodes[no].nuv_luminosity = nuv_luminosity_tp;
 #endif
@@ -1588,6 +1647,7 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].opt_luminosity = opt_luminosity_tp;
 #endif
 #endif
+#ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
     for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
     {
@@ -1759,6 +1819,10 @@ void force_add_element_to_tree(int iparent, int ichild)
  *  memory-access panelty (which reduces cache performance) incurred by the
  *  table.
  */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+/* G0DBG2: walk-side flux tallies split by interaction branch (reset+printed in gravtree.cc) */
+double G0DBG_fluxP = 0, G0DBG_fluxN = 0; long long G0DBG_nN = 0, G0DBG_nNzero = 0;
+#endif
 int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
@@ -1768,6 +1832,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     MyDouble acc_x=0, acc_y=0, acc_z=0; // cache some global vars in local vars to help compiler with alias analysis
     double pmass;
     double zeta=0, zeta_sec=0; int ptype_sec=-1;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+    int g0dbg_node = 0;   /* per-interaction: 1 = accepted-node (multipole) interaction */
+#endif
 #ifdef KETJU_REGULARIZATION
     int target_ketju_tag = 0;     /* chain-region id of this target (0 if not a chain member) */
     int ketju_skip_pair = 0;      /* set per-interaction: skip force from a same-region member leaf (MSTAR owns internal forces) */
@@ -1791,6 +1858,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double treecol_OPT_flux[NPIX] = {0};
 #endif
     double uv_lum = 0, lw_lum = 0;
+    double g0_flux_dx = 0, g0_flux_dy = 0, g0_flux_dz = 0, g0_flux_r2 = 0; /* luminosity-centroid separation for node flux */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     double nuv_lum = 0;
 #endif
@@ -1988,6 +2056,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         while(no >= 0)
         {
             h=soft; h_p=-1; /* initialize h and h_p, for use below: make sure to do so at the top of each iteration */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+            g0dbg_node = 0;
+#endif
 #ifdef KETJU_REGULARIZATION
             ketju_skip_pair = 0; /* reset each interaction; set below only for a same-region chain-member leaf */
 #endif
@@ -2044,7 +2115,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = 0; lw_lum = 0;
-                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;}
+                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;
+                    g0_flux_dx = dx; g0_flux_dy = dy; g0_flux_dz = dz; g0_flux_r2 = r2;}
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 nuv_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {nuv_lum = P[no].NUV_luminosity;}
 #endif
@@ -2366,6 +2438,22 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = nop->uv_luminosity;
                 lw_lum = nop->lw_luminosity;
+                /* flux geometry: evaluate 1/r^2 and the HEALPix direction at the node's
+                 * LUMINOSITY centroid, not the mass COM. A gas-dominated node's mass center
+                 * can sit tens of pc from its stars: measured 0.67x flux deficit at 113 pc
+                 * (windres single-star box) purely from the COM offset. lum_s is the
+                 * unnormalized Sum (L_uv+L_lw)*pos over the node's stars. */
+                if(uv_lum + lw_lum > 0) {
+                    double wl = uv_lum + lw_lum;
+                    g0_flux_dx = nop->lum_s[0]/wl - pos_x;
+                    g0_flux_dy = nop->lum_s[1]/wl - pos_y;
+                    g0_flux_dz = nop->lum_s[2]/wl - pos_z;
+                    GRAVITY_NEAREST_XYZ(g0_flux_dx, g0_flux_dy, g0_flux_dz, -1);
+                    g0_flux_r2 = g0_flux_dx*g0_flux_dx + g0_flux_dy*g0_flux_dy + g0_flux_dz*g0_flux_dz;
+                }
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+                g0dbg_node = 1;
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 nuv_lum = nop->nuv_luminosity;
 #endif
@@ -2745,12 +2833,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                if((uv_lum > 0 || lw_lum > 0) && r2 > 0)
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+                if(r2 > 0) {
+                    if(g0dbg_node) { if(uv_lum > 0) {G0DBG_fluxN += uv_lum/r2; G0DBG_nN++;} else {G0DBG_nNzero++;} }
+                    else if(uv_lum > 0) {G0DBG_fluxP += uv_lum/r2;}
+
+                }
+#endif
+                if((uv_lum > 0 || lw_lum > 0) && g0_flux_r2 > 0)
                 {
                     long iheal;
-                    double vec_hp[3] = {dx, dy, dz};
+                    double vec_hp[3] = {g0_flux_dx, g0_flux_dy, g0_flux_dz};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
-                    double inv_r2 = 1.0 / r2;
+                    double inv_r2 = 1.0 / g0_flux_r2;
                     treecol_UV_flux[iheal] += uv_lum * inv_r2;
                     treecol_LW_flux[iheal] += lw_lum * inv_r2;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE

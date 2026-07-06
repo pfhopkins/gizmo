@@ -366,7 +366,15 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     if(g0 < 0.324e-2) g0 = 0.324e-2;
     COOLR.G0 = g0;
     COOLR.G0_LW = g0; /* no separate LW in SFR-scaled mode */
-#ifdef CR_SCALE_WITH_G0
+#if defined(COSMIC_RAY_FLUID)
+    { /* CR fluid active: zeta from the LIVE local CR energy density (same normalization as the
+         G0_VARIABLE and M1 branches: 3e-17 s^-1 per eV/cm^3, Brugaletta+24/Cummings+16) — the
+         SFR-scaled subgrid guess must never override the transported CR field. */
+      double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* [erg cm^-3] */
+      COOLR.cosmic_ray_ion_rate = 3e-17 * (ecr_cgs / 1.602e-12);
+      COOLR.cr_energy_density = ecr_cgs;
+    }
+#elif defined(CR_SCALE_WITH_G0)
     COOLR.cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
 #endif
 #endif

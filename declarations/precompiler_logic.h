@@ -1424,3 +1424,10 @@
 #if defined(GALSF_RESOLVEDISM_WINDS_THERMAL) && defined(GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY)
 #error "GALSF_RESOLVEDISM_WINDS_THERMAL and _THERMAL_ONLY are mutually exclusive wind energy modes"
 #endif
+
+/* GALSF_RESOLVEDISM_G0_VARIABLE and TREE_RAD are a matched pair (Uli, 2026-07-06):
+ * used together or not at all. The forward direction is enforced constructively
+ * (G0_VARIABLE auto-#defines TREE_RAD above); this guard closes the reverse. */
+#if defined(TREE_RAD) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE)
+#error "TREE_RAD requires GALSF_RESOLVEDISM_G0_VARIABLE in Stella (treecol shielding pairs with the variable ISRF)"
+#endif

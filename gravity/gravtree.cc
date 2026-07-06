@@ -45,7 +45,12 @@ void sum_top_level_node_costfactors(void);
 void gravity_tree(void)
 {
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
-    if(ThisTask==0) {printf("G0DBG_WALK t=%g root_uv=%g\n", All.Time, (double)Nodes[All.MaxPart].uv_luminosity); fflush(stdout);}
+    {extern double G0DBG_fluxP, G0DBG_fluxN; extern long long G0DBG_nN, G0DBG_nNzero;
+     double lf[2]={G0DBG_fluxP,G0DBG_fluxN}, gf[2]; long long ln[2]={G0DBG_nN,G0DBG_nNzero}, gn[2];
+     MPI_Reduce(lf,gf,2,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD); MPI_Reduce(ln,gn,2,MPI_LONG_LONG,MPI_SUM,0,MPI_COMM_WORLD);
+     if(ThisTask==0) {printf("G0DBG_WALK t=%g root_uv=%g fluxP=%g fluxN=%g nN=%lld nNzero=%lld\n", All.Time,
+        (double)Nodes[All.MaxPart].uv_luminosity, gf[0], gf[1], gn[0], gn[1]); fflush(stdout);}
+     G0DBG_fluxP=G0DBG_fluxN=0; G0DBG_nN=G0DBG_nNzero=0;}
 #endif
 
     /* initialize variables */
@@ -404,7 +409,8 @@ void gravity_tree(void)
                 if(P[place].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].ProjectionH2[kp] += GravDataOut[j].ProjectionH2[kp]; CellP[place].ProjectionCO[kp] += GravDataOut[j].ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                if(P[place].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].UV_flux[kp] += GravDataOut[j].UV_flux[kp]; CellP[place].LW_flux[kp] += GravDataOut[j].LW_flux[kp];
+                if(P[place].Type == 0) {
+                    int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].UV_flux[kp] += GravDataOut[j].UV_flux[kp]; CellP[place].LW_flux[kp] += GravDataOut[j].LW_flux[kp];
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                     CellP[place].NUV_flux[kp] += GravDataOut[j].NUV_flux[kp];
 #endif
