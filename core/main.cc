@@ -128,6 +128,9 @@ int main(int argc, char **argv)
 
   run();			/* main simulation loop */
 
+#ifdef KETJU_REGULARIZATION
+  ketju_finalize();		/* free cached KETJU MPI communicators BEFORE MPI_Finalize (else static dtors segfault at exit) */
+#endif
   MPI_Finalize();		/* clean up & finalize MPI */
 
   return 0;

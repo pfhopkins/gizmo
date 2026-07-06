@@ -301,6 +301,12 @@ void init(void)
 #endif
 #ifdef KETJU_REGULARIZATION
             P[i].KetjuIntegrated = 0;
+            P[i].KetjuFreshScatter = 0;
+            P[i].KetjuReleaseBlock = 0;
+            P[i].KetjuRegionTag = 0;
+            P[i].KetjuTrickUntil = 0;
+            P[i].KetjuRegionTiStep = 0;
+            for(int kjv = 0; kjv < 3; kjv++) { P[i].KetjuFinalVel[kjv] = P[i].Vel[kjv]; P[i].KetjuTrueVel[kjv] = P[i].Vel[kjv]; P[i].KetjuTruePos[kjv] = P[i].Pos[kjv]; P[i].KetjuExtAccel[kjv] = 0; }
 #ifdef SINK_PARTICLES
             for(int j = 0; j < 3; j++) P[i].KetjuSpin[j] = 0;
 #endif

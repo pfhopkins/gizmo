@@ -1768,6 +1768,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     MyDouble acc_x=0, acc_y=0, acc_z=0; // cache some global vars in local vars to help compiler with alias analysis
     double pmass;
     double zeta=0, zeta_sec=0; int ptype_sec=-1;
+#ifdef KETJU_REGULARIZATION
+    int target_ketju_tag = 0;     /* chain-region id of this target (0 if not a chain member) */
+    int ketju_skip_pair = 0;      /* set per-interaction: skip force from a same-region member leaf (MSTAR owns internal forces) */
+#endif
 #ifdef RT_USE_TREECOL_FOR_NH
     double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
 #endif
@@ -1899,6 +1903,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         soft = ForceSoftening_KernelRadius(target);
         aold = All.ErrTolForceAcc * P[target].OldAcc;
         pmass = P[target].Mass;
+#ifdef KETJU_REGULARIZATION
+        target_ketju_tag = P[target].KetjuRegionTag;
+#endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         vel_x = P[target].Vel[0]; vel_y = P[target].Vel[1]; vel_z = P[target].Vel[2];
 #endif
@@ -1924,6 +1931,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         soft = GravDataGet[target].Soft;
         aold = All.ErrTolForceAcc * GravDataGet[target].OldAcc;
         pmass = GravDataGet[target].Mass;
+#ifdef KETJU_REGULARIZATION
+        target_ketju_tag = GravDataGet[target].KetjuRegionTag;
+#endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         vel_x = GravDataGet[target].Vel[0]; vel_y = GravDataGet[target].Vel[1]; vel_z = GravDataGet[target].Vel[2];
 #endif
@@ -1978,6 +1988,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         while(no >= 0)
         {
             h=soft; h_p=-1; /* initialize h and h_p, for use below: make sure to do so at the top of each iteration */
+#ifdef KETJU_REGULARIZATION
+            ketju_skip_pair = 0; /* reset each interaction; set below only for a same-region chain-member leaf */
+#endif
             
             if(no < maxPart) /* this is a particle, we will use it */
             {
@@ -1997,6 +2010,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 GRAVITY_NEAREST_XYZ(dx,dy,dz,-1);
                 r2 = dx * dx + dy * dy + dz * dz;
                 mass = P[no].Mass;
+#ifdef KETJU_REGULARIZATION
+                /* KETJU: skip the mutual force between two members of the SAME chain region — MSTAR
+                 * integrates all chain-internal forces exactly (regularized, unsoftened). Excluding the
+                 * pair here makes this member's GravAccel the exact external (non-member) field, with no
+                 * softening/kernel mismatch to leak energy at high-eccentricity pericenters. */
+                if((target_ketju_tag != 0) && (P[no].KetjuRegionTag == target_ketju_tag)) {ketju_skip_pair = 1;}
+#endif
                 
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                 r_source = sqrt(pow(P[no].Pos[0] - center[0],2) + pow(P[no].Pos[1] - center[1],2) + pow(P[no].Pos[2] - center[2],2));
@@ -2267,6 +2287,24 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if(r2 < nop->maxsoft * nop->maxsoft) {no = nop->u.d.nextnode; continue;} // inside node maxsoft, continue down tree
                 }
 #endif
+#ifdef KETJU_REGULARIZATION
+                /* GUARANTEED member<->member exclusion: if this target is a chain member, force-open any
+                 * node whose volume overlaps its region's bounding sphere. Without this, a same-region
+                 * companion co-integrated at large separation (orbit-criterion capture) can be absorbed
+                 * into an accepted multipole whose force is NOT excluded below — the member then feels
+                 * the companion both through the tree and through MSTAR (double-counted internal force,
+                 * systematic energy pumping). Opening continues until the companion is a leaf, where the
+                 * ketju_skip_pair exclusion applies. One distance check per node, member targets only. */
+                if(target_ketju_tag > 0 && target_ketju_tag <= KetjuNumTagRegions)
+                {
+                    double dxk = nop->center[0] - KetjuTagCenter[3*(target_ketju_tag-1)+0];
+                    double dyk = nop->center[1] - KetjuTagCenter[3*(target_ketju_tag-1)+1];
+                    double dzk = nop->center[2] - KetjuTagCenter[3*(target_ketju_tag-1)+2];
+                    GRAVITY_NEAREST_XYZ(dxk,dyk,dzk,-1);
+                    double reach = KetjuTagRadius[target_ketju_tag-1] + 0.866025 * nop->len; /* node bounding radius = len*sqrt(3)/2 */
+                    if(dxk*dxk + dyk*dyk + dzk*dzk < reach*reach) { no = nop->u.d.nextnode; continue; }
+                }
+#endif
                 if(All.ErrTolTheta)    /* check Barnes-Hut opening criterion */
                 {
                     if(nop->len * nop->len > r2 * All.ErrTolTheta * All.ErrTolTheta) /* open cell */
@@ -2442,7 +2480,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             
             
             
-            if((r2 > 0) && (mass > 0)) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
+            if((r2 > 0) && (mass > 0)
+#ifdef KETJU_REGULARIZATION
+               && !ketju_skip_pair /* same-region chain members: mutual force handled by MSTAR, excluded here */
+#endif
+              ) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
             {
                 r = sqrt(r2);
                 

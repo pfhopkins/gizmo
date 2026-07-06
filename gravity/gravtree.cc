@@ -227,6 +227,9 @@ void gravity_tree(void)
                 /* assign values (input-function to pass in memory) */
                 for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
                 GravDataIn[j].Type = P[place].Type;
+#ifdef KETJU_REGULARIZATION
+                GravDataIn[j].KetjuRegionTag = P[place].KetjuRegionTag; /* carry chain-region id so same-region leaves can be excluded on the importing task */
+#endif
                 GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
                 GravDataIn[j].OldAcc = P[place].OldAcc;
                 GravDataIn[j].Mass = P[place].Mass;
@@ -487,6 +490,14 @@ void gravity_tree(void)
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
 #ifdef HERMITE_INTEGRATION
+#ifdef KETJU_REGULARIZATION
+        /* In the pre-kick pass (HermiteOnlyFlag==1, runs AFTER ketju_limit_timesteps has retagged region
+         * members from current positions) also recompute KETJU-flagged particles — exactly the set whose
+         * member<->member tree exclusion may have CHANGED. Without this, the first half-kick uses
+         * GravAccel from the previous step's tags: a per-transition energy leak as boundary binaries
+         * flicker in/out of regions. */
+        if(HermiteOnlyFlag == 1 && P[i].KetjuIntegrated) {} else
+#endif
         if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
@@ -701,7 +712,11 @@ void *gravity_primary_loop(void *p)
         if(ProcessedFlag[i]) {continue;}
 
 #ifdef HERMITE_INTEGRATION /* if we are in the Hermite extra loops and a particle is not flagged for this, simply mark it done and move on */
-        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {ProcessedFlag[i]=1; continue;}
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)
+#ifdef KETJU_REGULARIZATION
+           && !(HermiteOnlyFlag == 1 && P[i].KetjuIntegrated) /* pre-kick pass: also recompute KETJU-flagged particles so the first half-kick uses membership-consistent (freshly-tagged) forces */
+#endif
+          ) {ProcessedFlag[i]=1; continue;}
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         if(!needs_new_treeforce(i)) {ProcessedFlag[i]=1; continue;}

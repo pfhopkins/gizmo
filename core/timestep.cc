@@ -287,6 +287,12 @@ integertime get_timestep(int p,		/*!< particle index */
                          int flag	/*!< either 0 for normal operation, or finite timestep to get corresponding aphys */ )
 {
     double ax, ay, az, ac, csnd = 0, dt = All.MaxSizeTimestep, dt_courant = 0, dt_divv = 0;
+#ifdef KETJU_REGULARIZATION
+    /* KETJU chain member (flag persists from the previous step's region integration, valid here
+     * at timestep-determination time): take the EXTERNAL-field timestep, not the tiny internal
+     * orbit — MSTAR sub-cycles the internal orbit. */
+    int p_ketju_member = P[p].KetjuIntegrated; (void)p_ketju_member;
+#endif
     integertime ti_step; int k; k=0;
 
 #ifdef IO_GRADUAL_SNAPSHOT_RESTART // if on the first timestep of a snapshot restart, start at the lowest allowed timestep to minimize any transient effects
@@ -434,6 +440,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[p].SuperTimestepFlag>=2) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
 #endif
+#if defined(KETJU_REGULARIZATION) && (SINGLE_STAR_TIMESTEPPING > 0)
+    if(p_ketju_member && P[p].is_in_a_binary) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
+#endif
     dt=DMIN(dt,dt_tidal);
 #endif
 
@@ -461,6 +470,10 @@ integertime get_timestep(int p,		/*!< particle index */
                 dt_2body = 2.*M_PI / SUPERTIMESTEPPING_NUM_STEPS_PER_ORBIT * (binary_dt_2body*2); // orbital frequency is |dr x dv| / r^2, so timestep will be inverse to this
 	        } else {P[p].SuperTimestepFlag = 0;}  // we still have to take a proper short N-body integration timestep due to a third body whose approach requires careful integration, so no super timestepping is possible
 	    }
+#endif
+#ifdef KETJU_REGULARIZATION
+        /* KETJU members: skip the internal binary-orbit constraint (MSTAR sub-cycles the orbit) */
+        if(!p_ketju_member)
 #endif
         dt = DMIN(dt, dt_2body);
 #ifdef HERMITE_INTEGRATION
@@ -1127,6 +1140,13 @@ integertime get_timestep(int p,		/*!< particle index */
 
     ti_step = (integertime) (dt / All.Timebase_interval);
 #ifndef STOP_WHEN_BELOW_MINTIMESTEP
+#ifdef KETJU_REGULARIZATION
+    /* KETJU chain member: CAP the normal (external-field) step by the region-adaptive step, keeping
+     * whichever is SMALLER. The member bin comes from this one returned ti_step, so sync point /
+     * MSTAR dt (reg.ti_step) / host drift interval all match and the velocity trick lands exactly
+     * on MSTAR's end position (no operator-split energy injection). */
+    if(P[p].KetjuRegionTiStep > 0 && P[p].KetjuRegionTiStep < ti_step) { ti_step = P[p].KetjuRegionTiStep; }
+#endif
     if(ti_step<=1) ti_step=2;
 #endif
 

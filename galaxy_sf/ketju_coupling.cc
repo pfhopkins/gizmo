@@ -31,6 +31,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../mesh/kernel.h"   /* kernel_gravity: match the tree's softened force law exactly */
 #include "ketju_coupling.h"
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 #include "resolvedism_stellar_tables.h"
@@ -49,9 +50,12 @@ struct ketju_mpi_particle {
     int Type;
     int Task;
     int Index;
+    int Tag;             /* KetjuRegionTag at gather time (PREVIOUS step's membership) — used for the
+                          * capture/release HYSTERESIS in pair_forms_subsystem */
     double Mass;
     double Pos[3];
     double Vel[3];
+    double GravAccel[3]; /* full tree acceleration (incl. member-member; G folded in) — used to build the external perturbation fed to MSTAR */
     short int is_dead_remnant; /* 1 = dead Type 4 star (NS/BH), 0 = living star or sink */
 #ifdef SINK_PARTICLES
     short int SinkSubType;
@@ -141,6 +145,8 @@ struct region_compute_info {
 struct KetjuRegion {
     std::vector<ketju_mpi_particle> centers;      /* BH/massive-star region centers */
     std::vector<ketju_mpi_particle> all_particles; /* all chain members (gathered on root) */
+    std::vector<double> mstar_end_vel;             /* compute-root: ps->vel captured right after MSTAR, before neg2 (true t_sync velocity), 3*n */
+    std::vector<double> external_accel;            /* compute tasks: per-member EXTERNAL accel = GravAccel - member-member force, in sorted order, 3*n */
     std::set<int> local_member_indices;            /* local P[] indices in this region */
     int total_particle_count;
     int num_pn_particles;                          /* count of PN-enabled (SMBH) particles */
@@ -157,8 +163,8 @@ struct KetjuRegion {
     std::vector<ketju_extra_data> extra_data;
 
     /* CoM frame data (stored at setup, used in scatter) */
-    double com_pos[3];
-    double com_vel[3];
+    double com_pos[3];           /* region CoM position; added back to MSTAR-relative positions at scatter */
+    double com_vel[3];           /* region CoM velocity; added back to MSTAR-relative velocities at scatter */
     integertime ti_step;     /* integer timestep for this region */
 
     KetjuRegion() : total_particle_count(0), num_pn_particles(0), integrator(NULL), ti_step(0) {
@@ -260,6 +266,44 @@ static int KetjuRegionsStale = 1; /* 1 = force rebuild (after domain decomp or f
  * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
 static std::vector<ketju_mpi_particle> CachedChainCenters;
 static int CachedChainCentersValid = 0;
+
+/* Per-tag region bounding spheres, consumed by force_treeevaluate to GUARANTEE member<->member
+ * exclusion: a tagged target force-opens every tree node whose volume overlaps its region's bounding
+ * sphere, so a same-region companion can never be absorbed into an accepted multipole (the original
+ * exclusion silently assumed companions always open to leaves — true for members within R in sparse
+ * neighborhoods, FALSE for orbit-criterion pairs co-integrated across 1000s of AU in the dense core:
+ * the un-excluded multipole share of the companion's force double-counts the internal force on top of
+ * MSTAR and systematically pumps pair energy, ~-0.02/step observed, discharging ~+5e-2 per pericenter).
+ * Derived from the globally-gathered group centers, so identical on every rank. Index = tag-1. */
+int KetjuNumTagRegions = 0;
+double *KetjuTagCenter = NULL;   /* 3 * ntag */
+double *KetjuTagRadius = NULL;   /* ntag */
+
+static void ketju_update_tag_geometry(const std::vector<std::vector<ketju_mpi_particle>> &groups)
+{
+    int ntag = (int)groups.size();
+    static int alloc = 0;
+    if(ntag > alloc) {
+        free(KetjuTagCenter); free(KetjuTagRadius);
+        alloc = ntag + 256;
+        KetjuTagCenter = (double*)malloc(3 * alloc * sizeof(double));
+        KetjuTagRadius = (double*)malloc(alloc * sizeof(double));
+    }
+    for(int r = 0; r < ntag; r++) {
+        double c[3] = {0,0,0}; int n = (int)groups[r].size();
+        for(const ketju_mpi_particle &m : groups[r]) for(int k = 0; k < 3; k++) c[k] += m.Pos[k];
+        if(n > 0) for(int k = 0; k < 3; k++) c[k] /= n;
+        double rad2max = 0;
+        for(const ketju_mpi_particle &m : groups[r]) {
+            double d2 = 0; for(int k = 0; k < 3; k++) { double d = m.Pos[k] - c[k]; d2 += d * d; }
+            if(d2 > rad2max) rad2max = d2;
+        }
+        for(int k = 0; k < 3; k++) KetjuTagCenter[3*r + k] = c[k];
+        /* margin: members drift within the step and captures anticipate; pad by 20% + one region radius */
+        KetjuTagRadius[r] = 1.2 * sqrt(rad2max) + All.KetjuRegionRadius;
+    }
+    KetjuNumTagRegions = ntag;
+}
 
 /* ============================================================
  *  Cost-based scheduling (Phase B)
@@ -465,7 +509,7 @@ static void update_region_costs(void)
  * ============================================================ */
 static int is_chain_center(int i)
 {
-    /* Type 4 stars above mass threshold */
+    /* Stella: Type 4 stars above mass threshold */
     if(P[i].Type == 4 && All.KetjuMinStarMass > 0) {
         if(P[i].Mass >= All.KetjuMinStarMass) return 1;
     }
@@ -490,9 +534,6 @@ static int is_chain_eligible(int i)
     return 0;
 }
 
-/* ============================================================
- *  Helper: is this particle PN-enabled? (SMBH only)
- * ============================================================ */
 /* Helper: is this a dead remnant (NS or BH) still stored as Type 4? */
 static int is_dead_remnant_type4(int i)
 {
@@ -502,6 +543,9 @@ static int is_dead_remnant_type4(int i)
     return 0;
 }
 
+/* ============================================================
+ *  Helper: is this particle PN-enabled? (compact objects only)
+ * ============================================================ */
 static int is_pn_particle(ketju_mpi_particle *p)
 {
 #ifdef SINK_PARTICLES
@@ -559,6 +603,36 @@ static double softened_force_factor(double r, double h)
     }
 }
 
+/* Store the EXTERNAL acceleration on each region member. The gravity tree now EXCLUDES
+ * member<->member interactions for chain particles (see KetjuRegionTag / forcetree.cc), so a
+ * member's gathered GravAccel already IS the exact external (non-member) field — computed with
+ * the tree's own force law (adaptive/few-body softening included), so there is no hand-rebuilt
+ * internal force to subtract and thus no softening/kernel mismatch to leak energy at tight
+ * high-eccentricity pericenters. For an isolated region GravAccel = 0 exactly, so external = 0
+ * and the scheme reduces to pure-MSTAR. The host KDK applies this external field to members;
+ * MSTAR integrates the internal forces. Result (sorted order, aligned with reg.all_particles)
+ * is stored in reg.external_accel, redundantly on every compute task. */
+static void ketju_compute_external_accel(KetjuRegion &reg)
+{
+    if(!reg.compute_tasks.is_member()) return;
+    int n = reg.total_particle_count;
+    reg.external_accel.assign(3 * n, 0.0);
+    for(int i = 0; i < n; i++) {
+        for(int k = 0; k < 3; k++)
+            reg.external_accel[3*i + k] = reg.all_particles[i].GravAccel[k];
+    }
+#ifdef KETJU_ENERGY_TRACE
+    if(reg.compute_tasks.is_root() && n == 2) {
+        double ga=0, ai=0, ex=0;
+        for(int k=0;k<3;k++){ ga+=reg.all_particles[0].GravAccel[k]*reg.all_particles[0].GravAccel[k];
+            ex+=reg.external_accel[k]*reg.external_accel[k]; }
+        double dr2=0; for(int k=0;k<3;k++){double d=reg.all_particles[0].Pos[k]-reg.all_particles[1].Pos[k]; dr2+=d*d;}
+        printf("EXTTRACE: |GravAccel0|=%.6g |external0|=%.6g r=%.4g AU\n", sqrt(ga), sqrt(ex), sqrt(dr2)*206265.0);
+        (void)ai;
+    }
+#endif
+}
+
 /* ============================================================
  *  Parse PN terms string (same logic as GADGET4-KETJU)
  * ============================================================ */
@@ -614,11 +688,12 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
             local_centers[k].Task = ThisTask;
             local_centers[k].Index = i;
             local_centers[k].Mass = P[i].Mass;
-            local_centers[k].is_dead_remnant = is_dead_remnant_type4(i);
             for(int j = 0; j < 3; j++) {
                 local_centers[k].Pos[j] = P[i].Pos[j];
                 local_centers[k].Vel[j] = P[i].Vel[j];
+            local_centers[k].Tag = P[i].KetjuRegionTag;
             }
+            local_centers[k].is_dead_remnant = is_dead_remnant_type4(i);
 #ifdef SINK_PARTICLES
             local_centers[k].SinkSubType = (P[i].Type == 5) ? P[i].SinkSubType : -1;
             for(int j = 0; j < 3; j++) local_centers[k].Spin[j] = (P[i].Type == 5) ? P[i].KetjuSpin[j] : 0;
@@ -698,12 +773,150 @@ static std::vector<std::vector<ketju_mpi_particle>> merge_overlapping_regions(
     return regions;
 }
 
+/* ============================================================
+ *  BIFROST-style ORBIT-BASED subsystem membership
+ *  (Rantala, Naab et al. 2023, MNRAS 522, 5180, Sec 3.4)
+ *
+ *  Membership from PAIR ORBITAL ELEMENTS instead of the instantaneous
+ *  separation. The whole point: capture/release handoffs must happen in the
+ *  WEAK-COUPLING regime. A pure distance trigger (separation < 2R) fires at
+ *  the deepest, fastest point of an eccentric passage, where any handoff
+ *  bookkeeping imperfection is amplified into a large energy error (measured:
+ *  the e=0.99 cluster is clean at 1e-5 when binaries never cross the boundary
+ *  and blows up to dE ~ 0.1-1 the moment per-orbit boundary crossings begin).
+ *  Orbit-based membership instead gives:
+ *    - bound pair with semi-major axis a < r_ngb: PERMANENT member. A tight
+ *      binary never churns in/out at apocenter — membership is a property of
+ *      the orbit, not the phase.
+ *    - any pair with predicted pericenter r_peri < r_ngb inside an
+ *      anticipatory time window r/|v_rel| < tau: captured EARLY on approach
+ *      (typically at ~K*r_ngb where the mutual force is ~K^2 weaker), carried
+ *      by MSTAR through the entire deep passage, released at the symmetric
+ *      weak point outbound (r/|v_rel| grows back through tau).
+ * ============================================================ */
+static int pair_forms_subsystem(const ketju_mpi_particle &a, const ketju_mpi_particle &b)
+{
+    const double r_ngb = All.KetjuRegionRadius;
+    double dr[3], dv[3]; double r2 = 0, v2 = 0;
+    for(int k = 0; k < 3; k++) {
+        dr[k] = a.Pos[k] - b.Pos[k]; dv[k] = a.Vel[k] - b.Vel[k];
+        r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
+    }
+    double r = sqrt(r2);
+    if(r < r_ngb) return 1;                       /* already deep — must be co-integrated regardless */
+
+    double GM = All.G * (a.Mass + b.Mass);
+    if(GM <= 0 || v2 <= 0) return 0;
+    double E = 0.5 * v2 - GM / r;                 /* specific orbital energy of the pair */
+    if(E < 0) {
+        double sma = -GM / (2.0 * E);
+        if(sma < r_ngb) return 1;                 /* bound + tight: permanent member */
+    }
+    /* distance cutoff applies only to UNBOUND pairs: a bound pair diving below r_ngb is held through
+     * apocenter UNCONDITIONALLY (apocenter can exceed any fixed multiple of r_ngb for small r_ngb;
+     * dropping it there would reintroduce per-orbit churn and strong-field recaptures) */
+    if(E >= 0 && r >= 50.0 * r_ngb) return 0;     /* pair-scan cutoff (BIFROST r_ngb,max analogue) */
+    /* predicted pericenter from the (Keplerian 2-body) angular momentum: r_peri = (h^2/GM)/(1+e).
+     * Valid for bound and hyperbolic orbits alike. */
+    double rv = dr[0]*dv[0] + dr[1]*dv[1] + dr[2]*dv[2];
+    double h2 = r2 * v2 - rv * rv;                /* |r x v|^2 */
+    double e2 = 1.0 + 2.0 * E * h2 / (GM * GM); if(e2 < 0) e2 = 0;
+    double r_peri = (h2 / GM) / (1.0 + sqrt(e2));
+    /* capture/release HYSTERESIS: a pair that is ALREADY co-integrated (same nonzero tag last step)
+     * is held until its pericenter grows beyond 1.5*r_ngb. Without this, binaries whose pericenter sits
+     * near the r_ngb boundary (marginal population) churn in/out as perturbations move r_peri across
+     * the threshold, with captures at arbitrary orbital phases (measured: -2.8e-2 by t=0.4 for the
+     * e=0.9 cluster with r_ngb == r_peri = 100 AU). With hysteresis each marginal binary is captured
+     * once and then kept — self-healing. */
+    if(E < 0 && a.Tag > 0 && a.Tag == b.Tag && r_peri < 1.5 * r_ngb) return 1;
+    if(r_peri >= r_ngb) return 0;                 /* passage never gets inside the regularized scale */
+    /* BOUND pair diving below the regularized scale: PERMANENT member — no per-orbit capture/release.
+     * Windowed capture of eccentric binaries proved intrinsically fragile: the inward dive covers its
+     * last few hundred AU in a handful of steps, so any capture latency (anticipation window, admission
+     * gates, deferrals) hands the pair to MSTAR deep in the dive at strong field, where handoff
+     * imperfections are amplified (observed as recurring events at synchronized capture waves for
+     * r_ngb <= 500 AU). Owning the full orbit removes the churn entirely; MSTAR integrates wide phases
+     * cheaply, and the forced node-opening guarantees tree exclusion across the whole orbit. The
+     * anticipatory time window below remains for genuinely UNBOUND (flyby) pairs only. */
+    if(E < 0) return 1;
+
+    /* anticipatory window: capture while |r|/|v_rel| < tau AND r < K*r_ngb, with tau sized so that on
+     * a near-parabolic infall (v ~ sqrt(2GM/r)) the time criterion fires at r_capture ~ K * r_ngb:
+     * r/v = r^1.5/sqrt(2GM) = tau  =>  r_capture = (2 GM tau^2)^(1/3) = K * r_ngb. Weak-field
+     * handoffs: at K=16 the mutual force at capture/release is ~256x weaker than at r_ngb.
+     * The EXPLICIT distance bound is essential: for fast HYPERBOLIC encounters (v_rel set by the
+     * cluster dispersion, not by the pair potential) r/v < tau alone fires at huge distances
+     * (~0.1 pc for r_ngb=500 AU), chaining hundreds of stars into giant merged subsystems. */
+    const double K = 16.0;
+    if(r >= K * r_ngb) return 0;
+    double tau = K * sqrt(K) * r_ngb * sqrt(r_ngb) / sqrt(2.0 * GM);
+    if(r / sqrt(v2) < tau) return 1;
+    return 0;
+}
+
+/* Group eligible stars into subsystems by the pair-orbit predicate (union-find, same output
+ * shape as merge_overlapping_regions). Deterministic from the globally-gathered centers, so
+ * all ranks derive identical groups without communication. */
+static std::vector<std::vector<ketju_mpi_particle>> build_orbit_regions(
+    const std::vector<ketju_mpi_particle> &centers)
+{
+    int n = centers.size();
+    std::vector<int> group(n);
+    for(int i = 0; i < n; i++) group[i] = i;
+    auto find = [&](int x) {
+        while(group[x] != x) { group[x] = group[group[x]]; x = group[x]; }
+        return x;
+    };
+    auto unite = [&](int a, int b) { a = find(a); b = find(b); if(a != b) group[a] = b; };
+
+    for(int i = 0; i < n; i++)
+        for(int j = i + 1; j < n; j++)
+            if(pair_forms_subsystem(centers[i], centers[j])) unite(i, j);
+
+    std::vector<std::vector<ketju_mpi_particle>> regions;
+    std::vector<int> root_to_region(n, -1);
+    for(int i = 0; i < n; i++) {
+        int r = find(i);
+        if(root_to_region[r] < 0) { root_to_region[r] = regions.size(); regions.push_back({}); }
+        regions[root_to_region[r]].push_back(centers[i]);
+    }
+    return regions;
+}
+
+/* Membership of an orbit-based group: the group IS the member list (each center is an eligible
+ * star). Local members = the centers this rank owns, filtered by the capture admission gate. */
+static std::set<int> local_members_from_group(const std::vector<ketju_mpi_particle> &group)
+{
+    std::set<int> members;
+    for(const ketju_mpi_particle &c : group) {
+        if(c.Task != ThisTask) continue;
+        int i = c.Index;
+        if(!is_chain_eligible(i)) continue;
+        /* CAPTURE ADMISSION GATE (see find_local_members): only capture particles that are ACTIVE at
+         * this sync or already members — never overwrite a mid-bin particle's state. */
+        if(!TimeBinActive[P[i].TimeBin] && !P[i].KetjuIntegrated) continue;
+        members.insert(i);
+    }
+    return members;
+}
+
 /* Find local particles within r_region of any center in a region */
 static std::set<int> find_local_members(const std::vector<ketju_mpi_particle> &centers, double radius)
 {
     std::set<int> members;
     for(int i = 0; i < NumPart; i++) {
         if(!is_chain_eligible(i)) continue;
+        /* CAPTURE ADMISSION GATE: a particle may be captured into a region only at a sync point where it
+         * is ACTIVE (or if it already is a member from the previous step — membership stays sticky so
+         * live regions are never ripped apart mid-step). Capturing an INACTIVE particle lets MSTAR's
+         * scatter overwrite it mid-way through its host bin, shredding its Hermite history and the
+         * velocity-trick drift chord (episodic-capture blowups: dE +194..+203 at the first e=0.99
+         * pericenter). A deferred star leaves its companion in a <2-member region, which is skipped
+         * entirely, so the capture just waits (a step or two — the buffer pass keeps approaching pairs
+         * on short synchronized bins) until both are active together. Consistent across
+         * ketju_limit_timesteps and ketju_find_regions: PASS 1 sets KetjuIntegrated for admitted
+         * members, so the later find_regions call reproduces the same admission decisions. */
+        if(!TimeBinActive[P[i].TimeBin] && !P[i].KetjuIntegrated) continue;
         for(size_t c = 0; c < centers.size(); c++) {
             double dist = particle_distance(P[i].Pos, const_cast<double*>(centers[c].Pos));
             if(dist < radius) { members.insert(i); break; }
@@ -760,11 +973,12 @@ static void setup_integrator(KetjuRegion &reg)
         mp.Task = ThisTask;
         mp.Index = idx;
         mp.Mass = P[idx].Mass;
-        mp.is_dead_remnant = is_dead_remnant_type4(idx);
         for(int j = 0; j < 3; j++) {
             mp.Pos[j] = P[idx].Pos[j];
             mp.Vel[j] = P[idx].Vel[j];
+            mp.GravAccel[j] = P[idx].GravAccel[j];
         }
+        mp.is_dead_remnant = is_dead_remnant_type4(idx);
 #ifdef SINK_PARTICLES
         mp.SinkSubType = (P[idx].Type == 5) ? P[idx].SinkSubType : -1;
         for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
@@ -829,12 +1043,18 @@ static void setup_integrator(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
                 if(a.Type == 5 && a.SinkSubType == 0) a_pn = 1;
                 if(b.Type == 5 && b.SinkSubType == 0) b_pn = 1;
-#endif
 #ifdef KETJU_PN_COMPACT_OBJECTS
-                if(a.Type == 4 && a.is_dead_remnant) a_pn = 1;
-                if(b.Type == 4 && b.is_dead_remnant) b_pn = 1;
                 if(a.Type == 5 && a.SinkSubType == 1) a_pn = 1;
                 if(b.Type == 5 && b.SinkSubType == 1) b_pn = 1;
+#endif
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+                /* keep the sort consistent with is_pn_particle: NS/BH Type-4 remnants are PN */
+                if(a.Type == 4 && (a.RemnantType == REM_ECSN || a.RemnantType == REM_CCSN || a.RemnantType == REM_FSN || a.RemnantType == REM_PPISN || a.RemnantType == REM_DBH)) a_pn = 1;
+                if(b.Type == 4 && (b.RemnantType == REM_ECSN || b.RemnantType == REM_CCSN || b.RemnantType == REM_FSN || b.RemnantType == REM_PPISN || b.RemnantType == REM_DBH)) b_pn = 1;
+#elif defined(KETJU_PN_COMPACT_OBJECTS)
+                if(a.Type == 4 && a.is_dead_remnant) a_pn = 1;
+                if(b.Type == 4 && b.is_dead_remnant) b_pn = 1;
 #endif
                 return a_pn > b_pn;
             });
@@ -912,9 +1132,29 @@ static void setup_integrator(KetjuRegion &reg)
         reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
 
         if(reg.compute_tasks.is_root() && ThisTask == 0) {
+#ifdef KETJU_VERBOSE_STEPS
             printf("KETJU: Region with %d particles (%d PN), compute tasks %d-%d\n",
                    reg.total_particle_count, reg.num_pn_particles,
                    reg.compute_info.first_task_index, reg.compute_info.final_task_index);
+#endif
+        }
+        ketju_compute_external_accel(reg);  /* external = GravAccel (member-member excluded in tree), for the host kick */
+    }
+
+    /* CoM was computed on compute members only (above). The broadcast below is rooted at
+     * affected_tasks.root, which need NOT be a compute member — in that case it still holds
+     * the constructor's zero CoM and would wipe every binary's bulk (streaming) velocity at
+     * scatter (KetjuFinalVel = sp.Vel + 0). Forward the authoritative CoM from compute_root
+     * (always a compute member) to affected_root first, mirroring the all_particles forward. */
+    if(reg.compute_tasks.root_sim != reg.affected_tasks.root_sim) {
+        double combuf[6];
+        if(ThisTask == reg.compute_tasks.root_sim) {
+            for(int j = 0; j < 3; j++) { combuf[j] = reg.com_pos[j]; combuf[j+3] = reg.com_vel[j]; }
+            MPI_Send(combuf, 6, MPI_DOUBLE, reg.affected_tasks.root_sim, 997, MPI_COMM_WORLD);
+        }
+        if(ThisTask == reg.affected_tasks.root_sim) {
+            MPI_Recv(combuf, 6, MPI_DOUBLE, reg.compute_tasks.root_sim, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            for(int j = 0; j < 3; j++) { reg.com_pos[j] = combuf[j]; reg.com_vel[j] = combuf[j+3]; }
         }
     }
 
@@ -944,11 +1184,12 @@ static void setup_integrator_reuse(KetjuRegion &reg)
         mp.Task = ThisTask;
         mp.Index = idx;
         mp.Mass = P[idx].Mass;
-        mp.is_dead_remnant = is_dead_remnant_type4(idx);
         for(int j = 0; j < 3; j++) {
             mp.Pos[j] = P[idx].Pos[j];
             mp.Vel[j] = P[idx].Vel[j];
+            mp.GravAccel[j] = P[idx].GravAccel[j];
         }
+        mp.is_dead_remnant = is_dead_remnant_type4(idx);
 #ifdef SINK_PARTICLES
         mp.SinkSubType = (P[idx].Type == 5) ? P[idx].SinkSubType : -1;
         for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
@@ -1011,12 +1252,18 @@ static void setup_integrator_reuse(KetjuRegion &reg)
 #ifdef SINK_PARTICLES
                 if(a.Type == 5 && a.SinkSubType == 0) a_pn = 1;
                 if(b.Type == 5 && b.SinkSubType == 0) b_pn = 1;
-#endif
 #ifdef KETJU_PN_COMPACT_OBJECTS
-                if(a.Type == 4 && a.is_dead_remnant) a_pn = 1;
-                if(b.Type == 4 && b.is_dead_remnant) b_pn = 1;
                 if(a.Type == 5 && a.SinkSubType == 1) a_pn = 1;
                 if(b.Type == 5 && b.SinkSubType == 1) b_pn = 1;
+#endif
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+                /* keep the sort consistent with is_pn_particle: NS/BH Type-4 remnants are PN */
+                if(a.Type == 4 && (a.RemnantType == REM_ECSN || a.RemnantType == REM_CCSN || a.RemnantType == REM_FSN || a.RemnantType == REM_PPISN || a.RemnantType == REM_DBH)) a_pn = 1;
+                if(b.Type == 4 && (b.RemnantType == REM_ECSN || b.RemnantType == REM_CCSN || b.RemnantType == REM_FSN || b.RemnantType == REM_PPISN || b.RemnantType == REM_DBH)) b_pn = 1;
+#elif defined(KETJU_PN_COMPACT_OBJECTS)
+                if(a.Type == 4 && a.is_dead_remnant) a_pn = 1;
+                if(b.Type == 4 && b.is_dead_remnant) b_pn = 1;
 #endif
                 return a_pn > b_pn;
             });
@@ -1083,9 +1330,27 @@ static void setup_integrator_reuse(KetjuRegion &reg)
         reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
 
         if(reg.compute_tasks.is_root() && ThisTask == 0) {
+#ifdef KETJU_VERBOSE_STEPS
             printf("KETJU: Region with %d particles (%d PN), compute tasks %d-%d [cached comms]\n",
                    reg.total_particle_count, reg.num_pn_particles,
                    reg.compute_info.first_task_index, reg.compute_info.final_task_index);
+#endif
+        }
+        ketju_compute_external_accel(reg);  /* external = GravAccel (member-member excluded in tree), for the host kick */
+    }
+
+    /* see setup_integrator: forward authoritative CoM compute_root -> affected_root before the
+     * affected-group broadcast, else a non-compute affected_root broadcasts a zero CoM and the
+     * binaries' bulk velocity is lost at scatter. */
+    if(reg.compute_tasks.root_sim != reg.affected_tasks.root_sim) {
+        double combuf[6];
+        if(ThisTask == reg.compute_tasks.root_sim) {
+            for(int j = 0; j < 3; j++) { combuf[j] = reg.com_pos[j]; combuf[j+3] = reg.com_vel[j]; }
+            MPI_Send(combuf, 6, MPI_DOUBLE, reg.affected_tasks.root_sim, 997, MPI_COMM_WORLD);
+        }
+        if(ThisTask == reg.affected_tasks.root_sim) {
+            MPI_Recv(combuf, 6, MPI_DOUBLE, reg.compute_tasks.root_sim, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            for(int j = 0; j < 3; j++) { reg.com_pos[j] = combuf[j]; reg.com_vel[j] = combuf[j+3]; }
         }
     }
 
@@ -1096,11 +1361,19 @@ static void setup_integrator_reuse(KetjuRegion &reg)
 }
 
 /* ============================================================
- *  PHASE 4: Negative half-step kick and integration
+ *  PHASE 4: External-force half-step kick and integration
  * ============================================================ */
 
-/* Subtract softened pairwise gravity between chain members from their velocities.
- * This undoes the tree force contribution so MSTAR can replace it with exact forces. */
+/* TNT-pattern internal-force negative half-kick (mirrors gadget_tnt's
+ * negative_half_step_kicks_region). Subtracts the member-member softened pairwise
+ * force from the chain members' velocities, removing the *internal* part of the
+ * host's full gravity kick — the host (kicks.cc) now kicks KETJU members with the
+ * full tree force exactly like every other particle (so the external force is
+ * carried by the same, energy-consistent KDK as the cluster), and MSTAR supplies
+ * the exact internal force. Operates on the current ps->pos, so it must be called
+ * with start-of-step positions before MSTAR (matching the first host kick) and with
+ * the MSTAR-evolved positions after (matching the second host kick at the drifted
+ * positions). */
 static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
 {
     if(!reg.compute_tasks.is_member() || !reg.integrator) return;
@@ -1108,7 +1381,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
 
-    /* softening: use the star softening (comoving -> physical) */
+    /* softening: use the star softening (comoving -> physical), matching the tree */
     double h = All.ForceSoftening[4] * All.cf_atime;
 #ifdef SINK_PARTICLES
     if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
@@ -1119,17 +1392,13 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
     int loop_end   = loop_scheduling_block_edge(n, reg.compute_tasks.size, reg.compute_tasks.rank + 1);
 
     std::vector<double> dv(3 * n, 0.0);
-
     for(int i = loop_start; i < loop_end; i++) {
         for(int j = i + 1; j < n; j++) {
             double dr[3], r2 = 0;
-            for(int k = 0; k < 3; k++) {
-                dr[k] = ps->pos[i][k] - ps->pos[j][k];
-                r2 += dr[k] * dr[k];
-            }
+            for(int k = 0; k < 3; k++) { dr[k] = ps->pos[i][k] - ps->pos[j][k]; r2 += dr[k] * dr[k]; }
             double r = sqrt(r2);
             if(r == 0) continue;
-
+            /* +G m_j softened(r) dr_ij = -internal_accel_i: undoes the internal part of the host kick */
             double fac = kick_factor * All.G * softened_force_factor(r, h);
             for(int k = 0; k < 3; k++) {
                 dv[3*i + k] += ps->mass[j] * fac * dr[k];
@@ -1137,15 +1406,9 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor)
             }
         }
     }
-
-    /* collect results across compute tasks and apply */
     MPI_Allreduce(MPI_IN_PLACE, dv.data(), 3 * n, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
-
-    for(int i = 0; i < n; i++) {
-        for(int k = 0; k < 3; k++) {
-            ps->vel[i][k] += dv[3*i + k];
-        }
-    }
+    for(int i = 0; i < n; i++)
+        for(int k = 0; k < 3; k++) ps->vel[i][k] += dv[3*i + k];
 }
 
 /* ============================================================
@@ -1227,6 +1490,28 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
            min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
 }
 
+#ifdef KETJU_ENERGY_TRACE
+/* Trace the 2-body internal energy of an n==2 region at a given stage (single-rank debug). */
+static void ketju_trace_energy(KetjuRegion &reg, const char *label)
+{
+    if(!reg.compute_tasks.is_root() || !reg.integrator) return;
+    if(reg.integrator->num_particles != 2) return;
+    struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+    double dr2 = 0, dv2 = 0, vcom2 = 0;
+    double mtot = ps->mass[0] + ps->mass[1];
+    for(int k = 0; k < 3; k++) {
+        double dx = ps->pos[0][k] - ps->pos[1][k];
+        double dv = ps->vel[0][k] - ps->vel[1][k];
+        double vc = (ps->mass[0]*ps->vel[0][k] + ps->mass[1]*ps->vel[1][k]) / mtot;
+        dr2 += dx*dx; dv2 += dv*dv; vcom2 += vc*vc;
+    }
+    double mu = ps->mass[0]*ps->mass[1]/mtot;
+    double Eint = 0.5*mu*dv2 - All.G*ps->mass[0]*ps->mass[1]/sqrt(dr2);
+    printf("KETRACE %-10s E_int=%.14g  r=%.8g  v_com=%.8g\n", label, Eint, sqrt(dr2), sqrt(vcom2));
+    fflush(stdout);
+}
+#endif
+
 /* Run the full integration step for one region.
  * Uses proper cosmological kick factors for comoving integration
  * (based on public GADGET4-KETJU, Mannerkoski+ 2023). */
@@ -1234,26 +1519,12 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 {
     if(dt_physical <= 0) return;
 
-    /* Compute kick factors: in comoving integration, the half-step kick
-     * factor is the gravkick integral (dt/a²), not just 0.5*dt_physical.
-     * The scale factor correction accounts for the tree force being computed
-     * in comoving coordinates while KETJU works in physical coordinates. */
-    double first_halfkick, second_halfkick;
-    if(All.ComovingIntegrationOn) {
-        integertime t0 = All.Ti_Current;
-        integertime t1 = t0 + reg.ti_step;
-        integertime tmid = t0 + reg.ti_step / 2;
-        double a0 = All.TimeBegin * exp(t0 * All.Timebase_interval);
-        double a1 = All.TimeBegin * exp(t1 * All.Timebase_interval);
-        first_halfkick  = get_gravkick_factor(t0, tmid, -1, 0) * a0;
-        second_halfkick = get_gravkick_factor(tmid, t1, -1, 0) * a1;
-    } else {
-        first_halfkick  = 0.5 * dt_physical;
-        second_halfkick = 0.5 * dt_physical;
-    }
-
-    /* subtract first half of tree force */
-    do_negative_halfstep_kick(reg, first_halfkick);
+    /* Pure-MSTAR coupling: the host applies NO gravity kick to chain members (see kicks.cc),
+     * so there is no internal tree force to remove here — MSTAR integrates the members in full
+     * over the step. (The old negative-half-kick subtraction injected energy at pericenters.) */
+#ifdef KETJU_ENERGY_TRACE
+    ketju_trace_energy(reg, "mstar_in");
+#endif
 
     /* expand tight binaries before integration to prevent stalling.
      * Runs on compute root only — broadcast updated velocities to all compute tasks. */
@@ -1271,11 +1542,13 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
         double dE = reg.integrator->perf->relative_energy_error;
 
+#ifdef KETJU_VERBOSE_STEPS
         if(reg.compute_tasks.is_root())
         printf("KETJU [task %d]: Integrated %d particles for dt=%g, %d steps (%d failed), dE/E=%g\n",
                ThisTask, reg.total_particle_count, dt_physical,
                reg.integrator->perf->successful_steps,
                reg.integrator->perf->failed_steps, dE);
+#endif
 
         if(All.KetjuMaxStepCount > 0 && n_steps >= All.KetjuMaxStepCount) {
             printf("KETJU WARNING: integration hit max step count (%d) — results may be inaccurate!\n",
@@ -1287,8 +1560,18 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         }
     }
 
-    /* subtract second half of tree force */
-    do_negative_halfstep_kick(reg, second_halfkick);
+#ifdef KETJU_ENERGY_TRACE
+    ketju_trace_energy(reg, "after_mstar"); /* MSTAR output: should equal after_neg1 (MSTAR conserves) */
+#endif
+    /* Capture MSTAR's end-of-step velocity (pure-MSTAR: this is already the true t_sync
+     * velocity, nothing to undo) for the energy diagnostic via P.KetjuTrueVel. */
+    if(reg.compute_tasks.is_root() && reg.integrator) {
+        int n = reg.integrator->num_particles;
+        struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        reg.mstar_end_vel.assign(3 * n, 0.0);
+        for(int i = 0; i < n; i++)
+            for(int k = 0; k < 3; k++) reg.mstar_end_vel[3*i + k] = ps->vel[i][k];
+    }
 }
 
 /* ============================================================
@@ -1392,50 +1675,50 @@ static void handle_mergers(KetjuRegion &reg,
     /* ---- Phase 3: each task executes its local part ---- */
     int n_metals = 0;
 #ifdef METALS
-    n_metals = NUM_METAL_SPECIES;  /* under our flag NUM_METAL_SPECIES=27 covers all elements */
+    n_metals = NUM_METAL_SPECIES;  /* under GALSF_RESOLVEDISM_METALS_INDIVIDUAL this covers all 27 elements */
 #endif
-    int buf_size = n_metals;
+    /* buffer layout: [0..n_metals) = Metallicity[]; last slot = victim's sampled IMF mass
+     * (Stella star-star merger: the survivor's stellar mass must grow so lifetimes/FB/luminosity
+     * stay consistent with the dynamical mass MSTAR merged) */
+    int buf_size = n_metals + 1;
 
     for(int m = 0; m < n_mergers; m++) {
         ketju_merger_action &act = actions[m];
 
         if(buf_size > 0) {
-            std::vector<double> merged_metals(buf_size, 0.0);
+            std::vector<double> merged_buf(buf_size, 0.0);
 
             if(act.task_merged == ThisTask) {
-#if defined(METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-                /* Legacy Metallicity[] merge — replaced by per-element EA merge under our flag */
+#ifdef METALS
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
-                    merged_metals[k] = P[act.idx_merged].Metallicity[k];
+                    merged_buf[k] = P[act.idx_merged].Metallicity[k];
 #endif
-                /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: 27 elements live in
-                 * Metallicity[NUM_METAL_SPECIES=27] under FIRE-pattern layout.
-                 * The Metallicity[] copy above already covers them. */
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                merged_buf[n_metals] = P[act.idx_merged].MstarSampleIMF[0];
+#endif
             }
 
-            /* point-to-point transfer of metals */
+            /* point-to-point transfer of metals + IMF mass */
             if(act.task_merged == act.task_survivor) {
                 /* same task — no MPI needed */
             } else {
                 if(act.task_merged == ThisTask)
-                    MPI_Send(merged_metals.data(), buf_size, MPI_DOUBLE,
+                    MPI_Send(merged_buf.data(), buf_size, MPI_DOUBLE,
                              act.task_survivor, 997, MPI_COMM_WORLD);
                 if(act.task_survivor == ThisTask)
-                    MPI_Recv(merged_metals.data(), buf_size, MPI_DOUBLE,
+                    MPI_Recv(merged_buf.data(), buf_size, MPI_DOUBLE,
                              act.task_merged, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
 
             if(act.task_survivor == ThisTask) {
-#if defined(METALS)
-                /* Mass-weighted Metallicity[] merge.  Under 28-slot layout
-                 * NUM_METAL_SPECIES=28 covers total Z (0), H (1), He (2), and
-                 * 25 metals (3..27). */
+#ifdef METALS
+                /* mass-weighted Metallicity[] merge (FIRE-pattern layout: slot 0 = total Z) */
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
                     P[act.idx_survivor].Metallicity[k] =
                         (act.M_survivor_old * P[act.idx_survivor].Metallicity[k] +
-                         act.M_merged * merged_metals[k]) / act.M_survivor_new;
+                         act.M_merged * merged_buf[k]) / act.M_survivor_new;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */
+                /* force Sigma Met[1..27] = 1 bit-exact via H from conservation */
                 {
                     double X_H_new = 1.0 - P[act.idx_survivor].Metallicity[0] - P[act.idx_survivor].Metallicity[MET_OF(ELEM_He)];
                     if(X_H_new < 0) X_H_new = 0;
@@ -1443,12 +1726,34 @@ static void handle_mergers(KetjuRegion &reg,
                 }
 #endif
 #endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                /* stellar collision: the survivor IS the merged star — grow its sampled stellar
+                 * mass so table lookups (lifetime, luminosity, Mej, remnant) see the merger product.
+                 * (No rejuvenation model: survivor keeps its age & BirthMetallicity.) */
+                if(P[act.idx_survivor].Type == 4 && merged_buf[n_metals] > 0)
+                    P[act.idx_survivor].MstarSampleIMF[0] += merged_buf[n_metals];
+#endif
             }
         }
 
-        /* mark merged particle for removal */
+        /* mark merged particle for removal — and make the ghost INERT for Stella:
+         * a Mass=0 particle with live MstarSampleIMF/luminosities would still trigger
+         * FB (SN/winds) and shine UV. Same retirement pattern as the FB death cleanup. */
         if(act.task_merged == ThisTask) {
             P[act.idx_merged].Mass = 0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            P[act.idx_merged].MstarSampleIMF[0] = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            P[act.idx_merged].UV_luminosity = 0;
+            P[act.idx_merged].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            P[act.idx_merged].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            P[act.idx_merged].OPT_luminosity = 0;
+#endif
+#endif
         }
     }
 }
@@ -1481,7 +1786,9 @@ struct ketju_scatter_particle {
     int Type;
     double Mass;
     double Pos[3];       /* absolute comoving position */
-    double Vel[3];       /* CoM-relative peculiar velocity */
+    double Vel[3];       /* CoM-relative peculiar velocity (carries the -neg2 half-kick, for the host-KDK handoff) */
+    double TrueVel[3];   /* CoM-relative true MSTAR end-of-step velocity (pre-neg2), for energy diagnostics */
+    double ExtAccel[3];  /* external acceleration (GravAccel - member-member) for the host KDK */
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     double OriginalMass;
 #endif
@@ -1551,6 +1858,11 @@ static void scatter_results(KetjuRegion &reg)
                  * sp.Vel stores CoM-relative canonical momentum (com_vel added later in velocity trick).
                  * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
                 sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
+                /* true MSTAR end-of-step velocity (captured pre-neg2), same back-conversion */
+                double vtrue = (i*3+j < (int)reg.mstar_end_vel.size()) ? reg.mstar_end_vel[3*i + j] : ps->vel[i][j];
+                sp.TrueVel[j] = (vtrue - hubble_end * ps->pos[i][j]) * a_end;
+                /* external accel for the host kick (already in code accel units, no a_end conversion) */
+                sp.ExtAccel[j] = (3*i+j < (int)reg.external_accel.size()) ? reg.external_accel[3*i + j] : 0.0;
             }
 #ifdef SINK_PARTICLES
             sp.SinkSubType = reg.extra_data[i].SinkSubType;
@@ -1684,6 +1996,7 @@ static void scatter_results(KetjuRegion &reg)
         double dt_drift = get_drift_factor(P[idx].Ti_current, P[idx].Ti_current + reg.ti_step, idx, 0);
 
         if(dt_drift > 0) {
+            P[idx].KetjuTrickUntil = P[idx].Ti_current + reg.ti_step;  /* velocity-trick chord completes here; no final-velocity swap before */
             for(int j = 0; j < 3; j++) {
                 /* desired final position = final_abs_pos + CoM displacement during drift */
                 double desired_pos = sp.Pos[j] + reg.com_vel[j] * dt_drift;
@@ -1694,13 +2007,20 @@ static void scatter_results(KetjuRegion &reg)
 #endif
                 P[idx].Vel[j] = delta_pos / dt_drift;
                 P[idx].KetjuFinalVel[j] = sp.Vel[j] + reg.com_vel[j];
+                P[idx].KetjuTrueVel[j]  = sp.TrueVel[j] + reg.com_vel[j];  /* true t_sync velocity for diagnostics */
+                P[idx].KetjuTruePos[j]  = desired_pos;                     /* true t_sync position (MSTAR end + CoM drift), synced with KetjuTrueVel */
+                P[idx].KetjuExtAccel[j] = sp.ExtAccel[j];                  /* external field for next host KDK */
             }
         } else {
             /* no drift — set position and velocity directly */
+            P[idx].KetjuTrickUntil = P[idx].Ti_current;  /* no chord — swap allowed immediately (no-op: Vel already final) */
             for(int j = 0; j < 3; j++) {
                 P[idx].Pos[j] = sp.Pos[j];
                 P[idx].Vel[j] = sp.Vel[j] + reg.com_vel[j];
                 P[idx].KetjuFinalVel[j] = P[idx].Vel[j];
+                P[idx].KetjuTrueVel[j]  = sp.TrueVel[j] + reg.com_vel[j];
+                P[idx].KetjuTruePos[j]  = sp.Pos[j];
+                P[idx].KetjuExtAccel[j] = sp.ExtAccel[j];
             }
         }
 
@@ -1711,14 +2031,21 @@ static void scatter_results(KetjuRegion &reg)
         }
 #endif
         P[idx].KetjuIntegrated = 1;
+        P[idx].KetjuFreshScatter = 1;  /* MSTAR results written THIS step -> velocity swap after drift is valid */
+#ifdef KETJU_HANDOFF_TRACE
+        printf("HTRACE-SC t=%.10f id=%llu trickvel=%.8g,%.8g,%.8g finalvel=%.8g,%.8g,%.8g (Ti=%lld TrickUntil=%lld regstep=%lld)\n",
+               All.Time, (unsigned long long)P[idx].ID, P[idx].Vel[0], P[idx].Vel[1], P[idx].Vel[2],
+               P[idx].KetjuFinalVel[0], P[idx].KetjuFinalVel[1], P[idx].KetjuFinalVel[2],
+               (long long)P[idx].Ti_current, (long long)P[idx].KetjuTrickUntil, (long long)reg.ti_step); fflush(stdout);
+#endif
     }
 
-    /* ---- Phase 5: stellar collision check ---- */
+    /* ---- Phase 5: stellar collision check (Stella: Type 4, radii from the stellar tables) ---- */
 #ifdef KETJU_MERGE_STARS
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     {
         /* Each task computes radii for its local Type 4 living stars, then Gatherv
-         * to affected root where the N² collision check runs. Results (mass updates
+         * to affected root where the N^2 collision check runs. Results (mass updates
          * from collisions) flow through handle_mergers which updates final_mass. */
         std::vector<double> my_radii(my_count, 0.0);
         for(int i = 0; i < my_count; i++) {
@@ -1818,17 +2145,51 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
     P[i].TimeBin = new_bin;
 }
 
-/* PHASE 6: Synchronize chain particles within each region.
+/* PHASE 6: Limit & synchronize chain-particle timesteps (gadget_tnt recipe).
  *
- * SUBCYCLING: instead of forcing all chain particles globally to the minimum
- * timebin (which drags the entire simulation down), we synchronize particles
- * within each region to the region's MAXIMUM active timebin. This is the
- * normal hydro/gravity step for the slowest-evolving particle in the region.
- * MSTAR handles internal substeps via its adaptive GBS integrator (η=10⁻⁷),
- * so tight binaries are resolved internally without shrinking the global step.
+ * This ports gadget_tnt's get_region_max_timestep + set_limited_timesteps. The
+ * regularized interior is integrated exactly by MSTAR, but the host couples to
+ * the EXTERNAL (cluster) field only once per host step, so the operator-split
+ * coupling error grows with the host step AND with desynchronization between
+ * regions. We therefore bound each region's step by the region CoM acceleration
+ * and the CoM displacement through the region radius (NOT the tidal tensor, and
+ * NOT "promote to the longest member bin", which let dense-core binaries take
+ * oversized, desynced steps and leak energy), then put all of the region's
+ * active members on that single shared bin.
+ *
+ *   acc_dt = sqrt(0.2 * ErrTolIntAccuracy * R_region / |com_acc|)
+ *   dt_fast = 0.1 * R_region / |com_vel|              (kappa = 0.1)
+ *   region_dt = min(acc_dt, dt_fast, MaxSizeTimestep)
+ *
+ * com_acc = |Sum_i m_i a_i| / M and com_vel = |Sum_i m_i v_i| / M over the
+ * region members (the member-member internal force cancels in the sum, so the
+ * full GravAccel gives the external CoM acceleration).
  *
  * All particles in a region must be on the same timebin for the velocity trick
  * to work (they all drift by the same dt after KETJU sets their velocities). */
+/* Set KetjuRegionTag on chain members WITHOUT touching timebins or caches. Needed before the
+ * pre-loop gravity (run.cc, before the main loop): that first gravity_tree runs before
+ * ketju_limit_timesteps has tagged anyone, so without this the very first MSTAR integration would
+ * gather an UN-excluded GravAccel (full member-member force) as its "external" field and inject the
+ * whole internal binding energy once (a one-time constant energy offset). In HERMITE builds the
+ * post-tag gravity_tree at run.cc:155 hides this; with HERMITE off we tag here instead. Uses the
+ * same detection as ketju_limit_timesteps/ketju_find_regions, so the tags agree with them. */
+void ketju_tag_regions(void)
+{
+    for(int i = 0; i < NumPart; i++) {P[i].KetjuRegionTag = 0;}
+    if(All.KetjuRegionRadius <= 0) return;
+    if(All.KetjuMinBHMass <= 0 && All.KetjuMinStarMass <= 0) return;
+    std::vector<ketju_mpi_particle> centers = gather_chain_centers();
+    if(centers.empty()) return;
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers);
+    ketju_update_tag_geometry(region_centers);  /* per-tag bounding spheres for guaranteed tree exclusion */
+    for(size_t r = 0; r < region_centers.size(); r++) {
+        if(region_centers[r].size() < 2) continue;  /* single stars are not chains */
+        std::set<int> local_members = local_members_from_group(region_centers[r]);
+        for(int idx : local_members) {P[idx].KetjuRegionTag = (int)(r + 1);}
+    }
+}
+
 void ketju_limit_timesteps(void)
 {
     CachedChainCentersValid = 0;
@@ -1836,50 +2197,260 @@ void ketju_limit_timesteps(void)
     if(All.KetjuRegionRadius <= 0) return;
     if(All.KetjuMinBHMass <= 0 && All.KetjuMinStarMass <= 0) return;
 
-    /* gather chain center positions (cache for ketju_find_regions) */
+    /* clear region tags AND per-member region timesteps before (re)assigning — a non-member must have
+     * tag 0 (tree excludes nothing) and KetjuRegionTiStep 0 (get_timestep uses the normal criteria).
+     * Done before the empty-centers early-out so nothing stale lingers. */
+    /* gather chain center positions FIRST (cache for ketju_find_regions) — the gathered Tag field
+     * must carry the PREVIOUS step's membership for the capture/release hysteresis, so the gather has
+     * to happen before the tags are cleared below */
     std::vector<ketju_mpi_particle> centers = gather_chain_centers();
+
+    for(int i = 0; i < NumPart; i++) {P[i].KetjuRegionTag = 0; P[i].KetjuRegionTiStep = 0;}
     CachedChainCenters = centers;
     CachedChainCentersValid = 1;
     if(centers.empty()) return;
 
-    /* merge overlapping centers into regions */
+    /* group stars into subsystems by the BIFROST pair-orbit predicate (weak-field capture/release);
+     * merge_radius retained only as the length scale for the capture-buffer pass below */
     double merge_radius = 2.0 * All.KetjuRegionRadius;
-    std::vector<std::vector<ketju_mpi_particle>> region_centers = merge_overlapping_regions(centers, merge_radius);
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers);
+    ketju_update_tag_geometry(region_centers);  /* per-tag bounding spheres for guaranteed tree exclusion */
 
+    /* TNT region-adaptive timestep (ports get_region_max_timestep + set_limited_timesteps): bound each
+     * region's host step by its EXTERNAL field and CoM motion, then put ALL its members on that single
+     * shared, synchronized bin. Because member<->member forces are excluded from the tree, each member's
+     * GravAccel IS its external acceleration, so the mass-weighted sum gives the region CoM external
+     * acceleration directly. This replaces the old "promote everyone to the longest member bin", which
+     * let dense-cluster regions take oversized, desynced steps and leak the external coupling energy.
+     *   acc_dt  = sqrt(0.2 * eta * R_region / |a_com|)   (limit CoM displacement relative to region size)
+     *   dt_fast = 0.1 * R_region / |v_com|                (CoM may not cross the region in one step)
+     *   region_dt = min(acc_dt, dt_fast, MaxSizeTimestep)
+     * Moving members to a SHORTER bin at a sync point is always safe (short bins subdivide long ones),
+     * unlike the old promotion to a longer bin. (Comoving factors assume a=1, i.e. STARFORGE's non-cosmo
+     * case; revisit for cosmological runs.) */
+    double eta = All.ErrTolIntAccuracy;
+    double R_region = All.KetjuRegionRadius;
     int n_moved_local = 0;
 
-    for(size_t r = 0; r < region_centers.size(); r++) {
-        /* find local members of this region */
-        std::set<int> local_members = find_local_members(region_centers[r], All.KetjuRegionRadius);
+    /* PASS 1: compute each region's own external-field-limited power-of-two step and TAG members.
+     * We also track the GLOBAL MINIMUM step over all regions. */
+    std::vector<std::set<int>> region_members(region_centers.size());
+    integertime global_min_ti = TIMEBASE;
+    /* accumulators for the bulk velocity-dispersion criterion (KETJU Eq. 6): mass-weighted mean and
+     * mean-square of the region CoM velocities (NOT individual member velocities — those are dominated by
+     * the internal orbit, which MSTAR handles; using them would wrongly force the host step down to the
+     * internal-orbit scale). sigma from the region CoMs is the bulk/perturber dispersion KETJU intends. */
+    double disp_M = 0, disp_Mv[3] = {0,0,0}, disp_Mv2 = 0; int disp_nreg = 0;
 
-        /* find local MAXIMUM active timebin (largest = longest step) */
-        int local_max_bin = 0;
+    for(size_t r = 0; r < region_centers.size(); r++) {
+        std::set<int> local_members = local_members_from_group(region_centers[r]);
+
+        /* mass-weighted local sums: [0]=M, [1..3]=Sum m*a_ext (a_ext=member GravAccel), [4..6]=Sum m*v,
+         * [7]=member count, [8]=count of members still MID velocity-trick chord */
+        double loc[9] = {0,0,0,0,0,0,0,0,0};
         for(int idx : local_members) {
-            if(P[idx].TimeBin > 0 && TimeBinActive[P[idx].TimeBin] && P[idx].TimeBin > local_max_bin)
-                local_max_bin = P[idx].TimeBin;
+            double m = P[idx].Mass;
+            loc[0] += m; loc[7] += 1.0;
+            if(P[idx].KetjuFreshScatter && P[idx].Ti_current < P[idx].KetjuTrickUntil) loc[8] += 1.0;
+            for(int k = 0; k < 3; k++) { loc[1+k] += m * P[idx].GravAccel[k]; loc[4+k] += m * P[idx].Vel[k]; }
+        }
+        double glob[9];
+        MPI_Allreduce(loc, glob, 9, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        double M = glob[0];
+        if(M <= 0) continue;
+        /* A region with fewer than 2 members is not a chain — MSTAR will skip it (ketju_find_regions
+         * skips n<2 regions). It must NOT be tagged, NOT be flagged KetjuIntegrated, and above all NOT
+         * vote in the global-min shared timestep: with small KetjuRegionRadius (e.g. episodic-encounter
+         * production configs, R ~ few x softening) every star >= KetjuMinStarMass forms its own
+         * single-member region, and their R-scaled dt criteria (0.1*R/v etc.) would force the ENTIRE
+         * star set onto an absurdly small shared bin (~100x slowdown observed) while marking every star
+         * KetjuIntegrated (wrongly bypassing Hermite in the kicks). Skip them entirely: such stars are
+         * ordinary Hermite/KDK particles until a real >=2-member chain forms around them. */
+        if(glob[7] < 1.5) continue;
+        /* TAG <=> INTEGRATE invariant: a region that will be DEFERRED this sync (any member still mid
+         * velocity-trick chord) must not be tagged at all. A tagged-but-unintegrated star is an ILLEGAL
+         * STATE with no correct owner: the tree excludes its companion's force while MSTAR skips it — if
+         * Hermite covers it, it does so with inconsistent state (trace-proven +0.9 events); if Hermite is
+         * blocked (tag guard), nobody supplies the companion force at all (force-free steps, +3e3 blowup
+         * in the R=250AU cluster). Deferral now means: spend this sync as an ORDINARY untagged
+         * full-force Hermite/KDK star (consistent), get captured at the next sync. */
+        if(glob[8] > 0.5) {
+            /* mid-chord deferral: the region is still MSTAR-OWNED — its members' velocity-trick chords
+             * (MSTAR output in transit) are in flight. KEEP THE TAGS so every gravity computed during
+             * and at the END of the chord stays member-excluded: the chord-end kick2/kick1 use the
+             * post-drift GravAccel, and stripping tags here handed them the FULL companion force on top
+             * of MSTAR's chord (trace-proven: -1.8e5 companion accel applied by kick2 at 26 AU, +8 km/s
+             * per event). Members are inactive mid-chord, so no other machinery touches them; no flags,
+             * timestep votes, or integration this sync. */
+            for(int idx : local_members) P[idx].KetjuRegionTag = (int)(r + 1);
+            continue;
         }
 
-        /* global maximum across all tasks for this region */
-        int global_max_bin;
-        MPI_Allreduce(&local_max_bin, &global_max_bin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(global_max_bin <= 0) continue;
+        double a_com2 = 0, v_com2 = 0;
+        for(int k = 0; k < 3; k++) { double a = glob[1+k]/M, v = glob[4+k]/M; a_com2 += a*a; v_com2 += v*v; }
+        double a_com = sqrt(a_com2), v_com = sqrt(v_com2);
 
-        /* move all local chain particles in this region to the max timebin
-         * (particles on shorter timebins get promoted to the longer step) */
+        /* accumulate this region's CoM velocity into the bulk-dispersion sums (mass-weighted) */
+        disp_M += M; disp_nreg++;
+        for(int k = 0; k < 3; k++) { double vc = glob[4+k]/M; disp_Mv[k] += M * vc; }
+        disp_Mv2 += M * v_com2;
+
+        double region_dt = All.MaxSizeTimestep;
+        if(a_com > 0 && R_region > 0) { double acc_dt  = sqrt(0.2 * eta * R_region / a_com); if(acc_dt  < region_dt) region_dt = acc_dt;  }
+        if(v_com > 0 && R_region > 0) { double dt_fast = 0.1 * R_region / v_com;              if(dt_fast < region_dt) region_dt = dt_fast; }
+
+        /* physical dt -> largest power-of-two integer timestep. */
+        integertime ti_target = (integertime)(region_dt / All.Timebase_interval);
+        integertime ti_pow2 = TIMEBASE;
+        while(ti_pow2 > ti_target) { ti_pow2 >>= 1; }
+        if(ti_pow2 < 2) ti_pow2 = 2;
+        if(ti_pow2 < global_min_ti) global_min_ti = ti_pow2;
+
+        /* Tag members now (before do_first_halfstep_kick) so the gravity_tree excludes member<->member
+         * forces. The TIMESTEP is assigned in pass 2 from the global minimum. */
         for(int idx : local_members) {
-            if(P[idx].TimeBin < global_max_bin) {
-                move_particle_timebin(idx, P[idx].TimeBin, global_max_bin);
-                n_moved_local++;
+            P[idx].KetjuIntegrated = 1;
+            P[idx].KetjuRegionTag = (int)(r + 1);
+        }
+        region_members[r] = std::move(local_members);
+    }
+
+    /* KETJU Eq. 6 bulk velocity-dispersion criterion: dt <= R_region / (6 sigma), sigma = dispersion of
+     * the region CoM velocities (bulk/perturber motion). Applied as a global cap so the shared step also
+     * resolves how fast the surrounding perturber configuration reshuffles. We use it IN ADDITION to our
+     * own a_com/v_com criteria (which for the dense plummer test are tighter, so this is usually inert);
+     * KETJU also bounds by the min GADGET step of nearby NON-member perturbers within a search radius —
+     * vacuous here since every particle is a region member, but worth porting for sparse/realistic clusters. */
+    if(disp_nreg >= 2 && disp_M > 0 && R_region > 0) {
+        /* need >=2 regions for a meaningful CoM-velocity dispersion: with one region the variance is
+         * zero up to floating-point cancellation, sigma ~ 1e-16 made dt_sigma overflow the integertime
+         * cast to NEGATIVE and the pow2 loop below spun forever (0 > negative). Guard the cancellation
+         * floor and cap dt_sigma at MaxSizeTimestep (beyond which it cannot bind) before any cast. */
+        double sigma2 = disp_Mv2 / disp_M, v2mean = disp_Mv2 / disp_M;
+        for(int k = 0; k < 3; k++) { double mv = disp_Mv[k] / disp_M; sigma2 -= mv * mv; }
+        double sigma = (sigma2 > 1e-12 * v2mean) ? sqrt(sigma2) : 0.0;
+        if(sigma > 0) {
+            double dt_sigma = R_region / (6.0 * sigma);
+            if(dt_sigma < All.MaxSizeTimestep) {
+                integertime ti_target = (integertime)(dt_sigma / All.Timebase_interval);
+                integertime ti_pow2 = TIMEBASE;
+                while(ti_pow2 > ti_target && ti_pow2 > 1) { ti_pow2 >>= 1; }
+                if(ti_pow2 < 2) ti_pow2 = 2;
+                if(ti_pow2 < global_min_ti) global_min_ti = ti_pow2;
             }
+        }
+    }
+
+    /* PASS 1.5 — CAPTURE BUFFER (ports tnt's timestep_limiting_radius; REQUIRED for episodic/small-R
+     * configs). A region capture must only ever happen to particles that are ACTIVE and on
+     * synchronized bins at the capture sync: MSTAR's scatter overwrites Pos/Vel of ALL members, so
+     * capturing a star that is mid-way through a long Hermite bin shreds its Hermite history and the
+     * velocity-trick drift bookkeeping — each such capture injects energy (observed: episodic-KETJU
+     * cluster runs blew up to dE ~ 1e5 via per-pericenter captures). Remedy: any pair of chain-eligible
+     * stars in DIFFERENT merged groups (same-group pairs are already co-members — MSTAR's job, their
+     * host bin is the region step) that approaches within a buffer radius gets its host timestep capped
+     * by an approach-time criterion, dt <= 0.1 * d / |v_rel|. Both stars compute the same symmetric cap
+     * -> same power-of-two bin -> both active together on the global timeline well before they can
+     * cross the capture radius (2R). KetjuRegionTiStep is min-combined in get_timestep, so normal
+     * Hermite criteria still apply. Runs BEFORE PASS 2 because the buffer caps must also lower the
+     * shared member bin (global_min_ti): the velocity-trick bookkeeping is only consistent when region
+     * step == member bin == global sync spacing, i.e. NO KETJU-relevant particle may sit on a bin
+     * smaller than the members' (otherwise member drift chords span multiple syncs and the end-of-drift
+     * velocity swap fires mid-chord). Caps are computed from globally-gathered centers, so the same
+     * minimum is derived identically on every rank. */
+    {
+        /* tnt uses timestep_search_radius = 100 * region_radius; the buffer must engage EARLY in the
+         * infall — a particle's bin can only shrink when it is ACTIVE, so the cap needs to be in place
+         * several bin-boundaries before the pair reaches the capture radius (a 4R buffer engaged only
+         * ~1e-5 before an e=0.99 pericenter — far too late, first captures still hit mid-bin). */
+        const double buffer_radius = 50.0 * merge_radius;  /* = 100 R_region; capture happens at 2R */
+        const double buf2 = buffer_radius * buffer_radius;
+        int n_buffered_local = 0;
+        for(size_t g1 = 0; g1 < region_centers.size(); g1++) {
+            for(size_t g2 = g1 + 1; g2 < region_centers.size(); g2++) {
+                for(const ketju_mpi_particle &a : region_centers[g1]) {
+                    for(const ketju_mpi_particle &b : region_centers[g2]) {
+                        double d2 = 0, vr2 = 0;
+                        for(int k = 0; k < 3; k++) {
+                            double dx = a.Pos[k] - b.Pos[k]; d2 += dx * dx;
+                            double dv = a.Vel[k] - b.Vel[k]; vr2 += dv * dv;
+                        }
+                        if(d2 >= buf2 || vr2 <= 0) continue;
+                        double dt_cap = 0.1 * sqrt(d2 / vr2);
+                        if(dt_cap >= All.MaxSizeTimestep) continue;  /* cannot bind; also guards the integertime cast */
+                        integertime ti_target = (integertime)(dt_cap / All.Timebase_interval);
+                        integertime ti_pow2 = TIMEBASE;
+                        while(ti_pow2 > ti_target && ti_pow2 > 1) { ti_pow2 >>= 1; }
+                        if(ti_pow2 < 2) ti_pow2 = 2;
+                        if(ti_pow2 < global_min_ti) global_min_ti = ti_pow2;  /* members must share the smallest KETJU bin */
+                        /* apply on the rank that owns each star (min-combine with any existing cap) */
+                        if(a.Task == ThisTask && (P[a.Index].KetjuRegionTiStep == 0 || ti_pow2 < P[a.Index].KetjuRegionTiStep))
+                            { P[a.Index].KetjuRegionTiStep = ti_pow2; n_buffered_local++; }
+                        if(b.Task == ThisTask && (P[b.Index].KetjuRegionTiStep == 0 || ti_pow2 < P[b.Index].KetjuRegionTiStep))
+                            { P[b.Index].KetjuRegionTiStep = ti_pow2; n_buffered_local++; }
+                    }
+                }
+            }
+        }
+        n_moved_local += n_buffered_local;
+    }
+
+    /* CHORD-SPANNING ELIMINATION: member chords must never be subdivided by intermediate syncs, or
+     * regions get DEFERRED mid-chord (a deferred sync has no correct owner for the pair — every variant
+     * of handling it leaks: measured -0.1..-0.2 blowups in eccentric clusters within half a crossing).
+     * Intermediate syncs are created by chain-ELIGIBLE stars sitting on smaller bins than the shared
+     * member bin, so fold the smallest current bin of ALL eligible stars into the global minimum: the
+     * members then always share the smallest relevant bin — every sync is a chord boundary, deferrals
+     * vanish. (This is exactly the property the validated always-on runs had implicitly, where every
+     * star was a member.) Gas or non-eligible types can still undercut in principle; acceptable for
+     * star-only tests, revisit for production with gas. */
+    {
+        integertime min_bin_ti_local = TIMEBASE;
+        for(int i = 0; i < NumPart; i++) {
+            if(!is_chain_eligible(i)) continue;
+            integertime ti_b = ((integertime)1) << P[i].TimeBin;
+            if(P[i].TimeBin > 0 && ti_b < min_bin_ti_local) min_bin_ti_local = ti_b;
+        }
+        integertime min_bin_ti;
+        MPI_Allreduce(&min_bin_ti_local, &min_bin_ti, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+        if(min_bin_ti < global_min_ti) global_min_ti = min_bin_ti;
+    }
+
+    /* PASS 2: put ALL regions on ONE shared, synchronized bin = the global minimum over region steps
+     * AND buffer caps. This ports tnt's set_limited_timesteps grouping: tnt groups every region within
+     * 100*R_region into one "timestep region" that shares a single minimum step, so neighbouring
+     * regions never desync. Our previous per-region-independent step let the embedded ECCENTRIC
+     * binaries fall onto different bins (198/256 active on the first sync); the inter-region external
+     * coupling was then evaluated at inconsistent times and leaked energy catastrophically (dE/|E0| ~
+     * 16). All members on one (smallest-KETJU) bin => the external KDK coupling between regions is
+     * consistent AND member drift chords never span multiple syncs. */
+    for(size_t r = 0; r < region_centers.size(); r++) {
+        for(int idx : region_members[r]) {
+            n_moved_local++;
+            P[idx].KetjuRegionTiStep = global_min_ti;  /* consumed by get_timestep */
         }
     }
 
     int n_moved_global;
     MPI_Reduce(&n_moved_local, &n_moved_global, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask == 0 && n_moved_global > 0) {
-        printf("KETJU SUBCYCLE: Promoted %d particles to longer timebins (MSTAR handles internal accuracy)\n",
+        printf("KETJU TIMESTEP: set region-adaptive external step for %d chain particle(s)\n",
                n_moved_global);
     }
+
+#ifdef KETJU_HANDOFF_TRACE
+    /* exhaustive per-star handoff state at the END of limit_timesteps (tags/flags/caps now set for this
+     * step). Only sane for tiny N — meant for the isolated-binary capture/release reproduction. */
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 5) continue;
+        printf("HTRACE-LT t=%.10f id=%llu bin=%d act=%d tag=%d integ=%d fresh=%d cap=%lld pos=%.8g,%.8g,%.8g vel=%.8g,%.8g,%.8g\n",
+               All.Time, (unsigned long long)P[i].ID, P[i].TimeBin, TimeBinActive[P[i].TimeBin] ? 1 : 0,
+               P[i].KetjuRegionTag, P[i].KetjuIntegrated, P[i].KetjuFreshScatter,
+               (long long)P[i].KetjuRegionTiStep,
+               P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], P[i].Vel[0], P[i].Vel[1], P[i].Vel[2]);
+    }
+    fflush(stdout);
+#endif
 }
 
 /* Collect sorted (ID,Task) keys for a region across all tasks (for staleness check).
@@ -1913,7 +2484,21 @@ void ketju_find_regions(void)
 {
     /* clear previous state — KetjuIntegrated is cleared here (not in finish_step)
      * so the flag survives across the step boundary for guard checks in kicks/predict/gravtree */
-    for(int i = 0; i < NumPart; i++) {P[i].KetjuIntegrated = 0;}
+#ifdef HERMITE_INTEGRATION
+    /* Mark particles that were KETJU-integrated last step as "Hermite history stale".
+     * If they remain in a chain this step they never reach the stale check (in-region
+     * guard fires first); if they exit, the next eligible_for_hermite() call falls
+     * back to KDK once before re-engaging Hermite with fresh OldPos/Acc/Jerk. */
+    for(int i = 0; i < NumPart; i++) {if(P[i].KetjuIntegrated) {P[i].HermiteHistoryStale = 1;}}
+#endif
+    /* NOTE: KetjuIntegrated is NOT cleared here anymore — the capture admission gate inside
+     * find_local_members ("active OR already-member") reads it, and membership decisions here MUST
+     * reproduce those made by ketju_limit_timesteps earlier in this step (both use the previous step's
+     * flags). It is cleared after the membership loop below; scatter_results then re-sets it for the
+     * particles MSTAR actually integrated. */
+    /* clear region tags; re-set per region below so the post-drift gravity_tree (run.cc:189/231)
+     * also excludes member<->member forces at the MSTAR-evolved positions */
+    for(int i = 0; i < NumPart; i++) {P[i].KetjuRegionTag = 0;}
     ActiveRegions.clear();
     AllKetjuParticleIndices.clear();
 
@@ -1929,11 +2514,12 @@ void ketju_find_regions(void)
     } else {
         centers = gather_chain_centers();
     }
-    if(centers.empty()) { CachedRegions.clear(); return; }
+    if(centers.empty()) { for(int i = 0; i < NumPart; i++) {P[i].KetjuIntegrated = 0;} CachedRegions.clear(); return; }
 
-    /* merge overlapping regions */
-    double merge_radius = 2.0 * All.KetjuRegionRadius;
-    std::vector<std::vector<ketju_mpi_particle>> region_centers = merge_overlapping_regions(centers, merge_radius);
+    /* group stars into subsystems by the BIFROST pair-orbit predicate (same grouping as
+     * ketju_limit_timesteps computed earlier this step — deterministic from the shared centers) */
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers);
+    ketju_update_tag_geometry(region_centers);  /* per-tag bounding spheres for guaranteed tree exclusion */
 
     /* build regions (first pass: find members, collect IDs, check staleness) */
     int n_regions = region_centers.size();
@@ -1947,17 +2533,42 @@ void ketju_find_regions(void)
     for(int r = 0; r < n_regions; r++) {
         KetjuRegion reg;
         reg.centers = region_centers[r];
-        reg.local_member_indices = find_local_members(reg.centers, All.KetjuRegionRadius);
+        reg.local_member_indices = local_members_from_group(reg.centers);
 
-        int n_local = reg.local_member_indices.size();
+        int counts_loc[2] = {(int)reg.local_member_indices.size(), 0};
+        for(int idx : reg.local_member_indices)
+            if(P[idx].KetjuFreshScatter && P[idx].Ti_current < P[idx].KetjuTrickUntil) { counts_loc[1] = 1; break; }
+        int counts_glob[2];
+        MPI_Allreduce(counts_loc, counts_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        int n_local = counts_loc[0];
         MPI_Allreduce(&n_local, &reg.total_particle_count, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-        /* skip regions with fewer than 2 particles — nothing to integrate */
-        if(reg.total_particle_count < 2) {
+        /* skip regions with <2 particles OR any member mid-chord (deferred) — WITHOUT tagging: the tag
+         * must exist if and only if MSTAR integrates the region this sync (see ketju_limit_timesteps).
+         * Decision reproduces limit_timesteps' exactly: same member sets, same FreshScatter/TrickUntil
+         * states (unmodified between the two calls within a step). */
+        if(reg.total_particle_count < 2 || counts_glob[1] > 0) {
+            if(reg.total_particle_count >= 2 && counts_glob[1] > 0) {
+                /* mid-chord deferral: keep tags — MSTAR still owns the in-flight chord (see
+                 * ketju_limit_timesteps); the post-drift gravity of this step must stay member-excluded */
+                for(int idx : reg.local_member_indices) {P[idx].KetjuRegionTag = r + 1;}
+            }
+#ifdef KETJU_HANDOFF_TRACE
+            for(int idx : reg.local_member_indices)
+                if(P[idx].ID == 75 || P[idx].ID == 68)
+                    printf("FRTRACE t=%.10f PLACEHOLDER r=%d id=%llu n=%d midchord=%d fresh=%d Ti=%lld TrickUntil=%lld act=%d bin=%d\n",
+                           All.Time, r, (unsigned long long)P[idx].ID, reg.total_particle_count, counts_glob[1],
+                           P[idx].KetjuFreshScatter, (long long)P[idx].Ti_current, (long long)P[idx].KetjuTrickUntil,
+                           TimeBinActive[P[idx].TimeBin] ? 1 : 0, P[idx].TimeBin);
+#endif
             ActiveRegions.push_back(std::move(reg)); /* placeholder to keep indexing aligned with cache */
             new_keys[r] = {};
             continue;
         }
+
+        /* tag members so the post-drift gravity_tree excludes member<->member forces (region index+1,
+         * globally consistent — same ordering as ketju_limit_timesteps, which shares the merged centers) */
+        for(int idx : reg.local_member_indices) {P[idx].KetjuRegionTag = r + 1;}
 
         for(int idx : reg.local_member_indices)
             AllKetjuParticleIndices.insert(idx);
@@ -1973,12 +2584,28 @@ void ketju_find_regions(void)
         }
     }
 
+    /* memberships are fixed now — clear the previous step's integrated flags (deferred earlier for the
+     * admission gate); scatter_results re-sets them for the particles MSTAR actually integrates.
+     * Any star that WAS integrated but is NOT a member of the new membership gets a durable Hermite
+     * release-block: its Old* is inconsistent with its just-updated MSTAR state until a clean kick1
+     * re-records it (see eligible_for_hermite / do_the_kick). Members keep integ and are Hermite-blocked
+     * by the tag guard anyway. */
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].KetjuIntegrated && P[i].KetjuRegionTag == 0) { P[i].KetjuReleaseBlock = 2; }
+        P[i].KetjuIntegrated = 0;
+    }
+
     /* allocate compute tasks across regions based on cost estimates */
     allocate_compute_tasks_for_regions();
 
     /* second pass: set up integrators — reuse cached communicators where possible */
     int n_reused = 0;
     for(int r = 0; r < n_regions; r++) {
+        /* single-member placeholders exist only to keep cache indexing aligned — no integrator, no
+         * communicators (with small KetjuRegionRadius every eligible star forms one; per-step MPI comm
+         * setup for hundreds of them was a dominant cost in Hermite-backbone configs). Decision is rank-
+         * consistent: total_particle_count is Allreduced. */
+        if(ActiveRegions[r].total_particle_count < 2) continue;
         if(!region_changed[r]) {
             /* reuse cached communicators — transfer ownership to ActiveRegion */
             ActiveRegions[r].affected_tasks = CachedRegions[r].affected_tasks;
@@ -2003,6 +2630,9 @@ void ketju_find_regions(void)
     CachedRegions.clear();
     KetjuRegionsStale = 0;
 
+#ifdef KETJU_VERBOSE_STEPS
+    /* per-step region listing: useful for debugging, but with many regions and small host steps this
+     * printing alone can I/O-throttle the run (observed 3x slowdown in the Hermite-backbone config) */
     if(ThisTask == 0 && !ActiveRegions.empty()) {
         printf("KETJU: Found %d region(s) from %d center(s) at t=%g (%d reused from cache)\n",
                n_regions, (int)centers.size(), All.Time, n_reused);
@@ -2012,6 +2642,7 @@ void ketju_find_regions(void)
                    region_changed[r] ? "" : " [cached]");
         }
     }
+#endif
 }
 
 void ketju_run_integration(void)
@@ -2028,6 +2659,18 @@ void ketju_run_integration(void)
         if(reg.compute_info.compute_sequence_position != seq) continue;
         if(reg.total_particle_count < 2) continue;
 
+        /* CHORD CONSISTENCY GATE: never integrate a region while ANY member's velocity-trick drift
+         * chord is still in flight (FreshScatter set, chord end not reached). Gathering such a member
+         * hands MSTAR its TRICK velocity (~CoM velocity) as an initial condition — garbage in, garbage
+         * out (observed as -44 energy events when an active intruder merged with a mid-chord pair).
+         * Deferring one/two syncs is safe: the mid-chord members are inactive, the active ones wait. */
+        int local_midchord = 0;
+        for(int idx : reg.local_member_indices)
+            if(P[idx].KetjuFreshScatter && P[idx].Ti_current < P[idx].KetjuTrickUntil) { local_midchord = 1; break; }
+        int any_midchord = 0;
+        MPI_Allreduce(&local_midchord, &any_midchord, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_midchord) continue;
+
         /* Subcycling: use the MAXIMUM active timebin among chain members.
          * This is the normal hydro/gravity step for these particles.
          * MSTAR internally substeps to whatever accuracy it needs (GBS adaptive).
@@ -2042,6 +2685,11 @@ void ketju_run_integration(void)
         /* global maximum across all tasks (all tasks participate since region spans tasks) */
         integertime global_max_ti;
         MPI_Allreduce(&local_max_ti, &global_max_ti, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+#ifdef KETJU_HANDOFF_TRACE
+        printf("HTRACE-RI t=%.10f region=%d n=%d ti_step=%lld (members:", All.Time, (int)r, reg.total_particle_count, (long long)global_max_ti);
+        for(int idx : reg.local_member_indices) printf(" id=%llu bin=%d act=%d", (unsigned long long)P[idx].ID, P[idx].TimeBin, TimeBinActive[P[idx].TimeBin] ? 1 : 0);
+        printf(")%s\n", (global_max_ti <= 0 || global_max_ti > TIMEBASE) ? " SKIPPED-no-active" : ""); fflush(stdout);
+#endif
         if(global_max_ti <= 0 || global_max_ti > TIMEBASE) continue;
 
         reg.ti_step = global_max_ti;
@@ -2085,7 +2733,17 @@ void ketju_set_final_velocities(void)
      * The velocity trick set Vel = delta_pos/dt_drift for the drift.
      * Now we replace it with the true MSTAR velocity and correct dp[]. */
     for(int i = 0; i < NumPart; i++) {
-        if(P[i].KetjuIntegrated) {
+        if(P[i].KetjuFreshScatter
+           && P[i].Ti_current >= P[i].KetjuTrickUntil) {  /* swap PENDING MSTAR results exactly when the
+            * velocity-trick drift CHORD completes — never earlier and never never. Not earlier: this routine
+            * runs after every sync, and an intermediate sync (other particles on smaller bins) must not swap
+            * mid-chord or the rest of the drift proceeds with the physical velocity and misses MSTAR's end
+            * position (a 15 AU hard binary got teleported to 230 AU: +0.92 in one step). Never never:
+            * deliberately NOT gated on KetjuIntegrated — if the member is RELEASED while its chord is still
+            * in flight, the flag gets cleared but the pending swap must still fire at chord end, else the
+            * star keeps the trick velocity (~CoM velocity) as its physical velocity forever, deleting its
+            * internal orbital motion (observed: dE -44 events). FreshScatter itself guards staleness: it is
+            * set only by scatter_results and consumed exactly once here. */
             for(int j = 0; j < 3; j++) {
                 /* dp correction: the difference between true velocity and trick velocity,
                  * converted to momentum. This ensures the kick integrator is consistent. */
@@ -2093,6 +2751,42 @@ void ketju_set_final_velocities(void)
                 P[i].dp[j] += P[i].Mass * dv;
                 P[i].Vel[j] = P[i].KetjuFinalVel[j];
             }
+            P[i].KetjuFreshScatter = 0;
+#ifdef HERMITE_INTEGRATION
+            /* HARD RESET of the Hermite history to the consistent post-swap state, with zeroed acc/jerk.
+             * The Old* stored at kick1 (before find_regions ran) holds this star's PRE-capture GravAccel,
+             * which for a tight pair still includes the companion's enormous unsoftened force (14 AU pair
+             * -> |a|~2e6). If the corrector fires on the released star it computes OldVel + dt*OldAcc and
+             * flings it to ~1e4 km/s (IMF star 46). The stale-flag guard alone is unreliable here because
+             * consume-on-check lets the PREDICTION pass eat the flag before the CORRECTION pass runs.
+             * Zeroing OldAcc/OldJerk and setting OldPos/OldVel to the current physical state makes any
+             * stray Hermite step a harmless no-op (v_new = OldVel = correct MSTAR velocity); the star
+             * regains full 4th-order Hermite on its next clean step. */
+            for(int j2 = 0; j2 < 3; j2++) {
+                P[i].OldPos[j2] = P[i].Pos[j2];
+                P[i].OldVel[j2] = P[i].Vel[j2];
+                P[i].Hermite_OldAcc[j2] = 0;
+                P[i].OldJerk[j2] = 0;
+            }
+            P[i].KetjuReleaseBlock = 2;  /* durable Hermite block until a clean kick1 re-records Old* */
+#endif
+            /* RELEASE HANDOFF: this swap is the moment the star's velocity becomes physical (MSTAR result)
+             * after living as a chain member. Its Hermite Old* history (OldVel/OldPos/OldAcc/OldJerk) is
+             * pre-capture-stale, so mark it stale: the consume-on-check in eligible_for_hermite then skips
+             * one Hermite step and the pre-kick pass refreshes Old* from the correct post-swap state.
+             * WITHOUT this, a star released the same sync it was captured (chord-deferred: fresh cleared
+             * here, tag/integ already cleared by find_regions) passes every eligibility guard and the
+             * Hermite corrector flings it from stale Old* — trace-proven on the IMF cluster (star 46,
+             * 0.80 Msun in a 14 AU pair, -> 1e4 km/s, dE=1e5). The line-2405 stale-set misses it because
+             * it only tags currently-KetjuIntegrated stars, which a deferred/released star no longer is. */
+#ifdef HERMITE_INTEGRATION
+            P[i].HermiteHistoryStale = 1;
+#endif
+#ifdef KETJU_HANDOFF_TRACE
+            printf("HTRACE-SW t=%.10f id=%llu swapped-> %.8g,%.8g,%.8g (Ti=%lld TrickUntil=%lld)\n",
+                   All.Time, (unsigned long long)P[i].ID, P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
+                   (long long)P[i].Ti_current, (long long)P[i].KetjuTrickUntil); fflush(stdout);
+#endif
         }
     }
 }
@@ -2102,6 +2796,7 @@ void ketju_finish_step(void)
     /* NOTE: KetjuIntegrated flags are NOT cleared here — they persist until
      * ketju_find_regions() at the start of the next step, so that guard checks
      * in kicks.cc/predict.cc/gravtree.cc can see which particles were KETJU-integrated */
+
 
     /* cache region communicators for reuse next step */
     CachedRegions.clear();
@@ -2142,6 +2837,20 @@ int ketju_is_particle_in_region(int i)
 
 void ketju_mark_regions_stale(void)
 {
+    KetjuRegionsStale = 1;
+}
+
+/* Free all cached/active KETJU MPI communicators and integrator state. MUST be called
+ * before MPI_Finalize: CachedRegions/ActiveRegions are static, so otherwise their
+ * destructors run at program exit AFTER MPI_Finalize and segfault inside MPI_Comm_free
+ * (this is the rc=139 shutdown crash). Clearing here frees the comms while MPI is alive;
+ * the empty static vectors then destruct harmlessly at exit. */
+void ketju_finalize(void)
+{
+    CachedRegions.clear();
+    ActiveRegions.clear();
+    CachedChainCenters.clear();
+    CachedChainCentersValid = 0;
     KetjuRegionsStale = 1;
 }
 

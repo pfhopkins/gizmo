@@ -1135,6 +1135,9 @@ extern struct gravdata_in
 #endif
     MyFloat OldAcc;
     int NodeList[NODELISTLENGTH];
+#ifdef KETJU_REGULARIZATION
+    int KetjuRegionTag;     /*!< KETJU chain-region id of the target (0 if none); leaves sharing this nonzero tag are excluded from the target's force so GravAccel becomes the exact external field */
+#endif
 }
  *GravDataIn,			/*!< holds particle data to be exported to other processors */
  *GravDataGet;			/*!< holds particle data imported from other processors */

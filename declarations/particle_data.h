@@ -36,6 +36,9 @@ extern ALIGN(32) struct particle_data
     MyFloat OldVel[3];
     MyFloat OldJerk[3];
     short int AccretedThisTimestep;     /*!< flag to decide whether to stick with the KDK step for stability reasons, e.g. when actively accreting */
+#ifdef KETJU_REGULARIZATION
+    short int HermiteHistoryStale;      /*!< 1 when particle just exited a KETJU chain — fall back to KDK for one step until OldX is reseeded */
+#endif
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat TreeMass;  /*!< Mass seen by the particle as it sums up the gravitational force from the tree - should be equal to total mass, a useful debug diagnostic  */
@@ -349,8 +352,16 @@ extern ALIGN(32) struct particle_data
 #endif
     
 #ifdef KETJU_REGULARIZATION
-    MyDouble KetjuFinalVel[3];  /* true physical velocity from KETJU, swapped in after drift */
+    MyDouble KetjuFinalVel[3];  /* velocity swapped into P.Vel for the host KDK after drift (carries the pre-applied -neg2 half-kick) */
+    MyDouble KetjuTrueVel[3];   /* TRUE physical end-of-step (t_sync) velocity straight from MSTAR, before any host-KDK half-kick bookkeeping — use this for energy diagnostics / analysis, NOT P.Vel (which is left half-a-kick off for chain members) */
+    MyDouble KetjuTruePos[3];   /* TRUE physical end-of-step (t_sync) position straight from MSTAR — synchronized with KetjuTrueVel. P.Pos is reconstructed by the velocity-trick drift and can be slightly phase-desynced from the velocity at pericenter; use this pair for diagnostics. */
+    MyDouble KetjuExtAccel[3];  /* EXTERNAL gravitational acceleration on this chain member. With member-member pairs excluded in the tree walk (see KetjuRegionTag), the member's tree GravAccel IS the external field, so this is just a copy of GravAccel. The host KDK applies only this external field to chain members; MSTAR integrates the internal forces. =0 for an isolated region, reducing exactly to pure-MSTAR. */
+    int KetjuRegionTag;         /* nonzero region identifier (region index+1) used by the gravity tree to EXCLUDE member<->member interactions: two particles with the same nonzero tag skip their mutual force so each member's GravAccel is the exact external (non-member) field. 0 = not a chain member. Set in ketju_limit_timesteps and ketju_find_regions before each gravity_tree call; region ordering is globally consistent (merge over gathered centers), so the tag agrees across MPI tasks. */
     short int KetjuIntegrated;  /* 1 if this particle was KETJU-integrated this step */
+    short int KetjuReleaseBlock; /* DURABLE Hermite block after a KETJU release. Decremented once per kick1 (do_the_kick mode==0); while >0, eligible_for_hermite returns 0. Unlike the consume-on-check HermiteHistoryStale (which the prediction pass eats before the correction pass runs), this survives arbitrary eligibility queries across sub-syncs, so it reliably blocks a released star's Hermite corrector from firing on its poisoned kick1 Old* (Old* captured before find_regions still holds a close companion's un-excluded force → 1e4 km/s on the IMF born-sub-softening pair). Cleared naturally once a clean full step has stored consistent Old*. */
+    short int KetjuFreshScatter; /* 1 only between scatter_results (MSTAR results written this step) and ketju_set_final_velocities. Guards the velocity swap: a freshly CAPTURED member whose region was NOT integrated this step (members still inactive on the capture sync, run_integration skipped it) has KetjuIntegrated=1 but STALE KetjuFinalVel — swapping that in destroyed the state (one-step dE=+194 in the episodic test). */
+    integertime KetjuTrickUntil; /* integer time at which this member's velocity-trick drift CHORD completes (= Ti at scatter + reg.ti_step). The final-velocity swap must NOT happen before this: ketju_set_final_velocities runs after EVERY sync, and when other particles create an intermediate sync mid-chord, a premature swap replaces the trick velocity with the physical one for the REMAINDER of the drift — the member then misses MSTAR's end position entirely (trace-verified: a 15 AU hard binary was teleported to 230 AU separation, +0.92 total energy in one step). Always-on configs never hit this (all members share the global-min bin = no intermediate syncs); episodic/cluster configs do. */
+    integertime KetjuRegionTiStep; /* region external timestep (TNT get_region_max_timestep); 0 = not a region member. Applied in get_timestep so chain members take the external/region step, not the tiny internal-orbit one. */
 #if defined(SINK_PARTICLES)
     MyDouble KetjuSpin[3];     /* BH spin angular momentum vector S [length*mass*velocity units] */
 #endif
