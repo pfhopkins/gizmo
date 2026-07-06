@@ -1197,7 +1197,7 @@ integertime get_timestep(int p,		/*!< particle index */
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-        /* Wave-CBE 2026-05-28: replaced endrun(888) with a CONTROLLED
+        /* Replaced endrun(888) with a CONTROLLED
          * stop request. Routing dt-floor through MPI_Abort (what
          * endrun(non-zero) does) bypasses Kokkos / CUDA-aware-MPI
          * cleanup and has correlated with Vista jobs stuck in SLURM CG

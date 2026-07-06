@@ -1,17 +1,14 @@
 /*
  * sidm/cbe_integrator_gradients.h
  *
- * CBE pre-force gradient module — Wave-CBE Phase 2 commit #5 corrective
- * architecture pivot (2026-05-26, v5). Replaces the earlier scratch-based
- * commits #1-#4 (CbeGradScratch + custom Alltoallv + raw UVM pointer in
- * DeviceContext) with the persistent-particle-field shape used by hydro
- * and DMGrad. Persistent storage holds the spatial gradients of the
- * reconstructed flux-frame basis content, per basis, per slot, per
- * direction:
+ * CBE pre-force gradient module. Uses the persistent-particle-field shape
+ * shared with hydro and DMGrad. Persistent storage holds the spatial
+ * gradients of the reconstructed flux-frame basis content, per basis, per
+ * slot, per direction:
  *   double P[i].Gradients_CBE_basis_moments[NBASIS][NMOMENTS][3]
  * (declarations/particle_data.h, gated on CBE_INTEGRATOR_WITHGRADIENTS).
  *
- * PRIMITIVE-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
+ * PRIMITIVE-gradient swap:
  * the field name `Gradients_CBE_basis_moments` is now STALE — the slots
  * store gradients of PRIMITIVES (∂ρ, ∂v_k, ∂S_kl), not gradients of the
  * moment row (m, p_k, T_kl). Slot indexing is identical to the moment
@@ -19,7 +16,7 @@
  * existing cbe_T_idx packing). The field-name rename is out of scope
  * (touches scatter / IO / snapshot); the stale name is documented in
  * declarations/particle_data.h. Pass-0 LSQ accumulates primitive deltas,
- * pass-1 limiter is COMPONENT-SEPARATED (Phil + codex 2026-06-06): ρ gets
+ * pass-1 limiter is COMPONENT-SEPARATED: ρ gets
  * BJ + positivity (affects only φ_ρ); v_k gets scale-aware BJ only (no
  * realizability role; affects only φ_v_k); the S block gets per-slot BJ
  * + tensor PSD (single φ_S across all stress slots to preserve the PSD
@@ -30,10 +27,7 @@
  * Standard GIZMO ghost import (gizmo_request_filtered_ghost_import_fresh)
  * carries the gradient field naturally as part of P[]. There is no scratch
  * UVM buffer, no custom Alltoallv, and no raw gradient pointer in any
- * DeviceContext. The earlier scratch-based architecture (CbeGradScratch,
- * CbeGradScratchOwner, cbe_grad_import_ghosts, CbeGradientsSpec,
- * CbeBjLimiterSpec) is gone; design history in
- * project memory OPEN_cbe_wave_port_design §"COMMIT #5 v5".
+ * DeviceContext.
  *
  * Toplevel `CBEGrad_gradient_calc()` runs pre-force (called from
  * core/accel.cc, paralleling DMGrad_gradient_calc) and refreshes
@@ -102,7 +96,7 @@ struct CBEGradCallScalars {
 /* Per-active local fill. Carries x_i, h_i, V_i, the stored moment array U_i,
  * Vel_i for Q_i construction, AND a by-value snapshot of the persistent
  * gradient row P[i].Gradients_CBE_basis_moments. The gradient snapshot is
- * Mode-B-safe envelope-transit (design invariant I2): pass-1 pair_kernel
+ * Mode-B-safe envelope-transit: pass-1 pair_kernel
  * reads active.local.Gradients_CBE_basis_moments instead of dereferencing
  * peer-rank storage. Populated unconditionally by load_active — pass 0
  * (LSQ) does not consume it, but the cost is fixed-size (NBASIS*NMOMENTS*3
@@ -133,8 +127,7 @@ struct CBEGradLocalIn {
  * fields are neutral elements (0 for sum, 1 for min) so the per-pass
  * branch isn't needed in merge_accum.
  *
- * Semantically post Wave-CBE Commit 10 (Fix #6 cone limiter) pass 1 is
- * ROW-SCALAR: a single phi per basis row m is produced per neighbor,
+ * Pass 1 is ROW-SCALAR: a single phi per basis row m is produced per neighbor,
  * and the same value is written to every k in row m. The per-(m,k)
  * storage layout is preserved for ABI stability; after min-merge over
  * neighbors all k in a given row therefore carry the same value, and
@@ -237,7 +230,7 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
             Pj.CBE_basis_moments_pred, Vel_j_code, V_j, cf_a3inv, cf_atime, Q_j);
     }
 
-    /* Basis matching via SSOT helper (Wave-CBE Commit 6b). Matching API
+    /* Basis matching via SSOT helper. Matching API
      * stays on Q (moment rows); the cost helpers cbe_cost_v_only and
      * cbe_cost_trace_w2 derive primitive content internally (v = p/ρ;
      * tr S = T/ρ − v²). Therefore the primitive-gradient swap does not
@@ -278,7 +271,7 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
      * P[i].Gradients_CBE_basis_moments field now stores primitive gradients
      * (∂ρ, ∂v, ∂S) packed in the slot layout shared with the moment row
      * (slot 0 = density, slots 1..NUMDIMS = v_k, stress slots = S_kl).
-     * See OPEN_cbe_primitive_grad_design.md / cbe_moments_to_primitives_row. */
+     * See cbe_moments_to_primitives_row. */
     double prim_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double prim_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
@@ -289,7 +282,7 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
     /* B_i[m][k][e] += w * (prim_j_matched − prim_i)[m][k] * (x_j − x_i)[e].
      * With dp = x_i − x_j, (x_j − x_i)[e] = −dp[e].
      *
-     * Scratch-row skip (OPEN_cbe_primitive_grad_design.md §7): if cell i
+     * Scratch-row skip: if cell i
      * basis m has ρ_i,m ≤ cbe_rho_active_floor(), leave B[m][:][:] at zero
      * for this pair. The pass-0 writeback then naturally produces a zero
      * gradient row (M_inv·0 = 0) — first-order reconstruction for that
@@ -310,12 +303,12 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
 }
 
 /* ----------------------------------------------------------------------------
- * Scale-aware pairwise BJ-style phi for the primitive-gradient limiter
- * (Phil + codex 2026-06-06 — Phase 1b). Bounds the reconstructed delta
+ * Scale-aware pairwise BJ-style phi for the primitive-gradient limiter.
+ * Bounds the reconstructed delta
  * `predicted` so that prim_face = prim_i + predicted stays between prim_i
  * and prim_j_matched.
  *
- * Why scale: the previous (Phase 1) helper used tol = |dQ| * 1e-14 +
+ * Why scale: an earlier helper used tol = |dQ| * 1e-14 +
  * MIN_REAL_NUMBER. For primitive slots where dprim ≡ 0 exactly (uniform
  * v in cold streams, uniform S in cold/warm-small IC) but predicted
  * carries LSQ roundoff (~1e-15..1e-17), the test fell through to
@@ -328,7 +321,7 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
  *   S_kl slot    :  scale = max(|S_kl_i|, |S_kl_j|, |R_kl_i|, |R_kl_j|)
  *                   with R_kl = T_kl / ρ
  *
- * Logic (codex 2026-06-06):
+ * Logic:
  *   - non-finite anywhere               → 0.0
  *   - |predicted| ≤ tol(scale)          → 1.0  (no meaningful predicted; no constraint)
  *   - |dQ| ≤ tol(scale)                 → 0.0  (predicted heads away from equal neighbor)
@@ -336,8 +329,8 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
  *   - same sign, |pred| > |dQ|          → dQ/predicted  (∈ (0, 1))
  *   - same sign, |pred| ≤ |dQ|          → 1.0
  *
- * Caller takes min across (j, m); the limiter body is COMPONENT-SEPARATED
- * (Phil 2026-06-06): one phi per slot per basis, NOT a single row-scalar.
+ * Caller takes min across (j, m); the limiter body is COMPONENT-SEPARATED:
+ * one phi per slot per basis, NOT a single row-scalar.
  * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
 static double cbe_bj_phi_pair_scaled(double dQ, double predicted, double scale,
@@ -499,8 +492,8 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
                             /*free_slot_fired_count_inout=*/NULL,
                             gcrho_a, gcrho_b, /*vF=*/0.0);
 
-    /* Primitive-gradient swap (Phase 1b — Phil + codex 2026-06-06):
-     * COMPONENT-SEPARATED limiter. The realizability constraint factorizes
+    /* Primitive-gradient swap: COMPONENT-SEPARATED limiter.
+     * The realizability constraint factorizes
      * in primitive variables (ρ²·S ≥ 0) so density, velocity, and stress
      * limiters are INDEPENDENT. The previous row-scalar shape was a
      * leftover from the moment-row coupling — applying one phi to all
@@ -513,7 +506,7 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
      *              across all stress slots to keep S_face on the PSD cone)
      *              — affects accum.phi[m][1+NDIM..NMOMENTS-1].
      *
-     * Scale-aware BJ tolerance uses physically meaningful scales (codex):
+     * Scale-aware BJ tolerance uses physically meaningful scales:
      *   scale_ρ   = max(|ρ_i|, |ρ_j|, ρ_floor)
      *   scale_v_k = max(|v_i,k|, |v_j,k|, sqrt(max(R_kk_i, R_kk_j, 0)))
      *                with R_kk = T_kk / ρ
@@ -693,7 +686,7 @@ struct CBEGradSpec {
     /* CBE-grad pair physics: h_j reach is P[j].AGS_KernelRadius for non-gas (DM)
      * — second symmetric pair body at line 399 reads h_j = Pj.AGS_KernelRadius
      * and filters via r > max(h_i, h_j) at line 408.  Gas excluded by
-     * neighbor_type_mask. See OPEN_radius_policy_runner_design.md audit table. */
+     * neighbor_type_mask. */
     static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_NONGAS_AGS;
 
     static constexpr WritePattern   write_pattern             = WritePattern::ActiveReduceOnly;
@@ -798,8 +791,8 @@ struct CBEGradSpec {
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
                 L.U_i[m][k] = dctx.P[i].CBE_basis_moments_pred[m][k];
 
-        /* Mode-B-safe by-value snapshot of the persistent gradient row
-         * (design invariant I2). Pass-1 limiter reads this from
+        /* Mode-B-safe by-value snapshot of the persistent gradient row.
+         * Pass-1 limiter reads this from
          * active.local; pass-0 LSQ does not consume it but populating
          * unconditionally is fixed-cost and keeps the load-active body
          * branch-free. */

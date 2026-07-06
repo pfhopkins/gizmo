@@ -34,7 +34,7 @@
 //                             0, 1, 2, 3,  4,  5,  6,  7,  8,  9
 
 
-/* C7 (2026-05-30) helpers: deterministic Fibonacci-sphere direction
+/* Helpers: deterministic Fibonacci-sphere direction
  * sampler + Rodrigues rotation. Used by cbe_synthesize_cold_default()
  * to lay down (NBASIS-1) placeholder-stream directions uniformly on
  * the velocity sphere, rotated so the canonical +z axis aligns with
@@ -70,12 +70,10 @@ static void cbe_fibonacci_sphere_dir_rotated_to_vhat(int n, int N,
     double vhat[3] = {Vel[0]/v0, Vel[1]/v0, Vel[2]/v0};
     double dot = vhat[2];   /* zhat . vhat */
     if(fabs(dot) > 1.0 - 1.0e-12) {
-        /* C7 fixup (2026-05-30, codex): antiparallel case (vhat ~ -zhat).
-         * Apply a proper 180-deg rotation about the x-axis -- maps +z to
-         * -z, leaves +x unchanged. Previous draft negated all three
-         * components (an inversion, not a rotation); harmless for the
-         * tiny placeholder slot but inconsistent with the Rodrigues
-         * intent. */
+        /* Antiparallel case (vhat ~ -zhat): apply a proper 180-deg
+         * rotation about the x-axis -- maps +z to -z, leaves +x
+         * unchanged (an inversion of all three components would not be
+         * a rotation). */
         if(dot < 0) { out[1] = -out[1]; out[2] = -out[2]; }
         return;
     }
@@ -142,9 +140,7 @@ static void cbe_synthesize_cold_default(int i)
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
         /* T_rel_ab = m * (v_rel_a*v_rel_b + S_floor*delta_ab); v_rel = 0 for
          * the dominant cold stream so T_rel_aa = m * S_floor and all
-         * off-diagonals are zero. Commit 4a: dim-agnostic via cbe_basis_T_w
-         * (was: explicit 3D triangular index block under the SECONDMOMENT
-         * fence). */
+         * off-diagonals are zero. Dim-agnostic via cbe_basis_T_w. */
         for(int a = 0; a < NUMDIMS; a++) {
             cbe_basis_T_w(P[i].CBE_basis_moments[0], a, a, m0 * S_floor);
             for(int b = a + 1; b < NUMDIMS; b++) {
@@ -170,8 +166,8 @@ static void cbe_synthesize_cold_default(int i)
                 cbe_basis_p_w(P[i].CBE_basis_moments[j], k, m_each * v_rel[k]);
             }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-            /* T_rel_ab = m * (v_rel_a*v_rel_b + S_floor*delta_ab). Commit 4a:
-             * dim-agnostic via cbe_basis_T_w over active (a<=b)<NUMDIMS. */
+            /* T_rel_ab = m * (v_rel_a*v_rel_b + S_floor*delta_ab).
+             * Dim-agnostic via cbe_basis_T_w over active (a<=b)<NUMDIMS. */
             for(int a = 0; a < NUMDIMS; a++) {
                 cbe_basis_T_w(P[i].CBE_basis_moments[j], a, a,
                               m_each * (v_rel[a]*v_rel[a] + S_floor));
@@ -226,8 +222,7 @@ void do_cbe_initialization(void)
              * Validate finiteness + non-zero mass sum before the
              * conservation pass touches it -- malformed loaded data
              * fails LOUD, not silently synthesized over (would hide
-             * a real IC bug; codex 2026-05-30). Per the C6-established
-             * migration rule: corruption-class stays on endrun. */
+             * a real IC bug). Corruption-class errors stay on endrun. */
             double mom_tot_check = 0;
             int has_nonfinite = 0;
             for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
@@ -258,16 +253,13 @@ void do_cbe_initialization(void)
             cbe_synthesize_cold_default(i);
         }
 
-        /* Commit 4b (2026-06-03): the prior dim-aware "moment zeroing"
-         * blocks for NUMDIMS==1/2 hardcoded the OLD 3D-only slot indices
-         * (keep k=0,1,4 in 1D; zero k=3,6,8,9 in 2D) which silently
-         * stomped on legitimate stress data once the 4b unfence made
-         * SECONDMOMENT reachable in low-D (1D T_xx lives at slot 2,
-         * 2D T_xx at slot 3, T_xy at slot 5 per cbe_T_idx). The blocks
-         * are also fully redundant now that CBE_INTEGRATOR_NMOMENTS is
-         * dim-aware (precompiler_logic.h:142-154): the array literally
-         * has exactly the active slots in every (NUMDIMS, SECONDMOMENT)
-         * combination, so there is nothing to "trim." Removed. */
+        /* No dim-aware "moment zeroing" trim is needed here: the older
+         * blocks hardcoded 3D-only slot indices and would stomp on
+         * legitimate low-D stress data (1D T_xx lives at slot 2, 2D T_xx
+         * at slot 3, T_xy at slot 5 per cbe_T_idx). They are also
+         * redundant now that CBE_INTEGRATOR_NMOMENTS is dim-aware: the
+         * array holds exactly the active slots in every (NUMDIMS,
+         * SECONDMOMENT) combination, so there is nothing to trim. */
 
         /* Conservation renormalization -- existing two-pass pattern,
          * applies to BOTH loaded and synthesized paths. For an exactly-
@@ -392,32 +384,26 @@ void cbe_sync_pred_to_conserved(int i)
 
 
 /* ---------------------------------------------------------------------------
- * Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
- * 2026-05-24). Gated by CBE_INTEGRATOR_OUTPUT_MOREINFO (or the broader
- * OUTPUT_ADDITIONAL_RUNINFO) so production runs can purge the entire
- * diagnostic subsystem by disabling the flag.
+ * Per-output-interval CBE diagnostic counters. Gated by
+ * CBE_INTEGRATOR_OUTPUT_MOREINFO (or the broader OUTPUT_ADDITIONAL_RUNINFO)
+ * so production runs can purge the entire diagnostic subsystem by disabling
+ * the flag.
  *
- * Host-side per-rank counters accumulated by future Wave-CBE commits
- * (3 = root-found v_F, 4 = gradient/reconstruction, 5 = SPD repair), then
- * MPI-reduced and emitted to FdCbeDiagnostics (cbe_diagnostics.txt; opened
- * in core/begrun.cc under the same gate). Reset at each emit so the values
- * represent the accumulated total since the previous output.
+ * Host-side per-rank counters (root-found v_F, gradient/reconstruction, SPD
+ * repair), then MPI-reduced and emitted to FdCbeDiagnostics
+ * (cbe_diagnostics.txt; opened in core/begrun.cc under the same gate). Reset
+ * at each emit so the values represent the accumulated total since the
+ * previous output.
  *
- * Aggregation path note: per-pair updates from inside AGSForce/GPU
- * kernels must go through the existing AgsForceOut accumulator / merge /
- * writeback pattern, not via direct writes to these globals. The pair-loop
- * infrastructure runs reductions onto per-particle out-structs which get
- * merged onto host particles in the post-loop step; the CBE counter
- * updates will hook there. This commit only defines the host-side
- * holding/reduce/emit scaffold; counters stay at zero until populated.
- *
- * No call site is added in this commit (Commit 3 will add the hook from
- * energy_statistics or equivalent once the counter writes are real). The
- * file is opened (with a column-header comment) but stays header-only.
+ * Aggregation path: per-pair updates from inside AGSForce/GPU kernels must go
+ * through the existing AgsForceOut accumulator / merge / writeback pattern,
+ * not via direct writes to these globals. The pair-loop infrastructure runs
+ * reductions onto per-particle out-structs which get merged onto host
+ * particles in the post-loop step; the CBE counter updates hook there.
  * --------------------------------------------------------------------------- */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
 struct cbe_step_accumulators {
-    /* Populated by Wave-CBE Commit 3 (root-found v_F). NOTE: aggregated
+    /* Root-found v_F counters. NOTE: aggregated
      * over per-pair evaluations (AGSForce visits an i-j pair once when i
      * is active; geometric faces with both endpoints active contribute
      * twice). residual_max is the worst single evaluation; residual_sum
@@ -426,22 +412,21 @@ struct cbe_step_accumulators {
     double face_mass_flux_residual_max;   /* max |sum_basis F_m * A| over pair evaluations */
     double face_mass_flux_residual_sum;   /* sum |sum_basis F_m * A| over pair evaluations */
     long long bracket_fail_count;         /* root-find bracket-widening failures */
-    /* Populated by Wave-CBE Commit 4 (gradient/reconstruction): */
+    /* Gradient/reconstruction counters: */
     long long recon_rho_clamp_count;      /* Q-face rho < eps clamps */
     long long recon_S_clamp_count;        /* Q-face Sxx < 0 clamps */
-    /* Populated by Wave-CBE Commit 5 (SPD repair): */
+    /* SPD-repair counters: */
     double repair_dP_sum;                 /* sum |dP| introduced by repair */
     double repair_dT_sum;                 /* sum |dT| introduced by repair */
-    /* Populated by Wave-CBE Commit 6c (pairing free-slot fallback): SUM
-     * over directional basis rows for which the cbe_apply_free_slot_
-     * fallback transform fired during flux pairing. Independent of
-     * WITHGRADIENTS — emitted as the appended last column of
+    /* Pairing free-slot fallback: SUM over directional basis rows for which
+     * the cbe_apply_free_slot_ fallback transform fired during flux pairing.
+     * Independent of WITHGRADIENTS — emitted as the appended last column of
      * cbe_diagnostics.txt (col-9 in WITHGRADIENTS-off 9-col format;
      * col-10 in WITHGRADIENTS-on 10-col format). 0 in builds with
      * CBE_PAIRING_USE_FREE_SLOT=0 (compile-time selector). */
     long long pairing_free_slot_count;
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-    /* Populated by Wave-CBE Commit 4 Phase 2 #5 (face reconstruction):
+    /* Face-reconstruction counter:
      * counts non-finite grad·dp events observed per pair in the flux body.
      * Defense-in-depth; Tikhonov regularization in the LSQ pass should
      * keep grads finite under normal physics. Emitted as col-9 of
@@ -469,7 +454,7 @@ void cbe_step_diagnostics_reset(void)
 }
 
 
-/* Wave-CBE Commit 3 observer: called once per active particle from
+/* Face-residual observer: called once per active particle from
  * AgsForceSpec::apply_active_writeback with that particle's merged
  * AgsForceOut.cbe_face_residual_* and cbe_bracket_fail_count. Per-rank
  * step-local aggregation; MPI reduction happens in cbe_step_diagnostics_emit. */
@@ -485,10 +470,10 @@ void cbe_step_diagnostics_observe_face(double face_residual_max,
 }
 
 
-/* Wave-CBE Commit 4 + Commit 5 observer: per-active particle's merged
+/* Reconstruction-clamp observer: per-active particle's merged
  * AgsForceOut.cbe_recon_rho_clamp_count + cbe_recon_S_clamp_count from
- * cbe_clamp_face_Q in the flux body. rho-clamp populated by Commit 4
- * Phase 1; S-clamp populated by Commit 5 face-state SPD repair. */
+ * cbe_clamp_face_Q in the flux body. rho-clamp is the Q-face density floor;
+ * S-clamp is the face-state SPD repair. */
 void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
                                          long long S_clamp_count)
 {
@@ -498,7 +483,7 @@ void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
 
 
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-/* Wave-CBE Commit 4 Phase 2 #5 observer: per-active particle's merged
+/* Grad-nonfinite observer: per-active particle's merged
  * AgsForceOut.cbe_grad_nonfinite_count from the flux body's per-pair tally
  * of non-finite grad·dp events. */
 void cbe_step_diagnostics_observe_grad_nonfinite(long long count)
@@ -508,15 +493,15 @@ void cbe_step_diagnostics_observe_grad_nonfinite(long long count)
 #endif
 
 
-/* Wave-CBE Commit 5 observer (2026-05-26): cell-state SPD-repair drift
+/* SPD-repair observer: cell-state SPD-repair drift
  * accumulators from do_cbe_drift_kick_kernel (Site A). Called once per
  * cbe_drift_kick_evaluate_gpu invocation with the host-summed dT_scratch
  * (deterministic sum order; no device atomics).
  *
  * dP is always 0.0 from Site A (SPD repair touches only stress slots
  * [4..9], not momentum [1..3]). Kept as a parameter so any future repair
- * site that touches momentum can plumb in without an API change. Phil's
- * directive: dP=0 is a useful invariant for the diagnostic. */
+ * site that touches momentum can plumb in without an API change; dP=0 is a
+ * useful invariant for the diagnostic. */
 void cbe_step_diagnostics_observe_repair(double dP, double dT)
 {
     CbeStepAccum.repair_dP_sum += dP;
@@ -524,7 +509,7 @@ void cbe_step_diagnostics_observe_repair(double dP, double dT)
 }
 
 
-/* Wave-CBE Commit 6c observer: per-active particle's merged
+/* Pairing free-slot observer: per-active particle's merged
  * AgsForceOut.cbe_pairing_free_slot_count from the flux body's per-pair
  * tally of free-slot fallback firings. Independent of WITHGRADIENTS;
  * appended as the last column of cbe_diagnostics.txt. */
@@ -560,14 +545,13 @@ void cbe_step_diagnostics_emit(void)
 #endif
     if(ThisTask == 0 && FdCbeDiagnostics != NULL) {
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-        /* 10-col extended format under WITHGRADIENTS. col-9 stays as
-         * cbe_grad_nonfinite_count (Commit 4 Phase 2 #5); col-10 is the
-         * new cbe_pairing_free_slot_count (Commit 6c). */
+        /* 10-col extended format under WITHGRADIENTS. col-9 is
+         * cbe_grad_nonfinite_count; col-10 is cbe_pairing_free_slot_count. */
         fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld %lld\n",
                 All.Time, rmax, rsum, brk, rc, sc, dP, dT, gnf, fs);
 #else
-        /* 9-col format. cols 1-8 unchanged from Phase-1; col-9 is the
-         * new cbe_pairing_free_slot_count (Commit 6c). */
+        /* 9-col format. cols 1-8 are the base diagnostics; col-9 is
+         * cbe_pairing_free_slot_count. */
         fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g %lld\n",
                 All.Time, rmax, rsum, brk, rc, sc, dP, dT, fs);
 #endif
