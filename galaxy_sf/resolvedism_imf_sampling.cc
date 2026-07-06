@@ -173,6 +173,30 @@ void finalize_sampled_star(int i, double M_drawn)
 void recompute_resolvedism_fuv_luminosities(void)
 {
     int i;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    /* TestFUVZero=1: silence ALL stellar radiation (UV/LW/NUV/OPT + Lyman) for
+     * quiescent-medium experiments (e.g. clean KO15 terminal-momentum ladder:
+     * progenitor FUV photoheating drives a ~10 km/s box-wide flow otherwise).
+     * Keeps the TREE_RAD columns/chemistry stack fully compiled and valid —
+     * stripping TREE_RAD_H2 from a net-17 build is an invalid config (CALC_PHOTO
+     * aborts). Test-tag only; no effect in production builds. */
+    if(All.TestFUVZero) {
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            if(P[i].Type != 4) continue;
+            P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            P[i].OPT_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            P[i].Lyman_photons_per_sec = 0;
+#endif
+        }
+        return;
+    }
+#endif
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type != 4) continue;

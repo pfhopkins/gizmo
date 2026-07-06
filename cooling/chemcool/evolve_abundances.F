@@ -192,8 +192,10 @@ c exceeded -> abort).  Here: zero the molecules, freeze the ions,
 c sub-cycle ONLY the energy equation (explicit, dt = 0.1 e/|edot|).
 c If the gas cools below T_NOCHEM mid-step, hand over to the normal
 c DVODE path below for the remaining time -- fully continuous.
-c T_NOCHEM defaults to 3d4 K (Uli design); override at compile time
-c with -DCHEMCOOL_TNOCHEM=... for cutoff-sensitivity studies.
+c T_NOCHEM defaults to 5d5 K; override at compile time with
+c -DCHEMCOOL_TNOCHEM=... for cutoff-sensitivity studies. (Above this T the
+c full stiff network is bypassed for equilibrium-cooling sub-cycling; the
+c 3e4-5e5 K range still runs the network, e.g. inside SN bubbles.)
 c
 #ifndef CHEMCOOL_TNOCHEM
 #define CHEMCOOL_TNOCHEM 5d5

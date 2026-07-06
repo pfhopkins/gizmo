@@ -673,8 +673,15 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                     P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
                     P[i_owner].SpawnEjEnergy = (MyFloat)(1.0e51/UNIT_ENERGY_IN_CGS);
                     P[i_owner].SN_SpawnPending = 1;
-                    P[i_owner].SNe_ThisTimeStep = -1;      /* retired: no kernel injection */
-                    P[i_owner].M_at_SN_trigger = -1;
+                    /* keep SNe_ThisTimeStep==1 and M_at_SN_trigger: the post-walk
+                     * conversion must still run for this star (FeedbackBudget entries +
+                     * MstarSampleIMF/luminosity zeroing + RemnantType), otherwise the
+                     * star re-flags as a live SN every step and re-spawns (round-2 bug:
+                     * 22 DECIDEs / repeated EXECs from 9 stars). Kernel re-injection
+                     * cannot happen: this event is marked done[] below and the
+                     * serialization token never re-admits it. The mass drain happens
+                     * at EXEC time in merge_split.cc, star -> spawned cell atomically.
+                     * Validated round-3 (job 173065): 99 SNe, DECIDE=EXEC=conv=99, 0 dups. */
                     printf("SPAWNSN_DECIDE: star=%llu Mkern=%.3e Msun < %.2f*Mej=%.3e -> payload stored (rem=%.3f)\n",
                         (unsigned long long)P[i_owner].ID, P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR,
                         f_thresh, Mej_sp, rem_sp); fflush(stdout);
@@ -786,6 +793,12 @@ void resolvedism_inject_fb_energy(void)
             M_injected[2] += dM_wind;
             M_removed[2] += dM_wind;
             dp_injected[2] += dp_wind;
+            /* source-side wind kinetic energy E = 1/2 dM v_w^2 = 1/2 dp^2/dM [erg];
+             * same semantics as the SN channel's 1e51 source booking (what the walk
+             * thermalizes of it is mode-dependent: full in THERMAL_ONLY, inelastic
+             * residual in WINDS_THERMAL, none in momentum-only). Was never booked —
+             * FeedbackBudget E column read 0 for winds in all modes (2026-07-06). */
+            if(dM_wind > 0) {E_injected[2] += 0.5 * dp_wind * dp_wind / (dM_wind * SOLAR_MASS_CGS);}
             /* Wind metals: estimate from surface abundances */
             double Mstar_w, logM_w, logZ_w;
             if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {

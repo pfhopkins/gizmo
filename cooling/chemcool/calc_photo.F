@@ -460,9 +460,16 @@ c
 
 c H2: use Lyman-Werner band (11.2-13.6 eV) specifically for H2 photodissociation
 #if CHEMISTRYNETWORK != 1
-c Network 1 doesn't use CPHOTO stuff
-      phrates(1) = phtab(1) * G0_LW * fshield * f_dust
+c Networks 5/17: phrates(1) is the H2-UNSHIELDED LW rate (dust-attenuated only).
+c The H2 self-shielding factor fshield is applied ONCE in rate_eq_simple.F /
+c rate_eq_ulli.F (ykdis = phrates(1)*fshield). Baking fshield in here as well
+c double-counts it (ykdis ~ fshield^2 = over-shielding -> HI->H2 transition at
+c ~6x too low a column). gizmo2017 calc_photo.F:453 omits fshield in this branch
+c for exactly this reason; the G0->G0_LW port accidentally unified the two branches
+c and reintroduced it. CO (gamma_co=phrates(10)) is correctly single-shielded.
+      phrates(1) = phtab(1) * G0_LW * f_dust
 #else
+c Network 1 applies fshield here (its rate_eq does not).
       phrates(1) = phtab(1) * G0_LW * fshield * f_dust
 #endif
 

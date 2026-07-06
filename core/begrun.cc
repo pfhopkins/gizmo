@@ -1091,7 +1091,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.CpuTimeBetRestartFile;
       id[nt++] = REAL;
 
-#ifdef DEVELOPER_MODE
+/* Stella: ENERGYinfo.txt (energy_statistics) cadence is controlled by this tag; with the
+ * registration gated on DEVELOPER_MODE only, every non-developer build silently ignored it,
+ * defaulted to 1e10, and wrote exactly ONE row (t=0) per run — the whole-fleet
+ * "ENERGYinfo header-only" symptom (2026-07-06). Register whenever the ledger exists. */
+#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB))
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;
@@ -2335,6 +2339,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.TestSNSpacing;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "TestFUVZero");
+      addr[nt] = &All.TestFUVZero;
+      id[nt++] = INT;
+
       strcpy(tag[nt], "TestStarMass2");
       addr[nt] = &All.TestStarMass2;
       id[nt++] = REAL;
@@ -2795,7 +2803,9 @@ void read_parameter_file(char *fname)
                  * any tag not matched HERE hits the error below — 2026-07-05) */
                 if(strcmp("TestSNTime0",tag[i])==0) {continue;}   /* value already defaulted in loop 1 */
                 if(strcmp("TestSNSpacing",tag[i])==0) {continue;}
+                if(strcmp("TestFUVZero",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: stellar radiation ON as normal (=0)\n",tag[i]); continue;}
 #endif
+                if(strcmp("TimeBetStatistics",tag[i])==0) {*((double *)addr[i])=1.0e10; printf("Tag %s (%s) not set in parameter file: ENERGYinfo.txt will get only the t=0 row (=%g) \n",tag[i],alternate_tag[i],All.TimeBetStatistics); continue;}
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
             }

@@ -69,7 +69,6 @@ static double *PIFrontRadius = NULL;  /* per-star per-pixel ionization front dis
 /* Convergence tolerance: per-pixel budget walk stops when remaining budget
  * drops below this. Scaled to ~1000 reference cells' recombination cost
  * (following gizmo2017). Computed once per step in resolvedism_photoionize(). */
-static double PITolerance = 0;
 
 /* Compute S_ly for a single star (used in particle2in and pre-processing) */
 static double compute_single_star_S_ly(int i)
@@ -130,6 +129,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], SearchRadius, S_ly;
     MyDouble budget_per_pixel[HEALPIX_NPIX]; /* per-pixel remaining photon budget, shared between mode 0 and mode 1 */
+    MyIDType StarID; /* for the deterministic partial-cell ionization draw (rank-independent) */
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -138,6 +138,7 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
 {
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->S_ly = compute_single_star_S_ly(i);
+    in->StarID = P[i].ID;
 
     /* Per-pixel photon budget: read from PIPixelBudget which is initialized to S_ly/NPIX
      * before mode 0, then updated with remaining budget after mode 0 for export packing */
@@ -292,7 +293,6 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
      * relative to a reference cell's recombination cost. This prevents
      * draining budget into low-density halo gas. */
     {
-        double tolerance_per_pixel = PITolerance / HEALPIX_NPIX;
         int idx = 0;
         for(k = 0; k < HEALPIX_NPIX; k++)
         {
@@ -314,19 +314,47 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
                 double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
                                  * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
-                budget -= recomb;
-                consumed += recomb;
-                last_r = sqrt(ngb_buf[idx].dist2);
-                CellP[j].Ionized = 2; /* mark as ionized THIS step */
-                idx++;
-                /* Ionization front found: either budget exhausted relative to
-                 * next cell cost, or remaining budget below tolerance */
-                if(budget < 10.0 * recomb || budget < tolerance_per_pixel) {front_found = 1; break;}
+                if(budget >= recomb) { /* fully covered cell: mark and charge exactly */
+                    budget -= recomb;
+                    consumed += recomb;
+                    last_r = sqrt(ngb_buf[idx].dist2);
+                    CellP[j].Ionized = 2; /* mark as ionized THIS step */
+                    idx++;
+                    continue;
+                }
+                /* PARTIAL cell: the ionization front lives inside this cell.
+                 * Photon-conserving-in-expectation treatment (Hu+16/17): ionize the
+                 * whole cell with probability p = budget/cost, charge the budget
+                 * exactly either way. The old deterministic mark-then-test walk fully
+                 * ionized this cell regardless of p — with the >=8 Msun activity gate
+                 * and NPIX pixels that gave EVERY early-B star a floor of ~NPIX fully
+                 * ionized cells (~48 Msun at 4 Msun res) against budgets that support
+                 * ~0.3 Msun: systematic over-ionization the ancestor code (gizmo2017
+                 * photoionize.c, isotropic bisection + generous tolerance) never had.
+                 * The draw is deterministic and rank-independent (table RNG keyed on
+                 * cell ID ^ star ID), and can only happen ONCE per star-pixel: budget
+                 * goes to exactly 0 here, so re-walks (radius-expansion iterations,
+                 * mode-0/mode-1 splits) skip this pixel at the budget<=0 gate above.
+                 * This also replaces the old 'budget < 10*recomb' and in-walk
+                 * tolerance stops, which silently discarded up to 10 cells' worth of
+                 * photons per pixel (the driver-side expansion tolerance remains). */
+                {
+                    double p_ion = budget / recomb;
+                    if(get_random_number(P[j].ID ^ (local.StarID << 8)) < p_ion) {
+                        CellP[j].Ionized = 2;
+                        last_r = sqrt(ngb_buf[idx].dist2);
+                    }
+                    consumed += budget;
+                    budget = 0;
+                    front_found = 1;
+                    idx++;
+                    break;
+                }
             }
             if(front_found)
-                out.consumed_per_pixel[k] = local.budget_per_pixel[k]; /* consume all: front found */
+                out.consumed_per_pixel[k] = local.budget_per_pixel[k]; /* budget exactly exhausted at the front */
             else
-                out.consumed_per_pixel[k] = consumed; /* report actual consumption only */
+                out.consumed_per_pixel[k] = consumed; /* walked all cells with budget left: report actual use (radius may expand) */
             out.front_radius[k] = last_r;
             /* Skip remaining cells in this pixel beyond the front */
             while(idx < n_collected && ngb_buf[idx].pixel == k) idx++;
@@ -363,14 +391,11 @@ void resolvedism_photoionize(void)
 #endif
     }
 
-    /* Compute convergence tolerance (gizmo2017 pattern):
-     * tolerance = alpha_B * 1000 * N_H_per_reference_cell
-     * where N_H = M_cell * X_H / m_p for the target cell mass.
-     * This is generous at low density, preventing over-ionization of halo gas. */
-    {
-        double M_ref_cgs = All.MassTable[0] * UNIT_MASS_IN_CGS; /* reference cell mass from IC */
-        PITolerance = PI_ALPHA_B * 1000.0 * (M_ref_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS);
-    }
+    /* (The old gizmo2017-pattern ABSOLUTE tolerance — alpha_B*1000*N_H(m_ref), a one-cell
+     * cost at n=1000 — was removed 2026-07-06: it suppressed all PI from stars below
+     * ~25 Msun. The walk now spends budgets exactly to zero via the probabilistic
+     * partial-cell draw, and the driver's expansion test uses a per-star RELATIVE
+     * tolerance of 1% of the pixel budget; see the expansion loop below.) */
 
     /* Allocate per-star arrays for iterative search radius adjustment */
     PISearchRadius = (double *) mymalloc("PISearchRadius", NumPart * sizeof(double));
@@ -405,12 +430,22 @@ void resolvedism_photoionize(void)
             #include "../system/code_block_xchange_perform_ops_demalloc.h"
         }
 
-        /* Check for stars whose search radius was too small (any pixel has remaining budget > tolerance) */
+        /* Check for stars whose search radius was too small (any pixel has remaining budget > tolerance).
+         * RELATIVE tolerance (2026-07-06): expand while a pixel retains > 1% of its initial
+         * budget. The old ABSOLUTE tolerance (beta*1000*N_H(m_ref)/NPIX ~ 8e46, inherited from
+         * gizmo2017 where it hardcoded a one-cell cost at n=1000) exceeded the ENTIRE pixel
+         * budget of stars below ~25 Msun — a B star whose initial radius contained no cell in
+         * some pixel would never expand and silently ionize nothing in that direction. Relative
+         * form is scale-free in Q; the partial-cell draw in the walk zeroes budgets exactly at
+         * found fronts, so this only drives expansion toward genuinely unreached gas, bounded
+         * by max_iter and MaxPISearchRadius. */
         int incomplete_local = 0;
-        double tol_pix = PITolerance / HEALPIX_NPIX;
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
             if(P[i].Type != 4) continue;
             if(PISearchRadius[i] <= 0) continue;
+            double S_ly_i = compute_single_star_S_ly(i);
+            if(S_ly_i <= 0) continue;
+            double tol_pix = 0.01 * S_ly_i / HEALPIX_NPIX;
             int k; int needs_expansion = 0;
             for(k = 0; k < HEALPIX_NPIX; k++)
                 if(PIPixelBudget[i * HEALPIX_NPIX + k] > tol_pix) {needs_expansion = 1; break;}
