@@ -775,9 +775,7 @@ void cbe_apply_fs_gate(
  * (cost-matrix build + greedy assignment) patterns; after wiring, all
  * three call sites are reduced to one call to this helper.
  *
- * Cost: dispatched on the compile-time selector CBE_PAIRING_COST. C6b
- * temporary default = CBE_COST_V_ONLY (byte-compatible with pre-C6b);
- * C6c flips to CBE_COST_TRACE_W2 per harness §4.4.
+ * Cost: dispatched on the compile-time selector CBE_PAIRING_COST. 
  *
  * Free-slot: applied iff the compile-time selector
  * CBE_PAIRING_USE_FREE_SLOT is 1. C6b temporary default = 0
@@ -790,9 +788,6 @@ void cbe_apply_fs_gate(
  * with the directional mass ratio.
  *
  * Assignment: cbe_assign_outgoing_greedy (one-sided-nearest per side).
- * CBE_PAIRING_ASSIGN sentinel exists so a future Hungarian comparator
- * (not part of C6) can be added cleanly; only CBE_ASSIGN_GREEDY is
- * supported in C6.
  *
  * Outputs:
  *   beta_of_alpha_for_a[m] = b-side basis matched as a's outgoing target
@@ -906,6 +901,12 @@ void cbe_build_pair_matching(
  *     building the per-basis stress contraction S_n[] locally for the
  *     full-tensor flux.
  * -------------------------------------------------------------------------- */
+/* Effective adiabatic index for the CBE signal/sound speed: c = sqrt(gamma_eff * n.S.n).
+ * gamma_eff = 3 is the 10-moment (Maxwellian) closure value; SINGLE definition point,
+ * shared by the per-basis face signal speed (c_x, below) and the fluid HLLC collisional
+ * sound speed (cbe_flux_collisional_hllc). Users may retune here. */
+static const double CBE_SIGNAL_GAMMA_EFF = 3.0;
+
 KOKKOS_INLINE_FUNCTION
 double cbe_face_normal_stress_speed_from_Qrow(
     const double moments[CBE_INTEGRATOR_NMOMENTS],
@@ -935,7 +936,7 @@ double cbe_face_normal_stress_speed_from_Qrow(
         }
     }
 #endif
-    return (nSn > 0) ? sqrt(3.0 * nSn) : 0;
+    return (nSn > 0) ? sqrt(CBE_SIGNAL_GAMMA_EFF * nSn) : 0;
 }
 
 
@@ -1030,6 +1031,66 @@ CbeFaceFluxScalars cbe_face_flux_scalars(double rho, double u_out, double c_x)
 #endif
     return s;
 }
+
+
+#if defined(CBE_INTEGRATOR_COLLISIONS)
+/* --------------------------------------------------------------------------
+ * Fluid HLLC collisional flux for the collisional Riemann term (method paper,
+ * "How Collisional Can the Method Go?"). This is the strongly-collisional
+ * counterpart of the collisionless one-sided vacuum flux: in the collisional
+ * limit the operator-split vacuum RP breaks down (mean free path << face size),
+ * and the per-face flux should instead approach the fluid HLLC solution. The
+ * two are blended by the mean-free-path weight w_c = exp(-Delta_x rho sigma/mu)
+ * at the call site (cbe_integrator_flux_compute_pair): the effective flux is
+ *   G_eff_alpha = w_c G_vacuum_alpha + (1-w_c)(m_alpha/m_cell) G_HLLC_collisional
+ * so w_c -> 1 (collisionless) recovers the pure vacuum flux exactly, and w_c ->
+ * 0 (fluid limit) recovers an MFM-like state: mass flux -> 0 (F_HLLC has zero
+ * mass flux, consistent with the CBE volume/face partition), with pressure and
+ * PdV work exchanged across the face.
+ *
+ * All inputs are CELL-bulk (summed over bases), face-normal, face-relative:
+ *   rho_K   physical cell density (m_cell/V_cell)
+ *   vn_K    (<v_K> . n_hat) - v_F_n     face-relative normal cell velocity
+ *   P_K     rho_K Tr(S^com_K)/D         isotropic cell pressure
+ *   c_K     sqrt(CBE_SIGNAL_GAMMA_EFF * n.S^com_K.n)   signal speed (same convention as c_x)
+ * vn_K are FACE-RELATIVE (vn = <v>.n_hat - v_F_normal); v_F_normal is the face
+ * velocity, needed to put the pressure-work energy flux back into the lab frame.
+ * Output Gc[] is the PER-UNIT-AREA flux (mass, momentum, 2nd-moment slots) in the
+ * n_hat-outward frame; the caller multiplies by |Area| and distributes by mass
+ * fraction. The intermediate pressure P_star IS the non-vacuum criterion: a valid
+ * (non-vacuum) star state has P_star > 0, and P_star -> 0 continuously at the
+ * vacuum boundary, so gating on P_star gives a positive, continuous pressure with
+ * no clamp. Returns the F1 flux if P_star > 0, else zero.
+ * -------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+void cbe_flux_collisional_hllc(double rho_L, double vn_L, double P_L, double c_L,
+                               double rho_R, double vn_R, double P_R, double c_R,
+                               double v_F_normal, const double n_hat[3],
+                               double Gc[CBE_INTEGRATOR_NMOMENTS])
+{
+    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) Gc[k] = 0.0;
+    const double c_star = DMAX(c_L, c_R);
+    const double S_L = DMIN(vn_L, vn_R) - c_star;
+    const double S_R = DMAX(vn_L, vn_R) + c_star;
+    const double eta_L = rho_L * (S_L - vn_L);
+    const double eta_R = rho_R * (S_R - vn_R);
+    const double deta  = eta_L - eta_R;
+    if(!(fabs(deta) > MIN_REAL_NUMBER)) return;
+    const double inv_deta = 1.0 / deta;
+    const double S_star = ((P_R - P_L) + (eta_L * vn_L - eta_R * vn_R)) * inv_deta;
+    const double P_star = (P_L * eta_R - P_R * eta_L + eta_L * eta_R * (vn_R - vn_L)) * (-inv_deta);
+    if(!(P_star > 0.0)) return;                              /* vacuum star region -> zero flux */
+    /* F1: zero mass flux; momentum = P_star n_hat; 2nd-moment (energy) is the
+     * lab-frame pressure work P_star * (S_star + v_F_normal) * 2/D on the diagonal
+     * (isotropic; off-diagonals zero). S_star is the face-relative contact speed;
+     * adding v_F_normal converts to the lab frame the moments are stored in. */
+    for(int k = 0; k < NUMDIMS; k++) cbe_basis_p_w(Gc, k, P_star * n_hat[k]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    const double e_diag = 2.0 * P_star * (S_star + v_F_normal) / (double)NUMDIMS;
+    for(int a = 0; a < NUMDIMS; a++) cbe_basis_T_w(Gc, a, a, e_diag);
+#endif
+}
+#endif /* CBE_INTEGRATOR_COLLISIONS */
 
 
 /* --------------------------------------------------------------------------

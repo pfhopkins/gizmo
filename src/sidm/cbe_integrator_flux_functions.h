@@ -459,6 +459,55 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * pairing split (gradient + limiter match on Q_cell; flux matches on
      * Q_face), both via the same SSOT cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
+
+    /* Collisional Riemann term (gated by CBE_INTEGRATOR_COLLISIONS; further no-op
+     * when CBECollisionCrossSection==0 -> w_c=1, Gc=0, so the vacuum deposits
+     * below are unchanged). Blends the collisionless per-basis vacuum flux with a
+     * cell-level fluid HLLC flux by the mean-free-path weight
+     * w_c = exp(-Delta_x rho sigma/mu): collisionless (w_c->1) is the pure vacuum
+     * flux; strongly collisional (w_c->0) recovers an MFM-like state (mass flux
+     * ->0, pressure/PdV exchange via P*). Cell-bulk states are summed from the
+     * face-reconstructed (physical density) Qface rows, matching the vacuum-flux
+     * units; Gc is per-unit-area (x A_norm at the deposit) and distributed to each
+     * basis by mass fraction. */
+#ifdef CBE_INTEGRATOR_COLLISIONS
+    double w_c = 1.0;
+    double Gc[CBE_INTEGRATOR_NMOMENTS]; for(int k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) Gc[k]=0.0;
+    double rho_i_cell = 0.0, rho_j_cell = 0.0;
+    if(All.CBECollisionCrossSection > 0) {
+        double pi[3]={0,0,0}, pj[3]={0,0,0}, Ti[3][3]={{0,0,0},{0,0,0},{0,0,0}}, Tj[3][3]={{0,0,0},{0,0,0},{0,0,0}};
+        for(int m=0;m<CBE_INTEGRATOR_NBASIS;m++) {
+            if(Qface_i[m][0]>0) { rho_i_cell+=Qface_i[m][0];
+                for(int k=0;k<NUMDIMS;k++) pi[k]+=cbe_basis_p_r(Qface_i[m],k);
+                for(int a=0;a<NUMDIMS;a++) for(int b=a;b<NUMDIMS;b++){double t=cbe_basis_T_r(Qface_i[m],a,b); Ti[a][b]+=t; if(a!=b)Ti[b][a]+=t;} }
+            if(Qface_j[m][0]>0) { rho_j_cell+=Qface_j[m][0];
+                for(int k=0;k<NUMDIMS;k++) pj[k]+=cbe_basis_p_r(Qface_j[m],k);
+                for(int a=0;a<NUMDIMS;a++) for(int b=a;b<NUMDIMS;b++){double t=cbe_basis_T_r(Qface_j[m],a,b); Tj[a][b]+=t; if(a!=b)Tj[b][a]+=t;} }
+        }
+        if(rho_i_cell>0 && rho_j_cell>0) {
+            const double inv_i=1.0/rho_i_cell, inv_j=1.0/rho_j_cell;
+            double vi[3]={0,0,0}, vj[3]={0,0,0};
+            for(int k=0;k<NUMDIMS;k++){ vi[k]=pi[k]*inv_i; vj[k]=pj[k]*inv_j; }
+            double nSn_i=0,nSn_j=0,tr_i=0,tr_j=0;
+            for(int a=0;a<NUMDIMS;a++) for(int b=0;b<NUMDIMS;b++) {
+                const double Si=Ti[a][b]*inv_i - vi[a]*vi[b];
+                const double Sj=Tj[a][b]*inv_j - vj[a]*vj[b];
+                nSn_i += A_hat[a]*Si*A_hat[b]; nSn_j += A_hat[a]*Sj*A_hat[b];
+                if(a==b){ tr_i+=Si; tr_j+=Sj; }
+            }
+            const double P_i = rho_i_cell*tr_i/(double)NUMDIMS, P_j = rho_j_cell*tr_j/(double)NUMDIMS;
+            const double c_i = (nSn_i>0)?sqrt(CBE_SIGNAL_GAMMA_EFF*nSn_i):0.0;
+            const double c_j = (nSn_j>0)?sqrt(CBE_SIGNAL_GAMMA_EFF*nSn_j):0.0;
+            const double vn_i = (vi[0]*A_hat[0]+vi[1]*A_hat[1]+vi[2]*A_hat[2]) - v_F_normal;
+            const double vn_j = (vj[0]*A_hat[0]+vj[1]*A_hat[1]+vj[2]*A_hat[2]) - v_F_normal;
+            cbe_flux_collisional_hllc(rho_i_cell,vn_i,P_i,c_i, rho_j_cell,vn_j,P_j,c_j, v_F_normal, A_hat, Gc);
+            double dx2=0; for(int k=0;k<3;k++) dx2+=kernel.dp[k]*kernel.dp[k];
+            const double dx_phys = sqrt(dx2)*All.cf_atime;
+            const double rho_avg = 0.5*(rho_i_cell+rho_j_cell);
+            w_c = exp(-dx_phys * rho_avg * All.CBECollisionCrossSection);
+        }
+    }
+#endif
     /* Fix #4 + AGS_vsig gating (codex 2026-06-04 Fix #10): call the flux solver
      * for every K>0 basis (no external θ gate). The solver returns zero mass-flux
      * for a sufficiently receding basis (top-hat vacuum branch u_out ≤ −c_x); the
@@ -481,7 +530,11 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
             double flux_vsig_i = cbe_flux_tophat_vacuum(Qface_i[m], vface, Area_i_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_moments_dt[m][k] -= w_c * flux[k];
+#else
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
+#endif
             }
             /* Outflow ledger (commit 2 of the aggregate-limiter pair; commit 1
              * a529fefb declared the field). The per-basis mass flux is
@@ -494,7 +547,11 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
              * The j-side `+=` deposit below is INCOMING to particle i's basis
              * i_m (not outgoing from i) and is intentionally NOT mirrored. */
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_out_rate_dt[m][k] -= w_c * flux[k];
+#else
                 out.CBE_basis_out_rate_dt[m][k] -= flux[k];
+#endif
             }
             vsig = DMAX(vsig, fabs(flux_vsig_i));
         }
@@ -502,11 +559,31 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
             double flux_vsig_j = cbe_flux_tophat_vacuum(Qface_j[m], vface, Area_j_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_moments_dt[i_m][k] += w_c * flux[k];
+#else
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
+#endif
             }
             vsig = DMAX(vsig, fabs(flux_vsig_j));
         }
     }
+#ifdef CBE_INTEGRATOR_COLLISIONS
+    /* Collisional (fluid-HLLC) deposit onto i's bases, distributed by mass
+     * fraction. Net face flux OUT of i (A_hat is the i-outward normal), same sign
+     * as the vacuum outflow; mass flux is 0 so the out-rate ledger is unaffected.
+     * Conserves pairwise: when j is primary it computes the HLLC with the reversed
+     * normal (= -Gc) and deposits the equal-opposite contribution on its bases. */
+    if(w_c < 1.0 && rho_i_cell > 0) {
+        const double inv_rho_i = 1.0 / rho_i_cell;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            if(!(Qface_i[m][0] > 0)) continue;
+            const double frac = Qface_i[m][0] * inv_rho_i * (1.0 - w_c) * Face_Area_Norm;
+            for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++)
+                out.CBE_basis_moments_dt[m][k] -= frac * Gc[k];
+        }
+    }
+#endif
     vsig /= Face_Area_Norm * All.cf_atime;
     if(vsig > out.AGS_vsig) { out.AGS_vsig = vsig; }
     if(!(timebin_active[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {

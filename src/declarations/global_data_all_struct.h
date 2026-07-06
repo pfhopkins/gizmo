@@ -231,6 +231,9 @@ struct global_data_all_processes
 #ifdef CBE_INTEGRATOR
   double CBEMassEffFloor;	/*!< CBE timestep m_eff floor fraction: m_eff = max(m_b, CBEMassEffFloor*m_cell) in the per-basis mass-depletion + moment-accel timestep criteria, so near-empty placeholder/free-slot bases cannot force an absurdly small step. Timestep-only (does not touch flux/update). Default 0.1. */
 #endif
+#ifdef CBE_INTEGRATOR_COLLISIONS
+  double CBECollisionCrossSection;	/*!< sigma/mu_p (cross-section per unit physical particle mass) in code units, for the intra-cell CBE collision operator + collisional Riemann term. 0 disables (no-op). */
+#endif
 
   /* frequency of tree reconstruction/domain decomposition */
   double TreeDomainUpdateFrequency;	/*!< controls frequency of domain decompositions  */
