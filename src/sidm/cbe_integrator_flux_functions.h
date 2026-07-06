@@ -14,7 +14,7 @@
  * if NBASIS grows > ~32.
  *
  * Requires allvars.h / proto.h and sidm/cbe_integrator.h forward decls
- * (for cbe_flux_hllc_vacuum and get_particle_volume_ags).
+ * (for cbe_flux_tophat_vacuum and get_particle_volume_ags).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -99,7 +99,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * matches whatever CBEGradSpec uses for its LSQ pass.
      * Stored basis moments are U-frame (cell-integrated, basis-frame
      * momentum); Q is per-volume comoving density with physical-frame
-     * momentum baked in -- exactly what cbe_flux_hllc_vacuum expects. */
+     * momentum baked in -- exactly what cbe_flux_tophat_vacuum expects. */
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     {
@@ -327,7 +327,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * cbe_face_solve_v_F_normal only when bisection fails to bracket).
      * Theta active set at vface_guess can be empty; in that case use
      * vface_guess as the fallback carrier. Tangential bulk components
-     * are NOT needed for cbe_flux_hllc_vacuum (Fix #1, Commit 8 retired
+     * are NOT needed for cbe_flux_tophat_vacuum (Fix #1, Commit 8 retired
      * the old SM-dispersion term that consumed them); the final flux
      * function only reads vface . n_hat, which equals v_F_normal under
      * the vface = v_F_normal * A_hat construction below. The full bulk
@@ -371,7 +371,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         v_F_lo, v_F_hi, vbulk_dot_Ahat, &bracket_ok);
 
     /* Face velocity for the flux call: pure normal component along the
-     * canonical face unit normal A_hat. cbe_flux_hllc_vacuum reads only
+     * canonical face unit normal A_hat. cbe_flux_tophat_vacuum reads only
      * vface . n_out (n_out = +A_hat for i-side, -A_hat for j-side), so the
      * tangential component cancels exactly; passing it as zero is clean. */
     const double vface[3] = { v_F_normal * A_hat[0],
@@ -379,13 +379,14 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
                               v_F_normal * A_hat[2] };
 
     /* Fix #4 (harness 2026-05-30 / reference_cbe_method_fix_list.md §"Fix #4"):
-     * DO NOT externally gate HLLC participation by (v_alpha_n − v_F) > 0
-     * (cold-limit θ gate). The HLLC vacuum solver itself returns zero
-     * flux when u_out ≤ −c_x/3 — so the participation condition is
-     * IMPLICIT in the flux solver, and the external cold-limit θ gate
-     * is too strict in the warm regime: a basis with −c_x/3 < u_out < 0
-     * (weakly receding mean, nonzero outgoing flux from thermal dispersion)
-     * is suppressed unphysically by the old gate. Inactive K=0 basis rows
+     * DO NOT externally gate flux participation by (v_alpha_n − v_F) > 0
+     * (cold-limit θ gate). The one-sided vacuum solver itself returns zero
+     * flux only for a sufficiently receding basis (u_out ≤ −c_x for the
+     * top-hat, exponentially suppressed tail for the Gaussian) — so the
+     * participation condition is IMPLICIT in the flux solver, and the external
+     * cold-limit θ gate is too strict in the warm regime: a weakly-receding
+     * basis (nonzero outgoing flux from thermal dispersion) is suppressed
+     * unphysically by the old gate. Inactive K=0 basis rows
      * are still skipped (no thermal channel; trivially zero flux). */
 
     /* Basis-pair matching via SSOT helper. Selectors per harness §4.4:
@@ -458,13 +459,13 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * pairing split (gradient + limiter match on Q_cell; flux matches on
      * Q_face), both via the same SSOT cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
-    /* Fix #4 + AGS_vsig gating (codex 2026-06-04 Fix #10): call HLLC for every
-     * K>0 basis (no external θ gate). HLLC returns zero mass-flux for the
-     * vacuum branch (u_out ≤ −c_x/3); the participation gate is implicit
-     * in the FLUX (no mass/momentum/stress crosses the face from a no-
-     * outflow basis at this step). HOWEVER for the SIGNAL-SPEED estimate
-     * that drives AGS_vsig and dt_cour, every rho-active basis contributes
-     * its |u_out| + c_x regardless of which HLLC branch it sits in. The
+    /* Fix #4 + AGS_vsig gating (codex 2026-06-04 Fix #10): call the flux solver
+     * for every K>0 basis (no external θ gate). The solver returns zero mass-flux
+     * for a sufficiently receding basis (top-hat vacuum branch u_out ≤ −c_x); the
+     * participation gate is implicit in the FLUX (no mass/momentum/stress crosses
+     * the face from a no-outflow basis at this step). HOWEVER for the SIGNAL-SPEED
+     * estimate that drives AGS_vsig and dt_cour, every rho-active basis contributes
+     * its |u_out| + c_x regardless of which flux branch it sits in. The
      * prior `fabs(flux[0]) > 0` gate was too restrictive (codex/Claude
      * 2026-06-04 Fix #10 probe Case C demonstrated that a high-S scratch
      * basis sitting in F=0 on one side, with no comparable basis on the
@@ -478,7 +479,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         const int i_m = matching_basis_i_for_basis_in_j[m];
         if(K_i[m] > 0) {
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
-            double flux_vsig_i = cbe_flux_hllc_vacuum(Qface_i[m], vface, Area_i_out, flux);
+            double flux_vsig_i = cbe_flux_tophat_vacuum(Qface_i[m], vface, Area_i_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
             }
@@ -499,7 +500,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         }
         if(K_j[m] > 0) {
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
-            double flux_vsig_j = cbe_flux_hllc_vacuum(Qface_j[m], vface, Area_j_out, flux);
+            double flux_vsig_j = cbe_flux_tophat_vacuum(Qface_j[m], vface, Area_j_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
             }

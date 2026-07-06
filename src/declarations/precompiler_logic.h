@@ -187,16 +187,10 @@
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
 #endif
-/* Softened-mass floor (fraction of cell mass) for the CBE acceleration and
- * mass-depletion timestep criteria: m_eff = m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC*m_cell.
- * Dividing the per-basis acceleration / mass-depletion rate by m_eff (not bare m_b)
- * limits depletion/acceleration of DYNAMICALLY MEANINGFUL basis mass, not the
- * maintained numerical trace mass of empty free-slots (~1e-8 of the cell).
- * Dangerous draining bases (~1e-3 of the cell at collapse onset) sit far above
- * this floor and are essentially unsoftened. */
-#ifndef CBE_TIMESTEP_MASS_FLOOR_FRAC
-#define CBE_TIMESTEP_MASS_FLOOR_FRAC 1.0e-5
-#endif
+/* The softened-mass floor for the CBE acceleration + mass-depletion timestep
+ * criteria (m_eff = max(m_b, CBEMassEffFloor*m_cell)) is the runtime parameter
+ * All.CBEMassEffFloor (parameterfile "CBEMassEffFloor", default 0.1); see
+ * core/timestep.cc and sidm/cbe_integrator.cc. */
 /* Loud guards against silently-ignored selector values. cbe_build_pair_
  * matching dispatches on CBE_PAIRING_COST via a single #if/#else and on
  * CBE_PAIRING_USE_FREE_SLOT via #if; any unsupported value silently
@@ -1629,7 +1623,7 @@
  *
  * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
  * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
- * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
+ * cbe_flux_tophat_vacuum, cbe_basis_row_is_realizable,
  * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
  * repair, postgravity dT block) to access stress slots via cbe_T_idx /
  * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent

@@ -5,7 +5,7 @@
  * KOKKOS_INLINE_FUNCTION.
  *
  * SSOT: the single per-basis flux implementation lives here as
- * cbe_flux_hllc_vacuum (Wave-CBE Commit 8, 2026-05-30, replaces the
+ * cbe_flux_tophat_vacuum (Wave-CBE Commit 8, 2026-05-30, replaces the
  * pre-fix do_cbe_flux_computation). There is no CPU duplicate in
  * cbe_integrator.cc; the legacy "mirrors do_cbe_flux_computation()"
  * comment that lived here referenced a now-retired pre-GPU-port copy.
@@ -651,9 +651,13 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
-/* Calibrated weight for the density-continuity term in the pairing cost.
- * Method constant (not a runtime or compile-time configuration option). */
-static const double CBE_CRHO_LAMBDA = 0.5;
+/* Calibrated weight for the density-continuity term in the pairing cost
+ * (C = C_v + CBE_CRHO_LAMBDA * C_rho). PRODUCTION DEFAULT = 0.25 (Phil spec). */
+static const double CBE_CRHO_LAMBDA = 0.25;
+
+/* v-slope-limiter finite opposite-sign tolerance: ignore a reconstructed sign
+ * flip when |predicted| < CBE_VOPPSIGN * scale_v. PRODUCTION DEFAULT = 0.1. */
+static const double CBE_VOPPSIGN = 0.1;
 
 /* Pairing cost with phase-space-sheet (density) continuity, used when
  * stale-gradient reconstructed face densities are available:
@@ -898,7 +902,7 @@ void cbe_build_pair_matching(
  * Used by:
  *   - cbe_face_K_and_vn_from_Q -- fills per-basis c_x array for downstream
  *     HLLC residual evaluation and bracket-pad sizing.
- *   - cbe_flux_hllc_vacuum -- gets its scalar c_x from here while still
+ *   - cbe_flux_tophat_vacuum -- gets its scalar c_x from here while still
  *     building the per-basis stress contraction S_n[] locally for the
  *     full-tensor flux.
  * -------------------------------------------------------------------------- */
@@ -936,16 +940,18 @@ double cbe_face_normal_stress_speed_from_Qrow(
 
 
 /* --------------------------------------------------------------------------
- * SSOT HLLC vacuum mass-flux density per unit face area, per basis. Branches
+ * SSOT one-sided vacuum mass-flux density per unit face area, per basis. Branches
  * on the source-side outward normal velocity u_out exactly as the full
- * flux solver (cbe_flux_hllc_vacuum) does for its mass slot; extracting it
+ * flux solver (cbe_flux_tophat_vacuum) does for its mass slot; extracting it
  * lets the v_F root-find residual and the deposited flux use bit-identical
  * branching, which is the requirement of the strict-root-found policy
  * (basis-summed F_m at v_F == 0 implies cell-summed mass conservation).
  *
- *   u_out >=  c_x         -> rho * u_out         (cold F0 supersonic)
- *  -c_x/3 <  u_out <  c_x -> rho * (3 u_out + c_x) / 4   (subsonic vacuum)
- *   u_out <= -c_x/3       -> 0                   (vacuum, no outflow)
+ * F_m branching is scheme-dependent (set below by CBE_INTEGRATOR_RP_GAUSSIAN);
+ * for the compact-support top-hat #else scheme:
+ *   u_out >=  c_x       -> rho * u_out              (cold F0 supersonic)
+ *  -c_x <  u_out <  c_x -> rho * (c_x/4)(1+u_out/c_x)^2   (warm fan)
+ *   u_out <= -c_x       -> 0                        (vacuum, no outflow)
  *
  * Cold limit c_x -> 0: F0 branch for u_out > 0, F = 0 for u_out < 0
  * (recovers cold-F0 cleanly when no stress is stored or n.S.n is zero).
@@ -953,31 +959,29 @@ double cbe_face_normal_stress_speed_from_Qrow(
 /* Per-basis face-flux scalars (SSOT): mass flux density per unit area F_m, and
  * the pressure (pstress) and intrinsic-stress (gomega) flux COEFFICIENTS, all
  * for the SELECTED flux scheme. The single compile switch CBE_INTEGRATOR_RP_GAUSSIAN
- * flips HLLC <-> exact one-sided Gaussian (kinetic) HERE, in this one place; both
+ * flips compact-support top-hat <-> exact one-sided Gaussian (kinetic) HERE, in
+ * this one place; both
  * consumers -- the v_F-normal root-find residual and the full flux solver
- * cbe_flux_hllc_vacuum -- call this, so they can never disagree on the scheme.
+ * cbe_flux_tophat_vacuum -- call this, so they can never disagree on the scheme.
  * Inputs are complete in (rho, u_out, c_x): sigma_x = c_x/sqrt(3), with
  * sigma_x^2 = n.S.n the normal central stress; u_out is the source-side outward
  * normal velocity relative to the (moving) face.
  *
- * The full flux is assembled identically for either scheme (cbe_flux_hllc_vacuum):
+ * The full flux is assembled identically for either scheme (cbe_flux_tophat_vacuum):
  *   F_mass   = F_m
  *   F_mom_k  = v_k F_m + pstress * S_n_k
  *   F_T_kl   = R_kl F_m + pstress (v_k S_n_l + v_l S_n_k) + gomega S_n_k S_n_l
- * HLLC:     F_m branched; pstress = F_m / c_x (= prefactor); gomega = 0.
+ * Top-hat:  compact-support uniform-in-v approximate solver, warm fan
+ *           -c_x < u_out < c_x; pstress and gomega both nonzero (see #else).
  * Gaussian: with xi = u_out/sigma_x, Phi = normal CDF, phi = normal PDF,
  *   F_m = rho (sigma_x phi + u_out Phi);  pstress = rho Phi;  gomega = rho phi / sigma_x.
- * F_m is monotone non-decreasing in u_out for both (HLLC slopes rho, 3rho/4, 0;
- * Gaussian slope rho*Phi in [0,rho]) -> the residual stays monotone, bisection
- * converges.
+ * F_m is monotone non-decreasing in u_out for both (top-hat warm-fan slope
+ * (rho/2)(1+u') >= 0; Gaussian slope rho*Phi in [0,rho]) -> the residual stays
+ * monotone, bisection converges.
  *
- * This is a flux-SCHEME / coefficient model, not a wrapper around legacy HLLC:
- * a new scheme (e.g. corrected-HLLC with different pstress/gomega coefficients)
- * is added as another branch here, and both consumers inherit it for free. The
- * HLLC branch is FP-EQUIVALENT to the pre-helper inline assembly, not necessarily
- * bit-identical (the coefficient algebra now lives in one place; -ffast-math may
- * reorder it). Non-chaotic problems reproduce HLLC to FP floor; a chaotic 3D
- * collapse amplifies the reorder but the physics is unchanged. */
+ * This is a flux-SCHEME / coefficient model: a new scheme (with different
+ * pstress/gomega coefficients) is added as another branch here, and both
+ * consumers inherit it for free. */
 struct CbeFaceFluxScalars { double F_m; double pstress; double gomega; };
 
 KOKKOS_INLINE_FUNCTION
@@ -997,10 +1001,32 @@ CbeFaceFluxScalars cbe_face_flux_scalars(double rho, double u_out, double c_x)
     s.pstress = rho * Phi;
     s.gomega  = rho * phi / sigma_x;
 #else
-    if(u_out >= c_x)            { s.F_m = rho * u_out;                 s.pstress = rho; }
-    else if(u_out > -c_x / 3.0) { s.F_m = 0.25*rho*(3.0*u_out + c_x);  s.pstress = 0.25*rho*(3.0*u_out/c_x + 1.0); }
-    else                        { s.F_m = 0.0;                         s.pstress = 0.0; }
-    s.gomega = 0.0;
+    /* Compact-support "top hat" (uniform-in-v) one-sided kinetic flux: the
+     * approximate solver derived from a constant-density velocity DF with the
+     * same (rho, <v>, S), exact for the 1D collisionless Riemann problem. The
+     * edge of support is c_x = sqrt(3) sigma_x, so the warm fan spans
+     * -c_x < u_out < c_x (participation boundary -c_x). With u' = u_out/c_x:
+     *   w'     = (c_x/4)(1+u')^2                 -> F_m     = rho w'
+     *   zeta'  = ((2-u')/4)(1+u')^2              -> pstress = rho zeta'
+     *   omega' = (sqrt(3)/8)(1-u'^2)^2           -> gomega  = rho omega'/sigma_x
+     *                                                       = (3/8) rho (1-u'^2)^2 / c_x
+     * Matches the exact Gaussian in pressure at u_out=0 (zeta=1/2) and to ~8% in
+     * mass flux; the conduction term is ~2x smaller at its peak and truncates
+     * exactly to 0 for |u_out| >= c_x, in contrast to the Gaussian's slow tail. */
+    if(c_x <= MIN_REAL_NUMBER) {                       /* cold / zero-stress: F0 free-stream */
+        s.F_m = (u_out > 0.0) ? rho * u_out : 0.0; s.pstress = 0.0; s.gomega = 0.0;
+        return s;
+    }
+    if(u_out >= c_x)      { s.F_m = rho * u_out; s.pstress = rho; s.gomega = 0.0; }   /* cold F0 */
+    else if(u_out > -c_x) {                            /* warm fan */
+        const double up   = u_out / c_x;
+        const double onep = 1.0 + up;
+        const double omu2 = 1.0 - up*up;
+        s.F_m     = 0.25  * rho * c_x * onep * onep;
+        s.pstress = 0.25  * rho * (2.0 - up) * onep * onep;
+        s.gomega  = 0.375 * rho * (omu2 * omu2) / c_x;
+    }
+    else                  { s.F_m = 0.0; s.pstress = 0.0; s.gomega = 0.0; }           /* vacuum */
 #endif
     return s;
 }
@@ -1008,9 +1034,10 @@ CbeFaceFluxScalars cbe_face_flux_scalars(double rho, double u_out, double c_x)
 
 /* --------------------------------------------------------------------------
  * Per-face root-found face-normal velocity v_F_n (Wave-CBE Commit 3,
- * 2026-05-25; HLLC update Wave-CBE Commit 9, 2026-05-30). Returns net
- * per-unit-area face mass flux at trial v_F_n, summing the HLLC vacuum
- * mass-flux contribution from every basis on both sides.
+ * 2026-05-25; vacuum-flux update Wave-CBE Commit 9, 2026-05-30). Returns net
+ * per-unit-area face mass flux at trial v_F_n, summing the one-sided vacuum
+ * mass-flux contribution (scheme per cbe_face_flux_scalars) from every basis
+ * on both sides.
  *
  * Sign convention matches the deposited flux (Wave-CBE Commit 8): i-side
  * basis outflow (u_out_i = v_alpha_n_i - v_F_n) carries mass in +A_hat,
@@ -1211,7 +1238,7 @@ void cbe_absolute_to_relative_row(
  *                [7]/[8]/[9]=off-diag holds).
  *
  * "Flux-frame" = physical-frame momentum baked in (v_phys = Vel/cf_atime
- * folded into the [1..3] slots so cbe_flux_hllc_vacuum's u_out matches
+ * folded into the [1..3] slots so cbe_flux_tophat_vacuum's u_out matches
  * v_phys directly). NOT a generic U/V conversion. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_flux_frame_Q_from_stored_moments(
@@ -1600,7 +1627,7 @@ bool cbe_basis_row_project_central_stress_to_PSD(
 /* Density-only face-Q clamp + counter (codex 2026-05-25 #6 + #5). For each
  * basis with Q_face[m][0] <= MIN_REAL_NUMBER, zero the ENTIRE basis row.
  * Rationale: leaving nonzero momentum/stress at zero density would crash
- * cbe_flux_hllc_vacuum's inv_rho = 1/moments[0] divide. Zeroing the row
+ * cbe_flux_tophat_vacuum's inv_rho = 1/moments[0] divide. Zeroing the row
  * marks the basis inactive at this face -- the downstream cbe_face_K_and_vn
  * helper gives it K=0, v_n=0 so it contributes nothing to the residual or
  * the flux loop.
@@ -1716,7 +1743,7 @@ void cbe_face_K_and_vn_from_Q(
      * MIN_REAL_NUMBER post cbe_clamp_face_Q) zero all three outputs so
      * downstream consumers naturally skip them. c_x is computed via the
      * SSOT helper cbe_face_normal_stress_speed_from_Qrow so the wave-speed
-     * definition matches what cbe_flux_hllc_vacuum and the residual use. */
+     * definition matches what cbe_flux_tophat_vacuum and the residual use. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface[m][0] > MIN_REAL_NUMBER) {
             double v_basis[3]; cbe_basis_v_load_3(Qface[m], v_basis);
@@ -1761,13 +1788,14 @@ void cbe_face_K_and_vn_from_Q(
  * physical wave speed. Caller uses this for CFL and wakeup criteria.
  *
  * BRANCHING: with u_out = (<v> - vface) · n_out and
- * c_x = sqrt(gamma_e * n_out · S · n_out), gamma_e = 3,
- *     u_out >= c_x         -> F0 (cold supersonic outflow)
- *     -c_x/3 < u_out < c_x -> F1 (subsonic vacuum, warm)
- *     u_out <= -c_x/3      -> 0  (no outgoing flux from this basis)
- * F1 prefactor (rho/4)(3 u_out/c_x + 1) goes continuously to F0 at u_out=c_x
- * and to 0 at u_out=-c_x/3. Cold limit S->0: c_x->0, F1 collapses, F0
- * recovers exactly.
+ * c_x = sqrt(gamma_e * n_out · S · n_out), gamma_e = 3. The per-basis flux
+ * coefficients (F_m, pstress, gomega) come from cbe_face_flux_scalars, which
+ * selects the scheme via CBE_INTEGRATOR_RP_GAUSSIAN (exact one-sided Gaussian)
+ * vs the compact-support top-hat (#else). Top-hat fan:
+ *     u_out >= c_x       -> F0 (cold supersonic outflow)
+ *     -c_x < u_out < c_x -> warm fan (continuous into F0 at +c_x, into 0 at -c_x)
+ *     u_out <= -c_x      -> 0  (no outgoing flux from this basis)
+ * Cold limit S->0: c_x->0, warm fan collapses, F0 recovers exactly.
  *
  * DEFENSIVE GUARD: if rho is non-positive or non-finite or A_norm_sq <= 0
  * the function zeros the flux and returns 0. Device-safe (no endrun);
@@ -1775,12 +1803,17 @@ void cbe_face_K_and_vn_from_Q(
 
 /* Signal-speed prefactor on the normal velocity dispersion in the CBE timestep
  * estimate: vsig = |u_out| + CBE_SIGNAL_SIGMA_PREFAC * sigma_x, with
- * sigma_x = c_x/sqrt(3) = sqrt(n.S.n). Method constant from the timestep survey
- * (was sqrt(3)); hardens the CBE timestep, may relax toward 3 after broader
- * tests. This affects ONLY the returned vsig estimate, not the flux physics. */
-static const double CBE_SIGNAL_SIGMA_PREFAC = 5.0;
+ * sigma_x = c_x/sqrt(3) = sqrt(n.S.n). Scheme-dependent: the top-hat has a
+ * compact support with exact maximum signal speed |u_out| + c_x, i.e. prefactor
+ * sqrt(3); the Gaussian tail is formally unbounded and uses a safety factor 3
+ * (>= sqrt3). This affects ONLY the returned vsig estimate, not the flux physics. */
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
+static const double CBE_SIGNAL_SIGMA_PREFAC = 3.0;                  /* Gaussian: safety factor */
+#else
+static const double CBE_SIGNAL_SIGMA_PREFAC = 1.7320508075688772;  /* top-hat: exact |u|+c_x (sqrt3) */
+#endif
 KOKKOS_INLINE_FUNCTION
-double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
+double cbe_flux_tophat_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
                             const double vface[3],
                             const double Area_outward[3],
                             double fluxes[CBE_INTEGRATOR_NMOMENTS])
@@ -1843,7 +1876,7 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
     fluxes[0] = F_m_per_area * A_norm;
 
     /* Pressure (pstress) and intrinsic-stress (gomega) flux coefficients from
-     * the same helper. HLLC: pstress = F_m/c_x branch-prefactor, gomega = 0.
+     * the same helper. Top-hat: pstress = rho*zeta', gomega = rho*omega'/sigma_x.
      * Gaussian: pstress = rho*Phi, gomega = rho*phi/sigma_x (the S_n⊗S_n term). */
     const double pstress_coef = fs.pstress;
     const double gomega_coef  = fs.gomega;
@@ -2809,9 +2842,8 @@ static void do_cbe_postgravity_kernel(struct particle_data& pi)
      * pi.GravAccel — routing CBE bulk velocity through the gravity kick —
      * and (b) converted dt-accumulator's per-basis dp_abs/dT_abs to relative
      * frame using a continuous-time differential formula. Both were
-     * structural bugs: (a) double-counted CBE bulk velocity (see the
-     * 2026-06-04 SPIKE A/B), and (b) lacked the O(dt²) finite-step terms
-     * needed for V-changing-during-step accuracy.
+     * structural bugs: (a) double-counted CBE bulk velocity, and (b) lacked
+     * the O(dt²) finite-step terms needed for V-changing-during-step accuracy.
      *
      * The new design moves the frame conversion into a finite absolute
      * round-trip inside do_cbe_drift_kick_kernel (see SSOT helpers

@@ -996,7 +996,7 @@ void do_cbe_initialization(void);
 void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_gravkick_pm);
 void cbe_particle_moment_accel(int i, double a_out[3]); /* strongest-basis dv/dt for the accel timestep */
 void cbe_sync_pred_to_conserved(int i);
-/* cbe_flux_hllc_vacuum, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel,
+/* cbe_flux_tophat_vacuum, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel,
    do_cbe_predict_drift_kernel live in sidm/cbe_integrator_functions.h
    (KOKKOS_INLINE_FUNCTION). The host entry points are
    cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu

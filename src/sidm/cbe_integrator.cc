@@ -209,7 +209,13 @@ void do_cbe_initialization(void)
         for(j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             for(k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
                 for(int d = 0; d < 3; d++) {
-                    P[i].Gradients_CBE_basis_moments[j][k][d] = 0;
+                    P[i].Gradients_CBE_basis_moments[j][k][d]      = 0;
+                    /* Stale (prev-step) gradient used by the density-continuity
+                     * matching cost: must be zero before the first force pass.
+                     * The pass-0 snapshot in CBEGrad_gradient_calc only covers
+                     * local actives, so without this a neighbor/ghost read on
+                     * step 0 sees uninitialized memory. */
+                    P[i].Gradients_CBE_basis_moments_prev[j][k][d] = 0;
                 }
             }
         }
@@ -344,9 +350,9 @@ void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_
 
 /* Strongest-basis CBE moment acceleration a_b = (dp_b/dt - v_b dm_b/dt)/m_eff,
  * for the accel timestep criterion. v_b uses the real basis mass; the
- * acceleration denominator uses the softened mass m_eff = m_b +
- * CBE_TIMESTEP_MASS_FLOOR_FRAC*m_cell, so the maintained numerical trace mass of
- * empty free-slots (m_b ~ 1e-8 m_cell) does not produce a spurious huge accel.
+ * acceleration denominator uses the softened mass m_eff = max(m_b,
+ * All.CBEMassEffFloor*m_cell), so the maintained numerical trace mass of empty
+ * free-slots (m_b ~ 1e-8 m_cell) does not produce a spurious huge accel.
  * Returns the max-magnitude basis acceleration (3-vector). */
 void cbe_particle_moment_accel(int i, double a_out[3])
 {
@@ -356,7 +362,9 @@ void cbe_particle_moment_accel(int i, double a_out[3])
         const double m_b = P[i].CBE_basis_moments[b][0];
         if(!(m_b > 0)) continue;
         const double inv_m = 1.0 / m_b, dm = P[i].CBE_basis_moments_dt[b][0];
-        const double inv_meff = 1.0 / (m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC * P[i].Mass);
+        /* m_eff = max(m_b, CBEMassEffFloor*m_cell) so empty/placeholder bases (tiny m_b)
+         * don't produce a spurious huge moment-acceleration in the timestep criterion. */
+        const double inv_meff = 1.0 / DMAX(m_b, All.CBEMassEffFloor * P[i].Mass);
         double a_b[3] = {0,0,0}, a2 = 0;
         for(int k = 0; k < NUMDIMS; k++) {
             const double v_k  = cbe_basis_p_r(P[i].CBE_basis_moments[b], k) * inv_m;   /* real basis velocity */

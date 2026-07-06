@@ -340,7 +340,8 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
  * (Phil 2026-06-06): one phi per slot per basis, NOT a single row-scalar.
  * ---------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
-static double cbe_bj_phi_pair_scaled(double dQ, double predicted, double scale)
+static double cbe_bj_phi_pair_scaled(double dQ, double predicted, double scale,
+                                     double oppsign_tol = 0.0)
 {
     if(!isfinite(dQ) || !isfinite(predicted) || !isfinite(scale)) return 0.0;
     const double tol = fabs(scale) * 1e-14 + MIN_REAL_NUMBER;
@@ -350,7 +351,14 @@ static double cbe_bj_phi_pair_scaled(double dQ, double predicted, double scale)
     if(fabs(dQ) <= tol) return 0.0;
     const double ratio = dQ / predicted;
     if(!isfinite(ratio)) return 0.0;
-    if(ratio < 0.0) return 0.0;
+    if(ratio < 0.0) {
+        /* Finite opposite-sign tolerance — a sign flip whose reconstructed jump
+         * |predicted| is small vs the local scale is safe to ignore (velocity:
+         * modest overshoot is physical). oppsign_tol=0 → hard clamp; ρ/S callers
+         * pass 0 so are unchanged, the v caller passes CBE_VOPPSIGN. */
+        if(oppsign_tol > 0.0 && fabs(predicted) < oppsign_tol * fabs(scale)) return 1.0;
+        return 0.0;
+    }
     if(ratio > 1.0) return 1.0;
     return ratio;
 }
@@ -581,7 +589,8 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
             const double scale_v_k =
                 DMAX(DMAX(fabs(prim_i[m][k]), fabs(prim_j[n][k])), R_scale);
             const double dprim = prim_j[n][k] - prim_i[m][k];
-            double phi_v = cbe_bj_phi_pair_scaled(dprim, g_row[k], scale_v_k);
+            /* v-slope BJ limiter with finite opposite-sign tolerance CBE_VOPPSIGN. */
+            double phi_v = cbe_bj_phi_pair_scaled(dprim, g_row[k], scale_v_k, CBE_VOPPSIGN);
             if(phi_v < 0) phi_v = 0;
             if(phi_v > 1) phi_v = 1;
             if(phi_v < accum.phi[m][k]) accum.phi[m][k] = phi_v;

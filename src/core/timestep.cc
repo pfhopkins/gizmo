@@ -537,14 +537,17 @@ integertime get_timestep(int p,		/*!< particle index */
         if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
         if(need_cbe_agscfl)
         {   /* CBE mass-depletion criterion: cap the per-basis fractional mass change per step.
-             * Surgical -- only near-empty fast-stream bases (large |dm/dt| relative to m_b) bind.
-             * Softened mass m_eff (same floor as cbe_particle_moment_accel) limits depletion of
-             * dynamically meaningful basis mass, not the trace mass of empty free-slots. */
+             * m_eff-floor: regularize the softened basis mass as m_eff = max(m_b,
+             * CBEMassEffFloor*m_cell), so a near-empty placeholder/free-slot basis
+             * (m_b ~ eps*m_cell) receiving a cell-scale flux cannot force an absurdly small step,
+             * while an occupied basis (m_b > f_floor*m_cell) still constrains smoothly as it gains
+             * mass. Continuous (max, not a hard gate) -> no threshold chatter. Timestep-only (does
+             * NOT touch the flux/update). */
             for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++)
             {
                 const double m_b = P[p].CBE_basis_moments[b][0];
                 if(!(m_b > 0)) continue;
-                const double m_eff = m_b + CBE_TIMESTEP_MASS_FLOOR_FRAC * P[p].Mass;
+                const double m_eff = DMAX(m_b, All.CBEMassEffFloor * P[p].Mass);
                 const double rate_m = DMAX(fabs(P[p].CBE_basis_out_rate_dt[b][0]), fabs(P[p].CBE_basis_moments_dt[b][0]));
                 if(rate_m > MIN_REAL_NUMBER) {double dt_m = 0.1 * m_eff / rate_m; if(dt_m < dt) {dt = dt_m;}}
             }

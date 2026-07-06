@@ -228,6 +228,9 @@ struct global_data_all_processes
 				   of all particles, and limits the timestep such that the rms displacement is a fraction of the mean particle separation (determined from the particle mass and the cosmological parameters). This parameter specifies this fraction. */
   int MaxMemSize;
   double CourantFac;		/*!< Courant factor */
+#ifdef CBE_INTEGRATOR
+  double CBEMassEffFloor;	/*!< CBE timestep m_eff floor fraction: m_eff = max(m_b, CBEMassEffFloor*m_cell) in the per-basis mass-depletion + moment-accel timestep criteria, so near-empty placeholder/free-slot bases cannot force an absurdly small step. Timestep-only (does not touch flux/update). Default 0.1. */
+#endif
 
   /* frequency of tree reconstruction/domain decomposition */
   double TreeDomainUpdateFrequency;	/*!< controls frequency of domain decompositions  */
