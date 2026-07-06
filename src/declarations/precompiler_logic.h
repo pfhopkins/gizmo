@@ -156,7 +156,7 @@
 #define CBE_INTEGRATOR_DOES_TYPE(t) (((1<<(t)) & (CBE_INTEGRATOR_PARTICLETYPES)) != 0)
 /* CBE + self-gravity: default the active type to adaptive softening (skip if SELFGRAVITY_OFF). */
 #if !defined(ADAPTIVE_GRAVSOFT_FORALL) && !defined(SELFGRAVITY_OFF)
-#define ADAPTIVE_GRAVSOFT_FORALL 2
+#define ADAPTIVE_GRAVSOFT_FORALL CBE_INTEGRATOR_PARTICLETYPES /* for self-gravity, gravsoft should be adaptive and match the same types */
 #endif
 #ifdef CBE_INTEGRATOR_SECONDMOMENT
 #if (BOX_SPATIAL_DIMENSION==1) || defined(ONEDIM)
