@@ -508,6 +508,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         MyFloat opt_luminosity = 0;
 #endif
+#ifdef TREE_RAY_PI
+        MyFloat ion_luminosity = 0, neutral_h_mass = 0;
+#ifdef TREERAY_PI_HE
+        MyFloat hei_mass = 0, heii_mass = 0;
+#endif
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         cr_injection = 0;
@@ -604,6 +610,14 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                         opt_luminosity += Nodes[p].opt_luminosity;
+#endif
+#ifdef TREE_RAY_PI
+                        ion_luminosity += Nodes[p].ion_luminosity;
+                        neutral_h_mass += Nodes[p].neutral_h_mass;
+#ifdef TREERAY_PI_HE
+                        hei_mass += Nodes[p].hei_mass;
+                        heii_mass += Nodes[p].heii_mass;
+#endif
 #endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -712,7 +726,26 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                         opt_luminosity += P[p].OPT_luminosity;
 #endif
+#ifdef TREE_RAY_PI
+                        ion_luminosity += P[p].Ion_luminosity;
+#endif
                     }
+#ifdef TREE_RAY_PI
+                    if(pa->Type == 0) {
+                        /* PI-band absorber masses from the non-eq abundances (per-H-nucleus
+                         * convention: n_X/n_H = TracAbund[..]; mass_X = A_X * x_X * X_H * m).
+                         * Neutral He = total He (from 1-X-Z) minus He+ and He++. */
+                        double m_h_x = HYDROGEN_MASSFRAC * pa->Mass;
+                        neutral_h_mass += (1.0 - CellP[p].TracAbund[IHP]) * m_h_x;
+#ifdef TREERAY_PI_HE
+                        {double m_heii = 4.0 * CellP[p].TracAbund[IHEP]  * m_h_x;
+                         double m_heiii= 4.0 * CellP[p].TracAbund[IHEPP] * m_h_x;
+                         double m_he_tot = (1.0 - HYDROGEN_MASSFRAC - P[p].Metallicity[0]) * pa->Mass;
+                         heii_mass += m_heii;
+                         hei_mass  += DMAX(0.0, m_he_tot - m_heii - m_heiii);}
+#endif
+                    }
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection += cr_get_source_injection_rate(p);
@@ -920,6 +953,14 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         Nodes[no].opt_luminosity = opt_luminosity;
 #endif
+#ifdef TREE_RAY_PI
+        Nodes[no].ion_luminosity = ion_luminosity;
+        Nodes[no].neutral_h_mass = neutral_h_mass;
+#ifdef TREERAY_PI_HE
+        Nodes[no].hei_mass = hei_mass;
+        Nodes[no].heii_mass = heii_mass;
+#endif
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[no].cr_injection = cr_injection;
@@ -1074,6 +1115,14 @@ void force_exchange_pseudodata(void)
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         MyFloat opt_luminosity;
 #endif
+#ifdef TREE_RAY_PI
+        MyFloat ion_luminosity, neutral_h_mass;
+#ifdef TREERAY_PI_HE
+        MyFloat hei_mass, heii_mass;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
@@ -1161,6 +1210,16 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             DomainMoment[i].opt_luminosity = Nodes[no].opt_luminosity;
+#endif
+#ifdef TREE_RAY_PI
+            DomainMoment[i].ion_luminosity = Nodes[no].ion_luminosity;
+            DomainMoment[i].neutral_h_mass = Nodes[no].neutral_h_mass;
+#ifdef TREERAY_PI_HE
+            DomainMoment[i].hei_mass = Nodes[no].hei_mass;
+            DomainMoment[i].heii_mass = Nodes[no].heii_mass;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1282,6 +1341,16 @@ void force_exchange_pseudodata(void)
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                     Nodes[no].opt_luminosity = DomainMoment[i].opt_luminosity;
 #endif
+#ifdef TREE_RAY_PI
+                    Nodes[no].ion_luminosity = DomainMoment[i].ion_luminosity;
+                    Nodes[no].neutral_h_mass = DomainMoment[i].neutral_h_mass;
+#ifdef TREERAY_PI_HE
+                    Nodes[no].hei_mass = DomainMoment[i].hei_mass;
+                    Nodes[no].heii_mass = DomainMoment[i].heii_mass;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
 #ifdef CHIMES_STELLAR_FLUXES
@@ -1374,6 +1443,14 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat opt_luminosity_tp=0;
+#endif
+#ifdef TREE_RAY_PI
+    MyFloat ion_luminosity_tp=0, neutral_h_mass_tp=0;
+#ifdef TREERAY_PI_HE
+    MyFloat hei_mass_tp=0, heii_mass_tp=0;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1471,6 +1548,16 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             opt_luminosity_tp += Nodes[p].opt_luminosity;
+#endif
+#ifdef TREE_RAY_PI
+            ion_luminosity_tp += Nodes[p].ion_luminosity;
+            neutral_h_mass_tp += Nodes[p].neutral_h_mass;
+#ifdef TREERAY_PI_HE
+            hei_mass_tp += Nodes[p].hei_mass;
+            heii_mass_tp += Nodes[p].heii_mass;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1645,6 +1732,16 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     Nodes[no].opt_luminosity = opt_luminosity_tp;
+#endif
+#ifdef TREE_RAY_PI
+    Nodes[no].ion_luminosity = ion_luminosity_tp;
+    Nodes[no].neutral_h_mass = neutral_h_mass_tp;
+#ifdef TREERAY_PI_HE
+    Nodes[no].hei_mass = hei_mass_tp;
+    Nodes[no].heii_mass = heii_mass_tp;
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1856,6 +1953,37 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     double treecol_OPT_flux[NPIX] = {0};
+#endif
+#ifdef TREE_RAY
+    /* TreeRay onion shells (Wunsch+21 style, in-walk; 2026-07-07): per (pixel x
+     * log-radial shell), sources deposit UNattenuated flux L/r^2 at exact
+     * lum-centroid distance (only the attenuation ORDERING is binned, not the
+     * dilution), absorbers deposit the same Sigma = m/area column contribution
+     * as treecol. Post-walk sweep in gravtree.cc attenuates shell-by-shell.
+     * Shells: log-spaced, dynamic range 10^3 below ShieldingLength; r>SL clamps
+     * to the outermost shell (attenuated by the full column); r<SL/1000 to the
+     * innermost (effectively unattenuated). */
+    double treeray_shell_uv[NPIX*TREE_RAY_NSHELL] = {0}, treeray_shell_lw[NPIX*TREE_RAY_NSHELL] = {0};
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    double treeray_shell_nuv[NPIX*TREE_RAY_NSHELL] = {0};
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    double treeray_shell_opt[NPIX*TREE_RAY_NSHELL] = {0};
+#endif
+    double treeray_shell_col[NPIX*TREE_RAY_NSHELL] = {0};
+#ifdef TREE_RAY_PI
+    double treeray_shell_ion[N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL] = {0};
+    double treeray_shell_nh[NPIX*TREE_RAY_NSHELL] = {0};
+    double ion_lum = 0, nh_m = 0;
+#ifdef TREERAY_PI_HE
+    double treeray_shell_hei[NPIX*TREE_RAY_NSHELL] = {0}, treeray_shell_heii[NPIX*TREE_RAY_NSHELL] = {0};
+    double hei_m = 0, heii_m = 0;
+#endif
+#endif
+    double treeray_sl_com = All.ShieldingLength / All.cf_atime;   /* shell grid anchor (comoving) */
+    double treeray_shell_fac = (double)TREE_RAY_NSHELL / 3.0;     /* shells per dex (range = 3 dex) */
+#define TREERAY_SHELL_OF(r2q) ( ((r2q) <= 0) ? 0 : (int)DMAX(0, DMIN(TREE_RAY_NSHELL-1, \
+        TREE_RAY_NSHELL-1 + (int)floor(0.5*log10((r2q)/(treeray_sl_com*treeray_sl_com)) * treeray_shell_fac) )) )
 #endif
     double uv_lum = 0, lw_lum = 0;
     double g0_flux_dx = 0, g0_flux_dy = 0, g0_flux_dz = 0, g0_flux_r2 = 0; /* luminosity-centroid separation for node flux */
@@ -2117,6 +2245,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 uv_lum = 0; lw_lum = 0;
                 if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;
                     g0_flux_dx = dx; g0_flux_dy = dy; g0_flux_dz = dz; g0_flux_r2 = r2;}
+#ifdef TREE_RAY_PI
+                ion_lum = 0; nh_m = 0;
+                if(P[no].Type == 4 || P[no].Type == 5) {ion_lum = P[no].Ion_luminosity;}
+                if(P[no].Type == 0) {
+                    double m_h_x_w = HYDROGEN_MASSFRAC * P[no].Mass;
+                    nh_m = (1.0 - CellP[no].TracAbund[IHP]) * m_h_x_w;
+#ifdef TREERAY_PI_HE
+                    {double m2 = 4.0*CellP[no].TracAbund[IHEP]*m_h_x_w, m3 = 4.0*CellP[no].TracAbund[IHEPP]*m_h_x_w;
+                     double mtot = (1.0 - HYDROGEN_MASSFRAC - P[no].Metallicity[0]) * P[no].Mass;
+                     heii_m = m2; hei_m = DMAX(0.0, mtot - m2 - m3);}
+#endif
+                }
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 nuv_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {nuv_lum = P[no].NUV_luminosity;}
 #endif
@@ -2438,6 +2579,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = nop->uv_luminosity;
                 lw_lum = nop->lw_luminosity;
+#ifdef TREE_RAY_PI
+                ion_lum = nop->ion_luminosity;
+                nh_m = nop->neutral_h_mass;
+#ifdef TREERAY_PI_HE
+                hei_m = nop->hei_mass; heii_m = nop->heii_mass;
+#endif
+#endif
                 /* flux geometry: evaluate 1/r^2 and the HEALPix direction at the node's
                  * LUMINOSITY centroid, not the mass COM. A gas-dominated node's mass center
                  * can sit tens of pc from its stars: measured 0.67x flux deficit at 113 pc
@@ -2831,6 +2979,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     treecol_ProjectionH2[iheal] += h2mass / area;
                     treecol_ProjectionCO[iheal] += comass / area;
 #endif
+#ifdef TREE_RAY
+                    /* absorber deposit: same Sigma contribution, binned by COM distance */
+                    {int is_col = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(r2);
+                     treeray_shell_col[is_col] += gasmass / area;
+#ifdef TREE_RAY_PI
+                     treeray_shell_nh[is_col] += nh_m / area;
+#ifdef TREERAY_PI_HE
+                     treeray_shell_hei[is_col]  += hei_m / area;
+                     treeray_shell_heii[is_col] += heii_m / area;
+#endif
+#endif
+                    }
+#endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
@@ -2846,6 +3007,29 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     double vec_hp[3] = {g0_flux_dx, g0_flux_dy, g0_flux_dz};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
                     double inv_r2 = 1.0 / g0_flux_r2;
+#ifdef TREE_RAY
+                    /* source deposit: exact 1/r^2 dilution at lum-centroid distance;
+                     * only the attenuation ordering is shell-binned. Direct (unattenuated)
+                     * treecol_*_flux arrays stay zero under TREE_RAY — the post-walk
+                     * sweep in gravtree.cc writes the attenuated CellP fluxes. */
+                    {int is_tr = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(g0_flux_r2);
+                     treeray_shell_uv[is_tr] += uv_lum * inv_r2;
+                     treeray_shell_lw[is_tr] += lw_lum * inv_r2;
+#ifdef TREE_RAY_PI
+                     /* ion band(s): split the total by the global blackbody fractions.
+                      * NOTE an ionizing star always has FUV>0, so riding the uv/lw
+                      * deposit gate + lum-centroid geometry is safe (no ion-only nodes). */
+                     {int b_tr; for(b_tr=0;b_tr<N_TRPI_BANDS;b_tr++) {
+                         treeray_shell_ion[(b_tr*NPIX + iheal)*TREE_RAY_NSHELL + (is_tr % TREE_RAY_NSHELL)] += ion_lum * TRPI_lumfrac[b_tr] * inv_r2;}}
+#endif
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                     treeray_shell_nuv[is_tr] += nuv_lum * inv_r2;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                     treeray_shell_opt[is_tr] += opt_lum * inv_r2;
+#endif
+                    }
+#else
                     treecol_UV_flux[iheal] += uv_lum * inv_r2;
                     treecol_LW_flux[iheal] += lw_lum * inv_r2;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
@@ -2854,6 +3038,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                     treecol_OPT_flux[iheal] += opt_lum * inv_r2;
 #endif
+#endif /* TREE_RAY */
                 }
 #endif
 #endif
@@ -3034,6 +3219,29 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             CellP[target].OPT_flux[kp] = treecol_OPT_flux[kp];
 #endif
         }}
+#ifdef TREE_RAY
+        if(P[target].Type == 0) {int ks; for(ks=0; ks<NPIX*TREE_RAY_NSHELL; ks++) {
+            CellP[target].TreeRay_ShellUV[ks] = treeray_shell_uv[ks];
+            CellP[target].TreeRay_ShellLW[ks] = treeray_shell_lw[ks];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            CellP[target].TreeRay_ShellNUV[ks] = treeray_shell_nuv[ks];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            CellP[target].TreeRay_ShellOPT[ks] = treeray_shell_opt[ks];
+#endif
+            CellP[target].TreeRay_ShellCol[ks] = treeray_shell_col[ks];
+        }}
+#ifdef TREE_RAY_PI
+        if(P[target].Type == 0) {int ks2;
+            for(ks2=0; ks2<N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL; ks2++) {CellP[target].TreeRay_ShellIon[ks2] = treeray_shell_ion[ks2];}
+            for(ks2=0; ks2<NPIX*TREE_RAY_NSHELL; ks2++) {CellP[target].TreeRay_ShellNH[ks2] = treeray_shell_nh[ks2];
+#ifdef TREERAY_PI_HE
+                CellP[target].TreeRay_ShellHeI[ks2] = treeray_shell_hei[ks2];
+                CellP[target].TreeRay_ShellHeII[ks2] = treeray_shell_heii[ks2];
+#endif
+            }}
+#endif
+#endif
 #endif
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -3135,6 +3343,29 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             GravDataResult[target].OPT_flux[kp] = treecol_OPT_flux[kp];
 #endif
         }}
+#ifdef TREE_RAY
+        {int ks; for(ks=0; ks<NPIX*TREE_RAY_NSHELL; ks++) {
+            GravDataResult[target].TreeRay_ShellUV[ks] = treeray_shell_uv[ks];
+            GravDataResult[target].TreeRay_ShellLW[ks] = treeray_shell_lw[ks];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            GravDataResult[target].TreeRay_ShellNUV[ks] = treeray_shell_nuv[ks];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            GravDataResult[target].TreeRay_ShellOPT[ks] = treeray_shell_opt[ks];
+#endif
+            GravDataResult[target].TreeRay_ShellCol[ks] = treeray_shell_col[ks];
+        }}
+#ifdef TREE_RAY_PI
+        {int ks2;
+            for(ks2=0; ks2<N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL; ks2++) {GravDataResult[target].TreeRay_ShellIon[ks2] = treeray_shell_ion[ks2];}
+            for(ks2=0; ks2<NPIX*TREE_RAY_NSHELL; ks2++) {GravDataResult[target].TreeRay_ShellNH[ks2] = treeray_shell_nh[ks2];
+#ifdef TREERAY_PI_HE
+                GravDataResult[target].TreeRay_ShellHeI[ks2] = treeray_shell_hei[ks2];
+                GravDataResult[target].TreeRay_ShellHeII[ks2] = treeray_shell_heii[ks2];
+#endif
+            }}
+#endif
+#endif
 #endif
 #endif
 #ifdef RT_OTVET

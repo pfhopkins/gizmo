@@ -1431,3 +1431,45 @@
 #if defined(TREE_RAD) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE)
 #error "TREE_RAD requires GALSF_RESOLVEDISM_G0_VARIABLE in Stella (treecol shielding pairs with the variable ISRF)"
 #endif
+
+/* ---- TREE_RAY: reverse-ray progressive dust attenuation IN the gravity walk ----
+ * (Wunsch+2021 TreeRay onion shells; Stella third radiation branch, 2026-07-07.)
+ * Per (HEALPix pixel x log-radial shell): sources deposit L/4pi r^2 at the
+ * luminosity-centroid geometry, absorbers deposit gas mass at COM geometry; a
+ * post-walk prefix sweep attenuates shell-by-shell -> attenuated UV/LW/NUV/OPT.
+ * HIERARCHY, not exclusivity: requires G0_VARIABLE (which auto-enables TREE_RAD);
+ * TREE_RAD_H2/CO stay untouched — H2/CO LINE self-shielding remains target-side
+ * in chemistry, applied ONCE (curve-of-growth, not exponential; see the
+ * h2-double-shield fix 2026-07-07). TreeRay takes over ONLY the stellar-band dust
+ * continuum (calc_photo f_dust -> 1 for point sources under TREE_RAY; isotropic
+ * background keeps target-side pixel-column attenuation). Future extension (do
+ * NOT bolt on casually): per-source H2 line shielding from binned H2 shells —
+ * requires splitting stellar-vs-background fshield in rate_eq. */
+#ifdef TREE_RAY
+#if defined(RADTRANSFER)
+#error "TREE_RAY and RADTRANSFER (M1) are mutually exclusive radiation transport schemes"
+#endif
+#if !defined(GALSF_RESOLVEDISM_G0_VARIABLE)
+#error "TREE_RAY requires GALSF_RESOLVEDISM_G0_VARIABLE (it attenuates the per-pixel stellar FUV field)"
+#endif
+#ifndef TREE_RAY_NSHELL
+#define TREE_RAY_NSHELL 12   /*! log-radial shells per pixel for the attenuation sweep */
+#endif
+#endif /* TREE_RAY */
+#if defined(TREE_RAY_PI) && !defined(TREE_RAY)
+#error "TREE_RAY_PI requires TREE_RAY"
+#endif
+#ifdef TREE_RAY_PI
+#if (CHEMISTRYNETWORK == 17)
+/* net-17 tracks He/He+/He++: carry the full M1-multifreq band structure
+ * ({13.6,24.6,54.4,70} eV edges, blackbody-weighted sigmas at Teff=4e4 K)
+ * so TreeRay-PI reproduces the validated nested He/H fronts. */
+#define TREERAY_PI_HE
+#define N_TRPI_BANDS 4
+#else
+#define N_TRPI_BANDS 1
+#endif
+#endif
+#if defined(TREE_RAY_IR) && !defined(TREE_RAY)
+#error "TREE_RAY_IR requires TREE_RAY"
+#endif

@@ -126,6 +126,16 @@ extern int ChimesInitIonState;
 extern int Chimes_incl_full_output;
 extern int N_chimes_full_output_freq;
 #endif // CHIMES
+#ifdef TREE_RAY_PI
+/* TreeRay-PI band constants (blackbody-weighted at Teff=4e4 K, mirroring the M1
+ * rt_chem.cc init exactly): per-band species cross sections [cm^2], effective
+ * photon energy [eV], and stellar luminosity fraction. Filled once by
+ * treeray_pi_init_bands() (called at gravity_tree entry, before any consumer). */
+extern double TRPI_sigma_HI[N_TRPI_BANDS], TRPI_sigma_HeI[N_TRPI_BANDS], TRPI_sigma_HeII[N_TRPI_BANDS];
+extern double TRPI_Eev[N_TRPI_BANDS], TRPI_lumfrac[N_TRPI_BANDS];
+extern int TRPI_bands_ready;
+void treeray_pi_init_bands(void);
+#endif
 #ifdef CHIMES_METAL_DEPLETION
 #define DEPL_N_ELEM 17
 struct Chimes_depletion_data_structure
@@ -1189,6 +1199,25 @@ extern struct gravdata_out
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyDouble OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
 #endif
+#ifdef TREE_RAY
+    MyFloat TreeRay_ShellUV[NPIX*TREE_RAY_NSHELL];   /*!< TreeRay: unattenuated per-(pixel,shell) source flux */
+    MyFloat TreeRay_ShellLW[NPIX*TREE_RAY_NSHELL];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    MyFloat TreeRay_ShellNUV[NPIX*TREE_RAY_NSHELL];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    MyFloat TreeRay_ShellOPT[NPIX*TREE_RAY_NSHELL];
+#endif
+    MyFloat TreeRay_ShellCol[NPIX*TREE_RAY_NSHELL];  /*!< TreeRay: per-(pixel,shell) gas column contribution Sigma */
+#ifdef TREE_RAY_PI
+    MyFloat TreeRay_ShellIon[N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL]; /*!< per-(band,pixel,shell) unattenuated ionizing flux */
+    MyFloat TreeRay_ShellNH[NPIX*TREE_RAY_NSHELL];   /*!< per-(pixel,shell) neutral-H column contribution */
+#ifdef TREERAY_PI_HE
+    MyFloat TreeRay_ShellHeI[NPIX*TREE_RAY_NSHELL];  /*!< per-(pixel,shell) neutral-He column contribution */
+    MyFloat TreeRay_ShellHeII[NPIX*TREE_RAY_NSHELL]; /*!< per-(pixel,shell) He+ column contribution */
+#endif
+#endif
+#endif
 #endif
 #ifdef SINK_COMPTON_HEATING
     MyDouble Rad_Flux_AGN;
@@ -1594,6 +1623,14 @@ extern ALIGN(32) struct NODE
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
   MyFloat opt_luminosity;       /*!< total optical+NIR luminosity in tree node, 0.4-3.4 eV */
+#endif
+#ifdef TREE_RAY_PI
+  MyFloat ion_luminosity;       /*!< total ionizing (>13.6 eV) luminosity in tree node [erg/s]; band split by the global blackbody fractions at deposit */
+  MyFloat neutral_h_mass;       /*!< neutral-H mass in tree node (PI-band absorber; (1-x_HII)*X_H*m summed over gas) */
+#ifdef TREERAY_PI_HE
+  MyFloat hei_mass;             /*!< neutral-He mass in node: Y*m - 4*(x_HeII+x_HeIII)*X_H*m */
+  MyFloat heii_mass;            /*!< He+ mass in node: 4*x_HeII*X_H*m */
+#endif
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE

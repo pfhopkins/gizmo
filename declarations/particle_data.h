@@ -117,6 +117,9 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     MyFloat Lyman_photons_per_sec;        /*!< ionizing photon rate [sec^-1] */
 #endif
+#ifdef TREE_RAY_PI
+    MyFloat Ion_luminosity;               /*!< ionizing (>13.6 eV) luminosity [erg/s] = Q_ion * <hnu>=27.2 eV (TreeRay PI band) */
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     int sampled;                          /*!< flag: 1 if IMF has been sampled for this star */

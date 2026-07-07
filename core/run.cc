@@ -763,7 +763,9 @@ void calculate_non_standard_physics(void)
 #endif // RADTRANSFER block
 
     MCBAL_LOG("pre_photoion");
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_PHOTOION) && !defined(TREE_RAY_PI)
+    /* TreeRay-PI supersedes the subgrid Stromgren search: continuous per-cell
+     * ionization rates from the tree bands feed rt_phot_HI in chemcool instead. */
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
 #endif
 

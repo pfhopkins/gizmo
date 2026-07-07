@@ -220,7 +220,17 @@ c
           endif
           y(itmp) = y(itmp) + dt_byp * ydot(itmp)
           t_start = t_start + dt_byp
-          if (t_start .ge. t_end) goto 100
+c WEDGEFIX 3 (2026-07-07, THE production ABORT(100) root cause): the outer
+c loop accumulates t_start = t_start + dt; FP rounding can leave a residual
+c of a few ULPs of t_end (measured: 3.1e-5 s at t=3.6e10 s = 4 ULPs), the
+c .ge. test misses, and DVODE is asked to integrate an interval BELOW the
+c representable resolution of time (t+dt == t in double) -> corrector can
+c never advance -> dt halves to <1e-8 s -> ABORT(100). Declare completion
+c when the residual is relatively negligible (1e-10*t_end ~ hours of
+c chemistry on kyr steps; physically nil). Network-independent bug: hit the
+c snladder dense interiors, the TreeRay-PI stromgren star-neighbor, and was
+c knife-edge FP-sensitive (dt-sequence dependent) — all now explained.
+          if (t_start .ge. t_end - 1d-10*t_end) goto 100
           yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
           ekn_byp   = y(itmp) / (kboltz * yntot_byp)
           call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp,
@@ -356,7 +366,7 @@ c
           new_step = 1
         endif
 c
-        if (t_start .ge. t_end) then
+        if (t_start .ge. t_end - 1d-10*t_end) then
           goto 100
         endif
       enddo

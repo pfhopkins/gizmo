@@ -264,6 +264,29 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
 #endif
+#ifdef TREE_RAY
+    /* TreeRay onion shells (2026-07-07): cross-MPI-mode accumulators. Mode 0 assigns,
+     * mode 1 adds (gravtree.cc merge); the post-walk sweep (gravtree.cc) converts them
+     * into the ATTENUATED UV/LW/NUV/OPT_flux above, which chemistry reads unchanged. */
+    MyFloat TreeRay_ShellUV[NPIX*TREE_RAY_NSHELL];
+    MyFloat TreeRay_ShellLW[NPIX*TREE_RAY_NSHELL];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    MyFloat TreeRay_ShellNUV[NPIX*TREE_RAY_NSHELL];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    MyFloat TreeRay_ShellOPT[NPIX*TREE_RAY_NSHELL];
+#endif
+    MyFloat TreeRay_ShellCol[NPIX*TREE_RAY_NSHELL];
+#ifdef TREE_RAY_PI
+    MyFloat Ion_flux[N_TRPI_BANDS*NPIX];             /*!< ATTENUATED per-(band,pixel) ionizing flux [erg/s / code-len^2], written by the sweep */
+    MyFloat TreeRay_ShellIon[N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL];
+    MyFloat TreeRay_ShellNH[NPIX*TREE_RAY_NSHELL];
+#ifdef TREERAY_PI_HE
+    MyFloat TreeRay_ShellHeI[NPIX*TREE_RAY_NSHELL];
+    MyFloat TreeRay_ShellHeII[NPIX*TREE_RAY_NSHELL];
+#endif
+#endif
+#endif
 #endif  /* close GALSF_RESOLVEDISM_G0_VARIABLE for the subgrid HEALPix flux arrays */
     /* G0 / G0_LW are set by EITHER the subgrid G0_VARIABLE path OR the M1 RADTRANSFER
        path (2026-07-04). Keep them alive in both branches so the M1 FUV/LW field is

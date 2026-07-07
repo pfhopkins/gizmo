@@ -193,6 +193,9 @@ void recompute_resolvedism_fuv_luminosities(void)
 #ifdef GALSF_RESOLVEDISM_PHOTOION
             P[i].Lyman_photons_per_sec = 0;
 #endif
+#ifdef TREE_RAY_PI
+            P[i].Ion_luminosity = 0;
+#endif
         }
         return;
     }
@@ -210,6 +213,9 @@ void recompute_resolvedism_fuv_luminosities(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         P[i].OPT_luminosity = 0;
+#endif
+#ifdef TREE_RAY_PI
+        P[i].Ion_luminosity = 0;
 #endif
         if(M_drawn <= All.IMFSampleStellarMassCut) continue;
         double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
@@ -231,6 +237,13 @@ void recompute_resolvedism_fuv_luminosities(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#endif
+#ifdef TREE_RAY_PI
+            /* ionizing ENERGY luminosity for the TreeRay PI band: Q_ion [photons/s]
+             * from the table x <hnu> = 27.2 eV (matches the M1 rt_chem convention;
+             * chemcool converts back with the same energy). */
+            P[i].Ion_luminosity = pow(10., stellar_log_Q_ion(logM, logZ, log_age)) * 27.2 * 1.60218e-12;
+            if(!isfinite(P[i].Ion_luminosity) || P[i].Ion_luminosity < 0) P[i].Ion_luminosity = 0;
 #endif
         } /* else PMS: stays 0 */
 #else

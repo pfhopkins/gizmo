@@ -57,6 +57,11 @@ c
       REAL abM
 
       REAL ph4, ph5, ph8, ph9, ph35, ph38, ph39, ph40, ph41
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+      integer nfdbg_ulli
+      save nfdbg_ulli
+      data nfdbg_ulli /0/
+#endif
       REAL ph42, ph43, ph44
 
       REAL h2p_pd_low, h2p_pd_lte
@@ -544,6 +549,7 @@ c
       ph38 = phrates(38)
       ph39 = phrates(39)
       ph40 = phrates(40)
+
       ph41 = phrates(41)
       ph42 = phrates(42)
       ph43 = phrates(43)
@@ -661,6 +667,15 @@ c
         abhehp = comp_equilib(num, denom, abhe, 3, yn,
      $                        time_to_equilibrium)
 c
+c WEDGEFIX 1 (2026-07-07): comp_equilib returns the -1d0 error sentinel both
+c for denom=0 and for an over-saturated equilibrium; abhm/abh2p are clamped
+c after their calls but abhehp was NOT -- the -1.0 folded straight into the
+c corrections below, injecting +1.0 into abHI/abheI and zeroing abe INSIDE
+c the DVODE RHS (corrector poison; the 'Species 3' warning spam; live He
+c corruption wherever abHI->0 guts the HeH+ denominator, i.e. ionized zones).
+        if (abhehp .lt. 0d0) then
+           abhehp = 0d0
+        endif
         abe   = max(0d0, abe + (abhehp - abhehp_old))
         abHI  = max(0d0, abHI - (abhehp - abhehp_old))
         abheI = max(0d0, abheI - (abhehp - abhehp_old))
@@ -676,6 +691,11 @@ c
         endif
         abhm_old  = abhm
         abh2p_old = abh2p
+c WEDGEFIX 2 (2026-07-07): abhehp_old was never updated in this loop -- the
+c full abhehp correction was re-applied every one of the 25 iterations
+c (cumulative abHI/abheI drain) and the convergence test could never be
+c satisfied for abhehp>0 (always burned all iterations).
+        abhehp_old = abhehp
       enddo
 c
 100   continue
@@ -761,6 +781,16 @@ c
      $              + ph39    * abheI
      $              - ph40    * abhep
       endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+c TRPIDBG-F2 (2026-07-07): He+ ODE ground truth — does the delivered rate
+c reach the RHS, and what does the net ydot(ihep) look like in ionized gas?
+      if (ph39 .gt. 1d-12 .and. nfdbg_ulli .lt. 30) then
+        nfdbg_ulli = nfdbg_ulli + 1
+        print *, 'TRPIDBGF2 id=', id_current, ' ph39=', ph39,
+     $           ' abheI=', abheI, ' abhep=', abhep,
+     $           ' ydot_hep=', ydot(ihep), ' abe=', abe
+      endif
+#endif
 c
 c D coupling to He+
 c

@@ -344,6 +344,23 @@ c
       df30     = 1d0
 #endif
 c
+c TREE_RAY: the tree walk attenuates the STELLAR bands along each source path
+c (shell sweep in gravtree.cc), so the per-rate dust factors must not be
+c re-applied -- but UNLIKE the M1 case, chi_isrf KEEPS its computed AV
+c attenuation: TreeRay transports only stellar point sources, and the
+c isotropic ISRF background still needs target-side shielding (zeroing the
+c columns instead broke net-17 chemistry from step 0: full unattenuated ISRF
+c in shielded gas -> 12k creation-without-destruction warnings -> DVODE 100).
+c Known small approximation: f_dust=1 also un-shields the G0 floor component
+c riding the stellar band (floor = 5.5e-3, negligible next to any real source).
+c
+#ifdef TREE_RAY
+      f_dust   = 1d0
+      f_simp   = 1d0
+      df25     = 1d0
+      df30     = 1d0
+#endif
+c
 c CO self-shielding, shielding by H2.
 c
 c Our treatment here is based on L96.

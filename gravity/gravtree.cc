@@ -12,6 +12,73 @@
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
+#ifdef TREE_RAY_PI
+/* ---- TreeRay-PI band constants (2026-07-07) ----
+ * Blackbody-weighted ionizing cross sections / effective energies / stellar
+ * luminosity fractions per band, computed EXACTLY as the M1 init does
+ * (radiation/rt_chem.cc rt_get_lum_band_* integrals, Teff=4e4 K, band edges
+ * {13.6,24.6,54.4,70}->500 eV), so TreeRay-PI reproduces the validated M1
+ * nested He/H front physics. Single band (net-5): sigma_HI=6.3e-18, <hnu>=27.2. */
+double TRPI_sigma_HI[N_TRPI_BANDS], TRPI_sigma_HeI[N_TRPI_BANDS], TRPI_sigma_HeII[N_TRPI_BANDS];
+double TRPI_Eev[N_TRPI_BANDS], TRPI_lumfrac[N_TRPI_BANDS];
+int TRPI_bands_ready = 0;
+void treeray_pi_init_bands(void)
+{
+#if (N_TRPI_BANDS == 1)
+    TRPI_sigma_HI[0] = 6.3e-18; TRPI_sigma_HeI[0] = 0; TRPI_sigma_HeII[0] = 0;
+    TRPI_Eev[0] = 27.2; TRPI_lumfrac[0] = 1.0;
+#else
+    double nu_vec[N_TRPI_BANDS+1] = {13.6, 24.6, 54.4, 70.0, 500.0};
+    double T_eff = 4.0e4, hc = C_LIGHT_CGS * 6.6262e-27;
+    int b, j, integral = 10000;
+    double sum_egy_all = 0;
+    for(b = 0; b < N_TRPI_BANDS; b++)
+    {
+        double e_start = nu_vec[b], e_end = nu_vec[b+1];
+        double d_nu = (e_end - e_start) / ((double)(integral - 1));
+        double sHI=0, sHeI=0, sHeII=0, sum_I=0, sum_IE=0;
+        for(j = 0; j < integral; j++)
+        {
+            double e = e_start + d_nu * j;                     /* eV */
+            double nu_cgs = e * ELECTRONVOLT_IN_ERGS / 6.6262e-27;
+            double x = 6.6262e-27 * nu_cgs / (1.380658e-16 * T_eff);
+            double I_nu = (x < 500.) ? 2.0*6.6262e-27*nu_cgs*nu_cgs*nu_cgs/(C_LIGHT_CGS*C_LIGHT_CGS) / (exp(x)-1.0) : 0.0;
+            double sig, f;
+            /* HI: Osterbrock fit (same as rt_chem) */
+            f = sqrt(DMAX((e / 13.6) - 1.0, 1.e-10));
+            if(e <= 13.6) {sig = 6.3e-18;} else {sig = 6.3e-18 * pow(13.6/e, 4) * exp(4 - (4*atan(f)/f)) / (1.0 - exp(-2*M_PI/f));}
+            sHI += d_nu * sig * I_nu / e;
+            if(e > 24.6) {
+                f = sqrt(DMAX((e / 24.6) - 1.0, 1.e-10));
+                sig = 7.83e-18 * pow(24.6/e, 4) * exp(4 - (4*atan(f)/f)) / (1.0 - exp(-2*M_PI/f));
+                if(e <= 24.6) {sig = 7.83e-18;}
+                sHeI += d_nu * sig * I_nu / e;
+            }
+            if(e > 54.4) {
+                f = sqrt(DMAX((e / 54.4) - 1.0, 1.e-10));
+                sig = 1.58e-18 * pow(54.4/e, 4) * exp(4 - (4*atan(f)/f)) / (1.0 - exp(-2*M_PI/f));
+                if(e <= 54.4) {sig = 1.58e-18;}
+                sHeII += d_nu * sig * I_nu / e;
+            }
+            sum_I  += d_nu * I_nu / e;      /* photon-number weight */
+            sum_IE += d_nu * I_nu;          /* energy weight */
+        }
+        TRPI_sigma_HI[b]   = (sum_I > 0) ? sHI  / sum_I : 0;
+        TRPI_sigma_HeI[b]  = (sum_I > 0) ? sHeI / sum_I : 0;
+        TRPI_sigma_HeII[b] = (sum_I > 0) ? sHeII/ sum_I : 0;
+        TRPI_Eev[b]        = (sum_I > 0) ? sum_IE / sum_I : 0.5*(e_start+e_end);
+        TRPI_lumfrac[b]    = sum_IE;
+        sum_egy_all += sum_IE;
+    }
+    if(sum_egy_all > 0) {for(b = 0; b < N_TRPI_BANDS; b++) {TRPI_lumfrac[b] /= sum_egy_all;}}
+#endif
+    TRPI_bands_ready = 1;
+    if(ThisTask == 0) {int bq; for(bq=0;bq<N_TRPI_BANDS;bq++) {
+        printf("TREERAY_PI band %d: sHI=%.3e sHeI=%.3e sHeII=%.3e <E>=%.2f eV frac=%.4f\n",
+               bq, TRPI_sigma_HI[bq], TRPI_sigma_HeI[bq], TRPI_sigma_HeII[bq], TRPI_Eev[bq], TRPI_lumfrac[bq]);}}
+}
+#endif /* TREE_RAY_PI */
+
 /*! \file gravtree.c
  *  \brief main driver routines for gravitational (short-range) force computation
  *
@@ -44,6 +111,9 @@ void sum_top_level_node_costfactors(void);
  *  tree is used.  Elements are only exported to other processors when needed. */
 void gravity_tree(void)
 {
+#ifdef TREE_RAY_PI
+    if(!TRPI_bands_ready) {treeray_pi_init_bands();}   /* MUST precede the walk: deposits read TRPI_lumfrac */
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
     {extern double G0DBG_fluxP, G0DBG_fluxN; extern long long G0DBG_nN, G0DBG_nNzero;
      double lf[2]={G0DBG_fluxP,G0DBG_fluxN}, gf[2]; long long ln[2]={G0DBG_nN,G0DBG_nNzero}, gn[2];
@@ -418,6 +488,30 @@ void gravity_tree(void)
                     CellP[place].OPT_flux[kp] += GravDataOut[j].OPT_flux[kp];
 #endif
                 }}
+#ifdef TREE_RAY
+                if(P[place].Type == 0) {
+                    int ks; for(ks=0; ks<NPIX*TREE_RAY_NSHELL; ks++) {
+                    CellP[place].TreeRay_ShellUV[ks] += GravDataOut[j].TreeRay_ShellUV[ks];
+                    CellP[place].TreeRay_ShellLW[ks] += GravDataOut[j].TreeRay_ShellLW[ks];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                    CellP[place].TreeRay_ShellNUV[ks] += GravDataOut[j].TreeRay_ShellNUV[ks];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                    CellP[place].TreeRay_ShellOPT[ks] += GravDataOut[j].TreeRay_ShellOPT[ks];
+#endif
+                    CellP[place].TreeRay_ShellCol[ks] += GravDataOut[j].TreeRay_ShellCol[ks];
+                }}
+#ifdef TREE_RAY_PI
+                if(P[place].Type == 0) {int ks2;
+                    for(ks2=0; ks2<N_TRPI_BANDS*NPIX*TREE_RAY_NSHELL; ks2++) {CellP[place].TreeRay_ShellIon[ks2] += GravDataOut[j].TreeRay_ShellIon[ks2];}
+                    for(ks2=0; ks2<NPIX*TREE_RAY_NSHELL; ks2++) {CellP[place].TreeRay_ShellNH[ks2] += GravDataOut[j].TreeRay_ShellNH[ks2];
+#ifdef TREERAY_PI_HE
+                        CellP[place].TreeRay_ShellHeI[ks2] += GravDataOut[j].TreeRay_ShellHeI[ks2];
+                        CellP[place].TreeRay_ShellHeII[ks2] += GravDataOut[j].TreeRay_ShellHeII[ks2];
+#endif
+                    }}
+#endif
+#endif
 #endif
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
@@ -490,6 +584,136 @@ void gravity_tree(void)
 
 
     /* now perform final operations on results [communication loop is done] */
+#ifdef TREE_RAY
+    /* ---- TreeRay attenuation sweep (2026-07-07) ----
+     * All shell contributions (local mode-0 + every import round) are merged into
+     * CellP.TreeRay_Shell* by this point. Sweep each pixel outward: sources in
+     * shell s are attenuated by the cumulative dust optical depth of interior
+     * shells plus half their own shell. Writes the ATTENUATED per-pixel fluxes
+     * into CellP.UV/LW/NUV/OPT_flux — chemistry reads them unchanged (and under
+     * TREE_RAY calc_photo must NOT re-apply f_dust to the stellar component).
+     * Column->N_H conversion mirrors chemcool.cc:572 (Sigma_code -> cgs -> per H).
+     * Dust cross sections per H (x DGR): sigma_FUV=2e-21, NUV=1.3e-21, OPT=0.5e-21
+     * cm^2 (LW attenuates with the FUV sigma; H2/CO LINE self-shielding stays in
+     * chemistry, applied once). DGR: global All.DGRnormalized (slice-1
+     * approximation — per-node metallicity is a documented future refinement). */
+    {
+        double tr_colconv = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+        double tr_dgr = All.DGRnormalized;
+#ifdef TREE_RAY_PI
+        /* per-species column conversions: shells hold the SPECIES mass Sigma directly */
+        double tr_colconv_hi = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv / PROTONMASS_CGS;
+        double tr_colconv_he = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv / (4.0 * PROTONMASS_CGS);
+        if(!TRPI_bands_ready) {treeray_pi_init_bands();}
+#endif
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+        {
+            if(P[i].Type != 0) continue;
+            int pfx, sfx;
+            for(pfx = 0; pfx < NPIX; pfx++)
+            {
+                double tau_uv = 0, F_uv = 0, F_lw = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                double F_nuv = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                double F_opt = 0;
+#endif
+                for(sfx = 0; sfx < TREE_RAY_NSHELL; sfx++)
+                {
+                    int ks = pfx*TREE_RAY_NSHELL + sfx;
+                    double NH_sh = (double)CellP[i].TreeRay_ShellCol[ks] * tr_colconv;
+                    double dtau_uv = 2.0e-21 * NH_sh * tr_dgr;
+                    double att_mid_uv = exp(-(tau_uv + 0.5*dtau_uv));
+                    F_uv += (double)CellP[i].TreeRay_ShellUV[ks] * att_mid_uv;
+                    F_lw += (double)CellP[i].TreeRay_ShellLW[ks] * att_mid_uv; /* LW: FUV dust sigma */
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                    F_nuv += (double)CellP[i].TreeRay_ShellNUV[ks] * exp(-(tau_uv + 0.5*dtau_uv)*(1.3/2.0));
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                    F_opt += (double)CellP[i].TreeRay_ShellOPT[ks] * exp(-(tau_uv + 0.5*dtau_uv)*(0.5/2.0));
+#endif
+                    tau_uv += dtau_uv;
+                }
+#ifdef TREE_RAY_PI
+                {int b_sw; for(b_sw=0; b_sw<N_TRPI_BANDS; b_sw++) {
+                    double tau_i = 0, F_i = 0;
+                    for(sfx = 0; sfx < TREE_RAY_NSHELL; sfx++) {
+                        int ksp = pfx*TREE_RAY_NSHELL + sfx;
+                        /* per-species number columns (mass Sigma -> N): HI /m_p, He /4m_p */
+                        double NHI  = (double)CellP[i].TreeRay_ShellNH[ksp]  * tr_colconv_hi;
+                        double dt_i = TRPI_sigma_HI[b_sw] * NHI;
+#ifdef TREERAY_PI_HE
+                        double NHeI = (double)CellP[i].TreeRay_ShellHeI[ksp] * tr_colconv_he;
+                        double NHeII= (double)CellP[i].TreeRay_ShellHeII[ksp]* tr_colconv_he;
+                        dt_i += TRPI_sigma_HeI[b_sw]*NHeI + TRPI_sigma_HeII[b_sw]*NHeII;
+#endif
+                        F_i += (double)CellP[i].TreeRay_ShellIon[(b_sw*NPIX + pfx)*TREE_RAY_NSHELL + sfx] * exp(-(tau_i + 0.5*dt_i));
+                        tau_i += dt_i;
+                    }
+                    CellP[i].Ion_flux[b_sw*NPIX + pfx] = F_i;
+                }}
+#endif
+                CellP[i].UV_flux[pfx] = F_uv;
+                CellP[i].LW_flux[pfx] = F_lw;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                CellP[i].NUV_flux[pfx] = F_nuv;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                CellP[i].OPT_flux[pfx] = F_opt;
+#endif
+            }
+        }
+        /* ---- Photon-conservation cap (LEBRON-style, per band; Uli 2026-07-07) ----
+         * Each target's ray integration is independent, so the IMPLIED total
+         * absorption Sum_cells sigma*n_H*V*F has no constraint to stay <= the
+         * actual emission Sum_stars L: in optically-thick regions the same photons
+         * are absorbed on many targets' rays. Guard: compute both sums (band with
+         * the largest sigma dominates the violation; we use FUV as the proxy for
+         * FUV+LW since LW is a sub-band attenuated with the same sigma), and if
+         * absorption exceeds emission, scale ALL cells' fluxes down by the ratio.
+         * Never scales up. TREE_RAY_IR (future) turns this cap into real closure
+         * by re-emitting the absorbed energy as dust IR. Flux and L are consistent
+         * code units (flux stored as L_code/r_code^2): absorption "area" per cell
+         * = sigma_cgs*DGR * N_gas_H * (1/(4pi r^2->code)) handled by using
+         * sigma*n*V in cgs against F converted with UNIT_FLUX. */
+        {
+            double L_emit_uv = 0, A_abs_uv = 0;
+            for(i = 0; i < NumPart; i++) {
+                if(P[i].Type == 4 && P[i].Mass > 0) {L_emit_uv += P[i].UV_luminosity + P[i].LW_luminosity;}
+            }
+            for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+                if(P[i].Type != 0 || P[i].Mass <= 0) continue;
+                /* implied absorbed luminosity of this cell, code units:
+                 * L_abs = F_tot(code L/len^2) * sigma_eff(code len^2), with
+                 * sigma_eff = sigma_cgs*DGR * N_H(cell) / UNIT_LENGTH^2 */
+                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] + CellP[i].LW_flux[pfx2];}
+                double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+                double sigma_eff_code = 2.0e-21 * tr_dgr * NH_cell / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+                A_abs_uv += F_tot * sigma_eff_code / (4.0 * M_PI); /* flux stored without 1/4pi; restore for luminosity */
+            }
+            double glob[2], loc[2]; loc[0] = L_emit_uv; loc[1] = A_abs_uv;
+            MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if(glob[1] > glob[0] && glob[1] > 0)
+            {
+                double fcons = glob[0] / glob[1];
+                for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+                    if(P[i].Type != 0) continue;
+                    int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {
+                        CellP[i].UV_flux[pfx2] *= fcons; CellP[i].LW_flux[pfx2] *= fcons;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                        CellP[i].NUV_flux[pfx2] *= fcons;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                        CellP[i].OPT_flux[pfx2] *= fcons;
+#endif
+                    }
+                }
+                if(ThisTask == 0) {printf("TREERAY: photon-conservation cap engaged, f=%g (L_emit=%g, L_abs_implied=%g)\n", fcons, glob[0], glob[1]);}
+            }
+        }
+    }
+#endif /* TREE_RAY */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
     if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS) {if(!(All.Ti_Current == 0 && RestartFlag == 0)) {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}}} else {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}} /* This will switch to the relative opening criterion for the following force computations */
 #endif

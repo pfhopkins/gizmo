@@ -482,6 +482,73 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 #endif /* RADTRANSFER */
 
+#ifdef TREE_RAY_PI
+    /* TreeRay-PI: photoionization rates from the tree-transported ionizing bands.
+     * Mirrors the M1 consumption above: Gamma_X = sigma_X * F_b / E_b per band,
+     * summed over bands; heating = excess energy above threshold per ionization.
+     * F_b = Sum_pix Ion_flux (stored as L[erg/s]/r_code^2) / (4pi * UNIT_LENGTH^2)
+     * -> erg/s/cm^2 (a2inv for comoving). The cosmological UVB floor below still
+     * applies on top, exactly as for M1. */
+    {
+        int b_pi, p_pi;
+        double gHI = 0, hHI = 0;
+#ifdef TREERAY_PI_HE
+        double gHeI = 0, hHeI = 0, gHeII = 0, hHeII = 0;
+#endif
+        if(TRPI_bands_ready) {
+            double fconv = All.cf_a2inv / (4.0 * M_PI * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+            for(b_pi = 0; b_pi < N_TRPI_BANDS; b_pi++) {
+                double F_b = 0; for(p_pi = 0; p_pi < NPIX; p_pi++) {F_b += CellP[target].Ion_flux[b_pi*NPIX + p_pi];}
+                F_b *= fconv;                                   /* erg/s/cm^2 */
+                if(F_b <= 0) continue;
+                double E_b = TRPI_Eev[b_pi] * ELECTRONVOLT_IN_ERGS;
+                double G_b = TRPI_sigma_HI[b_pi] * F_b / E_b;   /* s^-1 per HI atom */
+                gHI += G_b; hHI += G_b * DMAX(TRPI_Eev[b_pi] - 13.6, 0.0) * ELECTRONVOLT_IN_ERGS;
+#ifdef TREERAY_PI_HE
+                double GheI = TRPI_sigma_HeI[b_pi] * F_b / E_b;
+                gHeI += GheI; hHeI += GheI * DMAX(TRPI_Eev[b_pi] - 24.6, 0.0) * ELECTRONVOLT_IN_ERGS;
+                double GheII = TRPI_sigma_HeII[b_pi] * F_b / E_b;
+                gHeII += GheII; hHeII += GheII * DMAX(TRPI_Eev[b_pi] - 54.4, 0.0) * ELECTRONVOLT_IN_ERGS;
+#endif
+            }
+        }
+        COOLR.rt_phot_HI = gHI; COOLR.rt_heat_HI = hHI;
+#ifdef TREERAY_PI_HE
+        COOLR.rt_phot_HeI = gHeI; COOLR.rt_heat_HeI = hHeI;
+        COOLR.rt_phot_HeII = gHeII; COOLR.rt_heat_HeII = hHeII;
+#endif
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+        /* single-cell time series: the definitive He ratchet-vs-reset probe */
+        if(P[target].ID == 61225) {
+            printf("TRPICELL t=%.6e mode=%d gHI=%.3e gHeI=%.3e xHP_in=%.6e xHeP_in=%.6e\n",
+                   All.Time, mode, gHI,
+#ifdef TREERAY_PI_HE
+                   gHeI,
+#else
+                   0.0,
+#endif
+                   (double)CellP[target].TracAbund[IHP], (double)CellP[target].TracAbund[IHEP]); fflush(stdout);
+        }
+        static int trpidbg_n = 0;
+        if(gHI > 1e-13 && trpidbg_n < 250 && (trpidbg_n++, 1)) {  /* cells INSIDE the ionized zone only */
+            double F0=0,F1=0; for(p_pi=0;p_pi<NPIX;p_pi++){F0+=CellP[target].Ion_flux[0*NPIX+p_pi];
+#if (N_TRPI_BANDS > 1)
+                F1+=CellP[target].Ion_flux[1*NPIX+p_pi];
+#endif
+            }
+            printf("TRPIDBG id=%llu pos=%.5f,%.5f,%.5f gHI=%.3e gHeI=%.3e F0=%.3e F1=%.3e ready=%d\n",
+                   (unsigned long long)P[target].ID, P[target].Pos[0], P[target].Pos[1], P[target].Pos[2], gHI,
+#ifdef TREERAY_PI_HE
+                   gHeI,
+#else
+                   0.0,
+#endif
+                   F0, F1, TRPI_bands_ready); fflush(stdout);
+        }
+#endif
+    }
+#endif /* TREE_RAY_PI */
+
     /* Cosmological UVB floor: applied AFTER RT and G0_VARIABLE so it acts as a minimum.
        Adds metagalactic photoionization + photoheating rates from TREECOOL (FG2020).
        Compatible with RT (additive) and G0_VARIABLE (floor). */
@@ -581,7 +648,12 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
            dust-attenuated. The total-H column drives ONLY the dust f_dust in calc_photo
            (iphoto=6, lines 304/307); zero it here so dust is not double-counted. The H2
            and CO self-shielding columns (populated below) are KEPT — M1 continuum
-           transport does not capture line self-shielding, so the chemistry must still do it. */
+           transport does not capture line self-shielding, so the chemistry must still do it.
+           NOTE (TREE_RAY lesson, 2026-07-07): TreeRay does NOT zero these columns — it
+           overrides only the per-rate dust factors inside calc_photo (f_dust/f_simp/df25/
+           df30 -> 1) and KEEPS chi_isrf(AV): the tree transports stellar sources only,
+           so the ISRF background must stay target-side attenuated. Zeroing the columns
+           under TREE_RAY broke net-17 chemistry from step zero. */
         PROJECT.column_density_projection[i] = 0.0;
 #else
         PROJECT.column_density_projection[i] = NH;
