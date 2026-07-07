@@ -1451,13 +1451,8 @@ void process_wake_ups(void)
 		 * above the i-loop). Prevents the multiplicative wakeup cascade. */
 		if(bin < lowest_occupied_active_bin) bin = lowest_occupied_active_bin;
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-		/* Surface-fail-loud guard (codex 2026-05-30): if wakeup assigns a bin
-		 * whose physical timestep is below MinSizeTimestep, abort with full
-		 * context. Without this, the wakeup-application path silently floors at
-		 * bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning
-		 * at line 1102, which lets wakeup-cascade pathologies (over-aggressive
-		 * propagation of small bins via stale-MaxSignalVel wakeups) run all
-		 * the way to Systemstep=0 without any abort signal. */
+		/* If wakeup assigns a bin whose physical timestep is below MinSizeTimestep, abort with full
+		 * context. Without this, the wakeup-application path silently floors at bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning. */
 		{
 		    double dt_assigned_physical = (double)GET_INTEGERTIME_FROM_TIMEBIN(bin) * All.Timebase_interval;
 		    if(dt_assigned_physical < All.MinSizeTimestep) {

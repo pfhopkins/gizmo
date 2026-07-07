@@ -1737,7 +1737,7 @@ void cbe_clamp_face_Q(
                 const double trR_g  = cbe_basis_T_trace_active(Qface[m], inv_m_g);
                 const double trSc_g = trR_g - v_dot_v_g;
                 /* Device-safe printf; no fflush/endrun (host-only fns) here. */
-                printf("[CBE strict face guard (Fix #9)] post-clamp non-realizable: "
+                printf("[CBE strict face guard] post-clamp non-realizable: "
                        "basis=%d m=%.3e trace_S_central=%.3e v.v=%.3e\n",
                        m, m_face_g, trSc_g, v_dot_v_g);
                 printed_failure = true;
