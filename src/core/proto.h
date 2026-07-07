@@ -397,9 +397,9 @@ void cellcorrections_final_operations_and_cleanup(void);
  * decide before density(), end after hydro_force(). Future consumers
  * (cellcorrections / gradients / hydro_force as runner Specs) read the
  * mode via gizmo_hydro_corridor_get_mode() — include hydro_corridor.h
- * for the enum + accessor. Wave 5 corridor port chain. */
+ * for the enum + accessor. */
 void gizmo_hydro_corridor_decide_mode(void);
-void gizmo_hydro_corridor_begin_csr(void);
+void gizmo_hydro_corridor_begin(void);
 void gizmo_hydro_corridor_mass_guardrail_check(void);
 void gizmo_hydro_corridor_end(void);
 
@@ -429,6 +429,30 @@ struct ghost_exchange_spec_t;
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
+/* True iff a ghost import is live (pool materialized, between import and cleanup);
+ * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
+ * zero-ghost pool. */
+int ghost_pool_is_live(void);
+/* Value-only in-place refresh of the CURRENT ghost pool along the provenance
+ * recorded at the last import: owners re-pack their current P/CellP for exactly
+ * the already-exported particles; receivers overwrite the existing ghost slots
+ * in place. Topology (Pos/h/active-set/slot identity) is assumed unchanged, so
+ * NumPart, the home-rank/home-index maps, and any built CSR stay valid. Returns
+ * a ghost_refresh_status; on any GHOST_REFRESH_FAIL_* the caller must fall back
+ * to a full ghost_exchange_cleanup() + reimport (fail-closed, never a silent
+ * partial refresh). Production callers use ghost_refresh_values() only. */
+enum ghost_refresh_status {
+    GHOST_REFRESH_OK              = 0,  /* in-place value refresh done */
+    GHOST_REFRESH_SKIP_SERIAL,          /* NTask<=1: no remote ghosts, nothing to do */
+    GHOST_REFRESH_FAIL_NO_POOL,         /* no live ghost pool (NumPart_before_ghost<0) */
+    GHOST_REFRESH_FAIL_NO_PROVENANCE,   /* send provenance / comm maps absent */
+    GHOST_REFRESH_FAIL_POOL_MUTATED     /* live-pool counts inconsistent with provenance */
+};
+int ghost_refresh_values(void);
+/* Monotonic count of completed ghost imports. Read by the hydro corridor, which
+ * fast-paths a value-refresh only when the live pool's epoch matches the one its
+ * published CSR was built from — see hydro/hydro_corridor.cc. */
+unsigned long long ghost_provenance_epoch(void);
 /* Canonical out-of-line host accessors for `All.*` — defined in
  * declarations/allvars.cc (the TU that owns `All`). Useful where
  * explicit host-extern intent helps readability. With the central
@@ -899,6 +923,7 @@ MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
 #ifdef TRANSPORT_SUBCYCLE
 void transport_subcycle_exchange_fluxes(void);
 void transport_subcycle_kick(void);
+void transport_subcycle_prepare_topology(void);
 #endif
 
 #ifdef RADTRANSFER

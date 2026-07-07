@@ -150,10 +150,7 @@
  *                  Spec::compare_accum within Spec::accum_tolerance
  *     - timing:    PHASE0 instrumentation per loop_name
  *
- * Architecture binding contract:
- *   ~/.claude/memory/reference_neighbor_loop_contract.md
- *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef GIZMO_NEIGHBOR_LOOP_RUNNER_H
 #define GIZMO_NEIGHBOR_LOOP_RUNNER_H
@@ -1184,9 +1181,9 @@ enum class DispatchPath : int {
  * are declared below near their documentation. */
 enum class NlrForceMode { None = 0, A = 1, B = 2 };
 
-/* External symmetric gas-gas CSR injection (hydro corridor support — added
- * for Wave 5 cellcorrections/gradients/hydro_force port chain). When the
- * caller has already built a symmetric gas CSR (e.g. via the corridor's
+/* External symmetric gas-gas CSR injection (hydro corridor support:
+ * cellcorrections/gradients/hydro_force share one symmetric gas CSR per
+ * step). When the caller has already built a symmetric gas CSR (e.g. the
  * gizmo_gradients_prep_symlist) that's intended to be SHARED across multiple
  * runner-Spec consumers in one step, it can be injected here instead of the
  * runner re-building it per call. The runner stages the host CSR into
@@ -1208,8 +1205,20 @@ enum class NlrForceMode { None = 0, A = 1, B = 2 };
  *   - active_indices / offsets non-null; neighbors non-null iff total_pairs>0
  *     (endrun 7302/7303/7304/7305)
  *
+ * GHOST-POOL OWNERSHIP (load-bearing): a non-null external_csr means the CSR's
+ * neighbor indices refer to the CALLER'S live particle+ghost pool — the caller
+ * imported those ghosts and owns their lifetime. The runner therefore does NOT
+ * run its own ghost import (a fresh import could renumber ghost slots, leaving
+ * the CSR pointing at wrong particles) and does NOT run ghost_exchange_cleanup
+ * (the pool outlives this call; the caller tears it down at the end of its
+ * span). Ghost writeback + write-detector hooks still run normally — they read
+ * the caller's live provenance maps. Enforced at runtime (endrun) at NTask>1:
+ * ghost_pool_is_live() + non-null home_rank/home_index provenance +
+ * args.num_total == NumPart (args must be built AFTER the caller's import).
+ *
  * Mode B ignores external_csr entirely (request-driven walker does not need
- * a CSR). Only consumed by Mode A. */
+ * a CSR). Only consumed by Mode A; dispatch to a Mode B path with a non-null
+ * external_csr is a caller error (rejected at runtime). */
 struct nlr_external_csr {
     int        *active_indices;  /* len num_active; MUST equal args.active_list */
     int         num_active;
@@ -1242,11 +1251,14 @@ struct neighbor_loop_args {
                                   * NlrSubgroup::j_type_bitmask. */
     const nlr_external_csr *external_csr = nullptr;
                                  /* nullptr (default) => runner builds its own CSR
-                                  * via gpu_ngb_list_build (legacy behavior).
-                                  * non-null => Mode A skips the build and stages
-                                  * the provided host CSR into Kokkos memory.
-                                  * Mode B / iterative runner ignore. See struct
-                                  * nlr_external_csr above for contract details. */
+                                  * via gpu_ngb_list_build AND owns its own ghost
+                                  * import + cleanup (legacy behavior).
+                                  * non-null => Mode A skips the build, stages the
+                                  * provided host CSR into Kokkos memory, and the
+                                  * CALLER OWNS THE GHOST POOL: the runner skips
+                                  * its ghost import and cleanup (see the
+                                  * GHOST-POOL OWNERSHIP contract on struct
+                                  * nlr_external_csr above). */
     NlrForceMode dispatch_override = NlrForceMode::None;
                                  /* None (default) => normal priority: env vars
                                   * GIZMO_<LOOPNAME>_FORCE_MODE > GIZMO_NLR_FORCE_MODE

@@ -121,6 +121,14 @@ struct GradientsActiveData
     double V_i;
     int    sph_gradients_flag_i;
     int    kernel_mode_i;
+    bool   enabled;   /* row gate: false for a gas cell driven to Mass<=0 after
+                       * the shared row list was frozen (feedback/swallow can
+                       * kill a cell mid-corridor). Legacy rebuilt row lists
+                       * post-feedback with a Mass>0 filter, so dead rows were
+                       * simply ABSENT; this gate reproduces that row-absence
+                       * (pair_kernel early-returns, accum stays zero). Struct
+                       * member, not a computed local int, so it is safe from
+                       * device constant-propagation of gate variables. */
 #ifdef HYDRO_MULTIFLUID
     unsigned char FluidType;   /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
 #endif
@@ -261,6 +269,10 @@ struct GradientsSpec
         local.Mass         = kp[i].Mass;
         if(local.Mass < 0) { local.Mass = 0; }
 
+        /* Dead-row gate (see GradientsActiveData::enabled): also guards the
+         * Mass/Density divisions below against a mid-corridor-killed cell. */
+        active.enabled = (kp[i].Mass > 0 && kc[i].Density > 0);
+
         active.sph_gradients_flag_i = SHOULD_I_USE_SPH_GRADIENTS(kc[i].ConditionNumber);
         if(active.sph_gradients_flag_i) { local.Mass *= -1; }
 
@@ -274,9 +286,9 @@ struct GradientsSpec
         local.GQuant.Pressure = kc[i].Pressure;
         local.GQuant.Velocity = kc[i].VelPred;
 #ifdef MAGNETIC
-        local.GQuant.B = kc[i].BPred * (kc[i].Density / kp[i].Mass);
+        local.GQuant.B = active.enabled ? (kc[i].BPred * (kc[i].Density / kp[i].Mass)) : Vec3<double>{};
 #ifdef DIVBCLEANING_DEDNER
-        local.GQuant.Phi = kc[i].PhiPred / kp[i].Mass;
+        local.GQuant.Phi = active.enabled ? (kc[i].PhiPred / kp[i].Mass) : 0;
 #endif
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -342,7 +354,7 @@ struct GradientsSpec
         double h_i = local.KernelRadius;
         kernel_hinv(h_i, &active.hinv, &active.hinv3, &active.hinv4);
         if(local.Mass < 0) { local.Mass *= -1; }                 /* restore for V_i */
-        active.V_i = local.Mass / local.GQuant.Density;
+        active.V_i = active.enabled ? (local.Mass / local.GQuant.Density) : 0;
         if(active.sph_gradients_flag_i) { local.Mass *= -1; }    /* re-negate for kernel */
 
         active.kernel_mode_i = -1;
@@ -375,6 +387,7 @@ struct GradientsSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
+        if(!active.enabled) return;   /* dead row (Mass<=0 mid-corridor): zero contribution */
 #if defined(HYDRO_MULTIFLUID)
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif

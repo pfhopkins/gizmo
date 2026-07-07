@@ -15,11 +15,11 @@
  *   - hydro_gradient_calc     (toplevel — replaces the legacy walker in
  *                              the retired hydro/gradients.cc)
  *
- * MHD-CG outer loop ordering preserves commit 1's §0 ghost-refresh fix
- * (refresh AFTER host between-iter work, BEFORE next iter's kernel) — see
- * OPEN_3d_hydro_corridor_design.md §0. Post-iter finalization loop ships
- * SERIAL per codex round-6 (OMP follow-up is commit 7c only after the
- * calculate_and_assign_* per-i purity audit lands clean).
+ * MHD-CG outer loop ordering: the ghost refresh runs AFTER the host
+ * between-iter work and BEFORE the next iteration's kernel, so both sides
+ * of every cross-rank pair see the same slope-limited fields. The
+ * post-iter finalization loop is SERIAL (OMP parallelization requires a
+ * per-i purity audit of the calculate_and_assign_* helpers first).
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -40,7 +40,6 @@
                                                 * — kernel.h has no include guards */
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/neighbor_list.h"            /* gizmo_sym_* — still maintained for hydro_force */
-#include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_gradients_prep_symlist / refresh_symlist */
 #include "hydro_corridor.h"                   /* mode + external_csr accessors */
 #include "compute_finitevol_faces_functions.h"
 #include "gradients_loop.h"
@@ -641,22 +640,24 @@ double GradientsSpec::compare_accum(const AccumData& a, const AccumData& b)
  * Toplevel: hydro_gradient_calc — replaces the legacy walker in the retired
  * hydro/gradients.cc. Structure:
  *
- *   1. Maintain shared symlist for hydro_force (skip if corridor pre-built).
+ *   1. Corridor ghost-value refresh (Mode A; topology was built once at
+ *      gizmo_hydro_corridor_begin — this function builds nothing).
  *   2. Allocate GasGradDataPasser off the mymalloc LIFO stack (local
  *      std::vector — symlist stays at LIFO top, refresh is unobstructed).
  *   3. Host-side zero of CellP[i].Gradients.* / passer[i] / etc.
  *   4. Invalidate arena (host mutated state the next kernel reads).
  *   5. MHD-CG outer loop:
  *        a. Zero per-iter passer fields (FaceDotB / PhiGrad).
- *        b. Set aux.grad_iter; build args (corridor or fallback path).
+ *        b. Set aux.grad_iter; build args (corridor CSR in Mode A;
+ *           corridor-built active list in Mode B).
  *        c. run_neighbor_loop<GradientsSpec>(args).
  *        d. Host between-iter MHD-CG block (slope-limit B / CG correction
  *           sweeps / MIDPOINT Phi-gradient build).
- *        e. §0 ghost-refresh BEFORE next iter (NTask>1 MHD_CG only;
+ *        e. corridor ghost-refresh BEFORE next iter (NTask>1 MHD_CG only;
  *           skipped after final iter).
- *   6. SERIAL post-iter finalization loop (per codex round-6 — OMP-deferred
- *      to commit 7c after the calculate_and_assign_* per-i audit lands).
- *   7. Final refresh_symlist for hydro_force.
+ *   6. SERIAL post-iter finalization loop (OMP parallelization needs a
+ *      per-i purity audit of calculate_and_assign_* first).
+ *   7. No final refresh here — hydro_force refreshes at its own top.
  * ========================================================================== */
 void hydro_gradient_calc(void)
 {
@@ -664,18 +665,26 @@ void hydro_gradient_calc(void)
     double t0 = my_second();
     double t_grad_outer_start = my_second();
 
-    /* (1) Maintain shared gizmo_sym_* CSR for hydro_force. The GradientsSpec
-     * runner builds its own internal CSR independently — this prep is purely
-     * for the downstream hydro_force legacy walker. Corridor MODE_A NTask=1
-     * already built it; skip the redundant prep + LIFO double-alloc trap
-     * (same logic as the legacy hydro/gradients.cc:512-515 + commit 5b). */
-    const nlr_external_csr        *corridor_csr  = gizmo_hydro_corridor_external_csr();
+    /* (1) Corridor topology. The shared active list (and, in Mode A, the
+     * ghost pool + CSR) was built ONCE at gizmo_hydro_corridor_begin(); this
+     * function builds nothing. Mode A with a published view: refresh ghost
+     * field values (owner-side hydro fields changed since the corridor
+     * import: cellcorrections, stellar feedback) — the refresh may
+     * rebuild+republish the CSR view, so the view is re-fetched per
+     * iteration below, never cached across a refresh. Mode B: nothing to do
+     * here (request-driven walkers use the corridor-built active list; no
+     * ghosts, no CSR). Mode A WITHOUT a published view and with active gas
+     * is a corridor sequencing bug — fail loudly, never quietly rebuild. */
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
-    const bool corridor_built_csr = (corridor_csr != nullptr);
-    double gsl_safety = gizmo_ghost_safety_factor();
+    const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
     double t_diag_symlist_start = my_second();
-    if(!corridor_built_csr) {
-        gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+    if(corridor_built_csr) {
+        gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
+    } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
+              && gizmo_sym_num_active_global > 0) {
+        printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
+        fflush(stdout);
+        endrun(7315);
     }
     double t_grad_after_symlist = my_second();
     gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
@@ -777,16 +786,15 @@ void hydro_gradient_calc(void)
     aux.passer    = passer_base;
     aux.grad_iter = 0;
 
-    /* Active-list source: the corridor path uses the corridor's pre-built
-     * broad list; the non-corridor path reuses gizmo_sym_active_indices
-     * (also broad — built by gizmo_gradients_prep_symlist above). Using
-     * gizmo_sym_* directly (rather than a fresh nlr_build_active_list)
-     * matches the legacy GPU walker exactly AND keeps the LIFO clean:
-     * an in-iter nlr_build_active_list would mymalloc on top of the sym_*
-     * arena, blocking the §0 between-iter gizmo_gradients_refresh_symlist
-     * from freeing sym_neighbor_list — abort 814. */
+    /* Active-list source: both modes use the corridor-built broad list —
+     * Mode A via the published CSR view, Mode B via gizmo_sym_active_indices
+     * directly. Using gizmo_sym_* (rather than a fresh nlr_build_active_list)
+     * matches the legacy GPU walker exactly AND keeps the LIFO clean: an
+     * in-iter nlr_build_active_list would mymalloc on top of the sym_* arena,
+     * blocking the between-iter corridor refresh from freeing
+     * sym_neighbor_list — abort 814. */
     const bool nothing_to_do =
-        (corridor_csr == nullptr) && (gizmo_sym_num_active_global <= 0);
+        (!corridor_built_csr) && (gizmo_sym_num_active_global <= 0);
 
     for(int grad_iter = 0; (!nothing_to_do) && grad_iter < NUMBER_OF_GRADIENT_ITERATIONS; grad_iter++) {
         aux.grad_iter = grad_iter;
@@ -804,13 +812,15 @@ void hydro_gradient_calc(void)
             }
         }
 
-        /* (5b) Build args. Corridor MODE_A NTask=1 path consumes external
-         * CSR with the corridor's broad row list. Non-corridor path uses
-         * gizmo_sym_active_indices directly (also broad, owned by
-         * prep_symlist). */
+        /* (5b) Build args. Mode A consumes the corridor's external CSR with
+         * its broad row list; the view is RE-FETCHED here every iteration
+         * because a corridor ghost refresh (pre-gradients or between MHD-CG
+         * iters) may rebuild+republish it — a cached pointer would go stale.
+         * Mode B uses the corridor-built gizmo_sym_active_indices directly. */
         neighbor_loop_args args = nlr_default_args();
         args.aux = &aux;
 
+        const nlr_external_csr *corridor_csr = gizmo_hydro_corridor_external_csr();
         if(corridor_csr != nullptr) {
             args.active_list       = corridor_csr->active_indices;
             args.num_active        = corridor_csr->num_active;
@@ -960,16 +970,17 @@ void hydro_gradient_calc(void)
         }
 #endif /* MHD_CONSTRAINED_GRADIENT */
 
-        /* (5e) §0 fix — refresh ghosts between MHD-CG iters AFTER host
-         * between-iter work, BEFORE next iter's kernel. NTask>1 only;
-         * skipped after final iter. Preserved verbatim from commit 1's
-         * fix at hydro/gradients.cc:843-847. The runner builds its own
-         * private CSR per call (so its view is naturally fresh), but
-         * shared gizmo_sym_* is what hydro_force consumes — refresh
-         * keeps both in sync. */
+        /* (5e) Refresh ghosts between MHD-CG iters AFTER the host
+         * between-iter work, BEFORE the next iter's kernel, so cross-rank
+         * pairs see the slope-limited fields. NTask>1 only; skipped after
+         * the final iter. The corridor's refresh republishes the CSR view
+         * (re-fetched at the top of the next iteration). Mode B has no
+         * ghosts to refresh (request/reply reads live peer state). */
 #if defined(MHD_CONSTRAINED_GRADIENT)
         if(grad_iter + 1 < NUMBER_OF_GRADIENT_ITERATIONS && NTask > 1) {
-            gizmo_gradients_refresh_symlist(gsl_safety, gsl_safety);
+            if(corridor_built_csr) {
+                gizmo_hydro_corridor_refresh_ghost_values("mhd_cg_iter");
+            }
         }
 #endif
     } /* end grad_iter loop */
@@ -1442,12 +1453,15 @@ void hydro_gradient_calc(void)
     } /* end finalization for-each-active */
     } /* end if !nothing_to_do */
 
-    /* (7) Final ghost refresh — feeds the legacy hydro_force GPU walker
-     * that still consumes gizmo_sym_* (until commit 8 ports it). Preserved
-     * verbatim from hydro/gradients.cc:1241. */
+    /* (7) NO ghost refresh here: hydro_force runs the corridor refresh at
+     * its own top instead. Refreshing here would be both insufficient (owner
+     * values still change between here and hydro_force: MG gradient
+     * correction, dynamic-diffusion calc, and any intervening loop whose own
+     * runner import+cleanup tears the corridor pool down) and redundant with
+     * the hydro_force-top refresh that must happen anyway. Mode B has no
+     * ghosts to refresh. */
     double t1 = WallclockTime = my_second();
     double t_grad_before_refresh = my_second();
-    gizmo_gradients_refresh_symlist(gsl_safety, gsl_safety);
     double t_grad_outer_end = my_second();
     gizmo_step_phase_record("gradient_zero_iter_loops", timediff(t_grad_after_symlist, t_grad_before_refresh));
     gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));

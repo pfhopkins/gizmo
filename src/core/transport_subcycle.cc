@@ -23,14 +23,30 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 #ifdef TRANSPORT_SUBCYCLE
 
 #include "transport_subcycle.h"
+#include "../mesh/ghost_symlist_lifecycle.h"   /* gizmo_gradients_prep_symlist (topology build) */
 #include "../radiation/rt_direct_ray_transport_functions.h"
 #include "../radiation/rt_diffusion_explicit_functions.h"
 
+/* Build the topology the subcycle loop consumes: active-index list + gas ghost
+ * pool + shared symmetric gas CSR (gizmo_sym_*). Called from run.cc immediately
+ * before the subcycle loop, AFTER all particle-set mutations (sink accretion,
+ * wind spawning, rearrange_particle_sequence) and after any neighbor loop with
+ * its own ghost import/cleanup (RT source injection) — any of those running
+ * after this build would corrupt the pool or the CSR's ghost indices. One
+ * import + one build per main step; every sub-step reuses the frozen topology
+ * by design. Freed after the loop (run.cc: gizmo_sym_neighbor_list_free +
+ * ghost_exchange_cleanup). */
+void transport_subcycle_prepare_topology(void)
+{
+    const double gsl_safety = gizmo_ghost_safety_factor();
+    gizmo_gradients_prep_symlist(gsl_safety, gsl_safety, false);
+}
+
 /* ======================================================================================== */
 /* GPU dispatcher (transport_subcycle_exchange_fluxes below) consumes hydro_data_out
-   directly. Legacy CPU-tree scaffolding (particle2in_transport,
+   directly. The legacy CPU-tree scaffolding (particle2in_transport,
    out2particle_transport, transport_flux_evaluate, and the old code_block_xchange
-   headers) was retired in Step 5 Phase D1. */
+   headers) is retired. */
 
 
 /* ===== INITIAL OPERATIONS (zero rate arrays) ===== */

@@ -64,14 +64,14 @@ void cellcorrections_calc(void)
     double t00 = my_second();
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");
 
-    /* Commit 5b corridor consumption: when the corridor has built a Mode-A
-     * external CSR (NTask==1 only in 5b — see hydro_corridor.cc), consume
-     * it directly using the corridor's BROAD row list (Type==0 && Mass>0).
+    /* Corridor consumption: when the corridor has published a Mode-A
+     * external CSR (any rank count — see hydro_corridor.cc), consume it
+     * directly using the corridor's BROAD row list (Type==0 && Mass>0).
      * The narrow GasGrad_isactive predicate is applied per-row inside the
      * Spec via ActiveData::enabled — rows that don't pass contribute zero,
      * so apply_active_writeback's += leaves CellP[i].Volume_1 untouched.
-     * Otherwise (Mode B, UNSET, or NTask>1 conservative fallback), build
-     * the narrow active list ourselves — the legacy 5a behavior. */
+     * Otherwise (Mode B, UNSET, or an unpublished corridor), build the
+     * narrow active list ourselves. */
     const nlr_external_csr *corridor_csr = gizmo_hydro_corridor_external_csr();
     const GizmoHydroCorridorMode corridor_mode = gizmo_hydro_corridor_get_mode();
 
@@ -93,7 +93,8 @@ void cellcorrections_calc(void)
             fflush(stdout);
         }
     } else {
-        /* Fallback: 5a behavior — narrow active list built here. */
+        /* Mode B (request-driven, no corridor CSR): narrow active list built
+         * here. */
         if(!nlr_build_active_list(CellcorrectionsSpec::is_active,
                                    &active_list_local, &num_active, &num_global_active,
                                    "cellcorrections_active")) {
@@ -101,15 +102,17 @@ void cellcorrections_calc(void)
             CPU_Step[CPU_DENSMISC] += measure_time();
             return;
         }
+        /* Mode A always publishes a corridor view when there is active gas;
+         * reaching here in Mode A is a corridor sequencing bug — fail loudly,
+         * never quietly rebuild (that dual path is retired). */
+        if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
+            printf("FATAL: cellcorrections_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
+            fflush(stdout);
+            endrun(7316);
+        }
         args.active_list = active_list_local;
         args.num_active  = num_active;
-        /* Corridor mode-decision is still enforced even when the corridor
-         * didn't pre-build a CSR for us — forces runner dispatch to match
-         * the corridor-wide A/B choice (NTask>1 Mode A; Mode B any rank
-         * count). UNSET / None leaves the runner's adaptive/env logic. */
-        if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
-            args.dispatch_override = NlrForceMode::A;
-        } else if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
+        if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
             args.dispatch_override = NlrForceMode::B;
         }
     }

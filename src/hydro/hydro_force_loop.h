@@ -80,6 +80,14 @@ struct HydroForceActiveData
     double       h_search;
     /* Per-active input — the per-particle hydra block */
     struct hydro_data_in local;
+    bool enabled;   /* row gate: false for a gas cell driven to Mass<=0 after the
+                     * shared row list was frozen (feedback/swallow can kill a cell
+                     * mid-corridor). Legacy rebuilt row lists post-feedback with a
+                     * Mass>0 filter, so dead rows were simply ABSENT; this gate
+                     * reproduces that row-absence (pair_kernel early-returns; no
+                     * fluxes exchanged; accum stays zero). Struct member, not a
+                     * computed local int, so it is safe from device constant-
+                     * propagation of gate variables. */
 #ifdef HYDRO_MULTIFLUID
     unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
 #endif
@@ -229,6 +237,9 @@ struct HydroForceSpec
         local.KernelRadius      = kp[i].KernelRadius;
         local.Mass              = kp[i].Mass;
         local.Density           = kc[i].Density;
+        /* Dead-row gate (see HydroForceActiveData::enabled): also guards the
+         * Mass/Density divisions below against a mid-corridor-killed cell. */
+        active.enabled          = (kp[i].Mass > 0 && kc[i].Density > 0);
         local.Pressure          = kc[i].Pressure;
         local.ConditionNumber   = kc[i].ConditionNumber;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -245,7 +256,7 @@ struct HydroForceSpec
         local.NV_T                = kc[i].NV_T;
         local.TimeBin             = kp[i].TimeBin;
 #ifdef MAGNETIC
-        local.BPred       = kc[i].Bfield();
+        local.BPred       = active.enabled ? kc[i].Bfield() : Vec3<double>{};  /* Bfield() divides by Mass */
         local.Gradients.B = kc[i].Gradients.B;
 #ifdef MHD_BATTERY_MECHANISMS
 #if (MHD_BATTERY_MECHANISMS & 1)
@@ -254,7 +265,7 @@ struct HydroForceSpec
 #endif
 #endif
 #ifdef DIVBCLEANING_DEDNER
-        local.PhiPred       = kc[i].PhiPred / kp[i].Mass;
+        local.PhiPred       = active.enabled ? (kc[i].PhiPred / kp[i].Mass) : 0;
         local.Gradients.Phi = kc[i].Gradients.Phi;
 #endif
 #ifdef MHD_MODIFIED_GRADIENT
@@ -425,6 +436,7 @@ struct HydroForceSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
+        if(!active.enabled) return;   /* dead row (Mass<=0 mid-corridor): no fluxes, zero contribution */
 #if defined(HYDRO_MULTIFLUID)
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif

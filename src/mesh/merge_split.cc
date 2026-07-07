@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts (rearrange live-pool guard) */
 #include "../mesh/kernel.h"
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* update_ISMDustChemEvo_bin_number_and_slope + get_ISMDustChemEvo_bin_mass are
@@ -1140,6 +1141,21 @@ void remove_particle_from_treewalk(int i){
  */
 void rearrange_particle_sequence(void)
 {
+    /* HARD INVARIANT: no live ghost pool. This routine reorders/compacts the
+       particle array via NumPart/N_gas-bounded loops and swap-with-last moves;
+       with imported ghosts materialized in [num_local, NumPart) it would scan
+       ghost slots into the gas block, "eliminate" zero-mass ghost copies
+       (corrupting TimeBinCount and the pool bookkeeping), and shrink NumPart
+       under the pool. Callers must tear ghosts down first. Pool liveness is
+       collective (imports/cleanups are collective), so every rank fails here
+       together. */
+    if(ghost_pool_is_live()) {
+        printf("FATAL: rearrange_particle_sequence called with a live ghost pool "
+               "(num_local=%d NumPart=%d nghost=%d) on task %d — caller lifecycle bug.\n",
+               ghost_get_num_local(), NumPart, ghost_get_num_ghosts(), ThisTask);
+        fflush(stdout);
+        endrun(7314);
+    }
     int i, j, flag = 0, flag_sum, j_next;
     int count_elim, count_gaselim, count_sink_elim, tot_elim, tot_gaselim, tot_sink_elim;
     struct particle_data psave;

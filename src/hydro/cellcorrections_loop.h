@@ -5,11 +5,10 @@
  * for active gas particles. Pure i-side accumulate: no j-side writes, no
  * ghost-writeback, no iteration. Same topology as gradients / hydro_force
  * (symmetric gas-gas, GasOnly cache, per-active P[i].KernelRadius) — this
- * Spec is the first WAVE 5 corridor consumer, lands ahead of GradientsSpec.
- *
- * Commit 5a scope: Spec parity with the legacy host walker in
- * hydro/density.cc:62-162; runner builds its own CSR (no external CSR
- * injection yet — commit 5b adds that + hoists corridor CSR begin).
+ * Spec is the first consumer in the hydro corridor, ahead of GradientsSpec.
+ * Matches the legacy host walker in hydro/density.cc:62-162; consumes the
+ * corridor's shared external CSR when published, else the runner builds
+ * its own CSR from a narrow active list.
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -58,13 +57,13 @@ struct CellcorrectionsActiveData {
     double       h_search;  /* per-active radius (P[i].KernelRadius) — required
                              * by runner's Mode B remote walker contract
                              * (mesh/neighbor_loop_runner.cc:927) */
-    bool         enabled;   /* commit 5b external-CSR contract: corridor row
-                             * list is broad (Type==0 && Mass>0) but the
-                             * narrow filter (KernelRadius>0, Density>0,
+    bool         enabled;   /* external-CSR row gate: the corridor row list
+                             * is broad (Type==0 && Mass>0) but the narrow
+                             * filter (KernelRadius>0, Density>0,
                              * GasGrad_isactive, …) is finer. Set in
                              * load_active; pair_kernel early-returns if
                              * false so subset-non-members contribute zero.
-                             * For the legacy 5a / Mode B path the active
+                             * On the non-corridor / Mode B path the active
                              * list is already narrow, so enabled=true. */
 #ifdef HYDRO_MULTIFLUID
     unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
@@ -99,8 +98,8 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
 #if defined(HYDRO_MULTIFLUID)
     if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
 #endif
-    /* Per-row narrow-filter gate (commit 5b external-CSR consumption):
-     * corridor row list is broad; rows that fail the narrow GasGrad_isactive
+    /* Per-row narrow-filter gate (external-CSR consumption): the corridor
+     * row list is broad; rows that fail the narrow GasGrad_isactive
      * predicate contribute zero. apply_active_writeback's += keeps
      * CellP[i].Volume_1 untouched for disabled rows (accum stays 0). */
     if(!active.enabled) return;

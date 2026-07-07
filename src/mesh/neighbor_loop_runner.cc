@@ -1,30 +1,24 @@
 /* mesh/neighbor_loop_runner.cc — generic NeighborLoopSpec runner.
  *
- * Current scope (3c.2): WritePattern::ActiveReduceOnly,
- * RemoteEvalMode::RemoteComputesAccum, non-iterative, NoIdentity, NoScatter
- * — sufficient for SinkEnv1Spec migration.
- *
- * Mode A (GPU NGL pipeline): IMPLEMENTED in 3c.1. Stages caller-supplied
- * radii and per-call CallScalars host-side pre-arena, runs
- * gpu_particles_arena_acquire + gpu_ngb_list_build, then a tiny Kokkos
- * parallel_for that calls Spec::load_active to fill ActiveData[] in UVM
- * (same device epoch as the legacy lambda's q-packing), then the parametric
+ * Mode A (GPU NGL pipeline): stages caller-supplied radii and per-call
+ * CallScalars host-side pre-arena, runs gpu_particles_arena_acquire +
+ * gpu_ngb_list_build (or stages a caller-injected external CSR), then a
+ * Kokkos parallel_for calling Spec::load_active to fill ActiveData[] in
+ * UVM (same device epoch as the pair walk), then the parametric
  * pair-kernel parallel_for calling Spec::load_neighbor + Spec::pair_kernel.
- * Both launches go through gizmo_gpu_kernel_launch (project's parallel_for
- * + fence + check_last_error).
+ * Launches go through gizmo_gpu_kernel_launch (parallel_for + fence +
+ * check_last_error).
  *
- * Mode B local + Brute oracle: IMPLEMENTED in 3c.2 (single-rank only). Same
- * Spec::load_active / Spec::load_neighbor / Spec::pair_kernel — host-side
- * KOKKOS_INLINE_FUNCTION invocation. Lazy-drift function-boundary invariant
- * structurally encoded as collect_candidates_pre_drift →
- * lazy_drift_candidates → evaluate_pairs_post_drift; Brute oracle uses the
- * SAME drift epoch as Mode B. Multi-rank peer-to-peer is deferred to 3c.3 — runtime
- * abort guards GIZMO_NLR_FORCE_MODE=B on NTask>1.
+ * Mode B (request-driven walker, local + cross-rank peer-to-peer) and the
+ * Brute oracle share the same Spec hooks — host-side invocation with the
+ * lazy-drift boundary structurally encoded as collect_candidates_pre_drift
+ * -> lazy_drift_candidates -> evaluate_pairs_post_drift; the oracle uses
+ * the SAME drift epoch as Mode B.
  *
- * Architecture binding contract:
- *   ~/.claude/memory/reference_neighbor_loop_contract.md
+ * The Spec contract (hard-required members, hooks, invariants) is
+ * documented in mesh/neighbor_loop_runner.h.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -94,12 +88,11 @@
 #include "../hydro/cellcorrections_loop.h"
 #endif
 
-/* Wave 5 hydro corridor commit 7: GradientsSpec always built (gradients
- * has no master #ifdef gate — every hydro build runs hydro_gradient_calc). */
+/* GradientsSpec always built (gradients has no master #ifdef gate — every
+ * hydro build runs hydro_gradient_calc). */
 #include "../hydro/gradients_loop.h"
 
-/* Wave 5 hydro corridor commit 8: HydroForceSpec always built (closes the
- * corridor; every hydro build runs hydro_force). */
+/* HydroForceSpec always built (every hydro build runs hydro_force). */
 #include "../hydro/hydro_force_loop.h"
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
@@ -685,6 +678,17 @@ bool nlr_path_uses_imported_ghosts(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeB_Remote: return false;
     }
     return false;
+}
+
+/* Caller-owned ghost pool: a caller supplying external_csr owns the live
+ * particle+ghost pool the CSR indexes (see the GHOST-POOL OWNERSHIP contract
+ * in neighbor_loop_runner.h). The runner must not import (slot renumbering
+ * would silently invalidate the CSR) and must not cleanup (the pool outlives
+ * this call). Single ownership signal by design — no separate flag that
+ * could be set inconsistently with external_csr. */
+static inline bool nlr_caller_owns_ghost_pool(const neighbor_loop_args &args)
+{
+    return args.external_csr != nullptr;
 }
 
 bool nlr_path_uses_gpu_arena(NeighborLoopPlan::Path path)
@@ -1991,7 +1995,7 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const 
 }
 
 /* ============================================================================
- * External-CSR staging helpers (Wave 5 hydro corridor support).
+ * External-CSR staging helpers (hydro corridor support).
  *
  * When args.external_csr is non-null, Mode A skips gpu_ngb_list_build and
  * instead stages the caller's host CSR into Kokkos memory shaped like a
@@ -2665,24 +2669,61 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * requirements via gizmo_request_filtered_ghost_import_fresh (full
      * global drift + ghost import). Mode B paths skip this entirely;
      * peer-local pool + lazy candidate drift is sufficient. The dt_prep_import
-     * timer is 0 for Mode B paths (genuine 0 — the API isn't called). */
+     * timer is 0 for Mode B paths (genuine 0 — the API isn't called).
+     *
+     * Caller-owned ghost pool (external_csr non-null): the caller imported
+     * the pool the CSR indexes and owns its lifetime — skip the import (a
+     * fresh import could renumber ghost slots under the CSR) and, below, the
+     * cleanup. Contract enforced loudly here; see neighbor_loop_runner.h. */
+    if(args.external_csr != nullptr && !nlr_path_uses_imported_ghosts(plan.path)) {
+        /* external_csr is a Mode-A-only input; a Mode B dispatch with a CSR
+         * supplied means the caller's dispatch_override and CSR provisioning
+         * disagree — fail loudly rather than silently ignoring the CSR. */
+        fprintf(stderr, "[neighbor_loop_runner rank=%d caller=%s] external_csr supplied but "
+                "dispatch selected a Mode B path — caller contract violation.\n",
+                ThisTask, Spec::loop_name);
+        fflush(stderr);
+        endrun(7312);
+    }
     if(nlr_path_uses_imported_ghosts(plan.path)) {
-        StageTimer t_prep(tim_ptr ? &tim_ptr->dt_prep_import : nullptr);
-        gizmo_request_filtered_ghost_import_fresh(Spec::loop_name,
-                                                   Spec::search_mode,
-                                                   nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                                   args.active_list,
-                                                   args.num_active,
-                                                   radii.data(),
-                                                   args.ghost_safety_factor,
-                                                   Spec::radius_policy,
-                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
-        /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
-         * the runner's data view; only paths that imported ghosts read this
-         * extended view (Mode B paths use the original args via copy). */
-        effective_args.num_total = NumPart;
-        effective_args.P         = P;
-        effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+        if(nlr_caller_owns_ghost_pool(args)) {
+            /* At NTask>1 the CSR references imported ghost slots: require the
+             * caller's pool + provenance to be LIVE, and args to have been
+             * built AFTER the caller's import (num_total spans the ghosts).
+             * At NTask==1 no pool exists (imports early-out) — nothing to
+             * verify. ghost_get_num_ghosts()==0 is NOT a liveness signal
+             * (also 0 for a live zero-ghost pool); ghost_pool_is_live() is. */
+            if(NTask > 1) {
+                const char *own_err = nullptr;
+                if(!ghost_pool_is_live())                 own_err = "ghost pool not live";
+                else if(ghost_get_home_rank()  == nullptr ||
+                        ghost_get_home_index() == nullptr) own_err = "ghost provenance maps absent";
+                else if(args.num_total != NumPart)         own_err = "args.num_total != NumPart (args built before caller's import?)";
+                if(own_err != nullptr) {
+                    fprintf(stderr, "[neighbor_loop_runner rank=%d caller=%s] caller-owned ghost-pool "
+                            "contract violation: %s\n", ThisTask, Spec::loop_name, own_err);
+                    fflush(stderr);
+                    endrun(7313);
+                }
+            }
+        } else {
+            StageTimer t_prep(tim_ptr ? &tim_ptr->dt_prep_import : nullptr);
+            gizmo_request_filtered_ghost_import_fresh(Spec::loop_name,
+                                                       Spec::search_mode,
+                                                       nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
+                                                       args.active_list,
+                                                       args.num_active,
+                                                       radii.data(),
+                                                       args.ghost_safety_factor,
+                                                       Spec::radius_policy,
+                                                       nlr_spec_symmetric_j_radius_scale<Spec>());
+            /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
+             * the runner's data view; only paths that imported ghosts read this
+             * extended view (Mode B paths use the original args via copy). */
+            effective_args.num_total = NumPart;
+            effective_args.P         = P;
+            effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+        }
     }
 
     /* ---- Spec lifecycle hooks (begin) ---- */
@@ -2726,8 +2767,13 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     nlr_dispatch_ghost_write_detector_end<Spec>(effective_args, plan);
 
     /* ---- Imported-ghost cleanup ---- */
+    /* Caller-owned pools (external_csr) outlive this call — the caller tears
+     * them down at the end of its span; skip cleanup here. See
+     * neighbor_loop_runner.h. */
     if(nlr_path_uses_imported_ghosts(plan.path) && NTask > 1) {
-        ghost_exchange_cleanup();
+        if(!nlr_caller_owns_ghost_pool(args)) {
+            ghost_exchange_cleanup();
+        }
     }
 
     /* ---- Hard-corridor enforcement (Mode B paths) ---- */
@@ -5153,23 +5199,22 @@ template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
 #endif
 
-/* Wave 5 hydro corridor commit 7: GradientsSpec — runner port of the legacy
- * `gradient_evaluate_gpu` walker. Broad active list (Type==0 && Mass>0)
- * matching the legacy GPU walker; narrow GasGrad_isactive filter stays at
- * the neighbor side inside gradient_accumulate_neighbor. Symmetric gas-gas
- * topology — second corridor consumer (after CellcorrectionsSpec) and
- * direct precursor to HydroForceSpec (commit 8). See
- * hydro/gradients_loop.{h,cc} + OPEN_3d_gradientsspec_design.md. */
+/* GradientsSpec — runner port of the legacy `gradient_evaluate_gpu`
+ * walker. Broad active list (Type==0 && Mass>0) matching the legacy GPU
+ * walker; narrow GasGrad_isactive filter stays at the neighbor side inside
+ * gradient_accumulate_neighbor. Symmetric gas-gas topology — hydro
+ * corridor consumer (after CellcorrectionsSpec, before HydroForceSpec).
+ * See hydro/gradients_loop.{h,cc}. */
 template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
 
-/* Wave 5 hydro corridor commit 8: HydroForceSpec — runner port of the legacy
- * `hydro_evaluate_gpu` walker. Closes the corridor (third + final consumer
- * after CellcorrectionsSpec and GradientsSpec). uses_ghost_writeback=true
- * with a snapshot-diff bundle (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass))
- * for Mode A imported-ghost lifecycle; Mode B direct-owner-rank j-writes
- * via request-driven P2P. Helper hydro_accumulate_neighbor gained the
- * allow_j_writes gate in commit 8a (a2cb965a) so the oracle brute pass
- * doesn't double-apply j-writes. See hydro/hydro_force_loop.{h,cc}. */
+/* HydroForceSpec — runner port of the legacy `hydro_evaluate_gpu` walker.
+ * Final hydro-corridor consumer (after CellcorrectionsSpec and
+ * GradientsSpec). uses_ghost_writeback=true with a snapshot-diff bundle
+ * (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass)) for Mode A imported-ghost
+ * lifecycle; Mode B direct-owner-rank j-writes via request-driven P2P.
+ * Helper hydro_accumulate_neighbor carries an allow_j_writes gate so the
+ * oracle brute pass doesn't double-apply j-writes. See
+ * hydro/hydro_force_loop.{h,cc}. */
 template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
 /* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.

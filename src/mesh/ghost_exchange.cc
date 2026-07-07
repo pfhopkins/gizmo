@@ -90,6 +90,24 @@ static int *ghost_wb_recv_disp = NULL;      /* [NTask] displacement by source ra
 static int *ghost_wb_send_count = NULL;     /* [NTask] ghosts we sent to each rank */
 static int *ghost_wb_send_disp = NULL;      /* [NTask] displacement for what each rank got from us */
 
+/* Send-side provenance for ghost_refresh_values(): the ordered list of LOCAL
+   indices this rank exported at the last import (grouped by ghost_wb_send_*),
+   so a value-only refresh can re-pack current owner P/CellP without re-running
+   discovery. Preserved unconditionally at import (ownership taken from the
+   per-import send_home_idx buffer), freed in ghost_exchange_cleanup(). The actual
+   refresh guard is (non-NULL ghost_send_home_idx) + (send/recv totals match the
+   live pool): a non-NULL pointer implies "an import happened and no cleanup since"
+   (cleanup NULLs it). The monotonic epoch below counts completed imports; it has
+   two consumers: (a) the refresh diagnostic harness asserts a value-refresh does
+   NO reimport (epoch unchanged) while a full cleanup+reimport bumps it; (b) the
+   hydro corridor records the epoch its published CSR was built from and permits
+   the value-refresh fast path ONLY on an epoch match — a live pool from some
+   OTHER import could pass the count checks by coincidence while the CSR still
+   indexes the old slot layout. */
+static int *ghost_send_home_idx = NULL;     /* [ghost_send_home_count] exported local indices, send order */
+static int  ghost_send_home_count = 0;      /* == total_send at last import */
+static unsigned long long g_ghost_provenance_epoch = 0; /* import counter (see above) */
+
 /* Bucket 3 (SIDX overlay, Phase 1): persistent local-tree cache for the
  * request-driven ghost exchange path. Within a step, the local pool of
  * particles [0..NumPart_local) is stable across multiple ghost_exchange
@@ -1367,6 +1385,44 @@ static inline int ghost_particle_slots_fit(long long required)
     return (required <= (long long)All.MaxPart) ? 1 : 0;
 }
 
+/* SSOT for "what a send slot contains": one exported particle's P (+ gas CellP,
+   zeroed for non-gas). Used by BOTH import pack loops and ghost_refresh_values()
+   so the refresh cannot drift from import. src_P/src_CellP are the value source
+   (production import + refresh pass P/CellP; the refresh harness passes a copy). */
+static inline void gx_pack_send_slot(const struct particle_data *src_P,
+                                     const struct gas_cell_data *src_CellP,
+                                     int j,
+                                     struct particle_data *dst_P,
+                                     struct gas_cell_data *dst_CellP)
+{
+    *dst_P = src_P[j];
+    if(src_P[j].Type == 0 && j < N_gas) *dst_CellP = src_CellP[j];
+    else                                memset(dst_CellP, 0, sizeof(struct gas_cell_data));
+}
+
+/* SSOT for the forward particle+cell transport: the two typed Alltoallv calls
+   (P always; CellP only when gas exists globally) with element-unit counts.
+   Used by BOTH import impls (materialising ghosts at &P[NumPart]) and
+   ghost_refresh_values() (overwriting existing ghost slots at
+   &P[NumPart_before_ghost]). Verbose per-impl diagnostics stay at the call
+   sites; only the transport is factored here. */
+static void gx_forward_particle_exchange(const struct particle_data *send_P,
+                                         const struct gas_cell_data *send_CellP,
+                                         const int *send_count, const int *send_disp,
+                                         struct particle_data *dst_P,
+                                         struct gas_cell_data *dst_CellP,
+                                         const int *recv_count, const int *recv_disp)
+{
+    gizmo_mpi_alltoallv_typed((void *)send_P, (int *)send_count, (int *)send_disp,
+                              dst_P, (int *)recv_count, (int *)recv_disp,
+                              sizeof(struct particle_data), MPI_COMM_WORLD);
+    if(All.TotN_gas > 0) {
+        gizmo_mpi_alltoallv_typed((void *)send_CellP, (int *)send_count, (int *)send_disp,
+                                  dst_CellP, (int *)recv_count, (int *)recv_disp,
+                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+    }
+}
+
 static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec)
 {
     const double safety_factor = spec->safety_factor;
@@ -1873,12 +1929,8 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                 if(task_offset[task] >= send_disp[task] + send_count[task]) break;
                 int j = pool[tile_first[t] + s];
                 int off = task_offset[task]++;
-                send_P[off] = P[j];
-                send_home_idx[off] = j; /* record home index for writeback provenance */
-                if(P[j].Type == 0 && j < N_gas)
-                    send_CellP[off] = CellP[j];
-                else
-                    memset(&send_CellP[off], 0, sizeof(struct gas_cell_data));
+                gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
+                send_home_idx[off] = j; /* record home index for writeback + refresh provenance */
             }
         }
     }
@@ -2002,6 +2054,14 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
         memcpy(ghost_wb_recv_disp,  recv_disp,  NTask * sizeof(int));
         memcpy(ghost_wb_send_count, send_count, NTask * sizeof(int));
         memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
+
+        /* Preserve send-side provenance for ghost_refresh_values() (take
+           ownership of send_home_idx; the free() below then no-ops on NULL). */
+        if(ghost_send_home_idx) free(ghost_send_home_idx);
+        ghost_send_home_idx   = send_home_idx;
+        ghost_send_home_count = total_send;
+        send_home_idx         = NULL;
+        g_ghost_provenance_epoch++;
     }
 
     double t_ghost_mpi = timediff(t_phase_mpi_start, my_second()); /* steps 5+6 (pack + MPI + unpack) */
@@ -4693,10 +4753,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 if(!match_for_t[p]) continue;
                 int j = h_pool[p];
                 int off = task_offset[t]++;
-                send_P[off] = P[j];
+                gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
                 send_home_idx[off] = j;
-                if(P[j].Type == 0 && j < N_gas) send_CellP[off] = CellP[j];
-                else memset(&send_CellP[off], 0, sizeof(struct gas_cell_data));
             }
         }
         myfree(task_offset);
@@ -4705,14 +4763,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     double t_step5 = timediff(t_step5_start, my_second());
     /* === Step 6: Alltoallv particles + cells + home_idx === */
     double t_step6_start = my_second();
-    gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
-                              &P[NumPart], recv_count, recv_disp,
-                              sizeof(struct particle_data), MPI_COMM_WORLD);
-    if(All.TotN_gas > 0) {
-        gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
-                                  &CellP[NumPart], recv_count, recv_disp,
-                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
-    }
+    gx_forward_particle_exchange(send_P, send_CellP, send_count, send_disp,
+                                 &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
 
     /* Update counts now so home_idx receive can land at &P[NumPart_before_ghost+...] */
     NumGhostParticles = total_recv;
@@ -4746,6 +4798,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     memcpy(ghost_wb_recv_disp,  recv_disp,  NTask * sizeof(int));
     memcpy(ghost_wb_send_count, send_count, NTask * sizeof(int));
     memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
+
+    /* Preserve send-side provenance for ghost_refresh_values() (take ownership
+       of send_home_idx; the free() below then no-ops on NULL). */
+    if(ghost_send_home_idx) free(ghost_send_home_idx);
+    ghost_send_home_idx   = send_home_idx;
+    ghost_send_home_count = total_send;
+    send_home_idx         = NULL;
+    g_ghost_provenance_epoch++;
 
     /* TEMPORARY: post-install C2 oracle — ONLY for broadcast-authoritative mode
      * (!used_routed).  When routed transport installed (used_routed), the
@@ -4990,9 +5050,75 @@ void ghost_exchange_cleanup(void)
     if(ghost_wb_recv_disp)   { free(ghost_wb_recv_disp);   ghost_wb_recv_disp = NULL; }
     if(ghost_wb_send_count)  { free(ghost_wb_send_count);  ghost_wb_send_count = NULL; }
     if(ghost_wb_send_disp)   { free(ghost_wb_send_disp);   ghost_wb_send_disp = NULL; }
+    if(ghost_send_home_idx)  { free(ghost_send_home_idx);  ghost_send_home_idx = NULL; }
+    ghost_send_home_count = 0;
+    /* g_ghost_provenance_epoch is a monotonic stamp — NOT reset here. */
 }
 
+/* Make refreshed host ghost values visible to the device. With unified-memory
+   particles (P/CellP in Kokkos SharedSpace) this is a no-op: a host write to a
+   ghost slot is coherent to the next kernel, and compact_xyzh caches Pos+h only
+   (unchanged by a value refresh). This helper is ALWAYS in the refresh call path
+   (never elided) so a backend with explicit host/device particle buffers (no
+   unified-memory coherence) has ONE mandatory place to add an explicit
+   host->device ghost copy. Parity with import: import marks compact_xyzh h-dirty
+   + notifies SIDX; a value refresh changes neither Pos/h nor the slot set, so it
+   does neither — but any explicit device copy import gains MUST be mirrored here. */
+static inline void ghost_refresh_make_device_visible(int ghost_base, int ghost_count)
+{
+    (void)ghost_base; (void)ghost_count;
+}
+
+int ghost_refresh_values(void)
+{
+    /* Fail-closed guards (production callers fall back to full cleanup+reimport).
+       A non-NULL ghost_send_home_idx already implies an import happened with no
+       cleanup since (cleanup NULLs it). */
+    if(NTask <= 1)               return GHOST_REFRESH_SKIP_SERIAL;
+    if(NumPart_before_ghost < 0) return GHOST_REFRESH_FAIL_NO_POOL;
+    if(!ghost_send_home_idx || !ghost_wb_send_count || !ghost_wb_send_disp ||
+       !ghost_wb_recv_count || !ghost_wb_recv_disp)
+                                 return GHOST_REFRESH_FAIL_NO_PROVENANCE;
+    /* Live-pool consistency: current pool counts must match the preserved
+       provenance (topology unchanged; no intervening reimport with different
+       totals). */
+    long long send_tot = 0, recv_tot = 0;
+    for(int t = 0; t < NTask; t++) { send_tot += ghost_wb_send_count[t]; recv_tot += ghost_wb_recv_count[t]; }
+    if(NumPart != NumPart_before_ghost + NumGhostParticles) return GHOST_REFRESH_FAIL_POOL_MUTATED;
+    if(recv_tot != (long long)NumGhostParticles)            return GHOST_REFRESH_FAIL_POOL_MUTATED;
+    if(send_tot != (long long)ghost_send_home_count)        return GHOST_REFRESH_FAIL_POOL_MUTATED;
+
+    int ns = ghost_send_home_count;
+    struct particle_data *send_P = (struct particle_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct particle_data));
+    struct gas_cell_data *send_CellP = (struct gas_cell_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct gas_cell_data));
+    /* Re-pack current owner values via the SAME slot helper import uses, in the
+       SAME send order (ghost_send_home_idx) that produced this pool. */
+    for(int k = 0; k < ns; k++) {
+        gx_pack_send_slot(P, CellP, ghost_send_home_idx[k], &send_P[k], &send_CellP[k]);
+    }
+    /* Replay ONLY the forward transport, overwriting the EXISTING ghost slots at
+       [NumPart_before_ghost, NumPart). Slots land at identical offsets by
+       construction, so ghost_home_rank/index maps + any built CSR stay valid. */
+    gx_forward_particle_exchange(send_P, send_CellP, ghost_wb_send_count, ghost_wb_send_disp,
+                                 &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
+                                 ghost_wb_recv_count, ghost_wb_recv_disp);
+    free(send_P); free(send_CellP);
+    ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
+    return GHOST_REFRESH_OK;
+}
+
+/* Import-epoch accessor (see g_ghost_provenance_epoch): read by the hydro
+   corridor, which fast-paths a value-refresh only when the live pool's epoch
+   matches the one its published CSR was built from. */
+unsigned long long ghost_provenance_epoch(void) { return g_ghost_provenance_epoch; }
+
 /* Accessors for ghost provenance data — used by ghost_writeback.cc */
+/* True iff a ghost import is live (pool materialized, between import and cleanup).
+   Distinguishes "live pool with zero ghosts" from "no pool" — callers must not
+   infer liveness from ghost_get_num_ghosts(), which returns 0 in both states.
+   Used by the neighbor-loop runner to enforce the caller-owned-pool contract
+   for external-CSR consumers (see neighbor_loop_runner.h). */
+int ghost_pool_is_live(void) { return (NumPart_before_ghost >= 0) ? 1 : 0; }
 int ghost_get_num_ghosts(void) { return NumGhostParticles; }
 int ghost_get_previous_count(void) { return PreviousGhostCount; }
 int ghost_get_num_local(void)  { return (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart; }

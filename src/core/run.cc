@@ -541,15 +541,16 @@ void calculate_non_standard_physics(void)
             CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
     }
 #endif
-    for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
 #endif // TRANSPORT_SUBCYCLE
 
 #ifdef RADTRANSFER
+    /* Under TRANSPORT_SUBCYCLE this whole block runs ONCE, before the subcycle
+       topology build below (it used to run inside the loop gated on the first
+       sub-step; hoisted because rt_source_injection's neighbor loop runs its
+       own ghost import + cleanup, which must not touch the topology the
+       subcycle loop consumes). Non-subcycle builds: unchanged. */
     CPU_Step[CPU_MISC] += measure_time();
 #if defined(RT_SOURCE_INJECTION)
-#ifdef TRANSPORT_SUBCYCLE
-    if(transport_sub == 0) /* source injection only on first sub-step */
-#endif
     {
         int flag; flag=1;
 #if !defined(RT_INJECT_PHOTONS_DISCRETELY)
@@ -564,10 +565,7 @@ void calculate_non_standard_physics(void)
 #endif
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
-#ifdef TRANSPORT_SUBCYCLE
-    if(transport_sub == 0) /* chemistry update only on first sub-step (cooling handles it on subsequent sub-steps if TRANSPORT_SUBCYCLE_COOLING) */
-#endif
-    rt_update_chemistry(); /* chemistry updated at sub-stepping as well */
+    rt_update_chemistry(); /* chemistry update (under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps) */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
@@ -576,6 +574,13 @@ void calculate_non_standard_physics(void)
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
+    /* Build the topology the subcycle consumes (active list + gas ghost pool +
+       shared symmetric CSR) — AFTER sink accretion / wind spawning / rearrange
+       and the RT block above, so nothing mutates the particle array or the
+       ghost lifecycle between this build and the end of the loop. */
+    transport_subcycle_prepare_topology();
+    for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
+    gizmo_exit_bad_stop_if_requested("run:transport_subcycle_substep");
     /* --- recompute transport fluxes every sub-step and apply kick --- */
     transport_subcycle_exchange_fluxes();
     /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
@@ -612,9 +617,8 @@ void calculate_non_standard_physics(void)
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
-    /* TRANSPORT_SUBCYCLE path: symlist + ghosts were kept alive past hydro_force
-       (gizmo_hydro_cleanup_symlist_and_ghosts() skipped itself under this flag).
-       Free them now that the RT subcycle loop is done. */
+    /* Free the subcycle topology built by transport_subcycle_prepare_topology()
+       above (active list + shared CSR + gas ghost pool). */
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
     /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
