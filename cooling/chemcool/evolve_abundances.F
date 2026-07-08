@@ -209,6 +209,23 @@ c
 #if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
         y(ihd) = 0d0
 #endif
+c HOTIONFIX (2026-07-08, tier-0 ledger catch #2): set the ion states to their
+c hot-gas equilibrium instead of FREEZING whatever came in.  SN shocks drive
+c NEUTRAL ambient gas straight past T_NOCHEM; frozen x_HI~1 makes rate_eq
+c evaluate neutral-H collisional excitation/ionization cooling at 1e7-1e8 K
+c -> Lambda ~1e5x the ionized-gas truth -> hot bubbles lost ~24% of their
+c energy PER ACTIVE STEP (measured: one-zone A/B neutral-frozen vs ionized;
+c in-sim staircase cliffs in the m10 injection ledger).  Real gas at these
+c temperatures collisionally ionizes in ~months (t_ci ~ 1/(n k_ci) << any
+c step), so full ionization IS the correct frozen state.  Also fixes hot
+c bubble interiors carrying x_HI=1 in TracAbund (wrong snapshot ionization
+c and shielding columns).  CIE above 5e5 K: H+ = 1, He = He++, D = D+.
+        y(ihp) = 1d0
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        y(ihep)  = 0d0
+        y(ihepp) = abhe
+        y(idp)   = abundD
+#endif
         do nbyp = 1, 100000
           call rate_eq(nspec, t_start, y, ydot, rpar, ipar)
           ipar(1) = 0

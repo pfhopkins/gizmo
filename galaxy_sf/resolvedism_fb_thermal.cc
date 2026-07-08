@@ -346,11 +346,20 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 
                 /* ---- Thermal energy injection ---- */
                 if(local.Esne > 0) {
+                    /* ENERGY LEDGER FIX (2026-07-08, tier-0 benchmark catch): the specific
+                     * energy must be charged to the POST-deposit cell mass. The ejecta mass
+                     * (dM = wk*Mej, added below) multiplies the raised u, so dividing by the
+                     * pre-deposit Mass_j over-injects each SN by a factor 1 + Sum wk^2*Mej/m:
+                     * +30% at 10 Msun cells, +33% at 1 Msun, ~+300% at 0.1 Msun (resolution-
+                     * dependent!). Measured bit-clean against FeedbackBudget's 1e51 booking.
+                     * With m_new in the denominator the cell's total energy gain is exactly
+                     * wk*Esne (+ dM*u_ambient, the physically correct ambient-u carry). */
+                    double mass_j_post = Mass_j + wk * local.Mej;
 #ifdef COSMIC_RAY_FLUID
                     double cr_frac = All.CosmicRay_SNeFraction;
-                    double dE = wk * local.Esne * (1.0 - cr_frac) / Mass_j;
+                    double dE = wk * local.Esne * (1.0 - cr_frac) / mass_j_post;
 #else
-                    double dE = wk * local.Esne / Mass_j;
+                    double dE = wk * local.Esne / mass_j_post;
 #endif
                     #pragma omp atomic
                     CellP[j].InternalEnergy += dE;
