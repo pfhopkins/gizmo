@@ -56,14 +56,11 @@ enum class GizmoHydroCorridorMode : int {
  * core/accel.cc::compute_hydro_densities_and_forces just before density().
  *
  * Decision priority (highest first):
- *   1. env GIZMO_HYDRO_CORRIDOR_FORCE_MODE = A | B   (corridor-wide override)
- *   2. env GIZMO_NLR_FORCE_MODE            = A | B   (global runner override)
- *   3. adaptive vs env GIZMO_NLR_MODEB_THRESHOLD_SUM (default if unset = a
- *      sensible large-N threshold; see implementation)
- *
- * Per-loop overrides (GIZMO_GRADIENTS_FORCE_MODE, etc.) are NOT consulted
- * here — a single loop forced onto a different mode than the rest of the
- * corridor breaks corridor coherence. */
+ *   1. TRANSPORT_SUBCYCLE builds require the shared CSR every step -> Mode A.
+ *   2. adaptive: Mode B iff sum>0 && sum<=TS && max<=TM, where the summed and
+ *      per-rank-max active-gas counts are compared against the optional
+ *      NeighborLoopModeBThreshold{Sum,Max} parameters if set (<= 0 forces
+ *      Mode A), otherwise the built-in corridor defaults. */
 void gizmo_hydro_corridor_decide_mode(void);
 
 /* Read the current corridor mode. Returns UNSET when called outside the

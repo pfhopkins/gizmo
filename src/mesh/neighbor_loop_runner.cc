@@ -328,6 +328,9 @@ int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
             v, spec_default, loop_name ? loop_name : "?");
         return v;
     }
+    /* Production parameterfile override (supported interface, no warning): -1 = unset
+       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdSum; if(p != -1) return p; }
     return spec_default;
 }
 int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
@@ -350,6 +353,9 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
             v, spec_default, loop_name ? loop_name : "?");
         return v;
     }
+    /* Production parameterfile override (supported interface, no warning): -1 = unset
+       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdMax; if(p != -1) return p; }
     return spec_default;
 }
 

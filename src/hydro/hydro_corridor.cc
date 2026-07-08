@@ -17,11 +17,13 @@
 #include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_gradients_prep_symlist / refresh_symlist */
 #include "hydro_corridor.h"
 
-/* Default adaptive threshold (sum of global_num_active_gas) below which
- * the corridor picks Mode B. Matches the project-wide
- * GIZMO_NLR_MODEB_THRESHOLD_SUM convention used by the runner's per-loop
- * threshold; centralized here so a future tuning lives in one place. */
+/* Default adaptive thresholds (global summed / per-rank-max active gas) used
+ * when the optional NeighborLoopModeBThreshold{Sum,Max} parameters are unset.
+ * The corridor decision mirrors the runner's per-loop policy:
+ *   Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
+ * Centralized here so a future tuning lives in one place. */
 static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM = 1000;
+static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_MAX = 1000;
 
 /* Step-scoped mode state. Reset to UNSET by gizmo_hydro_corridor_end().
  * File-static so consumers must go through the accessor; no extern reads.
@@ -32,65 +34,25 @@ static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM = 1000;
  * (consumer placed outside the corridor span). */
 static GizmoHydroCorridorMode g_corridor_mode = GizmoHydroCorridorMode::UNSET;
 
-/* Helper: parse an "A" / "B" env var into a corridor mode. Returns
- * UNSET when the env var is missing or empty (caller treats this as
- * "no override at this priority level"). Case-insensitive on the first
- * char so "a" and "b" also work.
- *
- * Invalid set-but-nonsense values (e.g. "banana") FATAL via endrun.
- * Silent fallback to adaptive would create exactly the testing-confusion
- * class that ruins mode validation runs — a user setting the env var to
- * the wrong value must learn loudly. */
-static GizmoHydroCorridorMode
-parse_force_mode_env(const char *env_name)
-{
-    const char *v = getenv(env_name);
-    if(v == nullptr || v[0] == '\0') return GizmoHydroCorridorMode::UNSET;
-    /* Accept ONLY the single-char strings "A" or "B" (case-insensitive).
-     * "banana" starts with 'b' but is not a valid override; reject. */
-    if(v[1] == '\0') {
-        char c = v[0];
-        if(c == 'A' || c == 'a') return GizmoHydroCorridorMode::MODE_A;
-        if(c == 'B' || c == 'b') return GizmoHydroCorridorMode::MODE_B;
-    }
-    if(ThisTask == 0) {
-        printf("FATAL: %s='%s' not recognized (expected 'A' or 'B'). "
-               "Unset to fall through to the next priority level (adaptive).\n",
-               env_name, v);
-        fflush(stdout);
-    }
-    endrun(7310);
-    return GizmoHydroCorridorMode::UNSET; /* unreachable; silences compiler */
-}
-
-static int
-parse_threshold_env(const char *env_name, int fallback)
-{
-    const char *v = getenv(env_name);
-    if(v == nullptr || v[0] == '\0') return fallback;
-    long n = strtol(v, nullptr, 10);
-    if(n <= 0) return fallback;
-    return (int)n;
-}
-
-/* Global active-gas count — collective Allreduce so every rank computes
- * the same mode (corridor coherence requires this). Caller must be inside
- * MPI_COMM_WORLD scope. Cheap (one int Allreduce). */
-static int
-global_active_gas_count(void)
+/* Global active-gas counts — collective Allreduce so every rank computes
+ * the same mode (corridor coherence requires this). Fills the summed and the
+ * per-rank-max active-gas counts (matching the runner's sum/max dispatch
+ * inputs). Cheap (two int Allreduces). Caller must be inside MPI_COMM_WORLD
+ * scope. */
+static void
+global_active_gas_counts(int *out_sum, int *out_max)
 {
     int local_active_gas = 0;
     for(int ii : ActiveParticleList) {
         if(P[ii].Type == 0 && P[ii].Mass > 0) local_active_gas++;
     }
-    int global_active_gas = 0;
     if(NTask > 1) {
-        MPI_Allreduce(&local_active_gas, &global_active_gas, 1,
-                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&local_active_gas, out_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&local_active_gas, out_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     } else {
-        global_active_gas = local_active_gas;
+        *out_sum = local_active_gas;
+        *out_max = local_active_gas;
     }
-    return global_active_gas;
 }
 
 void gizmo_hydro_corridor_decide_mode(void)
@@ -114,29 +76,26 @@ void gizmo_hydro_corridor_decide_mode(void)
     }
     return;
 #endif
-    GizmoHydroCorridorMode mode = GizmoHydroCorridorMode::UNSET;
-    const char *source = "(unset)";
-
-    /* Priority 1: corridor-wide override */
-    mode = parse_force_mode_env("GIZMO_HYDRO_CORRIDOR_FORCE_MODE");
-    if(mode != GizmoHydroCorridorMode::UNSET) {
-        source = "GIZMO_HYDRO_CORRIDOR_FORCE_MODE";
-    } else {
-        /* Priority 2: global runner override */
-        mode = parse_force_mode_env("GIZMO_NLR_FORCE_MODE");
-        if(mode != GizmoHydroCorridorMode::UNSET) {
-            source = "GIZMO_NLR_FORCE_MODE";
-        } else {
-            /* Priority 3: adaptive on global active-gas count */
-            int global_active_gas = global_active_gas_count();
-            int threshold = parse_threshold_env("GIZMO_NLR_MODEB_THRESHOLD_SUM",
-                                                CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM);
-            mode = (global_active_gas <= threshold)
-                       ? GizmoHydroCorridorMode::MODE_B
-                       : GizmoHydroCorridorMode::MODE_A;
-            source = "adaptive";
-        }
-    }
+    /* Adaptive dispatch, mirroring the runner's per-loop policy:
+       Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
+       Thresholds from the optional NeighborLoopModeBThreshold{Sum,Max} params
+       (-1 = unset -> corridor default; any set value overrides, <= 0 disables
+       Mode B). TRANSPORT_SUBCYCLE has already forced Mode A above; there is no
+       env force-mode override. */
+    int sum_active_gas = 0, max_active_gas = 0;
+    global_active_gas_counts(&sum_active_gas, &max_active_gas);
+    const struct global_data_all_processes *host_all = nlr_host_all_ptr();
+    int threshold_sum = (host_all->NeighborLoopModeBThresholdSum != -1)
+                            ? host_all->NeighborLoopModeBThresholdSum
+                            : CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM;
+    int threshold_max = (host_all->NeighborLoopModeBThresholdMax != -1)
+                            ? host_all->NeighborLoopModeBThresholdMax
+                            : CORRIDOR_DEFAULT_MODEB_THRESHOLD_MAX;
+    bool select_mode_b = (sum_active_gas > 0) && (sum_active_gas <= threshold_sum)
+                                             && (max_active_gas <= threshold_max);
+    GizmoHydroCorridorMode mode = select_mode_b ? GizmoHydroCorridorMode::MODE_B
+                                                : GizmoHydroCorridorMode::MODE_A;
+    const char *source = "adaptive";
 
     g_corridor_mode = mode;
 
