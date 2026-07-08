@@ -720,13 +720,6 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     P[i].Time_Of_Last_MergeSplit = All.Time; P[j].Time_Of_Last_MergeSplit = All.Time;
 #endif
     
-    /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP    
-    long bin = P[i].TimeBin;
-    if(FirstInTimeBin[bin] < 0) {FirstInTimeBin[bin]=j; LastInTimeBin[bin]=j; NextInTimeBin[j]=-1; PrevInTimeBin[j]=-1;} /* only particle in this time bin on this task */
-    else {NextInTimeBin[j]=FirstInTimeBin[bin]; PrevInTimeBin[j]=-1; PrevInTimeBin[FirstInTimeBin[bin]]=j; FirstInTimeBin[bin]=j;} /* there is already at least one particle; add this one "to the front" of the list */
-    force_add_element_to_tree(i, j);
-#endif    
     /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
     
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)

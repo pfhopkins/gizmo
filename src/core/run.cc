@@ -350,14 +350,6 @@ void run(void)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
 
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
-        if(!reconstructed_tree)
-        {
-            STEP_PHASE_TIME("merge_split", merge_and_split_particles());
-            STEP_PHASE_TIME("rearrange_particles", rearrange_particle_sequence());
-        }
-#endif
-
         STEP_PHASE_TIME("kick2", do_second_halfstep_kick());	/* this does the half-step kick at the end of the timestep */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
