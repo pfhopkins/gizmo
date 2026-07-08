@@ -738,12 +738,11 @@ const char *nlr_path_label(NeighborLoopPlan::Path path)
 }
 
 /* ============================================================================
- * StageTimer — internal RAII helper for PHASE0 timing (3c.4b)
+ * StageTimer — internal RAII helper for PHASE0 timing
  *
  * `target == nullptr` means phase0 is off: ctor and dtor do nothing except
- * a single predictable nullptr branch. NO MPI_Wtime call when off — codex
- * constraint that "MPI_Wtime is not zero overhead" addressed at the call
- * site, not just at the gating env var.
+ * a single predictable nullptr branch. NO MPI_Wtime call when off — "MPI_Wtime is not zero overhead" is
+ * addressed at the call site, not just at the gating env var.
  *
  * Targets are accumulators: multiple StageTimer scopes can target the same
  * field (e.g. Mode B remote's dt_collect spans BOTH self and peer pre-drift
@@ -888,7 +887,7 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
     const int num_local = ghost_get_num_local();
     /* Per-call ownership: each inner vector owns its capacity for the
      * duration of this call. .assign(N, {}) clobbers any stale residue
-     * from a previous call. Stage 4 contract: walker appends via
+     * from a previous call. Walker-append contract: appends via
      * push_back; geometric growth handles any-size match set without
      * imposing the previous full-pool .assign(num_local, 0) cost
      * (~24 MB × N_active on fire_m11i). */
@@ -1067,7 +1066,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
 
 /* Helper: build the host-frozen ActiveData[] for self-rank actives. Called
  * BEFORE any drift so the active snapshot matches the legacy pack_query
- * epoch. (Codex nuance: this is NOT the same epoch as Mode A's device-staged
+ * epoch. (Note: this is NOT the same epoch as Mode A's device-staged
  * load_active post-NGL-build; documented at run_neighbor_loop dispatch site.)
  */
 template <typename Spec, typename DeviceCtx>
@@ -1086,7 +1085,7 @@ static void build_self_actives_host_pre_drift(
 }
 
 /* ============================================================================
- * Diagnostic active-dump emit helper (3c.4a)
+ * Diagnostic active-dump emit helper
  *
  * Iterates per-active and calls Spec::diagnostic_dump_active when the env
  * gate is on AND the spec opts in via the SFINAE-detected hook.
@@ -1207,10 +1206,10 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
  * extraction).
  *
  * Brute oracle uses ONLY Mode B / Brute machinery — no GPU NGL, no SIDX, no
- * arena. Codex invariant: "the oracle's pair kernel is the SAME pair_kernel
- * Mode B runs; only the search differs." */
+ * arena. Invariant: the oracle's pair kernel is the SAME pair_kernel
+ * Mode B runs; only the search differs. */
 /* Mismatch print cap — shared between local and remote oracle paths so we
- * don't double the cap when both fire (e.g. 3c.3 multi-rank-with-oracle
+ * don't double the cap when both fire (e.g. multi-rank-with-oracle
  * runs the local path under NTask==1 dispatch and the remote path under
  * NTask>1). */
 static const long long kMismatchPrintCap = 1024;
@@ -1244,9 +1243,9 @@ static void emit_oracle_mismatch_if_any(int rank, int active_slot,
 }
 
 /* ============================================================================
- * Iterative-oracle per-iter mismatch emit helpers (step 2c.4).
+ * Iterative-oracle per-iter mismatch emit helpers.
  *
- * Codex v2 P2: per-iter compare must cover four things, not just
+ * Note: per-iter compare must cover four things, not just
  * AccumData. These four helpers complement emit_oracle_mismatch_if_any
  * (which handles AccumData via Spec::compare_accum) with IterStatus
  * control-flow / radius / active-set-membership compare lines. All share
@@ -1382,7 +1381,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
      * the brute's writes but did not restore the post-tree state, so brute
      * read e.g. zeroed Mass / changed SwallowID and produced a different
      * accumulator than tree -- a silent false-pass on the oracle whenever no
-     * actual j-writes happened in the test config (codex review 2026-05-10).
+     * actual j-writes happened in the test config.
      * For non-j-write Specs the order is irrelevant; we use brute-first
      * universally for one consistent oracle shape. */
     DeviceCtx ctx_oracle = ctx;
@@ -1415,9 +1414,9 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
 }
 
 /* ============================================================================
- * Mode B remote (multi-rank) helpers (3c.3)
+ * Mode B remote (multi-rank) helpers
  *
- * STRONG INVARIANT (codex-locked, both oracle and non-oracle paths):
+ * STRONG INVARIANT (both oracle and non-oracle paths):
  *   collect-all → drift-union → evaluate-all on each rank.
  *
  * On each rank, the local pool is walked TWICE per call: once for this
@@ -1448,21 +1447,21 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
  *                                  rank for FP-reproducible order
  *   stage 12 (active rank) writeback
  *
- * Codex nuance (acknowledged): the host-frozen actives[] match Mode B /
+ * Note: the host-frozen actives[] match Mode B /
  * legacy pack_query epoch, NOT Mode A's device-staged post-NGL-build
  * epoch. Oracle in this path is Mode B tree vs brute on the same frozen
  * query — it does NOT cross-validate against Mode A's active epoch.
  * ========================================================================== */
 
 /* ============================================================================
- * mode_b_remote_evaluate_into_buffer<Spec, ORACLE> — extracted helper (step 2b.2).
+ * mode_b_remote_evaluate_into_buffer<Spec, ORACLE> — extracted helper.
  *
  * Mechanical refactor of the existing run_mode_b_remote_impl body, extracting
  * stages 1-12 (queries / collect / drift / evaluate / merge / replies / merge)
  * + the env-gated active_dumps diagnostic into a reusable helper. The caller
  * provides the output AccumData buffer; the helper does NOT call
  * Spec::apply_active_writeback. Final-only writeback decision stays with the
- * caller (codex 2b.2 constraint 1: "let the caller decide whether to call
+ * caller ("let the caller decide whether to call
  * apply_active_writeback").
  *
  * Two callers:
@@ -1475,7 +1474,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
  *     active_dumps emits are harmless: env-gated, only fire under spike-test
  *     flags.)
  *
- * Epoch order is preserved EXACTLY (codex constraint 2): build self/peer
+ * Epoch order is preserved EXACTLY: build self/peer
  * queries -> collect all candidate sets pre-drift -> exchange -> drift union
  * -> brute-FIRST if oracle -> evaluate -> exchange replies -> merge replies
  * in deterministic peer order. No re-derivation; line-for-line move from
@@ -1532,7 +1531,7 @@ static void mode_b_remote_evaluate_into_buffer(
      * Helper does NOT call populate_call_scalars or populate_device_context. */
 
     /* Freeze actives host-side pre-drift (same snapshot used for self-pair
-     * AND for ship-to-peers; codex requirement to prevent self/remote epoch
+     * AND for ship-to-peers; prevents self/remote epoch
      * skew on the active rank). */
     std::vector<ActiveData> actives(N);
     if(N > 0) {
@@ -1589,7 +1588,7 @@ static void mode_b_remote_evaluate_into_buffer(
      *     came from (used for unflattening replies back into per-peer arrays).
      *   - origin_slot / origin_rank: copied from the received envelope; ride
      *     into the REPLY envelope so the active rank can merge by slot
-     *     without relying on transport ordering (codex Option C — symmetric
+     *     without relying on transport ordering (symmetric
      *     query and reply envelopes). */
     std::vector<ActiveData> peer_actives;
     struct Provenance {
@@ -1668,7 +1667,7 @@ static void mode_b_remote_evaluate_into_buffer(
      *   OracleBrutePass:  brute -> accums_out (caller-owned ctx already
      *                     brute-pass-guarded). No tree, no compare.
      *
-     * Brute-FIRST ordering (codex 3d.3 / 2026-05-10): dry-run BEFORE tree
+     * Brute-FIRST ordering: dry-run BEFORE tree
      * so brute reads pre-mutation j-state; without it, tree's j-writes
      * leak into brute's read. For OracleBrutePass the caller owns the
      * brute-pass guard at outer scope (NlrOracleBrutePassGuard at iter
@@ -1834,7 +1833,7 @@ static void mode_b_remote_evaluate_into_buffer(
         /* Stage 10: build reply envelopes (origin_slot/rank copied from each
          * received query envelope), unflatten into per-peer arrays via the
          * provenance map, then exchange. Reply envelope makes the active-side
-         * merge transport-order independent (codex Option C consistency). */
+         * merge transport-order independent (symmetric query/reply envelopes). */
         std::vector<std::vector<ReplyEnvelope>> replies_per_peer(nt);
         for(int p = 0; p < nt; p++) {
             replies_per_peer[p].assign(state.recv_counts[p], ReplyEnvelope{});
@@ -1888,7 +1887,7 @@ static void mode_b_remote_evaluate_into_buffer(
     }
 
     /* Optionally export the actives[] snapshot to caller for post-writeback
-     * diagnostic emit (codex 2c.1 review fix: non-iter dump ordering must be
+     * diagnostic emit (non-iter dump ordering must be
      * apply_active_writeback FIRST, then runner_emit_active_dumps — pre-2b.2
      * timing preserved by exporting actives + letting wrapper emit AFTER its
      * writeback loop). Iter dispatch caller passes nullptr — diagnostic
@@ -1904,11 +1903,11 @@ static void mode_b_remote_evaluate_into_buffer(
 }
 
 /* ============================================================================
- * run_mode_b_remote_impl<Spec, ORACLE> — non-iterative thin wrapper (step 2b.2).
+ * run_mode_b_remote_impl<Spec, ORACLE> — non-iterative thin wrapper.
  *
  * Allocates per-call AccumData buffer, calls helper, runs final
  * apply_active_writeback + active_dumps emit. Behavior is byte-identical to
- * the pre-2b.2 monolithic impl — same epoch order, same oracle handling,
+ * the earlier monolithic impl — same epoch order, same oracle handling,
  * same writeback per active.
  * ========================================================================== */
 template <typename Spec, bool ORACLE>
@@ -1924,9 +1923,9 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     /* Capture CallScalars per call (non-iter wrapper). */
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
-    /* Build per-call DeviceContext + RAII cleanup guard (step 2c.1: helper
+    /* Build per-call DeviceContext + RAII cleanup guard (helper
      * no longer builds its own ctx; caller does). Behavior byte-equivalent
-     * to pre-2c.1 monolith — guard runs Spec::cleanup_device_context at
+     * to the earlier monolith — guard runs Spec::cleanup_device_context at
      * scope exit, after the writeback loop completes. */
     DeviceCtx ctx;
     ctx.P         = args.P;
@@ -1943,7 +1942,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
     /* Caller-owned per-call AccumData buffer; helper writes into it.
-     * Explicit Spec::zero_accum per slot (codex 2b.2 review fix): defensive
+     * Explicit Spec::zero_accum per slot: defensive
      * against future evaluate_pairs variants that don't zero internally.
      * Today evaluate_pairs_post_drift calls Spec::zero_accum at line 812
      * before walking candidates, so this outer zero is redundant — but
@@ -1956,14 +1955,14 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     }
 
     /* Caller-owned actives buffer for post-writeback diagnostic emit.
-     * Helper fills this when actives_out != nullptr; pre-2b.2 emit ordering
+     * Helper fills this when actives_out != nullptr; earlier emit ordering
      * (apply_active_writeback FIRST, runner_emit_active_dumps SECOND) is
      * preserved by emitting from this buffer AFTER the writeback loop below. */
     std::vector<ActiveData> actives_for_dumps(N);
 
     /* Helper runs Stages 1-12; writeback + dumps are the wrapper's
-     * responsibility (preserves pre-2b.2 timing per codex 2c.1 review). */
-    /* Step 2c.4 SSOT extension: helper now takes RemoteEvalMode enum
+     * responsibility (preserves the earlier timing). */
+    /* SSOT extension: helper takes a RemoteEvalMode enum
      * (Production / OracleCompare / OracleBrutePass). Non-iter wrapper
      * keeps the legacy bool ORACLE template parameter and translates. */
     constexpr RemoteHelperMode MODE = ORACLE ? RemoteHelperMode::OracleCompare
@@ -2445,7 +2444,7 @@ static constexpr const char *nlr_ghost_write_detector_name()
 /* Dispatch wrappers. Each gates on:
  *   (a) `uses_*` trait true (Spec opted in)
  *   (b) `nlr_path_uses_imported_ghosts(plan.path)` — for SinkEnv1Spec these
- *        hooks are imported-ghost-only per Stage 2c audit. The path gate
+ *        hooks are imported-ghost-only. The path gate
  *        IS the policy; the hook trait is the Spec opt-in.
  *   (c) hook method exists (SFINAE) — present ⇒ Spec custom hook fires;
  *        absent ⇒ runner default fires (::ghost_write_detector_begin(name)
@@ -2558,7 +2557,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * set together, invalid value) are caught and endrun'd centrally inside
      * gizmo_nlr_force_mode(); see the env-config block earlier in this TU.
      *
-     * Codex nuance (active-epoch caveat): Mode B host-frozen actives[] are
+     * Note (active-epoch caveat): Mode B host-frozen actives[] are
      * NOT bit-equivalent to Mode A's device-staged post-neighbor-list-build
      * actives. Oracle in this dispatch is Mode B tree vs Mode B brute on the
      * same frozen query — it does NOT cross-validate Mode A. Mode A vs
@@ -2577,7 +2576,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
                             gizmo_nlr_oracle_enabled_for(Spec::loop_name);
 
-    /* PHASE0 timing scaffolding (3c.4b). Cached env-gate; mid-run env
+    /* PHASE0 timing scaffolding. Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the
      * runner are gated; off-path overhead is one branch per StageTimer
      * scope, no MPI_Wtime call. PHASE0_NLR measures only RUNNER-OWNED time:
@@ -2592,7 +2591,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * Skipped when force-mode envs are set (cheap path).
      * PHASE0 num_active_global is captured here when the threshold path
      * already did the Allreduce; on force paths an extra Allreduce is done
-     * ONLY when phase0_on (codex constraint #4). */
+     * ONLY when phase0_on. */
     bool select_mode_b = force_b;
     int phase0_sum_active = -1;       /* -1 = not yet computed */
     if(!force_a && !force_b) {
@@ -2838,15 +2837,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
 }
 
 /* ============================================================================
- * run_neighbor_loop_iterative<Spec> — Phase 4.B.0 iterative entry point.
- *
- * STEP 2b (2026-05-10): framework + Mode B LOCAL iter dispatch only.
- * Mode A iter, Mode B remote iter, iterative oracle = HARD STUBS pending
- * step 2b.2 (Mode B remote helper extraction) and step 2c (Mode A
- * cached-CSR + iterative oracle). Per Phil + codex 2026-05-10: no slow /
- * regressed Mode A iterative path; harness in step 3 forces Mode B local
- * (np=1) for framework validation; np=2 + Mode A force = expected hard
- * abort until 2b.2 / 2c.
+ * run_neighbor_loop_iterative<Spec> — iterative entry point.
  *
  * Compile-time spec consistency:
  *   - IterControl == Iterative
@@ -2908,7 +2899,7 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
         radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
         active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
 
-        /* Byte-zero IterScratch ONCE — persists across iters per v4 §4. */
+        /* Byte-zero IterScratch ONCE — persists across iters. */
         std::memset(scratch_uvm[sg], 0, n * sizeof(IterScratch));
         /* AccumData NOT zeroed here; runner zeros via Spec::zero_accum at start of each iter. */
 
@@ -2985,13 +2976,13 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
 template <typename Spec>
 NlrIterDriver<Spec>::~NlrIterDriver()
 {
-    /* DeviceContext cleanup (codex 2c.1 review): only fire if init actually
+    /* DeviceContext cleanup: only fire if init actually
      * completed. Stubbed/aborted init paths leave ctx_initialized=false →
      * cleanup_device_context is NOT called, preventing free of unallocated
      * resources. Direct Spec call (NOT NlrDeviceContextCleanupGuard) — the
      * guard is RAII-only and wouldn't compose with conditional init.
      *
-     * Ordering (codex 2c.1 hardening note): cleanup_device_context fires
+     * Ordering: cleanup_device_context fires
      * BEFORE the per-subgroup UVM frees below. Spec::cleanup_device_context
      * MUST only free resources it OWNS (e.g., UVM arrays it allocated in
      * populate_device_context). It MUST NOT assume the driver's per-subgroup
@@ -3014,8 +3005,7 @@ NlrIterDriver<Spec>::~NlrIterDriver()
         }
     }
 
-    /* Free Mode A cached CSR/lookup state by POINTER STATE (codex 2c.2-fix
-     * blocker #5: mode_a_csr_valid=false can mean "allocated but invalid,
+    /* Free Mode A cached CSR/lookup state by POINTER STATE (mode_a_csr_valid=false can mean "allocated but invalid,
      * pending rebuild" if the rebuild trigger fired but rebuild itself
      * hadn't completed yet; check pointers, not the flag).
      *
@@ -3049,7 +3039,7 @@ NlrIterDriver<Spec>::~NlrIterDriver()
         arena_acquired = false;
     }
 
-    /* Imported-ghost cleanup ONCE per call (codex 2c.2-fix; matches non-iter
+    /* Imported-ghost cleanup ONCE per call (matches non-iter
      * line 2094-2097). Only fires for Mode A multi-rank paths that imported.
      * Runner's Mode A imports an exact-query ghost pool sized to the iter's
      * actives+radii; the caller (e.g. density()) is responsible for any
@@ -3103,8 +3093,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_b()
                   "Spec::DeviceContext must be trivially copyable; "
                   "captured by value into Kokkos device lambdas");
 
-    /* Double-init guard (codex 2c.1 hardening): once Mode A init lands in
-     * step 2c.2, accidental call sequences (e.g., path mis-route calling
+    /* Double-init guard: accidental call sequences (e.g., path mis-route calling
      * both inits) would silently double-populate / double-cleanup. Catch
      * loudly here. */
     if (ctx_initialized) {
@@ -3142,7 +3131,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
                   "Spec::DeviceContext must be trivially copyable; "
                   "captured by value into Kokkos device lambdas");
 
-    /* Double-init guard (codex 2c.1 hardening). */
+    /* Double-init guard. */
     if (ctx_initialized) {
         if (ThisTask == 0) {
             fprintf(stderr,
@@ -3157,7 +3146,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
         endrun(81210);
         return;
     }
-    /* Arena must already have been acquired (codex 2c.2 strict lifecycle). */
+    /* Arena must already have been acquired. */
     if (!arena_acquired) {
         if (ThisTask == 0) {
             fprintf(stderr,
@@ -3173,7 +3162,7 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
     }
 
     /* Bind to arena-resident P_gpu / CellP_gpu. Use the driver's
-     * effective_args (codex 2c.2-fix): if ghost import ran above, these
+     * effective_args: if ghost import ran above, these
      * point at the refreshed POST-IMPORT global P/CellP/NumPart; otherwise
      * they equal the original base args. CellP=NULL is legitimate (gas-free). */
     ctx.P         = gpu_particles_arena_P();
@@ -3203,17 +3192,17 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
         endrun(81212); return;
     }
 
-    /* === (1) Imported-ghost prep ONCE per call (codex 2c.2-fix + 2c.3 step 9) ===
+    /* === (1) Imported-ghost prep ONCE per call ===
      * Mode A requires neighbors that live on peer ranks to be imported as
      * ghosts. Mirrors non-iter run_neighbor_loop lines 2037-2052.
      *
-     * Multi-subgroup union semantics (step 2c.3 step 9): mask = OR of all
+     * Multi-subgroup union semantics: mask = OR of all
      * subgroups' j_type_bitmask; actives = concatenation of all subgroups'
      * full active_indices (initial iter-0 set; later iters' compactions
      * narrow but don't grow); radii = matching concatenation oversized via
      * mode_a_csr_buffer_factor. Single-subgroup case: trivial length-1
      * union = original behavior. Multi-subgroup over-imports in cross-bm
-     * cases (deliberate physics/perf tradeoff per codex plan v2 ch. 6).
+     * cases (deliberate physics/perf tradeoff).
      *
      * On rebuild via rebuild_mode_a_arena_and_ctx_for_current_active_union,
      * the union covers only CURRENT compacted actives (post-Converged-removal)
@@ -3262,8 +3251,8 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
 }
 
 /* ============================================================================
- * rebuild_mode_a_arena_and_ctx_for_current_active_union — codex 2c.3 plan v2
- * tightening 5: self-sufficient rebuild method (no parameters).
+ * rebuild_mode_a_arena_and_ctx_for_current_active_union — self-sufficient
+ * rebuild method (no parameters).
  *
  * Builds the union from driver's own subgroup state. Used by the Mode A
  * outer-iter pre-dispatch invalidation sweep (step 8). Invalidates ALL
@@ -3276,8 +3265,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
  * radii_uvm[sg][slot] * mode_a_csr_buffer_factor. Over-imports in
  * multi-bm cases (each active gets ghosts of all union types instead of
  * just its own mask). Cosmological FIRE typical = single bm-group = no
- * over-import. Documented as deliberate physics/perf tradeoff (codex
- * approved 2c.3 plan v2 change 6).
+ * over-import. Documented as deliberate physics/perf tradeoff.
  *
  * Pre-condition: drv.global_active_per_sg has been computed (set by the
  * outer iter loop's per-iter Allreduce). On iter 0 it may all be 0 (not
@@ -3404,7 +3392,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     /* === (7) Rebind ctx + (8) populate extended ctx for NEW pool === */
     initialize_device_context_mode_a_after_arena();
 
-    /* Codex 2c.3 blocker #4 fix: do NOT re-fire reset_per_iter_device_context
+    /* Do NOT re-fire reset_per_iter_device_context
      * here. The outer iter loop's step (a-pre) calls this method BEFORE
      * step (a0), which fires the reset hook exactly once per outer iter
      * over the freshly-populated ctx. Re-firing here would cause a
@@ -3476,8 +3464,8 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
 
     /* Driver-owned compacted AccumData buffer. Helper writes into this;
      * we scatter back into driver.accum_uvm[sg][slot] for active slots
-     * after the helper returns. Explicit Spec::zero_accum per slot
-     * (codex 2b.2 review fix): defensive against future evaluate_pairs
+     * after the helper returns. Explicit Spec::zero_accum per slot:
+     * defensive against future evaluate_pairs
      * variants + makes the per-iter AccumData zero contract explicit at
      * the caller level. */
     std::vector<AccumData> accums_compacted(n_compacted);
@@ -3507,7 +3495,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
 }
 
 /* ============================================================================
- * nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg) — Phase 4.B.0 step 2c.2.
+ * nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg).
  *
  * Per-iter Mode A dispatch for one subgroup. Cached oversized CSR + rebuild
  * trigger preserve legacy density_gpu.cc:140-220 session semantics.
@@ -3532,7 +3520,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
  *   6. Scatter compacted accums into driver-owned accum_uvm[sg][slot].
  * NO apply_active_writeback — final-only at driver level (post-iter-loop).
  *
- * CSR row-key invariant (codex v4.1 §2.A.1 restatement): rows in
+ * CSR row-key invariant: rows in
  * cached_gnl are in COMPACTED-AT-BUILD-TIME order. csr_offset_lookup[sg]
  * maps subgroup-slot → compacted-build-time row index. Active-set
  * compaction in later iters does NOT re-key rows; converged slots simply
@@ -3554,7 +3542,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     const int n_compacted  = drv.active_set_size[sg];
 
     /* Collective-symmetry: ghost_writeback_begin/end MUST fire on every rank
-     * for uses_ghost_writeback Specs (codex 2c.2-fix blocker #1) — even
+     * for uses_ghost_writeback Specs — even
      * empty-actives ranks, otherwise reverse-comm deadlocks. Hoist the
      * dispatch hooks outside the n_compacted<=0 short-circuit. The
      * kernel-side work between begin/end is gated on n_compacted > 0. */
@@ -3571,7 +3559,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     sub.num_active  = n_compacted;
 
     /* ===== (1) Build / rebuild CSR if invalid =====
-     * Codex 2c.3 blocker #1 fix: the reimport/re-arena lifecycle lives
+     * The reimport/re-arena lifecycle lives
      * EXCLUSIVELY in the outer pre-dispatch union rebuild (run_neighbor_loop_iterative
      * step a-pre), which uses the union mask across all globally-active
      * subgroups. Inside this helper, when !mode_a_csr_valid[sg], the ghost
@@ -3580,8 +3568,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     gpu_spatial_index_t *sidx = nlr_resolve_sidx_cache(Spec::sidx_cache_kind,
                                                          Spec::loop_name);
     if (!drv.mode_a_csr_valid[sg] && n_compacted > 0) {
-        /* Free old cached CSR / lookup state by POINTER STATE (codex
-         * 2c.2-fix blocker #5: mode_a_csr_valid=false can mean "allocated
+        /* Free old cached CSR / lookup state by POINTER STATE (mode_a_csr_valid=false can mean "allocated
          * but invalid, pending rebuild"; check pointers, not flag). */
         if (drv.mode_a_cached_gnl[sg].offsets != nullptr ||
             drv.mode_a_cached_gnl[sg].neighbors != nullptr) {
@@ -3627,7 +3614,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oversized_uvm);
 
         /* Allocate csr_offset_lookup + csr_buffered_h sized to subgroup max.
-         * Lookup keyed on subgroup-slot (codex v4.1 §2.A.1 invariant):
+         * Lookup keyed on subgroup-slot (invariant):
          *   csr_offset_lookup[slot] = build-time row index (0..n_compacted-1),
          *                              or -1 if slot wasn't in build-time set
          *                              (shouldn't happen — rebuild covers all
@@ -3652,7 +3639,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     }
 
     /* ===== (2) Ghost write detector + writeback begin =====
-     * UNCONDITIONAL (codex 2c.2-fix blocker #1): fires on every rank for
+     * UNCONDITIONAL: fires on every rank for
      * uses_ghost_writeback Specs, INCLUDING empty-actives ranks, to keep
      * MPI reverse-comm collectives in lockstep with non-empty ranks.
      * Plan.path == ModeA_GpuNgl gates the dispatch hooks via
@@ -3662,7 +3649,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
 
     if (n_compacted > 0) {
         /* ===== (3) Stage d_actives + (4) pair-kernel launch =====
-         * CSR ROW LOOKUP USAGE (codex 2c.2-fix blocker #2 verbatim):
+         * CSR ROW LOOKUP USAGE:
          *   slot = active_set[k]
          *   row  = csr_offset_lookup[slot]    (build-time row index)
          *   i    = d_active[row]              (particle index at build-time)
@@ -3761,7 +3748,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
 
     std::vector<AccumData> accums_compacted(n_compacted);
     for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_compacted[k]);     /* per-iter zero (codex constraint 2) */
+        Spec::zero_accum(accums_compacted[k]);     /* per-iter zero */
     }
 
     /* Collect → drift → evaluate (same helper chain as run_mode_b_local).
@@ -3980,7 +3967,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Sp
  * collect-brute / drift / brute walk / exchange replies / merge), brute
  * backend throughout. Caller-owned brute-pass guard at this scope.
  *
- * SSOT guardrail (codex 2c.4): no duplicated remote body. The helper
+ * SSOT guardrail: no duplicated remote body. The helper
  * handles self+peer brute walks and replies-merge via the existing
  * Stage 4 / 10 / 11 machinery.
  * ========================================================================== */
@@ -3993,8 +3980,7 @@ static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv,
     const int n_compacted  = drv.active_set_oracle_size[sg];
     /* NOTE: helper is COLLECTIVE — must be entered on every rank for the
      * MPI Allgather/Alltoall stages. Empty-rank participation uses
-     * n_compacted=0 with nullptr buffers (codex 2b.2 invariant 6 +
-     * 2c.2-fix-v2 blocker 23). */
+     * n_compacted=0 with nullptr buffers. */
 
     std::vector<int> active_particle_indices(n_compacted > 0 ? n_compacted : 0);
     for (int k = 0; k < n_compacted; k++) {
@@ -4181,7 +4167,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     static_assert(Spec::mode_a_csr_buffer_factor > 1.0,
                   "Spec::mode_a_csr_buffer_factor must be > 1.0 "
                   "(legacy DENSITY_H_BUFFER_FACTOR = 1.3).");
-    /* TRAP-5 carry-forward (codex 2b review 2026-05-10): same trivially-copyable
+    /* TRAP-5 carry-forward: same trivially-copyable
      * checks as run_neighbor_loop. Don't let iterative Specs bypass TRAP 5. */
     static_assert(std::is_trivially_copyable_v<typename Spec::CallScalars>,
                   "Spec::CallScalars must be trivially copyable (lambda-captured by value).");
@@ -4220,10 +4206,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      *     and Mode A NGL build per-subgroup.
      *   - Mode A multi-subgroup ghost import uses union semantics (mask
      *     OR + concatenation of actives/radii across subgroups). Documented
-     *     as deliberate over-import for cross-bm cases (codex plan v2 ch. 6).
+     *     as deliberate over-import for cross-bm cases.
      *   - Per-subgroup global activity tracking via global_active_per_sg[].
      *   - Pre-dispatch invalidation sweep rebuilds CSR caches once per iter
-     *     when any subgroup invalidated (codex plan v2 tightening 1).
+     *     when any subgroup invalidated.
      *   - Multi-subgroup actives partition + collective-symmetry validated
      *     under GIZMO_NLR_SUBGROUP_AUDIT=1 (step 10 audit block above).
      * Per-Spec opt-in still REQUIRED via `using SupportsSubgroups = std::true_type;`
@@ -4231,7 +4217,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 
     /* ===== Oracle env detection (step 2c.4) =====
      * Mode B oracle paths implemented this slice; Mode A + oracle still
-     * hard-stubbed (codex 2c.4-v3: Mode A oracle would catch only
+     * hard-stubbed (Mode A oracle would catch only
      * cached-CSR/lookup/rebuild bugs (covered by the synthetic harness in
      * step 3) and cannot validate ghost-import completeness (walks the
      * same imported pool as production). Its complexity is not justified
@@ -4239,7 +4225,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     const bool oracle_enabled = gizmo_nlr_oracle_enabled_global() ||
                                 gizmo_nlr_oracle_enabled_for(Spec::loop_name);
 
-    /* ===== Path selection at iter 0 (FIXED for whole call per v3 §0) =====
+    /* ===== Path selection at iter 0 (FIXED for whole call) =====
      * Step 2c.2: integrates with the canonical force-mode / threshold dispatch
      * (mirrors run_neighbor_loop logic at line 1936+). Path is held fixed
      * across all iterations of one iterative call.
@@ -4249,7 +4235,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * 2c.3 multi-subgroup walker mask-threading lands separately. */
     /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive
      * (mirrors non-iter site near line 2442). Iterative Specs (density, ags_density,
-     * mechfb, etc.) generally won't set dispatch_override in commit 5b since the
+     * mechfb, etc.) generally won't set dispatch_override since the
      * corridor mode flows through cellcorrections/gradients/hydro_force; preserved
      * here for completeness and future use. */
     const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
@@ -4327,15 +4313,15 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
     }
 
-    /* ===== CallScalars captured ONCE for whole call (codex constraint 4) ===== */
+    /* ===== CallScalars captured ONCE for whole call ===== */
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
-    /* ===== Step 2c.3 step 10: GIZMO_NLR_SUBGROUP_AUDIT collective-symmetry +
+    /* ===== GIZMO_NLR_SUBGROUP_AUDIT collective-symmetry +
      * no-duplicate-actives runtime checks. Hard-abort on violation. Off by
      * default; harness / test-mode enables.
      *
      * Check 1: subgroups[] length AND ordered bm-key sequence identical
-     * across all ranks (codex plan v2 tightening 4 — MIN/MAX hash, NOT BOR).
+     * across all ranks (MIN/MAX hash, NOT BOR).
      *
      * Check 2: each particle index appears in AT MOST ONE subgroup
      * (pitfall 6 — no duplicate active ownership; would double-apply final
@@ -4426,7 +4412,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
     }
 
-    /* ===== Mode B hard-corridor counter snapshot (codex 2c.2-fix 2026-05-10) =====
+    /* ===== Mode B hard-corridor counter snapshot =====
      * Mode B paths MUST NOT enter move_particles / ghost_exchange_impl /
      * gpu_particles_arena_acquire, and MUST NOT mutate NumPart. Always-on
      * enforcement around the iterative call; mirrors non-iter run_neighbor_loop
@@ -4438,7 +4424,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     const uint64_t s_arena0 = g_gpu_arena_acquire_counter;
     const int      s_np0    = NumPart;
 
-    /* ===== Driver lifetime wrapped in inner scope (codex 2c.2-fix-v2 hardening 1) =====
+    /* ===== Driver lifetime wrapped in inner scope =====
      * Driver destructor runs at scope exit; Mode B hard-corridor check fires
      * AFTER scope exit so the check covers driver cleanup hooks too (defensive
      * — current cleanup_device_context contractually MUST NOT touch
@@ -4473,7 +4459,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     gizmo_exit_bad_stop_if_requested("nlr:iter_context_init");
 
     /* ===== Independent ctx_oracle init (step 2c.4) =====
-     * Codex 2c.4-v2 P1 fix: ctx_oracle gets its OWN populate_device_context
+     * ctx_oracle gets its OWN populate_device_context
      * + cleanup_device_context, never aliased to production ctx. Bound to
      * args.P/CellP (Mode B lazy-drift contract — production reads owner-
      * local args.P[j] directly, oracle reads the same args.* with the
@@ -4491,7 +4477,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 
     /* ===== Outer iter loop =====
      *
-     * INVARIANT (codex v4.4 fix 2026-05-10): `accum_uvm[sg][slot]` always
+     * INVARIANT: `accum_uvm[sg][slot]` always
      * holds the most recent evaluated AccumData for that slot. Converged
      * slots are NEVER re-touched after they leave active_set; their final
      * iter's result persists in accum_uvm until the post-loop apply_active_writeback
@@ -4503,9 +4489,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * nlr_iter_dispatch_subgroup_mode_b_local).
      * The runner does NOT zero converged slots — doing so would destroy
      * exactly the result apply_active_writeback needs. The earlier "defensive
-     * cross-iter zero of all slots" in this position was the bug codex
-     * caught in 2b review. */
-    /* Phase 4.B.0 v4.3 step 0 (partition-by-subgroup contract): record the
+     * cross-iter zero of all slots" in this position was a bug. */
+    /* Partition-by-subgroup contract: record the
      * iter-0 per-subgroup j_type_bitmask values so the per-iter partition
      * assertion below can verify Spec::active_subgroup_key returns the same
      * key for every active in that subgroup on every iter. Only populated
@@ -4526,8 +4511,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 
     for (drv.iter_index = 0; drv.iter_index < Spec::max_iters; drv.iter_index++) {
 
-        /* Phase 4.B.0 v4.3 step 0 — mode_a_rebuild_csr_every_iter correctness
-         * fallback (OPEN_3d_agsdensity_design.md §10.2). When the Spec sets
+        /* mode_a_rebuild_csr_every_iter correctness
+         * fallback. When the Spec sets
          * this trait true, force-invalidate every subgroup's Mode A CSR
          * cache at the start of every iter > 0, bypassing the buffer-
          * exceedance trigger entirely. The static_assert on
@@ -4587,27 +4572,27 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
 #endif
 
-        /* (a-pre) Mode A pre-dispatch invalidation sweep (step 2c.3 step 8).
+        /* (a-pre) Mode A pre-dispatch invalidation sweep.
          * If any subgroup's CSR is invalid (set by the buffer-exceedance
          * trigger in last iter's step b.5), call the no-arg union-rebuild
          * method ONCE before any per-subgroup dispatch this iter. Prevents
          * mixing old/new arena pools across subgroup dispatches in the same
-         * iter (codex plan v2 tightening 1). Skips iter 0 (initial arena
+         * iter. Skips iter 0 (initial arena
          * acquire was via acquire_arena_and_init_ctx_mode_a). */
         if (path == DispatchPath::ModeA_GPU_NGL && drv.iter_index > 0) {
-            /* Codex 2c.3 blocker #2 + #3 fix: the sweep must be COLLECTIVE.
+            /* The sweep must be COLLECTIVE.
              * mode_a_csr_valid is rank-local; a rank with no actives for a
              * globally-active subgroup never builds CSR locally, so its
              * mode_a_csr_valid[sg] stays false while another rank's is true.
              * Without an Allreduce, one rank enters ghost_exchange_cleanup +
              * reimport collectives while the other skips them => deadlock.
-             * Also skip globally-converged subgroups (blocker #3): a sg with
+             * Also skip globally-converged subgroups: a sg with
              * global_active_per_sg[sg]==0 may have invalid CSR from an
              * earlier buffer-exceedance trigger but doesn't need a rebuild. */
             int local_needs_rebuild = 0;
             for (int sg = 0; sg < args.num_subgroups; sg++) {
                 if (drv.global_active_per_sg[sg] <= 0) continue;
-                /* Codex 2c.3 post-blocker-fix re-review (2026-05-10): a rank
+                /* Note: a rank
                  * with zero local actives in this globally-active subgroup
                  * never builds CSR locally, so its mode_a_csr_valid[sg]
                  * stays false. Without this guard, such a rank would vote
@@ -4640,7 +4625,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
          * for validation. Hook MUST NOT do MPI (TRAP 7 generalized). */
         if constexpr (nlr_spec_has_reset_per_iter_device_context_v<Spec>) {
             Spec::reset_per_iter_device_context(args, drv.ctx, drv.iter_index);
-            /* Codex 2c.4 post-review (2026-05-10): ctx_oracle has its own
+            /* Note: ctx_oracle has its own
              * independent lifecycle and carries the same per-iter counter
              * fields (e.g. ags-style wakeup counters, harness diagnostic
              * counters). Without the symmetric reset here, the oracle's
@@ -4860,7 +4845,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             int rank_now = 0;
             MPI_Comm_rank(MPI_COMM_WORLD, &rank_now);
             for (int sg = 0; sg < args.num_subgroups; sg++) {
-                /* Codex 2c.4 non-blocking polish (2026-05-10): encode sg + iter
+                /* Encode sg + iter
                  * into the origin tag so multi-subgroup iterative mismatch
                  * lines are diagnosable. Format keeps the existing "iter_"
                  * prefix the helper's [mode_b ORACLE MISMATCH ... origin=X] line
@@ -4995,7 +4980,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
     }
 
-    /* ===== Final apply_active_writeback (final-only per v3 §11) ===== */
+    /* ===== Final apply_active_writeback (final-only) ===== */
     /* Fires once per active across all subgroups, on the final iteration's
      * accum (whether that iteration was Converged for that slot, or
      * max_iters terminated for everyone). The active_list semantics for
@@ -5005,7 +4990,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         const NlrSubgroup& sgr = args.subgroups[sg];
         const int n_total = sgr.num_active_local;
         if (n_total <= 0) continue;
-        /* Use effective_args (codex 2c.2-fix): Mode A iterative refreshed
+        /* Use effective_args: Mode A iterative refreshed
          * P/CellP/num_total after ghost import; apply_active_writeback hooks
          * may read these for correctness. Mode B leaves effective_args ==
          * base args. */
@@ -5014,7 +4999,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
             int i = sgr.active_indices[slot];
-            /* Codex round-10 fix 2026-05-12: if Spec opts into the
+            /* If Spec opts into the
              * iterative-variant hook, route the converged radius +
              * IterScratch through it. Production-only path (oracle has
              * its own accum_oracle_uvm / radii_oracle_uvm; oracle does
@@ -5033,7 +5018,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     }
 
 #ifdef GIZMO_NLR_ITER_HARNESS_TEST
-    /* Step 3 harness telemetry (codex step-3 review 2026-05-10): populate
+    /* Harness telemetry: populate
      * the harness's compile-gated snapshot struct BEFORE driver destruction
      * so per-subgroup arrays are still live. Only fires for IterHarnessSpec
      * via `if constexpr` on Spec::loop_name; the strcmp lifts to a
@@ -5053,7 +5038,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         g_iter_harness_telemetry.oracle_enabled           = drv.oracle_enabled ? 1 : 0;
         /* Sum pair counts across all converged slots in all subgroups.
          * accum_uvm holds the final-iter accum for each slot (never zeroed
-         * after convergence — codex v4.4 invariant). For non-oracle runs,
+         * after convergence — invariant). For non-oracle runs,
          * accum_oracle_uvm pointers are nullptr; skip the sum. */
         long long pairs_prod = 0, pairs_oracle = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
@@ -5090,10 +5075,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     }
 #endif
 
-    }  /* end inner scope: driver destructs HERE (codex 2c.2-fix-v2 hardening 1) */
+    }  /* end inner scope: driver destructs HERE */
 
-    /* ===== Mode B hard-corridor enforcement (codex 2c.2-fix blocker #3 +
-     * v2 hardening 1) =====
+    /* ===== Mode B hard-corridor enforcement =====
      * Check AFTER final apply_active_writeback AND after driver destruction
      * so the invariant covers the FULL Mode B path including writeback hooks
      * and driver cleanup. Mode A paths legitimately advanced counters; skip
@@ -5166,41 +5150,40 @@ template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_ar
 template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args_iterative&);
 #endif
 
-/* Phase 4 Wave-1: DensitySpec — hydro density runner port (Step 6).
+/* DensitySpec — hydro density runner port.
  * Single gas-only subgroup, oracle-safe (no after_iter P/CellP writes),
  * uses apply_active_writeback_iterative for oracle-safe radius
- * channeling (codex round-10 fix). See hydro/density_loop.{h,cc}. */
+ * channeling. See hydro/density_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_iterative&);
 
-/* Phase 4 Wave-3 / 3e.1: MechFBSpec — mechanical-feedback runner port
- * (milestone 3: physics-complete pair kernel + full state-machine Spec
+/* MechFBSpec — mechanical-feedback runner port
+ * (physics-complete pair kernel + full state-machine Spec
  * contract). 6-mode iterative state machine over loop_iteration
  * {-2,-1,0,1,2,3}; mode_a_rebuild_csr_every_iter=false preserves the legacy
  * 1-CSR-shared-across-6-modes optimization. Mode A multi-rank ghost-side
- * writes are guarded by Kokkos::abort pending milestone 3.5 (custom
- * MechFBGasDelta ghost-writeback callback + lazy d_gas_iter). See
- * galaxy_sf/mechfb_loop.{h,cc} + OPEN_3d_mechfb_design.md. */
+ * writes hit a Kokkos::abort; supporting them needs a custom MechFBGasDelta
+ * ghost-writeback callback + lazy d_gas_iter, which are not implemented. See
+ * galaxy_sf/mechfb_loop.{h,cc}. */
 #ifdef GALSF_FB_MECHANICAL
 template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_iterative&);
 #endif
 
-/* Phase 4 Wave-3 / 3e.2: ThermalFBSpec — thermal-feedback runner port.
+/* ThermalFBSpec — thermal-feedback runner port.
  * Non-iterative scatter (Type-4 stars → gas neighbors); ActiveReduceOnly +
  * manifest-bundle ghost_writeback; sink_feed pattern. See
  * galaxy_sf/thermal_fb_loop.{h,cc}. The Spec definition is gated on
  * GALSF_FB_THERMAL in thermal_fb_loop.h, so the explicit instantiation must
- * sit inside the same #ifdef (Wave 2 lesson — non-thermal Configs would
+ * sit inside the same #ifdef (non-thermal Configs would
  * otherwise hit an undefined type at this template instantiation site). */
 #ifdef GALSF_FB_THERMAL
 template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 #endif
 
-/* Wave 5 corridor / cellcorrections: CellcorrectionsSpec — first-pass
+/* Cellcorrections corridor: CellcorrectionsSpec — first-pass
  * volume corrections (Volume_1 = sum_j Volume_0[j]^2 wk(r, h_j)).
  * NotIterative GasOnly Spec, no j-side writes, no ghost-writeback;
  * first corridor consumer in the chain. See
- * hydro/cellcorrections_loop.{h,cc} and OPEN_3d_hydro_corridor_design.md
- * commit 5a. */
+ * hydro/cellcorrections_loop.{h,cc}. */
 #ifdef HYDRO_VOLUME_CORRECTIONS
 template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
 #endif
@@ -5223,17 +5206,17 @@ template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
  * hydro/hydro_force_loop.{h,cc}. */
 template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
-/* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
+/* RadFBRPSpec — local radiation-pressure winds.
  * Iterative 2-pass (iter 0 wt_sum aggregation; iter 1 kick application).
  * Ghost-writeback bundle with PARTICLE_ADD_VEC3 + new GAS_ADD_VEC3 ops.
  * iter-gating via Aux::iter_index (set in reset_per_iter_device_context);
  * inter-iter wt_sum staged through IterScratch by after_iter_global. See
- * galaxy_sf/radfb_rp_loop.{h,cc} + OPEN_3d_radfb_local_design.md. */
+ * galaxy_sf/radfb_rp_loop.{h,cc}. */
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_iterative&);
 #endif
 
-/* Phase 4 Wave-4 / 3d.D: DMDispersionSpec — DM velocity dispersion runner port.
+/* DMDispersionSpec — DM velocity dispersion runner port.
  * Gas actives (Type==0) iterate bisection on KernelRadiusDM to enclose
  * 64±48 DM (Type==1) neighbors; accumulates unweighted Vel sums for dispersion.
  * ActiveReduceOnly + SidxCacheKind::None (DM tbm matches neither GasOnly nor
@@ -5243,7 +5226,7 @@ template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_
 template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_args_iterative&);
 #endif
 
-/* Wave-CBE Phase 2 commit #5 corrective architecture pivot
+/* CBE gradients corrective architecture pivot
  * (sidm/cbe_integrator_gradients.{h,cc}). CBEGradSpec is non-iterative
  * (paralleling DMGradSpec); the two passes (raw LSQ then pairwise BJ-style
  * conservative limiter) are orchestrated by CBEGrad_gradient_calc() at the
@@ -5254,7 +5237,7 @@ template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_
 template void run_neighbor_loop<CBEGradSpec>(const neighbor_loop_args&);
 #endif
 
-/* Phase 4 Wave-3 / rt_source_injection: RtSrcInjectionSpec — radiation source
+/* RtSrcInjectionSpec — radiation source
  * injection runner port. Non-iterative scatter (non-gas sources → gas); the
  * toplevel builds the active list directly (Aux::host_locals) so
  * nlr_build_active_list is not used. SYMMETRIC search matches the legacy GPU
@@ -5268,7 +5251,7 @@ template void run_neighbor_loop<CBEGradSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<RtSrcInjectionSpec>(const neighbor_loop_args&);
 #endif
 
-/* Wave 5 / difffilter: DiffFilterSpec + DynDiffSpec — TURB_DIFF_DYNAMIC
+/* difffilter: DiffFilterSpec + DynDiffSpec — TURB_DIFF_DYNAMIC
  * velocity-smoothing + dynamic-Smagorinsky loops. Non-iterative,
  * scaled-symmetric gas-gas (symmetric_neighbor_radius_scale = TurbDynamicDiffFac),
  * pure i-side reduce. See turb/difffilter_loop.{h,cc}. */
@@ -5277,7 +5260,7 @@ template void run_neighbor_loop<DiffFilterSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<DynDiffSpec>(const neighbor_loop_args&);
 #endif
 
-/* Wave 5 / dm_fuzzy: DMGradSpec — DM_FUZZY higher-order density-gradient
+/* dm_fuzzy: DMGradSpec — DM_FUZZY higher-order density-gradient
  * estimator. Non-iterative, one-way DM->DM, fixed radius P[i].AGS_KernelRadius,
  * pure i-side reduce. The toplevel DMGrad_gradient_calc issues one call per
  * (gradient-pass, bm group) with args.neighbor_type_mask_override = bm. See
@@ -5286,7 +5269,7 @@ template void run_neighbor_loop<DynDiffSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<DMGradSpec>(const neighbor_loop_args&);
 #endif
 
-/* Wave 5 / grain_physics: GrainBackrxSpec + GrainRTGasSpec + GrainRTGrainSpec.
+/* grain_physics: GrainBackrxSpec + GrainRTGasSpec + GrainRTGrainSpec.
  * Three independent non-iterative Specs for the grain_physics neighbor loops
  * (B7a: grain→gas backreaction with ghost writeback; B7b direction 1: gas→grain
  * RT opacity, pure i-side; B7b direction 2: grain→gas radiation acceleration,
