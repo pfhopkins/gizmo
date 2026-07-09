@@ -302,7 +302,6 @@ void init(void)
 #ifdef KETJU_REGULARIZATION
             P[i].KetjuIntegrated = 0;
             P[i].KetjuFreshScatter = 0;
-            P[i].KetjuReleaseBlock = 0;
             P[i].KetjuRegionTag = 0;
             P[i].KetjuTrickUntil = 0;
             P[i].KetjuRegionTiStep = 0;
@@ -729,8 +728,10 @@ void init(void)
             CellP[i].Ionized = 0;
 #endif
 #endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
             {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].Projection[kp] = 0;}}
+#endif
 #ifdef TREE_RAD_H2
             {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].ProjectionH2[kp] = 0; CellP[i].ProjectionCO[kp] = 0;}}
 #endif

@@ -239,17 +239,7 @@ static void incode_total_energy(void)
      * (the potential-convention switch of an inside-kernel pair must be evaluated at the separation
      * where it actually happened). Only the PRINT remains throttled to snapshot cadence. Cost is
      * O(N_type5^2) per step — the diagnostic already bails for N>4096. */
-    /* FULL-SYNC GATE: the total energy is only unambiguous when EVERY particle's (pos,vel) are at the
-     * same physical instant. In a block-timestep run that is exactly a full step (highest active bin ==
-     * highest occupied bin): then chain members' MSTAR end-of-step state (KetjuTruePos/Vel) and all
-     * non-members' P.Pos/P.Vel are genuinely simultaneous, so the cross-term PE(member,non-member) is
-     * consistent. At a SUB-sync only some bins are current, so that cross-term mixes phases and injects a
-     * bounded, non-secular ~1e-3 artifact (proven: cold-collapse structure is identical between KETJU and
-     * Hermite — no real energy loss). We therefore capture E0 and report dE ONLY on full steps. The
-     * ledger (below) still accumulates every step so membership switches are caught at their true
-     * separation. */
-    int full_sync = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
-    int do_print = full_sync && !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
+    int do_print = !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
 
     /* per particle, 11 doubles: pos[3], Vel[3], (unused), mass, integrated-flag.
      * With pure-MSTAR coupling the chain member's synchronized P.Vel and P.Pos are exactly
@@ -279,12 +269,13 @@ static void incode_total_energy(void)
         sloc[k*W+3]=vx; sloc[k*W+4]=vy; sloc[k*W+5]=vz;
         /* [6] = kernel radius (compact-support h) for the softened-potential metric;
          * [7] = KETJU region tag (0 = not a chain member; same nonzero tag = same chain);
-         * [8] = 1 if chain-internal pairs are UNSOFTENED (KetjuUseStarStarSoftening=0), else 0 */
+         * [8] = 1 => chain-internal pairs are UNSOFTENED (ALWAYS, by design: gravity
+         *       inside a KETJU region is never softened -- see ketju_coupling.cc). */
         sloc[k*W+6]=ForceSoftening_KernelRadius(i);
         sloc[k*W+7]=0.0; sloc[k*W+8]=0.0;
 #ifdef KETJU_REGULARIZATION
         sloc[k*W+7]=(double)P[i].KetjuRegionTag;
-        sloc[k*W+8]=(All.KetjuUseStarStarSoftening ? 0.0 : 1.0);
+        sloc[k*W+8]=1.0;
 #endif
         sloc[k*W+9]=P[i].Mass;
         sloc[k*W+11]=(double)P[i].ID;
@@ -332,8 +323,8 @@ static void incode_total_energy(void)
                 double r = sqrt(dr2), Gmm = All.G * all[i*W+9] * all[b*W+9];
                 PE += -Gmm / r;   /* unsoftened metric (backward-compatible column) */
                 /* PROPER metric = the Hamiltonian the run actually conserves: kernel-softened potential
-                 * for every pair (as the tree applies), EXCEPT unsoftened for chain-internal pairs when
-                 * the run integrates chains unsoftened (KetjuUseStarStarSoftening=0). */
+                 * for every pair (as the tree applies), EXCEPT unsoftened for chain-internal pairs
+                 * (chains are ALWAYS integrated unsoftened inside a KETJU region, by design). */
                 double h = (all[i*W+6] > all[b*W+6]) ? all[i*W+6] : all[b*W+6];
                 double hinv = (h > 0) ? 1.0/h : 0;
                 double pe_soft = (r >= h || h <= 0) ? (-Gmm / r) : Gmm * kernel_gravity(r*hinv, hinv, hinv*hinv*hinv, -1);
@@ -360,8 +351,7 @@ static void incode_total_energy(void)
             free(cur2prev);
 
             double E = KE + PE, E_prop = KE + PE_prop;
-            /* baseline E0 taken on the first FULL step only — an unambiguous, phase-consistent reference */
-            static double E0_prop = 0; if(!have0 && full_sync) { E0 = E; E0_prop = E_prop; have0 = 1; }
+            static double E0_prop = 0; if(!have0) { E0 = E; E0_prop = E_prop; have0 = 1; }
             if(do_print) {
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
@@ -373,29 +363,6 @@ static void incode_total_energy(void)
     }
     have0 = 1; if(do_print) last_t = All.Time;  /* keep print throttle in sync on all ranks */
 }
-
-#if defined(KETJU_REGULARIZATION) && defined(KETJU_HANDOFF_TRACE)
-/* velocity watchpoint: print whenever the watched particle's velocity changes between checkpoints */
-static void htrace_velwatch(const char *where)
-{
-    const unsigned long long WATCH_ID = 46;
-    static double last[3] = {0,0,0}; static int have = 0;
-    for(int i = 0; i < NumPart; i++) {
-        if((unsigned long long)P[i].ID != WATCH_ID) continue;
-        if(!have || P[i].Vel[0] != last[0] || P[i].Vel[1] != last[1] || P[i].Vel[2] != last[2]) {
-            printf("VELWATCH t=%.10f id=%llu at[%s] vel=%.10g,%.10g,%.10g grav=%.6g,%.6g,%.6g tag=%d\n",
-                   All.Time, WATCH_ID, where, P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
-                   P[i].GravAccel[0], P[i].GravAccel[1], P[i].GravAccel[2], P[i].KetjuRegionTag);
-            fflush(stdout);
-            last[0]=P[i].Vel[0]; last[1]=P[i].Vel[1]; last[2]=P[i].Vel[2]; have = 1;
-        }
-        break;
-    }
-}
-#define HTRACE_VELWATCH(w) htrace_velwatch(w)
-#else
-#define HTRACE_VELWATCH(w)
-#endif
 
 
 /*! This routine contains the main simulation loop that iterates over
@@ -438,7 +405,6 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         incode_total_energy();	/* DIAGNOSTIC: true KETJU-aware energy at sync point (prints on full syncs) */
-        HTRACE_VELWATCH("loop_top");
         compute_statistics();	/* regular statistics outputs (like total energy) */
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
@@ -451,10 +417,17 @@ void run(void)
             break;
         }
 
-        find_timesteps();		/* find-timesteps */
 #ifdef KETJU_REGULARIZATION
-        ketju_limit_timesteps();    /* force chain particles to shared timebin */
+        ketju_limit_timesteps();    /* compute region-adaptive external timesteps + tags BEFORE
+                                     * find_timesteps, so get_timestep hands every current chain member
+                                     * the shared global-min bin THIS step and bin/sync/MSTAR-dt/drift
+                                     * derive consistently from it (STARFORGE 26d425fd multi-region sync).
+                                     * The reversed order (find before limit) was the Stella cluster
+                                     * energy-leak regression: get_timestep read a stale/zero region cap,
+                                     * so regions desynced onto different power-of-2 bins and the
+                                     * inter-region KDK coupling was evaluated at inconsistent times. */
 #endif
+        find_timesteps();		/* find-timesteps */
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;

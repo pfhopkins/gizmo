@@ -1089,7 +1089,15 @@ void resolvedism_inject_fb_energy(void)
      * momentum kicks → Σ wk = 1 exactly → Σ Δp_j = p_radpressure exactly. */
     FB_ZERO_AWS();
     resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
-    resolvedism_fb_momentum_calc(1);    /* radpressure injection */
+    resolvedism_fb_momentum_calc(1);    /* radpressure injection (IR-trapping boost; DIRECT term
+                                         * offloaded to the per-cell TREE_RAD pass below) */
+#ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+    /* LEBRON-style DIRECT radp: per gas cell, from the TREE_RAD attenuated per-pixel
+     * fluxes finalized in the gravity walk (deposited locally in the absorbing cell,
+     * with correct direction + shadowing). Also accumulates into RadPressure_dp_thisStep
+     * so channel-3 (radpres) of the FeedbackBudget ledger stays complete. */
+    resolvedism_radpressure_treerad();
+#endif
 
     /* Count radiation pressure events */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {

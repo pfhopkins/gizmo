@@ -21,6 +21,31 @@ c abort, no zombies.)
 #define ABORT(x) call chemcool_fatal(x)
 
 #include "chemcool_consts.h"
+
+c ---- M1 (RT) + H2/CO LINE self-shielding matched pair (Uli, 2026-07-08) ----
+c FORTRAN mirror of the precompiler_logic.h auto-enable. The chemcool .F files
+c (and this header) see ONLY the raw Config.sh flags via GIZMO_config.h -- they
+c never get the C-header auto-#define of RADTRANSFER / TREE_RAD_H2. So re-derive
+c the standalone H2/CO line-shielding walk here from the RT umbrella flags, so the
+c /project/ common block below AND the iphoto=6 H2/CO self-shielding branches in
+c calc_photo.F are compiled under M1 too (M1 does the continuum with dust; the
+c H2/CO LINE self-shielding stays target-side, curve-of-growth on the column).
+c Every CHEMCOOL network tracks H2 (IH2); CO (ICO) is real only for the
+c molecular-metal networks. Stands alone -- does NOT pull in TREE_RAD / G0_VARIABLE.
+#if (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID)) && defined(CHEMCOOL)
+#ifndef TREE_RAD_H2
+#define TREE_RAD_H2
+#endif
+#if (CHEMISTRYNETWORK != 1) && (CHEMISTRYNETWORK != 2) && (CHEMISTRYNETWORK != 4)
+#ifndef TREE_RAD_CO
+#define TREE_RAD_CO
+#endif
+#endif
+#endif
+#if defined(TREE_RAD_CO) && !defined(TREE_RAD_H2)
+#define TREE_RAD_H2
+#endif
+
 #ifdef CHEMCOOL
 c
 c He:H ratio by number (=> ratio by mass is 4*abhe).

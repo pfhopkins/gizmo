@@ -248,8 +248,12 @@ extern struct gas_cell_data
     int Ionized;                          /*!< flag: 1 if particle is in HII region */
 #endif
 #endif
+/* total-H Projection[] is TREE_RAD-only (FUV-G0 dust column, M1's job); the H2/CO
+ * columns run standalone under TREE_RAD_H2 for M1 line self-shielding. */
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
     MyFloat Projection[NPIX];             /*!< HEALPix column density per pixel */
+#endif
 #ifdef TREE_RAD_H2
     MyFloat ProjectionH2[NPIX];           /*!< HEALPix H2 column density per pixel */
     MyFloat ProjectionCO[NPIX];           /*!< HEALPix CO column density per pixel */

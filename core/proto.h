@@ -66,10 +66,6 @@ void do_hermite_correction(void);
 void ketju_tag_regions(void);
 void ketju_limit_timesteps(void);
 void ketju_find_regions(void);
-/* per-tag region bounding spheres (set alongside tagging; consumed by force_treeevaluate to
- * force-open any node overlapping the target's region so companions always reach leaf level) */
-extern int KetjuNumTagRegions;
-extern double *KetjuTagCenter, *KetjuTagRadius;
 void ketju_run_integration(void);
 void ketju_set_final_velocities(void);
 void ketju_finish_step(void);
@@ -817,6 +813,9 @@ void resolvedism_inject_fb_energy(void);
 void resolvedism_fb_thermal_calc(int loop_iteration);
 void resolvedism_fb_momentum_calc(int fb_loop_iteration);
 extern MyIDType FB_SerialEventID; /* per-event FB serialization token (resolvedism_fb.cc); 0 = unrestricted */
+#ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp from TREE_RAD fluxes (Uli 2026-07-08) */
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 void resolvedism_photoionize(void);

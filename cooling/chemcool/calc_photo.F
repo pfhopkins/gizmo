@@ -264,8 +264,12 @@ c
             dfsp1  = 1d0
             chi_isrf = 1d0
          endif
-      elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then        
-#if defined RAYTRACE || defined TREE_RAD
+      elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then
+c iphoto=6 (TreeCol) also runs standalone under M1 (TREE_RAD_H2 without TREE_RAD):
+c the df*/f_dust dust factors must still be INITIALISED and summed here (they come
+c out ~1 because column_density_projection is zeroed under M1), then the RADTRANSFER
+c override below pins the key ones -- M1 already applied continuum dust attenuation.
+#if defined RAYTRACE || defined TREE_RAD || defined TREE_RAD_H2
          sigma_dust = 2d-21 * dust_to_gas_ratio
          f_dust     = 0d0
          f_simp     = 0d0
@@ -314,7 +318,7 @@ c
 #ifdef RAYTRACE
                print*, AV_ext, I, col_tot(I)
 #endif
-#ifdef TREE_RAD
+#if defined(TREE_RAD) || defined(TREE_RAD_H2)
                print*, AV_ext, I, column_density_projection(I)
 #endif
                ABORT(124)
@@ -753,13 +757,18 @@ c
       parameter (mh  = PROTONMASS)
       integer I, nray
 c
-#ifdef TREE_RAD
+c nray = number of TreeCol pixels averaged over. The iphoto=6 loop below runs over
+c all NPIX pixels using fac_uv_pix = 1/nray (when G0_VARIABLE is off), so nray MUST
+c equal NPIX for the correct pixel average -- this holds for the standalone TREE_RAD_H2
+c (M1) path too, NOT only TREE_RAD. (Uli, 2026-07-08: was TREE_RAD-only -> nray=1 under
+c M1 -> H2 self-shielding over-counted by a factor NPIX.)
+#if defined(TREE_RAD) || defined(TREE_RAD_H2)
       nray = NPIX
 #else
       nray = 1
 #endif
 c
-c To compute H2 self-shielding, we assume that the local b param. is 
+c To compute H2 self-shielding, we assume that the local b param. is
 c representative of the whole flow. This isn't true in general, but 
 c is still a minor approximation compared to the others we are making
 c

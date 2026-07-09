@@ -180,6 +180,57 @@ void recompute_resolvedism_fuv_luminosities(void)
      * Keeps the TREE_RAD columns/chemistry stack fully compiled and valid —
      * stripping TREE_RAD_H2 from a net-17 build is an invalid config (CALC_PHOTO
      * aborts). Test-tag only; no effect in production builds. */
+    /* TestFixedQion>0: clean StarBench PI ionization-front test. PIN the ionizing
+     * photon rate to a CONSTANT (Q [phot/s], no aging drift) and zero every
+     * non-ionizing band, so the source is a pure fixed-Q ioniser directly
+     * comparable to the Spitzer/Hosokawa-Inutsuka D-type solution. Checked BEFORE
+     * TestFUVZero so it takes precedence. (Tier-2 variable-Q test: leave this =0.) */
+    if(All.TestFixedQion > 0) {
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            if(P[i].Type != 4) continue;
+            P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            P[i].OPT_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            P[i].Lyman_photons_per_sec = All.TestFixedQion;
+#endif
+#ifdef TREE_RAY_PI
+            P[i].Ion_luminosity = All.TestFixedQion * 27.2 * 1.60218e-12;
+#endif
+        }
+        return;
+    }
+    /* TestFixedLbol>0: clean RADIATION-PRESSURE test. PIN the bolometric luminosity
+     * to a CONSTANT L [erg/s] (no aging drift), split into the UV/NUV/OPT bands with
+     * a fixed representative hot-star spectrum (FUV 0.5, NUV 0.2, OPT 0.3; LW = 0.3
+     * of FUV), and zero the ionizing rate so radp is isolated from PI. Gives a pure
+     * constant-L radiation source directly comparable to the momentum-driven
+     * radiation-pressure shell (Draine 2011 / Krumholz-Matzner). Checked before
+     * TestFUVZero so it takes precedence. (Variable-L test: leave this =0.) */
+    if(All.TestFixedLbol > 0) {
+        double L = All.TestFixedLbol;
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            if(P[i].Type != 4) continue;
+            P[i].UV_luminosity = 0.5 * L; P[i].LW_luminosity = 0.15 * L;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            P[i].NUV_luminosity = 0.2 * L;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            P[i].OPT_luminosity = 0.3 * L;
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            P[i].Lyman_photons_per_sec = 0;
+#endif
+#ifdef TREE_RAY_PI
+            P[i].Ion_luminosity = 0;
+#endif
+        }
+        return;
+    }
     if(All.TestFUVZero) {
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
             if(P[i].Type != 4) continue;

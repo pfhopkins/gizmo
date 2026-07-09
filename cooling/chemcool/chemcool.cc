@@ -664,6 +664,15 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 #endif
 
+#if defined(TREE_RAD_H2) && !defined(TREE_RAD)
+    /* M1 (RADTRANSFER) + standalone H2/CO line self-shielding: there is NO total-H
+       TreeCol column (TREE_RAD off -- the FUV-G0 dust walk is M1's job, and M1 already
+       dust-attenuated the continuum). Zero the dust column so calc_photo's f_dust and
+       the df* dust factors compute at AV=0 (no double-counting). The H2/CO line-shield
+       columns are populated below and DO drive the target-side self-shielding. */
+    for(i = 0; i < NPIX; i++) { PROJECT.column_density_projection[i] = 0.0; }
+#endif
+
 #ifdef TREE_RAD_H2
     for(i = 0; i < NPIX; i++) {
         columni = CellP[target].ProjectionH2[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;

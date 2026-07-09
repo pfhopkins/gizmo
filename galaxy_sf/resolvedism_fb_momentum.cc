@@ -5,7 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+#if defined(GALSF_RESOLVEDISM_FB_HEALPIX) || defined(GALSF_RESOLVEDISM_RADPRESSURE_TREERAD)
 #include "../gravity/healpix_utils.h"
 #endif
 #include "../mesh/kernel.h"
@@ -117,17 +117,47 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         double rho_phys = P[i].DensityAroundParticle * All.cf_a3inv;
         double h_phys = P[i].KernelRadius * All.cf_atime;
         double NH = rho_phys * UNIT_DENSITY_IN_NHCGS * h_phys * UNIT_LENGTH_IN_CGS;
-        double sigma_dust = 2.0e-21 * DGR;
-        double tau_UV = sigma_dust * NH;
-        double f_abs = 1.0 - exp(-tau_UV);
-        if(f_abs < 1.0e-6) {RP_TRACE("f_abs", f_abs); RP_TRACE("f_abs.DGR", DGR); RP_TRACE("f_abs.NH", NH); return;}
 
-        double dp_cgs = f_abs * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
+        /* RADP CORRECTNESS PASS (2026-07-08, Uli review): band-resolved direct term,
+         * CONSISTENT WITH THE TREE_RAD LIMIT — the same band split and dust
+         * cross-sections the tree attenuation uses (sigma_FUV/NUV/OPT =
+         * 2.0/1.3/0.5e-21 cm^2/H x DGR), so the momentum coupling and the
+         * radiation-field attenuation see identical per-band optical depths.
+         * (Old form: f_abs(sigma_UV) x L_BOL — UV opacity on bolometric light
+         * over-coupled the un-absorbed optical/NIR remainder of L_bol.) */
+        double L_FUV = P[i].UV_luminosity; /* erg/s (tables store cgs band luminosities) */
+        double L_NUV = 0, L_OPT = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+        L_NUV = P[i].NUV_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+        L_OPT = P[i].OPT_luminosity;
+#endif
+        double f_FUV = 1.0 - exp(-(2.0e-21 * DGR) * NH);
+        double f_NUV = 1.0 - exp(-(1.3e-21 * DGR) * NH);
+        double f_OPT = 1.0 - exp(-(0.5e-21 * DGR) * NH);
+        double L_abs_cgs = f_FUV * L_FUV + f_NUV * L_NUV + f_OPT * L_OPT; /* absorbed lum, erg/s */
+        if(L_abs_cgs <= 0 || Lbol_cgs <= 0) {RP_TRACE("L_abs", L_abs_cgs); return;}
+        if(L_abs_cgs > Lbol_cgs) L_abs_cgs = Lbol_cgs; /* budget guard */
+
+#ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+        /* DIRECT (UV/NUV/OPT) single-scattering radp is computed PER GAS CELL from
+         * the TREE_RAD attenuated per-pixel fluxes in resolvedism_radpressure_treerad()
+         * (LEBRON-style, deposited locally in the absorbing cell). Zero the star-side
+         * direct term here so radp is not double-counted; ONLY the IR-trapping boost
+         * below (local-Sigma approximation) is retained in the star-side path. */
+        double dp_cgs = 0.0;
+        RP_TRACE("FIRING.dp_cgs_treerad_direct_offloaded", dp_cgs);
+#else
+        double dp_cgs = L_abs_cgs * dt_cgs / C_LIGHT_CGS; /* direct: single-scattering on ABSORBED light */
         RP_TRACE("FIRING.dp_cgs", dp_cgs);
+#endif
         double Sigma_cgs = rho_phys * UNIT_DENSITY_IN_CGS * h_phys * UNIT_LENGTH_IN_CGS;
-        double kappa_IR = 5.0 * DGR;
+        double kappa_IR = 5.0 * DGR;   /* cm^2/g; constant kappa_IR = stated model choice (no T_dust dependence) */
         double tau_IR = kappa_IR * Sigma_cgs;
-        if(tau_IR > 0) dp_cgs += tau_IR * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
+        /* IR-trapped boost acts on the REPROCESSED (absorbed) luminosity only —
+         * the old tau_IR * L_BOL form boosted light that was never absorbed. */
+        if(tau_IR > 0) dp_cgs += tau_IR * L_abs_cgs * dt_cgs / C_LIGHT_CGS;
 
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
         RadPressure_dp_thisStep += dp_cgs;
@@ -699,5 +729,95 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
 }
 
 #include "../system/code_block_xchange_finalize.h"
+
+#ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+/* ============================================================================
+ * LEBRON-style DIRECT radiation-pressure force, computed PER GAS CELL from the
+ * TREE_RAD attenuated per-pixel band fluxes (Uli 2026-07-08).
+ *
+ * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX]: the flux
+ * ARRIVING from each HEALPix pixel direction, stored WITHOUT the 1/4pi (i.e.
+ * Sum_sources L_band[erg/s] * inv_r2[code_len^-2], per pixel; see gravtree.cc
+ * ~657-664, capped for photon conservation ~714). The absorbed luminosity of a
+ * cell in a band/pixel is (identically to the photon-conservation cap at
+ * gravtree.cc:690-693):
+ *     L_abs = F_band[pfx] * sigma_eff_code / (4pi),
+ *     sigma_eff_code = sigma_band_cgs * DGR * N_H(cell) / UNIT_LENGTH_IN_CGS^2 .
+ * n_hat(pfx) (pix2vec_ring) points from the cell TOWARD the source, so the photon
+ * travels source->cell along -n_hat and the absorbed momentum pushes the cell
+ * along -n_hat (radially AWAY from the star). Per band/pixel the momentum is
+ * dp = (1/c) dt L_abs; summed over pixels and bands and deposited LOCALLY here.
+ *   dp_vec_cgs = -(dt_cgs/c) * Sum_pfx n_hat(pfx) *
+ *                   Sum_band sigma_band*DGR*N_H/UNIT_LEN^2 * F_band[pfx] / 4pi .
+ * Converted to code momentum exactly like the star-side radp
+ * (dp_code = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s)) and
+ * applied as a velocity kick dv = dp_code * cf_atime / Mass.
+ *
+ * This REPLACES the star-side DIRECT term (that block is #ifdef'd out above);
+ * the IR-trapping boost stays in the star-side path. DGR is taken exactly as the
+ * momentum path / tree cap use it (DUST -> P[i].DGR_around/0.01, else the global
+ * normalized DGR). Called once per step from resolvedism_inject_fb_energy(),
+ * after the tree walk has finalized the fluxes. ========================== */
+void resolvedism_radpressure_treerad(void)
+{
+    const double sig_uv = 2.0e-21, sig_nuv = 1.3e-21, sig_opt = 0.5e-21; /* cm^2 / H, per band */
+    const double inv4pi = 1.0 / (4.0 * M_PI);
+    const double area_conv = 1.0 / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* cm^2 -> code_len^2 */
+    const double p_conv = 1.0 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* cgs p -> code p */
+    int i;
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+        if(dt <= 0) {continue;}
+        double dt_cgs = dt * UNIT_TIME_IN_CGS;
+        /* DGR: use EXACTLY the tree's tr_dgr (gravtree.cc:602, = All.DGRnormalized,
+         * documented "DGR: global All.DGRnormalized"). Photon conservation requires
+         * the per-cell radp absorption to use the SAME dust cross-section the tree
+         * attenuation + the photon-conservation cap (gravtree.cc:690-693) used, so we
+         * never absorb more momentum than the flux was attenuated by. NOTE: the
+         * star-side radp (line ~109) uses P[i].DGR_around/0.01 — but DGR_around is a
+         * per-STAR kernel field (density.cc:399, DO_DENSITY_AROUND_NONGAS_PARTICLES)
+         * and is NOT meaningful on gas cells; using it here would decouple absorption
+         * from the tree's attenuation. */
+        double DGR = All.DGRnormalized;
+        double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS; /* # H atoms */
+        /* per-band effective absorbing area in code_len^2 (matches the tree cap) */
+        double se_uv  = sig_uv  * DGR * NH_cell * area_conv;
+        double se_nuv = sig_nuv * DGR * NH_cell * area_conv;
+        double se_opt = sig_opt * DGR * NH_cell * area_conv;
+        double dp_vec[3] = {0.0, 0.0, 0.0};
+        int pfx;
+        for(pfx = 0; pfx < NPIX; pfx++)
+        {
+            /* L_abs from this pixel (all bands), erg/s; FUV cross-section also for LW sub-band */
+            double L_abs = se_uv * ((double)CellP[i].UV_flux[pfx] + (double)CellP[i].LW_flux[pfx]);
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            L_abs += se_nuv * (double)CellP[i].NUV_flux[pfx];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            L_abs += se_opt * (double)CellP[i].OPT_flux[pfx];
+#endif
+            L_abs *= inv4pi; /* fluxes stored without 1/4pi; restore it -> erg/s */
+            if(!(L_abs > 0)) {continue;}
+            double nhat[3]; pix2vec_ring(NSIDE, (long)pfx, nhat);
+            double dp_scalar_cgs = L_abs * dt_cgs / C_LIGHT_CGS; /* g cm/s */
+            /* push AWAY from the source: photon momentum is along -n_hat(pfx) */
+            int k; for(k = 0; k < 3; k++) {dp_vec[k] += -nhat[k] * dp_scalar_cgs;}
+        }
+        double dpmag_cgs = sqrt(dp_vec[0]*dp_vec[0] + dp_vec[1]*dp_vec[1] + dp_vec[2]*dp_vec[2]);
+        if(!(dpmag_cgs > 0)) {continue;}
+        int k;
+        for(k = 0; k < 3; k++)
+        {
+            double dp_code = dp_vec[k] * p_conv;
+            double dv = dp_code * All.cf_atime / P[i].Mass;
+            P[i].Vel[k] += dv;
+            CellP[i].VelPred[k] += dv;
+        }
+        RadPressure_dp_thisStep += dpmag_cgs; /* channel-3 ledger (FeedbackBudget) */
+    }
+}
+#endif /* GALSF_RESOLVEDISM_RADPRESSURE_TREERAD */
 
 #endif /* GALSF_RESOLVEDISM_FB */

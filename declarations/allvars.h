@@ -491,9 +491,11 @@ extern struct global_data_all_processes
   double TestSNTime0;           /*!< code time: if >0, FORCE star ID=k to explode at TestSNTime0+(k-1)*TestSNSpacing (clustered-SN test; bypasses lifetimes) */
   double TestSNSpacing;         /*!< code time between forced explosions (see TestSNTime0) */
   int TestFUVZero;              /*!< 1: zero ALL stellar radiation (UV/LW/NUV/OPT/Lyman) — quiescent-medium experiments (KO15 ladder) */
+  double TestFixedQion;         /*!< >0: PIN the ionizing photon rate Q [phot/s] to this constant (no aging drift) + zero non-ionizing bands — clean StarBench PI ionization-front test (constant source vs Spitzer/HI); 0 = off (variable table Q) */
+  double TestFixedLbol;         /*!< >0: PIN bolometric luminosity [erg/s] constant, split UV/NUV/OPT, zero ionizing — clean radiation-pressure test (constant source vs momentum-driven shell); 0 = off */
 #endif
-#ifdef TREE_RAD
-  double ShieldingLength;       /*!< maximum distance for column density integration in tree walk */
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
+  double ShieldingLength;       /*!< maximum distance for column density integration in tree walk (shared by TREE_RAD FUV-G0 and the standalone TREE_RAD_H2/CO line-shielding walks) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
   double MinMassIMF;            /*!< minimum mass for stochastic IMF sampling [Msun] */
@@ -531,7 +533,6 @@ extern struct global_data_all_processes
   double KetjuIntegrationTolerance;      /*!< GBS relative tolerance (default 1e-9) */
   char   KetjuPNTerms[20];              /*!< PN term flags: "all","none","no_spin", or bitstring */
   int    KetjuEnableBHMergerKicks;       /*!< enable GW recoil kicks for BH mergers */
-  int    KetjuUseStarStarSoftening;      /*!< keep softening between stars inside chain */
   double KetjuTimestepLimitingFactor;    /*!< radius factor for timestep limiting (default 100) */
   int    KetjuMaxStepCount;              /*!< max MSTAR integration steps before bail-out (default 100000, 0=off) */
   double KetjuExpandBinariesFactor;      /*!< expand tight binaries if period < factor*dt (default 0=off, typical 0.1) */
@@ -1183,8 +1184,13 @@ extern struct gravdata_out
     double Chimes_G0[CHIMES_LOCAL_UV_NBINS];
     double Chimes_fluxPhotIon[CHIMES_LOCAL_UV_NBINS];
 #endif
+/* TreeCol column-density exports: total-H Projection[] is TREE_RAD-only (FUV-G0 dust
+ * shielding, M1's job); the H2/CO columns run standalone under TREE_RAD_H2 (M1 line
+ * self-shielding), so they must be packed/exported whenever TREE_RAD_H2 is on. */
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
     MyDouble Projection[NPIX];            /*!< HEALPix column density per pixel */
+#endif
 #ifdef TREE_RAD_H2
     MyDouble ProjectionH2[NPIX];          /*!< HEALPix H2 column density per pixel */
     MyDouble ProjectionCO[NPIX];          /*!< HEALPix CO column density per pixel */

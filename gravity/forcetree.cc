@@ -7,8 +7,8 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef TREE_RAD
-#include "healpix_utils.h"
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
+#include "healpix_utils.h"     /* HEALPix pixel geometry: shared by FUV-G0 (TREE_RAD) and standalone H2/CO column walks */
 #ifdef TREE_RAD_H2
 #include "../cooling/chemcool/chemcool_consts.h"
 #endif
@@ -1939,8 +1939,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef RT_USE_TREECOL_FOR_NH
     double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
 #endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
-    double treecol_Projection[NPIX] = {0};
+    double treecol_Projection[NPIX] = {0};   /* total-H column: FUV-G0 dust shielding (TREE_RAD only) */
+#endif
 #ifdef TREE_RAD_H2
     double treecol_ProjectionH2[NPIX] = {0}, treecol_ProjectionCO[NPIX] = {0};
     double h2mass = 0, comass = 0;
@@ -2500,24 +2502,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if(r2 < nop->maxsoft * nop->maxsoft) {no = nop->u.d.nextnode; continue;} // inside node maxsoft, continue down tree
                 }
 #endif
-#ifdef KETJU_REGULARIZATION
-                /* GUARANTEED member<->member exclusion: if this target is a chain member, force-open any
-                 * node whose volume overlaps its region's bounding sphere. Without this, a same-region
-                 * companion co-integrated at large separation (orbit-criterion capture) can be absorbed
-                 * into an accepted multipole whose force is NOT excluded below — the member then feels
-                 * the companion both through the tree and through MSTAR (double-counted internal force,
-                 * systematic energy pumping). Opening continues until the companion is a leaf, where the
-                 * ketju_skip_pair exclusion applies. One distance check per node, member targets only. */
-                if(target_ketju_tag > 0 && target_ketju_tag <= KetjuNumTagRegions)
-                {
-                    double dxk = nop->center[0] - KetjuTagCenter[3*(target_ketju_tag-1)+0];
-                    double dyk = nop->center[1] - KetjuTagCenter[3*(target_ketju_tag-1)+1];
-                    double dzk = nop->center[2] - KetjuTagCenter[3*(target_ketju_tag-1)+2];
-                    GRAVITY_NEAREST_XYZ(dxk,dyk,dzk,-1);
-                    double reach = KetjuTagRadius[target_ketju_tag-1] + 0.866025 * nop->len; /* node bounding radius = len*sqrt(3)/2 */
-                    if(dxk*dxk + dyk*dyk + dzk*dzk < reach*reach) { no = nop->u.d.nextnode; continue; }
-                }
-#endif
                 if(All.ErrTolTheta)    /* check Barnes-Hut opening criterion */
                 {
                     if(nop->len * nop->len > r2 * All.ErrTolTheta * All.ErrTolTheta) /* open cell */
@@ -2967,14 +2951,16 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     treecol_angular_bins[bin] += fac_accel*gasmass*r / (angular_bin_size*mass); // in our binning scheme, we stretch the gas mass over a patch  of the sphere located at radius r subtending solid angle equal to the bin size - thus the area is r^2 * angular_bin_size, so sigma = m/(r^2 * angular bin size) = fac_accel/r / angular bin size. Factor of gasmass / mass corrects the gravitational mass to the gas mass
                 }
 #endif
-#ifdef TREE_RAD
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
                 if(gasmass > 0 && r > 0 && r < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
                     long iheal;
                     double vec_hp[3] = {dx, dy, dz};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
                     double area = (4.0*M_PI / NPIX) * r2;
-                    treecol_Projection[iheal] += gasmass / area;
+#ifdef TREE_RAD
+                    treecol_Projection[iheal] += gasmass / area;   /* total-H column: TREE_RAD (FUV-G0) only */
+#endif
 #ifdef TREE_RAD_H2
                     treecol_ProjectionH2[iheal] += h2mass / area;
                     treecol_ProjectionCO[iheal] += comass / area;
@@ -3205,8 +3191,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target].ColumnDensityBins[k] = treecol_angular_bins[k];
 #endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
         if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) CellP[target].Projection[kp] = treecol_Projection[kp];}
+#endif
 #ifdef TREE_RAD_H2
         if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; CellP[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif
@@ -3329,8 +3317,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef RT_USE_TREECOL_FOR_NH
         {int k; for(k=0;k<RT_USE_TREECOL_FOR_NH;k++) GravDataResult[target].ColumnDensityBins[k] = treecol_angular_bins[k];}
 #endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifdef TREE_RAD
         {int kp; for(kp=0; kp<NPIX; kp++) GravDataResult[target].Projection[kp] = treecol_Projection[kp];}
+#endif
 #ifdef TREE_RAD_H2
         {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; GravDataResult[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif

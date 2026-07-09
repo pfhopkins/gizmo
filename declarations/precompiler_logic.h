@@ -1296,6 +1296,36 @@
 #ifndef GALSF_RESOLVEDISM_STELLAR_TABLES
 #define GALSF_RESOLVEDISM_STELLAR_TABLES
 #endif
+/* the band-resolved radp direct term (2026-07-08 correctness pass) couples
+ * f_FUV*L_FUV + f_NUV*L_NUV + f_OPT*L_OPT — the NUV/OPT band fields are NOT
+ * default-compiled, and without them that contribution silently vanishes
+ * (under-coupled direct pressure). RADPRESSURE therefore requires the band
+ * luminosities: auto-enable both. */
+#ifndef GALSF_RESOLVEDISM_NUV_VARIABLE
+#define GALSF_RESOLVEDISM_NUV_VARIABLE
+#endif
+#ifndef GALSF_RESOLVEDISM_OPT_VARIABLE
+#define GALSF_RESOLVEDISM_OPT_VARIABLE
+#endif
+/* ---- Direct radiation-pressure force from the TREE_RAD per-cell fluxes
+ * (LEBRON-style, Uli 2026-07-08) ----
+ * When the variable ISRF is available (G0_VARIABLE auto-#defines TREE_RAD, so
+ * every gas cell carries the attenuated per-pixel UV/LW/NUV/OPT_flux) and M1 RT
+ * is off, close the subgrid radiation-pressure model by computing the DIRECT
+ * single-scattering radp momentum PER GAS CELL from those attenuated fluxes and
+ * depositing it LOCALLY (correct direction + shadowing, in the swept-up shell),
+ * instead of computing it at the star from the star's local column and kernel-
+ * weighting the deposit. This is the production-relevant configuration, so
+ * auto-enable it here. MUTUALLY EXCLUSIVE with the star-side DIRECT radp term:
+ * that block in resolvedism_fb_momentum.cc is #ifdef'd out when this is set, so
+ * radp is not double-counted; the IR-trapping boost (local-Sigma approximation)
+ * is DELIBERATELY RETAINED in the star-side path (TREE_RAD does the DIRECT
+ * UV/NUV/OPT term only). */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
+#ifndef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+#define GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
+#endif
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
 #ifndef GALSF_RESOLVEDISM_STELLAR_TABLES
@@ -1389,11 +1419,42 @@
 #endif /* CHEMCOOL */
 
 
+/* ---- M1 (RADTRANSFER) + H2/CO LINE self-shielding matched pair (Uli, 2026-07-08) ----
+ * M1 transports the FUV/LW continuum WITH dust attenuation (G0/dust = M1's job),
+ * but the H2/CO LINE self-shielding is a curve-of-growth on the molecular column,
+ * NOT a continuum opacity, so it stays TARGET-SIDE in the chemistry and still needs
+ * the TreeCol H2/CO columns. Auto-#define the STANDALONE column walk whenever M1 runs
+ * with the chemistry -- exactly analogous to the GALSF_RESOLVEDISM_G0_VARIABLE ->
+ * TREE_RAD matched pair below, so no M1 Config.sh can ship without H2 self-shielding.
+ * This does NOT drag in TREE_RAD / G0_VARIABLE (those #error against RADTRANSFER):
+ * TREE_RAD_H2/CO stand alone. */
+#if defined(RADTRANSFER) && defined(CHEMCOOL)
+#ifndef TREE_RAD_H2
+#define TREE_RAD_H2   /* H2 tracked (IH2) in every CHEMCOOL network */
+#endif
+#if (CHEMISTRYNETWORK != 1) && (CHEMISTRYNETWORK != 2) && (CHEMISTRYNETWORK != 4)
+#ifndef TREE_RAD_CO   /* CO (ICO) real only for the molecular-metal networks */
+#define TREE_RAD_CO
+#endif
+#endif
+#endif /* RADTRANSFER && CHEMCOOL */
+
+/* TREE_RAD_CO carries its column in the ProjectionH2/CO field pair (cell_data.h /
+ * GravData), which is gated on TREE_RAD_H2 -- so CO shielding requires the H2 walk. */
+#if defined(TREE_RAD_CO) && !defined(TREE_RAD_H2)
+#define TREE_RAD_H2
+#endif
+
 /* ---- TREE_RAD: HEALPix column density in gravity tree ---- */
 #ifdef TREE_RAD
 #if defined(RT_USE_TREECOL_FOR_NH)
 #error "TREE_RAD and RT_USE_TREECOL_FOR_NH are mutually exclusive column density methods"
 #endif
+#endif /* TREE_RAD */
+/* The TreeCol HEALPix machinery (pixel geometry + per-node gas mass) is SHARED by
+ * the FUV-G0 walk (TREE_RAD) AND the H2/CO line-shielding column walks
+ * (TREE_RAD_H2/CO, which run standalone under M1). Enable it for ANY of the three. */
+#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
 #ifndef NEED_HEALPIX
 #define NEED_HEALPIX
 #endif
@@ -1404,7 +1465,7 @@
 #if !defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
 #define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
 #endif
-#endif /* TREE_RAD */
+#endif /* TREE_RAD || TREE_RAD_H2 || TREE_RAD_CO */
 
 
 #if defined(COOLING) && defined(GALSF_EFFECTIVE_EQS)

@@ -112,30 +112,9 @@ int eligible_for_hermite(int i)
     if(P[i].SuperTimestepFlag >= 2) {return 0;}
 #endif
 #ifdef KETJU_REGULARIZATION
-    /* Hermite must never touch a particle KETJU has ANY claim on, and this check must be PURE (no side
-     * effects) and based on DURABLE state. The old guards all leaked simultaneously in rare
-     * configurations (trace-proven, one Hermite correction from pre-capture Old* state then unbound a
-     * hard pair, +5e-2 per event): KetjuIntegrated is cleared when a region is chord-deferred (no
-     * scatter that sync); the in-region set misses members of regions tagged but skipped as n<2 (tags
-     * are applied BEFORE the skip); and the consume-on-check stale flag was eaten by unrelated
-     * eligibility QUERIES (gravity-pass gating) before the actual Hermite step ran. */
-    if(P[i].KetjuReleaseBlock > 0) {return 0;}  /* DURABLE post-release block: survives eligibility queries
-        * across sub-syncs (unlike consume-on-check HermiteHistoryStale) so the corrector cannot fire on a
-        * poisoned kick1 Old* after a KETJU capture/release. Counts down over clean kick1 stores (do_the_kick
-        * mode==0), so Hermite resumes only once a consistent Old* has been recorded. */
-    if(P[i].KetjuIntegrated) {return 0;}       /* MSTAR results in flight */
-    if(P[i].KetjuRegionTag) {return 0;}        /* tagged member — even if its region was deferred/skipped this sync (trace-proven leak: tag set but region skipped as n<2 left the star unprotected) */
-    if(P[i].KetjuFreshScatter) {return 0;}     /* velocity-trick swap PENDING (KetjuFinalVel not yet applied):
-        * the star's P.Vel is the trick/chord value and its Hermite Old* state is pre-capture-stale, so a
-        * Hermite correction here injects garbage. The pending swap still completes for deferred stars
-        * (ketju_set_final_velocities is not tag-gated), after which fresh clears and the star becomes
-        * Hermite-eligible with refreshed state. */
+    if(P[i].KetjuIntegrated) {return 0;} /* KETJU particles use MSTAR, not Hermite */
     if(ketju_is_particle_in_region(i)) {return 0;} /* current chain members: KETJU only */
-    if(P[i].HermiteHistoryStale) { /* just exited a chain: consume-on-check — the FIRST query this step
-        * (get_timestep) consumes the flag, so the star is Hermite-integrated from the release step itself
-        * with state fully refreshed by the pre-kick pass. (A "pure" flag + end-of-step retirement was
-        * tried and REGRESSED always-on runs 2000x: the enforced KDK bridge interacts badly with the
-        * handoff — the warm same-step Hermite pickup is the correct behavior.) */
+    if(P[i].HermiteHistoryStale) { /* just exited a chain — OldPos/Acc/Jerk are stale; do KDK this step, Hermite picks up next step */
         P[i].HermiteHistoryStale = 0; return 0;
     }
 #endif
@@ -424,16 +403,6 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                     P[i].OldPos[j] = P[i].Pos[j];
                     P[i].OldJerk[j] = P[i].GravJerk[j];
                     P[i].Hermite_OldAcc[j] = P[i].GravAccel[j]; // this is the value from the first Hermite tree pass for this timestep
-#ifdef KETJU_REGULARIZATION
-                    /* Durable release-block bookkeeping (j==0 only, once per particle). While the star is
-                     * KETJU-involved its Old* store may be poisoned (companion force not yet excluded, or
-                     * about to be captured), so hold the block up; once it is cleanly free, count down so
-                     * Hermite resumes only after a consistent Old* has been recorded here. */
-                    if(j == 0) {
-                        if(P[i].KetjuRegionTag || P[i].KetjuIntegrated || P[i].KetjuFreshScatter) { P[i].KetjuReleaseBlock = 2; }
-                        else if(P[i].KetjuReleaseBlock > 0) { P[i].KetjuReleaseBlock--; }
-                    }
-#endif
                 }
             }
 #endif	    
