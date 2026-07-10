@@ -1666,6 +1666,20 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.MinSizeTimestep;
         id[nt++] = REAL;
 
+#ifdef CBE_INTEGRATOR
+        strcpy(tag[nt], "CBEMassEffFloor");
+        strcpy(alternate_tag[nt], "CBE_Mass_Effective_Floor_Fraction");
+        addr[nt] = &All.CBEMassEffFloor;
+        id[nt++] = REAL;
+#endif
+
+#ifdef CBE_INTEGRATOR_COLLISIONS
+        strcpy(tag[nt], "CBECollisionCrossSection");
+        strcpy(alternate_tag[nt], "CBE_Collision_CrossSection_Per_Mass");
+        addr[nt] = &All.CBECollisionCrossSection;
+        id[nt++] = REAL;
+#endif
+
 
         strcpy(tag[nt], "DesNumNgb");
         strcpy(alternate_tag[nt], "Effective_Kernel_NeighborNumber");
@@ -2685,6 +2699,12 @@ void read_parameter_file(char *fname)
                 if(strcmp("MaxKernelRadius",tag[i])==0) {*((double *)addr[i])=MAX_REAL_NUMBER; printf("Tag %s (%s) not set in parameter file: defaulting to assume no maximum (=%g) \n",tag[i],alternate_tag[i],All.MaxKernelRadius); continue;}
                 if(strcmp("GravityConstantInternal",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to calculating in terms of other specified units if needed (=%g) \n",tag[i],alternate_tag[i],All.G); continue;}
                 if(strcmp("MinSizeTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to minimum allowed by memory table-size (=%g) \n",tag[i],alternate_tag[i],All.MinSizeTimestep); continue;}
+#ifdef CBE_INTEGRATOR
+                if(strcmp("CBEMassEffFloor",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to CBE m_eff floor fraction (=%g) \n",tag[i],alternate_tag[i],All.CBEMassEffFloor); continue;}
+#endif
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                if(strcmp("CBECollisionCrossSection",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 = collisions disabled (=%g) \n",tag[i],alternate_tag[i],All.CBECollisionCrossSection); continue;}
+#endif
                 if(strcmp("TimeLimitCPU",tag[i])==0) {*((double *)addr[i])=8.6e4; printf("Tag %s (%s) not set in parameter file: defaulting to 24-hours before auto-shutdown (=%g) \n",tag[i],alternate_tag[i],All.TimeLimitCPU); continue;}
                 if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=10.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (needed for ghost particle headroom in multi-rank runs) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
 #if !(defined(BOX_PERIODIC) || defined(BOX_SHEARING) || defined(BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE) || defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z))

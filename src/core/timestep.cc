@@ -384,6 +384,15 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         }
 
+#if defined(CBE_INTEGRATOR)
+        if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type))
+        {   /* CBE moment-flux acceleration enters the accel timestep like HydroAccel does for gas;
+             * reduces to the hydro acceleration when all bases are identical isotropic Gaussians */
+            double a_cbe[3]; cbe_particle_moment_accel(p, a_cbe);
+            ax += a_cbe[0]; ay += a_cbe[1]; az += a_cbe[2];
+        }
+#endif
+
         ac = sqrt(ax * ax + ay * ay + az * az);	/* this is now the physical acceleration */
         *aphys = ac;
     }
@@ -402,6 +411,9 @@ integertime get_timestep(int p,		/*!< particle index */
         return flag;
     }
     {double h_for_accel_dt = KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p);
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type)) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
+#endif
 #ifdef GRAIN_FLUID
     if(((1 << P[p].Type) & (GRAIN_PTYPES)) && (h_for_accel_dt <= 0)) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* for grain particles without gravity, use the inter-particle spacing as the characteristic length scale */
 #endif
@@ -506,14 +518,14 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef DM_SIDM
     if((1 << P[p].Type) & (DM_SIDM)) {need_agscfl = 1;}
 #endif
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-    if(P[p].Type == 1)
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type))
     {
         need_agscfl = 1;
-#if defined(CBE_INTEGRATOR)
         need_cbe_agscfl = 1; /* CBE-moment-flux particle: gets the stricter factor below */
-#endif
     }
+#elif defined(DM_FUZZY)
+    if(P[p].Type == 1) {need_agscfl = 1;}
 #endif
     if(need_agscfl)
     {
@@ -523,6 +535,23 @@ integertime get_timestep(int p,		/*!< particle index */
         double dt_cour = 2. * All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig); // can be generous here, really the signal velocity isn't that important in the collisionless case, but it is important with some of the physics above //
 #if defined(CBE_INTEGRATOR)
         if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
+        if(need_cbe_agscfl)
+        {   /* CBE mass-depletion criterion: cap the per-basis fractional mass change per step.
+             * m_eff-floor: regularize the softened basis mass as m_eff = max(m_b,
+             * CBEMassEffFloor*m_cell), so a near-empty placeholder/free-slot basis
+             * (m_b ~ eps*m_cell) receiving a cell-scale flux cannot force an absurdly small step,
+             * while an occupied basis (m_b > f_floor*m_cell) still constrains smoothly as it gains
+             * mass. Continuous (max, not a hard gate) -> no threshold chatter. Timestep-only (does
+             * NOT touch the flux/update). */
+            for(int b = 0; b < CBE_INTEGRATOR_NBASIS; b++)
+            {
+                const double m_b = P[p].CBE_basis_moments[b][0];
+                if(!(m_b > 0)) continue;
+                const double m_eff = DMAX(m_b, All.CBEMassEffFloor * P[p].Mass);
+                const double rate_m = DMAX(fabs(P[p].CBE_basis_out_rate_dt[b][0]), fabs(P[p].CBE_basis_moments_dt[b][0]));
+                if(rate_m > MIN_REAL_NUMBER) {double dt_m = 0.1 * m_eff / rate_m; if(dt_m < dt) {dt = dt_m;}}
+            }
+        }
 #endif
         if(dt_cour < dt) {dt = dt_cour;}
     }
@@ -1168,7 +1197,7 @@ integertime get_timestep(int p,		/*!< particle index */
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-        /* Wave-CBE 2026-05-28: replaced endrun(888) with a CONTROLLED
+        /* Replaced endrun(888) with a CONTROLLED
          * stop request. Routing dt-floor through MPI_Abort (what
          * endrun(non-zero) does) bypasses Kokkos / CUDA-aware-MPI
          * cleanup and has correlated with Vista jobs stuck in SLURM CG
@@ -1422,13 +1451,8 @@ void process_wake_ups(void)
 		 * above the i-loop). Prevents the multiplicative wakeup cascade. */
 		if(bin < lowest_occupied_active_bin) bin = lowest_occupied_active_bin;
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-		/* Surface-fail-loud guard (codex 2026-05-30): if wakeup assigns a bin
-		 * whose physical timestep is below MinSizeTimestep, abort with full
-		 * context. Without this, the wakeup-application path silently floors at
-		 * bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning
-		 * at line 1102, which lets wakeup-cascade pathologies (over-aggressive
-		 * propagation of small bins via stale-MaxSignalVel wakeups) run all
-		 * the way to Systemstep=0 without any abort signal. */
+		/* If wakeup assigns a bin whose physical timestep is below MinSizeTimestep, abort with full
+		 * context. Without this, the wakeup-application path silently floors at bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning. */
 		{
 		    double dt_assigned_physical = (double)GET_INTEGERTIME_FROM_TIMEBIN(bin) * All.Timebase_interval;
 		    if(dt_assigned_physical < All.MinSizeTimestep) {

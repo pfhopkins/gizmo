@@ -126,6 +126,10 @@ struct AgsForceLocalIn {
      * particles retain prior-step values (hydro semantics). */
     double Gradients_CBE_basis_moments[CBE_INTEGRATOR_NBASIS]
                                       [CBE_INTEGRATOR_NMOMENTS][3];
+    /* Prev-step (stale) gradient snapshot, same load path; consumed by the
+     * flux body's density-continuity matching cost. */
+    double Gradients_CBE_basis_moments_prev[CBE_INTEGRATOR_NBASIS]
+                                           [CBE_INTEGRATOR_NMOMENTS][3];
 #endif
 #if defined(DM_SIDM)
     double dtime_sidm;
@@ -528,9 +532,20 @@ struct AgsForceSpec {
         L.Mass             = dctx.P[i].Mass;
         L.AGS_KernelRadius = (double)dctx.P[i].AGS_KernelRadius;   /* un-inflated */
         L.Pos              = a.pos;
+#if defined(CBE_INTEGRATOR)
+        /* In a CBE build local.Vel IS the CBE bulk velocity; load the PREDICTED
+         * (drifted) value so the flux reconstructs the cell at the substep time
+         * rather than its stale begin-of-step state. DM_SIDM — the only other
+         * consumer of local.Vel in this loop (kernel.dv, which the CBE flux does
+         * not use) — is mutually exclusive with CBE_INTEGRATOR. */
+        L.Vel[0] = (double)dctx.P[i].CBE_VelPred[0];
+        L.Vel[1] = (double)dctx.P[i].CBE_VelPred[1];
+        L.Vel[2] = (double)dctx.P[i].CBE_VelPred[2];
+#else
         L.Vel[0] = (double)dctx.P[i].Vel[0];
         L.Vel[1] = (double)dctx.P[i].Vel[1];
         L.Vel[2] = (double)dctx.P[i].Vel[2];
+#endif
         L.Type   = dctx.P[i].Type;
         L.dtime  = get_particle_timestep_in_physical(i, dctx.P);
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
@@ -554,9 +569,11 @@ struct AgsForceSpec {
 #endif
 #endif
 #if defined(CBE_INTEGRATOR)
+        /* Load PREDICTED moments (drifted to the substep time); the flux
+         * reconstructs i's cell from these instead of the stale conserved row. */
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                L.CBE_basis_moments[m][k] = dctx.P[i].CBE_basis_moments[m][k];
+                L.CBE_basis_moments[m][k] = dctx.P[i].CBE_basis_moments_pred[m][k];
 #endif
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
         /* By-value snapshot of the persistent gradient row for Mode-B-safe
@@ -566,9 +583,12 @@ struct AgsForceSpec {
          * (natural P[] ghost import). */
         for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++)
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                for(int d = 0; d < 3; d++)
+                for(int d = 0; d < 3; d++) {
                     L.Gradients_CBE_basis_moments[m][k][d] =
                         dctx.P[i].Gradients_CBE_basis_moments[m][k][d];
+                    L.Gradients_CBE_basis_moments_prev[m][k][d] =
+                        dctx.P[i].Gradients_CBE_basis_moments_prev[m][k][d];
+                }
 #endif
 #if defined(DM_SIDM)
         L.dtime_sidm = dctx.P[i].dtime_sidm;

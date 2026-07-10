@@ -69,7 +69,7 @@ void do_first_halfstep_kick(void)
         int k = 0;
         for(int _a = 0; _a < n; _a++) {
             int ii = ActiveParticleList[_a];
-            if(P[ii].Mass > 0) {
+            if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
                 cbe_active[k] = ii;
                 cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
                 k++;
@@ -85,9 +85,33 @@ void do_first_halfstep_kick(void)
 void do_second_halfstep_kick(void)
 {
     int i; integertime ti_step, tstart=0, tend=0;
-    
+
+#if defined(CBE_INTEGRATOR)
+    /* Palindromic operator split: kick1 is gravity->CBE; kick2 is CBE->gravity,
+     * so the full step is G C | C G — symmetric in the gravity/CBE coupling
+     * (2nd-order split instead of 1st). Run the CBE kick BEFORE BOTH gravity
+     * half-kicks here (the PM long-range kick is moved below the CBE block too);
+     * the predicted state is resynced to conserved AFTER all gravity below (the
+     * pre-gravity CBE-kick reset would otherwise leave it stale). */
+    {
+        int n = (int)ActiveParticleList.size();
+        int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
+        double *cbe_dt     = (double *)mymalloc("cbe_kick_dt",  (n>0?n:1)*sizeof(double));
+        int k = 0;
+        for(int _a = 0; _a < n; _a++) {
+            int ii = ActiveParticleList[_a];
+            if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
+                cbe_active[k] = ii;
+                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
+                k++;
+            }
+        }
+        cbe_drift_kick_evaluate_gpu(P, cbe_active, k, cbe_dt);
+        myfree(cbe_dt); myfree(cbe_active);
+    }
+#endif
 #ifdef PMGRID
-    if(All.PM_Ti_endstep == All.Ti_Current)	/* need to do long-range kick */
+    if(All.PM_Ti_endstep == All.Ti_Current)	/* second-half PM long-range kick — AFTER the CBE block so all of gravity (PM long-range + short-range) lands on one side of the CBE kick, keeping kick2 = C->G palindromic with kick1 G->C. */
     {
         ti_step = All.PM_Ti_endstep - All.PM_Ti_begstep;
         tstart = All.PM_Ti_begstep + ti_step / 2;
@@ -118,21 +142,14 @@ void do_second_halfstep_kick(void)
         }
     } // for(i = 0; i < NumPart; i++) //
 #if defined(CBE_INTEGRATOR)
-    {
-        int n = (int)ActiveParticleList.size();
-        int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
-        double *cbe_dt     = (double *)mymalloc("cbe_kick_dt",  (n>0?n:1)*sizeof(double));
-        int k = 0;
-        for(int _a = 0; _a < n; _a++) {
-            int ii = ActiveParticleList[_a];
-            if(P[ii].Mass > 0) {
-                cbe_active[k] = ii;
-                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
-                k++;
-            }
-        }
-        cbe_drift_kick_evaluate_gpu(P, cbe_active, k, cbe_dt);
-        myfree(cbe_dt); myfree(cbe_active);
+    /* Resync predicted CBE state to conserved AFTER the gravity half-kick. The
+     * CBE kick (above, before gravity) reset pred=conserved in the pre-gravity
+     * frame; gravity has since advanced pi.Vel, so without this the predicted
+     * frame velocity would be stale at kick completion. Restores pred==conserved
+     * at the end of the step. */
+    for(int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
+        int i = ActiveParticleList[_apl];
+        if(P[i].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) cbe_sync_pred_to_conserved(i);
     }
 #endif
 
@@ -146,8 +163,10 @@ void do_second_halfstep_kick(void)
 int eligible_for_hermite(int i)
 {
     if(!(HERMITE_INTEGRATION & (1<<P[i].Type))) {return 0;} // hermite flag said to not include these types
-#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-    if(P[i].Type==1) {return 0;} // not compatible with these flags for these types
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) {return 0;} // CBE moment particles: not compatible with Hermite
+#elif defined(DM_FUZZY)
+    if(P[i].Type==1) {return 0;} // fuzzy-DM: not compatible with Hermite
 #endif
 #if defined(GRAIN_FLUID)
     if((1 << P[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types

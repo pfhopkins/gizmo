@@ -1700,11 +1700,18 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_AGS_RHO:        /* Adaptive Gravitational Softening: density */
-#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(DM_FUZZY)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+#if defined(DM_FUZZY)
                     *fp++ = (MyOutputFloat) P[pindex].AGS_Density;
+#else
+                    /* code density = Mass / AGS effective volume (same estimator the
+                     * CBE collision operator uses; get_particle_volume_ags) */
+                    double V_ags_out = get_particle_volume_ags(pindex);
+                    *fp++ = (MyOutputFloat) ((V_ags_out > 0) ? (P[pindex].Mass / V_ags_out) : 0);
+#endif
                     n++;
                 }
 #endif
@@ -3426,6 +3433,11 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_AGS_RHO:
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && (defined(DM_FUZZY) || defined(CBE_INTEGRATOR))
+            return 1;
+#endif
+            break;
+
         case IO_AGS_QPT:
 #if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(DM_FUZZY)
             return 1;

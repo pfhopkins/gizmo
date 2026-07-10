@@ -993,10 +993,15 @@ void special_rt_feedback_injection(void);
 
 #ifdef CBE_INTEGRATOR
 void do_cbe_initialization(void);
-/* cbe_flux_hllc_vacuum, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel
-   live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
-   entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
-   (sidm/sidm_gpu_decls.h). */
+void do_cbe_predict_drift(int i, double dt_drift, double dt_gravkick, double dt_gravkick_pm);
+void cbe_particle_moment_accel(int i, double a_out[3]); /* strongest-basis dv/dt for the accel timestep */
+void cbe_collision_parent_routine(void); /* operator-split intra-cell CBE collision operators (no-op unless CBE_INTEGRATOR_COLLISIONS + cross-section>0) */
+void cbe_sync_pred_to_conserved(int i);
+/* cbe_flux_tophat_vacuum, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel,
+   do_cbe_predict_drift_kernel live in sidm/cbe_integrator_functions.h
+   (KOKKOS_INLINE_FUNCTION). The host entry points are
+   cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
+   (sidm/sidm_gpu_decls.h) and do_cbe_predict_drift (above). */
 /* Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
  * 2026-05-24). Counters defined in sidm/cbe_integrator.cc; populated by
  * later commits; emitted to FdCbeDiagnostics (cbe_diagnostics.txt) when

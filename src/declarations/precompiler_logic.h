@@ -141,10 +141,27 @@
 
 #if defined(CBE_INTEGRATOR)
 #define CBE_INTEGRATOR_NBASIS CBE_INTEGRATOR
-/* CBE + self-gravity: default the active type to adaptive softening (skip if SELFGRAVITY_OFF). */
-#if !defined(ADAPTIVE_GRAVSOFT_FORALL) && !defined(SELFGRAVITY_OFF)
-#define ADAPTIVE_GRAVSOFT_FORALL 2
+#if !defined(OUTPUT_POTENTIAL)
+#define OUTPUT_POTENTIAL
 #endif
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
+#define OUTPUT_ADDITIONAL_RUNINFO
+#endif
+#ifndef CBE_INTEGRATOR_PARTICLETYPES
+#define CBE_INTEGRATOR_PARTICLETYPES 2 /* Particle types carrying a CBE moment distribution (bitmask over Type; default type = 1 */
+#endif
+#define CBE_INTEGRATOR_DOES_TYPE(t) (((1<<(t)) & (CBE_INTEGRATOR_PARTICLETYPES)) != 0) /* macro for utility purposes */
+/* CBE collision operators: each can be given a different numerical code to check against in the subroutines employing them */
+#define CBE_COLLISION_MODEL_BGK_ISOTROPIC 1 /* isotropic elastic hard-sphere relaxation to Maxwellian (BGK) */
+#ifdef CBE_INTEGRATOR_COLLISIONS
+#ifndef CBE_COLLISION_MODEL
+#define CBE_COLLISION_MODEL CBE_COLLISION_MODEL_BGK_ISOTROPIC
+#endif
+#endif
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL) && !defined(SELFGRAVITY_OFF)
+#define ADAPTIVE_GRAVSOFT_FORALL CBE_INTEGRATOR_PARTICLETYPES /* for self-gravity, gravsoft should be adaptive and match the same types */
+#endif
+/* define the moment number. for now implemented is a 10-moment scheme, will expand to 13-moment */
 #ifdef CBE_INTEGRATOR_SECONDMOMENT
 #if (BOX_SPATIAL_DIMENSION==1) || defined(ONEDIM)
 #define CBE_INTEGRATOR_NMOMENTS 3  /* [0-norm,1-mom,1-second] */
@@ -156,37 +173,16 @@
 #else
 #define CBE_INTEGRATOR_NMOMENTS ((BOX_SPATIAL_DIMENSION)+1)
 #endif
-/* Wave-CBE Commit 6b pairing selectors. Temporary defaults are
- * CBE_COST_V_ONLY + USE_FREE_SLOT=0 so the SSOT pair-matching helper
- * reproduces the pre-C6b open-coded path byte-for-byte. C6c flips both
- * to the harness §4.4 production defaults (CBE_COST_TRACE_W2 + free-slot
- * on). CBE_PAIRING_ASSIGN is a sentinel; greedy (= one-sided-nearest) is
- * the only assignment exposed in C6 per harness §4.1 + Phil. */
-#define CBE_COST_V_ONLY     0
 #define CBE_COST_TRACE_W2   1
 #define CBE_ASSIGN_GREEDY   0
 #ifndef CBE_PAIRING_COST
-#define CBE_PAIRING_COST            CBE_COST_TRACE_W2 /* harness §4.4 production default (flipped in C6c from C6b temp CBE_COST_V_ONLY) */
+#define CBE_PAIRING_COST            CBE_COST_TRACE_W2 /* harness §4.4 production default (flipped) */
 #endif
 #ifndef CBE_PAIRING_USE_FREE_SLOT
 #define CBE_PAIRING_USE_FREE_SLOT   1                 /* harness §4.4 production default (flipped in C6c from C6b temp 0) */
 #endif
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
-#endif
-/* Loud guards against silently-ignored selector values. cbe_build_pair_
- * matching dispatches on CBE_PAIRING_COST via a single #if/#else and on
- * CBE_PAIRING_USE_FREE_SLOT via #if; any unsupported value silently
- * falls through to legacy behavior, which is the same fake-selector
- * footgun the ASSIGN guard prevents. Fail the build loud instead. */
-#if (CBE_PAIRING_COST != CBE_COST_V_ONLY) && (CBE_PAIRING_COST != CBE_COST_TRACE_W2)
-#error "CBE_PAIRING_COST must be CBE_COST_V_ONLY or CBE_COST_TRACE_W2. cbe_build_pair_matching's #if/#else dispatch silently falls back to cbe_cost_v_only for any unsupported value; set the selector to one of the supported sentinels or wire the new cost into the helper."
-#endif
-#if (CBE_PAIRING_USE_FREE_SLOT != 0) && (CBE_PAIRING_USE_FREE_SLOT != 1)
-#error "CBE_PAIRING_USE_FREE_SLOT must be 0 or 1. cbe_build_pair_matching's #if-only dispatch silently treats any non-1 value as 0; set the selector explicitly."
-#endif
-#if (CBE_PAIRING_ASSIGN != CBE_ASSIGN_GREEDY)
-#error "CBE_PAIRING_ASSIGN currently supports only CBE_ASSIGN_GREEDY in C6. Hungarian (or other) assignment is not wired through cbe_build_pair_matching; the SSOT helper would silently use greedy. Either set the selector to CBE_ASSIGN_GREEDY or wire the additional assignment first."
 #endif
 #endif
 
@@ -1553,21 +1549,6 @@
 #endif
 
 
-#ifdef CBE_INTEGRATOR_WITHGRADIENTS
-#ifndef CBE_INTEGRATOR
-#error "CBE_INTEGRATOR_WITHGRADIENTS requires CBE_INTEGRATOR."
-#endif
-/* CBE_INTEGRATOR_SECONDMOMENT 3D fence is enforced separately below; not
- * duplicated here. */
-#endif
-
-#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(CBE_INTEGRATOR)
-#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires CBE_INTEGRATOR."
-#endif
-#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
-#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
-#endif
-
 /* Some modules compute neighbor fluxes explicitly within the force tree: those
  * require the tree walk to open leaves more aggressively (sphere-box intersection)
  * so possible neighbors are not missed. This must be a GLOBAL define so the CPU
@@ -1593,41 +1574,4 @@
 #define AGS_DSOFT_TOL (0.5)
 #endif
 
-/* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
- *
- * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at
- * 3D because every momentum-slot access in sidm/cbe_integrator{.cc,
- * _functions.h, _flux_functions.h} hard-coded [1]/[2]/[3] as p_x/p_y/p_z.
- * Lifted 2026-06-02 to NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path
- * once sidm/cbe_integrator_functions.h gained dimension-aware
- * momentum-slot helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3,
- * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
- * sites were migrated through them.
- *
- * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
- * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
- * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
- * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
- * repair, postgravity dT block) to access stress slots via cbe_T_idx /
- * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
- * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
- * cbe_build_flux_frame_Q_from_stored_moments so the flux solver sees
- * absolute-frame Q. The frame conversion on the storage side has since
- * been moved (codex 2026-06-04) from a continuous-time differential
- * postgravity formula into a finite absolute-update round-trip inside
- * do_cbe_drift_kick_kernel (see SSOT helpers cbe_relative_row_to_absolute
- * / cbe_absolute_to_relative_row); postgravity is now reduced to a
- * mass-closure safety net, and pi.Vel is updated directly from the
- * post-update mass-weighted-mean basis velocity rather than through a
- * GravAccel injection. With these pieces in place, the SECONDMOMENT-on
- * low-D code passes the 1D uniform warm two-stream and the warm
- * density-wave analytic gates (mass, central S, total M/p/E preserved
- * to roundoff).
- *
- * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
- * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)
- * — that whole repair chain (diagonal floor + CS + det + SPD projection +
- * split-largest) is slated for replacement by Fix #2b conservative-shift
- * repair (commit 5). The active-dim SPD projection landed in 4a is what
- * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
- * reachable. */
+

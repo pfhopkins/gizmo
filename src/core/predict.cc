@@ -184,7 +184,16 @@ void drift_particle(int i, integertime time1)
 #ifdef DM_FUZZY
     do_dm_fuzzy_drift_kick(i, dt_drift, 1);
 #endif
-    
+
+#ifdef CBE_INTEGRATOR
+    /* CBE-moment predictor SUPPRESSED: the implemented per-basis CBE-moment
+     * drift-prediction degraded accuracy (it damped the harmonic breathing test
+     * more than leaving it off), so the do_cbe_predict_drift() call is removed
+     * pending a corrected revival (separate future work). The general
+     * AGS_KernelRadius / gas VelPred prediction is unaffected; do_cbe_predict_drift()
+     * remains defined (currently unused) as a placeholder for that revival. */
+#endif
+
     if((P[i].Type == 0) && (P[i].Mass > 0))
         {
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;

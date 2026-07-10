@@ -704,6 +704,10 @@ void calculate_non_standard_physics(void)
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
+#ifdef CBE_INTEGRATOR_COLLISIONS
+    cbe_collision_parent_routine(); // operator-split intra-cell CBE collision operators (relax basis DF toward local Maxwellian, etc.) //
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
 #ifdef PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();

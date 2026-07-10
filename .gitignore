@@ -34,6 +34,9 @@ compile_time_info.cc
 test/*/output/
 test/*/output_*/
 test/*/GIZMO
+test/*/GIZMO_*
+test/*/*.log
+test/*/*.bak
 test/*/*_ics.hdf5
 test/*/spcool_tables/
 test/*/spcool_tables.tgz

@@ -1,7 +1,7 @@
 /* cbe_integrator_flux_functions.h -- per-pair CBE (Collisionless Boltzmann
  * Equation) flux computation for the adaptive-gravity AGSForce loop.
  *
- * Replaces the fragment sidm/cbe_integrator_flux_computation.h. Body guarded
+ * Body guarded
  * by CBE_INTEGRATOR so the caller (ags_rkern.cc AGSForce_evaluate) can invoke
  * unconditionally. Pure i-accumulation into the caller out struct; the only
  * shared-memory writes are the optional P[j].wakeup flag, which is returned
@@ -14,7 +14,7 @@
  * if NBASIS grows > ~32.
  *
  * Requires allvars.h / proto.h and sidm/cbe_integrator.h forward decls
- * (for cbe_flux_hllc_vacuum and get_particle_volume_ags).
+ * (for cbe_flux_tophat_vacuum and get_particle_volume_ags).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -69,7 +69,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         Face_Area_Vec[k] = -(kernel.wk_i * wt_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
                            + kernel.wk_j * wt_j * (P[j].NV_T[k][0]*kernel.dp[0] + P[j].NV_T[k][1]*kernel.dp[1] + P[j].NV_T[k][2]*kernel.dp[2])) * All.cf_atime * All.cf_atime;
         Face_Area_Norm += Face_Area_Vec[k] * Face_Area_Vec[k];
-        vface_guess[k] = 0.5 * (local.Vel[k] + P[j].Vel[k]) / All.cf_atime;
+        vface_guess[k] = 0.5 * (local.Vel[k] + P[j].CBE_VelPred[k]) / All.cf_atime;
     }
     Face_Area_Norm = sqrt(Face_Area_Norm);
     if(!(Face_Area_Norm > 0)) { return r; }
@@ -94,21 +94,24 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double inv_FAN = 1.0 / Face_Area_Norm;
     double A_hat[3] = { Face_Area_Vec[0]*inv_FAN, Face_Area_Vec[1]*inv_FAN, Face_Area_Vec[2]*inv_FAN };
 
-    /* Wave-CBE Commit 4 (2026-05-25): build "flux-frame" Q on both sides
-     * via the SSOT helper so the cosmology / velocity-boost convention
-     * matches whatever CBEGradSpec uses for its LSQ pass.
+    /* Build "flux-frame" Q on both sides via the shared helper so the
+     * cosmology / velocity-boost convention matches whatever CBEGradSpec
+     * uses for its LSQ pass.
      * Stored basis moments are U-frame (cell-integrated, basis-frame
      * momentum); Q is per-volume comoving density with physical-frame
-     * momentum baked in -- exactly what cbe_flux_hllc_vacuum expects. */
+     * momentum baked in -- exactly what cbe_flux_tophat_vacuum expects. */
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     {
+        /* i-side: local.Vel / local.CBE_basis_moments already hold the PREDICTED
+         * state (loaded from CBE_VelPred / CBE_basis_moments_pred in the AGS-force
+         * loader under CBE_INTEGRATOR). j-side: read predicted state directly. */
         double Vel_i_code[3] = { local.Vel[0], local.Vel[1], local.Vel[2] };
-        double Vel_j_code[3] = { P[j].Vel[0],  P[j].Vel[1],  P[j].Vel[2]  };
+        double Vel_j_code[3] = { P[j].CBE_VelPred[0], P[j].CBE_VelPred[1], P[j].CBE_VelPred[2] };
         cbe_build_flux_frame_Q_from_stored_moments(
             local.CBE_basis_moments, Vel_i_code, V_i, All.cf_a3inv, All.cf_atime, Q_i);
         cbe_build_flux_frame_Q_from_stored_moments(
-            P[j].CBE_basis_moments, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
+            P[j].CBE_basis_moments_pred, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
     }
 
     /* Face reconstruction. With CBE_INTEGRATOR_WITHGRADIENTS on, the
@@ -118,13 +121,12 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      *     Q_face_j[m][k] = Q_j[m][k] + psi_j * grad_Q_j[m][k] . kernel.dp
      * with psi_i = h_j / (h_i+h_j) = MFM FACE POSITION weight (NOT a flux
      * share). grad_i is read from local.Gradients_CBE_basis_moments
-     * (by-value snapshot in AgsForceSpec::load_active, Mode-B-safe per
-     * design invariant I2); grad_j is read directly from
+     * (by-value snapshot in AgsForceSpec::load_active, Mode-B-safe);
+     * grad_j is read directly from
      * P[j].Gradients_CBE_basis_moments (standard P[] ghost transport
      * carries the field onto ghost slots).
      *
-     * WITHGRADIENTS off → fall through to Qface = Q (cell-centered),
-     * byte-identical to the Phase-1 baseline. */
+     * WITHGRADIENTS off → fall through to Qface = Q (cell-centered). */
     double Qface_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Qface_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
@@ -139,8 +141,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
          * the event is observable when diagnostics are enabled (a clean
          * pair contributes 0; a denom-bad pair contributes the full row).
          *
-         * Primitive-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
-         * face reconstruction now round-trips through primitives. Per basis m
+         * Primitive-gradient swap: face reconstruction round-trips
+         * through primitives. Per basis m
          * and per side X ∈ {i, j}:
          *   if Q_X[m][0] > cbe_rho_active_floor():
          *       prim_X = cbe_moments_to_primitives_row(Q_X[m])
@@ -229,8 +231,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 #endif
     }
 #else
-    /* Phase-1 fallback — Q_face = Q (cell-centered). Byte-identical
-     * baseline when CBE_INTEGRATOR_WITHGRADIENTS is off. */
+    /* Q_face = Q (cell-centered) when CBE_INTEGRATOR_WITHGRADIENTS is off. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
             Qface_i[m][k] = Q_i[m][k];
@@ -238,11 +239,10 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         }
     }
 #endif
-    /* Density clamp + counter (rho slot, all NMOMENTS). Wave-CBE Commit 5
-     * (2026-05-26): face-state SPD repair on the stress block of each
-     * rho-active basis row (NMOMENTS>=10 only) via cbe_spd_repair_S3x3
-     * inside cbe_clamp_face_Q. Counters feed AgsForceOut.cbe_recon_rho_clamp_count
-     * (col-5) and cbe_recon_S_clamp_count (col-6). */
+    /* Density clamp + counter (rho slot, all NMOMENTS). Face-state SPD
+     * repair on the stress block of each rho-active basis row (NMOMENTS>=10
+     * only) via cbe_spd_repair_S3x3 inside cbe_clamp_face_Q. Counters feed
+     * AgsForceOut.cbe_recon_rho_clamp_count and cbe_recon_S_clamp_count. */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
     cbe_clamp_face_Q(Qface_i, &out.cbe_recon_rho_clamp_count, &out.cbe_recon_S_clamp_count);
     cbe_clamp_face_Q(Qface_j, &out.cbe_recon_rho_clamp_count, &out.cbe_recon_S_clamp_count);
@@ -251,7 +251,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     cbe_clamp_face_Q(Qface_j, (long long*)0, (long long*)0);
 #endif
 
-    /* Guarded per-basis face-normal state (Wave-CBE Commit 9): K = density,
+    /* Guarded per-basis face-normal state: K = density,
      * v_alpha_n = v . Ahat, c_x = HLLC normal stress speed. The helper
      * returns all three as zero for any basis clamped inactive, so the
      * residual / cost-matrix / flux loop all naturally skip those bases. */
@@ -261,12 +261,11 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     cbe_face_K_and_vn_from_Q(Qface_i, A_hat, K_i, v_alpha_n_i, c_x_i);
     cbe_face_K_and_vn_from_Q(Qface_j, A_hat, K_j, v_alpha_n_j, c_x_j);
 
-    /* Dispersion-based bracket pad. The pre-4a code computed trace(R)/m via
-     * the literal slot sum (Qface[m][4]+[5]+[6])/Qface[m][0] -- this is
-     * trace(raw R), NOT trace(central S), but the bracket pad is a heuristic
-     * upper bound on the wave-speed range so over-inclusion of the bulk-KE
-     * piece is conservative-safe (wider bracket only). Commit 4a preserves
-     * that semantic byte-for-byte in 3D and extends it to active-dim via
+    /* Dispersion-based bracket pad. Uses trace(raw R)/m via
+     * (Qface[m][4]+[5]+[6])/Qface[m][0] -- this is trace(raw R), NOT
+     * trace(central S), but the bracket pad is a heuristic upper bound on
+     * the wave-speed range so over-inclusion of the bulk-KE piece is
+     * conservative-safe (wider bracket only). Computed on active-dim via
      * cbe_basis_T_trace_active so 1D/2D builds get the same heuristic on
      * only their physical (active) diagonals. */
     double pad = 0;
@@ -286,7 +285,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 #endif
     /* NMOMENTS=4 (or NMOMENTS>4 with all-zero S) pad floor: small fraction
      * of the velocity spread so the bracket has nonzero width even when
-     * basis velocities coincide. bracket-widen-4x handles degenerate cases. */
+     * basis velocities coincide. */
     {
         double v_spread = 0;
         for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
@@ -324,12 +323,11 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
      * cbe_face_solve_v_F_normal only when bisection fails to bracket).
      * Theta active set at vface_guess can be empty; in that case use
      * vface_guess as the fallback carrier. Tangential bulk components
-     * are NOT needed for cbe_flux_hllc_vacuum (Fix #1, Commit 8 retired
-     * the old SM-dispersion term that consumed them); the final flux
-     * function only reads vface . n_hat, which equals v_F_normal under
-     * the vface = v_F_normal * A_hat construction below. The full bulk
-     * vector is retained here as raw material for Fix #7's analytic
-     * fallback rewrite. */
+     * are NOT needed for cbe_flux_tophat_vacuum (no SM-dispersion term
+     * consumes them); the final flux function only reads vface . n_hat,
+     * which equals v_F_normal under the vface = v_F_normal * A_hat
+     * construction below. The full bulk vector is retained here as raw
+     * material for the analytic fallback. */
     double v_F_guess = vface_guess[0]*A_hat[0] + vface_guess[1]*A_hat[1] + vface_guess[2]*A_hat[2];
     double vface_bulk[3] = {0};
     double v_wt_sum = 0;
@@ -356,8 +354,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         vbulk_dot_Ahat = v_F_guess;
     }
 
-    /* Root-find face-normal v_F on the HLLC mass-flux residual (Wave-CBE
-     * Commit 9): bisection in v_F_n until basis-summed F_m_HLLC across both
+    /* Root-find face-normal v_F on the mass-flux residual: bisection in
+     * v_F_n until basis-summed F_m across both
      * sides vanishes. K=0 rows contribute 0 to the residual, so the root
      * depends only on the active-basis set. Fallback on bracket failure is
      * vbulk_dot_Ahat (bulk-weighted normal velocity over the active set,
@@ -368,27 +366,26 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         v_F_lo, v_F_hi, vbulk_dot_Ahat, &bracket_ok);
 
     /* Face velocity for the flux call: pure normal component along the
-     * canonical face unit normal A_hat. cbe_flux_hllc_vacuum reads only
+     * canonical face unit normal A_hat. cbe_flux_tophat_vacuum reads only
      * vface . n_out (n_out = +A_hat for i-side, -A_hat for j-side), so the
      * tangential component cancels exactly; passing it as zero is clean. */
     const double vface[3] = { v_F_normal * A_hat[0],
                               v_F_normal * A_hat[1],
                               v_F_normal * A_hat[2] };
 
-    /* Fix #4 (harness 2026-05-30 / reference_cbe_method_fix_list.md §"Fix #4"):
-     * DO NOT externally gate HLLC participation by (v_alpha_n − v_F) > 0
-     * (cold-limit θ gate). The HLLC vacuum solver itself returns zero
-     * flux when u_out ≤ −c_x/3 — so the participation condition is
-     * IMPLICIT in the flux solver, and the external cold-limit θ gate
-     * is too strict in the warm regime: a basis with −c_x/3 < u_out < 0
-     * (weakly receding mean, nonzero outgoing flux from thermal dispersion)
-     * is suppressed unphysically by the old gate. Inactive K=0 basis rows
+    /* DO NOT externally gate flux participation by (v_alpha_n − v_F) > 0
+     * (cold-limit θ gate). The one-sided vacuum solver itself returns zero
+     * flux only for a sufficiently receding basis (u_out ≤ −c_x for the
+     * top-hat, exponentially suppressed tail for the Gaussian) — so the
+     * participation condition is IMPLICIT in the flux solver, and the external
+     * cold-limit θ gate is too strict in the warm regime: a weakly-receding
+     * basis (nonzero outgoing flux from thermal dispersion) is suppressed
+     * unphysically by the old gate. Inactive K=0 basis rows
      * are still skipped (no thermal channel; trivially zero flux). */
 
-    /* Basis-pair matching via SSOT helper. Selectors per harness §4.4:
-     * CBE_COST_TRACE_W2 cost + CBE_PAIRING_USE_FREE_SLOT=1 with the
-     * source-mass eps_rho free-slot fallback (Fix #3, see
-     * cbe_apply_free_slot_fallback in cbe_integrator_functions.h). The
+    /* Basis-pair matching via shared helper. Selectors:
+     * CBE_COST_TRACE_W2 cost + CBE_PAIRING_USE_FREE_SLOT=1 with the two-cost
+     * free-slot gate (see cbe_apply_fs_gate in cbe_integrator_functions.h). The
      * free-slot fire-count is accumulated per face into a local int (bound:
      * 2*NBASIS<=16 per face) gated by the diagnostic compile flag, then
      * folded into out.cbe_pairing_free_slot_count for the standard
@@ -396,22 +393,45 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
     double vsig = 0;
+    /* Stale-gradient reconstructed face densities (mass slot) for the
+     * density-continuity matching cost. NULL when gradients are not compiled
+     * in -> base velocity/trace cost. vF = face-normal velocity. */
+    const double *crho_pa = (const double*)0; const double *crho_pb = (const double*)0;
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+    double crho_rho_fi[CBE_INTEGRATOR_NBASIS], crho_rho_fj[CBE_INTEGRATOR_NBASIS];
+    {
+        double pden = kernel.h_i + kernel.h_j;
+        double psi_i = (pden > 0) ? kernel.h_j/pden : 0.5; double psi_j = 1.0 - psi_i;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            double gi = local.Gradients_CBE_basis_moments_prev[m][0][0]*kernel.dp[0]
+                      + local.Gradients_CBE_basis_moments_prev[m][0][1]*kernel.dp[1]
+                      + local.Gradients_CBE_basis_moments_prev[m][0][2]*kernel.dp[2];
+            double gj = P[j].Gradients_CBE_basis_moments_prev[m][0][0]*kernel.dp[0]
+                      + P[j].Gradients_CBE_basis_moments_prev[m][0][1]*kernel.dp[1]
+                      + P[j].Gradients_CBE_basis_moments_prev[m][0][2]*kernel.dp[2];
+            crho_rho_fi[m] = Q_i[m][0] - psi_i*gi;
+            crho_rho_fj[m] = Q_j[m][0] + psi_j*gj;
+        }
+        crho_pa = crho_rho_fi; crho_pb = crho_rho_fj;
+    }
+#endif
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
     int free_slot_fired_this_face = 0;
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
-                            &free_slot_fired_this_face);
+                            &free_slot_fired_this_face,
+                            crho_pa, crho_pb, v_F_normal);
     out.cbe_pairing_free_slot_count += (long long)free_slot_fired_this_face;
 #else
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
-                            /*free_slot_fired_count_inout=*/NULL);
+                            /*free_slot_fired_count_inout=*/NULL,
+                            crho_pa, crho_pb, v_F_normal);
 #endif
 
-    /* Flux loop. Wave-CBE Commit 8 (Fix #1, 2026-05-30) — sign convention
-     * is now explicit at the call site, not via a wt_prefac trick:
+    /* Flux loop. Sign convention is explicit at the call site:
      *   i-side call passes Area_outward = +Face_Area_Vec (i is upwind on
      *     the +A_hat side; F is outflow from i; i LOSES it -> "-= flux").
      *   j-side call passes Area_outward = -Face_Area_Vec (j is upwind on
@@ -424,71 +444,144 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     const double Area_i_out[3] = {  Face_Area_Vec[0],  Face_Area_Vec[1],  Face_Area_Vec[2] };
     const double Area_j_out[3] = { -Face_Area_Vec[0], -Face_Area_Vec[1], -Face_Area_Vec[2] };
     /* matching_basis_j_for_basis_in_i[] is populated by cbe_build_pair_matching
-     * for symmetric SSOT but is not consumed locally: matched-pair coupling
+     * for symmetry but is not consumed locally: matched-pair coupling
      * for the i-side deposit happens via Q_face reconstruction reading the
      * matched j-basis through the gradient stencil, NOT through a per-pair
      * flux-call neighbor argument. The j-side outflow path needs i_m to
      * deposit gain into i's basis i_m. This is the architected Q-cell/Q-face
      * pairing split (gradient + limiter match on Q_cell; flux matches on
-     * Q_face), both via the same SSOT cost function and assignment rule. */
+     * Q_face), both via the same shared cost function and assignment rule. */
     (void)matching_basis_j_for_basis_in_i;
-    /* Fix #4 + AGS_vsig gating (codex 2026-06-04 Fix #10): call HLLC for every
-     * K>0 basis (no external θ gate). HLLC returns zero mass-flux for the
-     * vacuum branch (u_out ≤ −c_x/3); the participation gate is implicit
-     * in the FLUX (no mass/momentum/stress crosses the face from a no-
-     * outflow basis at this step). HOWEVER for the SIGNAL-SPEED estimate
+
+    /* Collisional Riemann term (gated by CBE_INTEGRATOR_COLLISIONS; further no-op
+     * when CBECollisionCrossSection==0 -> w_c=1, Gc=0, so the vacuum deposits
+     * below are unchanged). Blends the collisionless per-basis vacuum flux with a
+     * cell-level fluid HLLC flux by the mean-free-path weight
+     * w_c = exp(-Delta_x rho sigma/mu): collisionless (w_c->1) is the pure vacuum
+     * flux; strongly collisional (w_c->0) recovers an MFM-like state (mass flux
+     * ->0, pressure/PdV exchange via P*). Cell-bulk states are summed from the
+     * face-reconstructed (physical density) Qface rows, matching the vacuum-flux
+     * units; Gc is per-unit-area (x A_norm at the deposit) and distributed to each
+     * basis by mass fraction. */
+#ifdef CBE_INTEGRATOR_COLLISIONS
+    double w_c = 1.0;
+    double Gc[CBE_INTEGRATOR_NMOMENTS]; for(int k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) Gc[k]=0.0;
+    double rho_i_cell = 0.0, rho_j_cell = 0.0;
+    if(All.CBECollisionCrossSection > 0) {
+        double pi[3]={0,0,0}, pj[3]={0,0,0}, Ti[3][3]={{0,0,0},{0,0,0},{0,0,0}}, Tj[3][3]={{0,0,0},{0,0,0},{0,0,0}};
+        for(int m=0;m<CBE_INTEGRATOR_NBASIS;m++) {
+            if(Qface_i[m][0]>0) { rho_i_cell+=Qface_i[m][0];
+                for(int k=0;k<NUMDIMS;k++) pi[k]+=cbe_basis_p_r(Qface_i[m],k);
+                for(int a=0;a<NUMDIMS;a++) for(int b=a;b<NUMDIMS;b++){double t=cbe_basis_T_r(Qface_i[m],a,b); Ti[a][b]+=t; if(a!=b)Ti[b][a]+=t;} }
+            if(Qface_j[m][0]>0) { rho_j_cell+=Qface_j[m][0];
+                for(int k=0;k<NUMDIMS;k++) pj[k]+=cbe_basis_p_r(Qface_j[m],k);
+                for(int a=0;a<NUMDIMS;a++) for(int b=a;b<NUMDIMS;b++){double t=cbe_basis_T_r(Qface_j[m],a,b); Tj[a][b]+=t; if(a!=b)Tj[b][a]+=t;} }
+        }
+        if(rho_i_cell>0 && rho_j_cell>0) {
+            const double inv_i=1.0/rho_i_cell, inv_j=1.0/rho_j_cell;
+            double vi[3]={0,0,0}, vj[3]={0,0,0};
+            for(int k=0;k<NUMDIMS;k++){ vi[k]=pi[k]*inv_i; vj[k]=pj[k]*inv_j; }
+            double nSn_i=0,nSn_j=0,tr_i=0,tr_j=0;
+            for(int a=0;a<NUMDIMS;a++) for(int b=0;b<NUMDIMS;b++) {
+                const double Si=Ti[a][b]*inv_i - vi[a]*vi[b];
+                const double Sj=Tj[a][b]*inv_j - vj[a]*vj[b];
+                nSn_i += A_hat[a]*Si*A_hat[b]; nSn_j += A_hat[a]*Sj*A_hat[b];
+                if(a==b){ tr_i+=Si; tr_j+=Sj; }
+            }
+            const double P_i = rho_i_cell*tr_i/(double)NUMDIMS, P_j = rho_j_cell*tr_j/(double)NUMDIMS;
+            const double c_i = (nSn_i>0)?sqrt(CBE_SIGNAL_GAMMA_EFF*nSn_i):0.0;
+            const double c_j = (nSn_j>0)?sqrt(CBE_SIGNAL_GAMMA_EFF*nSn_j):0.0;
+            const double vn_i = (vi[0]*A_hat[0]+vi[1]*A_hat[1]+vi[2]*A_hat[2]) - v_F_normal;
+            const double vn_j = (vj[0]*A_hat[0]+vj[1]*A_hat[1]+vj[2]*A_hat[2]) - v_F_normal;
+            cbe_flux_collisional_hllc(rho_i_cell,vn_i,P_i,c_i, rho_j_cell,vn_j,P_j,c_j, v_F_normal, A_hat, Gc);
+            double dx2=0; for(int k=0;k<3;k++) dx2+=kernel.dp[k]*kernel.dp[k];
+            const double dx_phys = sqrt(dx2)*All.cf_atime;
+            const double rho_avg = 0.5*(rho_i_cell+rho_j_cell);
+            w_c = exp(-dx_phys * rho_avg * All.CBECollisionCrossSection);
+        }
+    }
+#endif
+    /* AGS_vsig gating: call the flux solver for every K>0 basis (no external
+     * θ gate). The solver returns zero mass-flux for a sufficiently receding
+     * basis (top-hat vacuum branch u_out ≤ −c_x); the participation gate is
+     * implicit in the FLUX (no mass/momentum/stress crosses the face from a
+     * no-outflow basis at this step). HOWEVER for the SIGNAL-SPEED estimate
      * that drives AGS_vsig and dt_cour, every rho-active basis contributes
-     * its |u_out| + c_x regardless of which HLLC branch it sits in. The
-     * prior `fabs(flux[0]) > 0` gate was too restrictive (codex/Claude
-     * 2026-06-04 Fix #10 probe Case C demonstrated that a high-S scratch
+     * its |u_out| + c_x regardless of which flux branch it sits in. A
+     * `fabs(flux[0]) > 0` gate would be too restrictive: a high-S scratch
      * basis sitting in F=0 on one side, with no comparable basis on the
-     * matched j-side at the same raw index, would silently miss a 37x
-     * contribution to vsig — exactly Phil's "never exclude scratch S from
-     * the CBE signal speed" failure mode). The kinematic |u_out| + c_x
-     * IS a real causality constraint on the next-step timestep: the basis
-     * can rotate into F0/F1 during the next step. Only truly inactive
-     * K==0 / rho-clamped rows are excluded. */
+     * matched j-side at the same raw index, would silently miss a large
+     * contribution to vsig (scratch S must never be excluded from the CBE
+     * signal speed). The kinematic |u_out| + c_x IS a real causality
+     * constraint on the next-step timestep: the basis can rotate into
+     * F0/F1 during the next step. Only truly inactive K==0 / rho-clamped
+     * rows are excluded. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const int i_m = matching_basis_i_for_basis_in_j[m];
         if(K_i[m] > 0) {
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
-            double flux_vsig_i = cbe_flux_hllc_vacuum(Qface_i[m], vface, Area_i_out, flux);
+            double flux_vsig_i = cbe_flux_tophat_vacuum(Qface_i[m], vface, Area_i_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_moments_dt[m][k] -= w_c * flux[k];
+#else
                 out.CBE_basis_moments_dt[m][k] -= flux[k];
+#endif
             }
-            /* Outflow ledger (commit 2 of the aggregate-limiter pair; commit 1
-             * a529fefb declared the field). HLLC mass-flux is unconditionally
-             * >= 0 for finite rho > 0 (cbe_hllc_mass_flux_per_unit_area at
-             * functions.h:735 -- F0 branch rho*u with u>=c>=0; F1 branch
-             * 0.25*rho*(3u+c) with 3u+c>0 in the F1 interval; F=0 branch
-             * explicit zero). Mirroring the loss-side `-= flux[k]` deposit
+            /* Outflow ledger for the aggregate limiter. The per-basis mass flux is
+             * unconditionally >= 0 for finite rho > 0 (cbe_face_flux_scalars:
+             * HLLC F0/F1/0 branches are each >= 0; Gaussian F_m = rho*(sigma_x*phi
+             * + u_out*Phi) = rho * int_{w>0} w f dw >= 0). Mirroring the loss-side `-= flux[k]` deposit
              * therefore records actual outgoing flux as a negative ledger
              * value; the aggregate-limiter helper reads
              * -CBE_basis_out_rate_dt[a][0] to recover positive mass-out rate.
              * The j-side `+=` deposit below is INCOMING to particle i's basis
              * i_m (not outgoing from i) and is intentionally NOT mirrored. */
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_out_rate_dt[m][k] -= w_c * flux[k];
+#else
                 out.CBE_basis_out_rate_dt[m][k] -= flux[k];
+#endif
             }
             vsig = DMAX(vsig, fabs(flux_vsig_i));
         }
         if(K_j[m] > 0) {
             double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
-            double flux_vsig_j = cbe_flux_hllc_vacuum(Qface_j[m], vface, Area_j_out, flux);
+            double flux_vsig_j = cbe_flux_tophat_vacuum(Qface_j[m], vface, Area_j_out, flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+#ifdef CBE_INTEGRATOR_COLLISIONS
+                out.CBE_basis_moments_dt[i_m][k] += w_c * flux[k];
+#else
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
+#endif
             }
             vsig = DMAX(vsig, fabs(flux_vsig_j));
         }
     }
+#ifdef CBE_INTEGRATOR_COLLISIONS
+    /* Collisional (fluid-HLLC) deposit onto i's bases, distributed by mass
+     * fraction. Net face flux OUT of i (A_hat is the i-outward normal), same sign
+     * as the vacuum outflow; mass flux is 0 so the out-rate ledger is unaffected.
+     * Conserves pairwise: when j is primary it computes the HLLC with the reversed
+     * normal (= -Gc) and deposits the equal-opposite contribution on its bases. */
+    if(w_c < 1.0 && rho_i_cell > 0) {
+        const double inv_rho_i = 1.0 / rho_i_cell;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            if(!(Qface_i[m][0] > 0)) continue;
+            const double frac = Qface_i[m][0] * inv_rho_i * (1.0 - w_c) * Face_Area_Norm;
+            for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++)
+                out.CBE_basis_moments_dt[m][k] -= frac * Gc[k];
+        }
+    }
+#endif
     vsig /= Face_Area_Norm * All.cf_atime;
     if(vsig > out.AGS_vsig) { out.AGS_vsig = vsig; }
     if(!(timebin_active[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {
         if(vsig > WAKEUP * P[j].AGS_vsig) { r.set_wakeup_j = 1; }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    /* Diagnostic: HLLC mass-flux residual at the converged v_F_normal
-     * (Wave-CBE Commit 9 replaced cold-F0 form with HLLC branched form),
+    /* Diagnostic: HLLC mass-flux residual at the converged v_F_normal,
      * converted to dM/dt units by multiplying by Face_Area_Norm. */
     {
         double R_final = cbe_face_mass_residual_per_unit_area(

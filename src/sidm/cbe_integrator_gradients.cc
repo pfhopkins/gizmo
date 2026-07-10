@@ -318,6 +318,12 @@ void CBEGrad_gradient_calc(void)
         /* Pre-zero only on pass 0; pass 1 rescales the persistent field. */
         if(pass == 0) {
             for(int i : union_actives) {
+                /* Snapshot last step's final gradient as the 'prev' (stale) row
+                 * before the pre-zero wipes it — the density-continuity matching
+                 * cost reconstructs face densities from this prior-step gradient. */
+                std::memcpy(P[i].Gradients_CBE_basis_moments_prev,
+                            P[i].Gradients_CBE_basis_moments,
+                            sizeof(P[i].Gradients_CBE_basis_moments));
                 std::memset(P[i].Gradients_CBE_basis_moments, 0,
                             sizeof(P[i].Gradients_CBE_basis_moments));
             }

@@ -578,6 +578,7 @@ FOF_OBJS =	structure/fof.o \
 			structure/twopoint.o
 
 MISC_OBJS = sidm/cbe_integrator.o \
+			sidm/cbe_collisions.o \
 			sidm/dm_fuzzy.o \
 			sidm/sidm_core.o
 

@@ -24,7 +24,9 @@
 BOX_SPATIAL_DIMENSION=3
 ADAPTIVE_GRAVSOFT_FORALL=2
 
-# CBE PRODUCTION DEFAULT METHOD (Phil, binding 2026-07-05): compact-support
+# GAUSSIAN comparison variant of Config_cbe_secmoment.sh (adds RP_GAUSSIAN = exact
+# one-sided Gaussian flux scheme). Method-comparison ONLY; the Gaussian collapses the
+# Hernquist core (heat-conduction flux over-drive). Top-hat (base config) is the default.
 # TOP-HAT fluxes (default; NO RP_GAUSSIAN) + secondmoment (NMOMENTS=10 in 3D) +
 # 8 bases + gradients ON. RP_GAUSSIAN selects the exact-Gaussian scheme for method
 # comparison ONLY (see Config_cbe_secmoment_gaussian.sh) -- the Gaussian over-drives
@@ -37,10 +39,11 @@ ADAPTIVE_GRAVSOFT_FORALL=2
 CBE_INTEGRATOR=8
 CBE_INTEGRATOR_SECONDMOMENT
 CBE_INTEGRATOR_WITHGRADIENTS
-CBE_INTEGRATOR_OUTPUT_MOREINFO
 
 OUTPUT_ADDITIONAL_RUNINFO
 STOP_WHEN_BELOW_MINTIMESTEP
 INPUT_IN_DOUBLEPRECISION
 OUTPUT_IN_DOUBLEPRECISION
 DEVELOPER_MODE
+CBE_INTEGRATOR_RP_GAUSSIAN
+CBE_INTEGRATOR_OUTPUT_MOREINFO

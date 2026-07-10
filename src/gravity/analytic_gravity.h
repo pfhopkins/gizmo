@@ -29,6 +29,7 @@ void GravAccel_RDITestProblem(void);
 void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
 void GravAccel_GMCTurbInit(void);
 void GravAccel_FilamentTurbInit(void);
+void GravAccel_Harmonic1D(void);
 
 /* parent routine which decides which (if any) analytic gravitational forces are applied */
 void add_analytic_gravitational_forces()
@@ -66,6 +67,9 @@ void add_analytic_gravitational_forces()
 #ifdef GRAIN_RDI_TESTPROBLEM
     GravAccel_RDITestProblem();           // vertical gravity+external acceleration for grain-RDI-wind tests
 #endif
+#ifdef GRAVITY_ANALYTIC_HARMONIC
+    GravAccel_Harmonic1D();               // 1D harmonic-oscillator confining potential (analytic CBE hot-equilibrium test)
+#endif
 }
 
 
@@ -78,6 +82,26 @@ void GravAccel_set_zeros_if_needed()
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     for (int i : ActiveParticleList) {for(int k=0;k<6;k++) {P[i].tidal_tensorps.data[k]=0;}}
 #endif
+#endif
+}
+
+
+
+/* 1D harmonic-oscillator confining potential: a = -Omega^2 (x - x_c), centered
+ * at the box midpoint x_c = BoxSize/2, with Omega = 1 in code units. This is a
+ * clean analytic external potential for validating collisionless moment-flux
+ * transport: the distribution f ~ exp[-(v^2 + Omega^2 (x-x_c)^2)/(2 sigma^2)]
+ * is an exact stationary solution (Gaussian density of width sigma/Omega,
+ * uniform velocity dispersion sigma). 1D test problem only. */
+void GravAccel_Harmonic1D()
+{
+#ifdef GRAVITY_ANALYTIC_HARMONIC
+    double Omega2 = 1.0;                 /* Omega = 1 (code units) */
+    double xc = 0.5 * All.BoxSize;       /* equilibrium center = box midpoint */
+    int i; for(int i : ActiveParticleList)
+    {
+        P[i].GravAccel[0] += -Omega2 * (P[i].Pos[0] - xc);
+    }
 #endif
 }
 

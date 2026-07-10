@@ -5,10 +5,7 @@
  * KOKKOS_INLINE_FUNCTION.
  *
  * SSOT: the single per-basis flux implementation lives here as
- * cbe_flux_hllc_vacuum (Wave-CBE Commit 8, 2026-05-30, replaces the
- * pre-fix do_cbe_flux_computation). There is no CPU duplicate in
- * cbe_integrator.cc; the legacy "mirrors do_cbe_flux_computation()"
- * comment that lived here referenced a now-retired pre-GPU-port copy.
+ * cbe_flux_tophat_vacuum. There is no CPU duplicate in cbe_integrator.cc.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -29,8 +26,8 @@
  * happens to share (Ti_Current, ID, tag). See gpu_rng.h for rationale. */
 static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_drift_kick");
 
-/* Wave-CBE Commit 5 (2026-05-26) — SPD repair eigenvalue floor, relative to
- * trace. Applied identically in face-state Q-clamp and the Fix #2b
+/* SPD repair eigenvalue floor, relative to
+ * trace. Applied identically in face-state Q-clamp and the
  * conservative cell-state repair (both via the SSOT helper
  * cbe_basis_row_project_central_stress_to_PSD). 1e-12 is a small relative
  * floor (well below the intended stress scale, but large enough to
@@ -38,7 +35,7 @@ static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_dri
  * downstream consumers). */
 static constexpr double CBE_SPD_RELATIVE_FLOOR = 1.0e-12;
 
-/* Wave-CBE Fix #2b (2026-06-04) tunings for the conservative cell-state
+/* Tunings for the conservative cell-state
  * realizability repair. EPS_M_ABS / EPS_M_REL: empty-slot mass threshold
  * (m_thresh = max(EPS_M_ABS, EPS_M_REL * M_cell / NBASIS)). EPS_CONS:
  * FP-scale residual acceptance bound (residual norm <= EPS_CONS * cell_scale
@@ -48,7 +45,7 @@ static constexpr double CBE_REPAIR_EPS_M_ABS = 1.0e-30;
 static constexpr double CBE_REPAIR_EPS_M_REL = 1.0e-12;
 static constexpr double CBE_REPAIR_EPS_CONS  = 1.0e-12;
 
-/* Aggregate per-basis outflow-budget limiter (commit 2 of the limiter pair).
+/* Aggregate per-basis outflow-budget limiter.
  * FRAC: per-basis outgoing-mass budget as fraction of m_a, capped per drift
  * call. MIN_DONOR_MASS: floor below which a basis is ineligible as a donor
  * AND as a capped-basis recipient of the (1-f)*excess "uncapped remainder"
@@ -57,8 +54,8 @@ static constexpr double CBE_REPAIR_EPS_CONS  = 1.0e-12;
 static constexpr double CBE_OUTFLOW_BUDGET_FRAC           = 0.9;
 static constexpr double CBE_OUTFLOW_BUDGET_MIN_DONOR_MASS = 1.0e-30;
 
-/* Per-basis outflow-budget limiter status codes (orthogonal to Fix #2b
- * repair codes). 200+ for non-error outcomes; no hard-fails / endruns --
+/* Per-basis outflow-budget limiter status codes (orthogonal to the
+ * cell-state repair codes). 200+ for non-error outcomes; no hard-fails / endruns --
  * donor-limited cases surface via the counter, not abort. */
 enum {
     CBE_OUTBUDGET_OK              = 200,   /* nothing exceeded budget          */
@@ -68,10 +65,9 @@ enum {
 };
 
 /* POD diagnostic counters for the outflow-budget limiter. Allocated only
- * when diagnostics are enabled (matching Fix #2b repair counts gating).
- * NOT promoted to a cbe_diagnostics.txt column (codex 2026-06-04: no schema
- * churn); accessible via the optional CBE_INTEGRATOR_OUTBUDGET_VERBOSE
- * printf path or via debugger. */
+ * when diagnostics are enabled (matching the cell-state repair counts gating).
+ * NOT promoted to a cbe_diagnostics.txt column; accessible via the optional
+ * CBE_INTEGRATOR_OUTBUDGET_VERBOSE printf path or via debugger. */
 struct CbeOutflowBudgetDiag {
     long long n_capped_bases;          /* SUM: bases that hit f_out cap (status APPLIED) */
     long long n_donor_limited;         /* SUM: bisection capped fraction f < 1 (DONOR_LIMITED) */
@@ -79,7 +75,7 @@ struct CbeOutflowBudgetDiag {
     double    max_pre_out_frac_seen;   /* MAX: pre-cap dt*Udot_out[a][0]/m_a seen */
 };
 
-/* Dimension-aware momentum-slot accessors (2026-06-02). Stored basis-moment
+/* Dimension-aware momentum-slot accessors. Stored basis-moment
  * row layout is row[0] = mass, row[1..NUMDIMS] = p_x..p_{NUMDIMS-1}, and
  * (under CBE_INTEGRATOR_SECONDMOMENT) row[1+NUMDIMS..NMOMENTS-1] = stress
  * tensor components. NMOMENTS shrinks in 1D/2D so the y/z momentum slots
@@ -117,9 +113,9 @@ KOKKOS_INLINE_FUNCTION void cbe_basis_v_load_3(const double *row, double v3[3]) 
     v3[2] = cbe_basis_p_r(row, 2) * inv_m;
 }
 
-/* Symmetric stress-slot helpers (Phil 2026-06-02 — added now so the
- * SECONDMOMENT path can be unfenced for arbitrary D later without
- * rewriting the hot path). Layout per the existing convention:
+/* Symmetric stress-slot helpers (defined so the SECONDMOMENT path can be
+ * unfenced for arbitrary D later without rewriting the hot path). Layout
+ * per the existing convention:
  *   1D NMOMENTS=3 : [m, p_x, T_xx]                                   -> NSTRESS=1
  *   2D NMOMENTS=6 : [m, p_x, p_y, T_xx, T_yy, T_xy]                  -> NSTRESS=3
  *   3D NMOMENTS=10: [m, p_x, p_y, p_z, T_xx, T_yy, T_zz, T_xy, T_xz, T_yz] -> NSTRESS=6
@@ -151,7 +147,7 @@ KOKKOS_INLINE_FUNCTION void cbe_basis_T_w(double *row, int a, int b, double val)
 #endif
 }
 
-/* Active-dimensional symmetric stress workspace helpers (commit 4a, 2026-06-03).
+/* Active-dimensional symmetric stress workspace helpers.
  *
  * Stress math operates on a 3x3 workspace tensor for shape uniformity (matches
  * the 3-vector convention for dp[3]/Vel[3]/Face_Area_Vec[3]), but ONLY the
@@ -160,9 +156,8 @@ KOKKOS_INLINE_FUNCTION void cbe_basis_T_w(double *row, int a, int b, double val)
  * projection, principal-minors realizability test, n.S.n contractions) reduce
  * to the correct active-dim physics without per-D special-casing in callers.
  *
- * SECONDMOMENT non-3D was fenced until this commit; the new helpers carry the
- * dim-aware layout to all stress consumers so the fence at
- * declarations/precompiler_logic.h can be lifted.
+ * These helpers carry the dim-aware layout to all stress consumers so the
+ * SECONDMOMENT non-3D fence at declarations/precompiler_logic.h can be lifted.
  *
  * Semantics:
  *   _load_active(row, T)  -- zero T[3][3], then fill the active D x D upper
@@ -242,19 +237,18 @@ KOKKOS_INLINE_FUNCTION double cbe_basis_T_trace_active(
  *   stress slots     : S_kl = T_kl / ρ - v_k v_l         (SECONDMOMENT only)
  * The stress slots are indexed by cbe_T_idx() exactly as in the moment row.
  *
- * Identity (codex 2026-06-06, load-bearing for the swap):
+ * Identity (load-bearing for the swap):
  *     ρ · T_kl − p_k p_l ≡ ρ² · S_kl
  * Moment-cone realizability (m·T − p·p ⪰ 0) is therefore exactly equivalent
  * to primitive realizability (ρ ≥ ρ_floor, S ⪰ 0). The face limiter exploits
- * this — see OPEN_cbe_primitive_grad_design.md §6.
+ * this.
  *
  * The persistent storage field is still spelled Gradients_CBE_basis_moments
  * but holds primitive-gradient slots after the swap. The field-name rename
- * is out of scope; see particle_data.h doc and OPEN_cbe_primitive_grad_design.md
- * §3.
+ * is out of scope; see the particle_data.h doc.
  *
- * Phase 0 (2026-06-06) ADDS THESE HELPERS but does NOT use them. No gradient
- * writer / face reader / limiter behavior change in Phase 0. */
+ * These helpers are defined but not yet used: no gradient writer / face
+ * reader / limiter behavior change from their presence. */
 
 /* Single SSOT for "is this row's density active enough to divide by?".
  * Used at every primitive-derivation site (primitive conversion, scratch-row
@@ -313,9 +307,8 @@ void cbe_moments_to_primitives_row(const double Q_row[CBE_INTEGRATOR_NMOMENTS],
 /* Primitive row -> moment row. Deterministic, no iteration. The inverse of
  * cbe_moments_to_primitives_row at every site where the primitive row was
  * built from a row with ρ > cbe_rho_active_floor(). At or below the floor
- * the caller must NOT use this helper — see scratch-row handling in
- * OPEN_cbe_primitive_grad_design.md §7 (face reconstruction stays first-
- * order moment for sub-floor rows, bypassing the round-trip).
+ * the caller must NOT use this helper — for sub-floor rows the face
+ * reconstruction stays first-order moment, bypassing the round-trip.
  *
  * Identity: applying primitives_to_moments after moments_to_primitives is
  * algebraically exact for any row with ρ > floor. FP cancellation can still
@@ -394,7 +387,7 @@ bool cbe_symNxN_active_principal_minors_nonneg(const double M[3][3], double eps_
  * 1D: no off-diagonal sweep; floor on S[0][0].
  *
  * Caller provides the eigenvalue_floor (e.g. CBE_SPD_RELATIVE_FLOOR * trace
- * for the face-clamp policy, or 0 for Fix #2 cell repair true-PSD). dT_out
+ * for the face-clamp policy, or 0 for cell-state repair true-PSD). dT_out
  * (nullable) receives the post-minus-pre active-trace change. Non-finite
  * input triggers the same MIN_REAL_NUMBER fallback on active diagonals as
  * the 3D path used. */
@@ -530,21 +523,17 @@ bool cbe_project_central_S_active_to_PSD(double S[3][3], double eigenvalue_floor
 #ifdef CBE_INTEGRATOR
 
 /* --------------------------------------------------------------------------
- * Basis-pair cost and outgoing-side assignment helpers (2026-05-24).
+ * Basis-pair cost and outgoing-side assignment helpers.
  *
- * Conservation principle: the C step in cbe_integrator_flux_functions.h
+ * Conservation principle: the transfer step in cbe_integrator_flux_functions.h
  * applies -F to source basis and +F to target basis for every transfer.
  * Global mass/p/T conservation holds regardless of which pairing rule is
  * used; different rules produce different mixing patterns.
  *
- * C0 / C1 exposed velocity-only cost + greedy outgoing assignment (matches
- * the corrected post-C0 inline path). C6a adds trace-W2 cost and the
- * adaptive-free-slot row transform per harness §4.4; these are unused in
- * C6a (no callers; default routing flips in C6c via the compile-time
- * selectors added in C6b). Hungarian assignment is deliberately NOT
- * added in C6 -- harness §4.1 + Phil designate one-sided-nearest (=
- * greedy) the production assignment; Hungarian is a comparator option
- * that may be added in a future commit on explicit request.
+ * Provides velocity-only cost + greedy outgoing assignment, and a trace-W2
+ * cost plus adaptive-free-slot row transform, dispatched by compile-time
+ * selectors. One-sided-nearest (= greedy) is the production assignment;
+ * a Hungarian assignment is a possible comparator option, not implemented.
  *
  * See also the 'theta uses dp not Face_Area_Vec' note in
  * cbe_integrator_flux_functions.h.
@@ -552,9 +541,7 @@ bool cbe_project_central_S_active_to_PSD(double S[3][3], double eigenvalue_floor
 
 /* Velocity-only squared cost between two basis components:
  *     C = sum over k of (v_a_k - v_b_k)^2
- * Matches the corrected post-Commit-0 inline path in
- * cbe_integrator_flux_functions.h. Basis-mass denominators floored at
- * MIN_REAL_NUMBER to avoid NaN. */
+ * Basis-mass denominators floored at MIN_REAL_NUMBER to avoid NaN. */
 KOKKOS_INLINE_FUNCTION
 double cbe_cost_v_only(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
                        const double moments_b[CBE_INTEGRATOR_NMOMENTS])
@@ -574,8 +561,7 @@ double cbe_cost_v_only(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
 
 /* Outgoing-side greedy assignment: given an NBASIS x NBASIS cost matrix C,
  * fill beta_of_alpha[m] = argmin_n C[m][n] for each row m. Multiple alphas
- * may collide on the same beta (asymmetric). Matches the corrected
- * post-Commit-0 inline argmin behavior.
+ * may collide on the same beta (asymmetric).
  *
  * Call once with C for a-side outgoing, once with C^T for b-side outgoing. */
 KOKKOS_INLINE_FUNCTION
@@ -593,10 +579,9 @@ void cbe_assign_outgoing_greedy(
 }
 
 
-/* Trace-W^2 squared cost between two basis components (Wave-CBE Commit 6a,
- * 2026-05-27). Rotationally invariant 3D generalization of the harness
- * 1D form  C = (v_a - v_b)^2 + (sqrt(S_a) - sqrt(S_b))^2  (cbe_cosmology
- * python_harness HARNESS_RESULTS_AND_FINDINGS §2.4 / §4.4).
+/* Trace-W^2 squared cost between two basis components. Rotationally
+ * invariant 3D generalization of the 1D reference form
+ * C = (v_a - v_b)^2 + (sqrt(S_a) - sqrt(S_b))^2.
  *
  * Velocity term: sum_k (v_a_k - v_b_k)^2, same float-op ordering as
  * cbe_cost_v_only. NMOMENTS=4 builds (no stress slots) reduce to the
@@ -607,17 +592,17 @@ void cbe_assign_outgoing_greedy(
  * before summation to absorb pre-SPD-repair numerical noise. The cost
  * contribution is (sqrt(tr(S_a)) - sqrt(tr(S_b)))^2 -- one scalar add,
  * one sqrt per side, no matrix sqrt. Rotationally invariant; collapses
- * to the harness 1D form exactly when only one stress component is
- * meaningful. Diagonal-only sum would be coordinate-frame dependent and
- * was rejected during codex+Phil review 2026-05-27.
+ * to the 1D reference form exactly when only one stress component is
+ * meaningful. A diagonal-only sum would be coordinate-frame dependent and
+ * is deliberately not used.
  *
  * Full multivariate Gaussian Wasserstein-2 (needs matrix sqrt of
  * Sigma_a^{1/2} Sigma_b Sigma_a^{1/2}) is NOT this function; if a
  * comparator is ever wanted, it lands as a separate cbe_cost_w2_full
  * symbol and selector.
  *
- * Unused in C6a (no callers yet); SSOT pair-matching builder in C6b
- * routes to this via the CBE_PAIRING_COST compile-time selector. */
+ * The SSOT pair-matching builder routes to this via the CBE_PAIRING_COST
+ * compile-time selector. */
 KOKKOS_INLINE_FUNCTION
 double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
                          const double moments_b[CBE_INTEGRATOR_NMOMENTS])
@@ -635,8 +620,7 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
     }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     /* Active-block trace of central S = sum_{a<NUMDIMS} (T_aa/m - v_a^2),
-     * each piece floored at 0 before sqrt. Migrated in commit 4a from
-     * hardcoded 4+k indices that only worked in 3D. */
+     * each piece floored at 0 before sqrt. */
     double tr_S_a = 0, tr_S_b = 0;
     for(int a=0; a<NUMDIMS; a++) {
         double S_a_aa = cbe_basis_T_r(moments_a, a, a) * inv_a - v_a[a]*v_a[a];
@@ -651,78 +635,134 @@ double cbe_cost_trace_w2(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
 }
 
 
-/* Free-slot row-fallback transform on an NBASIS x NBASIS cost matrix.
- *
- * Fix #3 from reference_cbe_method_fix_list.md (harness 2026-05-30):
- *
- * For every source basis alpha with nonfloor mass (rho_a[alpha] > eps_rho),
- * apply the cost reweight
- *     C[alpha][beta] *= target_masses[beta] / (source_masses[alpha]
- *                                              + target_masses[beta] + eps_rho)
- * where eps_rho = 1e-8 * (sum_source rho + sum_target rho) is a relative
- * regularizer. The multiplicative prefactor naturally biases the argmin
- * toward empty / lightly-occupied target slots only when no exact-match
- * basis exists (its C_W^2[alpha,beta] ≈ 0 already dominates the argmin).
- *
- * The PRIOR median(C) gate (Wave-CBE Commit 6a) is REMOVED — the harness
- * docstring catches it: row C[alpha] = [1,4,9,16] has median(C)=1 and the
- * gate "1 > 1" is False, so the reweighting silently never fires on the
- * perturbation IC. All three cost choices collapse to plain W^2 and the
- * perturbation routes into the dominant +1 slot instead of the empty -2
- * slot. Always-reweighting (gated only by source mass nonfloor) is the
- * production form per python_harness/cbe1d/pairing.py:cost_free_slot_fallback.
- *
- * The source-mass eps_rho skip is ESSENTIAL: floor-mass sources have
- * v_alpha = p_alpha / m_alpha dominated by FP noise; allowing them to
- * drive routing decisions destabilizes pairing.
- *
- * fired_count_inout is NULLABLE. When non-null, increments by 1 per
- * alpha-row that passed the source-mass gate and applied the reweight.
- * Per-face increment bounded by 2*NBASIS (two cost matrices per face).
- *
- * Direction is asymmetric. Caller passes (source_masses, target_masses)
- * matching the cost-matrix BUILD direction. For an a->b matrix
- *   C[alpha_on_a][beta_on_b] = cost(Q_a[alpha], Q_b[beta]):
- *     source_masses[i] = Q_a[i][0]        // mass density of a-side basis i
- *     target_masses[j] = Q_b[j][0]        // mass density of b-side basis j
- * The b->a direction (separately built C') requires its own free-slot
- * call with source = Q_b masses, target = Q_a masses. It is NOT a
- * transpose of this transform. */
+/* Calibrated weight for the density-continuity term in the pairing cost
+ * (C = C_v + CBE_CRHO_LAMBDA * C_rho). PRODUCTION DEFAULT = 0.25. */
+static const double CBE_CRHO_LAMBDA = 0.25;
+
+/* v-slope-limiter finite opposite-sign tolerance: ignore a reconstructed sign
+ * flip when |predicted| < CBE_VOPPSIGN * scale_v. PRODUCTION DEFAULT = 0.1. */
+static const double CBE_VOPPSIGN = 0.1;
+
+/* Pairing cost with phase-space-sheet (density) continuity, used when
+ * stale-gradient reconstructed face densities are available:
+ *   C_c   = normalized face-centric velocity distance
+ *           |du|^2 / (|ua|^2 + |ub|^2 + 2|ua.ub| + trS_a + trS_b)
+ *   C_rho = |rho_fa - rho_fb| / (|rho_fa| + |rho_fb| + 1e-3*rho_cell)
+ *   C     = C_c + CBE_CRHO_LAMBDA * C_rho
+ * rho_fa/rho_fb are the stale-gradient reconstructed face densities of the two
+ * bases; vF is the face-normal velocity (1D: subtract from the normal k=0). */
 KOKKOS_INLINE_FUNCTION
-void cbe_apply_free_slot_fallback(
+double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
+                        const double Qb[CBE_INTEGRATOR_NMOMENTS],
+                        double rho_fa, double rho_fb, double vF, double rho_cell)
+{
+    const double eps = 1.0e-12;
+    double inv_a = 1.0 / DMAX(Qa[0], MIN_REAL_NUMBER);
+    double inv_b = 1.0 / DMAX(Qb[0], MIN_REAL_NUMBER);
+    double du2 = 0, na = 0, nb = 0, dot = 0, trSa = 0, trSb = 0;
+    for(int k=0; k<NUMDIMS; k++) {
+        double va = cbe_basis_p_r(Qa, k) * inv_a;
+        double vb = cbe_basis_p_r(Qb, k) * inv_b;
+        double ua = va - ((k==0) ? vF : 0.0);   /* face-centric: normal=k0 in 1D */
+        double ub = vb - ((k==0) ? vF : 0.0);
+        du2 += (ua-ub)*(ua-ub); na += ua*ua; nb += ub*ub; dot += ua*ub;
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        double Sa = cbe_basis_T_r(Qa, k, k) * inv_a - va*va;
+        double Sb = cbe_basis_T_r(Qb, k, k) * inv_b - vb*vb;
+        trSa += DMAX(Sa, 0.0); trSb += DMAX(Sb, 0.0);
+#endif
+    }
+    double Cc   = du2 / (na + nb + 2.0*fabs(dot) + trSa + trSb + eps);
+    double Crho = fabs(rho_fa - rho_fb) / (fabs(rho_fa) + fabs(rho_fb) + 1.0e-3*rho_cell + eps);
+    return Cc + CBE_CRHO_LAMBDA * Crho;
+}
+
+
+/* Calibrated constants for the two-cost free-slot gate (cbe_apply_fs_gate).
+ * Method constants (not runtime or compile-time configuration options). */
+static const double CBE_FSGATE_TAU    = 0.04;    /* free-slot-open threshold on the continuation cost */
+static const double CBE_FSGATE_DELTA  = 0.02;    /* smoothstep half-width */
+static const double CBE_FSGATE_FFF    = 1.0e-2;  /* reliability mass scale f_FS (q_b = m_b/(m_b+f_FS*m_cell)) */
+static const double CBE_FSGATE_VFLOOR = 0.02;    /* velocity floor in C_cont = |dv|^2/(|dv|^2 + S_src + vfloor^2) */
+
+/* Two-cost free-slot gate on an NBASIS x NBASIS cost matrix. Replaces the old
+ * always-on psi reweight: the free-slot fallback fires ONLY when a source has
+ * no reliable existing CONTINUATION. Density-amplitude continuity (C_rho, the
+ * C2 route cost) must NOT decide that — it is reconstruction/limiter-sensitive
+ * (a same-stream like-match across a steep density edge has a small velocity
+ * gap but large C_rho). So the trigger is velocity-based and independent of the
+ * route cost:
+ *   trigger (continuation): C_cont(a,b) = |dv|^2 / (|dv|^2 + S_src + vfloor^2)
+ *     velocity-center gap normalized by SOURCE dispersion S_src (a broad target
+ *     cannot absorb a cold source's gap; same-center heating stays closed).
+ *   reliability:  q_b = m_b / (m_b + f_FS * m_cell_tgt)   (no hard empty cutoff)
+ *   C_fit(a) = min_b [ C_cont(a,b) + eta*(1-q_b) ];  eta = tau
+ *   w_FS(a)  = smoothstep( (C_fit - (tau-Delta)) / (2 Delta) )  in [0,1]
+ *   C_eff(a,b) = C_route(a,b) * ( 1 - w_FS(a)*(1 - psi_ab) ),  psi=m_b/(m_a+m_b)
+ * C (= C_route) is the caller's cost matrix (C_c + lambda*C_rho); routing keeps
+ * C_rho. Reliability/routing masses are the cell-centered row masses Q[m][0]
+ * (src_masses/target_masses), NOT reconstructed face densities. Direction is
+ * asymmetric: caller passes (Q_src,Q_tgt,src_masses,target_masses) for the build
+ * direction. The old always-on psi reweight is the w_FS==1 limit of this gate.
+ *
+ * fired_count_inout is NULLABLE; when non-null, increments once per source row
+ * that opens the gate (w_FS > 0.5). Bounded by 2*NBASIS per face. */
+KOKKOS_INLINE_FUNCTION
+void cbe_apply_fs_gate(
     double C[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS],
-    const double source_masses[CBE_INTEGRATOR_NBASIS],
+    const double Q_src[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double Q_tgt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double src_masses[CBE_INTEGRATOR_NBASIS],
     const double target_masses[CBE_INTEGRATOR_NBASIS],
     int *fired_count_inout)
 {
     const int N = CBE_INTEGRATOR_NBASIS;
-    double sum_rho = 0.0;
-    for(int m=0; m<N; m++) { sum_rho += source_masses[m] + target_masses[m]; }
+    const double tau = CBE_FSGATE_TAU, Delta = DMAX(CBE_FSGATE_DELTA, 1.0e-6);
+    const double eta = CBE_FSGATE_TAU, f_FS = CBE_FSGATE_FFF;
+    const double vfloor2 = CBE_FSGATE_VFLOOR * CBE_FSGATE_VFLOOR;
+    double m_cell_tgt = 0.0, sum_rho = 0.0;
+    for(int j=0; j<N; j++) { m_cell_tgt += target_masses[j]; sum_rho += src_masses[j] + target_masses[j]; }
     const double eps_rho = 1.0e-8 * sum_rho;
+    double q[CBE_INTEGRATOR_NBASIS];
+    for(int j=0; j<N; j++) q[j] = target_masses[j] / (target_masses[j] + f_FS*m_cell_tgt + MIN_REAL_NUMBER);
     for(int m=0; m<N; m++) {
-        if(source_masses[m] <= eps_rho) continue;   /* floor-mass source: skip */
-        for(int p=0; p<N; p++) {
-            const double denom = source_masses[m] + target_masses[p] + eps_rho;
-            C[m][p] *= target_masses[p] / denom;
+        if(src_masses[m] <= eps_rho) continue;   /* floor-mass source: skip (orthogonal) */
+        /* source basis velocity + dispersion (absolute frame), for C_cont */
+        double inv_a = 1.0 / DMAX(Q_src[m][0], MIN_REAL_NUMBER);
+        double va[3] = {0,0,0}, S_src = 0.0;
+        for(int k=0; k<NUMDIMS; k++) va[k] = cbe_basis_p_r(Q_src[m], k) * inv_a;
+        for(int k=0; k<NUMDIMS; k++) { double s = cbe_basis_T_r(Q_src[m], k, k) * inv_a - va[k]*va[k]; S_src += DMAX(s, 0.0); }
+        /* C_fit = min over reliable targets of C_cont + eta*(1-q) */
+        double Cfit = 1.0e30;
+        for(int b=0; b<N; b++) {
+            double inv_b = 1.0 / DMAX(Q_tgt[b][0], MIN_REAL_NUMBER), dv2 = 0.0;
+            for(int k=0; k<NUMDIMS; k++) { double vb = cbe_basis_p_r(Q_tgt[b], k) * inv_b; dv2 += (va[k]-vb)*(va[k]-vb); }
+            double Ccont = dv2 / (dv2 + S_src + vfloor2);
+            double c = Ccont + eta*(1.0 - q[b]);
+            if(c < Cfit) Cfit = c;
         }
-        if(fired_count_inout) { (*fired_count_inout)++; }
+        double tt = (Cfit - (tau - Delta)) / (2.0*Delta);
+        tt = (tt < 0.0) ? 0.0 : ((tt > 1.0) ? 1.0 : tt);
+        double wFS = tt*tt*(3.0 - 2.0*tt);
+        for(int p=0; p<N; p++) {
+            double psi = target_masses[p] / (src_masses[m] + target_masses[p] + eps_rho);
+            C[m][p] *= (1.0 - wFS*(1.0 - psi));
+        }
+        if(fired_count_inout && wFS > 0.5) { (*fired_count_inout)++; }
     }
 }
 
 
-/* SSOT pair-matching builder (Wave-CBE Commit 6b, 2026-05-27). Single
+/* SSOT pair-matching builder. Single
  * canonical helper used by the flux body, gradient LSQ accumulator, and
  * BJ limiter to produce basis-pair matchings. Replaces three open-coded
- * (cost-matrix build + greedy assignment) patterns; after wiring, all
- * three call sites are reduced to one call to this helper.
+ * (cost-matrix build + greedy assignment) patterns; all three call sites
+ * reduce to one call to this helper.
  *
- * Cost: dispatched on the compile-time selector CBE_PAIRING_COST. C6b
- * temporary default = CBE_COST_V_ONLY (byte-compatible with pre-C6b);
- * C6c flips to CBE_COST_TRACE_W2 per harness §4.4.
+ * Cost: dispatched on the compile-time selector CBE_PAIRING_COST.
  *
  * Free-slot: applied iff the compile-time selector
- * CBE_PAIRING_USE_FREE_SLOT is 1. C6b temporary default = 0
- * (byte-compatible); C6c flips to 1 per harness §4.4. Direction is
+ * CBE_PAIRING_USE_FREE_SLOT is 1. Direction is
  * asymmetric: the a->b pass uses source = Q_a masses, target = Q_b
  * masses; the b->a pass (only built when alpha_of_beta_for_b is
  * non-null) builds a fresh cost matrix and uses source = Q_b masses,
@@ -731,9 +771,6 @@ void cbe_apply_free_slot_fallback(
  * with the directional mass ratio.
  *
  * Assignment: cbe_assign_outgoing_greedy (one-sided-nearest per side).
- * CBE_PAIRING_ASSIGN sentinel exists so a future Hungarian comparator
- * (not part of C6) can be added cleanly; only CBE_ASSIGN_GREEDY is
- * supported in C6.
  *
  * Outputs:
  *   beta_of_alpha_for_a[m] = b-side basis matched as a's outgoing target
@@ -744,29 +781,43 @@ void cbe_apply_free_slot_fallback(
  *                            limiter call sites). Flux passes a real
  *                            pointer (both directions needed).
  *   free_slot_fired_count_inout: nullable counter (see
- *                            cbe_apply_free_slot_fallback). Flux call
- *                            site (in C6c) passes &out.cbe_pairing_free_
+ *                            cbe_apply_fs_gate). Flux call
+ *                            site passes &out.cbe_pairing_free_
  *                            slot_count; gradient and BJ-limiter call
  *                            sites pass NULL since pre-pass matching is
- *                            not a flux-pairing decision. */
+ *                            not a flux-pairing decision.
+ *   rho_face_a/rho_face_b:   per-basis stale-gradient reconstructed face
+ *                            densities (NBASIS each). When both non-NULL, the
+ *                            cost includes the density-continuity term
+ *                            (cbe_cost_cc_crho); NULL on either side falls back
+ *                            to the velocity/trace cost. vF is the face-normal
+ *                            velocity used by the face-centric velocity cost. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_pair_matching(
     const double Q_a[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     const double Q_b[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     int beta_of_alpha_for_a[CBE_INTEGRATOR_NBASIS],
     int alpha_of_beta_for_b[CBE_INTEGRATOR_NBASIS],
-    int *free_slot_fired_count_inout)
+    int *free_slot_fired_count_inout,
+    const double *rho_face_a, const double *rho_face_b, double vF)
 {
     const int N = CBE_INTEGRATOR_NBASIS;
+    /* Density-continuity cost is used iff the caller supplied stale-gradient
+     * reconstructed face densities for both sides (gradient/flux passes with
+     * gradients on). Otherwise fall back to the velocity/trace cost. */
+    const bool use_crho = (rho_face_a != (const double*)0 && rho_face_b != (const double*)0);
+    double rho_cell_a = 0.0, rho_cell_b = 0.0;
+    if(use_crho) { for(int m=0;m<N;m++){ rho_cell_a += Q_a[m][0]; rho_cell_b += Q_b[m][0]; } }
 
     /* a->b cost matrix. */
     double C_ab[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
     for(int m=0; m<N; m++) {
         for(int n=0; n<N; n++) {
+            if(use_crho) { C_ab[m][n] = cbe_cost_cc_crho(Q_a[m], Q_b[n], rho_face_a[m], rho_face_b[n], vF, rho_cell_a); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
-            C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
+            else C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
 #else
-            C_ab[m][n] = cbe_cost_v_only(Q_a[m], Q_b[n]);
+            else C_ab[m][n] = cbe_cost_v_only(Q_a[m], Q_b[n]);
 #endif
         }
     }
@@ -778,8 +829,8 @@ void cbe_build_pair_matching(
             src_masses[m] = Q_a[m][0];
             tgt_masses[m] = Q_b[m][0];
         }
-        cbe_apply_free_slot_fallback(C_ab, src_masses, tgt_masses,
-                                     free_slot_fired_count_inout);
+        cbe_apply_fs_gate(C_ab, Q_a, Q_b, src_masses, tgt_masses,
+                          free_slot_fired_count_inout);
     }
 #else
     (void)free_slot_fired_count_inout;
@@ -792,10 +843,11 @@ void cbe_build_pair_matching(
         double C_ba[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
         for(int m=0; m<N; m++) {
             for(int n=0; n<N; n++) {
+                if(use_crho) { C_ba[m][n] = cbe_cost_cc_crho(Q_b[m], Q_a[n], rho_face_b[m], rho_face_a[n], vF, rho_cell_b); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
-                C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
+                else C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
 #else
-                C_ba[m][n] = cbe_cost_v_only(Q_b[m], Q_a[n]);
+                else C_ba[m][n] = cbe_cost_v_only(Q_b[m], Q_a[n]);
 #endif
             }
         }
@@ -807,8 +859,8 @@ void cbe_build_pair_matching(
                 src_masses[m] = Q_b[m][0];
                 tgt_masses[m] = Q_a[m][0];
             }
-            cbe_apply_free_slot_fallback(C_ba, src_masses, tgt_masses,
-                                         free_slot_fired_count_inout);
+            cbe_apply_fs_gate(C_ba, Q_b, Q_a, src_masses, tgt_masses,
+                              free_slot_fired_count_inout);
         }
 #endif
         cbe_assign_outgoing_greedy(C_ba, alpha_of_beta_for_b);
@@ -827,11 +879,17 @@ void cbe_build_pair_matching(
  *
  * Used by:
  *   - cbe_face_K_and_vn_from_Q -- fills per-basis c_x array for downstream
- *     HLLC residual evaluation and bracket-pad sizing.
- *   - cbe_flux_hllc_vacuum -- gets its scalar c_x from here while still
+ *     vacuum-flux residual evaluation and bracket-pad sizing.
+ *   - cbe_flux_tophat_vacuum -- gets its scalar c_x from here while still
  *     building the per-basis stress contraction S_n[] locally for the
  *     full-tensor flux.
  * -------------------------------------------------------------------------- */
+/* Effective adiabatic index for the CBE signal/sound speed: c = sqrt(gamma_eff * n.S.n).
+ * gamma_eff = 3 is the 10-moment (Maxwellian) closure value; SINGLE definition point,
+ * shared by the per-basis face signal speed (c_x, below) and the fluid HLLC collisional
+ * sound speed (cbe_flux_collisional_hllc). Users may retune here. */
+static const double CBE_SIGNAL_GAMMA_EFF = 3.0;
+
 KOKKOS_INLINE_FUNCTION
 double cbe_face_normal_stress_speed_from_Qrow(
     const double moments[CBE_INTEGRATOR_NMOMENTS],
@@ -841,10 +899,10 @@ double cbe_face_normal_stress_speed_from_Qrow(
     const double inv_rho = 1.0 / moments[0];
     /* Always-3-vector velocity. Missing components zero-padded by the helper.
      * Stress block runs only under SECONDMOMENT and loops over the active
-     * NUMDIMS x NUMDIMS block via cbe_basis_T_load_active_scaled. Commit 4a
-     * migrated the layout to be dim-agnostic; the SECONDMOMENT D!=3 fence
-     * was lifted in commit 4b and the frame-conversion bookkeeping was
-     * moved (codex 2026-06-04) into the drift-kick absolute round-trip via
+     * NUMDIMS x NUMDIMS block via cbe_basis_T_load_active_scaled. The
+     * layout is dim-agnostic; the SECONDMOMENT D!=3 fence
+     * was lifted and the frame-conversion bookkeeping was
+     * moved into the drift-kick absolute round-trip via
      * cbe_relative_row_to_absolute / cbe_absolute_to_relative_row. */
     double v[3]; cbe_basis_v_load_3(moments, v);
     double nSn = 0;
@@ -861,49 +919,178 @@ double cbe_face_normal_stress_speed_from_Qrow(
         }
     }
 #endif
-    return (nSn > 0) ? sqrt(3.0 * nSn) : 0;
+    return (nSn > 0) ? sqrt(CBE_SIGNAL_GAMMA_EFF * nSn) : 0;
 }
 
 
 /* --------------------------------------------------------------------------
- * SSOT HLLC vacuum mass-flux density per unit face area, per basis. Branches
+ * SSOT one-sided vacuum mass-flux density per unit face area, per basis. Branches
  * on the source-side outward normal velocity u_out exactly as the full
- * flux solver (cbe_flux_hllc_vacuum) does for its mass slot; extracting it
+ * flux solver (cbe_flux_tophat_vacuum) does for its mass slot; extracting it
  * lets the v_F root-find residual and the deposited flux use bit-identical
  * branching, which is the requirement of the strict-root-found policy
  * (basis-summed F_m at v_F == 0 implies cell-summed mass conservation).
  *
- *   u_out >=  c_x         -> rho * u_out         (cold F0 supersonic)
- *  -c_x/3 <  u_out <  c_x -> rho * (3 u_out + c_x) / 4   (subsonic vacuum)
- *   u_out <= -c_x/3       -> 0                   (vacuum, no outflow)
+ * F_m branching is scheme-dependent (set below by CBE_INTEGRATOR_RP_GAUSSIAN);
+ * for the compact-support top-hat #else scheme:
+ *   u_out >=  c_x       -> rho * u_out              (cold F0 supersonic)
+ *  -c_x <  u_out <  c_x -> rho * (c_x/4)(1+u_out/c_x)^2   (warm fan)
+ *   u_out <= -c_x       -> 0                        (vacuum, no outflow)
  *
  * Cold limit c_x -> 0: F0 branch for u_out > 0, F = 0 for u_out < 0
  * (recovers cold-F0 cleanly when no stress is stored or n.S.n is zero).
  * -------------------------------------------------------------------------- */
+/* Per-basis face-flux scalars (SSOT): mass flux density per unit area F_m, and
+ * the pressure (pstress) and intrinsic-stress (gomega) flux COEFFICIENTS, all
+ * for the SELECTED flux scheme. The single compile switch CBE_INTEGRATOR_RP_GAUSSIAN
+ * flips compact-support top-hat <-> exact one-sided Gaussian (kinetic) HERE, in
+ * this one place; both
+ * consumers -- the v_F-normal root-find residual and the full flux solver
+ * cbe_flux_tophat_vacuum -- call this, so they can never disagree on the scheme.
+ * Inputs are complete in (rho, u_out, c_x): sigma_x = c_x/sqrt(3), with
+ * sigma_x^2 = n.S.n the normal central stress; u_out is the source-side outward
+ * normal velocity relative to the (moving) face.
+ *
+ * The full flux is assembled identically for either scheme (cbe_flux_tophat_vacuum):
+ *   F_mass   = F_m
+ *   F_mom_k  = v_k F_m + pstress * S_n_k
+ *   F_T_kl   = R_kl F_m + pstress (v_k S_n_l + v_l S_n_k) + gomega S_n_k S_n_l
+ * Top-hat:  compact-support uniform-in-v approximate solver, warm fan
+ *           -c_x < u_out < c_x; pstress and gomega both nonzero (see #else).
+ * Gaussian: with xi = u_out/sigma_x, Phi = normal CDF, phi = normal PDF,
+ *   F_m = rho (sigma_x phi + u_out Phi);  pstress = rho Phi;  gomega = rho phi / sigma_x.
+ * F_m is monotone non-decreasing in u_out for both (top-hat warm-fan slope
+ * (rho/2)(1+u') >= 0; Gaussian slope rho*Phi in [0,rho]) -> the residual stays
+ * monotone, bisection converges.
+ *
+ * This is a flux-SCHEME / coefficient model: a new scheme (with different
+ * pstress/gomega coefficients) is added as another branch here, and both
+ * consumers inherit it for free. */
+struct CbeFaceFluxScalars { double F_m; double pstress; double gomega; };
+
 KOKKOS_INLINE_FUNCTION
-double cbe_hllc_mass_flux_per_unit_area(double rho, double u_out, double c_x)
+CbeFaceFluxScalars cbe_face_flux_scalars(double rho, double u_out, double c_x)
 {
-    if(u_out >= c_x)              return rho * u_out;
-    else if(u_out > -c_x / 3.0)   return 0.25 * rho * (3.0 * u_out + c_x);
-    else                          return 0;
+    CbeFaceFluxScalars s;
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
+    if(c_x <= MIN_REAL_NUMBER) {                       /* cold / zero-stress: F0 free-stream */
+        s.F_m = (u_out > 0.0) ? rho * u_out : 0.0; s.pstress = 0.0; s.gomega = 0.0;
+        return s;
+    }
+    const double sigma_x = c_x / 1.7320508075688772;   /* sqrt(3) */
+    const double xi      = u_out / sigma_x;
+    const double Phi     = 0.5 * erfc(-xi / 1.4142135623730951);    /* normal CDF, /sqrt(2) */
+    const double phi     = exp(-0.5*xi*xi) / 2.5066282746310002;    /* normal PDF, /sqrt(2pi) */
+    s.F_m     = rho * (sigma_x * phi + u_out * Phi);
+    s.pstress = rho * Phi;
+    s.gomega  = rho * phi / sigma_x;
+#else
+    /* Compact-support "top hat" (uniform-in-v) one-sided kinetic flux: the
+     * approximate solver derived from a constant-density velocity DF with the
+     * same (rho, <v>, S), exact for the 1D collisionless Riemann problem. The
+     * edge of support is c_x = sqrt(3) sigma_x, so the warm fan spans
+     * -c_x < u_out < c_x (participation boundary -c_x). With u' = u_out/c_x:
+     *   w'     = (c_x/4)(1+u')^2                 -> F_m     = rho w'
+     *   zeta'  = ((2-u')/4)(1+u')^2              -> pstress = rho zeta'
+     *   omega' = (sqrt(3)/8)(1-u'^2)^2           -> gomega  = rho omega'/sigma_x
+     *                                                       = (3/8) rho (1-u'^2)^2 / c_x
+     * Matches the exact Gaussian in pressure at u_out=0 (zeta=1/2) and to ~8% in
+     * mass flux; the conduction term is ~2x smaller at its peak and truncates
+     * exactly to 0 for |u_out| >= c_x, in contrast to the Gaussian's slow tail. */
+    if(c_x <= MIN_REAL_NUMBER) {                       /* cold / zero-stress: F0 free-stream */
+        s.F_m = (u_out > 0.0) ? rho * u_out : 0.0; s.pstress = 0.0; s.gomega = 0.0;
+        return s;
+    }
+    if(u_out >= c_x)      { s.F_m = rho * u_out; s.pstress = rho; s.gomega = 0.0; }   /* cold F0 */
+    else if(u_out > -c_x) {                            /* warm fan */
+        const double up   = u_out / c_x;
+        const double onep = 1.0 + up;
+        const double omu2 = 1.0 - up*up;
+        s.F_m     = 0.25  * rho * c_x * onep * onep;
+        s.pstress = 0.25  * rho * (2.0 - up) * onep * onep;
+        s.gomega  = 0.375 * rho * (omu2 * omu2) / c_x;
+    }
+    else                  { s.F_m = 0.0; s.pstress = 0.0; s.gomega = 0.0; }           /* vacuum */
+#endif
+    return s;
 }
 
 
+#if defined(CBE_INTEGRATOR_COLLISIONS)
 /* --------------------------------------------------------------------------
- * Per-face root-found face-normal velocity v_F_n (Wave-CBE Commit 3,
- * 2026-05-25; HLLC update Wave-CBE Commit 9, 2026-05-30). Returns net
- * per-unit-area face mass flux at trial v_F_n, summing the HLLC vacuum
- * mass-flux contribution from every basis on both sides.
+ * Fluid HLLC collisional flux for the collisional Riemann term (method paper,
+ * "How Collisional Can the Method Go?"). This is the strongly-collisional
+ * counterpart of the collisionless one-sided vacuum flux: in the collisional
+ * limit the operator-split vacuum RP breaks down (mean free path << face size),
+ * and the per-face flux should instead approach the fluid HLLC solution. The
+ * two are blended by the mean-free-path weight w_c = exp(-Delta_x rho sigma/mu)
+ * at the call site (cbe_integrator_flux_compute_pair): the effective flux is
+ *   G_eff_alpha = w_c G_vacuum_alpha + (1-w_c)(m_alpha/m_cell) G_HLLC_collisional
+ * so w_c -> 1 (collisionless) recovers the pure vacuum flux exactly, and w_c ->
+ * 0 (fluid limit) recovers an MFM-like state: mass flux -> 0 (F_HLLC has zero
+ * mass flux, consistent with the CBE volume/face partition), with pressure and
+ * PdV work exchanged across the face.
  *
- * Sign convention matches the deposited flux (Wave-CBE Commit 8): i-side
+ * All inputs are CELL-bulk (summed over bases), face-normal, face-relative:
+ *   rho_K   physical cell density (m_cell/V_cell)
+ *   vn_K    (<v_K> . n_hat) - v_F_n     face-relative normal cell velocity
+ *   P_K     rho_K Tr(S^com_K)/D         isotropic cell pressure
+ *   c_K     sqrt(CBE_SIGNAL_GAMMA_EFF * n.S^com_K.n)   signal speed (same convention as c_x)
+ * vn_K are FACE-RELATIVE (vn = <v>.n_hat - v_F_normal); v_F_normal is the face
+ * velocity, needed to put the pressure-work energy flux back into the lab frame.
+ * Output Gc[] is the PER-UNIT-AREA flux (mass, momentum, 2nd-moment slots) in the
+ * n_hat-outward frame; the caller multiplies by |Area| and distributes by mass
+ * fraction. The intermediate pressure P_star IS the non-vacuum criterion: a valid
+ * (non-vacuum) star state has P_star > 0, and P_star -> 0 continuously at the
+ * vacuum boundary, so gating on P_star gives a positive, continuous pressure with
+ * no clamp. Returns the F1 flux if P_star > 0, else zero.
+ * -------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+void cbe_flux_collisional_hllc(double rho_L, double vn_L, double P_L, double c_L,
+                               double rho_R, double vn_R, double P_R, double c_R,
+                               double v_F_normal, const double n_hat[3],
+                               double Gc[CBE_INTEGRATOR_NMOMENTS])
+{
+    for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) Gc[k] = 0.0;
+    const double c_star = DMAX(c_L, c_R);
+    const double S_L = DMIN(vn_L, vn_R) - c_star;
+    const double S_R = DMAX(vn_L, vn_R) + c_star;
+    const double eta_L = rho_L * (S_L - vn_L);
+    const double eta_R = rho_R * (S_R - vn_R);
+    const double deta  = eta_L - eta_R;
+    if(!(fabs(deta) > MIN_REAL_NUMBER)) return;
+    const double inv_deta = 1.0 / deta;
+    const double S_star = ((P_R - P_L) + (eta_L * vn_L - eta_R * vn_R)) * inv_deta;
+    const double P_star = (P_L * eta_R - P_R * eta_L + eta_L * eta_R * (vn_R - vn_L)) * (-inv_deta);
+    if(!(P_star > 0.0)) return;                              /* vacuum star region -> zero flux */
+    /* F1: zero mass flux; momentum = P_star n_hat; 2nd-moment (energy) is the
+     * lab-frame pressure work P_star * (S_star + v_F_normal) * 2/D on the diagonal
+     * (isotropic; off-diagonals zero). S_star is the face-relative contact speed;
+     * adding v_F_normal converts to the lab frame the moments are stored in. */
+    for(int k = 0; k < NUMDIMS; k++) cbe_basis_p_w(Gc, k, P_star * n_hat[k]);
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+    const double e_diag = 2.0 * P_star * (S_star + v_F_normal) / (double)NUMDIMS;
+    for(int a = 0; a < NUMDIMS; a++) cbe_basis_T_w(Gc, a, a, e_diag);
+#endif
+}
+#endif /* CBE_INTEGRATOR_COLLISIONS */
+
+
+/* --------------------------------------------------------------------------
+ * Per-face root-found face-normal velocity v_F_n. Returns net
+ * per-unit-area face mass flux at trial v_F_n, summing the one-sided vacuum
+ * mass-flux contribution (scheme per cbe_face_flux_scalars) from every basis
+ * on both sides.
+ *
+ * Sign convention matches the deposited flux: i-side
  * basis outflow (u_out_i = v_alpha_n_i - v_F_n) carries mass in +A_hat,
  * j-side basis outflow (u_out_j = v_F_n - v_alpha_n_j) carries mass in
  * -A_hat. Net flux in +A_hat is therefore
  *
- *   r(v_F_n) = sum_m  F_m_HLLC(K_i[m], u_out_i, c_x_i[m])
- *            - sum_m  F_m_HLLC(K_j[m], u_out_j, c_x_j[m]).
+ *   r(v_F_n) = sum_m  F_m(K_i[m], u_out_i, c_x_i[m])
+ *            - sum_m  F_m(K_j[m], u_out_j, c_x_j[m]).
  *
- * Monotone non-increasing in v_F_n (each per-basis F_m_HLLC is monotone
+ * Monotone non-increasing in v_F_n (each per-basis F_m is monotone
  * non-decreasing in u_out: F0 slope rho, F1 slope 3 rho / 4, F=0 slope 0;
  * u_out_i decreases as v_F_n rises; u_out_j increases as v_F_n rises);
  * bisection in cbe_face_solve_v_F_normal converges to the unique zero.
@@ -923,20 +1110,19 @@ double cbe_face_mass_residual_per_unit_area(
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         const double u_out_i = v_alpha_n_i[m] - v_F_n;
         const double u_out_j = v_F_n - v_alpha_n_j[m];
-        r += cbe_hllc_mass_flux_per_unit_area(K_i[m], u_out_i, c_x_i[m]);
-        r -= cbe_hllc_mass_flux_per_unit_area(K_j[m], u_out_j, c_x_j[m]);
+        r += cbe_face_flux_scalars(K_i[m], u_out_i, c_x_i[m]).F_m;
+        r -= cbe_face_flux_scalars(K_j[m], u_out_j, c_x_j[m]).F_m;
     }
     return r;
 }
 
 
 /* Bisection root-find for v_F_n with bracket-widen-up-to-4x and explicit
- * fallback flagged via bracket_ok_out=0. Matches the harness brentq
- * widening loop in cadence; uses bisection instead of Brent for device
- * portability. Scale-aware termination: stop when (hi-lo) drops below
+ * fallback flagged via bracket_ok_out=0. Uses bisection (not Brent) for
+ * device portability. Scale-aware termination: stop when (hi-lo) drops below
  * tol_abs + tol_rel * max(|lo|,|hi|), so high-velocity (cosmological)
  * brackets reach machine-eps relative precision rather than absolute
- * 1e-12. Iteration cap = 60 (matches harness brentq xtol/rtol scale).
+ * 1e-12. Iteration cap = 60.
  * NO silent midpoint -- on bracket failure the caller's analytic
  * fallback v_F is used and bracket_fail_count is incremented. */
 KOKKOS_INLINE_FUNCTION
@@ -968,9 +1154,9 @@ double cbe_face_solve_v_F_normal(
         return fallback_v_F_n;
     }
     *bracket_ok_out = 1;
-    /* Tightened tol_rel to 1e-14 (Wave-CBE Commit 9): the strict-root-found
+    /* tol_rel = 1e-14: the strict-root-found
      * policy means the per-face mass residual at v_F is bounded by
-     * |F_m_HLLC'(v_F)| * (hi - lo), and |F_m'| ~ sum of active basis K's
+     * |F_m'(v_F)| * (hi - lo), and |F_m'| ~ sum of active basis K's
      * times Face_Area_Norm. For Hernquist v_F bracket scale ~200 the
      * 1e-12 rel tol left residuals at ~1e-10 (above the col-2 <= 1e-11
      * gate); 1e-14 brings them solidly below. Extra iterations are cheap
@@ -990,7 +1176,7 @@ double cbe_face_solve_v_F_normal(
 }
 
 
-/* SSOT relative <-> absolute moment transforms (codex 2026-06-04, finite
+/* SSOT relative <-> absolute moment transforms (finite
  * absolute-update round-trip in cbe_drift_kick).
  *
  *   ABSOLUTE-frame moments of basis b:
@@ -1002,7 +1188,7 @@ double cbe_face_solve_v_F_normal(
  *     p_rel[a]   = p_abs[a]   - m_b * V[a]
  *     T_rel[a,b] = T_abs[a,b] - V[a] p_rel[a,b] - p_rel[a] V[b] - m_b V[a] V[b]   (uses new p_rel)
  *
- * These two helpers are the SSOT used by the new cbe_drift_kick absolute
+ * These two helpers are the SSOT used by the cbe_drift_kick absolute
  * round-trip and by any standalone test code (unit-checked algebra). The row
  * layout is the same in both frames; only the [1..NUMDIMS] and [T_idx] slot
  * VALUES differ. Operations are NUMDIMS-aware and gate the stress block on
@@ -1074,18 +1260,13 @@ void cbe_absolute_to_relative_row(
 
 
 /* --------------------------------------------------------------------------
- * Wave-CBE Commit 4 (2026-05-25) — SSOT conversion from stored basis-frame
- * moments to "flux-frame" Q. The pre-Commit-4 path inlined this in
- * cbe_integrator_flux_compute_pair (cosmology factor + velocity boost at
- * flux_functions.h:45-76, then a hardcoded ψ=0.5 prefactor downstream).
- * Commit 4 hoists the conversion into one helper used by BOTH the
- * gradient pass (when it lands) and the per-pair reconstruction so they
- * cannot drift apart on cf_a3inv / cf_atime / NMOMENTS handling.
+ * SSOT conversion from stored basis-frame moments to "flux-frame" Q.
+ * One helper used by BOTH the gradient pass and the per-pair reconstruction
+ * so they cannot drift apart on cf_a3inv / cf_atime / NMOMENTS handling.
  *
- * Output (codex 2026-05-25 wording correction: in this codebase
- * `cf_a3inv * density_code` = physical density in code units, NOT a
- * comoving-frame density — the `a3inv` factor turns the comoving-volume
- * cell-integrated U into a physical-frame density.):
+ * Output (note: in this codebase `cf_a3inv * density_code` = physical
+ * density in code units, NOT a comoving-frame density — the `a3inv` factor
+ * turns the comoving-volume cell-integrated U into a physical-frame density.):
  *   Q[m][0]    = physical-frame mass density of basis m   (code units)
  *   Q[m][1..3] = physical-frame momentum density          = Q[m][0]*v_phys
  *   Q[m][4..9] = physical-frame stress density (only when NMOMENTS==10;
@@ -1094,7 +1275,7 @@ void cbe_absolute_to_relative_row(
  *                [7]/[8]/[9]=off-diag holds).
  *
  * "Flux-frame" = physical-frame momentum baked in (v_phys = Vel/cf_atime
- * folded into the [1..3] slots so cbe_flux_hllc_vacuum's u_out matches
+ * folded into the [1..3] slots so cbe_flux_tophat_vacuum's u_out matches
  * v_phys directly). NOT a generic U/V conversion. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_flux_frame_Q_from_stored_moments(
@@ -1112,8 +1293,7 @@ void cbe_build_flux_frame_Q_from_stored_moments(
             Q_out[m][k] = U[m][k] * inv_V * cf_a3inv;
         }
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        /* Commit 4b (2026-06-03) — relative-frame stress boost. Storage
-         * convention from commit 89fb05cc:
+        /* Relative-frame stress boost. Storage convention:
          *    p_rel = m * (v_phys - V)
          *    T_rel = m * <(v_phys - V) (v_phys - V)>
          * where V is the mesh-generating-point velocity. The flux solver
@@ -1163,33 +1343,29 @@ void cbe_build_flux_frame_Q_from_stored_moments(
 }
 
 
-/* Wave-CBE Fix #2a (2026-05-30) — symmetric 3x3 SSOT realizability machinery.
+/* Symmetric 3x3 SSOT realizability machinery.
  *
  * The three helpers below provide the canonical PSD predicate + projection
- * for CBE basis rows, shared by the Commit-10 cone limiter, the face-state
+ * for CBE basis rows, shared by the cone limiter, the face-state
  * Q-clamp, and the cell-state drift-kick repair. Storage convention: raw
  * moment slots [4..9] hold T_kl = m * R_kl = m * (S_kl + v_k v_l) (raw
  * second-moment density). Central stress S_kl = R_kl - v_k v_l is built
  * locally by the raw-row wrapper before projection.
  *
- * 2a fixes a pre-existing units bug in the prior cbe_spd_repair_S3x3
- * function (Commit 5 introduced; Commit 10 inherited at the face site):
- * both call sites passed raw R slots to a helper that interpreted them
- * as central S. Effective floor was CBE_SPD_RELATIVE_FLOOR * trace(raw R)
- * ~ 1e-12 * m * (trace(S) + v_bulk^2) — a hidden bulk-KE floor on stress.
- * The new raw-row wrapper does the raw <-> central conversion correctly,
- * and the core projection takes an explicit eigenvalue_floor argument so
- * each caller picks its own policy.
+ * The raw-row wrapper does the raw <-> central conversion correctly (a
+ * subtlety: passing raw R slots to a central-S API applies an effective
+ * floor CBE_SPD_RELATIVE_FLOOR * trace(raw R) ~ 1e-12 * m * (trace(S) +
+ * v_bulk^2), a hidden bulk-KE floor on stress). The core projection takes
+ * an explicit eigenvalue_floor argument so each caller picks its own policy.
  */
 
 
-/* SSOT 3x3 symmetric PSD test via all principal minors (originally Commit 10
- * Fix #6; moved here in Fix #2a). Returns true iff every principal minor
- * of M is >= -eps_tol * scale, where scale is the natural amplitude for
- * each minor order (trace for diagonal, trace^2 for 2x2, trace^3 for det).
- * eps_tol = 0 gives strict Sylvester-style PSD; eps_tol > 0 absorbs
- * FP-scale near-zero negative roundoff. Cone limiter uses 0 (strict);
- * Fix #2 cell repair uses 1e-12. */
+/* SSOT 3x3 symmetric PSD test via all principal minors. Returns true iff
+ * every principal minor of M is >= -eps_tol * scale, where scale is the
+ * natural amplitude for each minor order (trace for diagonal, trace^2 for
+ * 2x2, trace^3 for det). eps_tol = 0 gives strict Sylvester-style PSD;
+ * eps_tol > 0 absorbs FP-scale near-zero negative roundoff. Cone limiter
+ * uses 0 (strict); cell-state repair uses 1e-12. */
 KOKKOS_INLINE_FUNCTION
 bool cbe_sym3x3_all_principal_minors_nonneg(const double M[3][3], double eps_tol)
 {
@@ -1217,7 +1393,7 @@ bool cbe_sym3x3_all_principal_minors_nonneg(const double M[3][3], double eps_tol
  * (Note the M expression: M = m * R_kl * m - p_k p_l = T_kl * m - p_k p_l
  *  with T_kl = m * R_kl already, so M = T_kl * m - p p^T as written.)
  *
- * Consumers: cone limiter (strict, eps_tol = 0); Fix #2b cell repair
+ * Consumers: cone limiter (strict, eps_tol = 0); cell-state repair
  * (FP-scale, eps_tol = CBE_REPAIR_EPS_M_REL). */
 KOKKOS_INLINE_FUNCTION
 bool cbe_basis_row_is_realizable(
@@ -1292,15 +1468,14 @@ bool cbe_primitive_row_is_realizable(
  * max(lambda_k, eigenvalue_floor), reconstruct S = V * diag(lambda) * V^T.
  *
  * eigenvalue_floor: caller-supplied. Pass 0 for true PSD projection
- * (Fix #2 cell repair); pass CBE_SPD_RELATIVE_FLOOR * trace_central_S_pos
- * for the existing face-clamp floor policy. Fix #2a corrected the
- * pre-existing units bug where this floor was computed from trace(raw R).
+ * (cell-state repair); pass CBE_SPD_RELATIVE_FLOOR * trace_central_S_pos
+ * for the face-clamp floor policy (computed from trace(central S), NOT
+ * trace(raw R)).
  *
  * Degenerate-input fallback: fires ONLY when input is non-finite (NaN/Inf
  * in any S slot). trace_before <= 0 with finite entries is a legitimate
  * central state to project (cold flows naturally give central S near or
- * below zero) — Jacobi handles it, no isotropic-MIN_REAL injection.
- * Codex round 4 explicit. */
+ * below zero) — Jacobi handles it, no isotropic-MIN_REAL injection. */
 KOKKOS_INLINE_FUNCTION
 bool cbe_project_central_S_to_PSD(double S[6], double eigenvalue_floor,
                                   double *dT_out)
@@ -1309,8 +1484,8 @@ bool cbe_project_central_S_to_PSD(double S[6], double eigenvalue_floor,
     double trace_before = S[0] + S[1] + S[2];
 
     /* Degenerate-input fallback (non-finite only). Off-diagonal NaN check
-     * is load-bearing per codex 2026-05-26 (Jacobi propagates NaN through
-     * eigenvalues silently). */
+     * is load-bearing (Jacobi propagates NaN through eigenvalues
+     * silently). */
     bool all_finite = true;
     for(int q = 0; q < 6; q++) { if(!isfinite(S[q])) { all_finite = false; break; } }
     if(!all_finite || !isfinite(trace_before)) {
@@ -1416,13 +1591,12 @@ bool cbe_project_central_S_to_PSD(double S[6], double eigenvalue_floor,
  * Central stress S_kl = R_kl - v_k v_l = T_kl / m - v_k v_l where v = p/m.
  * On modification, rebuilds T_kl_new = m * (S_kl_repaired + v_k v_l).
  *
- * Named explicitly around "raw moment row" to prevent the bug 2a fixes
- * (passing raw slots to a central-S-only API). dT_out is the raw-slot
- * trace delta = m * (central-dT), preserving the dP_sum / dT_sum
- * accumulator semantic Commit 5 wired into cbe_diagnostics col-8.
+ * Named explicitly around "raw moment row" to prevent passing raw slots to
+ * a central-S-only API. dT_out is the raw-slot trace delta = m * (central-dT),
+ * preserving the dP_sum / dT_sum accumulator semantic wired into
+ * cbe_diagnostics col-8.
  *
- * Commit 4a (2026-06-03): now SECONDMOMENT-gated (replaces NMOMENTS>=10
- * gate) and operates on the active D x D stress block via the new
+ * SECONDMOMENT-gated; operates on the active D x D stress block via the
  * active-dimensional helpers. Inactive rows/cols stay at zero; PSD
  * projection only floors active eigenvalues. */
 KOKKOS_INLINE_FUNCTION
@@ -1434,8 +1608,8 @@ bool cbe_basis_row_project_central_stress_to_PSD(
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     /* Mass-positivity guard: m <= 0 means v = p/m undefined; caller is
      * responsible for rho-clamping upstream (cbe_clamp_face_Q does so via
-     * Q_face[m][0] <= MIN_REAL_NUMBER row-zeroing; Fix #2b corrupt-cell
-     * guard does so at Step 0). Treat as no-op here. */
+     * Q_face[m][0] <= MIN_REAL_NUMBER row-zeroing; the cell-state repair's
+     * corrupt-cell guard does so at Step 0). Treat as no-op here. */
     if(!(U_row[0] > 0) || !isfinite(U_row[0])) {
         if(dT_out) *dT_out = 0;
         return false;
@@ -1480,31 +1654,26 @@ bool cbe_basis_row_project_central_stress_to_PSD(
 }
 
 
-/* Density-only face-Q clamp + counter (codex 2026-05-25 #6 + #5). For each
+/* Density-only face-Q clamp + counter. For each
  * basis with Q_face[m][0] <= MIN_REAL_NUMBER, zero the ENTIRE basis row.
  * Rationale: leaving nonzero momentum/stress at zero density would crash
- * cbe_flux_hllc_vacuum's inv_rho = 1/moments[0] divide. Zeroing the row
+ * cbe_flux_tophat_vacuum's inv_rho = 1/moments[0] divide. Zeroing the row
  * marks the basis inactive at this face -- the downstream cbe_face_K_and_vn
  * helper gives it K=0, v_n=0 so it contributes nothing to the residual or
  * the flux loop.
  *
- * Wave-CBE Commit 5 (2026-05-26): face-state SPD enforcement on the
- * stress block of each rho-active basis row.
- *
- * Wave-CBE Fix #2a (2026-05-30): migrated from cbe_spd_repair_S3x3 (which
- * silently treated raw R as if it were central S) to the raw-row wrapper
+ * Also performs face-state SPD enforcement on the stress block of each
+ * rho-active basis row via the raw-row wrapper
  * cbe_basis_row_project_central_stress_to_PSD, which correctly converts
  * raw <-> central. The eigenvalue floor is computed from trace(central S)
- * — NOT trace(raw R) which secretly included the bulk-KE contribution
- * v_bulk^2 and acted as a hidden physical floor. Net physics change in
- * cold flows: floor magnitude shrinks dramatically (1e-12 * trace_central_S
- * is much smaller than 1e-12 * (trace_central_S + v_bulk^2) when bulk
- * kinetic dominates). S_clamp_count semantic unchanged.
+ * — NOT trace(raw R) which secretly includes the bulk-KE contribution
+ * v_bulk^2 and would act as a hidden physical floor. In cold flows the
+ * floor magnitude is thus much smaller (1e-12 * trace_central_S vs
+ * 1e-12 * (trace_central_S + v_bulk^2) when bulk kinetic dominates).
  *
- * Commit 4a (2026-06-03): SECONDMOMENT-gated (was NMOMENTS>=10). The stress
- * block runs in any dimension under SECONDMOMENT; trace and projection
- * helpers loop over active NUMDIMS so 1D/2D warm physics participates
- * correctly. */
+ * SECONDMOMENT-gated: the stress block runs in any dimension under
+ * SECONDMOMENT; trace and projection helpers loop over active NUMDIMS so
+ * 1D/2D warm physics participates correctly. */
 KOKKOS_INLINE_FUNCTION
 void cbe_clamp_face_Q(
     double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
@@ -1512,16 +1681,16 @@ void cbe_clamp_face_Q(
     long long *S_clamp_count)
 {
 #if defined(CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD) && defined(CBE_INTEGRATOR_SECONDMOMENT)
-    /* Fix #9 strict post-clamp face-state realizability guard. Default OFF;
+    /* Strict post-clamp face-state realizability guard. Default OFF;
      * enabled by adding CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD to Config.sh.
      * Only meaningful under SECONDMOMENT -- without stress storage,
      * realizability reduces to mass-positivity which the rho>MIN_REAL_NUMBER
      * branch already enforces. Surfaces post-clamp non-realizability that
      * survives the rho-zero branch + the eigenvalue-floor projection --
-     * with the cone limiter (Fix #6) upstream this should NEVER fire at
+     * with the cone limiter upstream this should NEVER fire at
      * non-roundoff amplitude. printf-only + once-per-call latch (the print
-     * is device-safe; fflush/endrun are intentionally NOT used here per
-     * codex 2026-06-04 and feedback_code_facts #10). */
+     * is device-safe; fflush/endrun are intentionally NOT used here, they
+     * are host-only functions). */
     bool printed_failure = false;
 #endif
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
@@ -1568,7 +1737,7 @@ void cbe_clamp_face_Q(
                 const double trR_g  = cbe_basis_T_trace_active(Qface[m], inv_m_g);
                 const double trSc_g = trR_g - v_dot_v_g;
                 /* Device-safe printf; no fflush/endrun (host-only fns) here. */
-                printf("[CBE strict face guard (Fix #9)] post-clamp non-realizable: "
+                printf("[CBE strict face guard] post-clamp non-realizable: "
                        "basis=%d m=%.3e trace_S_central=%.3e v.v=%.3e\n",
                        m, m_face_g, trSc_g, v_dot_v_g);
                 printed_failure = true;
@@ -1580,7 +1749,7 @@ void cbe_clamp_face_Q(
 
 
 /* Guarded face-Q -> (K[m], v_alpha_n[m]) construction for the root-find +
- * theta gate (codex 2026-05-25 #5). On rows with Qface[m][0] > eps, this is
+ * theta gate. On rows with Qface[m][0] > eps, this is
  * the standard v = momentum/density projection onto Ahat; on clamped-inactive
  * rows (Qface[m][0]==0 after cbe_clamp_face_Q), it returns K=0, v_n=0 so
  * the residual function and the flux loop both naturally skip the basis. */
@@ -1592,14 +1761,14 @@ void cbe_face_K_and_vn_from_Q(
     double v_alpha_n[CBE_INTEGRATOR_NBASIS],
     double c_x[CBE_INTEGRATOR_NBASIS])
 {
-    /* Per-basis face state for the HLLC vacuum mass-flux residual + flux
+    /* Per-basis face state for the vacuum mass-flux residual + flux
      * loop. K = rho (basis density on the face), v_alpha_n = v . Ahat
-     * (normal velocity), c_x = sqrt(gamma_e * Ahat.S.Ahat) (HLLC normal
+     * (normal velocity), c_x = sqrt(gamma_e * Ahat.S.Ahat) (normal
      * stress speed, gamma_e = 3). Inactive rows (Qface[m][0] <=
      * MIN_REAL_NUMBER post cbe_clamp_face_Q) zero all three outputs so
      * downstream consumers naturally skip them. c_x is computed via the
      * SSOT helper cbe_face_normal_stress_speed_from_Qrow so the wave-speed
-     * definition matches what cbe_flux_hllc_vacuum and the residual use. */
+     * definition matches what cbe_flux_tophat_vacuum and the residual use. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         if(Qface[m][0] > MIN_REAL_NUMBER) {
             double v_basis[3]; cbe_basis_v_load_3(Qface[m], v_basis);
@@ -1615,9 +1784,8 @@ void cbe_face_K_and_vn_from_Q(
 }
 
 
-/* Wave-CBE Commit 8 (Fix #1, 2026-05-30) — branched HLLC vacuum one-sided
- * flux. Per-basis flux on one side of a face, in the SOURCE-side outward
- * frame defined by Area_outward.
+/* Branched top-hat vacuum one-sided flux. Per-basis flux on one side of a
+ * face, in the SOURCE-side outward frame defined by Area_outward.
  *
  * CONTRACT (caller responsibility, NOT verified inside; device code):
  *   - moments[]      Upwind flux-frame Q (cell or face-reconstructed)
@@ -1640,23 +1808,36 @@ void cbe_face_K_and_vn_from_Q(
  *   - fluxes[]       Output, in Area_outward frame, area-integrated
  *                    (units: [Q] × velocity × area).
  *
- * RETURNS: signal speed (|u_out| + c_x) * |Area_outward|. The full HLLC
+ * RETURNS: signal speed (|u_out| + c_x) * |Area_outward|. The full
  * physical wave speed. Caller uses this for CFL and wakeup criteria.
  *
  * BRANCHING: with u_out = (<v> - vface) · n_out and
- * c_x = sqrt(gamma_e * n_out · S · n_out), gamma_e = 3,
- *     u_out >= c_x         -> F0 (cold supersonic outflow)
- *     -c_x/3 < u_out < c_x -> F1 (subsonic vacuum, warm)
- *     u_out <= -c_x/3      -> 0  (no outgoing flux from this basis)
- * F1 prefactor (rho/4)(3 u_out/c_x + 1) goes continuously to F0 at u_out=c_x
- * and to 0 at u_out=-c_x/3. Cold limit S->0: c_x->0, F1 collapses, F0
- * recovers exactly.
+ * c_x = sqrt(gamma_e * n_out · S · n_out), gamma_e = 3. The per-basis flux
+ * coefficients (F_m, pstress, gomega) come from cbe_face_flux_scalars, which
+ * selects the scheme via CBE_INTEGRATOR_RP_GAUSSIAN (exact one-sided Gaussian)
+ * vs the compact-support top-hat (#else). Top-hat fan:
+ *     u_out >= c_x       -> F0 (cold supersonic outflow)
+ *     -c_x < u_out < c_x -> warm fan (continuous into F0 at +c_x, into 0 at -c_x)
+ *     u_out <= -c_x      -> 0  (no outgoing flux from this basis)
+ * Cold limit S->0: c_x->0, warm fan collapses, F0 recovers exactly.
  *
  * DEFENSIVE GUARD: if rho is non-positive or non-finite or A_norm_sq <= 0
  * the function zeros the flux and returns 0. Device-safe (no endrun);
  * caller's clamp helpers should already filter these cases. */
+
+/* Signal-speed prefactor on the normal velocity dispersion in the CBE timestep
+ * estimate: vsig = |u_out| + CBE_SIGNAL_SIGMA_PREFAC * sigma_x, with
+ * sigma_x = c_x/sqrt(3) = sqrt(n.S.n). Scheme-dependent: the top-hat has a
+ * compact support with exact maximum signal speed |u_out| + c_x, i.e. prefactor
+ * sqrt(3); the Gaussian tail is formally unbounded and uses a safety factor 3
+ * (>= sqrt3). This affects ONLY the returned vsig estimate, not the flux physics. */
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
+static const double CBE_SIGNAL_SIGMA_PREFAC = 3.0;                  /* Gaussian: safety factor */
+#else
+static const double CBE_SIGNAL_SIGMA_PREFAC = 1.7320508075688772;  /* top-hat: exact |u|+c_x (sqrt3) */
+#endif
 KOKKOS_INLINE_FUNCTION
-double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
+double cbe_flux_tophat_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
                             const double vface[3],
                             const double Area_outward[3],
                             double fluxes[CBE_INTEGRATOR_NMOMENTS])
@@ -1704,62 +1885,66 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
 #endif
     const double c_x = cbe_face_normal_stress_speed_from_Qrow(moments, n_hat);
 
-    /* Mass slot via SSOT HLLC helper -- bit-identical to what the v_F
-     * root-find residual sums over, so basis-summed F_m at v_F == 0
-     * exactly implies cell-summed mass conservation. F = 0 vacuum branch
-     * returns short-circuit (no stress / momentum work needed). */
-    const double F_m_per_area = cbe_hllc_mass_flux_per_unit_area(rho, u_out, c_x);
+    /* Mass slot + scheme coefficients via the SSOT helper -- bit-identical to
+     * what the v_F root-find residual sums over (it calls the same helper), so
+     * basis-summed F_m at v_F == 0 exactly implies cell-summed mass
+     * conservation, and the deposited flux can never disagree with the root
+     * solve on the scheme (top-hat vs Gaussian, set by CBE_INTEGRATOR_RP_GAUSSIAN).
+     * F = 0 vacuum branch returns short-circuit (no stress / momentum work). */
+    const CbeFaceFluxScalars fs = cbe_face_flux_scalars(rho, u_out, c_x);
+    const double F_m_per_area = fs.F_m;
     if(F_m_per_area == 0) {
         for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) fluxes[k] = 0;
-        return (fabs(u_out) + c_x) * A_norm;
+        return (fabs(u_out) + CBE_SIGNAL_SIGMA_PREFAC * (c_x * (1.0/1.7320508075688772))) * A_norm;
     }
     fluxes[0] = F_m_per_area * A_norm;
 
-    /* prefactor and u_or_c are derived from the helper's branching for
-     * use in the momentum + stress slots, which still need the tensor
-     * structure that the scalar helper does not return. */
-    const double prefactor = (u_out >= c_x) ? rho : 0.25 * rho * (3.0 * u_out / c_x + 1.0);
-    const double u_or_c    = (u_out >= c_x) ? u_out : c_x;
+    /* Pressure (pstress) and intrinsic-stress (gomega) flux coefficients from
+     * the same helper. Top-hat: pstress = rho*zeta', gomega = rho*omega'/sigma_x.
+     * Gaussian: pstress = rho*Phi, gomega = rho*phi/sigma_x (the S_n⊗S_n term). */
+    const double pstress_coef = fs.pstress;
+    const double gomega_coef  = fs.gomega;
 
-    /* Momentum: F_p_k = v_k * F_m + prefactor * |A| * S_n_k. The flux row
+    /* Momentum: F_p_k = v_k * F_m + pstress_coef * |A| * S_n_k. The flux row
      * has only NUMDIMS momentum slots in low-D builds; cbe_basis_p_w silently
      * drops writes to non-existent y/z slots. The S_n[k] math stays 3-vector
      * so the rotation-invariant cold limit (S=0 → fluxes[k+1] = v[k]*F_m)
      * collapses cleanly to the existing 1D code path with v_y=v_z=0. */
     for(int k=0; k<3; k++) {
-        cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + prefactor * A_norm * S_n[k]);
+        cbe_basis_p_w(fluxes, k, v[k] * fluxes[0] + pstress_coef * A_norm * S_n[k]);
     }
 
-    /* Stress: F_T_ab = R_ab * F_m + prefactor * |A| * (v_a S_n_b + S_n_a v_b).
-     * Active block (a,b < NUMDIMS) with 2*v*S_n on diagonals (the v_a S_n_b
-     * + S_n_a v_b sum collapses to 2 v_a S_n_a when a==b). The R_ab * F_m
-     * piece carries RAW R; the cross piece uses central S contracted with
-     * n_hat (S_n). Writes via cbe_basis_T_w so inactive slots are silently
-     * untouched -- no OOB at any NUMDIMS. */
+    /* Stress: F_T_ab = R_ab * F_m + pstress_coef * |A| * (v_a S_n_b + S_n_a v_b)
+     * + gomega_coef * |A| * S_n_a S_n_b. The S_n⊗S_n term (gomega) is the exact
+     * one-sided third-moment / heat-flux piece of the Gaussian flux (the top-hat
+     * scheme uses its own compact-support gomega). Active block (a,b < NUMDIMS); the v_a S_n_b + S_n_a v_b
+     * sum collapses to 2 v_a S_n_a when a==b. The R_ab * F_m piece carries RAW
+     * R; the cross piece uses central S contracted with n_hat (S_n). Writes via
+     * cbe_basis_T_w so inactive slots are silently untouched -- no OOB. */
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int a=0; a<NUMDIMS; a++) {
         const double R_aa = cbe_basis_T_r(moments, a, a) * inv_rho;
         cbe_basis_T_w(fluxes, a, a,
-            R_aa * fluxes[0] + prefactor * A_norm * 2.0 * v[a] * S_n[a]);
+            R_aa * fluxes[0] + pstress_coef * A_norm * 2.0 * v[a] * S_n[a]
+            + gomega_coef * A_norm * S_n[a] * S_n[a]);
         for(int b=a+1; b<NUMDIMS; b++) {
             const double R_ab = cbe_basis_T_r(moments, a, b) * inv_rho;
             cbe_basis_T_w(fluxes, a, b,
-                R_ab * fluxes[0] + prefactor * A_norm * (v[a]*S_n[b] + S_n[a]*v[b]));
+                R_ab * fluxes[0] + pstress_coef * A_norm * (v[a]*S_n[b] + S_n[a]*v[b])
+                + gomega_coef * A_norm * S_n[a] * S_n[b]);
         }
     }
 #endif
 
-    return (fabs(u_out) + c_x) * A_norm;
+    return (fabs(u_out) + CBE_SIGNAL_SIGMA_PREFAC * (c_x * (1.0/1.7320508075688772))) * A_norm;
 }
 
 
-/* Wave-CBE Fix #2b (2026-06-04): conservative cell-state realizability repair.
+/* Conservative cell-state realizability repair.
  *
- * Single SSOT operator that replaces the legacy in-place chain (active-
- * diagonal floor + 3D Cauchy-Schwarz off-diag + det crossnorm + SPD
- * projection + stochastic split-largest) inside do_cbe_drift_kick_kernel.
- * Operates on RELATIVE-FRAME storage (the canonical pi.CBE_basis_moments
- * layout post the 2026-06-04 absolute round-trip).
+ * Single SSOT operator inside do_cbe_drift_kick_kernel. Operates on
+ * RELATIVE-FRAME storage (the canonical pi.CBE_basis_moments layout after
+ * the absolute round-trip).
  *
  * Conservation contract (preserved to roundoff except where explicitly
  * lossy-with-bounded-magnitude):
@@ -1780,11 +1965,11 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
  *   2  identify empty bases (m_b < m_thresh).
  *   3  reset empties to comoving-inert in RELATIVE storage:
  *        m = m_thresh; p_rel = 0; T_rel = 0.
- *      (Codex: do NOT write m*V_bulk into stored slots; storage is
+ *      (do NOT write m*V_bulk into stored slots; storage is
  *      relative-frame. An inert basis comoving with the cell bulk has
  *      p_rel = 0 and T_rel = 0 by definition.)
  *      Special case: if ALL bases are empty, skip reset entirely
- *      (Phil: would over-mass by NBASIS * m_thresh - M0).
+ *      (would over-mass by NBASIS * m_thresh - M0).
  *   4  row-local PSD projection on non-empty bases. NOT cell-conservative;
  *      trace-deltas flow into Step 5 residual.
  *   5  compute residual vs Step 1 target; precompute cell scales.
@@ -1812,8 +1997,8 @@ double cbe_flux_hllc_vacuum(const double moments[CBE_INTEGRATOR_NMOMENTS],
  * (Step 4 + Step 8). Same contract as the prior legacy chain so downstream
  * cbe_diagnostics col-8 semantics carry through. */
 KOKKOS_INLINE_FUNCTION
-static void cbe_repair_cell_conservative_basis_states(
-    struct particle_data& pi,
+static void cbe_repair_basis_states_core(
+    double (&moments)[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
     double *dT_out)
 {
     double dT_local = 0.0;
@@ -1824,10 +2009,10 @@ static void cbe_repair_cell_conservative_basis_states(
         double M0_probe = 0.0;
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-                if(!isfinite(pi.CBE_basis_moments[j][k])) { any_nonfinite = true; break; }
+                if(!isfinite(moments[j][k])) { any_nonfinite = true; break; }
             }
             if(any_nonfinite) break;
-            M0_probe += pi.CBE_basis_moments[j][0];
+            M0_probe += moments[j][0];
         }
         if(any_nonfinite || !(M0_probe > 0)) {
             if(dT_out) *dT_out = 0.0;
@@ -1839,8 +2024,8 @@ static void cbe_repair_cell_conservative_basis_states(
     double M0 = 0.0;
     double P0[3] = {0.0, 0.0, 0.0};
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        M0 += pi.CBE_basis_moments[j][0];
-        for(int a = 0; a < NUMDIMS; a++) P0[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+        M0 += moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P0[a] += cbe_basis_p_r(moments[j], a);
     }
     const double V_bulk[3] = { P0[0] / M0, P0[1] / M0, P0[2] / M0 };
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
@@ -1848,7 +2033,7 @@ static void cbe_repair_cell_conservative_basis_states(
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                T0[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+                T0[a][b] += cbe_basis_T_r(moments[j], a, b);
             }
         }
     }
@@ -1860,7 +2045,7 @@ static void cbe_repair_cell_conservative_basis_states(
     bool is_empty[CBE_INTEGRATOR_NBASIS];
     int empty_count = 0;
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        is_empty[j] = (pi.CBE_basis_moments[j][0] < m_thresh);
+        is_empty[j] = (moments[j][0] < m_thresh);
         if(is_empty[j]) empty_count++;
     }
 
@@ -1868,17 +2053,17 @@ static void cbe_repair_cell_conservative_basis_states(
      * Inert basis comoving with V_bulk in absolute frame -> relative
      * storage: m = m_thresh, p_rel = 0, T_rel = 0. The cell-sum changes
      * caused by these assignments flow into Step 5 residual. Special-case:
-     * if every basis is empty, skip reset (Phil: NBASIS*m_thresh > M0
+     * if every basis is empty, skip reset (NBASIS*m_thresh > M0
      * over-masses the cell). ----- */
     if(empty_count > 0 && empty_count < CBE_INTEGRATOR_NBASIS) {
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             if(!is_empty[j]) continue;
-            pi.CBE_basis_moments[j][0] = m_thresh;
-            for(int a = 0; a < NUMDIMS; a++) cbe_basis_p_w(pi.CBE_basis_moments[j], a, 0.0);
+            moments[j][0] = m_thresh;
+            for(int a = 0; a < NUMDIMS; a++) cbe_basis_p_w(moments[j], a, 0.0);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
             for(int a = 0; a < NUMDIMS; a++) {
                 for(int b = a; b < NUMDIMS; b++) {
-                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b, 0.0);
+                    cbe_basis_T_w(moments[j], a, b, 0.0);
                 }
             }
 #endif
@@ -1891,19 +2076,19 @@ static void cbe_repair_cell_conservative_basis_states(
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         if(is_empty[j]) continue;
-        const double m_b = pi.CBE_basis_moments[j][0];
+        const double m_b = moments[j][0];
         if(!(m_b > 0)) continue;
-        double v[3]; cbe_basis_v_load_3(pi.CBE_basis_moments[j], v);
+        double v[3]; cbe_basis_v_load_3(moments[j], v);
         double v_dot_v = 0.0;
         for(int a = 0; a < NUMDIMS; a++) v_dot_v += v[a] * v[a];
         const double trace_R_active  = cbe_basis_T_trace_active(
-            pi.CBE_basis_moments[j], 1.0 / m_b);
+            moments[j], 1.0 / m_b);
         const double trace_S_central = trace_R_active - v_dot_v;
         const double trace_S_pos     = DMAX(trace_S_central, MIN_REAL_NUMBER);
         const double eigenvalue_floor = CBE_SPD_RELATIVE_FLOOR * trace_S_pos;
         double dT_basis = 0.0;
         (void)cbe_basis_row_project_central_stress_to_PSD(
-            pi.CBE_basis_moments[j], eigenvalue_floor, &dT_basis);
+            moments[j], eigenvalue_floor, &dT_basis);
         dT_local += dT_basis;
     }
 #endif
@@ -1914,8 +2099,8 @@ static void cbe_repair_cell_conservative_basis_states(
     double M_new = 0.0;
     double P_new[3] = {0.0, 0.0, 0.0};
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        M_new += pi.CBE_basis_moments[j][0];
-        for(int a = 0; a < NUMDIMS; a++) P_new[a] += cbe_basis_p_r(pi.CBE_basis_moments[j], a);
+        M_new += moments[j][0];
+        for(int a = 0; a < NUMDIMS; a++) P_new[a] += cbe_basis_p_r(moments[j], a);
     }
     double res_M    = M0 - M_new;
     double res_P[3] = { P0[0] - P_new[0], P0[1] - P_new[1], P0[2] - P_new[2] };
@@ -1924,7 +2109,7 @@ static void cbe_repair_cell_conservative_basis_states(
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                T_new[a][b] += cbe_basis_T_r(pi.CBE_basis_moments[j], a, b);
+                T_new[a][b] += cbe_basis_T_r(moments[j], a, b);
             }
         }
     }
@@ -1966,38 +2151,38 @@ static void cbe_repair_cell_conservative_basis_states(
     int    sd_idx = -1; double sd_m = -1.0;
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
         is_candidate[j] = cbe_basis_row_is_realizable(
-            pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL);
-        cand_m[j]   = is_candidate[j] ? pi.CBE_basis_moments[j][0] : 0.0;
+            moments[j], CBE_REPAIR_EPS_M_REL);
+        cand_m[j]   = is_candidate[j] ? moments[j][0] : 0.0;
         cand_m_sum += cand_m[j];
-        if(is_candidate[j] && pi.CBE_basis_moments[j][0] > sd_m) {
-            sd_m = pi.CBE_basis_moments[j][0]; sd_idx = j;
+        if(is_candidate[j] && moments[j][0] > sd_m) {
+            sd_m = moments[j][0]; sd_idx = j;
         }
     }
 
     /* saved[]: per-row pre-donation state for revert / bisection restore. */
     double saved[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) saved[j][k] = pi.CBE_basis_moments[j][k];
+        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) saved[j][k] = moments[j][k];
     }
 
     bool single_ok = false;
     if(sd_idx >= 0 && cand_m_sum > 0) {
-        pi.CBE_basis_moments[sd_idx][0] += res_M;
+        moments[sd_idx][0] += res_M;
         for(int a = 0; a < NUMDIMS; a++)
-            cbe_basis_p_a(pi.CBE_basis_moments[sd_idx], a, res_P[a]);
+            cbe_basis_p_a(moments[sd_idx], a, res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
         for(int a = 0; a < NUMDIMS; a++) {
             for(int b = a; b < NUMDIMS; b++) {
-                cbe_basis_T_w(pi.CBE_basis_moments[sd_idx], a, b,
-                    cbe_basis_T_r(pi.CBE_basis_moments[sd_idx], a, b) + res_T[a][b]);
+                cbe_basis_T_w(moments[sd_idx], a, b,
+                    cbe_basis_T_r(moments[sd_idx], a, b) + res_T[a][b]);
             }
         }
 #endif
         single_ok = cbe_basis_row_is_realizable(
-            pi.CBE_basis_moments[sd_idx], CBE_REPAIR_EPS_M_REL);
+            moments[sd_idx], CBE_REPAIR_EPS_M_REL);
         if(!single_ok) {
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                pi.CBE_basis_moments[sd_idx][k] = saved[sd_idx][k];
+                moments[sd_idx][k] = saved[sd_idx][k];
         }
     }
 
@@ -2024,20 +2209,20 @@ static void cbe_repair_cell_conservative_basis_states(
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
                 for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                    pi.CBE_basis_moments[j][k] = saved[j][k];
+                    moments[j][k] = saved[j][k];
             }
             /* Apply weighted share at f_try. */
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
                 const double w = cand_m[j] / cand_m_sum;
-                pi.CBE_basis_moments[j][0] += w * f_try * res_M;
+                moments[j][0] += w * f_try * res_M;
                 for(int a = 0; a < NUMDIMS; a++)
-                    cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_try * res_P[a]);
+                    cbe_basis_p_a(moments[j], a, w * f_try * res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
                 for(int a = 0; a < NUMDIMS; a++) {
                     for(int b = a; b < NUMDIMS; b++) {
-                        cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                            cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_try * res_T[a][b]);
+                        cbe_basis_T_w(moments[j], a, b,
+                            cbe_basis_T_r(moments[j], a, b) + w * f_try * res_T[a][b]);
                     }
                 }
 #endif
@@ -2046,7 +2231,7 @@ static void cbe_repair_cell_conservative_basis_states(
             bool all_ok = true;
             for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
                 if(!is_candidate[j]) continue;
-                if(!cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL)) {
+                if(!cbe_basis_row_is_realizable(moments[j], CBE_REPAIR_EPS_M_REL)) {
                     all_ok = false; break;
                 }
             }
@@ -2061,16 +2246,16 @@ static void cbe_repair_cell_conservative_basis_states(
         for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
             if(!is_candidate[j]) continue;
             for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++)
-                pi.CBE_basis_moments[j][k] = saved[j][k];
+                moments[j][k] = saved[j][k];
             const double w = cand_m[j] / cand_m_sum;
-            pi.CBE_basis_moments[j][0] += w * f_lo * res_M;
+            moments[j][0] += w * f_lo * res_M;
             for(int a = 0; a < NUMDIMS; a++)
-                cbe_basis_p_a(pi.CBE_basis_moments[j], a, w * f_lo * res_P[a]);
+                cbe_basis_p_a(moments[j], a, w * f_lo * res_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
             for(int a = 0; a < NUMDIMS; a++) {
                 for(int b = a; b < NUMDIMS; b++) {
-                    cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                        cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w * f_lo * res_T[a][b]);
+                    cbe_basis_T_w(moments[j], a, b,
+                        cbe_basis_T_r(moments[j], a, b) + w * f_lo * res_T[a][b]);
                 }
             }
 #endif
@@ -2103,15 +2288,14 @@ static void cbe_repair_cell_conservative_basis_states(
         const bool T_fp = true;
 #endif
         if(!(M_fp && P_fp && T_fp)) {
-            /* Deterministic mass-positive proportional fallback (codex blocker
-             * fix 2026-06-04). Replaces the prior "concentrate the FULL
-             * unabsorbed residual on a single donor" path which (a) could
-             * leave m_donor <= 0 for large negative unab_M, and (b) silently
-             * relied on a row-local PSD projection of unbounded magnitude to
-             * clean up T.
+            /* Deterministic mass-positive proportional fallback. Avoids
+             * concentrating the FULL unabsorbed residual on a single donor,
+             * which (a) could leave m_donor <= 0 for large negative unab_M,
+             * and (b) would rely on a row-local PSD projection of unbounded
+             * magnitude to clean up T.
              *
-             * Codex round-2 correction (2026-06-04): the denominator must be
-             * the CURRENT cell mass sum (post-Step-6 donation at f_eff), NOT
+             * The denominator must be the CURRENT cell mass sum (post-Step-6
+             * donation at f_eff), NOT
              * M_new (the pre-donation sum). At Step 7 entry the cell holds
              *   M_cur = M_new + f_eff * res_M
              * so applying (m_b / M_cur) * unab_M gives Sum w_j = 1 exactly
@@ -2139,18 +2323,18 @@ static void cbe_repair_cell_conservative_basis_states(
              * cold/warm Mac smoke; a non-FP magnitude signals upstream
              * pathological cell state surfaced via the dT_out path). */
             double M_cur = 0.0;
-            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) M_cur += pi.CBE_basis_moments[j][0];
+            for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) M_cur += moments[j][0];
             if(M_cur > 0) {
                 for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-                    const double w_j = pi.CBE_basis_moments[j][0] / M_cur;
-                    pi.CBE_basis_moments[j][0] += w_j * unab_M;
+                    const double w_j = moments[j][0] / M_cur;
+                    moments[j][0] += w_j * unab_M;
                     for(int a = 0; a < NUMDIMS; a++)
-                        cbe_basis_p_a(pi.CBE_basis_moments[j], a, w_j * unab_P[a]);
+                        cbe_basis_p_a(moments[j], a, w_j * unab_P[a]);
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
                     for(int a = 0; a < NUMDIMS; a++) {
                         for(int b = a; b < NUMDIMS; b++) {
-                            cbe_basis_T_w(pi.CBE_basis_moments[j], a, b,
-                                cbe_basis_T_r(pi.CBE_basis_moments[j], a, b) + w_j * unab_T[a][b]);
+                            cbe_basis_T_w(moments[j], a, b,
+                                cbe_basis_T_r(moments[j], a, b) + w_j * unab_T[a][b]);
                         }
                     }
 #endif
@@ -2165,13 +2349,13 @@ static void cbe_repair_cell_conservative_basis_states(
      * preserves m_b individually; trace-delta accumulated into dT_local. */
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
     for(int j = 0; j < CBE_INTEGRATOR_NBASIS; j++) {
-        if(cbe_basis_row_is_realizable(pi.CBE_basis_moments[j], CBE_REPAIR_EPS_M_REL))
+        if(cbe_basis_row_is_realizable(moments[j], CBE_REPAIR_EPS_M_REL))
             continue;
-        const double m_b = pi.CBE_basis_moments[j][0];
+        const double m_b = moments[j][0];
         if(!(m_b > 0)) continue;
         double dT_last = 0.0;
         (void)cbe_basis_row_project_central_stress_to_PSD(
-            pi.CBE_basis_moments[j], 0.0, &dT_last);
+            moments[j], 0.0, &dT_last);
         dT_local += dT_last;
     }
 #endif
@@ -2179,14 +2363,26 @@ static void cbe_repair_cell_conservative_basis_states(
     if(dT_out) *dT_out = dT_local;
 }
 
+/* Thin particle-object wrapper preserving the original conserved-path call
+ * signature: forwards the particle's conserved basis moments to the
+ * array-level core above. The predictor (later) calls the core directly on
+ * the predicted (_pred) storage so conserved state is never touched. */
+KOKKOS_INLINE_FUNCTION
+static void cbe_repair_cell_conservative_basis_states(
+    struct particle_data& pi,
+    double *dT_out)
+{
+    cbe_repair_basis_states_core(pi.CBE_basis_moments, dT_out);
+}
 
-/* Donor-trial helper for the aggregate outflow-budget limiter (commit 2).
+
+/* Donor-trial helper for the aggregate outflow-budget limiter.
  * Tests whether ALL candidate donors stay row-local realizable when fraction
- * f of the excess is redistributed from basis a. Extracted from a captured
- * lambda inside cbe_apply_basis_outflow_budget per codex 2026-06-05 -- a
- * KOKKOS_INLINE_FUNCTION at file scope is device-portable under CUDA/HIP
- * where a captured C++ lambda inside another KOKKOS_INLINE_FUNCTION is a
- * portability hazard.
+ * f of the excess is redistributed from basis a. A file-scope
+ * KOKKOS_INLINE_FUNCTION (rather than a captured lambda inside
+ * cbe_apply_basis_outflow_budget) is device-portable under CUDA/HIP, where a
+ * captured C++ lambda inside another KOKKOS_INLINE_FUNCTION is a portability
+ * hazard.
  *
  * Inputs:
  *   pi          particle (read-only access to moments + moments_dt + Vel)
@@ -2247,8 +2443,7 @@ static bool cbe_outbudget_trial_donors_realizable(
 }
 
 
-/* Aggregate per-basis outflow-budget limiter (commit 2 of the limiter pair,
- * 2026-06-04; Phil + codex review). For each basis a whose dt*outflow_rate
+/* Aggregate per-basis outflow-budget limiter. For each basis a whose dt*outflow_rate
  * exceeds f_out * m_a, scale the outflow rates by c = f_out*m_a/dt/Udot_out0
  * and redistribute the saved (1-c)*Udot_out among capacity-weighted donor
  * bases (b != a). Cell-summed dt-accumulator is preserved exactly by
@@ -2261,15 +2456,15 @@ static bool cbe_outbudget_trial_donors_realizable(
  *                                  NEGATIVE; -ledger -> positive out rate)
  *   pi.CBE_basis_moments_dt[b][k]  full net flux rate (existing) -- used by
  *                                  the projected-donor realizability check
- *                                  (codex 2026-06-04: donor check MUST
- *                                  include donor's existing rate, not just
- *                                  the limiter correction)
+ *                                  (the donor check MUST include donor's
+ *                                  existing rate, not just the limiter
+ *                                  correction)
  *   pi.Vel                         V_old for the frame round-trip
  *
  * Inputs modified:
  *   pi.CBE_basis_moments_dt[][]    a += excess[k]; donors -= w_b * f * excess[k]
  *
- * Frame-consistency for the donor PSD check (codex 2026-06-04, EXACT not
+ * Frame-consistency for the donor PSD check (EXACT, not
  * approximate): row-local realizability `M = m*T - p p^T PSD` is
  * frame-invariant under affine velocity transforms when the absolute<->relative
  * conversion uses the SAME V on both sides. Using V_old here is therefore
@@ -2277,7 +2472,7 @@ static bool cbe_outbudget_trial_donors_realizable(
  * V_new = MMV from the post-update MMV; the V_new drift does not affect
  * row-local realizability per the same invariance.
  *
- * Projected donor state INCLUDES donor's existing rate (codex 2026-06-04):
+ * Projected donor state INCLUDES donor's existing rate:
  *   U_abs_proj[b] = U_abs_old[b] + dt * (CBE_basis_moments_dt[b] + apply_to_b)
  * NOT just dt * apply_to_b. This catches the failure where a donor is
  * current-state realizable but already near overdrain from its own flux
@@ -2299,9 +2494,7 @@ static bool cbe_outbudget_trial_donors_realizable(
  *
  * Diag is nullable. Returns max-severity status code observed.
  *
- * Per [feedback_never_originate_remote_hpc] and the parallel endrun work,
- * this helper deliberately avoids any new endrun codes (Phil + codex
- * 2026-06-04). */
+ * This helper deliberately avoids any new endrun codes. */
 KOKKOS_INLINE_FUNCTION
 static int cbe_apply_basis_outflow_budget(
     struct particle_data& pi,
@@ -2317,7 +2510,7 @@ static int cbe_apply_basis_outflow_budget(
 
     /* Donor projected-realizability test is in the standalone
      * cbe_outbudget_trial_donors_realizable helper above (file-scope
-     * KOKKOS_INLINE_FUNCTION; device-portable per codex 2026-06-05). */
+     * KOKKOS_INLINE_FUNCTION; device-portable). */
 
     for(int a = 0; a < CBE_INTEGRATOR_NBASIS; a++) {
         const double m_a       = pi.CBE_basis_moments[a][0];
@@ -2404,15 +2597,78 @@ static int cbe_apply_basis_outflow_budget(
 }
 
 
+/* SSOT frame round-trip used by the conserved CBE drift-kick (and, later,
+ * the predictor). Encapsulates kick Steps 1-5: read RELATIVE basis rows in
+ * the V_old frame, convert to ABSOLUTE, apply the absolute-frame moment rate
+ * scaled by `coeff` (= nfac*dt for the conserved kick), derive V_new from the
+ * updated mass-weighted-mean basis velocity, and convert back to RELATIVE
+ * storage in the V_new frame. `rate` is an ABSOLUTE-frame rate array (e.g.
+ * CBE_basis_moments_dt). In-place use (src_rows == dst_rows) is safe: every
+ * source row is read into locals before any destination row is written.
+ * V_new is computed 3-wide (inactive dims default to 0, or V_old in the
+ * m<=0 fallback); the caller decides which components to write. */
+KOKKOS_INLINE_FUNCTION
+static void cbe_apply_moment_rate_framecorrect(
+    const double src_rows[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double V_old[3],
+    const double rate[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    double coeff,
+    double dst_rows[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    double V_new[3])
+{
+    /* Step 1+2: relative storage (V_old frame) -> absolute per basis. */
+    double m_b_arr[CBE_INTEGRATOR_NBASIS];
+    double p_abs_arr[CBE_INTEGRATOR_NBASIS][3];
+    double T_abs_arr[CBE_INTEGRATOR_NBASIS][3][3];
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_relative_row_to_absolute(src_rows[j], V_old,
+                                     &m_b_arr[j], p_abs_arr[j], T_abs_arr[j]);
+    }
+
+    /* Step 3: apply coeff * absolute-frame rate. */
+    double m_new_total = 0;
+    double p_abs_new_total[3] = {0,0,0};
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        m_b_arr[j] += coeff * rate[j][0];
+        m_new_total += m_b_arr[j];
+        for(int a=0;a<NUMDIMS;a++) {
+            p_abs_arr[j][a] += coeff * cbe_basis_p_r(rate[j], a);
+            p_abs_new_total[a] += p_abs_arr[j][a];
+        }
+#if defined(CBE_INTEGRATOR_SECONDMOMENT)
+        for(int a=0;a<NUMDIMS;a++) {
+            T_abs_arr[j][a][a] += coeff * cbe_basis_T_r(rate[j], a, a);
+            for(int b=a+1;b<NUMDIMS;b++) {
+                const double dT_ab = coeff * cbe_basis_T_r(rate[j], a, b);
+                T_abs_arr[j][a][b] += dT_ab; T_abs_arr[j][b][a] += dT_ab;
+            }
+        }
+#endif
+    }
+
+    /* Step 4: V_new = mass-weighted-mean basis velocity (defensive copy of
+     * V_old when total mass is non-positive). */
+    V_new[0] = 0; V_new[1] = 0; V_new[2] = 0;
+    if(m_new_total > 0) {
+        for(int a=0;a<NUMDIMS;a++) V_new[a] = p_abs_new_total[a] / m_new_total;
+    } else {
+        for(int a=0;a<3;a++) V_new[a] = V_old[a];
+    }
+
+    /* Step 5: absolute -> relative storage in the V_new frame. */
+    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        cbe_absolute_to_relative_row(m_b_arr[j], p_abs_arr[j], T_abs_arr[j],
+                                     V_new, dst_rows[j]);
+    }
+}
+
 /* GPU-callable per-particle drift-kick update for the CBE integrator.
  * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
  * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
  *
- * Wave-CBE Fix #2b (2026-06-04): the legacy in-place realizability chain
- * (active-diagonal floor + 3D Cauchy-Schwarz off-diag + det crossnorm +
- * SPD projection + stochastic split-largest) is replaced by a single call
- * to cbe_repair_cell_conservative_basis_states. The 2026-06-04 absolute
- * round-trip (nfac + frame conversion + V_new derivation) is unchanged.
+ * Cell-state realizability is handled by a single call to
+ * cbe_repair_cell_conservative_basis_states, following the absolute
+ * round-trip (nfac + frame conversion + V_new derivation).
  *
  * *dT_out (nullable) receives the sum-over-bases trace-delta from PSD
  * projections inside the repair helper; caller passes nullptr to skip
@@ -2421,7 +2677,7 @@ KOKKOS_INLINE_FUNCTION
 static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
                                      double *dT_out)
 {
-    /* Codex 2026-06-04 finite absolute-update round-trip.
+    /* Finite absolute-update round-trip.
      *
      * Per particle, per step:
      *   1. Read RELATIVE storage in current pi.Vel frame (V_old).
@@ -2439,7 +2695,7 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      *   6. Set pi.Vel = V_new (CBE-induced bulk velocity is now derived,
      *      NOT routed through GravAccel; gravity kicks are independent).
      *   7. Conservative cell-state realizability repair via SSOT helper
-     *      cbe_repair_cell_conservative_basis_states (Fix #2b, 2026-06-04).
+     *      cbe_repair_cell_conservative_basis_states.
      *
      * The nfac rate-limit (capping per-basis |dm|/m at 0.75) is preserved
      * from the legacy operator as a robustness safeguard. The legacy
@@ -2453,7 +2709,7 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
      * cbe_diagnostics.txt col-8). dP from this kernel is identically zero
      * (repair preserves Σ p_rel and projection only touches stress slots). */
 
-    /* Aggregate outflow-budget limiter (commit 2, 2026-06-04 Phil + codex).
+    /* Aggregate outflow-budget limiter.
      * Runs BEFORE nfac so subsequent steps operate on the capped rates.
      * No-op on the cold/warm 1D smoke tests we validate against (basis
      * outflows are well within f_out*m_a); fires only in the scratch-basis
@@ -2462,7 +2718,7 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
         struct CbeOutflowBudgetDiag obdiag_local{};
         int obstatus = cbe_apply_basis_outflow_budget(pi, dt, &obdiag_local);
 #ifdef CBE_INTEGRATOR_OUTBUDGET_VERBOSE
-        /* Opt-in verbose smoke verification (codex 2026-06-04): default OFF.
+        /* Opt-in verbose smoke verification: default OFF.
          * Enable by adding CBE_INTEGRATOR_OUTBUDGET_VERBOSE to Config.sh and
          * grep stdout for "[CBE outbudget]" -- zero hits on clean smoke =
          * limiter did not fire. Device-safe printf (no fflush/endrun). */
@@ -2496,69 +2752,88 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
     double nfac = 1.0;
     if(biggest_dm < -0.75) nfac = -0.75 / biggest_dm;
 
-    /* Step 1+2: read relative storage and convert each basis to absolute
-     * using V_old = current pi.Vel. */
+    /* Steps 1-5 via the SSOT frame round-trip helper: read RELATIVE storage
+     * in the V_old=pi.Vel frame, convert to ABSOLUTE, apply the nfac-limited
+     * absolute-frame rate (coeff = nfac*dt), derive V_new from the updated
+     * mass-weighted-mean basis velocity, and convert back to RELATIVE storage
+     * in the V_new frame. In-place (src==dst==pi.CBE_basis_moments) is safe. */
     const double V_old[3] = { pi.Vel[0], pi.Vel[1], pi.Vel[2] };
-    double m_b_arr[CBE_INTEGRATOR_NBASIS];
-    double p_abs_arr[CBE_INTEGRATOR_NBASIS][3];
-    double T_abs_arr[CBE_INTEGRATOR_NBASIS][3][3];
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        cbe_relative_row_to_absolute(pi.CBE_basis_moments[j], V_old,
-                                     &m_b_arr[j], p_abs_arr[j], T_abs_arr[j]);
-    }
-
-    /* Step 3: apply nfac-limited absolute-frame update. dt_accumulator is
-     * in absolute frame post-postgrav (which now does only mass closure). */
-    double m_new_total = 0;
-    double p_abs_new_total[3] = {0,0,0};
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        m_b_arr[j] += nfac * dt * pi.CBE_basis_moments_dt[j][0];
-        m_new_total += m_b_arr[j];
-        for(int a=0;a<NUMDIMS;a++) {
-            p_abs_arr[j][a] += nfac * dt * cbe_basis_p_r(pi.CBE_basis_moments_dt[j], a);
-            p_abs_new_total[a] += p_abs_arr[j][a];
-        }
-#if defined(CBE_INTEGRATOR_SECONDMOMENT)
-        for(int a=0;a<NUMDIMS;a++) {
-            T_abs_arr[j][a][a] += nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, a);
-            for(int b=a+1;b<NUMDIMS;b++) {
-                const double dT_ab = nfac * dt * cbe_basis_T_r(pi.CBE_basis_moments_dt[j], a, b);
-                T_abs_arr[j][a][b] += dT_ab; T_abs_arr[j][b][a] += dT_ab;
-            }
-        }
-#endif
-    }
-
-    /* Step 4: derive V_new from new mass-weighted-mean basis velocity. */
-    double V_new[3] = {0,0,0};
-    if(m_new_total > 0) {
-        for(int a=0;a<NUMDIMS;a++) V_new[a] = p_abs_new_total[a] / m_new_total;
-    } else {
-        for(int a=0;a<3;a++) V_new[a] = V_old[a];   /* defensive — m≤0 cell */
-    }
-
-    /* Step 5: convert each basis back to relative storage in V_new frame
-     * via SSOT helper. By construction Σ p_rel = 0 to machine eps. */
-    for(int j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
-        cbe_absolute_to_relative_row(m_b_arr[j], p_abs_arr[j], T_abs_arr[j],
-                                     V_new, pi.CBE_basis_moments[j]);
-    }
+    double V_new[3];
+    cbe_apply_moment_rate_framecorrect(pi.CBE_basis_moments, V_old,
+                                       pi.CBE_basis_moments_dt, nfac * dt,
+                                       pi.CBE_basis_moments, V_new);
 
     /* Step 6: pi.Vel <- V_new (CBE-induced bulk velocity, derived not
      * GravAccel-injected). Gravity kicks against pi.GravAccel remain
      * independent and apply only EXTERNAL gravitational acceleration. */
     for(int a=0;a<NUMDIMS;a++) pi.Vel[a] = V_new[a];
 
-    /* Step 7: conservative cell-state realizability repair (Fix #2b).
-     * Replaces the legacy in-place chain (active-diagonal floor + 3D
-     * Cauchy-Schwarz off-diag + det crossnorm + SPD projection +
-     * stochastic split-largest) with the single SSOT helper defined
-     * above. Operates on the now-frame-consistent relative storage. */
+    /* Step 7: conservative cell-state realizability repair via the single
+     * SSOT helper defined above. Operates on the now-frame-consistent
+     * relative storage. */
     cbe_repair_cell_conservative_basis_states(pi, dT_out);
+
+    /* Predictor reset: after the conserved kick, snap the predicted state to
+     * the new conserved state; subsequent drifts advance pred from here and
+     * the flux reads pred. Writes ONLY the derived _pred fields (conserved
+     * state untouched). NOTE: pi.Vel here is the current post-kick CBE frame —
+     * do_the_kick has already applied gravity before this CBE kick, and V_new
+     * was derived from that gravity-inclusive frame. So CBE_VelPred starts from
+     * the current gravity-inclusive frame; the predictor adds only the gravity
+     * increment over later drift intervals (no double counting). */
+    for(int jp=0; jp<CBE_INTEGRATOR_NBASIS; jp++)
+        for(int kp=0; kp<CBE_INTEGRATOR_NMOMENTS; kp++)
+            pi.CBE_basis_moments_pred[jp][kp] = pi.CBE_basis_moments[jp][kp];
+    for(int ap=0; ap<3; ap++) pi.CBE_VelPred[ap] = pi.Vel[ap];
+}
+
+/* Predicted-state drift for the adaptive-timestep CBE predictor. Advances the
+ * derived (CBE_basis_moments_pred, CBE_VelPred) over a drift interval so an
+ * active short-dt neighbor reading these sees an estimate of where this cell
+ * WILL be, instead of its stale begin-of-step conserved reservoir (the cause
+ * of the adaptive over-siphon). Mirrors do_cbe_drift_kick_kernel on the _pred
+ * storage: gravity enters via the FRAME velocity V_old_pred (matching
+ * do_the_kick's GravAccel*dt_gravkick update of pi.Vel, which the conserved
+ * CBE kick then reads as V_old), then the SSOT frame round-trip applies the
+ * last-active CBE moment rate over dt_drift, then a realizability repair on the
+ * predicted rows. Writes ONLY the _pred fields; conserved state untouched.
+ * dt_gravkick / dt_gravkick_pm come from the same get_gravkick_factor
+ * machinery as the gas VelPred prediction (predict.cc). */
+KOKKOS_INLINE_FUNCTION
+static void do_cbe_predict_drift_kernel(struct particle_data& pi, double dt_drift,
+                                        double dt_gravkick, double dt_gravkick_pm)
+{
+    if(!(pi.Mass > 0)) return;
+
+    /* Fold the gravity drift into the frame velocity (NOT the relative
+     * moments): a uniform velocity shift leaves each basis's central stress
+     * invariant and only advects the mean. GravAccel*dt_gravkick (no cf_a2inv,
+     * matching do_the_kick); PM long-range piece by analogy to gas VelPred. */
+    double V_old_pred[3];
+    for(int a=0;a<3;a++) V_old_pred[a] = pi.CBE_VelPred[a] + pi.GravAccel[a]*dt_gravkick;
+#ifdef PMGRID
+    for(int a=0;a<3;a++) V_old_pred[a] += pi.GravPM[a]*dt_gravkick_pm;
+#else
+    (void)dt_gravkick_pm;
+#endif
+
+    double V_new_pred[3];
+    double pred_coeff = dt_drift;
+    cbe_apply_moment_rate_framecorrect(pi.CBE_basis_moments_pred, V_old_pred,
+                                       pi.CBE_basis_moments_dt, pred_coeff,
+                                       pi.CBE_basis_moments_pred, V_new_pred);
+    for(int a=0;a<3;a++) pi.CBE_VelPred[a] = V_new_pred[a];
+
+    /* Realizability repair on the PREDICTED rows only (array-level core, never
+     * the conserved-state wrapper). dT is local/discarded — predicted-repair
+     * diagnostics stay out of cbe_diagnostics until the flux consumes pred. */
+    double dT_pred = 0.0;
+    cbe_repair_basis_states_core(pi.CBE_basis_moments_pred, &dT_pred);
+    (void)dT_pred;
 }
 
 /* GPU-callable per-particle post-gravity finalization for the CBE integrator.
- * Codex 2026-06-04: this routine is now minimal — it ONLY enforces basis-
+ * This routine is minimal — it ONLY enforces basis-
  * mass closure (Σ_α dm_α/dt = 0 to FP) as a safety net. CBE bulk velocity
  * is NOT injected into pi.GravAccel anymore; the absolute round-trip in
  * do_cbe_drift_kick_kernel handles frame conversion and derives V_new from
@@ -2577,13 +2852,12 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt,
 KOKKOS_INLINE_FUNCTION
 static void do_cbe_postgravity_kernel(struct particle_data& pi)
 {
-    /* Codex 2026-06-04 rewrite. The OLD postgrav (a) injected a_cbe into
+    /* The OLD postgrav (a) injected a_cbe into
      * pi.GravAccel — routing CBE bulk velocity through the gravity kick —
      * and (b) converted dt-accumulator's per-basis dp_abs/dT_abs to relative
      * frame using a continuous-time differential formula. Both were
-     * structural bugs: (a) double-counted CBE bulk velocity (see the
-     * 2026-06-04 SPIKE A/B), and (b) lacked the O(dt²) finite-step terms
-     * needed for V-changing-during-step accuracy.
+     * structural bugs: (a) double-counted CBE bulk velocity, and (b) lacked
+     * the O(dt²) finite-step terms needed for V-changing-during-step accuracy.
      *
      * The new design moves the frame conversion into a finite absolute
      * round-trip inside do_cbe_drift_kick_kernel (see SSOT helpers
