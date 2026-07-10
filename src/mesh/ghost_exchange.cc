@@ -311,38 +311,6 @@ extern "C" void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end)
     if(g_glt_cache.valid) g_glt_cache.needs_refit = 1;
 }
 
-static unsigned int ghost_exchange_eligible_type_mask(void)
-{
-    static int initialized = 0;
-    static unsigned int mask = GHOST_TYPE_ALL;
-    if(initialized) return mask;
-    initialized = 1;
-
-    const char *e = getenv("GIZMO_GHOST_ELIGIBLE_TYPES");
-    if(!e || !e[0]) return mask;
-
-    unsigned int parsed = 0;
-    if(strchr(e, ',') || strchr(e, ' ')) {
-        const char *p = e;
-        while(*p) {
-            while(*p == ',' || *p == ' ' || *p == '\t') p++;
-            if(!*p) break;
-            char *endp = NULL;
-            long t = strtol(p, &endp, 10);
-            if(endp == p || t < 0 || t >= TILE_NUM_PTYPES) { parsed = 0; break; }
-            parsed |= (1u << (unsigned)t);
-            p = endp;
-        }
-    } else {
-        char *endp = NULL;
-        unsigned long v = strtoul(e, &endp, 0);
-        if(endp && *endp == '\0') parsed = (unsigned int)v;
-    }
-    parsed &= GHOST_TYPE_ALL;
-    if(parsed) mask = parsed;
-    return mask;
-}
-
 /* TEMPORARY top-leaf-router oracle gate (stripped after the router is blessed).
  * GIZMO_GHOST_ROUTE_ORACLE=1 enables the compute-and-compare oracle in the
  * request-driven path: broadcast stays authoritative; routed discovery is
@@ -3436,7 +3404,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     float *h_compact_xyzh = NULL;
     int *h_pool_types = NULL;
     int from_cache = 0;
-    unsigned int desired_pool_mask = (ghost_exchange_eligible_type_mask() | supply_mask) & GHOST_TYPE_ALL;
+    /* All particle types are eligible as ghost sources. */
+    unsigned int desired_pool_mask = GHOST_TYPE_ALL;
     /* Cache-key invariant (codex 2026-06-07): {NumPart, safety, supply-pool
      * coverage, radius_policy, j_radius_scale}.  Ti and dirty bits drive REFIT
      * (glt_cache_refit_from_particles), NOT rebuild — see below. */
