@@ -359,23 +359,6 @@ static int ghost_route_oracle_enabled(void)
     return enabled;
 }
 
-/* TEMPORARY top-leaf-router TRANSPORT gate (C3; separate from the oracle gate).
- * GIZMO_GHOST_ROUTE_TRANSPORT=1 makes the ROUTED discovery AUTHORITATIVE (it
- * installs the ghosts) for ONEWAY callers; broadcast becomes the fallback (and,
- * with the oracle also on, the compare-before-install check).  Default OFF until
- * the FIRE transport+oracle gate is green AND timing improves.  Env => uniform on
- * every rank => the skip/run-broadcast decision is collective-safe. */
-static int ghost_route_transport_enabled(void)
-{
-    static int initialized = 0;
-    static int enabled = 0;
-    if(initialized) return enabled;
-    initialized = 1;
-    const char *e = getenv("GIZMO_GHOST_ROUTE_TRANSPORT");
-    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
-    return enabled;
-}
-
 /* Stage-3 producer mode (Step 5).  Selects HOW the matched ghost set is produced;
  * Stages 1-2 (route CSR -> Alltoall -> Alltoallv -> received queries) are shared
  * SSOT regardless of mode.  HOST_ONLY = host walk only; HOST_AND_DEVICE_VALIDATE =
@@ -462,20 +445,6 @@ static int ghost_route_hier_oracle_enabled(void)
     const char *e = getenv("GIZMO_GHOST_ROUTE_HIER_ORACLE");
     enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
     return enabled;
-}
-
-/* H2: routed transport uses the HIERARCHICAL constructor by default; set
- * GIZMO_GHOST_ROUTE_FLAT=1 to force the (slow) flat constructor — a perf A/B
- * knob, NOT for production.  Env => uniform per rank. */
-static int ghost_route_flat_forced(void)
-{
-    static int initialized = 0;
-    static int forced = 0;
-    if(initialized) return forced;
-    initialized = 1;
-    const char *e = getenv("GIZMO_GHOST_ROUTE_FLAT");
-    forced = (e && e[0] && e[0] != '0') ? 1 : 0;
-    return forced;
 }
 
 /* TEMPORARY H4b flat-vs-hierarchical SYMMETRIC owner-set oracle gate (stripped
@@ -1219,44 +1188,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
 static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
 static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
-/* Env gate: GIZMO_GHOST_REQUEST_DRIVEN=1 selects the per-active query-driven
- * exchange (Phase 2 design). Default 0 retains the legacy tile-overlap path
- * during validation. Once Phase 2 validates against R1 baseline waste
- * numbers, this becomes the only path and the gate goes away. */
-static int ghost_request_driven_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_GHOST_REQUEST_DRIVEN");
-        cached = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    return cached;
-}
-
-/* Caller allowlist for request-driven path. Only callers we have explicitly
- * audited for narrow supply_mask + caller-built query list go through
- * request-driven. Everything else falls back to legacy tile-overlap.
- *
- * Reason: shared all-types tree + supply_mask=ALL collapses per-type hmax
- * filter into scalar hmax → near-O(N) walk → 180 s/call regression seen on
- * Vista 2-rank fire_m11i (job 695755 era). The migration plan is to add
- * each caller here as it's converted to a typed spec; until then they go
- * legacy where the cost is bounded. */
-static int ghost_request_driven_caller_safe(const struct ghost_exchange_spec_t *spec)
-{
-    if(!spec || !spec->caller_name) return 0;
-    const char *n = spec->caller_name;
-    if(strcmp(n, "hydro_oneway") == 0)        return 1;
-    if(strcmp(n, "hydro_symmetric") == 0)     return 1;
-    if(strncmp(n, "gradients_", 10) == 0)     return 1;
-    if(strcmp(n, "mech_fb_v1") == 0)          return 1;
-    if(strcmp(n, "sink_env1") == 0)           return 1;
-    if(strcmp(n, "sink_env2") == 0)           return 1;
-    if(strcmp(n, "sink_feed") == 0)           return 1;
-    if(strcmp(n, "sink_swk") == 0)            return 1;
-    return 0;
-}
-
 static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 {
     /* Tiny-N corridor counter: increments on API entry, before any
@@ -1265,8 +1196,6 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * declarations/lifecycle_counters.h. */
     g_ghost_import_counter++;
 
-    const int rd_enabled = ghost_request_driven_enabled();
-    const int caller_safe = ghost_request_driven_caller_safe(spec);
     /* Phase 0 instrumentation: env-gated, all-ranks. Brackets dispatch so
      * both impls are captured without duplication. Off ⇒ no work beyond
      * one static int read. */
@@ -1281,16 +1210,17 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
         t_phase0_start = my_second();
         nlocal_pre = NumPart;
     }
-    /* Codex 2026-05-12: explicit-query specs (n_queries >= 0) MUST go
-     * through the request-driven path. Tile-overlap has no way to use
-     * spec->query_pos / spec->query_h — it scans ActiveParticleList and
-     * filters by request_type_mask. For runner-issued specs with
-     * request_type_mask=0u + explicit query list, tile-overlap imports
-     * zero ghosts (all actives filtered out), silently breaking the
-     * caller's neighbor lookup. Force request-driven whenever queries
-     * are explicit, independent of env / allowlist. */
+    /* Explicit-query callers (runner-issued specs, n_queries >= 0) use the
+     * request-driven path; tile-overlap cannot consume an explicit query list
+     * (it scans ActiveParticleList filtered by request_type_mask, so a spec with
+     * request_type_mask=0u + an explicit list would import zero ghosts).
+     * hydro_oneway carries no explicit list but uses the routed ONEWAY discovery
+     * path, so it goes request-driven too.  Other non-explicit callers remain on
+     * tile-overlap pending their own migration. */
     const int explicit_queries = (spec && spec->n_queries >= 0);
-    const int want_request_driven = explicit_queries || (rd_enabled && caller_safe);
+    const int hydro_oneway_caller = (spec && spec->caller_name
+                                     && strcmp(spec->caller_name, "hydro_oneway") == 0);
+    const int want_request_driven = explicit_queries || hydro_oneway_caller;
     const char *selected_impl;
     if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
@@ -1333,8 +1263,8 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 /* Public entry for new-style callers that build their own spec literal at
  * the call site (mech_fb_v1 onward). The literal IS the single source of
  * truth for that loop's physics — to flip mode / supply_mask / query list,
- * edit the literal at the caller. ghost_exchange.cc has no per-caller
- * knowledge. */
+ * edit the literal at the caller. Dispatch keys only on spec fields
+ * (n_queries, and the hydro_oneway caller_name). */
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec)
 {
     ghost_exchange_impl(spec);
@@ -2880,8 +2810,8 @@ static char *compute_matched_routed(
             q_pos[i*3+2] = local_queries[i].pos[2];
             q_h[i]       = local_queries[i].h;
         }
-        /* H2: hierarchical TopNodes descent by default; flat is the A/B fallback
-         * (GIZMO_GHOST_ROUTE_FLAT) and the reference for the flat-vs-hier oracle. */
+        /* Hierarchical TopNodes descent (production); the flat constructor is the
+         * reference for the flat-vs-hier oracle. */
         int rc = use_hier
             ? topleaf_router_route_queries_hier(q_pos, q_h, nq, supply_mask, oneway,
                                                 periodic_flags, box_sizes,
@@ -3382,7 +3312,7 @@ static int gx_fine_device_produce(
     enum gx_producer_mode fmode = matched_device ? device_mode : GX_PRODUCER_HOST_ONLY;
     char *matched_fine = compute_matched_routed_fine(local_queries, n_local_queries,
                                num_pool, supply_mask, search_mode, periodic_flags, box_sizes,
-                               !ghost_route_flat_forced(),
+                               /*use_hier=*/1,
                                g_glt_cache.radius_policy_when_built,
                                g_glt_cache.j_radius_scale_when_built,
                                g_glt_cache.safety_factor_when_built,
@@ -3644,10 +3574,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     double t_step3_walk_start = my_second();
 
-    /* C3b matched producer selection: ROUTED transport (gated, ONEWAY) installs;
-     * BROADCAST is the fallback (+ compare-before-install oracle).  Broadcast query
-     * gather is LAZY (ensure_broadcast_queries) — skipped in routed production. */
-    int want_routed = ghost_route_transport_enabled() && (search_mode == NGB_SEARCH_ONEWAY);
+    /* C3b matched producer selection: for ONEWAY callers the routed top-leaf
+     * discovery installs when top-leaf geometry is collectively available;
+     * BROADCAST is the fail-closed fallback (+ compare-before-install oracle).
+     * Broadcast query gather is LAZY (ensure_broadcast_queries) — skipped when
+     * routed installs. */
+    int want_routed = (search_mode == NGB_SEARCH_ONEWAY);
     int route_pre_ok_local = want_routed ? ((topleaf_router_geometry_acquire() == 0) ? 1 : 0) : 0;
     int route_pre_available = 0;
     if(want_routed)
@@ -3657,7 +3589,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     char *matched = NULL;
     int   used_routed = 0;
     enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry (5a-i) */
-    int   use_hier = !ghost_route_flat_forced();   /* H2: hierarchical route by default */
+    int   use_hier = 1;   /* H2: hierarchical route constructor (production) */
     double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
     /* Step-5 SYMM device-fine authority SELECTION (cheap + rank-uniform, BEFORE any heavy
@@ -3839,38 +3771,52 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         }
     }
 
-    /* Compare-before-install oracle (transport+oracle): routed must EQUAL broadcast.
-     * Sender-side compare of the exact (dest_rank, home_index=h_pool[p]) send
-     * identities Steps 4-6 will install; routed⊆broadcast so any broadcast send the
-     * routed set lacks is an UNDER-ROUTE.  Stop BEFORE install (drained at the Step-4
-     * poll) so a bad ghost set never reaches downstream physics. */
+    /* Compare-before-install oracle (transport+oracle): routed must EQUAL broadcast,
+     * BOTH ways.  Sender-side compare of the exact (dest_rank, home_index=h_pool[p])
+     * send identities Steps 4-6 will install:
+     *   UNDER-ROUTE (mb && !mr) — broadcast has a ghost the routed set lacks; the
+     *       safety-critical direction (missing physics) -> hard stop 7704.
+     *   EXTRA-MATCH (mr && !mb) — routed has a ghost broadcast lacks; a predicate/
+     *       snapshot bug (over-import; physics still correct but the invariant is
+     *       broken) -> hard stop 7722.
+     * Both are drained IMMEDIATELY below, BEFORE any Step-4 count/pack/send touches
+     * `matched`, so a bad ghost set never reaches the install path. */
     if(installed_producer == GX_INSTALLED_ONEWAY_ROUTED_BVH && oracle_on && matched) {
         char *matched_bcast = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                                         h_compact_xyzh, h_tiles, ntiles,
                                                         h_pool, num_pool, h_pool_types, supply_mask,
                                                         h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
-        int local_mismatch = (matched_bcast == NULL) ? 1 : 0;
-        int mt = -1, mp = -1;
-        if(matched_bcast) {
-            for(int t = 0; t < NTask && !local_mismatch; t++) {
+        long under_local = 0, extra_local = 0;   /* under-route / extra-match counts */
+        int  under_t = -1, under_p = -1, extra_t = -1, extra_p = -1;   /* first offenders */
+        if(matched_bcast == NULL) {
+            under_local = 1;   /* guard alloc fail -> treat as un-provable under-route */
+        } else {
+            for(int t = 0; t < NTask; t++) {
                 if(t == ThisTask) continue;
                 const char *mr = matched       + (size_t)t * num_pool;
                 const char *mb = matched_bcast + (size_t)t * num_pool;
                 for(int p = 0; p < num_pool; p++) {
-                    if(mb[p] && !mr[p]) { local_mismatch = 1; mt = t; mp = p; break; }
+                    if(mb[p] && !mr[p]) { under_local++; if(under_t < 0) { under_t = t; under_p = p; } }
+                    else if(mr[p] && !mb[p]) { extra_local++; if(extra_t < 0) { extra_t = t; extra_p = p; } }
                 }
             }
         }
-        if(local_mismatch) {
-            printf("[GX_ROUTE_TRANSPORT call=%d caller=%s rank=%d MISMATCH routed vs broadcast (dest=%d pool=%d home_idx=%d)]\n",
-                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, mt, mp,
-                   (mt >= 0 && mp >= 0) ? h_pool[mp] : -1);
-            fflush(stdout);
-        }
-        int mismatch_any = 0;
-        MPI_Allreduce(&local_mismatch, &mismatch_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(mismatch_any) {
-            gizmo_request_controlled_stop(7704, "ghost route transport: routed ghost set != broadcast (under-route)",
+        if(under_local > 0)
+            printf("[GX_ROUTE_TRANSPORT call=%d caller=%s rank=%d UNDER-ROUTE: %ld broadcast ghosts missing from routed (first dest=%d pool=%d home_idx=%d)]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, under_local,
+                   under_t, under_p, (under_t >= 0 && under_p >= 0) ? h_pool[under_p] : -1);
+        if(extra_local > 0)
+            printf("[GX_ROUTE_TRANSPORT call=%d caller=%s rank=%d EXTRA-MATCH: %ld routed ghosts not in broadcast (first dest=%d pool=%d home_idx=%d)]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), ThisTask, extra_local,
+                   extra_t, extra_p, (extra_t >= 0 && extra_p >= 0) ? h_pool[extra_p] : -1);
+        if(under_local > 0 || extra_local > 0) fflush(stdout);
+        long uv_in[2] = { under_local, extra_local }, uv_any[2] = { 0, 0 };
+        MPI_Allreduce(uv_in, uv_any, 2, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(uv_any[0] > 0) {
+            gizmo_request_controlled_stop(7704, "ghost route transport: broadcast ghosts missing from routed set (UNDER-ROUTE)",
+                                          __FILE__, __LINE__, __FUNCTION__);
+        } else if(uv_any[1] > 0) {
+            gizmo_request_controlled_stop(7722, "ghost route transport: routed set has ghosts broadcast lacks (EXTRA-MATCH; predicate/snapshot bug)",
                                           __FILE__, __LINE__, __FUNCTION__);
         } else if(ThisTask == 0) {
             printf("[GX_ROUTE_TRANSPORT call=%d caller=%s OK routed==broadcast]\n",
@@ -3878,6 +3824,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             fflush(stdout);
         }
         free(matched_bcast);
+        /* Drain BEFORE Step 4 dereferences `matched` (do not defer to a later poll). */
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:route_transport_compare");
     }
 
     /* H1 flat-vs-hierarchical owner-set oracle (gated; flat stays authoritative).
@@ -4435,7 +4383,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 char *matched_routed = compute_matched_routed(local_queries, n_local_queries,
                                            h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool, h_pool_types,
                                            supply_mask, h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
-                                           !ghost_route_flat_forced(), &tc, &ta, &tw,
+                                           /*use_hier=*/1, &tc, &ta, &tw,
                                            &fanout_sum, &fanout_max, &recv_this,
                                            &d_pairs, &d_pairs_nz, &d_hit_sum, &d_hit_max);
                 if(!matched_routed) {
