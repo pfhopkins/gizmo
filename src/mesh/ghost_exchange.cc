@@ -1178,17 +1178,17 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
         t_phase0_start = my_second();
         nlocal_pre = NumPart;
     }
-    /* Explicit-query callers (runner-issued specs, n_queries >= 0) use the
-     * request-driven path; tile-overlap cannot consume an explicit query list
-     * (it scans ActiveParticleList filtered by request_type_mask, so a spec with
-     * request_type_mask=0u + an explicit list would import zero ghosts).
-     * hydro_oneway carries no explicit list but uses the routed ONEWAY discovery
-     * path, so it goes request-driven too.  Other non-explicit callers remain on
-     * tile-overlap pending their own migration. */
+    /* Dispatch policy: explicit-query callers (runner-issued specs,
+     * n_queries >= 0) use the request-driven path — tile-overlap cannot consume
+     * an explicit query list (it scans ActiveParticleList filtered by
+     * request_type_mask, so a spec with request_type_mask=0u + an explicit list
+     * would import zero ghosts).  Every ONEWAY request also uses request-driven,
+     * regardless of caller: routed ONEWAY discovery is a property of the search
+     * mode, not of any specific loop.  Non-explicit SYMMETRIC callers remain on
+     * tile-overlap pending the SYMMETRIC routing migration. */
     const int explicit_queries = (spec && spec->n_queries >= 0);
-    const int hydro_oneway_caller = (spec && spec->caller_name
-                                     && strcmp(spec->caller_name, "hydro_oneway") == 0);
-    const int want_request_driven = explicit_queries || hydro_oneway_caller;
+    const int want_request_driven = explicit_queries
+                                    || (spec && spec->search_mode == NGB_SEARCH_ONEWAY);
     const char *selected_impl;
     if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
@@ -1232,7 +1232,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
  * the call site (mech_fb_v1 onward). The literal IS the single source of
  * truth for that loop's physics — to flip mode / supply_mask / query list,
  * edit the literal at the caller. Dispatch keys only on spec fields
- * (n_queries, and the hydro_oneway caller_name). */
+ * (explicit query list, or search_mode == NGB_SEARCH_ONEWAY). */
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec)
 {
     ghost_exchange_impl(spec);

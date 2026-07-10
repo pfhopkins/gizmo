@@ -5,8 +5,10 @@
  * The spec literal at the caller is the single source of truth for that
  * loop's (supply_type_mask, search_mode, query list). Editing those there
  * is the only edit needed to flip the call's physics. Dispatch keys only on
- * the spec fields (n_queries, and the hydro_oneway caller_name) — no other
- * per-caller special-casing lives in ghost_exchange.cc.
+ * spec fields: an explicit query list (n_queries >= 0) or search_mode ==
+ * NGB_SEARCH_ONEWAY selects request-driven; non-explicit SYMMETRIC callers
+ * use tile-overlap pending the SYMMETRIC routing migration. No per-caller
+ * special-casing lives in ghost_exchange.cc.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -42,9 +44,7 @@ struct ghost_exchange_spec_t {
     /* Multiplier on per-query h before the predicate. */
     double       safety_factor;
 
-    /* Caller label for diagnostic prints and dispatch selection.  Callers with
-     * an explicit query list (n_queries >= 0) and hydro_oneway use the
-     * request-driven path; other non-explicit callers use tile-overlap. */
+    /* Caller label for diagnostic prints only — dispatch never keys on it. */
     const char  *caller_name;
 
     /* Caller-owned explicit query list. n_queries >= 0 → use these. n_queries
