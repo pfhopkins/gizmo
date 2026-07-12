@@ -51,7 +51,7 @@
 #include <cmath>
 #include <cctype>
 
-#include "mode_b_p2p_transport.h"  /* mode_b_exchange_queries / _replies */
+#include "mode_b_p2p_transport.h"  /* ModeBBoundedExchange (query/reply transport) */
 
 /* Spec instantiations. Each #include declares one Spec type whose explicit
  * template instantiation appears at the bottom of this file. */
@@ -1726,6 +1726,7 @@ static void mode_b_remote_evaluate_into_buffer(
 
     long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
     long long diag_rounds = 0, diag_peak_sent = 0;
+    long long diag_recv_groups = 0, diag_peak_recv_env = 0, diag_peak_recv_bytes = 0;
     int cursor = 0;
     int ndone  = 0;
 
@@ -1847,26 +1848,53 @@ static void mode_b_remote_evaluate_into_buffer(
         diag_rounds++;
         if(round_env_count > diag_peak_sent) diag_peak_sent = round_env_count;
 
-        /* Stage 4: exchange queries (collective). Every rank participates even
-         * if it queued 0 this round (peers may target this rank's pool). The
-         * Allreduce(ndone) at the round's end keeps every rank's round count
-         * equal, so this exchange stays balanced. */
-        auto state = [&]{
+        /* Stage 4: exchange queries. Every rank participates even if it queued
+         * 0 this round (peers may target this rank's pool); the Allreduce(ndone)
+         * at the round's end keeps every rank's round count equal, so the
+         * exchange stays balanced. begin() posts ALL query-payload Isends + ALL
+         * reply Irecvs up front; the receiver then stages, evaluates, and
+         * answers incoming queries in memory-bounded WHOLE-PEER groups (the
+         * legacy import sub-chunk loop, code_block_xchange_perform_ops.h:96-174)
+         * instead of materializing every peer's payload at once. Group budget =
+         * the same All.BufferSize that sizes the sender bunch. The bound covers
+         * TRANSPORT payloads only (envelopes + replies) — candidate vectors and
+         * pair-kernel scratch scale with the group's query content, not with
+         * NTask. Peers are consumed in ascending rank order, so the
+         * concatenated per-group evaluation sequence — and the post-loop reply
+         * merge — keep the exact pre-group order (matters for j-writing specs). */
+        using XReply = typename std::conditional<DUAL_OUT, DualReplyEnvelope,
+                                                 ReplyEnvelope>::type;
+        ModeBBoundedExchange<Envelope, XReply> xch;
+        {
             StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
-            return mode_b_exchange_queries<Envelope>(queries_per_peer);
-        }();
+            xch.begin(queries_per_peer);
+        }
+        const size_t group_budget_bytes =
+            (size_t)((double)All.BufferSize * 1024.0 * 1024.0);
 
-    /* Stage 5: flatten received envelopes and build provenance map.
+        std::vector<int> group_peers;
+        std::vector<std::vector<Envelope>> group_queries;
+        while(true) {
+            bool have_group;
+            {
+                StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
+                have_group = xch.next_group(group_budget_bytes, group_peers, group_queries);
+            }
+            if(!have_group) break;
+            diag_recv_groups++;
+
+    /* Stage 5: flatten THIS GROUP's envelopes and build the provenance map.
      * provenance[k] carries:
-     *   - source_peer / source_qi: where in state.recv_queries[][] this k
-     *     came from (used for unflattening replies back into per-peer arrays).
+     *   - source_gidx / source_qi: where in group_queries[][] this k came
+     *     from (used for unflattening replies back into per-peer arrays);
+     *     source_peer = the peer's rank, for diagnostics.
      *   - origin_slot / origin_rank: copied from the received envelope; ride
      *     into the REPLY envelope so the active rank can merge by slot
      *     without relying on transport ordering (symmetric
      *     query and reply envelopes). */
     std::vector<ActiveData> peer_actives;
     struct Provenance {
-        int source_peer; int source_qi;
+        int source_gidx; int source_peer; int source_qi;
         int origin_slot; int origin_rank;
     };
     std::vector<Provenance> peer_provenance;
@@ -1877,17 +1905,22 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<int> peer_nodelist_flat;
     std::vector<int> peer_nnodes;
     std::vector<int> peer_probe;
-    int total_recv = 0;
-    for(int p = 0; p < nt; p++) total_recv += state.recv_counts[p];
+    size_t total_recv = 0, total_recv_bytes = 0;
+    for(size_t gi = 0; gi < group_peers.size(); gi++) {
+        total_recv += group_queries[gi].size();
+        total_recv_bytes += group_queries[gi].size() * (sizeof(Envelope) + sizeof(XReply));
+    }
+    if((long long)total_recv > diag_peak_recv_env) diag_peak_recv_env = (long long)total_recv;
+    if((long long)total_recv_bytes > diag_peak_recv_bytes) diag_peak_recv_bytes = (long long)total_recv_bytes;
     peer_actives.reserve(total_recv);
     peer_provenance.reserve(total_recv);
-    peer_nodelist_flat.reserve((size_t)total_recv * NODELISTLENGTH);
+    peer_nodelist_flat.reserve(total_recv * NODELISTLENGTH);
     peer_nnodes.reserve(total_recv);
     peer_probe.reserve(total_recv);
-    for(int p = 0; p < nt; p++) {
-        if(p == rank) continue;
-        for(int qi = 0; qi < state.recv_counts[p]; qi++) {
-            const Envelope& env = state.recv_queries[p][qi];
+    for(size_t gi = 0; gi < group_peers.size(); gi++) {
+        const int p = group_peers[gi];
+        for(int qi = 0; qi < (int)group_queries[gi].size(); qi++) {
+            const Envelope& env = group_queries[gi][qi];
             /* Sanity: envelope's origin_rank should equal sender p. */
             if(env.origin_rank != p) {
                 fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
@@ -1903,7 +1936,7 @@ static void mode_b_remote_evaluate_into_buffer(
              * with the transport-consistent origin rank p (== env.origin_rank when clean);
              * the run drains at the next phase poll with reply choreography intact. */
             peer_actives.push_back(env.active);
-            peer_provenance.push_back({p, qi, env.origin_slot, p});
+            peer_provenance.push_back({(int)gi, p, qi, env.origin_slot, p});
             peer_nnodes.push_back(env.n_nodes);
             peer_probe.push_back(env.oracle_untargeted_probe);
             for(int t = 0; t < NODELISTLENGTH; t++) peer_nodelist_flat.push_back(env.NodeList[t]);
@@ -2059,93 +2092,51 @@ static void mode_b_remote_evaluate_into_buffer(
         }
     }
 
-    if constexpr (DUAL_OUT) {
-        /* Iterative oracle is temporary port-validation scaffolding. Keep the
-         * transport simple and correct: production and brute replies travel in
-         * one payload, so we do not run two reply exchanges with identical MPI
-         * tags. */
-        std::vector<std::vector<DualReplyEnvelope>> replies_per_peer(nt);
-        for (int p = 0; p < nt; p++) {
-            replies_per_peer[p].assign(state.recv_counts[p], DualReplyEnvelope{});
-        }
-        for (int k = 0; k < K; k++) {
-            const Provenance& pv = peer_provenance[k];
-            DualReplyEnvelope& re = replies_per_peer[pv.source_peer][pv.source_qi];
-            re.origin_slot  = pv.origin_slot;
-            re.origin_rank  = pv.origin_rank;
-            re.accum_prod   = peer_replies[k];
-            re.accum_oracle = peer_replies_oracle[k];
-        }
-        auto recv_replies = [&]{
-            StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
-            return mode_b_exchange_replies<Envelope, DualReplyEnvelope>(replies_per_peer, state);
-        }();
-        {
-            StageTimer t(tim ? &tim->dt_reduce : nullptr);
-            if (N > 0 && accums_oracle_out != nullptr) {
-                for (int p = 0; p < nt; p++) {
-                    if (p == rank) continue;
-                    const int q_to_p = state.sent_counts[p];
-                    for (int qi = 0; qi < q_to_p; qi++) {
-                        const DualReplyEnvelope& re = recv_replies[p][qi];
-                        if (re.origin_rank != rank) {
-                            fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
-                                    "dual reply envelope origin_rank=%d != ThisTask=%d from "
-                                    "peer=%d qi=%d. Transport/peer-side corruption?\n",
-                                    rank, Spec::loop_name, re.origin_rank, rank, p, qi);
-                            fflush(stderr);
-                            /* reply exchange already completed; the merge is the only dangerous op.
-                             * Soft bad-stop + skip the corrupt reply; drains at the next phase poll. */
-                            endrun(81221); continue;
-                        }
-                        const int slot = re.origin_slot;
-                        if (slot < 0 || slot >= N) {
-                            fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
-                                    "dual reply envelope slot %d out of range [0,%d) from peer %d.\n",
-                                    rank, Spec::loop_name, slot, N, p);
-                            fflush(stderr);
-                            /* skip: continuing would merge into accums_out[slot] with slot OOB. */
-                            endrun(81222); continue;
-                        }
-                        Spec::merge_accum(accums_out[slot], re.accum_prod);
-                        Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
-                    }
-                }
-            }
-        }
-    } else {
-        /* Stage 10: build reply envelopes (origin_slot/rank copied from each
-         * received query envelope), unflatten into per-peer arrays via the
-         * provenance map, then exchange. Reply envelope makes the active-side
-         * merge transport-order independent (symmetric query/reply envelopes). */
-        std::vector<std::vector<ReplyEnvelope>> replies_per_peer(nt);
-        for(int p = 0; p < nt; p++) {
-            replies_per_peer[p].assign(state.recv_counts[p], ReplyEnvelope{});
+    /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
+     * each received query envelope), unflatten into per-peer arrays via the
+     * provenance map, then send THIS group's replies — after which the group's
+     * buffers are released (the whole point of the group staging). Production
+     * and dual-oracle replies share one payload type (XReply), so there is one
+     * reply exchange per group, never two with identical MPI tags. */
+    {
+        std::vector<std::vector<XReply>> replies_for_group(group_peers.size());
+        for(size_t gi = 0; gi < group_peers.size(); gi++) {
+            replies_for_group[gi].assign(group_queries[gi].size(), XReply{});
         }
         for(int k = 0; k < K; k++) {
             const Provenance& pv = peer_provenance[k];
-            ReplyEnvelope& re = replies_per_peer[pv.source_peer][pv.source_qi];
+            XReply& re = replies_for_group[pv.source_gidx][pv.source_qi];
             re.origin_slot = pv.origin_slot;
             re.origin_rank = pv.origin_rank;
-            re.accum       = peer_replies[k];
+            if constexpr (DUAL_OUT) {
+                re.accum_prod   = peer_replies[k];
+                re.accum_oracle = peer_replies_oracle[k];
+            } else {
+                re.accum = peer_replies[k];
+            }
         }
+        StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
+        xch.send_group_replies(group_peers, replies_for_group);
+    }
+        }   /* end whole-peer group loop */
 
-        auto recv_replies = [&]{
-            StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
-            return mode_b_exchange_replies<Envelope, ReplyEnvelope>(replies_per_peer, state);
-        }();
-
-        /* Stage 11: merge replies into accums_self by envelope.origin_slot.
-         * Pinned deterministic order: ascending peer rank (self contribution
-         * already in accums_self from stage 8). Asserts each reply envelope's
-         * origin_rank == ThisTask — a transport-corruption sanity check. */
+        /* Stage 11: drain the exchange (remaining query-payload Isends + all
+         * pre-posted reply Irecvs, byte-count-asserted), then merge replies
+         * into accums_out by envelope.origin_slot. Pinned deterministic order:
+         * ascending peer rank, ascending qi — identical to the pre-group
+         * single-shot merge (self contribution already in accums_out from
+         * stage 8). Asserts each reply envelope's origin_rank == ThisTask. */
         {
+            auto recv_replies = [&]{
+                StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
+                return xch.finish();
+            }();
             StageTimer t(tim ? &tim->dt_reduce : nullptr);
             for (int p = 0; p < nt; p++) {
                 if (p == rank) continue;
-                const int q_to_p = state.sent_counts[p];
+                const int q_to_p = xch.sent_counts[p];
                 for (int qi = 0; qi < q_to_p; qi++) {
-                    const ReplyEnvelope& re = recv_replies[p][qi];
+                    const XReply& re = recv_replies[p][qi];
                     if(re.origin_rank != rank) {
                         fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
                                 "reply envelope origin_rank=%d != ThisTask=%d from "
@@ -2164,11 +2155,17 @@ static void mode_b_remote_evaluate_into_buffer(
                         /* skip: continuing would merge into accums_out[slot] with slot OOB. */
                         endrun(81224); continue;
                     }
-                    Spec::merge_accum(accums_out[slot], re.accum);
+                    if constexpr (DUAL_OUT) {
+                        if (N > 0 && accums_oracle_out != nullptr) {
+                            Spec::merge_accum(accums_out[slot], re.accum_prod);
+                            Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
+                        }
+                    } else {
+                        Spec::merge_accum(accums_out[slot], re.accum);
+                    }
                 }
             }
         }
-    }
 
         /* Termination (legacy 186-191): done when my cursor drained; the SUM
          * Allreduce makes every rank run the SAME number of rounds so the
@@ -2183,10 +2180,14 @@ static void mode_b_remote_evaluate_into_buffer(
     } while(ndone < NTask);
 
     if(gizmo_nlr_dispatch_trace_enabled()) {
+        /* peak_recv_env/bytes bound TRANSPORT payloads only (envelopes+replies
+         * staged per group) — not candidate vectors or kernel scratch. */
         fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
-                "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld\n",
+                "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
+                "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld\n",
                 rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
-                bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent);
+                bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
+                diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes);
         fflush(stdout);
     }
 
