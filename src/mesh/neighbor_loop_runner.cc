@@ -1570,119 +1570,28 @@ static void mode_b_remote_evaluate_into_buffer(
                                                   actives.data());
     }
 
-    /* Stage 2: build query envelopes. ELIGIBLE loops (ONEWAY, or SYMMETRIC with
-     * a gas-kernel policy the cross-rank scalar hmax dominates) get TARGETED
-     * export: walk the local tree per active and export it ONLY to peers whose
-     * remote subtree the query reaches (remote-top-leaf open), carrying the
-     * exported start-nodes so the receiver resumes a bounded walk. This is the
-     * legacy source-tree export the port had replaced with an all-peer
-     * broadcast. UNCOVERED loops (non-gas / AGS / ForceSoftening policy) use the
-     * all-peer broadcast (n_nodes==0): the per-type node band is not exchanged
-     * cross-rank, so the sender cannot bound their reach on remote peers.
-     * Broadcast is correct (each receiver prunes with its own bands), so this is
-     * not a regression for those loops. Self-pair is handled locally; the self
-     * entry stays empty. Self local-candidate collection is done by Stage 3
-     * (cand_out=nullptr on the export walk) so those results are unchanged. */
-    std::vector<std::vector<Envelope>> queries_per_peer(nt);
-    constexpr bool targeted_export_ok =
-        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
-    if(N > 0 && nt > 1) {
-        if constexpr (targeted_export_ok) {
-            /* Oracle under-route probes: in any oracle mode, ALSO ship each query
-             * to the peers targeting did NOT select, flagged probe=1 with n_nodes=0
-             * (receiver full-walks it). A probe that finds matches = SENDER
-             * UNDER-ROUTE, alarmed receiver-side (Stage 6). Physics stays correct
-             * in the oracle run (probe replies merge like broadcast replies), so
-             * this is a self-healing detector — same shape as route1's
-             * compare-before-install oracle. Production sends NO probes. */
-            constexpr bool ORACLE_PROBES = (MODE != RemoteHelperMode::Production);
-            ModeBExportCollector exporter;
-            exporter.ensure_size(nt);
-            exporter.build_topleaf_map();   /* DomainNodeIndex SSOT; per-call, no staleness */
-            const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
-            long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
-            for(int aa = 0; aa < N; aa++) {
-                const double h_q = (double)actives[aa].h_search;
-                if(h_q <= 0) continue;
-                double pos_arr[3] = {(double)actives[aa].pos[0],
-                                     (double)actives[aa].pos[1],
-                                     (double)actives[aa].pos[2]};
-                exporter.clear_all();
-                mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
-                                        Spec::search_mode, Spec::radius_policy,
-                                        /*cand_out=*/nullptr, exporter, jscale);
-                for(int p = 0; p < nt; p++) {
-                    if(p == rank) continue;
-                    const std::vector<int>& nodes = exporter.nodes_per_peer[p];
-                    const int nn = (int)nodes.size();
-                    if(nn > 0) { diag_export_qr++; diag_node_appends += nn; }
-                    if(nn == 0) {
-                        if constexpr (ORACLE_PROBES) {
-                            Envelope env;
-                            env.origin_slot = aa;
-                            env.origin_rank = rank;
-                            env.n_nodes = 0;
-                            env.oracle_untargeted_probe = 1;
-                            for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                            env.active = actives[aa];
-                            queries_per_peer[p].push_back(env);
-                        }
-                        continue;
-                    }
-                    /* Chunk into NODELISTLENGTH-sized records (legacy opens a fresh
-                     * export slot when a NodeList fills; after_condition_unthreaded.h:
-                     * 34-59). Chunks cover disjoint subtrees → the slot-keyed reply
-                     * merge sums their partial results without double counting. */
-                    for(int c = 0; c < nn; c += NODELISTLENGTH) {
-                        Envelope env;
-                        env.origin_slot = aa;
-                        env.origin_rank = rank;
-                        int cnt = 0;
-                        for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                            env.NodeList[cnt] = nodes[(size_t)c + cnt];
-                        }
-                        env.n_nodes = cnt;
-                        env.oracle_untargeted_probe = 0;
-                        for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                        env.active = actives[aa];
-                        queries_per_peer[p].push_back(env);
-                    }
-                }
-            }
-            if(gizmo_nlr_dispatch_trace_enabled()) {
-                fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld\n",
-                        rank, Spec::loop_name, N, diag_export_qr, diag_node_appends);
-                fflush(stdout);
-            }
-        } else {
-            /* Uncovered radius policy → all-peer broadcast (n_nodes==0). Visible
-             * path selection (codex: no hidden fallback): rank-0 announces once. */
-            for(int p = 0; p < nt; p++) {
-                if(p == rank) continue;
-                queries_per_peer[p].reserve(N);
-                for(int aa = 0; aa < N; aa++) {
-                    Envelope env;
-                    env.origin_slot = aa;
-                    env.origin_rank = rank;
-                    env.n_nodes = 0;
-                    env.oracle_untargeted_probe = 0;   /* legit broadcast, matches expected */
-                    for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                    env.active = actives[aa];
-                    queries_per_peer[p].push_back(env);
-                }
-            }
-            if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
-                static bool s_announced = false;
-                if(!s_announced) {
-                    s_announced = true;
-                    fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
-                            "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
-                            Spec::loop_name);
-                    fflush(stdout);
-                }
-            }
-        }
-    }
+    /* ---- SELF stages run ONCE, BEFORE the peer round loop. Self candidate
+     * collection + drift + evaluation must PRECEDE peer evaluation so the
+     * self-before-peer WRITE order (a neighbor j touched by a local active is
+     * updated before any remote active's pair sees it) is preserved. Only the
+     * PEER work streams in bounded rounds below.
+     *
+     * ORDERING NOTE — the reorder this introduces vs the prior single-pass form:
+     * peer candidate COLLECTION now runs AFTER self EVALUATION (previously it ran
+     * before). The peer-candidate walk keys membership on P[j].{Type,Pos,Mass}:
+     *   - Type/Pos are NEVER mutated by a pair kernel (only drift writes Pos, and
+     *     it is applied identically per round) → position/type membership is
+     *     reorder-invariant for ALL specs.
+     *   - Mass is the only membership field a pair kernel can change (mass-flux
+     *     specs: MFV hydro; feedback add; sink swallow remove). For mass-
+     *     PRESERVING specs (density, gradients, MFM hydro_force) the reorder is
+     *     EXACTLY neutral. For mass-MUTATING specs a j crossing the Mass>0 gate
+     *     during self eval could shift its peer-candidate membership — but those
+     *     specs are ALREADY order-dependent (see thermal_fb accum_tolerance) and
+     *     this stays within that tolerance regime, not a new exactness contract.
+     * NO generic j-write-exactness claim is made. Any mass-mutating spec routed
+     * through streamed Mode-B at multi-round MUST be re-audited + oracle-checked
+     * (evrard, the validated case, is mass-preserving MFM). */
 
     /* Stage 3: collect SELF candidate sets PRE-DRIFT. */
     std::vector<std::vector<int>> cand_self_tree, cand_self_brute;
@@ -1702,12 +1611,250 @@ static void mode_b_remote_evaluate_into_buffer(
         }
     }
 
-    /* Stage 4: exchange queries (collective). Every rank participates even
-     * if N == 0 (peers may have queries directed at this rank's pool). */
-    auto state = [&]{
-        StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
-        return mode_b_exchange_queries<Envelope>(queries_per_peer);
-    }();
+    /* Self drift (split from the former self+peer union drift; peer candidates
+     * drift per-round below). drift_particle is idempotent to All.Ti_Current
+     * (constant across the helper), so a j that is both a self- and peer-
+     * candidate drifts once — identical to the pre-B2a union drift. */
+    {
+        StageTimer t(tim ? &tim->dt_drift : nullptr);
+        if (RUN_TREE  && N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
+        if (RUN_BRUTE && N > 0) lazy_drift_candidates<Spec>(cand_self_brute);
+    }
+
+    /* Stage 8: evaluate SELF post-drift.
+     *   Production:       tree -> accums_out.
+     *   OracleCompare:    brute dry-run (own buffer) -> tree -> accums_out, emit
+     *                     per-slot inline compare.
+     *   OracleBrutePass:  brute -> accums_out (caller-owned ctx already
+     *                     brute-pass-guarded). No tree, no compare.
+     * Brute-FIRST ordering: dry-run BEFORE tree so brute reads pre-mutation
+     * j-state; without it, tree's j-writes leak into brute's read. */
+    std::vector<AccumData> accums_self_brute;
+    if(N > 0) {
+        if constexpr (RUN_INLINE_COMPARE) {
+            accums_self_brute.assign(N, AccumData{});
+            DeviceCtx ctx_oracle_self = ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_self, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
+                                              cand_self_brute, accums_self_brute.data());
+        }
+        if constexpr (BRUTE_WRITES_OUT) {
+            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+                                              cand_self_brute, accums_out);
+        }
+        if constexpr (DUAL_OUT) {
+            DeviceCtx ctx_oracle_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_dual, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_dual, actives.data(), N,
+                                              cand_self_brute, accums_oracle_out);
+        }
+        if constexpr (RUN_TREE) {
+            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+                                              cand_self_tree, accums_out);
+        }
+        if constexpr (RUN_INLINE_COMPARE) {
+            static long long s_self_mismatch_count = 0;
+            for(int aa = 0; aa < N; aa++) {
+                emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_out[aa],
+                                                    accums_self_brute[aa], "self",
+                                                    &s_self_mismatch_count);
+            }
+        }
+    }
+
+    /* ---- PEER round loop (B2a streaming). Build a BufferSize-bounded batch of
+     * query envelopes from actives[cursor..N), exchange+evaluate+reply, advance
+     * cursor, iterate until every rank is drained (legacy do/while +
+     * Allreduce(ndone), code_block_xchange_perform_ops.h:9-191). Bounds total
+     * in-flight export envelopes so forced-Mode-B is memory-safe at large
+     * N_active. B2a = SENDER cap only; the full large-N fix needs B2b receiver
+     * group staging.
+     *
+     * ELIGIBLE loops (ONEWAY, or SYMMETRIC with a gas-kernel policy the cross-
+     * rank scalar hmax dominates) get TARGETED export: walk the local tree per
+     * active and export ONLY to peers whose remote subtree the query reaches,
+     * carrying the exported start-nodes so the receiver resumes a bounded walk.
+     * UNCOVERED loops (non-gas / AGS / ForceSoftening) broadcast (n_nodes==0):
+     * the per-type node band is not exchanged cross-rank, so the sender cannot
+     * bound their reach on remote peers. Broadcast is correct (each receiver
+     * prunes with its own bands). Self-pair handled above; self entry stays
+     * empty. */
+    constexpr bool targeted_export_ok =
+        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
+    /* Oracle under-route probes (oracle modes only): ALSO ship each query to the
+     * peers targeting did NOT select, flagged probe=1 / n_nodes=0; a probe that
+     * finds matches = SENDER UNDER-ROUTE, alarmed receiver-side. Probes count
+     * against the same cap. Production sends NO probes. */
+    constexpr bool ORACLE_PROBES = (MODE != RemoteHelperMode::Production);
+
+    /* Cap = legacy All.BunchSize analog: BufferSize / (query env + reply env).
+     * Our NlrQueryEnvelope IS data_index+data_nodelist+ActiveData fused, so
+     * counting envelopes == legacy counting DataIndexTable entries. (No env var;
+     * All.BufferSize is the existing parameterfile parameter, default 100MB.) */
+    constexpr size_t kReplyBytes = DUAL_OUT ? sizeof(DualReplyEnvelope)
+                                            : sizeof(ReplyEnvelope);
+    const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
+    long long bunch = ((long long)All.BufferSize * 1024 * 1024) /
+                      (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
+    if(bunch < 1) bunch = 1;
+
+    const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
+
+    /* Targeted-export reverse map: topnode indices are stable between builds →
+     * build ONCE, reuse every round. Broadcast-path loops skip it and announce. */
+    ModeBExportCollector exporter;
+    if constexpr (targeted_export_ok) {
+        if(N > 0 && nt > 1) { exporter.ensure_size(nt); exporter.build_topleaf_map(); }
+    } else {
+        if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
+            static bool s_announced = false;
+            if(!s_announced) {
+                s_announced = true;
+                fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
+                        "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
+                        Spec::loop_name);
+                fflush(stdout);
+            }
+        }
+    }
+
+    long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
+    long long diag_rounds = 0, diag_peak_sent = 0;
+    int cursor = 0;
+    int ndone  = 0;
+
+    do {
+        long long round_env_count = 0;
+        std::vector<std::vector<Envelope>> queries_per_peer(nt);
+
+        /* Stage 2 (bounded): fill this round's export batch from actives[cursor..).
+         * Per active, stage its FULL export set into `exporter` first, MEASURE the
+         * envelope count, then commit-or-stop atomically — measure-then-commit
+         * gives legacy's all-or-nothing-per-particle rollback (an active never
+         * lands half its chunks in one round) without legacy's DataIndexTable
+         * compaction. An active whose OWN set exceeds `bunch` ships in a solo
+         * oversized round (graceful; loud diag) instead of aborting. */
+        if(N > 0 && nt > 1) {
+            if constexpr (targeted_export_ok) {
+                int aa = cursor;
+                for(; aa < N; aa++) {
+                    const double h_q = (double)actives[aa].h_search;
+                    if(h_q <= 0) continue;
+                    double pos_arr[3] = {(double)actives[aa].pos[0],
+                                         (double)actives[aa].pos[1],
+                                         (double)actives[aa].pos[2]};
+                    exporter.clear_all();
+                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            /*cand_out=*/nullptr, exporter, jscale);
+                    /* envelopes this active would add across all peers */
+                    long long add = 0;
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        const int nn = (int)exporter.nodes_per_peer[p].size();
+                        if(nn == 0) { if constexpr (ORACLE_PROBES) add += 1; }
+                        else add += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                    }
+                    if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
+                    if(round_env_count == 0 && add > bunch) {
+                        nlr_warn_once_rank0("modeb_oversize_active",
+                            "[mode_b B2a caller=%s] single active's export set (%lld envelopes, "
+                            "~%lld bytes) exceeds BufferSize bunch (%lld envelopes); shipping a solo "
+                            "oversized round — cap ineffective for this call (raise BufferSize).",
+                            Spec::loop_name, add, add * kEnvPairBytes, bunch);
+                    }
+                    /* commit this active's envelopes */
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        const std::vector<int>& nodes = exporter.nodes_per_peer[p];
+                        const int nn = (int)nodes.size();
+                        if(nn > 0) { diag_export_qr++; diag_node_appends += nn; }
+                        if(nn == 0) {
+                            if constexpr (ORACLE_PROBES) {
+                                Envelope env;
+                                env.origin_slot = aa;
+                                env.origin_rank = rank;
+                                env.n_nodes = 0;
+                                env.oracle_untargeted_probe = 1;
+                                for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                                env.active = actives[aa];
+                                queries_per_peer[p].push_back(env);
+                            }
+                            continue;
+                        }
+                        /* Chunk into NODELISTLENGTH-sized records (legacy opens a
+                         * fresh export slot when a NodeList fills). Chunks cover
+                         * disjoint subtrees → the slot-keyed reply merge sums their
+                         * partial results without double counting. All chunks of a
+                         * (query,peer) group land in THIS round (all-or-nothing
+                         * above), so the group stays contiguous for peer_group_first
+                         * / the oracle group-sum compare. */
+                        for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                            Envelope env;
+                            env.origin_slot = aa;
+                            env.origin_rank = rank;
+                            int cnt = 0;
+                            for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                                env.NodeList[cnt] = nodes[(size_t)c + cnt];
+                            }
+                            env.n_nodes = cnt;
+                            env.oracle_untargeted_probe = 0;
+                            for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                            env.active = actives[aa];
+                            queries_per_peer[p].push_back(env);
+                        }
+                    }
+                    round_env_count += add;
+                }
+                cursor = aa;
+            } else {
+                /* Broadcast: each active adds exactly (nt-1) envelopes. */
+                int aa = cursor;
+                for(; aa < N; aa++) {
+                    const long long add = (long long)(nt - 1);
+                    if(round_env_count > 0 && round_env_count + add > bunch) break;
+                    if(round_env_count == 0 && add > bunch) {
+                        nlr_warn_once_rank0("modeb_oversize_active_bcast",
+                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > BufferSize "
+                            "bunch (%lld); solo oversized round — cap ineffective (raise BufferSize).",
+                            Spec::loop_name, add, bunch);
+                    }
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        Envelope env;
+                        env.origin_slot = aa;
+                        env.origin_rank = rank;
+                        env.n_nodes = 0;
+                        env.oracle_untargeted_probe = 0;   /* legit broadcast, matches expected */
+                        for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                        env.active = actives[aa];
+                        queries_per_peer[p].push_back(env);
+                    }
+                    round_env_count += add;
+                }
+                cursor = aa;
+            }
+        } else {
+            cursor = N;   /* nothing to export (N==0 or single rank) */
+        }
+
+        diag_rounds++;
+        if(round_env_count > diag_peak_sent) diag_peak_sent = round_env_count;
+
+        /* Stage 4: exchange queries (collective). Every rank participates even
+         * if it queued 0 this round (peers may target this rank's pool). The
+         * Allreduce(ndone) at the round's end keeps every rank's round count
+         * equal, so this exchange stays balanced. */
+        auto state = [&]{
+            StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
+            return mode_b_exchange_queries<Envelope>(queries_per_peer);
+        }();
 
     /* Stage 5: flatten received envelopes and build provenance map.
      * provenance[k] carries:
@@ -1834,76 +1981,13 @@ static void mode_b_remote_evaluate_into_buffer(
         }
     }
 
-    /* Stage 7: drift the UNION of all candidate sets that touch MY pool. */
+    /* Stage 7 (peer): drift THIS round's peer candidate sets (self candidates
+     * were drifted once before the round loop). Idempotent to All.Ti_Current. */
     {
         StageTimer t(tim ? &tim->dt_drift : nullptr);
-        if (RUN_TREE) {
-            if(N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
-            lazy_drift_candidates<Spec>(cand_peer_tree);
-        }
+        if (RUN_TREE)  lazy_drift_candidates<Spec>(cand_peer_tree);
     }
-    if (RUN_BRUTE) {
-        if(N > 0) lazy_drift_candidates<Spec>(cand_self_brute);
-        lazy_drift_candidates<Spec>(cand_peer_brute);
-    }
-
-    /* Stage 8: evaluate SELF post-drift.
-     *   Production:       tree -> accums_out.
-     *   OracleCompare:    brute dry-run (own buffer) -> tree -> accums_out,
-     *                     emit per-slot inline compare.
-     *   OracleBrutePass:  brute -> accums_out (caller-owned ctx already
-     *                     brute-pass-guarded). No tree, no compare.
-     *
-     * Brute-FIRST ordering: dry-run BEFORE tree
-     * so brute reads pre-mutation j-state; without it, tree's j-writes
-     * leak into brute's read. For OracleBrutePass the caller owns the
-     * brute-pass guard at outer scope (NlrOracleBrutePassGuard at iter
-     * dispatch helper entry); helper does NOT touch set_oracle_brute_pass.
-     * For OracleCompare the helper still owns a local ctx copy + inline
-     * toggle for the dry-run pass (legacy shape preserved). */
-    std::vector<AccumData> accums_self_brute;
-    if(N > 0) {
-        if constexpr (RUN_INLINE_COMPARE) {
-            accums_self_brute.assign(N, AccumData{});
-            DeviceCtx ctx_oracle_self = ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_self, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
-                                              cand_self_brute, accums_self_brute.data());
-        }
-        if constexpr (BRUTE_WRITES_OUT) {
-            /* Caller's ctx is already brute-pass-guarded via
-             * NlrOracleBrutePassGuard at the iter dispatch helper. Walk
-             * directly into accums_out. */
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_brute, accums_out);
-        }
-        if constexpr (DUAL_OUT) {
-            /* OracleIterative: brute-first into accums_oracle_out (same epoch
-             * as tree; both candidate sets were collected pre-drift above). */
-            DeviceCtx ctx_oracle_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_dual, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_dual, actives.data(), N,
-                                              cand_self_brute, accums_oracle_out);
-        }
-        if constexpr (RUN_TREE) {
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_tree, accums_out);
-        }
-        if constexpr (RUN_INLINE_COMPARE) {
-            static long long s_self_mismatch_count = 0;
-            for(int aa = 0; aa < N; aa++) {
-                emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_out[aa],
-                                                    accums_self_brute[aa], "self",
-                                                    &s_self_mismatch_count);
-            }
-        }
-    }
+    if (RUN_BRUTE)     lazy_drift_candidates<Spec>(cand_peer_brute);
 
     /* Stage 9: evaluate PEER queries post-drift.
      *   Production / OracleCompare: tree result -> peer_replies, shipped
@@ -2084,6 +2168,26 @@ static void mode_b_remote_evaluate_into_buffer(
                 }
             }
         }
+    }
+
+        /* Termination (legacy 186-191): done when my cursor drained; the SUM
+         * Allreduce makes every rank run the SAME number of rounds so the
+         * per-round query/reply exchanges stay collective-balanced. Ranks that
+         * finished sending keep entering as 0-send receivers for peers still
+         * draining. */
+        int ndone_flag = (cursor >= N) ? 1 : 0;
+        {
+            StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
+            MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        }
+    } while(ndone < NTask);
+
+    if(gizmo_nlr_dispatch_trace_enabled()) {
+        fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
+                "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld\n",
+                rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
+                bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent);
+        fflush(stdout);
     }
 
     /* Optionally export the actives[] snapshot to caller for post-writeback
