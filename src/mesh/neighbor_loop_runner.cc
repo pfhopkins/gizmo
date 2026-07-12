@@ -535,19 +535,28 @@ static int nlr_force_modeb_active_cap_for(const char *loop_name)
 
 static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
                                                 int local_active,
-                                                int global_active)
+                                                int global_active,
+                                                bool oracle_active)
 {
+    /* Narrowed post-B2 (bunchSize streaming + receiver group staging): forced /
+     * threshold / corridor-override Mode-B is now memory-bounded at arbitrary
+     * N_active (the round loop + whole-peer receiver staging wrap the whole
+     * remote helper), so the old "prevent the large-N un-chunked Mode-B hang"
+     * cap is obsolete for PRODUCTION runs and must NOT block a param-driven
+     * corridor Mode-B decision. The one path still genuinely dangerous at large
+     * N is the ORACLE brute walk (O(N_active x N_local) per query, unchunkable),
+     * so the cap fires ONLY when an oracle/brute pass is active. */
+    if(!oracle_active) return;
     const int cap = nlr_force_modeb_active_cap_for(loop_name);
     if(cap >= 0 && global_active > cap) {
         if(ThisTask == 0) {
             fprintf(stderr,
-                    "[NLR FORCE_MODE=B] FATAL: caller=%s requested forced "
-                    "Mode B with global_active=%d local_active(rank0)=%d, "
-                    "exceeding cap=%d. This prevents accidental full-N "
-                    "host-walker/oracle runs during startup density setup. "
-                    "Use GIZMO_<LOOP>_FORCE_MODE=A for dense loops, a "
-                    "per-loop Mode-B override for tiny loops, or raise "
-                    "GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE intentionally.\n",
+                    "[NLR ORACLE Mode-B] FATAL: caller=%s ran forced Mode-B WITH "
+                    "an oracle/brute pass at global_active=%d local_active(rank0)=%d, "
+                    "exceeding cap=%d. The brute walk is O(N_active x N_local) per "
+                    "query — intractable at this N. Run the oracle at small N, or "
+                    "raise GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE intentionally. (Non-oracle "
+                    "forced Mode-B is memory-safe post-B2 and is NOT capped.)\n",
                     loop_name ? loop_name : "?", global_active,
                     local_active, cap);
             fflush(stderr);
@@ -555,8 +564,8 @@ static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
         endrun(81105);
         /* All-rank symmetric (global_active is the MPI-reduced sum; both call
          * sites poll after the Allreduce): drain immediately rather than enter
-         * the known large-N Mode-B hang the cap exists to prevent. */
-        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:forced_modeb_cap");
+         * the intractable large-N oracle brute walk. */
+        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:forced_modeb_oracle_cap");
     }
 }
 
@@ -2939,7 +2948,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     }
     if(force_b) {
         nlr_abort_if_forced_modeb_too_large(
-            Spec::loop_name, args.num_active, phase0_sum_active);
+            Spec::loop_name, args.num_active, phase0_sum_active, oracle_on);
     }
 
     /* Compute the execution plan from the dispatch decision. Path is the
@@ -4573,7 +4582,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
                       MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         nlr_abort_if_forced_modeb_too_large(
-            Spec::loop_name, args.num_active, forced_modeb_global_active);
+            Spec::loop_name, args.num_active, forced_modeb_global_active,
+            oracle_enabled);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
