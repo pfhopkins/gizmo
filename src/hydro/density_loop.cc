@@ -1502,32 +1502,23 @@ void density(void)
      *     + scatter accum -> P/CellP + legacy 620-795 post-loop physics. */
     density_finalize_post_runner(active_list_concat, aux, host_all);
 
-    /* (7) Downstream handoff: build the broad hydro-oneway ghost pool that
-     *     cellcorrections / gradients / hydro_force expect. Codex 2026-05-12:
-     *     the runner's Mode A imports an EXACT-QUERY pool sized to per-iter
-     *     actives+radii — narrower than legacy's broad upfront pool — and
-     *     cleans it at runner-return. `redo_ghosts_if_needed` cannot evolve
-     *     a too-narrow pool into a broad one; we must rebuild fresh from
-     *     converged radii.
-     *
-     *     IMPORT-ONLY, NO DRIFT: must not call gizmo_hydro_density_prep_ghosts
-     *     here — that helper does move_particles(All.Ti_Current) + import.
-     *     Post-density drift at the current Ti_Current breaks downstream
-     *     hydro's drift contract (next phase asks drift_particle to predict
-     *     to time1=0.5*dt_step from particles already at Ti_current=2*dt_step,
-     *     aborting with 'no prediction into past allowed'). Legacy avoids
-     *     this because its post-density helper (redo_ghosts_if_needed) does
-     *     cleanup+import only, no drift. The drift in legacy density happens
-     *     ONLY at the top via prep_ghosts. The runner's drift happens inside
-     *     the Mode A request-driven import path. Post-density: import only.
-     *
-     *     Mode B contract preserved: this call happens AFTER the runner has
-     *     fully returned (corridor closed); it is the density-phase handoff
-     *     to subsequent phases, not "attached to" the Mode B per-active
-     *     evaluation. For Mode B runs, the runner imported no ghosts, so
-     *     `ghost_exchange_cleanup()` inside this helper early-returns and
-     *     the broad import is the only work done. */
-    gizmo_hydro_density_import_ghosts_fresh_no_drift(gsl_safety);
+    /* (7) NO downstream ghost-pool handoff here. Every downstream consumer owns
+     *     its own ghost lifecycle and cleans up any prior pool before importing,
+     *     so a broad pool built here is dead work — it is destroyed before any
+     *     consumer reads it: ags_density() cleans + re-imports its own pool
+     *     (gravity/ags_density_loop.cc); the hydro corridor cleans + imports its
+     *     own SYMMETRIC gas pool in Mode A (or nothing in Mode B) at
+     *     gizmo_hydro_corridor_begin() -> gizmo_gradients_prep_symlist(); and
+     *     force_update_hmax() between them reads no ghost pool. The prior
+     *     unconditional gizmo_hydro_density_import_ghosts_fresh_no_drift() call
+     *     was a legacy leftover from before the corridor owned the gas ghost
+     *     lifecycle; under forced universal Mode-B it fired a large ONEWAY
+     *     import (up to ~7s/all-active step) that nothing consumed, contaminating
+     *     the density wall. (Drift contract note, still load-bearing for any
+     *     future post-density ghost work: NEVER call gizmo_hydro_density_prep_ghosts
+     *     here — its move_particles(All.Ti_Current) breaks the next phase's
+     *     lazy-drift contract with 'no prediction into past allowed'. Post-density
+     *     ghost work, if ever reintroduced, must be import-only / no-drift.) */
 
     /* (8) Timing. Mirrors legacy density.cc:798-802 (PRINT_STATUS at end). */
     const double t1 = my_second();
