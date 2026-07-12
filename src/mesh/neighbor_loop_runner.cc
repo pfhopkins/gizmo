@@ -46,6 +46,7 @@
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
 
 #include <vector>
+#include <algorithm>   /* nth_element / max_element (coverage dry-run percentiles) */
 #include <unordered_map>
 #include <cmath>
 #include <cctype>
@@ -941,13 +942,20 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
 template <typename Spec>
 static void collect_candidates_for_remote_queries(
     const std::vector<typename Spec::ActiveData>& peer_actives,
+    const std::vector<int>& peer_nodelist_flat,   /* K*NODELISTLENGTH; exported start-nodes per query */
+    const std::vector<int>& peer_nnodes,          /* K; valid entries per query's NodeList */
+    const std::vector<int>& peer_group_first,     /* K; 0 = continuation chunk of the previous (peer,slot) */
     unsigned int neighbor_type_mask,
     DispatchPath backend,
     std::vector<std::vector<int>>& per_query_cands)
 {
     /* neighbor_type_mask is explicit caller parameter (step 2c.3
      * mask-threading refactor 2026-05-10). Non-iter callers pass
-     * Spec::neighbor_type_mask; iter dispatch passes sg.j_type_bitmask. */
+     * Spec::neighbor_type_mask; iter dispatch passes sg.j_type_bitmask.
+     *
+     * ModeB_HostWalker resumes the walk from the exported NodeList start-nodes
+     * (legacy mode==1); Brute_Oracle scans the whole local pool
+     * (the ground-truth oracle that catches any under-route). */
     const int K = (int)peer_actives.size();
     const int num_local = ghost_get_num_local();
     per_query_cands.assign(K, std::vector<int>{});
@@ -961,19 +969,39 @@ static void collect_candidates_for_remote_queries(
         if(cands.capacity() == 0) cands.reserve(64);
         double pos_arr[3] = {(double)active.pos[0], (double)active.pos[1], (double)active.pos[2]};
         if(backend == DispatchPath::ModeB_HostWalker) {
-            mode_b_local_neighbor_walk(pos_arr, h_q,
-                                        neighbor_type_mask,
-                                        Spec::search_mode,
-                                        Spec::radius_policy,
-                                        cands,
-                                        nlr_spec_symmetric_j_radius_scale<Spec>());
+            if(peer_nnodes[k] > 0) {
+                /* Targeted query: bounded resume from the exported start-nodes. */
+                mode_b_walk_from_start_nodes(pos_arr, h_q,
+                                             neighbor_type_mask,
+                                             Spec::search_mode,
+                                             Spec::radius_policy,
+                                             &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
+                                             peer_nnodes[k],
+                                             cands,
+                                             nlr_spec_symmetric_j_radius_scale<Spec>());
+            } else {
+                /* Broadcast query (n_nodes==0): the sender took the broadcast
+                 * path (uncovered radius policy) — full local
+                 * walk from root (the prior broadcast behavior). */
+                mode_b_local_neighbor_walk(pos_arr, h_q,
+                                            neighbor_type_mask,
+                                            Spec::search_mode,
+                                            Spec::radius_policy,
+                                            cands,
+                                            nlr_spec_symmetric_j_radius_scale<Spec>());
+            }
         } else if(backend == DispatchPath::Brute_Oracle) {
-            mode_b_local_brute_walk(pos_arr, h_q,
-                                     neighbor_type_mask,
-                                     Spec::search_mode,
-                                     Spec::radius_policy,
-                                     cands,
-                                     nlr_spec_symmetric_j_radius_scale<Spec>());
+            /* Full-query ground truth: run ONCE per chunk group (see the
+             * group_first construction in the flatten); continuation chunks
+             * keep an empty candidate list → zero accum reply. */
+            if(peer_group_first[k]) {
+                mode_b_local_brute_walk(pos_arr, h_q,
+                                         neighbor_type_mask,
+                                         Spec::search_mode,
+                                         Spec::radius_policy,
+                                         cands,
+                                         nlr_spec_symmetric_j_radius_scale<Spec>());
+            }
         } else {
             fprintf(stderr, "neighbor_loop_runner: collect_candidates_for_remote_queries"
                     " bad backend %d for loop '%s'\n", (int)backend, Spec::loop_name);
@@ -1524,6 +1552,9 @@ static void mode_b_remote_evaluate_into_buffer(
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
     const int rank = ThisTask;
+    /* Oracle under-route accumulator: reduced + hard-stopped at the collective
+     * end of this helper (every rank enters here → the Allreduce is symmetric). */
+    int local_underroute = 0;
 
     /* CallScalars and DeviceContext passed in by caller (step 2c.1):
      *   - Iterative: driver-owned via NlrIterDriver, populated once at iter-0 entry.
@@ -1539,20 +1570,116 @@ static void mode_b_remote_evaluate_into_buffer(
                                                   actives.data());
     }
 
-    /* Stage 2: build envelopes per peer (broadcast pattern: every peer
-     * receives ALL of this rank's actives). Self-pair handled locally;
-     * envelopes for self entry stay empty. */
+    /* Stage 2: build query envelopes. ELIGIBLE loops (ONEWAY, or SYMMETRIC with
+     * a gas-kernel policy the cross-rank scalar hmax dominates) get TARGETED
+     * export: walk the local tree per active and export it ONLY to peers whose
+     * remote subtree the query reaches (remote-top-leaf open), carrying the
+     * exported start-nodes so the receiver resumes a bounded walk. This is the
+     * legacy source-tree export the port had replaced with an all-peer
+     * broadcast. UNCOVERED loops (non-gas / AGS / ForceSoftening policy) use the
+     * all-peer broadcast (n_nodes==0): the per-type node band is not exchanged
+     * cross-rank, so the sender cannot bound their reach on remote peers.
+     * Broadcast is correct (each receiver prunes with its own bands), so this is
+     * not a regression for those loops. Self-pair is handled locally; the self
+     * entry stays empty. Self local-candidate collection is done by Stage 3
+     * (cand_out=nullptr on the export walk) so those results are unchanged. */
     std::vector<std::vector<Envelope>> queries_per_peer(nt);
-    if(N > 0) {
-        for(int p = 0; p < nt; p++) {
-            if(p == rank) continue;
-            queries_per_peer[p].reserve(N);
+    constexpr bool targeted_export_ok =
+        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
+    if(N > 0 && nt > 1) {
+        if constexpr (targeted_export_ok) {
+            /* Oracle under-route probes: in any oracle mode, ALSO ship each query
+             * to the peers targeting did NOT select, flagged probe=1 with n_nodes=0
+             * (receiver full-walks it). A probe that finds matches = SENDER
+             * UNDER-ROUTE, alarmed receiver-side (Stage 6). Physics stays correct
+             * in the oracle run (probe replies merge like broadcast replies), so
+             * this is a self-healing detector — same shape as route1's
+             * compare-before-install oracle. Production sends NO probes. */
+            constexpr bool ORACLE_PROBES = (MODE != RemoteHelperMode::Production);
+            ModeBExportCollector exporter;
+            exporter.ensure_size(nt);
+            exporter.build_topleaf_map();   /* DomainNodeIndex SSOT; per-call, no staleness */
+            const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
+            long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
             for(int aa = 0; aa < N; aa++) {
-                Envelope env;
-                env.origin_slot = aa;
-                env.origin_rank = rank;
-                env.active      = actives[aa];
-                queries_per_peer[p].push_back(env);
+                const double h_q = (double)actives[aa].h_search;
+                if(h_q <= 0) continue;
+                double pos_arr[3] = {(double)actives[aa].pos[0],
+                                     (double)actives[aa].pos[1],
+                                     (double)actives[aa].pos[2]};
+                exporter.clear_all();
+                mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                        Spec::search_mode, Spec::radius_policy,
+                                        /*cand_out=*/nullptr, exporter, jscale);
+                for(int p = 0; p < nt; p++) {
+                    if(p == rank) continue;
+                    const std::vector<int>& nodes = exporter.nodes_per_peer[p];
+                    const int nn = (int)nodes.size();
+                    if(nn > 0) { diag_export_qr++; diag_node_appends += nn; }
+                    if(nn == 0) {
+                        if constexpr (ORACLE_PROBES) {
+                            Envelope env;
+                            env.origin_slot = aa;
+                            env.origin_rank = rank;
+                            env.n_nodes = 0;
+                            env.oracle_untargeted_probe = 1;
+                            for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                            env.active = actives[aa];
+                            queries_per_peer[p].push_back(env);
+                        }
+                        continue;
+                    }
+                    /* Chunk into NODELISTLENGTH-sized records (legacy opens a fresh
+                     * export slot when a NodeList fills; after_condition_unthreaded.h:
+                     * 34-59). Chunks cover disjoint subtrees → the slot-keyed reply
+                     * merge sums their partial results without double counting. */
+                    for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                        Envelope env;
+                        env.origin_slot = aa;
+                        env.origin_rank = rank;
+                        int cnt = 0;
+                        for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                            env.NodeList[cnt] = nodes[(size_t)c + cnt];
+                        }
+                        env.n_nodes = cnt;
+                        env.oracle_untargeted_probe = 0;
+                        for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                        env.active = actives[aa];
+                        queries_per_peer[p].push_back(env);
+                    }
+                }
+            }
+            if(gizmo_nlr_dispatch_trace_enabled()) {
+                fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld\n",
+                        rank, Spec::loop_name, N, diag_export_qr, diag_node_appends);
+                fflush(stdout);
+            }
+        } else {
+            /* Uncovered radius policy → all-peer broadcast (n_nodes==0). Visible
+             * path selection (codex: no hidden fallback): rank-0 announces once. */
+            for(int p = 0; p < nt; p++) {
+                if(p == rank) continue;
+                queries_per_peer[p].reserve(N);
+                for(int aa = 0; aa < N; aa++) {
+                    Envelope env;
+                    env.origin_slot = aa;
+                    env.origin_rank = rank;
+                    env.n_nodes = 0;
+                    env.oracle_untargeted_probe = 0;   /* legit broadcast, matches expected */
+                    for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                    env.active = actives[aa];
+                    queries_per_peer[p].push_back(env);
+                }
+            }
+            if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
+                static bool s_announced = false;
+                if(!s_announced) {
+                    s_announced = true;
+                    fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
+                            "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
+                            Spec::loop_name);
+                    fflush(stdout);
+                }
             }
         }
     }
@@ -1596,10 +1723,20 @@ static void mode_b_remote_evaluate_into_buffer(
         int origin_slot; int origin_rank;
     };
     std::vector<Provenance> peer_provenance;
+    /* Parallel to peer_actives[k]: the exported start-node list carried in the
+     * received envelope, flattened K*NODELISTLENGTH, so the receiver walk
+     * (collect_candidates_for_remote_queries) resumes from those nodes; plus
+     * the oracle under-route probe flag (alarmed after Stage 6). */
+    std::vector<int> peer_nodelist_flat;
+    std::vector<int> peer_nnodes;
+    std::vector<int> peer_probe;
     int total_recv = 0;
     for(int p = 0; p < nt; p++) total_recv += state.recv_counts[p];
     peer_actives.reserve(total_recv);
     peer_provenance.reserve(total_recv);
+    peer_nodelist_flat.reserve((size_t)total_recv * NODELISTLENGTH);
+    peer_nnodes.reserve(total_recv);
+    peer_probe.reserve(total_recv);
     for(int p = 0; p < nt; p++) {
         if(p == rank) continue;
         for(int qi = 0; qi < state.recv_counts[p]; qi++) {
@@ -1620,6 +1757,23 @@ static void mode_b_remote_evaluate_into_buffer(
              * the run drains at the next phase poll with reply choreography intact. */
             peer_actives.push_back(env.active);
             peer_provenance.push_back({p, qi, env.origin_slot, p});
+            peer_nnodes.push_back(env.n_nodes);
+            peer_probe.push_back(env.oracle_untargeted_probe);
+            for(int t = 0; t < NODELISTLENGTH; t++) peer_nodelist_flat.push_back(env.NodeList[t]);
+        }
+    }
+    /* Chunk groups: a (query,peer) needing >NODELISTLENGTH start-nodes arrives
+     * as CONSECUTIVE envelopes (Stage 2 pushes them contiguously; the flatten
+     * above preserves order). Production sums their disjoint partial accums —
+     * correct. The ORACLE brute walk, however, answers the FULL query per
+     * envelope; evaluating it per chunk double-counts on the merge (and makes
+     * per-envelope compare partial-vs-full). So brute runs only on each
+     * group's FIRST chunk; continuations reply zero (exact under summation). */
+    std::vector<int> peer_group_first(peer_actives.size(), 1);
+    for(size_t k = 1; k < peer_provenance.size(); k++) {
+        if(peer_provenance[k].source_peer == peer_provenance[k-1].source_peer &&
+           peer_provenance[k].origin_slot == peer_provenance[k-1].origin_slot) {
+            peer_group_first[k] = 0;
         }
     }
 
@@ -1636,15 +1790,48 @@ static void mode_b_remote_evaluate_into_buffer(
     if (RUN_TREE) {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         collect_candidates_for_remote_queries<Spec>(peer_actives,
+                                                     peer_nodelist_flat, peer_nnodes,
+                                                     peer_group_first,
                                                      neighbor_type_mask,
                                                      DispatchPath::ModeB_HostWalker,
                                                      cand_peer_tree);
     }
     if (RUN_BRUTE) {
         collect_candidates_for_remote_queries<Spec>(peer_actives,
+                                                     peer_nodelist_flat, peer_nnodes,
+                                                     peer_group_first,
                                                      neighbor_type_mask,
                                                      DispatchPath::Brute_Oracle,
                                                      cand_peer_brute);
+    }
+
+    /* Oracle SENDER-UNDER-ROUTE detection: a probe (peer NOT selected by the
+     * sender's targeted export) that finds matches in my pool means the
+     * sender's routing missed a physically-required (query,rank) pair — silent
+     * wrong physics in production. Under-route is the one failure we cannot let
+     * pass as "looked fine in logs": accumulate here, then HARD-STOP at the
+     * collective end of the helper (reduced across ranks). The oracle run's
+     * physics stays correct (the probe's matches were evaluated + merged like a
+     * broadcast reply), so the run reaches the safe stop point cleanly. */
+    if constexpr (MODE != RemoteHelperMode::Production) {
+        static long long s_underroute_alarms = 0;
+        const std::vector<std::vector<int>>& probe_cands =
+            (!cand_peer_tree.empty()) ? cand_peer_tree : cand_peer_brute;
+        const int KP = (int)probe_cands.size();
+        for(int k = 0; k < KP && k < (int)peer_probe.size(); k++) {
+            if(peer_probe[k] && !probe_cands[k].empty()) {
+                if(s_underroute_alarms < 20) {
+                    fprintf(stderr, "[mode_b ORACLE SENDER-UNDER-ROUTE rank=%d caller=%s] "
+                            "untargeted probe from rank=%d slot=%d matched %d local candidates "
+                            "— targeted export MISSED this (query,rank) pair.\n",
+                            rank, Spec::loop_name, peer_provenance[k].source_peer,
+                            peer_provenance[k].origin_slot, (int)probe_cands[k].size());
+                    fflush(stderr);
+                }
+                s_underroute_alarms++;
+                local_underroute++;
+            }
+        }
     }
 
     /* Stage 7: drift the UNION of all candidate sets that touch MY pool. */
@@ -1765,12 +1952,25 @@ static void mode_b_remote_evaluate_into_buffer(
                                               cand_peer_tree, peer_replies.data());
         }
         if constexpr (RUN_INLINE_COMPARE) {
+            /* Compare per chunk GROUP: sum the tree partials over the group's
+             * consecutive chunks (disjoint subtrees), then compare against the
+             * group-first brute (the only chunk that ran the full-query brute).
+             * Per-chunk compare would be partial-vs-full = guaranteed false
+             * mismatch on any multi-chunk query. */
             static long long s_peer_mismatch_count = 0;
-            for(int k = 0; k < K; k++) {
+            int k = 0;
+            while(k < K) {
+                AccumData tree_sum = peer_replies[k];
+                int kk = k + 1;
+                while(kk < K && !peer_group_first[kk]) {
+                    Spec::merge_accum(tree_sum, peer_replies[kk]);
+                    kk++;
+                }
                 emit_oracle_mismatch_if_any<Spec>(rank, peer_provenance[k].origin_slot,
-                                                    peer_replies[k],
+                                                    tree_sum,
                                                     peer_replies_brute[k],
                                                     "peer", &s_peer_mismatch_count);
+                k = kk;
             }
         }
     }
@@ -1894,6 +2094,24 @@ static void mode_b_remote_evaluate_into_buffer(
      * plumbing for the iterative path lands in a later slice. */
     if (actives_out != nullptr && N > 0) {
         for (int aa = 0; aa < N; aa++) actives_out[aa] = actives[aa];
+    }
+
+    /* Oracle under-route HARD-STOP (collective: every rank reaches here). Any
+     * rank that saw an untargeted probe match means targeted export is
+     * incomplete — a correctness-contract violation, not a warning. Reduce and
+     * stop all ranks together. Only compiled/run in oracle modes. */
+    if constexpr (MODE != RemoteHelperMode::Production) {
+        int global_underroute = 0;
+        MPI_Allreduce(&local_underroute, &global_underroute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(global_underroute > 0) {
+            if(rank == 0) {
+                fprintf(stderr, "[mode_b ORACLE SENDER-UNDER-ROUTE FATAL caller=%s] targeted export "
+                        "missed physically-required (query,rank) pairs (see per-rank lines above). "
+                        "Mode-B targeted export is INCOMPLETE — stopping.\n", Spec::loop_name);
+                fflush(stderr);
+            }
+            endrun(81225);
+        }
     }
 
     /* End of helper. Caller decides whether to call apply_active_writeback

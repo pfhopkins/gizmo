@@ -158,6 +158,7 @@
 #include <cstdint>
 #include <vector>
 #include <type_traits>
+#include "../declarations/constants.h"  /* NODELISTLENGTH (NlrQueryEnvelope start-node list) */
 #include "mode_b_local_walker.h"  /* SearchMode, RadiusPolicy already declared */
 
 /* NLR_INLINE_FUNCTION — private host+device-callable macro for runner-owned
@@ -2058,6 +2059,20 @@ template <typename ActiveData>
 struct NlrQueryEnvelope {
     int        origin_slot;   /* active_slot on the origin rank (== aa) */
     int        origin_rank;   /* ThisTask of origin rank; for diagnostics */
+    /* Targeted-export start-node list (legacy DataNodeList[...].NodeList).
+     * n_nodes valid entries in [1, NODELISTLENGTH]; the receiver resumes its walk
+     * from these exported nodes and stops at the top-level boundary instead of
+     * full-walking from root. A (query,peer) needing more than NODELISTLENGTH
+     * nodes is split across multiple envelopes (disjoint subtrees; the slot-keyed
+     * reply merge sums them). n_nodes==0 = broadcast query (full local walk on
+     * the receiver: uncovered-policy loops, or an oracle probe). */
+    int        n_nodes;
+    /* Oracle under-route probe (validation scaffolding, oracle mode only): 1 =
+     * the sender's targeted routing did NOT select this peer for this query and
+     * expects ZERO matches here; the receiver full-walks it and raises a loud
+     * SENDER-UNDER-ROUTE alarm if it finds any. 0 on all production envelopes. */
+    int        oracle_untargeted_probe;
+    int        NodeList[NODELISTLENGTH];
     ActiveData active;
 };
 

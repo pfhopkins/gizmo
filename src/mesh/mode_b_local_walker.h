@@ -88,6 +88,94 @@ void mode_b_local_brute_walk(const double pos[3],
                              std::vector<int>& out,
                              double j_radius_scale = 1.0);
 
+/* Cross-rank targeted-export support (restores the legacy source-tree export
+ * the port dropped). The three
+ * public walks below (mode_b_local_neighbor_walk above + the two here) are thin
+ * wrappers over ONE shared traversal body, mirroring legacy's 8 ngb_treefind_*
+ * wrappers over one codeblock. Legacy templates: system/ngb_codeblock_
+ * after_condition_unthreaded.h + hydro/density.cc mode==0/mode==1. */
+
+/* Per-query export collector. add() records, for the CURRENT query, the
+ * DomainNodeIndex start-nodes to export to each owning peer task (legacy
+ * pseudo-node export: after_condition_unthreaded.h:19-67). Reused across
+ * queries: ensure_size() + build_topleaf_map() once per call, clear_all()
+ * per query (retains capacity).
+ *
+ * The topleaf reverse map identifies remote-owned TOP-LEAVES during the walk:
+ * post-LET, a shipped remote topleaf's pseudo child is replaced by the
+ * imported foreign subtree (let_pack.cc install), so the export event is the
+ * OPEN DECISION ON THE TOPLEAF itself — exactly legacy's pseudo-hit set (a
+ * pseudo child is reached iff its parent topleaf is opened). SSOT = the
+ * DomainNodeIndex[]/DomainTask[] arrays (the same arrays legacy ngb.cc and
+ * the modern Ewald export detector use); the map is derived from them per
+ * call, never assumed from slot layout. */
+struct ModeBExportCollector {
+    std::vector<std::vector<int>> nodes_per_peer;   /* [owner_task] -> DomainNodeIndex list */
+    std::vector<int> leaf_of_topnode;               /* [no - All.MaxPart] -> topleaf id, -1 = not a topleaf */
+    int topnode_map_size = 0;                       /* valid offsets: [0, topnode_map_size) */
+    void ensure_size(int ntask) {
+        if((int)nodes_per_peer.size() != ntask) nodes_per_peer.assign(ntask, std::vector<int>{});
+    }
+    void clear_all() { for(auto &v : nodes_per_peer) v.clear(); }
+    void add(int owner_task, int domain_node_index) {
+        nodes_per_peer[owner_task].push_back(domain_node_index);
+    }
+    void build_topleaf_map(void);                   /* fill from DomainNodeIndex[0..NTopleaves) */
+    /* Returns the topleaf id for internal node `no`, or -1 if not a topleaf. */
+    inline int topleaf_of(int no, int max_part) const {
+        const int off = no - max_part;
+        if(off < 0 || off >= topnode_map_size) return -1;
+        return leaf_of_topnode[off];
+    }
+};
+
+/* SENDER walk (legacy mode==0): walk the local tree from the root; at every
+ * remote pseudo-node the query reaches, record a targeted export into
+ * `exporter` (the owner peer + that node's DomainNodeIndex). Optionally also
+ * append local real-particle candidates to `cand_out` (pass nullptr to skip —
+ * the self-candidate collection is done by the existing collect-candidates
+ * path so local results stay byte-identical). Same predicate/pruning as
+ * mode_b_local_neighbor_walk. */
+void mode_b_walk_and_export(const double pos[3],
+                            double h_q,
+                            unsigned int type_mask,
+                            int search_mode,
+                            mode_b_radius_policy_t radius_policy,
+                            std::vector<int>* cand_out,
+                            ModeBExportCollector& exporter,
+                            double j_radius_scale = 1.0);
+
+/* RECEIVER walk (legacy mode==1): for each exported start-node in
+ * node_list[0..n_nodes) (a DomainNodeIndex, -1 terminates early), resume the
+ * walk from that node's children and stop when the walk re-enters the
+ * top-level tree (BITFLAG_TOPLEVEL) — the bounded subtree resume from
+ * hydro/density.cc:272,351 + codeblock:74-81. Appends local candidates to
+ * `out`. No export. */
+void mode_b_walk_from_start_nodes(const double pos[3],
+                                  double h_q,
+                                  unsigned int type_mask,
+                                  int search_mode,
+                                  mode_b_radius_policy_t radius_policy,
+                                  const int *node_list,
+                                  int n_nodes,
+                                  std::vector<int>& out,
+                                  double j_radius_scale = 1.0);
+
+/* Structural eligibility for TARGETED export. The sender's
+ * export walk prunes SYMMETRIC nodes by the cross-rank SCALAR Extnodes.hmax,
+ * which covers gas KernelRadius only (allvars.h:858). A loop is eligible iff its
+ * j-side reach is dominated by that band: ONEWAY (band unused), or SYMMETRIC
+ * with a gas-kernel-only radius policy. Non-gas / AGS / ForceSoftening policies
+ * (sink_env1/2/feed/swk, ags_force) stay on the broadcast path, because the
+ * per-type node band is not exchanged cross-rank (only the scalar hmax is), so
+ * the sender cannot bound their reach on remote peers. Keyed on radius_policy,
+ * NEVER a caller name (directive 6a). */
+constexpr bool mode_b_targeted_export_eligible(int search_mode,
+                                               mode_b_radius_policy_t radius_policy) {
+    return (search_mode == MODE_B_SEARCH_ONEWAY) ||
+           ((radius_policy & ~(mode_b_radius_policy_t)MODE_B_RADIUS_GAS_KERNEL) == 0u);
+}
+
 /* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
  *
  * GPU NGL contract: candidate walk runs on whatever P[j].Pos state exists,

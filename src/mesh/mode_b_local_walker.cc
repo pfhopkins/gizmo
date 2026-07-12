@@ -3,9 +3,14 @@
  * See header for design constraints. Both paths return LOCAL real P[]
  * indices in [0, ghost_get_num_local()) intersecting (pos, h_q).
  *
- * Status: WORKING for ONEWAY mode (the density-iter target). SYMMETRIC
- * tree walk currently always opens (no per-node max-h tracking yet);
- * brute walk handles SYMMETRIC correctly. Oracle catches any divergence.
+ * SYMMETRIC tree walk prunes internal nodes by the per-type hmax bands
+ * (Extnodes[no].hmax_per_type via mode_b_node_symmetric_radius); ONEWAY
+ * prunes by h_q alone. The brute walk is the oracle for both.
+ *
+ * The three public tree walks (mode_b_local_neighbor_walk / _walk_and_export /
+ * _walk_from_start_nodes) are thin wrappers over the one shared traversal body
+ * mode_b_walk_impl below — the same SSOT-body/many-wrappers shape legacy uses
+ * (ngb.cc's 8 ngb_treefind_* over one codeblock).
  *
  * Periodic boundaries: handled via NEAREST_XYZ on the displacement.
  */
@@ -114,61 +119,110 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * (looser) clamp and can fall BELOW the live max-particle radius. The
  * 50% inflation absorbs this asymmetry conservatively — over-search is
  * safe (extra candidates → physics kernel filters), under-search is a
- * correctness bug. Same convention as GPU NGL's BVH tile-overlap test. */
+ * correctness bug. Same convention as GPU NGL's BVH tile-overlap test.
+ *
+ * The +50% slack is a drift margin with no legacy analog (legacy relied on
+ * force_update_hmax cadence + the node-size term). It over-opens the node
+ * prune, so its cost is measured before any change; do NOT alter it here
+ * without re-measuring the export volume. */
+static constexpr double MODE_B_NODE_H_SLACK = 0.5;  /* matches SIDX_H_SLACK; SSOT for the drift slack */
+
 static inline double mode_b_node_symmetric_radius(int no,
                                                   unsigned int type_mask,
                                                   double j_radius_scale)
 {
-    static constexpr double H_SLACK = 0.5;  /* matches SIDX_H_SLACK */
     double rmax = 0.0;
     for(int t = 0; t < 6; t++) {
         if(!(type_mask & (1u << t))) continue;
         double v = (double)Extnodes[no].hmax_per_type[t];
         if(v > rmax) rmax = v;
     }
-    return rmax * (1.0 + H_SLACK) * j_radius_scale;
+    return rmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
 }
 
-void mode_b_local_neighbor_walk(const double pos[3],
-                                double h_q,
-                                unsigned int type_mask,
-                                int search_mode,
-                                mode_b_radius_policy_t radius_policy,
-                                std::vector<int>& out,
-                                double j_radius_scale)
+/* Which node band the SYMMETRIC open test uses:
+ *  - LegacyScalar: the cross-rank scalar Extnodes.hmax (DomainMoment-exchanged;
+ *    forcetree.cc:766/886). The SENDER export walk MUST use this so its
+ *    targeting covers REMOTE ranks' h_j — the per-type bands are rank-local
+ *    (allvars.h) so they under-cover remote peers.
+ *  - PerTypeLocal: the rank-local per-type bands (mode_b_node_symmetric_radius),
+ *    fresh + tight for THIS rank's own pool. Used by local + receiver walks.
+ * Scalar hmax is gas-biased: the runner only
+ * takes the export path for policies it dominates (gate in neighbor_loop_runner.cc). */
+enum class ModeBNodeBand { PerTypeLocal, LegacyScalar };
+
+/* Build the topleaf reverse map from the DomainNodeIndex SSOT (never from a
+ * slot-layout assumption). Sized to the max observed offset; entries outside
+ * any topleaf stay -1. O(NTopleaves), rebuilt per export call (topnode indices
+ * are stable between tree builds; per-call rebuild avoids any staleness). */
+void ModeBExportCollector::build_topleaf_map(void)
+{
+    const int max_part = All.MaxPart;
+    int max_off = -1;
+    for(int i = 0; i < NTopleaves; i++) {
+        const int off = DomainNodeIndex[i] - max_part;
+        if(off < 0) { topnode_map_size = 0; return; }   /* malformed map: disable topleaf detection (walk still exports via pseudo branch) */
+        if(off > max_off) max_off = off;
+    }
+    topnode_map_size = max_off + 1;
+    leaf_of_topnode.assign(topnode_map_size, -1);
+    for(int i = 0; i < NTopleaves; i++) {
+        leaf_of_topnode[DomainNodeIndex[i] - max_part] = i;
+    }
+}
+
+/* Shared traversal body (SSOT for all three public tree walks).
+ *
+ * Walks from `start_no`. Local real-particle matches are appended to `cand_out`
+ * (nullptr = do not collect). At every remote pseudo-node reached, if
+ * `export_out != nullptr` the owner peer + node's DomainNodeIndex is recorded
+ * (legacy mode==0 targeted export, ngb_codeblock_after_condition_unthreaded.h:
+ * 19-67; modern symbol form matches gravity/forcetree.cc:2173-2210). If
+ * `stop_at_toplevel` (legacy mode==1 receiver), the walk returns when it
+ * re-enters the top-level tree — the exported subtree is exhausted
+ * (after_condition_unthreaded.h:74-81).
+ *
+ * SYMMETRIC internal-node pruning uses the per-type hmax bands
+ * (mode_b_node_symmetric_radius); ONEWAY prunes by h_q alone. Bands are
+ * rank-local and re-seeded every build/refresh; a query against another rank's
+ * pool is shipped there and answered with that rank's own fresh bands, so no
+ * cross-rank band exchange is needed. */
+static void mode_b_walk_impl(const double pos[3],
+                             double h_q,
+                             unsigned int type_mask,
+                             int search_mode,
+                             mode_b_radius_policy_t radius_policy,
+                             double j_radius_scale,
+                             int start_no,
+                             bool stop_at_toplevel,
+                             ModeBNodeBand band,
+                             std::vector<int>* cand_out,
+                             ModeBExportCollector* export_out)
 {
     if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
     const int max_part  = All.MaxPart;
     const int pseudo_start = max_part + MaxNodes + MaxForeignNodes;
-
-    /* SYMMETRIC pruning uses the per-type hmax bands maintained in extNODE
-     * (see allvars.h). For each internal node:
-     *   R_eff = max(h_query, max_{t in type_mask} Extnodes[no].hmax_per_type[t])
-     * then sphere-vs-AABB overlap with R_eff. Per-type generalization of the
-     * legacy scalar-hmax node prune. ONEWAY ignores hmax and uses h_query alone.
-     *
-     * The bands are rank-local by design: this walker returns only rank-local
-     * candidates and skips pseudo/foreign nodes (handled at the bottom of the
-     * loop), and the bands are re-seeded on every rank at every build/refresh.
-     * A query against another rank's pool is shipped to that rank and answered
-     * with its own locally-fresh bands, so no cross-rank band exchange is
-     * required for correctness. */
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
-    int no = max_part; /* root node */
+    int no = start_no;
 
     while(no >= 0) {
         if(no < max_part) {
-            /* Particle leaf. Only return if it's a domain-owned local
-             * particle (not a ghost import). */
-            if(no < num_local && particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale)) {
-                out.push_back(no);
+            /* Particle leaf. Only return domain-owned local particles (not a
+             * ghost import). cand_out==nullptr on a pure export-discovery walk. */
+            if(cand_out && no < num_local &&
+               particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale)) {
+                cand_out->push_back(no);
             }
             no = Nextnode[no];
         } else if(no < pseudo_start) {
-            /* Internal node — drift if stale, then prune. */
+            /* Internal node. */
             struct NODE *nop = &Nodes[no];
+            /* Receiver (legacy mode==1): re-entering the top-level tree means
+             * the exported branch is done. */
+            if(stop_at_toplevel && (nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) return;
+            /* Drift if stale, then prune. */
             if(nop->Ti_current != All.Ti_Current) {
 #ifdef _OPENMP
 #pragma omp critical(_modebdrift_)
@@ -183,22 +237,115 @@ void mode_b_local_neighbor_walk(const double pos[3],
             if(oneway) {
                 R_eff = h_q;
             } else {
-                /* SYMMETRIC: R_eff = max(h_q, per-type hmax under mask).
-                 * Bands are conservative across every radius_policy source
-                 * for their type — node-prune is policy-independent. */
-                double node_h = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
+                /* SYMMETRIC: R_eff = max(h_q, node band). LegacyScalar uses the
+                 * cross-rank scalar hmax (sender export — must cover remote h_j);
+                 * PerTypeLocal uses the rank-local per-type bands (local/receiver
+                 * walks). Over-opening is safe; under-opening is a correctness bug. */
+                double node_h;
+                if(band == ModeBNodeBand::LegacyScalar) {
+                    node_h = (double)Extnodes[no].hmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
+                } else {
+                    node_h = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
+                }
                 R_eff = (node_h > h_q) ? node_h : h_q;
             }
             int do_open = sphere_aabb_overlap(pos, nop, R_eff);
+            /* SENDER export event (legacy pseudo-hit equivalence): the walk
+             * decided to OPEN a remote-owned TOPLEAF. Legacy would descend and
+             * hit the pseudo child (export + skip); post-LET the child may be
+             * the imported foreign subtree instead — which holds NO local
+             * candidates and must NOT be descended in source-export semantics.
+             * Export (owner task, DomainNodeIndex) and skip to sibling. The
+             * open test just applied uses the SAME cross-rank-exchanged scalar
+             * hmax + node geometry legacy applied to this topleaf, so the
+             * exported set matches legacy's exactly. */
+            if(do_open && export_out) {
+                const int leaf = export_out->topleaf_of(no, max_part);
+                if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
+                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    no = nop->u.d.sibling;
+                    continue;
+                }
+            }
             no = do_open ? nop->u.d.nextnode : nop->u.d.sibling;
         } else {
-            /* Pseudo-particle node (LET / cross-rank). These are not
-             * addressable NODE slots in the Phase-9 layout. Match the
-             * legacy force walkers: skip through the corresponding
-             * Nextnode[] entry, whose pseudo index is shifted by the
-             * local-node and foreign-node reservation. */
+            /* Pseudo-particle node (cross-rank subtree root; reached only for
+             * remote topleaves the LET did not ship/redirect — with the
+             * topleaf-boundary export above this branch is normally never hit,
+             * but it keeps non-LET / unshipped-leaf configs correct). Record
+             * the same targeted export, then skip forward exactly as the
+             * legacy force walkers: the pseudo index is shifted by the
+             * local-node + foreign-node reservation (Phase-9 layout). */
+            if(export_out) {
+                const int leaf = no - pseudo_start;
+                if(leaf >= 0 && leaf < NTopleaves && DomainTask[leaf] != ThisTask) {
+                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                }
+            }
             no = Nextnode[no - MaxNodes - MaxForeignNodes];
         }
+    }
+}
+
+/* LOCAL-candidates walk (legacy-mode==0 without export): from root, collect
+ * local matches, skip pseudo-nodes. Behavior byte-identical to the prior broadcast-only
+ * walker (export_out=nullptr, stop_at_toplevel=false). */
+void mode_b_local_neighbor_walk(const double pos[3],
+                                double h_q,
+                                unsigned int type_mask,
+                                int search_mode,
+                                mode_b_radius_policy_t radius_policy,
+                                std::vector<int>& out,
+                                double j_radius_scale)
+{
+    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+                     /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
+                     ModeBNodeBand::PerTypeLocal, &out, /*export_out=*/nullptr);
+}
+
+/* SENDER walk: from root, record targeted exports at reached pseudo-nodes;
+ * optionally also collect local candidates (cand_out may be nullptr). Uses the
+ * cross-rank scalar hmax band (LegacyScalar) so targeting covers remote h_j. */
+void mode_b_walk_and_export(const double pos[3],
+                            double h_q,
+                            unsigned int type_mask,
+                            int search_mode,
+                            mode_b_radius_policy_t radius_policy,
+                            std::vector<int>* cand_out,
+                            ModeBExportCollector& exporter,
+                            double j_radius_scale)
+{
+    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+                     /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
+                     ModeBNodeBand::LegacyScalar, cand_out, &exporter);
+}
+
+/* RECEIVER walk: resume from each exported start-node (open its children like
+ * legacy density.cc:272), stop at the top-level boundary. Multiple entries
+ * (legacy NodeList) cover disjoint exported subtrees. */
+void mode_b_walk_from_start_nodes(const double pos[3],
+                                  double h_q,
+                                  unsigned int type_mask,
+                                  int search_mode,
+                                  mode_b_radius_policy_t radius_policy,
+                                  const int *node_list,
+                                  int n_nodes,
+                                  std::vector<int>& out,
+                                  double j_radius_scale)
+{
+    if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
+    const int max_part      = All.MaxPart;
+    const int pseudo_start  = max_part + MaxNodes + MaxForeignNodes;
+    for(int k = 0; k < n_nodes; k++) {
+        const int nl = node_list[k];
+        if(nl < 0) break;   /* -1 terminator (legacy NodeList convention) */
+        /* Defensive: a start-node arrives over MPI; it must be an internal
+         * node index. Skip a corrupt entry rather than dereference OOB. */
+        if(nl < max_part || nl >= pseudo_start) continue;
+        const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
+        mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+                         start, /*stop_at_toplevel=*/true,
+                         ModeBNodeBand::PerTypeLocal, &out, /*export_out=*/nullptr);
     }
 }
 
