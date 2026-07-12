@@ -2951,6 +2951,25 @@ void run_neighbor_loop(const neighbor_loop_args& args)
             Spec::loop_name, args.num_active, phase0_sum_active, oracle_on);
     }
 
+    /* Globally-zero-active call: do NO neighbor work. phase0_sum_active is the
+     * dispatch Allreduce of active particles (set on the threshold + force-B
+     * paths), so it is identical on every rank -> this return is collective-
+     * symmetric (all ranks return together, skipping the Mode-A ghost import /
+     * writeback / cleanup as a matched set). NOT the banned local num_active==0
+     * early return: the condition is GLOBAL. Without it, a zero-active call
+     * falls to Mode A and fires a spurious ghost import with nothing to compute.
+     * Not fired on the force-A path (phase0_sum_active stays -1 there). The
+     * normal PHASE0/dispatch summary is intentionally skipped for such calls; a
+     * distinct rank-0 marker (diag-gated) keeps them observable. */
+    if(phase0_sum_active == 0) {
+        if(phase0_on && ThisTask == 0) {
+            std::printf("NLR_ZERO_ACTIVE_NOOP sp=%d caller=%s\n",
+                        (int)All.NumCurrentTiStep, Spec::loop_name);
+            std::fflush(stdout);
+        }
+        return;
+    }
+
     /* Compute the execution plan from the dispatch decision. Path is the
      * single-source-of-truth; predicates derive from it. */
     NeighborLoopPlan plan;
@@ -4575,12 +4594,17 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                                       : gizmo_nlr_force_mode_for(Spec::loop_name);
     DispatchPath path;
     int forced_modeb_global_active = -1;
+    /* Global active-particle sum across all ranks (from the dispatch Allreduce);
+     * -1 = not computed (force-A cheap path). Used for the globally-zero-active
+     * no-op below. */
+    int global_active_sum = -1;
     if (force_mode == NlrForceMode::A) {
         path = DispatchPath::ModeA_GPU_NGL;
     } else if (force_mode == NlrForceMode::B) {
         int local_act = args.num_active;
         MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
                       MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        global_active_sum = forced_modeb_global_active;
         nlr_abort_if_forced_modeb_too_large(
             Spec::loop_name, args.num_active, forced_modeb_global_active,
             oracle_enabled);
@@ -4592,12 +4616,32 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         int sum_act = 0, max_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        global_active_sum = sum_act;
         const int spec_default_sum = nlr_spec_threshold_sum<Spec>(64);
         const int spec_default_max = nlr_spec_threshold_max<Spec>(64);
         const int TS = gizmo_nlr_modeb_threshold_sum_for(Spec::loop_name, spec_default_sum);
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         bool select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
         path = select_mode_b ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
+    }
+
+    /* Globally-zero-active call: do NO neighbor work. global_active_sum comes
+     * from the dispatch Allreduce, so it is identical on every rank -> this
+     * return is collective-symmetric (all ranks return together, skipping the
+     * ghost import / writeback / cleanup as a matched set). This is NOT the
+     * banned local num_active==0 early return: the condition is GLOBAL. Without
+     * it, a zero-active call falls to Mode A (sum_act>0 gate fails) and fires a
+     * spurious request-driven ghost import with nothing to compute. Not fired on
+     * the force-A path (global_active_sum stays -1 there). The normal
+     * PHASE0/dispatch summary is intentionally skipped for such calls; a distinct
+     * rank-0 marker (diag-gated) keeps them observable. */
+    if (global_active_sum == 0) {
+        if (gizmo_nlr_phase0_diag_enabled() && ThisTask == 0) {
+            std::printf("NLR_ZERO_ACTIVE_NOOP sp=%d caller=%s\n",
+                        (int)All.NumCurrentTiStep, Spec::loop_name);
+            std::fflush(stdout);
+        }
+        return;
     }
 
     /* ===== Mode A + oracle hard-stub (step 2c.4) =====
