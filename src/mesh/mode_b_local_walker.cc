@@ -94,7 +94,16 @@ static inline int sphere_aabb_overlap(const double pos[3],
     double dy = (double)nop->center[1] - pos[1];
     double dz = (double)nop->center[2] - pos[2];
     NEAREST_XYZ(dx, dy, dz, 1);
-    /* Conservative bound: cube half-diagonal sqrt(3)/2 * len */
+    /* Legacy per-axis AABB reject at R + 0.5*len (ngb_codeblock_checknode.h normal
+     * branch: if(NGB_PERIODIC_BOX_LONG_* > R+0.5*len) continue, per axis). The node box
+     * spans center +- 0.5*len per axis; a single-axis separation > R+0.5*len means the
+     * query sphere (radius R) cannot reach the box, so no overlap. Conservative — a
+     * neighbor inside the node forces box/sphere intersection, so this never drops a real
+     * neighbor; it removes the corner-case nodes the enclosing-sphere bound alone opens. */
+    const double half = R + 0.5 * (double)nop->len;
+    if(fabs(dx) > half || fabs(dy) > half || fabs(dz) > half) return 0;
+    /* Legacy enclosing-sphere test at R + CUBE_EDGEFACTOR_1*len = R + 0.866*len
+     * (0.5 + 0.366025 = sqrt(3)/2 = SQRT3_OVER_2) — byte-identical to legacy's radial. */
     const double SQRT3_OVER_2 = 0.86602540378443864676;
     double r_max = R + (double)nop->len * SQRT3_OVER_2;
     return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
