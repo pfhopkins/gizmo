@@ -132,10 +132,11 @@ struct ModeBExportCollector {
 /* SENDER walk (legacy mode==0): walk the local tree from the root; at every
  * remote pseudo-node the query reaches, record a targeted export into
  * `exporter` (the owner peer + that node's DomainNodeIndex). Optionally also
- * append local real-particle candidates to `cand_out` (pass nullptr to skip —
- * the self-candidate collection is done by the existing collect-candidates
- * path so local results stay byte-identical). Same predicate/pruning as
- * mode_b_local_neighbor_walk. */
+ * append local real-particle candidates to `cand_out` in the SAME traversal
+ * (pass nullptr to skip). Passing cand_out != nullptr is the FUSED legacy
+ * mode==0 walk: one traversal, two sinks, each gated by its own predicate
+ * (candidates by the per-type leaf test, exports by the scalar reach) — see
+ * the ModeBWalkReach table in mode_b_local_walker.cc. */
 void mode_b_walk_and_export(const double pos[3],
                             double h_q,
                             unsigned int type_mask,

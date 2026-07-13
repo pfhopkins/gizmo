@@ -148,16 +148,41 @@ static inline double mode_b_node_symmetric_radius(int no,
     return rmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
 }
 
-/* Which node band the SYMMETRIC open test uses:
- *  - LegacyScalar: the cross-rank scalar Extnodes.hmax (DomainMoment-exchanged;
- *    forcetree.cc:766/886). The SENDER export walk MUST use this so its
- *    targeting covers REMOTE ranks' h_j — the per-type bands are rank-local
- *    (allvars.h) so they under-cover remote peers.
- *  - PerTypeLocal: the rank-local per-type bands (mode_b_node_symmetric_radius),
- *    fresh + tight for THIS rank's own pool. Used by local + receiver walks.
- * Scalar hmax is gas-biased: the runner only
- * takes the export path for policies it dominates (gate in neighbor_loop_runner.cc). */
-enum class ModeBNodeBand { PerTypeLocal, LegacyScalar };
+/* SYMMETRIC node-open reach, derived from the SINK SET (no independent band
+ * knob — the sinks a caller passes determine the semantics, so band and purpose
+ * cannot be mis-paired):
+ *
+ *   sinks                    | traversal reach              | export decisions
+ *   -------------------------+------------------------------+------------------
+ *   cand_out only            | per-type local band          | (none)
+ *   export_out only          | cross-rank scalar hmax       | = traversal test
+ *   cand_out + export_out    | max(per-type, scalar)        | scalar re-test
+ *   (fused, legacy mode==0)  | (union of both predicates)   | at topleaf/pseudo
+ *
+ * WHY: the candidate walk's correctness predicate is the rank-local per-type
+ * band (mode_b_node_symmetric_radius — fresh + tight for THIS rank's pool);
+ * the export walk's is the cross-rank scalar Extnodes.hmax (DomainMoment-
+ * exchanged, forcetree.cc:766/886 — the ONLY band that covers REMOTE ranks'
+ * h_j; per-type is rank-local and would under-route). A fused walk traverses
+ * on the UNION of the two open predicates — since the overlap test is monotone
+ * in reach, union == one test at max(reach) — and gates each sink on its own
+ * predicate: candidates by the exact leaf test (never the band), exports by a
+ * scalar-reach re-test at remote topleaves. Each consumer keeps its own
+ * already-validated predicate; neither depends on the other's band dominating.
+ * Scalar hmax is gas-biased: the runner only takes the export path for
+ * policies it dominates (gate in neighbor_loop_runner.cc). */
+struct ModeBWalkReach {
+    bool use_pertype;   /* cand_out present: per-type local band enters traversal reach */
+    bool use_scalar;    /* export_out present: cross-rank scalar band enters traversal reach */
+};
+static inline ModeBWalkReach mode_b_reach_for_sinks(const std::vector<int>* cand_out,
+                                                    const ModeBExportCollector* export_out)
+{
+    ModeBWalkReach r;
+    r.use_pertype = (cand_out   != nullptr);
+    r.use_scalar  = (export_out != nullptr);
+    return r;
+}
 
 /* Build the topleaf reverse map from the DomainNodeIndex SSOT (never from a
  * slot-layout assumption). Sized to the max observed offset; entries outside
@@ -203,7 +228,6 @@ static void mode_b_walk_impl(const double pos[3],
                              double j_radius_scale,
                              int start_no,
                              bool stop_at_toplevel,
-                             ModeBNodeBand band,
                              std::vector<int>* cand_out,
                              ModeBExportCollector* export_out)
 {
@@ -212,6 +236,7 @@ static void mode_b_walk_impl(const double pos[3],
     const int max_part  = All.MaxPart;
     const int pseudo_start = max_part + MaxNodes + MaxForeignNodes;
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
+    const ModeBWalkReach reach = mode_b_reach_for_sinks(cand_out, export_out);
 
     int no = start_no;
 
@@ -241,53 +266,63 @@ static void mode_b_walk_impl(const double pos[3],
                     }
                 }
             }
-            double R_eff;
+            /* Traversal reach = union of the active sinks' open predicates
+             * (overlap is monotone in reach, so union == one test at the max).
+             * node_h_export kept separately: the export decision below re-tests
+             * with the SCALAR reach so a fused walk never exports on the wider
+             * union predicate (export set must equal the pure export walk's). */
+            double R_trav, R_export = h_q;
             if(oneway) {
-                R_eff = h_q;
+                R_trav = h_q;   /* both predicates degenerate to h_q: no band */
             } else {
-                /* SYMMETRIC: R_eff = max(h_q, node band). LegacyScalar uses the
-                 * cross-rank scalar hmax (sender export — must cover remote h_j);
-                 * PerTypeLocal uses the rank-local per-type bands (local/receiver
-                 * walks). Over-opening is safe; under-opening is a correctness bug. */
-                double node_h;
-                if(band == ModeBNodeBand::LegacyScalar) {
-                    node_h = (double)Extnodes[no].hmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
-                } else {
-                    node_h = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
+                double node_h = 0.0;
+                if(reach.use_scalar) {
+                    const double node_h_scalar =
+                        (double)Extnodes[no].hmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
+                    if(node_h_scalar > node_h) node_h = node_h_scalar;
+                    R_export = (node_h_scalar > h_q) ? node_h_scalar : h_q;
                 }
-                R_eff = (node_h > h_q) ? node_h : h_q;
+                if(reach.use_pertype) {
+                    const double node_h_pt = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
+                    if(node_h_pt > node_h) node_h = node_h_pt;
+                }
+                R_trav = (node_h > h_q) ? node_h : h_q;
             }
-            int do_open = sphere_aabb_overlap(pos, nop, R_eff);
+            int do_open = sphere_aabb_overlap(pos, nop, R_trav);
             /* SENDER export event (legacy pseudo-hit equivalence): the walk
              * decided to OPEN a remote-owned TOPLEAF. Legacy would descend and
              * hit the pseudo child (export + skip); post-LET the child may be
-             * the imported foreign subtree instead — which holds NO local
+             * the imported foreign subtree instead — which holds NO owned-local
              * candidates and must NOT be descended in source-export semantics.
-             * Export (owner task, DomainNodeIndex) and skip to sibling. The
-             * open test just applied uses the SAME cross-rank-exchanged scalar
-             * hmax + node geometry legacy applied to this topleaf, so the
-             * exported set matches legacy's exactly. */
+             * Export iff the EXPORT predicate (cross-rank scalar reach — the
+             * SAME hmax + geometry legacy applied to this topleaf) opens it;
+             * skip to sibling REGARDLESS. In a fused walk the traversal may
+             * have opened this topleaf on the per-type reach alone; that must
+             * neither export (would inflate the export set past legacy's) nor
+             * descend (no owned-local candidates below). */
             if(do_open && export_out) {
                 const int leaf = export_out->topleaf_of(no, max_part);
                 if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
-                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    const int do_export = (R_export >= R_trav)
+                        ? do_open
+                        : sphere_aabb_overlap(pos, nop, R_export);
+                    if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
                     no = nop->u.d.sibling;
                     continue;
                 }
             }
             if(do_open) {
                 const int child = nop->u.d.nextnode;
-                /* Legacy foreign-subtree skip: in a local-candidate walk from root
-                 * (self-collect / broadcast-fallback receiver), a remote topleaf's child
-                 * is the imported foreign subtree (post-LET rewire), whose nodes are in
-                 * [MaxPart+MaxNodes, pseudo_start) and hold NO owned-local P[] candidates.
-                 * Descending it is wasted opens; legacy skipped remote subtrees in the
-                 * local walk too. Take the sibling instead. The targeted receiver walk
-                 * (owner's own subtree) never has foreign children so this never fires
-                 * there; the export-discovery walk (cand_out==nullptr) skips remote
-                 * topleaves earlier. */
-                if(cand_out && !export_out &&
-                   child >= max_part + MaxNodes && child < pseudo_start) {
+                /* Legacy foreign-subtree skip (ALL walk modes): an imported
+                 * foreign subtree (post-LET rewire; nodes in [MaxPart+MaxNodes,
+                 * pseudo_start)) holds NO owned-local P[] candidates and NO
+                 * pseudo-nodes (probe-verified), so no walk mode can gain
+                 * anything by descending it — legacy never descends remote
+                 * subtrees. Take the sibling. Normally dead code for export-
+                 * capable walks (the topleaf branch above skips first); it
+                 * covers the malformed-topleaf-map fallback and the plain
+                 * local-candidate walk. */
+                if(child >= max_part + MaxNodes && child < pseudo_start) {
                     no = nop->u.d.sibling;
                 } else {
                     no = child;
@@ -299,14 +334,26 @@ static void mode_b_walk_impl(const double pos[3],
             /* Pseudo-particle node (cross-rank subtree root; reached only for
              * remote topleaves the LET did not ship/redirect — with the
              * topleaf-boundary export above this branch is normally never hit,
-             * but it keeps non-LET / unshipped-leaf configs correct). Record
-             * the same targeted export, then skip forward exactly as the
-             * legacy force walkers: the pseudo index is shifted by the
-             * local-node + foreign-node reservation (Phase-9 layout). */
+             * but it keeps non-LET / unshipped-leaf / malformed-topleaf-map
+             * configs correct). Gate the export on the EXPORT predicate against
+             * the topleaf node's own geometry (a fused walk may reach here via
+             * the wider union reach), then skip forward exactly as the legacy
+             * force walkers: the pseudo index is shifted by the local-node +
+             * foreign-node reservation (Phase-9 layout). */
             if(export_out) {
                 const int leaf = no - pseudo_start;
                 if(leaf >= 0 && leaf < NTopleaves && DomainTask[leaf] != ThisTask) {
-                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    int do_export = 1;
+                    if(reach.use_pertype && !oneway) {   /* fused: re-test with scalar reach */
+                        const int tl_node = DomainNodeIndex[leaf];
+                        if(tl_node >= max_part && tl_node < pseudo_start) {
+                            const double node_h_scalar =
+                                (double)Extnodes[tl_node].hmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
+                            const double R_exp_tl = (node_h_scalar > h_q) ? node_h_scalar : h_q;
+                            do_export = sphere_aabb_overlap(pos, &Nodes[tl_node], R_exp_tl);
+                        }
+                    }
+                    if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
                 }
             }
             no = Nextnode[no - MaxNodes - MaxForeignNodes];
@@ -327,12 +374,15 @@ void mode_b_local_neighbor_walk(const double pos[3],
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
-                     ModeBNodeBand::PerTypeLocal, &out, /*export_out=*/nullptr);
+                     &out, /*export_out=*/nullptr);
 }
 
-/* SENDER walk: from root, record targeted exports at reached pseudo-nodes;
- * optionally also collect local candidates (cand_out may be nullptr). Uses the
- * cross-rank scalar hmax band (LegacyScalar) so targeting covers remote h_j. */
+/* SENDER walk: from root, record targeted exports at reached remote topleaves
+ * / pseudo-nodes; optionally ALSO collect local candidates in the same
+ * traversal (cand_out != nullptr = the FUSED legacy-mode==0 walk: one
+ * traversal, two sinks, each gated by its own predicate — see the
+ * ModeBWalkReach table). Export decisions always use the cross-rank scalar
+ * hmax reach so targeting covers remote h_j. */
 void mode_b_walk_and_export(const double pos[3],
                             double h_q,
                             unsigned int type_mask,
@@ -344,7 +394,7 @@ void mode_b_walk_and_export(const double pos[3],
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
-                     ModeBNodeBand::LegacyScalar, cand_out, &exporter);
+                     cand_out, &exporter);
 }
 
 /* RECEIVER walk: resume from each exported start-node (open its children like
@@ -372,7 +422,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
         mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                          start, /*stop_at_toplevel=*/true,
-                         ModeBNodeBand::PerTypeLocal, &out, /*export_out=*/nullptr);
+                         &out, /*export_out=*/nullptr);
     }
 }
 
