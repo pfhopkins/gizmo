@@ -1602,10 +1602,103 @@ static void mode_b_remote_evaluate_into_buffer(
      * through streamed Mode-B at multi-round MUST be re-audited + oracle-checked
      * (evrard, the validated case, is mass-preserving MFM). */
 
-    /* Stage 3: collect SELF candidate sets PRE-DRIFT. */
+    /* Targeted-export eligibility (compile-time, STRUCTURAL — search_mode +
+     * radius_policy, never a caller name). Hoisted above Stage 3 because the
+     * fused self walk consumes it + the exporter + jscale. */
+    constexpr bool targeted_export_ok =
+        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
+    const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
+
+    /* Targeted-export reverse map: topnode indices are stable between builds →
+     * build ONCE, reuse for the fused walk. Broadcast-path loops skip it and
+     * announce. */
+    ModeBExportCollector exporter;
+    if constexpr (targeted_export_ok) {
+        if(N > 0 && nt > 1) { exporter.ensure_size(nt); exporter.build_topleaf_map(); }
+    } else {
+        if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
+            static bool s_announced = false;
+            if(!s_announced) {
+                s_announced = true;
+                fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
+                        "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
+                        Spec::loop_name);
+                fflush(stdout);
+            }
+        }
+    }
+
+    /* Fused-walk export CSR (targeted specs): per active, its per-peer export
+     * node-lists, staged ONCE by the fused self walk and marshalled (no second
+     * walk) by the B2a round loop. Active-ordered (csr_rec_off), peer-ascending
+     * within an active, node order = walk append order. Sized O(total targeted
+     * exports), NOT O(NTask*N). */
+    struct FusedExportRec { int peer; int node_off; int n_nodes; };
+    std::vector<int> csr_rec_off;                    /* size N+1: active aa -> [off[aa],off[aa+1]) recs */
+    std::vector<FusedExportRec> csr_recs;
+    std::vector<int> csr_nodes;
+    long long diag_csr_bytes = 0; int diag_max_env_per_active = 0;
+
+    /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the
+     * FUSED legacy-mode==0 walk — candidates + export CSR in ONE traversal, keyed
+     * on the frozen actives[] snapshot (== the query the receiver walks) so the
+     * candidate / export / receiver walks share one query SSOT. Broadcast specs
+     * keep the plain candidate walk (they have no export walk to fuse). */
     std::vector<std::vector<int>> cand_self_tree, cand_self_brute;
     if(N > 0) {
-        if (RUN_TREE) {
+        if constexpr (targeted_export_ok) {
+            if(nt > 1) {
+                /* want_cands: only RUN_TREE needs candidates; OracleBrutePass
+                 * (RUN_BRUTE-only) still needs the export CSR for the round loop,
+                 * so the fused walk runs with cand_out=nullptr there. */
+                const bool want_cands = RUN_TREE;
+                if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
+                csr_rec_off.assign(N + 1, 0);
+                StageTimer t(tim ? &tim->dt_collect : nullptr);
+                for(int aa = 0; aa < N; aa++) {
+                    csr_rec_off[aa] = (int)csr_recs.size();
+                    const double h_q = (double)actives[aa].h_search;
+                    if(h_q <= 0) continue;
+                    double pos_arr[3] = {(double)actives[aa].pos[0],
+                                         (double)actives[aa].pos[1],
+                                         (double)actives[aa].pos[2]};
+                    exporter.clear_all();
+                    std::vector<int>* cand_ptr = nullptr;
+                    if(want_cands) {
+                        cand_ptr = &cand_self_tree[aa];
+                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                    }
+                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            cand_ptr, exporter, jscale);
+                    /* stage this active's per-peer exports into the CSR */
+                    long long env_this_active = 0;
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        const std::vector<int>& nodes = exporter.nodes_per_peer[p];
+                        const int nn = (int)nodes.size();
+                        if(nn == 0) continue;
+                        FusedExportRec rec;
+                        rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
+                        csr_recs.push_back(rec);
+                        csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
+                        env_this_active += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                    }
+                    if(env_this_active > diag_max_env_per_active)
+                        diag_max_env_per_active = (int)env_this_active;
+                }
+                csr_rec_off[N] = (int)csr_recs.size();
+                diag_csr_bytes = (long long)csr_recs.size() * (long long)sizeof(FusedExportRec)
+                               + (long long)csr_nodes.size() * (long long)sizeof(int);
+            } else if (RUN_TREE) {
+                /* single rank: no peers to export to → plain candidate walk. */
+                StageTimer t(tim ? &tim->dt_collect : nullptr);
+                collect_candidates_pre_drift<Spec>(args, radii,
+                                                    neighbor_type_mask,
+                                                    DispatchPath::ModeB_HostWalker,
+                                                    cand_self_tree);
+            }
+        } else if (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_collect : nullptr);
             collect_candidates_pre_drift<Spec>(args, radii,
                                                 neighbor_type_mask,
@@ -1694,9 +1787,8 @@ static void mode_b_remote_evaluate_into_buffer(
      * bound their reach on remote peers. Broadcast is correct (each receiver
      * prunes with its own bands). Self-pair handled above; self entry stays
      * empty. */
-    constexpr bool targeted_export_ok =
-        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
-    /* Oracle under-route probes (oracle modes only): ALSO ship each query to the
+    /* (targeted_export_ok, jscale, exporter hoisted above Stage 3 for the fused walk.)
+     * Oracle under-route probes (oracle modes only): ALSO ship each query to the
      * peers targeting did NOT select, flagged probe=1 / n_nodes=0; a probe that
      * finds matches = SENDER UNDER-ROUTE, alarmed receiver-side. Probes count
      * against the same cap. Production sends NO probes. */
@@ -1713,26 +1805,6 @@ static void mode_b_remote_evaluate_into_buffer(
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
     if(bunch < 1) bunch = 1;
 
-    const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
-
-    /* Targeted-export reverse map: topnode indices are stable between builds →
-     * build ONCE, reuse every round. Broadcast-path loops skip it and announce. */
-    ModeBExportCollector exporter;
-    if constexpr (targeted_export_ok) {
-        if(N > 0 && nt > 1) { exporter.ensure_size(nt); exporter.build_topleaf_map(); }
-    } else {
-        if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
-            static bool s_announced = false;
-            if(!s_announced) {
-                s_announced = true;
-                fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
-                        "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
-                        Spec::loop_name);
-                fflush(stdout);
-            }
-        }
-    }
-
     long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
     long long diag_rounds = 0, diag_peak_sent = 0;
     long long diag_recv_groups = 0, diag_peak_recv_env = 0, diag_peak_recv_bytes = 0;
@@ -1744,33 +1816,23 @@ static void mode_b_remote_evaluate_into_buffer(
         std::vector<std::vector<Envelope>> queries_per_peer(nt);
 
         /* Stage 2 (bounded): fill this round's export batch from actives[cursor..).
-         * Per active, stage its FULL export set into `exporter` first, MEASURE the
-         * envelope count, then commit-or-stop atomically — measure-then-commit
-         * gives legacy's all-or-nothing-per-particle rollback (an active never
-         * lands half its chunks in one round) without legacy's DataIndexTable
-         * compaction. An active whose OWN set exceeds `bunch` ships in a solo
-         * oversized round (graceful; loud diag) instead of aborting. */
+         * MARSHAL from the fused walk's export CSR — NO walk here (the fused
+         * legacy mode==0 walk already ran in Stage 3). Per active, MEASURE its
+         * envelope count from the CSR, then commit-or-stop atomically —
+         * measure-then-commit gives legacy's all-or-nothing-per-particle
+         * rollback (an active never lands half its chunks in one round). An
+         * active whose OWN set exceeds `bunch` ships in a solo oversized round
+         * (graceful; loud diag) instead of aborting. */
         if(N > 0 && nt > 1) {
             if constexpr (targeted_export_ok) {
                 int aa = cursor;
                 for(; aa < N; aa++) {
-                    const double h_q = (double)actives[aa].h_search;
-                    if(h_q <= 0) continue;
-                    double pos_arr[3] = {(double)actives[aa].pos[0],
-                                         (double)actives[aa].pos[1],
-                                         (double)actives[aa].pos[2]};
-                    exporter.clear_all();
-                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
-                                            Spec::search_mode, Spec::radius_policy,
-                                            /*cand_out=*/nullptr, exporter, jscale);
+                    const int r0 = csr_rec_off[aa], r1 = csr_rec_off[aa + 1];
                     /* envelopes this active would add across all peers */
                     long long add = 0;
-                    for(int p = 0; p < nt; p++) {
-                        if(p == rank) continue;
-                        const int nn = (int)exporter.nodes_per_peer[p].size();
-                        if(nn == 0) { if constexpr (ORACLE_PROBES) add += 1; }
-                        else add += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
-                    }
+                    for(int r = r0; r < r1; r++)
+                        add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                    if constexpr (ORACLE_PROBES) add += (long long)(nt - 1) - (long long)(r1 - r0);
                     if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active",
@@ -1779,43 +1841,48 @@ static void mode_b_remote_evaluate_into_buffer(
                             "oversized round — cap ineffective for this call (raise BufferSize).",
                             Spec::loop_name, add, add * kEnvPairBytes, bunch);
                     }
-                    /* commit this active's envelopes */
+                    /* commit: chunked envelopes per exported peer (CSR records are
+                     * peer-ascending); an under-route probe for each zero-export
+                     * peer (oracle modes only). */
+                    int rr = r0;
                     for(int p = 0; p < nt; p++) {
                         if(p == rank) continue;
-                        const std::vector<int>& nodes = exporter.nodes_per_peer[p];
-                        const int nn = (int)nodes.size();
-                        if(nn > 0) { diag_export_qr++; diag_node_appends += nn; }
-                        if(nn == 0) {
-                            if constexpr (ORACLE_PROBES) {
+                        if(rr < r1 && csr_recs[rr].peer == p) {
+                            const FusedExportRec& rec = csr_recs[rr];
+                            const int* nd = &csr_nodes[rec.node_off];
+                            const int nn = rec.n_nodes;
+                            diag_export_qr++; diag_node_appends += nn;
+                            /* Chunk into NODELISTLENGTH-sized records (legacy opens a
+                             * fresh export slot when a NodeList fills). Chunks cover
+                             * disjoint subtrees → the slot-keyed reply merge sums their
+                             * partial results without double counting. All chunks of a
+                             * (query,peer) group land in THIS round (all-or-nothing
+                             * above), so the group stays contiguous for peer_group_first
+                             * / the oracle group-sum compare. */
+                            for(int c = 0; c < nn; c += NODELISTLENGTH) {
                                 Envelope env;
                                 env.origin_slot = aa;
                                 env.origin_rank = rank;
-                                env.n_nodes = 0;
-                                env.oracle_untargeted_probe = 1;
-                                for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                                int cnt = 0;
+                                for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                                    env.NodeList[cnt] = nd[c + cnt];
+                                }
+                                env.n_nodes = cnt;
+                                env.oracle_untargeted_probe = 0;
+                                for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                                 env.active = actives[aa];
                                 queries_per_peer[p].push_back(env);
                             }
+                            rr++;
                             continue;
                         }
-                        /* Chunk into NODELISTLENGTH-sized records (legacy opens a
-                         * fresh export slot when a NodeList fills). Chunks cover
-                         * disjoint subtrees → the slot-keyed reply merge sums their
-                         * partial results without double counting. All chunks of a
-                         * (query,peer) group land in THIS round (all-or-nothing
-                         * above), so the group stays contiguous for peer_group_first
-                         * / the oracle group-sum compare. */
-                        for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                        if constexpr (ORACLE_PROBES) {
                             Envelope env;
                             env.origin_slot = aa;
                             env.origin_rank = rank;
-                            int cnt = 0;
-                            for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                                env.NodeList[cnt] = nodes[(size_t)c + cnt];
-                            }
-                            env.n_nodes = cnt;
-                            env.oracle_untargeted_probe = 0;
-                            for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                            env.n_nodes = 0;
+                            env.oracle_untargeted_probe = 1;
+                            for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                             env.active = actives[aa];
                             queries_per_peer[p].push_back(env);
                         }
@@ -2190,13 +2257,17 @@ static void mode_b_remote_evaluate_into_buffer(
 
     if(gizmo_nlr_dispatch_trace_enabled()) {
         /* peak_recv_env/bytes bound TRANSPORT payloads only (envelopes+replies
-         * staged per group) — not candidate vectors or kernel scratch. */
+         * staged per group) — not candidate vectors or kernel scratch.
+         * export_csr_bytes/max_env_per_active bound the fused walk's materialized
+         * export CSR (recs+nodes) built once in Stage 3 (targeted specs). */
         fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
                 "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
-                "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld\n",
+                "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld "
+                "export_csr_bytes=%lld max_env_per_active=%d\n",
                 rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
                 bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
-                diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes);
+                diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes,
+                diag_csr_bytes, diag_max_env_per_active);
         fflush(stdout);
     }
 
