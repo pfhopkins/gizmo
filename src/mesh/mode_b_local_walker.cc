@@ -276,7 +276,26 @@ static void mode_b_walk_impl(const double pos[3],
                     continue;
                 }
             }
-            no = do_open ? nop->u.d.nextnode : nop->u.d.sibling;
+            if(do_open) {
+                const int child = nop->u.d.nextnode;
+                /* Legacy foreign-subtree skip: in a local-candidate walk from root
+                 * (self-collect / broadcast-fallback receiver), a remote topleaf's child
+                 * is the imported foreign subtree (post-LET rewire), whose nodes are in
+                 * [MaxPart+MaxNodes, pseudo_start) and hold NO owned-local P[] candidates.
+                 * Descending it is wasted opens; legacy skipped remote subtrees in the
+                 * local walk too. Take the sibling instead. The targeted receiver walk
+                 * (owner's own subtree) never has foreign children so this never fires
+                 * there; the export-discovery walk (cand_out==nullptr) skips remote
+                 * topleaves earlier. */
+                if(cand_out && !export_out &&
+                   child >= max_part + MaxNodes && child < pseudo_start) {
+                    no = nop->u.d.sibling;
+                } else {
+                    no = child;
+                }
+            } else {
+                no = nop->u.d.sibling;
+            }
         } else {
             /* Pseudo-particle node (cross-rank subtree root; reached only for
              * remote topleaves the LET did not ship/redirect — with the
