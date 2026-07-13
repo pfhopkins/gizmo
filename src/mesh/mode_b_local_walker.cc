@@ -121,20 +121,19 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * Returns 0 if no requested type has a populated band (degenerates to ONEWAY
  * pruning, which is still correct given the leaf-level filter).
  *
- * Slack rationale (matches mesh/gpu_neighbor_list.cc:SIDX_H_SLACK = 0.5):
- * between force_update_hmax() refreshes, per-particle KernelRadius can
- * grow under drift up to factor exp(divv_fac_max/NUMDIMS) ≈ 1.105 (gas)
- * or exp(4/3) ≈ 3.79 (AGS-active). Node hmax decays under a different
- * (looser) clamp and can fall BELOW the live max-particle radius. The
- * 50% inflation absorbs this asymmetry conservatively — over-search is
- * safe (extra candidates → physics kernel filters), under-search is a
- * correctness bug. Same convention as GPU NGL's BVH tile-overlap test.
- *
- * The +50% slack is a drift margin with no legacy analog (legacy relied on
- * force_update_hmax cadence + the node-size term). It over-opens the node
- * prune, so its cost is measured before any change; do NOT alter it here
- * without re-measuring the export volume. */
-static constexpr double MODE_B_NODE_H_SLACK = 0.5;  /* matches SIDX_H_SLACK; SSOT for the drift slack */
+ * Node-open slack: between force_update_hmax() refreshes, per-particle
+ * KernelRadius can grow under drift — up to ~exp(divv_fac_max/NUMDIMS) ≈ 1.105
+ * per refresh for gas, more for AGS-active — while node hmax decays under a
+ * different (looser) clamp. Legacy carried NO extra node-open slack: with
+ * force_update_hmax refreshed every step, the within-step gas growth is covered
+ * by the enclosing-sphere 0.866*len node term, so no inflation is needed. Set
+ * to 0 to match legacy. Over-search is safe (extra candidates filter at the
+ * leaf); under-search is a correctness bug — full-oracle membership on the
+ * downsampled m11i confirmed 0 lost neighbors under real FIRE (gas) drift at
+ * slack 0. AGS-active builds (larger per-step growth) rely on the same
+ * per-step refresh cadence and are not independently oracle-checked here;
+ * re-verify with the oracle if a SYMMETRIC Mode-B loop runs in an AGS config. */
+static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 
 static inline double mode_b_node_symmetric_radius(int no,
                                                   unsigned int type_mask,
