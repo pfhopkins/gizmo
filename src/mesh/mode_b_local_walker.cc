@@ -177,11 +177,11 @@ struct ModeBWalkReach {
     bool use_scalar;    /* export_out present: cross-rank scalar band enters traversal reach */
 };
 static inline ModeBWalkReach mode_b_reach_for_sinks(const std::vector<int>* cand_out,
-                                                    const ModeBExportCollector* export_out)
+                                                    const ModeBExportSink* sink)
 {
     ModeBWalkReach r;
-    r.use_pertype = (cand_out   != nullptr);
-    r.use_scalar  = (export_out != nullptr);
+    r.use_pertype = (cand_out != nullptr);
+    r.use_scalar  = (sink     != nullptr);
     return r;
 }
 
@@ -189,7 +189,7 @@ static inline ModeBWalkReach mode_b_reach_for_sinks(const std::vector<int>* cand
  * slot-layout assumption). Sized to the max observed offset; entries outside
  * any topleaf stay -1. O(NTopleaves), rebuilt per export call (topnode indices
  * are stable between tree builds; per-call rebuild avoids any staleness). */
-void ModeBExportCollector::build_topleaf_map(void)
+void ModeBTopleafMap::build(void)
 {
     const int max_part = All.MaxPart;
     int max_off = -1;
@@ -230,7 +230,8 @@ static void mode_b_walk_impl(const double pos[3],
                              int start_no,
                              bool stop_at_toplevel,
                              std::vector<int>* cand_out,
-                             ModeBExportCollector* export_out)
+                             const ModeBTopleafMap* topleaf_map,
+                             ModeBExportSink* export_out)
 {
     if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
@@ -304,7 +305,7 @@ static void mode_b_walk_impl(const double pos[3],
              * neither export (would inflate the export set past legacy's) nor
              * descend (no owned-local candidates below). */
             if(do_open && export_out) {
-                const int leaf = export_out->topleaf_of(no, max_part);
+                const int leaf = topleaf_map->topleaf_of(no, max_part);
                 if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
                     const int do_export = (R_export >= R_trav)
                         ? do_open
@@ -377,7 +378,7 @@ void mode_b_local_neighbor_walk(const double pos[3],
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
-                     &out, /*export_out=*/nullptr);
+                     &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr);
 }
 
 /* SENDER walk: from root, record targeted exports at reached remote topleaves
@@ -392,12 +393,13 @@ void mode_b_walk_and_export(const double pos[3],
                             int search_mode,
                             mode_b_radius_policy_t radius_policy,
                             std::vector<int>* cand_out,
-                            ModeBExportCollector& exporter,
+                            const ModeBTopleafMap& topleaf_map,
+                            ModeBExportSink& sink,
                             double j_radius_scale)
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
-                     cand_out, &exporter);
+                     cand_out, &topleaf_map, &sink);
 }
 
 /* RECEIVER walk: resume from each exported start-node (open its children like
@@ -425,7 +427,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
         mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
                          start, /*stop_at_toplevel=*/true,
-                         &out, /*export_out=*/nullptr);
+                         &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr);
     }
 }
 

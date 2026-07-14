@@ -95,37 +95,42 @@ void mode_b_local_brute_walk(const double pos[3],
  * wrappers over one codeblock. Legacy templates: system/ngb_codeblock_
  * after_condition_unthreaded.h + hydro/density.cc mode==0/mode==1. */
 
-/* Per-query export collector. add() records, for the CURRENT query, the
- * DomainNodeIndex start-nodes to export to each owning peer task (legacy
- * pseudo-node export: after_condition_unthreaded.h:19-67). Reused across
- * queries: ensure_size() + build_topleaf_map() once per call, clear_all()
- * per query (retains capacity).
- *
- * The topleaf reverse map identifies remote-owned TOP-LEAVES during the walk:
- * post-LET, a shipped remote topleaf's pseudo child is replaced by the
- * imported foreign subtree (let_pack.cc install), so the export event is the
- * OPEN DECISION ON THE TOPLEAF itself — exactly legacy's pseudo-hit set (a
- * pseudo child is reached iff its parent topleaf is opened). SSOT = the
- * DomainNodeIndex[]/DomainTask[] arrays (the same arrays legacy ngb.cc and
- * the modern Ewald export detector use); the map is derived from them per
- * call, never assumed from slot layout. */
-struct ModeBExportCollector {
-    std::vector<std::vector<int>> nodes_per_peer;   /* [owner_task] -> DomainNodeIndex list */
+/* Topleaf reverse map — the READ-ONLY, walk-invariant half of the export
+ * machinery. Identifies remote-owned TOP-LEAVES during the walk: post-LET, a
+ * shipped remote topleaf's pseudo child is replaced by the imported foreign
+ * subtree (let_pack.cc install), so the export event is the OPEN DECISION ON
+ * THE TOPLEAF itself — exactly legacy's pseudo-hit set (a pseudo child is
+ * reached iff its parent topleaf is opened). SSOT = the DomainNodeIndex[]/
+ * DomainTask[] arrays (the same arrays legacy ngb.cc and the modern Ewald
+ * export detector use); the map is derived from them per call, never assumed
+ * from slot layout. build() once per call; read-only during the walk, so ONE
+ * instance is safely shared across all walking threads. */
+struct ModeBTopleafMap {
     std::vector<int> leaf_of_topnode;               /* [no - All.MaxPart] -> topleaf id, -1 = not a topleaf */
     int topnode_map_size = 0;                       /* valid offsets: [0, topnode_map_size) */
+    void build(void);                               /* fill from DomainNodeIndex[0..NTopleaves) */
+    /* Returns the topleaf id for internal node `no`, or -1 if not a topleaf. */
+    inline int topleaf_of(int no, int max_part) const {
+        const int off = no - max_part;
+        if(off < 0 || off >= topnode_map_size) return -1;
+        return leaf_of_topnode[off];
+    }
+};
+
+/* Per-query export sink — the WRITE half. add() records, for the CURRENT
+ * query, the DomainNodeIndex start-nodes to export to each owning peer task
+ * (legacy pseudo-node export: after_condition_unthreaded.h:19-67). Reused
+ * across queries: ensure_size() once per call, clear_all() per query (retains
+ * capacity). Write-only during the walk, so each thread owns its OWN instance
+ * (no shared export counter). */
+struct ModeBExportSink {
+    std::vector<std::vector<int>> nodes_per_peer;   /* [owner_task] -> DomainNodeIndex list */
     void ensure_size(int ntask) {
         if((int)nodes_per_peer.size() != ntask) nodes_per_peer.assign(ntask, std::vector<int>{});
     }
     void clear_all() { for(auto &v : nodes_per_peer) v.clear(); }
     void add(int owner_task, int domain_node_index) {
         nodes_per_peer[owner_task].push_back(domain_node_index);
-    }
-    void build_topleaf_map(void);                   /* fill from DomainNodeIndex[0..NTopleaves) */
-    /* Returns the topleaf id for internal node `no`, or -1 if not a topleaf. */
-    inline int topleaf_of(int no, int max_part) const {
-        const int off = no - max_part;
-        if(off < 0 || off >= topnode_map_size) return -1;
-        return leaf_of_topnode[off];
     }
 };
 
@@ -143,7 +148,8 @@ void mode_b_walk_and_export(const double pos[3],
                             int search_mode,
                             mode_b_radius_policy_t radius_policy,
                             std::vector<int>* cand_out,
-                            ModeBExportCollector& exporter,
+                            const ModeBTopleafMap& topleaf_map,
+                            ModeBExportSink& sink,
                             double j_radius_scale = 1.0);
 
 /* RECEIVER walk (legacy mode==1): for each exported start-node in

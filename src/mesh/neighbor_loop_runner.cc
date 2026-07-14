@@ -1612,9 +1612,10 @@ static void mode_b_remote_evaluate_into_buffer(
     /* Targeted-export reverse map: topnode indices are stable between builds →
      * build ONCE, reuse for the fused walk. Broadcast-path loops skip it and
      * announce. */
-    ModeBExportCollector exporter;
+    ModeBTopleafMap topleaf_map;   /* shared read-only map, built once */
+    ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
     if constexpr (targeted_export_ok) {
-        if(N > 0 && nt > 1) { exporter.ensure_size(nt); exporter.build_topleaf_map(); }
+        if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
     } else {
         if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
             static bool s_announced = false;
@@ -1662,7 +1663,7 @@ static void mode_b_remote_evaluate_into_buffer(
                     double pos_arr[3] = {(double)actives[aa].pos[0],
                                          (double)actives[aa].pos[1],
                                          (double)actives[aa].pos[2]};
-                    exporter.clear_all();
+                    export_sink.clear_all();
                     std::vector<int>* cand_ptr = nullptr;
                     if(want_cands) {
                         cand_ptr = &cand_self_tree[aa];
@@ -1670,12 +1671,12 @@ static void mode_b_remote_evaluate_into_buffer(
                     }
                     mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
-                                            cand_ptr, exporter, jscale);
+                                            cand_ptr, topleaf_map, export_sink, jscale);
                     /* stage this active's per-peer exports into the CSR */
                     long long env_this_active = 0;
                     for(int p = 0; p < nt; p++) {
                         if(p == rank) continue;
-                        const std::vector<int>& nodes = exporter.nodes_per_peer[p];
+                        const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
                         const int nn = (int)nodes.size();
                         if(nn == 0) continue;
                         FusedExportRec rec;
