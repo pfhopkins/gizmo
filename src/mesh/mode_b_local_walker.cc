@@ -23,6 +23,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../gravity/forcetree.h"
+#include "../gravity/force_node_drift_sync.h"  /* modeb_node_ti_current_acquire */
 #include "ghost_writeback.h"      /* ghost_get_num_local */
 #include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
@@ -255,13 +256,15 @@ static void mode_b_walk_impl(const double pos[3],
             /* Receiver (legacy mode==1): re-entering the top-level tree means
              * the exported branch is done. */
             if(stop_at_toplevel && (nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) return;
-            /* Drift if stale, then prune. */
-            if(nop->Ti_current != All.Ti_Current) {
+            /* Drift if stale, then prune. Acquire-load Ti_current so a threaded
+             * walk that sees it fresh also sees the drifter's fresh geometry
+             * (paired with the release store in force_drift_node). */
+            if(modeb_node_ti_current_acquire(no) != All.Ti_Current) {
 #ifdef _OPENMP
 #pragma omp critical(_modebdrift_)
 #endif
                 {
-                    if(nop->Ti_current != All.Ti_Current) {
+                    if(modeb_node_ti_current_acquire(no) != All.Ti_Current) {
                         force_drift_node(no, All.Ti_Current);
                     }
                 }
