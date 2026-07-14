@@ -287,6 +287,7 @@ static void rt_source_injection_pair_body(
  * ========================================================================== */
 struct RtSrcInjectionSpec {
     static constexpr const char *loop_name = "rtsrcinjection";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* Search policy. SYMMETRIC matches legacy rt_source_injection_gpu.cc:178
      * (NGB_SEARCH_SYMMETRIC unconditional). Correctness-required under

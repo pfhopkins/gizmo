@@ -248,6 +248,7 @@ struct DensityNeighborData {
 struct DensitySpec {
     /* Identity */
     static constexpr const char *loop_name = "density";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* Search policy: legacy density CSR builder uses NGB_SEARCH_ONEWAY
      * with j-bitmask = 1 (gas only) per density_gpu.cc:256. Pair predicate

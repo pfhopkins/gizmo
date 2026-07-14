@@ -175,6 +175,7 @@ void iter_harness_pair_body(const IterHarnessActiveData& a,
 struct IterHarnessSpec {
     /* ============ PHYSICS BLOCK ============ */
     static constexpr const char *loop_name = "iter_harness";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
     static constexpr int                    search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int           neighbor_type_mask = 0xFFu;
     static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_DEFAULT;
@@ -442,6 +443,7 @@ void iter_harness_ghost_pair_body(const IterHarnessActiveData& a,
 struct IterHarnessGhostSpec {
     /* Physics block */
     static constexpr const char *loop_name = "iter_harness_ghost";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
     static constexpr int                    search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int           neighbor_type_mask = 0xFFu;
     static constexpr mode_b_radius_policy_t radius_policy      = MODE_B_RADIUS_DEFAULT;

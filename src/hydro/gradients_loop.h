@@ -171,6 +171,7 @@ struct GradientsDeviceContext : NeighborLoopDeviceContextBase
 struct GradientsSpec
 {
     static constexpr const char *loop_name = "gradients";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* Symmetric gas-gas topology (matches gizmo_sym_neighbor_list + the
      * legacy gradient_evaluate_gpu CSR consumer). */

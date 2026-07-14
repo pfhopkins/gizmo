@@ -93,6 +93,7 @@ struct DMGradNeighborData {
 
 struct DMGradSpec {
     static constexpr const char *loop_name = "dm_fuzzy_dmgrad";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* One-way DM->DM (legacy ngb_treefind_variable_threads_targeted). */
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;

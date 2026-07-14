@@ -369,6 +369,7 @@ struct AgsForceSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "ags_force";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* SIDM pair-filter is r <= h_i+h_j; non-SIDM is r <= max(h_i,h_j). Both
      * are symmetric pair predicates — neighbor pool must include j with

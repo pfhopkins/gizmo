@@ -149,6 +149,7 @@ struct MechFBDeviceContext : NeighborLoopDeviceContextBase {
 struct MechFBSpec {
     /* Identity */
     static constexpr const char *loop_name = "mechfb";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
 
     /* Search policy: NGB_SEARCH_SYMMETRIC + gas-only — mirrors the
      * retired legacy evaluator's gpu_ngb_list_build call. */

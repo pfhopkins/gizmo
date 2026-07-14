@@ -2494,13 +2494,16 @@ static void mode_b_remote_evaluate_into_buffer(
                 "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
                 "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld "
                 "export_csr_bytes=%lld max_env_per_active=%d "
-                "nthr=%d omp_self=%lld omp_recv=%lld drift_certified=%d "
+                "nthr=%d omp_self=%lld omp_recv=%lld omp_eval=%s drift_certified=%d "
                 "stale_node_hits=%lld lazy_drift_performed=%lld lazy_drift_raced=%lld\n",
                 rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
                 bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
                 diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes,
                 diag_csr_bytes, diag_max_env_per_active,
-                modeb_nthreads, diag_omp_self, diag_omp_recv, drift_certified,
+                modeb_nthreads, diag_omp_self, diag_omp_recv,
+                nlr_modeb_eval_omp_label(nlr_spec_modeb_eval_omp<Spec>(),
+                                         nlr_spec_modeb_eval_omp_is_explicit_v<Spec>),
+                drift_certified,
                 drift_ctr_total.stale_node_hits, drift_ctr_total.lazy_drift_performed,
                 drift_ctr_total.lazy_drift_raced);
         fflush(stdout);

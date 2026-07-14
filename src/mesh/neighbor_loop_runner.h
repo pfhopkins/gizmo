@@ -288,6 +288,40 @@ enum class SidxCacheKind : int {
 };
 
 /* ============================================================================
+ * ModeBEvalOMP — per-Spec eval-threading tier for Mode-B pair-kernel evaluation.
+ *
+ * The Mode-B discovery/collection walks are threaded by the runner for every
+ * Spec above a work threshold (a runner property, not a per-spec knob). The
+ * pair-kernel EVAL is classified per-spec here because only it can write
+ * neighbor (j-side) state, so its thread-safety depends on the physics:
+ *
+ *   BitwiseReadonly — pair_kernel writes ONLY the i-side AccumData; no j-side
+ *                     scatter. Threaded eval is bit-identical (per-active
+ *                     candidate order is fixed). Requires uses_ghost_writeback
+ *                     == false.
+ *   EpsilonAtomic   — pair_kernel scatters to j via atomic ops. Threaded eval
+ *                     reorders the same atomic updates -> ulp-class
+ *                     nondeterminism (the class Mode-A Kokkos kernels already
+ *                     exhibit). Validated by ID-sort epsilon + oracle
+ *                     membership + accum_tolerance, not bitwise.
+ *   SerialOnly      — evaluated on one thread. A justified final SerialOnly
+ *                     carries a stated STRUCTURAL reason (order-sensitive
+ *                     j-writes, RNG-order dependence, non-atomic scatter). A
+ *                     spec whose tier is not yet audited is conservatively
+ *                     SerialOnly with a note until its pair-kernel is verified.
+ *
+ * A Spec that omits the trait resolves to SerialOnly (compile-safe fallback);
+ * nlr_modeb_eval_omp_label() reports an explicit SerialOnly distinctly from a
+ * missing trait so an unaudited spec is never mistaken for a justified one.
+ * ========================================================================== */
+
+enum class ModeBEvalOMP : int {
+    BitwiseReadonly = 0,
+    EpsilonAtomic   = 1,
+    SerialOnly      = 2,
+};
+
+/* ============================================================================
  * DeviceContext base
  *
  * Specs may extend by typedef-ing `DeviceContext` to a struct that publicly
@@ -468,6 +502,45 @@ struct nlr_spec_has_set_oracle_brute_pass<
 template <typename Spec>
 constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
     nlr_spec_has_set_oracle_brute_pass<Spec>::value;
+
+/* SFINAE detection + resolution of the optional per-Spec eval-threading tier
+ * Spec::modeb_eval_omp (ModeBEvalOMP). A Spec that omits it resolves to
+ * SerialOnly; the *_is_explicit_v trait lets diagnostics report a missing trait
+ * separately from a declared SerialOnly (a missing trait is an unaudited spec,
+ * not a justified serial one — the Mode-B eval-threading audit closes only when
+ * every spec carries an explicit, structurally-justified tier). */
+template <typename Spec, typename = void>
+struct nlr_spec_has_modeb_eval_omp : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_modeb_eval_omp<
+    Spec, std::void_t<decltype(Spec::modeb_eval_omp)>> : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_modeb_eval_omp_is_explicit_v =
+    nlr_spec_has_modeb_eval_omp<Spec>::value;
+
+template <typename Spec>
+constexpr ModeBEvalOMP nlr_spec_modeb_eval_omp() {
+    if constexpr (nlr_spec_has_modeb_eval_omp<Spec>::value) {
+        return Spec::modeb_eval_omp;
+    } else {
+        return ModeBEvalOMP::SerialOnly;
+    }
+}
+
+/* Human-readable tier label for the GX_MODEB_EXPORT eval-threading audit field.
+ * A resolved SerialOnly prints "(explicit)" vs "(missing_trait)" so justified
+ * serial rows are distinguishable from unaudited specs that forgot the trait. */
+inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit) {
+    switch(tier) {
+        case ModeBEvalOMP::BitwiseReadonly: return "BitwiseReadonly";
+        case ModeBEvalOMP::EpsilonAtomic:   return "EpsilonAtomic";
+        case ModeBEvalOMP::SerialOnly:
+            return is_explicit ? "SerialOnly(explicit)" : "SerialOnly(missing_trait)";
+    }
+    return "SerialOnly(missing_trait)";
+}
 
 /* SFINAE detection of optional Spec::bind_active_to_eval_context.
  *
