@@ -300,6 +300,10 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
 #endif
+    /* The sweep drifted every node's AoS + SoA geometry to time1 → record
+     * certification so a consumer can confirm the tree is current at time1
+     * without re-sweeping. */
+    gpu_gravity_soa_mark_drift_certified(time1);
     return 0;
 }
 

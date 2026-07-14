@@ -193,6 +193,22 @@ void gpu_force_drift_release(void);
  * generation; invalidated on SoA realloc/free/rebuild. */
 int gpu_gravity_soa_ensure_drifted(integertime time1);
 
+/* Pure O(1) READ-ONLY query: is the SoA+AoS node geometry certified drifted to
+ * `ti`?  Returns 1 iff the drift stamp matches (ti + current treebuild
+ * generation), else 0.  Never launches a drift kernel and never loops over nodes
+ * (two integer compares), so it is cheap to call on any step.  The stamp is set
+ * by the drift sweep on success (gpu_force_drift_nodes /
+ * gpu_gravity_soa_ensure_drifted) and invalidated on SoA realloc/free/rebuild.
+ * A caller that has not run the sweep this step (before the first gravity walk,
+ * or SELFGRAVITY_OFF) reads 0 and must drift any stale node it uses itself. */
+int gpu_gravity_soa_drift_certified(integertime time1);
+
+/* Record that the SoA+AoS node geometry is drifted to `ti` (snapshots the
+ * current treebuild generation).  Called by the drift sweep on success so every
+ * sweep caller records certification; sets the same stamp
+ * gpu_gravity_soa_ensure_drifted already sets. */
+void gpu_gravity_soa_mark_drift_certified(integertime time1);
+
 /* Phase 6.2: GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
  * payloads) directly on the device, using dependency-counter atomics on

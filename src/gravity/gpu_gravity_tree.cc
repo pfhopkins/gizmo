@@ -292,9 +292,26 @@ extern "C" int gpu_gravity_soa_ensure_drifted(integertime ti)
         gpu_gravity_soa_invalidate_drift_stamp_();
         return 0;
     }
+    /* gpu_force_drift_nodes already recorded the stamp on success; this re-set is
+     * redundant-but-identical (same ti + gen). Kept for locality. */
     g_soa_drift_ti  = ti;
     g_soa_drift_gen = gen;
     return 1;
+}
+
+/* Record node geometry drifted to `ti` (snapshot current treebuild gen). Set by
+ * the drift sweep's success path; read by ensure_drifted's fast-path and the
+ * read-only certification query below. */
+extern "C" void gpu_gravity_soa_mark_drift_certified(integertime ti)
+{
+    g_soa_drift_ti  = ti;
+    g_soa_drift_gen = force_treebuild_generation();
+}
+
+/* Pure O(1) read-only certification query (no drift, no node loop). */
+extern "C" int gpu_gravity_soa_drift_certified(integertime ti)
+{
+    return (g_soa_drift_ti == ti && g_soa_drift_gen == force_treebuild_generation()) ? 1 : 0;
 }
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)
