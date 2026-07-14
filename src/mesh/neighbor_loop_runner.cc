@@ -44,6 +44,10 @@
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
+#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_soa_drift_certified (drift-cert diagnostic) */
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <vector>
 #include <algorithm>   /* nth_element / max_element (coverage dry-run percentiles) */
@@ -875,6 +879,35 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  * pre-pruning).
  * ========================================================================== */
 
+/* Mode-B discovery-walk OpenMP threading. The self/receiver walks write into
+ * disjoint per-item output slots, so they parallelize over the item index with
+ * no shared writes. Threading engages only above a structural work threshold
+ * (never a caller name); below it the serial code runs verbatim (tiny-N steps
+ * pay nothing). Chunk sizes are separate constants because received-query work
+ * variance differs from self-active variance. */
+static constexpr int MODEB_OMP_MIN_PER_THREAD = 4;    /* work >= max(64, 4*nthreads) to thread */
+static constexpr int MODEB_OMP_CHUNK_ACTIVE   = 16;   /* schedule(dynamic) chunk for self-active loops */
+static constexpr int MODEB_OMP_CHUNK_RECV     = 16;   /* schedule(dynamic) chunk for received-query loop */
+
+static inline int nlr_modeb_omp_nthreads(void)
+{
+#ifdef _OPENMP
+    return omp_get_max_threads();
+#else
+    return 1;
+#endif
+}
+
+/* Structural gate: thread iff more than one thread AND enough work to amortize.
+ * Reads NOTHING tree- or drift-related; safe to call on any step. */
+static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
+{
+    if(nthreads <= 1) return false;
+    const long long floor_work = (long long)MODEB_OMP_MIN_PER_THREAD * nthreads;
+    const long long thresh = (floor_work > 64) ? floor_work : 64;
+    return n_items >= thresh;
+}
+
 /* WALK-ONLY. Does NOT mutate P[].Pos/Vel — drift_particle must not be
  * called from inside this helper. (Audited 2026-05-08: walker calls only
  * force_drift_node on tree-internal nodes, which is search-side state.)
@@ -887,8 +920,11 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
                                           const double *radii,
                                           unsigned int neighbor_type_mask,
                                           DispatchPath backend,
-                                          std::vector<std::vector<int>>& per_active_cands)
+                                          std::vector<std::vector<int>>& per_active_cands,
+                                          ModeBDriftCounters* drift_ctr_out = nullptr,
+                                          int* threads_used_out = nullptr)
 {
+    if(threads_used_out) *threads_used_out = 0;   /* 0 until threading is decided */
     /* neighbor_type_mask is explicit caller parameter (step 2c.3
      * mask-threading refactor 2026-05-10). Non-iter callers pass
      * Spec::neighbor_type_mask (unchanged behavior); iter dispatch
@@ -903,6 +939,55 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
      * (~24 MB × N_active on fire_m11i). */
     per_active_cands.assign(N, std::vector<int>{});
     if(num_local <= 0) return;
+    if(backend != DispatchPath::ModeB_HostWalker &&
+       backend != DispatchPath::Brute_Oracle) {
+        fprintf(stderr, "neighbor_loop_runner: collect_candidates_pre_drift "
+                "called with non-Mode-B/Brute backend (%d) for loop '%s'\n",
+                (int)backend, Spec::loop_name);
+        fflush(stderr);
+        endrun(81033);
+        return;
+    }
+    const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
+    /* Thread the real tree walk above the work threshold; the brute oracle
+     * stays serial (reference stays independent of the machinery under test)
+     * and below-threshold stays serial (byte-identical to today). */
+    const int nthreads = nlr_modeb_omp_nthreads();
+    const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
+                         nlr_modeb_use_omp(N, nthreads);
+    if(threads_used_out) *threads_used_out = use_omp ? nthreads : 0;
+    if(use_omp) {
+        /* Each thread mutates only its own per_active_cands[aa] (outer vector
+         * pre-sized; no shared push) and its own drift counter (diagnostic
+         * only — allocated iff a counter sink was requested). */
+        std::vector<ModeBDriftCounters> tctr;
+        if(drift_ctr_out) tctr.resize(nthreads);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
+#endif
+        for(int aa = 0; aa < N; aa++) {
+            const int i = args.active_list[aa];
+            const double h_q = radii[aa];
+            if(h_q <= 0) continue;
+            std::vector<int>& cands = per_active_cands[aa];
+            cands.clear();
+            if(cands.capacity() == 0) cands.reserve(64);
+            double pos_arr[3] = {(double)args.P[i].Pos[0],
+                                  (double)args.P[i].Pos[1],
+                                  (double)args.P[i].Pos[2]};
+#ifdef _OPENMP
+            const int tid = omp_get_thread_num();
+#else
+            const int tid = 0;
+#endif
+            ModeBDriftCounters* ctr = drift_ctr_out ? &tctr[tid] : nullptr;
+            mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                       Spec::search_mode, Spec::radius_policy,
+                                       cands, jscale, ctr);
+        }
+        if(drift_ctr_out) for(const auto& c : tctr) drift_ctr_out->add(c);
+        return;
+    }
     for(int aa = 0; aa < N; aa++) {
         const int i = args.active_list[aa];
         const double h_q = radii[aa];
@@ -914,26 +999,13 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
                               (double)args.P[i].Pos[1],
                               (double)args.P[i].Pos[2]};
         if(backend == DispatchPath::ModeB_HostWalker) {
-            mode_b_local_neighbor_walk(pos_arr, h_q,
-                                        neighbor_type_mask,
-                                        Spec::search_mode,
-                                        Spec::radius_policy,
-                                        cands,
-                                        nlr_spec_symmetric_j_radius_scale<Spec>());
-        } else if(backend == DispatchPath::Brute_Oracle) {
-            mode_b_local_brute_walk(pos_arr, h_q,
-                                     neighbor_type_mask,
-                                     Spec::search_mode,
-                                     Spec::radius_policy,
-                                     cands,
-                                     nlr_spec_symmetric_j_radius_scale<Spec>());
+            mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                        Spec::search_mode, Spec::radius_policy,
+                                        cands, jscale);
         } else {
-            fprintf(stderr, "neighbor_loop_runner: collect_candidates_pre_drift "
-                    "called with non-Mode-B/Brute backend (%d) for loop '%s'\n",
-                    (int)backend, Spec::loop_name);
-            fflush(stderr);
-            endrun(81033);
-            return;
+            mode_b_local_brute_walk(pos_arr, h_q, neighbor_type_mask,
+                                     Spec::search_mode, Spec::radius_policy,
+                                     cands, jscale);
         }
     }
 }
@@ -956,8 +1028,11 @@ static void collect_candidates_for_remote_queries(
     const std::vector<int>& peer_group_first,     /* K; 0 = continuation chunk of the previous (peer,slot) */
     unsigned int neighbor_type_mask,
     DispatchPath backend,
-    std::vector<std::vector<int>>& per_query_cands)
+    std::vector<std::vector<int>>& per_query_cands,
+    ModeBDriftCounters* drift_ctr_out = nullptr,
+    int* threads_used_out = nullptr)
 {
+    if(threads_used_out) *threads_used_out = 0;   /* 0 until threading is decided */
     /* neighbor_type_mask is explicit caller parameter (step 2c.3
      * mask-threading refactor 2026-05-10). Non-iter callers pass
      * Spec::neighbor_type_mask; iter dispatch passes sg.j_type_bitmask.
@@ -969,6 +1044,55 @@ static void collect_candidates_for_remote_queries(
     const int num_local = ghost_get_num_local();
     per_query_cands.assign(K, std::vector<int>{});
     if(num_local <= 0) return;
+    if(backend != DispatchPath::ModeB_HostWalker &&
+       backend != DispatchPath::Brute_Oracle) {
+        fprintf(stderr, "neighbor_loop_runner: collect_candidates_for_remote_queries"
+                " bad backend %d for loop '%s'\n", (int)backend, Spec::loop_name);
+        fflush(stderr);
+        endrun(81033);
+        return;
+    }
+    const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
+    /* Thread the received-query tree walk above the work threshold; brute
+     * oracle stays serial; below-threshold stays serial (byte-identical). */
+    const int nthreads = nlr_modeb_omp_nthreads();
+    const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
+                         nlr_modeb_use_omp(K, nthreads);
+    if(threads_used_out) *threads_used_out = use_omp ? nthreads : 0;
+    if(use_omp) {
+        std::vector<ModeBDriftCounters> tctr;   /* diagnostic only */
+        if(drift_ctr_out) tctr.resize(nthreads);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_RECV)
+#endif
+        for(int k = 0; k < K; k++) {
+            const auto& active = peer_actives[k];
+            const double h_q = (double)active.h_search;
+            if(h_q <= 0) continue;
+            std::vector<int>& cands = per_query_cands[k];
+            cands.clear();
+            if(cands.capacity() == 0) cands.reserve(64);
+            double pos_arr[3] = {(double)active.pos[0], (double)active.pos[1], (double)active.pos[2]};
+#ifdef _OPENMP
+            const int tid = omp_get_thread_num();
+#else
+            const int tid = 0;
+#endif
+            ModeBDriftCounters* ctr = drift_ctr_out ? &tctr[tid] : nullptr;
+            if(peer_nnodes[k] > 0) {
+                mode_b_walk_from_start_nodes(pos_arr, h_q, neighbor_type_mask,
+                                             Spec::search_mode, Spec::radius_policy,
+                                             &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
+                                             peer_nnodes[k], cands, jscale, ctr);
+            } else {
+                mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            cands, jscale, ctr);
+            }
+        }
+        if(drift_ctr_out) for(const auto& c : tctr) drift_ctr_out->add(c);
+        return;
+    }
     for(int k = 0; k < K; k++) {
         const auto& active = peer_actives[k];
         const double h_q = (double)active.h_search;
@@ -980,43 +1104,27 @@ static void collect_candidates_for_remote_queries(
         if(backend == DispatchPath::ModeB_HostWalker) {
             if(peer_nnodes[k] > 0) {
                 /* Targeted query: bounded resume from the exported start-nodes. */
-                mode_b_walk_from_start_nodes(pos_arr, h_q,
-                                             neighbor_type_mask,
-                                             Spec::search_mode,
-                                             Spec::radius_policy,
+                mode_b_walk_from_start_nodes(pos_arr, h_q, neighbor_type_mask,
+                                             Spec::search_mode, Spec::radius_policy,
                                              &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
-                                             peer_nnodes[k],
-                                             cands,
-                                             nlr_spec_symmetric_j_radius_scale<Spec>());
+                                             peer_nnodes[k], cands, jscale);
             } else {
                 /* Broadcast query (n_nodes==0): the sender took the broadcast
                  * path (uncovered radius policy) — full local
                  * walk from root (the prior broadcast behavior). */
-                mode_b_local_neighbor_walk(pos_arr, h_q,
-                                            neighbor_type_mask,
-                                            Spec::search_mode,
-                                            Spec::radius_policy,
-                                            cands,
-                                            nlr_spec_symmetric_j_radius_scale<Spec>());
-            }
-        } else if(backend == DispatchPath::Brute_Oracle) {
-            /* Full-query ground truth: run ONCE per chunk group (see the
-             * group_first construction in the flatten); continuation chunks
-             * keep an empty candidate list → zero accum reply. */
-            if(peer_group_first[k]) {
-                mode_b_local_brute_walk(pos_arr, h_q,
-                                         neighbor_type_mask,
-                                         Spec::search_mode,
-                                         Spec::radius_policy,
-                                         cands,
-                                         nlr_spec_symmetric_j_radius_scale<Spec>());
+                mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            cands, jscale);
             }
         } else {
-            fprintf(stderr, "neighbor_loop_runner: collect_candidates_for_remote_queries"
-                    " bad backend %d for loop '%s'\n", (int)backend, Spec::loop_name);
-            fflush(stderr);
-            endrun(81033);
-            return;
+            /* Brute_Oracle full-query ground truth: run ONCE per chunk group
+             * (see group_first in the flatten); continuation chunks keep an
+             * empty candidate list → zero accum reply. */
+            if(peer_group_first[k]) {
+                mode_b_local_brute_walk(pos_arr, h_q, neighbor_type_mask,
+                                         Spec::search_mode, Spec::radius_policy,
+                                         cands, jscale);
+            }
         }
     }
 }
@@ -1640,6 +1748,26 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<int> csr_nodes;
     long long diag_csr_bytes = 0; int diag_max_env_per_active = 0;
 
+    /* Discovery-walk threading diagnostics (GX_MODEB_EXPORT, NLR_DIAG>=2 only).
+     * The threading itself always runs above the work threshold; only the
+     * per-thread drift accounting is diagnostic, so it is fully OFF when the
+     * dispatch trace is off (drift_sink == nullptr => walker skips every counter
+     * increment, no per-thread tctr allocated) — zero production overhead.
+     * drift_certified is the O(1) SoA drift-cert query, read LAZILY the first
+     * time a walk actually threads (below-threshold tiny-N calls never touch the
+     * stamp); it reports whether the lazy per-node drift branch is provably dead
+     * (stale_node_hits MUST be 0 when drift_certified==1). */
+    const int modeb_nthreads = nlr_modeb_omp_nthreads();
+    const bool nlr_diag_on = gizmo_nlr_dispatch_trace_enabled();
+    ModeBDriftCounters drift_ctr_total{};
+    ModeBDriftCounters* const drift_sink = nlr_diag_on ? &drift_ctr_total : nullptr;
+    int drift_certified = -1;   /* -1 = no threaded walk ran (or diag off) */
+    long long diag_omp_self = 0, diag_omp_recv = 0;   /* actual threads used per stage; 0 = serial */
+    auto nlr_note_threaded_walk = [&]() {
+        if(nlr_diag_on && drift_certified < 0)
+            drift_certified = gpu_gravity_soa_drift_certified(All.Ti_Current) ? 1 : 0;
+    };
+
     /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the
      * FUSED legacy-mode==0 walk — candidates + export CSR in ONE traversal, keyed
      * on the frozen actives[] snapshot (== the query the receiver walks) so the
@@ -1656,55 +1784,146 @@ static void mode_b_remote_evaluate_into_buffer(
                 if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
                 csr_rec_off.assign(N + 1, 0);
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
-                for(int aa = 0; aa < N; aa++) {
-                    csr_rec_off[aa] = (int)csr_recs.size();
-                    const double h_q = (double)actives[aa].h_search;
-                    if(h_q <= 0) continue;
-                    double pos_arr[3] = {(double)actives[aa].pos[0],
-                                         (double)actives[aa].pos[1],
-                                         (double)actives[aa].pos[2]};
-                    export_sink.clear_all();
-                    std::vector<int>* cand_ptr = nullptr;
-                    if(want_cands) {
-                        cand_ptr = &cand_self_tree[aa];
+                /* Thread the fused self walk when producing candidates above the
+                 * work threshold. Each thread walks its actives into its OWN
+                 * export sink + its OWN CSR segment (no shared push, no lock); a
+                 * serial prefix-sum then assembles the active-ordered CSR
+                 * BYTE-IDENTICALLY to the serial build (per-active walk order
+                 * fixed; peers ascending within an active; node order = walk
+                 * append order). The OracleBrutePass export walk (want_cands
+                 * false) stays serial. */
+                const bool use_omp_self = want_cands && nlr_modeb_use_omp(N, modeb_nthreads);
+                if(use_omp_self) {
+                    diag_omp_self = modeb_nthreads;
+                    nlr_note_threaded_walk();
+                    struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; long long env_count; };
+                    std::vector<AaMeta> meta(N);
+                    std::vector<ModeBExportSink> tsink(modeb_nthreads);
+                    for(auto& s : tsink) s.ensure_size(nt);
+                    std::vector<std::vector<FusedExportRec>> trecs(modeb_nthreads);
+                    std::vector<std::vector<int>> tnodes(modeb_nthreads);
+                    std::vector<ModeBDriftCounters> tctr;   /* diagnostic only */
+                    if(drift_sink) tctr.resize(modeb_nthreads);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
+#endif
+                    for(int aa = 0; aa < N; aa++) {
+#ifdef _OPENMP
+                        const int tid = omp_get_thread_num();
+#else
+                        const int tid = 0;
+#endif
+                        ModeBExportSink& sink = tsink[tid];
+                        std::vector<FusedExportRec>& lrecs = trecs[tid];
+                        std::vector<int>& lnodes = tnodes[tid];
+                        AaMeta& m = meta[aa];
+                        m.tid = tid; m.rec_off = (int)lrecs.size(); m.node_off = (int)lnodes.size();
+                        m.n_recs = 0; m.n_nodes = 0; m.env_count = 0;
+                        const double h_q = (double)actives[aa].h_search;
+                        if(h_q <= 0) continue;
+                        double pos_arr[3] = {(double)actives[aa].pos[0],
+                                             (double)actives[aa].pos[1],
+                                             (double)actives[aa].pos[2]};
+                        sink.clear_all();
+                        std::vector<int>* cand_ptr = &cand_self_tree[aa];
                         if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                        mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                                Spec::search_mode, Spec::radius_policy,
+                                                cand_ptr, topleaf_map, sink, jscale,
+                                                drift_sink ? &tctr[tid] : nullptr);
+                        for(int p = 0; p < nt; p++) {
+                            if(p == rank) continue;
+                            const std::vector<int>& nodes = sink.nodes_per_peer[p];
+                            const int nn = (int)nodes.size();
+                            if(nn == 0) continue;
+                            FusedExportRec rec;
+                            rec.peer = p; rec.node_off = (int)lnodes.size(); rec.n_nodes = nn;
+                            lrecs.push_back(rec);
+                            lnodes.insert(lnodes.end(), nodes.begin(), nodes.end());
+                            m.n_recs++;
+                            m.n_nodes += nn;
+                            m.env_count += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                        }
                     }
-                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
-                                            Spec::search_mode, Spec::radius_policy,
-                                            cand_ptr, topleaf_map, export_sink, jscale);
-                    /* stage this active's per-peer exports into the CSR */
-                    long long env_this_active = 0;
-                    for(int p = 0; p < nt; p++) {
-                        if(p == rank) continue;
-                        const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
-                        const int nn = (int)nodes.size();
-                        if(nn == 0) continue;
-                        FusedExportRec rec;
-                        rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
-                        csr_recs.push_back(rec);
-                        csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
-                        env_this_active += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                    /* Deterministic active-ordered merge. */
+                    size_t total_recs = 0, total_nodes = 0;
+                    for(int aa = 0; aa < N; aa++) { total_recs += meta[aa].n_recs; total_nodes += meta[aa].n_nodes; }
+                    csr_recs.resize(total_recs);
+                    csr_nodes.resize(total_nodes);
+                    int rec_cursor = 0, node_cursor = 0;
+                    for(int aa = 0; aa < N; aa++) {
+                        csr_rec_off[aa] = rec_cursor;
+                        const AaMeta& m = meta[aa];
+                        const std::vector<FusedExportRec>& lrecs = trecs[m.tid];
+                        const std::vector<int>& lnodes = tnodes[m.tid];
+                        for(int rr = 0; rr < m.n_recs; rr++) {
+                            FusedExportRec rec = lrecs[m.rec_off + rr];
+                            const int local_node_off = rec.node_off;   /* thread-segment-relative */
+                            rec.node_off = node_cursor;
+                            for(int q = 0; q < rec.n_nodes; q++)
+                                csr_nodes[node_cursor++] = lnodes[local_node_off + q];
+                            csr_recs[rec_cursor++] = rec;
+                        }
+                        if(m.env_count > diag_max_env_per_active)
+                            diag_max_env_per_active = (int)m.env_count;
                     }
-                    if(env_this_active > diag_max_env_per_active)
-                        diag_max_env_per_active = (int)env_this_active;
+                    csr_rec_off[N] = rec_cursor;
+                    if(drift_sink) for(const auto& c : tctr) drift_ctr_total.add(c);
+                } else {
+                    for(int aa = 0; aa < N; aa++) {
+                        csr_rec_off[aa] = (int)csr_recs.size();
+                        const double h_q = (double)actives[aa].h_search;
+                        if(h_q <= 0) continue;
+                        double pos_arr[3] = {(double)actives[aa].pos[0],
+                                             (double)actives[aa].pos[1],
+                                             (double)actives[aa].pos[2]};
+                        export_sink.clear_all();
+                        std::vector<int>* cand_ptr = nullptr;
+                        if(want_cands) {
+                            cand_ptr = &cand_self_tree[aa];
+                            if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                        }
+                        mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                                Spec::search_mode, Spec::radius_policy,
+                                                cand_ptr, topleaf_map, export_sink, jscale);
+                        /* stage this active's per-peer exports into the CSR */
+                        long long env_this_active = 0;
+                        for(int p = 0; p < nt; p++) {
+                            if(p == rank) continue;
+                            const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
+                            const int nn = (int)nodes.size();
+                            if(nn == 0) continue;
+                            FusedExportRec rec;
+                            rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
+                            csr_recs.push_back(rec);
+                            csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
+                            env_this_active += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                        }
+                        if(env_this_active > diag_max_env_per_active)
+                            diag_max_env_per_active = (int)env_this_active;
+                    }
+                    csr_rec_off[N] = (int)csr_recs.size();
                 }
-                csr_rec_off[N] = (int)csr_recs.size();
                 diag_csr_bytes = (long long)csr_recs.size() * (long long)sizeof(FusedExportRec)
                                + (long long)csr_nodes.size() * (long long)sizeof(int);
             } else if (RUN_TREE) {
                 /* single rank: no peers to export to → plain candidate walk. */
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
+                int tu_self = 0;
                 collect_candidates_pre_drift<Spec>(args, radii,
                                                     neighbor_type_mask,
                                                     DispatchPath::ModeB_HostWalker,
-                                                    cand_self_tree);
+                                                    cand_self_tree, drift_sink, &tu_self);
+                if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
             }
         } else if (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_collect : nullptr);
+            int tu_self = 0;
             collect_candidates_pre_drift<Spec>(args, radii,
                                                 neighbor_type_mask,
                                                 DispatchPath::ModeB_HostWalker,
-                                                cand_self_tree);
+                                                cand_self_tree, drift_sink, &tu_self);
+            if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
         }
         if (RUN_BRUTE) {
             collect_candidates_pre_drift<Spec>(args, radii,
@@ -2046,12 +2265,14 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<std::vector<int>> cand_peer_tree, cand_peer_brute;
     if (RUN_TREE) {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
+        int tu_recv = 0;
         collect_candidates_for_remote_queries<Spec>(peer_actives,
                                                      peer_nodelist_flat, peer_nnodes,
                                                      peer_group_first,
                                                      neighbor_type_mask,
                                                      DispatchPath::ModeB_HostWalker,
-                                                     cand_peer_tree);
+                                                     cand_peer_tree, drift_sink, &tu_recv);
+        if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
     }
     if (RUN_BRUTE) {
         collect_candidates_for_remote_queries<Spec>(peer_actives,
@@ -2260,15 +2481,28 @@ static void mode_b_remote_evaluate_into_buffer(
         /* peak_recv_env/bytes bound TRANSPORT payloads only (envelopes+replies
          * staged per group) — not candidate vectors or kernel scratch.
          * export_csr_bytes/max_env_per_active bound the fused walk's materialized
-         * export CSR (recs+nodes) built once in Stage 3 (targeted specs). */
+         * export CSR (recs+nodes) built once in Stage 3 (targeted specs).
+         * nthr = OpenMP threads available; omp_self/omp_recv = threads used for
+         * the self / receiver discovery walks (0 = ran serial, below the work
+         * threshold). drift_certified = O(1) SoA drift-cert query (1 = the lazy
+         * per-node drift branch is provably dead; -1 = not queried on a serial
+         * call). The three drift counts are lazy per-node drifts under threading:
+         * stale_node_hits = fast-path saw a stale node; lazy_drift_performed =
+         * this thread drifted it; lazy_drift_raced = a peer drifted it first.
+         * stale_node_hits MUST be 0 on a drift_certified=1 run. */
         fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
                 "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
                 "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld "
-                "export_csr_bytes=%lld max_env_per_active=%d\n",
+                "export_csr_bytes=%lld max_env_per_active=%d "
+                "nthr=%d omp_self=%lld omp_recv=%lld drift_certified=%d "
+                "stale_node_hits=%lld lazy_drift_performed=%lld lazy_drift_raced=%lld\n",
                 rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
                 bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
                 diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes,
-                diag_csr_bytes, diag_max_env_per_active);
+                diag_csr_bytes, diag_max_env_per_active,
+                modeb_nthreads, diag_omp_self, diag_omp_recv, drift_certified,
+                drift_ctr_total.stale_node_hits, drift_ctr_total.lazy_drift_performed,
+                drift_ctr_total.lazy_drift_raced);
         fflush(stdout);
     }
 

@@ -64,17 +64,43 @@ double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);
  * fire_m11i — the dominant tiny-N cost post-Stage 2). Geometric growth
  * via push_back handles correctness for any-size match set without
  * imposing full-pool memory traffic on tiny-N. */
+/* Lazy per-node drift accounting for a threaded walk. A walk drifts a stale
+ * tree node to All.Ti_Current under an omp critical; when several threads walk
+ * concurrently one thread performs the drift and the rest observe it already
+ * fresh. Passing a non-null counter (one instance PER THREAD, reduced after the
+ * region) records that behaviour with no hot-path atomics:
+ *   stale_node_hits      = fast-path acquire-load found the node stale
+ *   lazy_drift_performed = entered the critical, node STILL stale -> this
+ *                          thread drifted it
+ *   lazy_drift_raced     = entered the critical, node now fresh -> another
+ *                          thread drifted it first
+ * A serial walk passes nullptr (no accounting, no cost). */
+struct ModeBDriftCounters {
+    long long stale_node_hits = 0;
+    long long lazy_drift_performed = 0;
+    long long lazy_drift_raced = 0;
+    void add(const ModeBDriftCounters& o) {
+        stale_node_hits      += o.stale_node_hits;
+        lazy_drift_performed += o.lazy_drift_performed;
+        lazy_drift_raced     += o.lazy_drift_raced;
+    }
+};
+
 /* j_radius_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
  * (1.0 = legacy). TURB_DIFF_DYNAMIC wide-filter loops pass
  * All.TurbDynamicDiffFac so the Mode B reach matches the Mode A scaled-
- * symmetric NGL. See OPEN_3d_difffilter_design.md §3. */
+ * symmetric NGL. See OPEN_3d_difffilter_design.md §3.
+ *
+ * drift_ctr (optional, default nullptr): per-thread lazy-drift accounting for a
+ * threaded caller; nullptr for a serial walk. */
 void mode_b_local_neighbor_walk(const double pos[3],
                                 double h_q,
                                 unsigned int type_mask,
                                 int search_mode,
                                 mode_b_radius_policy_t radius_policy,
                                 std::vector<int>& out,
-                                double j_radius_scale = 1.0);
+                                double j_radius_scale = 1.0,
+                                ModeBDriftCounters* drift_ctr = nullptr);
 
 /* Brute-force path. Iterates 0..num_local. Slow but obviously correct.
  * Used as the runner-owned oracle. Same append-oriented contract as the
@@ -150,7 +176,8 @@ void mode_b_walk_and_export(const double pos[3],
                             std::vector<int>* cand_out,
                             const ModeBTopleafMap& topleaf_map,
                             ModeBExportSink& sink,
-                            double j_radius_scale = 1.0);
+                            double j_radius_scale = 1.0,
+                            ModeBDriftCounters* drift_ctr = nullptr);
 
 /* RECEIVER walk (legacy mode==1): for each exported start-node in
  * node_list[0..n_nodes) (a DomainNodeIndex, -1 terminates early), resume the
@@ -166,7 +193,8 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   const int *node_list,
                                   int n_nodes,
                                   std::vector<int>& out,
-                                  double j_radius_scale = 1.0);
+                                  double j_radius_scale = 1.0,
+                                  ModeBDriftCounters* drift_ctr = nullptr);
 
 /* Structural eligibility for TARGETED export. The sender's
  * export walk prunes SYMMETRIC nodes by the cross-rank SCALAR Extnodes.hmax,
