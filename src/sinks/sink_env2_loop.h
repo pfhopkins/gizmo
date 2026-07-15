@@ -136,7 +136,7 @@ struct SinkEnv2Spec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_env2";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (const j-pointer, MgasBulge/MstarBulge sums); no j-write -> threaded eval bit-identical */
     /* Legacy detector label preserved; differs from loop_name. Predates the
      * runner-template loop_name convention. Without this, the runner default
      * would label this Spec's detector "sink_env2" instead of the historical

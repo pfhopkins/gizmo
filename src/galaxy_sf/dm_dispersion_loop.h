@@ -90,7 +90,7 @@ struct DMDispNeighborData {
 struct DMDispersionSpec {
     /* Identity */
     static constexpr const char *loop_name = "dm_dispersion";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics -> threaded eval bit-identical */
 
     /* Search policy: one-way (gas i → DM j only; no j-side writes). */
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;

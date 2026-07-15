@@ -77,7 +77,7 @@ struct DiffFilterNeighborData {
 
 struct DiffFilterSpec {
     static constexpr const char *loop_name = "difffilter";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (add/max/min reductions, const j); no j-write, no atomics -> threaded eval bit-identical */
 
     /* Scaled-symmetric gas-gas: search reaches max(fac*h_i, fac*h_j). */
     static constexpr int                    search_mode        = MODE_B_SEARCH_SYMMETRIC;
@@ -302,7 +302,7 @@ struct DynDiffNeighborData {
 
 struct DynDiffSpec {
     static constexpr const char *loop_name = "dyndiff";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (add/max/min reductions, const j); no j-write, no atomics -> threaded eval bit-identical */
 
     static constexpr int                    search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int           neighbor_type_mask = (1u << 0);  /* gas */

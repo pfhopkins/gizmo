@@ -126,7 +126,7 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
 struct CellcorrectionsSpec {
     /* Identity */
     static constexpr const char *loop_name = "cellcorrections";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (out.volume_1 += vol0^2*wk); no j-write, no atomics -> threaded eval bit-identical */
 
     /* Search policy. Symmetric so the pair contributes whenever r < h_j
      * (j's kernel) even if r > h_i; gas-only neighbor_type_mask matches

@@ -909,7 +909,7 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
 }
 
 /* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
- * may thread (BitwiseReadonly specs only); the brute/oracle REFERENCE eval
+ * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier); the brute/oracle REFERENCE eval
  * always runs serial so the reference stays independent of the threaded path it
  * validates. Passed explicitly at every call site (no default) so production vs
  * reference eval is greppable and can never be silently mis-gated. */
@@ -2559,7 +2559,7 @@ static void mode_b_remote_evaluate_into_buffer(
          * stale_node_hits MUST be 0 on a drift_certified=1 run.
          * omp_eval_self / omp_eval_peer = the production self / peer eval
          * threading decisions, each mirroring the evaluate_pairs_post_drift
-         * BitwiseReadonly gate on its OWN work count (N self; peak per-round K
+         * eval-threading (non-SerialOnly) gate on its OWN work count (N self; peak per-round K
          * peer). Reported separately so peer-eval threading is never hidden
          * behind the self-eval decision (a call can be self-serial/peer-threaded
          * or vice versa). */
