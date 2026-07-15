@@ -926,10 +926,13 @@ static inline void nlr_modeb_eval_decision_label(char *buf, size_t n,
 {
     if(!is_explicit)                                  { std::snprintf(buf, n, "serial(missing_trait)"); return; }
     if(policy == EvalOMPPolicy::ForceSerialReference) { std::snprintf(buf, n, "serial(reference)"); return; }
-    if(tier != ModeBEvalOMP::BitwiseReadonly)         { std::snprintf(buf, n, "serial(trait_serialonly)"); return; }
+    if(tier == ModeBEvalOMP::SerialOnly)              { std::snprintf(buf, n, "serial(trait_serialonly)"); return; }
+    /* tier is BitwiseReadonly or EpsilonAtomic (both thread the production eval) */
     if(nthreads <= 1)                                 { std::snprintf(buf, n, "serial(1thread)"); return; }
-    if(nlr_modeb_use_omp(work, nthreads))               std::snprintf(buf, n, "bitwise_readonly(%d)", nthreads);
-    else                                                std::snprintf(buf, n, "serial(below_threshold)");
+    if(nlr_modeb_use_omp(work, nthreads)) {
+        if(tier == ModeBEvalOMP::BitwiseReadonly)       std::snprintf(buf, n, "bitwise_readonly(%d)", nthreads);
+        else                                            std::snprintf(buf, n, "epsilon_atomic(%d)", nthreads);
+    } else                                              std::snprintf(buf, n, "serial(below_threshold)");
 }
 
 /* WALK-ONLY. Does NOT mutate P[].Pos/Vel — drift_particle must not be
@@ -1220,13 +1223,18 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
         }
     };
 
-    /* BitwiseReadonly specs accumulate only into the per-active AccumData with a
-     * fixed per-active neighbor order — no j-side writes, no atomics, no shared
-     * or global mutation (verified per spec). Threading over aa is therefore
-     * bit-identical regardless of thread count/schedule. Only the production
-     * path threads; the brute/oracle reference eval (ForceSerialReference) and
-     * EpsilonAtomic/SerialOnly specs run the serial loop verbatim. Below the
-     * work threshold no OpenMP region is entered — the serial path is
+    /* Two tiers thread the production eval over aa; each aa writes only its own
+     * accums[aa] plus call-local scratch (fixed per-active neighbor order):
+     *   BitwiseReadonly — no j-side writes at all -> bit-identical regardless of
+     *     thread count/schedule.
+     *   EpsilonAtomic   — j-side scatter goes through Kokkos::atomic_* (the same
+     *     atomics Mode A's kernel already applies over concurrent actives), so
+     *     threading only re-orders those atomic updates -> ulp-class
+     *     nondeterminism, NOT a new race. The per-active AccumData stays
+     *     order-independent (no j-write is read back into the kernel).
+     * Only the production path threads; the brute/oracle reference eval
+     * (ForceSerialReference) and SerialOnly specs run the serial loop verbatim.
+     * Below the work threshold no OpenMP region is entered — the serial path is
      * byte-identical to the unthreaded code. */
     if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly) {
         static_assert(!Spec::uses_ghost_writeback,
@@ -1236,7 +1244,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
     const int  eval_nthreads = nlr_modeb_omp_nthreads();
     const bool eval_use_omp  =
         (eval_policy == EvalOMPPolicy::AllowProduction) &&
-        (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly) &&
+        (nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly) &&
         nlr_modeb_use_omp((long long)N, eval_nthreads);
 
     if(eval_use_omp) {

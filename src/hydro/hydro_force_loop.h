@@ -137,7 +137,15 @@ struct HydroForceDeviceContext : NeighborLoopDeviceContextBase
 struct HydroForceSpec
 {
     static constexpr const char *loop_name = "hydro_force";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    /* Eval-thread tier: j-side writes are CellP[j].dMass (Kokkos::atomic_add,
+     * MFV), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
+     * (Kokkos::atomic_store 1, idempotent) — all via HYDRO_ATOMIC_* in
+     * hydro_functions.h, all gated by allow_j_writes. Only dMass is
+     * order-sensitive (FP reduction across concurrent actives -> ulp class);
+     * neither dMass nor wakeup is read back in the kernel, so the i-side
+     * AccumData is order-independent. Threaded eval re-orders the SAME atomics
+     * Mode A already applies -> EpsilonAtomic (not bitwise). */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic;
 
     /* Symmetric gas-gas topology (matches gizmo_sym_neighbor_list + the
      * legacy hydro_evaluate_gpu CSR consumer). */
