@@ -149,7 +149,17 @@ struct MechFBDeviceContext : NeighborLoopDeviceContextBase {
 struct MechFBSpec {
     /* Identity */
     static constexpr const char *loop_name = "mechfb";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* eval-thread tier unaudited (serial until j-write/order safety verified) */
+    /* Eval-thread tier: every j-side write is a Kokkos::atomic_* into the
+     * MechFBGasDelta buffer (gd) — atomic_add for the reductions (m/TE/KE/Z/p/
+     * CR/N/dust injected), atomic_max for max_source_wakeup (order-invariant);
+     * all gated by !oracle_dry_run. No direct P[j]/CellP[j] write, no gd read-
+     * back. Deltas are per-pair-independent (stable P[j] snapshot + local copies,
+     * NO running cross-source state → not the thermal_fb read-then-write class),
+     * so the i-side myout is order-independent and only the FP atomic-add
+     * reduction on gd re-orders → ulp class. The ghost-writeback apply
+     * (verify_and_assign_local_mechfb_integrals) runs post-eval, outside the
+     * threaded region. → EpsilonAtomic (not bitwise). */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic;
 
     /* Search policy: NGB_SEARCH_SYMMETRIC + gas-only — mirrors the
      * retired legacy evaluator's gpu_ngb_list_build call. */
