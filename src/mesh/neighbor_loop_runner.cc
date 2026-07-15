@@ -908,6 +908,30 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
     return n_items >= thresh;
 }
 
+/* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
+ * may thread (BitwiseReadonly specs only); the brute/oracle REFERENCE eval
+ * always runs serial so the reference stays independent of the threaded path it
+ * validates. Passed explicitly at every call site (no default) so production vs
+ * reference eval is greppable and can never be silently mis-gated. */
+enum class EvalOMPPolicy { AllowProduction, ForceSerialReference };
+
+/* GX_MODEB_EXPORT omp_eval= field: the eval-threading decision, mirroring the
+ * evaluate_pairs_post_drift gate exactly (same nlr_modeb_use_omp threshold) so
+ * the diagnostic can never disagree with the code path taken. Reports the
+ * production self-eval decision (EvalOMPPolicy::AllowProduction at the emit). */
+static inline void nlr_modeb_eval_decision_label(char *buf, size_t n,
+                                                 ModeBEvalOMP tier, bool is_explicit,
+                                                 EvalOMPPolicy policy,
+                                                 int nthreads, long long work)
+{
+    if(!is_explicit)                                  { std::snprintf(buf, n, "serial(missing_trait)"); return; }
+    if(policy == EvalOMPPolicy::ForceSerialReference) { std::snprintf(buf, n, "serial(reference)"); return; }
+    if(tier != ModeBEvalOMP::BitwiseReadonly)         { std::snprintf(buf, n, "serial(trait_serialonly)"); return; }
+    if(nthreads <= 1)                                 { std::snprintf(buf, n, "serial(1thread)"); return; }
+    if(nlr_modeb_use_omp(work, nthreads))               std::snprintf(buf, n, "bitwise_readonly(%d)", nthreads);
+    else                                                std::snprintf(buf, n, "serial(below_threshold)");
+}
+
 /* WALK-ONLY. Does NOT mutate P[].Pos/Vel — drift_particle must not be
  * called from inside this helper. (Audited 2026-05-08: walker calls only
  * force_drift_node on tree-internal nodes, which is search-side state.)
@@ -1156,11 +1180,16 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                                        const typename Spec::ActiveData *actives,
                                        int N,
                                        const std::vector<std::vector<int>>& per_active_cands,
-                                       typename Spec::AccumData *accums)
+                                       typename Spec::AccumData *accums,
+                                       EvalOMPPolicy eval_policy)
 {
     using NeighborData = typename Spec::NeighborData;
     using ScatterData  = typename Spec::ScatterData;
-    for(int aa = 0; aa < N; aa++) {
+
+    /* Per-active evaluation. Writes ONLY accums[aa] plus call-local scratch, so
+     * distinct aa are independent — the invariant the BitwiseReadonly threading
+     * below relies on. */
+    auto eval_one = [&](int aa) {
         Spec::zero_accum(accums[aa]);
         ScatterData s{};                              /* NoScatter for ActiveReduceOnly */
         const auto& cands = per_active_cands[aa];
@@ -1189,6 +1218,34 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                 Spec::pair_kernel(a, nb, accums[aa], s);
             }
         }
+    };
+
+    /* BitwiseReadonly specs accumulate only into the per-active AccumData with a
+     * fixed per-active neighbor order — no j-side writes, no atomics, no shared
+     * or global mutation (verified per spec). Threading over aa is therefore
+     * bit-identical regardless of thread count/schedule. Only the production
+     * path threads; the brute/oracle reference eval (ForceSerialReference) and
+     * EpsilonAtomic/SerialOnly specs run the serial loop verbatim. Below the
+     * work threshold no OpenMP region is entered — the serial path is
+     * byte-identical to the unthreaded code. */
+    if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly) {
+        static_assert(!Spec::uses_ghost_writeback,
+                      "BitwiseReadonly eval tier requires uses_ghost_writeback==false "
+                      "(no j-side ghost scatter)");
+    }
+    const int  eval_nthreads = nlr_modeb_omp_nthreads();
+    const bool eval_use_omp  =
+        (eval_policy == EvalOMPPolicy::AllowProduction) &&
+        (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly) &&
+        nlr_modeb_use_omp((long long)N, eval_nthreads);
+
+    if(eval_use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
+#endif
+        for(int aa = 0; aa < N; aa++) eval_one(aa);
+    } else {
+        for(int aa = 0; aa < N; aa++) eval_one(aa);
     }
 }
 
@@ -1329,7 +1386,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     std::vector<AccumData> accums(N);
     {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data());
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data(), EvalOMPPolicy::AllowProduction);
     }
 
     /* Host writeback — same code path as Mode A's writeback. */
@@ -1533,10 +1590,10 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
     if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
         Spec::set_oracle_brute_pass(ctx_oracle, true);
     }
-    evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data());
+    evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data(), EvalOMPPolicy::ForceSerialReference);
     {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data(), EvalOMPPolicy::AllowProduction);
     }
 
     int rank = 0;
@@ -1960,12 +2017,12 @@ static void mode_b_remote_evaluate_into_buffer(
                 Spec::set_oracle_brute_pass(ctx_oracle_self, true);
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
-                                              cand_self_brute, accums_self_brute.data());
+                                              cand_self_brute, accums_self_brute.data(), EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (BRUTE_WRITES_OUT) {
             StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_brute, accums_out);
+                                              cand_self_brute, accums_out, EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (DUAL_OUT) {
             DeviceCtx ctx_oracle_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
@@ -1973,12 +2030,12 @@ static void mode_b_remote_evaluate_into_buffer(
                 Spec::set_oracle_brute_pass(ctx_oracle_dual, true);
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_dual, actives.data(), N,
-                                              cand_self_brute, accums_oracle_out);
+                                              cand_self_brute, accums_oracle_out, EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_tree, accums_out);
+                                              cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
         }
         if constexpr (RUN_INLINE_COMPARE) {
             static long long s_self_mismatch_count = 0;
@@ -2028,6 +2085,7 @@ static void mode_b_remote_evaluate_into_buffer(
     long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
     long long diag_rounds = 0, diag_peak_sent = 0;
     long long diag_recv_groups = 0, diag_peak_recv_env = 0, diag_peak_recv_bytes = 0;
+    long long eval_peer_work_peak = 0;   /* max per-round peer-eval work K (feeds omp_eval_peer diag) */
     int cursor = 0;
     int ndone  = 0;
 
@@ -2340,7 +2398,7 @@ static void mode_b_remote_evaluate_into_buffer(
                 Spec::set_oracle_brute_pass(ctx_oracle_peer, true);
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_peer, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies_brute.data());
+                                              cand_peer_brute, peer_replies_brute.data(), EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (BRUTE_WRITES_OUT) {
             /* Caller's ctx is already brute-pass-guarded; peer-side brute
@@ -2348,7 +2406,7 @@ static void mode_b_remote_evaluate_into_buffer(
              * merge into accums_out alongside the self-side brute result). */
             StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies.data());
+                                              cand_peer_brute, peer_replies.data(), EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (DUAL_OUT) {
             /* OracleIterative: peer brute -> peer_replies_oracle, peer tree
@@ -2359,12 +2417,13 @@ static void mode_b_remote_evaluate_into_buffer(
                 Spec::set_oracle_brute_pass(ctx_oracle_peer_dual, true);
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_peer_dual, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies_oracle.data());
+                                              cand_peer_brute, peer_replies_oracle.data(), EvalOMPPolicy::ForceSerialReference);
         }
         if constexpr (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+            if((long long)K > eval_peer_work_peak) eval_peer_work_peak = K;
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_tree, peer_replies.data());
+                                              cand_peer_tree, peer_replies.data(), EvalOMPPolicy::AllowProduction);
         }
         if constexpr (RUN_INLINE_COMPARE) {
             /* Compare per chunk GROUP: sum the tree partials over the group's
@@ -2489,20 +2548,36 @@ static void mode_b_remote_evaluate_into_buffer(
          * call). The three drift counts are lazy per-node drifts under threading:
          * stale_node_hits = fast-path saw a stale node; lazy_drift_performed =
          * this thread drifted it; lazy_drift_raced = a peer drifted it first.
-         * stale_node_hits MUST be 0 on a drift_certified=1 run. */
+         * stale_node_hits MUST be 0 on a drift_certified=1 run.
+         * omp_eval_self / omp_eval_peer = the production self / peer eval
+         * threading decisions, each mirroring the evaluate_pairs_post_drift
+         * BitwiseReadonly gate on its OWN work count (N self; peak per-round K
+         * peer). Reported separately so peer-eval threading is never hidden
+         * behind the self-eval decision (a call can be self-serial/peer-threaded
+         * or vice versa). */
+        char eval_self_label[40], eval_peer_label[40];
+        nlr_modeb_eval_decision_label(eval_self_label, sizeof(eval_self_label),
+                                      nlr_spec_modeb_eval_omp<Spec>(),
+                                      nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                                      EvalOMPPolicy::AllowProduction,
+                                      modeb_nthreads, (long long)N);
+        nlr_modeb_eval_decision_label(eval_peer_label, sizeof(eval_peer_label),
+                                      nlr_spec_modeb_eval_omp<Spec>(),
+                                      nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                                      EvalOMPPolicy::AllowProduction,
+                                      modeb_nthreads, eval_peer_work_peak);
         fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
                 "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
                 "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld "
                 "export_csr_bytes=%lld max_env_per_active=%d "
-                "nthr=%d omp_self=%lld omp_recv=%lld omp_eval=%s drift_certified=%d "
+                "nthr=%d omp_self=%lld omp_recv=%lld omp_eval_self=%s omp_eval_peer=%s drift_certified=%d "
                 "stale_node_hits=%lld lazy_drift_performed=%lld lazy_drift_raced=%lld\n",
                 rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
                 bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
                 diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes,
                 diag_csr_bytes, diag_max_env_per_active,
                 modeb_nthreads, diag_omp_self, diag_omp_recv,
-                nlr_modeb_eval_omp_label(nlr_spec_modeb_eval_omp<Spec>(),
-                                         nlr_spec_modeb_eval_omp_is_explicit_v<Spec>),
+                eval_self_label, eval_peer_label,
                 drift_certified,
                 drift_ctr_total.stale_node_hits, drift_ctr_total.lazy_drift_performed,
                 drift_ctr_total.lazy_drift_raced);
@@ -4420,7 +4495,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
                                          DispatchPath::ModeB_HostWalker, cand_modeB);
     lazy_drift_candidates<Spec>(cand_modeB);
     evaluate_pairs_post_drift<Spec>(drv.ctx, actives_compacted.data(), n_compacted,
-                                      cand_modeB, accums_compacted.data());
+                                      cand_modeB, accums_compacted.data(), EvalOMPPolicy::AllowProduction);
 
     /* Scatter compacted accums back into driver-owned per-slot accum_uvm.
      * Slots NOT in active_set_uvm keep their stale values (will not be
@@ -4490,7 +4565,7 @@ static void nlr_iter_dispatch_subgroup_oracle_b_local(NlrIterDriver<Spec>& drv, 
                                          DispatchPath::Brute_Oracle, cand_brute);
     lazy_drift_candidates<Spec>(cand_brute);
     evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_compacted.data(), n_compacted,
-                                      cand_brute, accums_compacted.data());
+                                      cand_brute, accums_compacted.data(), EvalOMPPolicy::ForceSerialReference);
 
     /* Scatter brute results back into driver's per-slot oracle AccumData
      * (slot keyspace is the same as production — sgr.active_indices). */
@@ -4575,7 +4650,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Sp
 
     if(n_prod > 0) {
         evaluate_pairs_post_drift<Spec>(drv.ctx, actives_prod.data(), n_prod,
-                                        cand_prod, accums_prod.data());
+                                        cand_prod, accums_prod.data(), EvalOMPPolicy::AllowProduction);
         for(int k = 0; k < n_prod; k++) {
             int slot = drv.active_set_uvm[sg][k];
             drv.accum_uvm[sg][slot] = accums_prod[k];
@@ -4585,7 +4660,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Sp
     if(n_oracle > 0) {
         NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
         evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_oracle.data(), n_oracle,
-                                        cand_oracle, accums_oracle.data());
+                                        cand_oracle, accums_oracle.data(), EvalOMPPolicy::ForceSerialReference);
         for(int k = 0; k < n_oracle; k++) {
             int slot = drv.active_set_oracle_uvm[sg][k];
             drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
