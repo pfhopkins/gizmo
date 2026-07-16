@@ -253,6 +253,136 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
                          MPI_COMM_WORLD);
 }
 
+/* ============================================================================
+ * Per-receiver COVER TREE. The receiver R's owned-topleaf geometric boxes
+ * ([center - len/2, center + len/2]) arranged as a balanced binary AABB tree, so
+ * LET essentiality tests each source node against a HIERARCHY of compact per-
+ * topleaf covers instead of one whole-rank union box. The single union box spans
+ * ~the whole domain for a spatially-spread rank, driving min_dist(node,cover)->0,
+ * which defeats the PM cutoff + theta cull and imports ~the whole global tree;
+ * per-topleaf covers restore that selectivity. Built sender-side each exchange
+ * from REPLICATED top-tree geometry (DomainTask/DomainNodeIndex/Nodes topnodes)
+ * + R's existing payload scalars -- no wire-format change. The opening predicate
+ * (gravtree_open_decision_cell) is the untouched SSOT; this only refines WHICH
+ * cover boxes are fed to it. Scratch is grown once and reused across receivers/
+ * exchanges (no allocation in the pack recursion). The tree for "the receiver
+ * currently being packed" is file-scope state (g_cover*), set by let_pack_for_rank
+ * before its pack loop -- same idiom as g_let_pack_oom.
+ * ========================================================================== */
+struct LETCoverNode { double bmin[3], bmax[3]; int c0, c1; }; /* c0<0 => leaf topleaf */
+static struct LETCoverNode *g_cover      = NULL;  /* AABB-tree nodes, root at index 0 */
+static int                   g_cover_cap  = 0;
+static int                   g_cover_n    = 0;     /* nodes used by the current build */
+static int                  *g_cover_leaf = NULL;  /* R's owned-topleaf Nodes[] indices */
+static int                   g_cover_leaf_cap = 0;
+
+/* Union box of the leaf range [lo,hi) into out[bmin/bmax]. */
+static void cover_union_box(int lo, int hi, double bmin[3], double bmax[3])
+{
+    bmin[0]=bmin[1]=bmin[2]= DBL_MAX;
+    bmax[0]=bmax[1]=bmax[2]=-DBL_MAX;
+    for(int k = lo; k < hi; k++) {
+        int no = g_cover_leaf[k];
+        double h = 0.5 * (double) Nodes[no].len;
+        for(int d = 0; d < 3; d++) {
+            double c = (double) Nodes[no].center[d];
+            if(c - h < bmin[d]) bmin[d] = c - h;
+            if(c + h > bmax[d]) bmax[d] = c + h;
+        }
+    }
+}
+
+/* BVH build over the leaf range [lo,hi): split at the SPATIAL MEDIAN of the
+ * range's longest axis (partition g_cover_leaf in place by leaf-center along that
+ * axis), so aggregate boxes are tight and the walk prunes early. Falls back to the
+ * index median for a degenerate partition (coincident centers). g_cover is pre-
+ * sized to 2*NTopleaves so no realloc moves g_cover[idx] during the recursion. */
+static int cover_build(int lo, int hi)
+{
+    int idx = g_cover_n++;
+    double *bmin = g_cover[idx].bmin, *bmax = g_cover[idx].bmax;
+    cover_union_box(lo, hi, bmin, bmax);
+    if(hi - lo <= 1) { g_cover[idx].c0 = -1; g_cover[idx].c1 = -1; return idx; }
+
+    int ax = 0; double ext = bmax[0] - bmin[0];
+    if(bmax[1] - bmin[1] > ext) { ax = 1; ext = bmax[1] - bmin[1]; }
+    if(bmax[2] - bmin[2] > ext) { ax = 2; ext = bmax[2] - bmin[2]; }
+    double split = 0.5 * (bmin[ax] + bmax[ax]);
+    int i = lo, j = hi - 1;
+    while(i <= j) {
+        while(i <= j && (double) Nodes[g_cover_leaf[i]].center[ax] <  split) i++;
+        while(i <= j && (double) Nodes[g_cover_leaf[j]].center[ax] >= split) j--;
+        if(i < j) { int t = g_cover_leaf[i]; g_cover_leaf[i] = g_cover_leaf[j]; g_cover_leaf[j] = t; i++; j--; }
+    }
+    int mid = i;
+    if(mid <= lo || mid >= hi) mid = (lo + hi) / 2;   /* degenerate split -> index median */
+
+    int l = cover_build(lo, mid);
+    int r = cover_build(mid, hi);
+    g_cover[idx].c0 = l; g_cover[idx].c1 = r;
+    return idx;
+}
+
+/* Build receiver R's cover tree into the scratch (g_cover* / root = index 0).
+ * Leaves g_cover_n = 0 if R owns no topleaves (caller's has_cover guard already
+ * excludes that case). realloc failure -> loud controlled stop, never a segfault. */
+static void let_build_cover_tree(int R)
+{
+    g_cover_n = 0;
+    if(g_cover_leaf_cap < NTopleaves) {
+        int *nl = (int *) realloc(g_cover_leaf, (size_t) NTopleaves * sizeof(int));
+        if(!nl) { printf("let_build_cover_tree: cover-leaf realloc failed (NTopleaves=%d, rank=%d). Stopping.\n",
+                         NTopleaves, ThisTask); fflush(stdout); endrun(90000091); }
+        g_cover_leaf = nl; g_cover_leaf_cap = NTopleaves;
+    }
+    int nleaf = 0;
+    for(int i = 0; i < NTopleaves; i++) {
+        if(DomainTask[i] != R) continue;
+        int no = DomainNodeIndex[i];
+        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        g_cover_leaf[nleaf++] = no;
+    }
+    if(nleaf == 0) return;
+    int need = 2 * nleaf;                  /* balanced tree over nleaf leaves has <= 2*nleaf-1 nodes */
+    if(g_cover_cap < need) {
+        struct LETCoverNode *nc = (struct LETCoverNode *) realloc(g_cover, (size_t) need * sizeof(struct LETCoverNode));
+        if(!nc) { printf("let_build_cover_tree: cover-node realloc failed (need=%d, rank=%d). Stopping.\n",
+                         need, ThisTask); fflush(stdout); endrun(90000092); }
+        g_cover = nc; g_cover_cap = need;
+    }
+    cover_build(0, nleaf);                 /* root = node 0 */
+}
+
+/* Does ANY of R's per-topleaf covers OPEN this source node? Walk the cover tree
+ * with the SAME predicate; prune a subtree whose AGGREGATE box does not open
+ * (conservativeness: child box subset of aggregate => min_dist(node,child) >=
+ * min_dist(node,aggregate); every distance-decreasing open test that fires for a
+ * child fires for the aggregate, and the PM/theta culls only get looser at the
+ * larger aggregate distance => aggregate-not-OPEN => no child OPENs). Short-
+ * circuits at the first LEAF topleaf that opens. Iterative (balanced tree depth
+ * <= ~log2(NTopleaves) < 40; the 64-slot stack cannot overflow for a balanced
+ * build, and the guarded conservative return keeps it correct if it ever could). */
+static int let_cover_opens(double cx, double cy, double cz,
+                           double sx, double sy, double sz,
+                           double len, double mass, double maxsoft, int node_nsink,
+                           double t_soft_max, double t_soft_min, double t_aold_min, int has_sink,
+                           double rcut, double rcut2, int is_first_step)
+{
+    if(g_cover_n <= 0) return 0;
+    int stack[64]; int sp = 0; stack[sp++] = 0;   /* root */
+    while(sp > 0) {
+        int ci = stack[--sp];
+        gravtree_open_t d = gravtree_open_decision_cell(cx, cy, cz, sx, sy, sz, len, mass, maxsoft,
+            node_nsink, g_cover[ci].bmin, g_cover[ci].bmax,
+            t_soft_max, t_soft_min, t_aold_min, has_sink, rcut, rcut2, is_first_step);
+        if(d != GRAV_OPEN_NODE) continue;         /* aggregate doesn't open -> prune this subtree */
+        if(g_cover[ci].c0 < 0) return 1;          /* a real topleaf opens -> node is essential */
+        if(sp + 2 <= 64) { stack[sp++] = g_cover[ci].c0; stack[sp++] = g_cover[ci].c1; }
+        else return 1;                            /* depth guard (unreachable for balanced tree): conservative */
+    }
+    return 0;
+}
+
 /* ----------------------------------------------------------------------
  * Essential-node check (worst-case opening criterion for "any particle in R")
  *
@@ -291,13 +421,14 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
     /* Same first-step value the walk uses (hybrid opening: relative suppressed on step 0). */
     int is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
 
-    gravtree_open_t decision = gravtree_open_decision_cell(
-        cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
-        p->bbox_min, p->bbox_max,
-        t_soft_max, p->min_soft, t_aold_min, p->has_sink,
-        rcut, rcut2, is_first_step);
-
-    return (decision == GRAV_OPEN_NODE) ? 1 : 0;
+    /* Essential iff ANY of R's per-topleaf covers opens this node (cover tree built
+     * for the receiver currently being packed). Replaces the single whole-rank-union-
+     * box test (p->bbox_min/max), which for a spatially-spread rank spanned ~the whole
+     * domain and thus never let the PM/theta cull prune -> ~whole-tree import. Same
+     * predicate + worst-case scalars; only the cover geometry is refined. */
+    return let_cover_opens(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
+                           t_soft_max, p->min_soft, t_aold_min, p->has_sink,
+                           rcut, rcut2, is_first_step);
 }
 
 /* ----------------------------------------------------------------------
@@ -835,6 +966,10 @@ extern "C" int let_pack_for_rank(int R,
         *out_hdr_count = 0;
         return 0;
     }
+    /* Build R's per-topleaf cover tree (file-scope g_cover*, consumed by
+     * let_node_essential_for_rank during this receiver's pack). Cheap: one pass
+     * over the replicated topleaf list + a balanced build; scratch reused. */
+    let_build_cover_tree(R);
     /* Walk the LOCAL tree from each topnode that's NOT in R's domain.  Topnodes
      * in R's domain are R's own data; they won't help R (and would create a
      * self-reference if shipped). */
