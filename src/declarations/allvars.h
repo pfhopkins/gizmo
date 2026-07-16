@@ -902,11 +902,12 @@ extern struct extNODE
    * kept as fresh as the scalar hmax.  Consumer = the Mode B SYMMETRIC local
    * tree-walk (mesh/mode_b_local_walker.cc): rank-local bands prune the candidate
    * walk (returns only rank-local candidates, never descends pseudo/foreign
-   * subtrees); the cross-rank bands are the substrate for targeted export of
-   * remote topleaves instead of broadcasting.  (Historically these were rank-local
-   * + broadcast-answered; the cross-rank exchange was added to enable targeted
-   * export of the non-gas SYMMETRIC loops -- correctness for those, since the
-   * gas-biased scalar hmax cannot bound their reach.) */
+   * subtrees); the cross-rank bands bound the sender's targeted export of remote
+   * topleaves (mode_b_node_symmetric_radius), replacing the broadcast path.
+   * (Historically these were rank-local + broadcast-answered; the cross-rank
+   * exchange + export routing were added to bound the non-gas SYMMETRIC loops --
+   * correctness for those, since the gas-biased scalar hmax cannot cover their
+   * reach.) */
   MyFloat hmax_per_type[6];
   MyFloat divVmax;
   integertime Ti_lastkicked;

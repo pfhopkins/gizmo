@@ -269,7 +269,23 @@ double SinkFeedSpec::compare_accum(const AccumData& local, const AccumData& orac
      * mass_markedswallow_scratch field is per-i scratch and NOT replicated
      * across peers in merge_accum, so single-rank Mode B and Brute see the
      * same value. We include it in the byte walk; if it ever disagrees,
-     * the oracle output identifies the field. */
+     * the oracle output identifies the field.
+     *
+     * B3a NOTE (targeted-export peer splitting): sink_feed is modeb_eval_omp=
+     * SerialOnly and its swallow selection is STRICT-SERIAL order-dependent -- it
+     * reads P[j].SwallowID at pair entry and atomic_exchanges it at commit, so the
+     * ORDER in which peers are visited decides which sink claims a contested
+     * particle (sink_feed_loop.h docblock). Under targeted export a query's peers
+     * are visited in a different order than under broadcast/brute, so a resid on
+     * mass_markedswallow_scratch (a peer-origin claim resolving to a different sink)
+     * is EXPECTED order-of-operations, NOT an under-route -- do not re-litigate it
+     * as a routing bug. The B3a routing-correctness gate for this loop is the
+     * SENDER-UNDER-ROUTE probe (neighbor_loop_runner.cc:2352): it ships each query
+     * to the peers targeting did NOT select and hard-stops if any finds a match, so
+     * SENDER-UNDER-ROUTE=0 proves no peer was missed. Any nonzero under-route stays
+     * fatal. (If this compare_accum false positive ever blocks automation, the fix
+     * is a separate order-independent-fields peer comparator, NOT a blind mask of
+     * this scratch field -- masking would hide real sink_feed logic drift.) */
     double max_rel = 0.0;
     /* AccumData mixes double + Vec3<double>; both are "double" at the byte
      * level. Treat as a byte-walk of doubles. */

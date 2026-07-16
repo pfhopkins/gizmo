@@ -196,19 +196,24 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   double j_radius_scale = 1.0,
                                   ModeBDriftCounters* drift_ctr = nullptr);
 
-/* Structural eligibility for TARGETED export. The sender's
- * export walk prunes SYMMETRIC nodes by the cross-rank SCALAR Extnodes.hmax,
- * which covers gas KernelRadius only (allvars.h:858). A loop is eligible iff its
- * j-side reach is dominated by that band: ONEWAY (band unused), or SYMMETRIC
- * with a gas-kernel-only radius policy. Non-gas / AGS / ForceSoftening policies
- * (sink_env1/2/feed/swk, ags_force) stay on the broadcast path, because the
- * per-type node band is not exchanged cross-rank (only the scalar hmax is), so
- * the sender cannot bound their reach on remote peers. Keyed on radius_policy,
- * NEVER a caller name (directive 6a). */
+/* Structural eligibility for TARGETED export. Post-B3a the sender's export walk
+ * prunes SYMMETRIC nodes by the cross-rank PER-TYPE band (mode_b_node_symmetric_radius):
+ * it dominates every radius_policy (allvars.h invariant; seed capped at
+ * MaxKernelRadius, kernel/AGS radii <= MaxKernelRadius by construction, FS seeded
+ * uncapped) and is cross-rank-fresh (S2 DomainNODE exchange + force_update_hmax
+ * post-density exchange), so it bounds every loop's j-side reach on remote peers.
+ * Every real neighbor loop is therefore eligible -- ONEWAY (band unused) or
+ * SYMMETRIC (any radius_policy). The historical gas-kernel-only restriction (the
+ * gas-biased scalar hmax under-covered non-gas / AGS / ForceSoftening loops:
+ * sink_env1/2/feed/swk, ags_force, grain) is retired. The broadcast fallback in
+ * neighbor_loop_runner.cc is kept structurally-dead pending per-loop oracle
+ * validation, then removed. radius_policy is retained (structural contract, keyed
+ * on policy never a caller name -- directive 6a) but no longer gates. */
 constexpr bool mode_b_targeted_export_eligible(int search_mode,
                                                mode_b_radius_policy_t radius_policy) {
+    (void)radius_policy;
     return (search_mode == MODE_B_SEARCH_ONEWAY) ||
-           ((radius_policy & ~(mode_b_radius_policy_t)MODE_B_RADIUS_GAS_KERNEL) == 0u);
+           (search_mode == MODE_B_SEARCH_SYMMETRIC);
 }
 
 /* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
