@@ -348,6 +348,7 @@ static void topnode_resum_node_(int no_abs,
     MyFloat mass = 0;
     Vec3<MyFloat> s = {}, vs = {};
     MyFloat hmax = 0, vmax = 0, divVmax = 0, maxsoft = 0;
+    MyFloat hmax_per_type[6] = {};   /* B3a substrate: per-type band, max over children (not in the shared moment kernel) */
     long count_particles = 0;
     int multiple_flag = 0;
 
@@ -466,6 +467,15 @@ static void topnode_resum_node_(int no_abs,
         moment_node_accum<MyFloat> child = topnode_child_accum_(soa, pk);
         moment_accum_add_child_normalized<moment_plain_ops, MyFloat>(acc_ref, child);
 
+        /* Per-type h band is host-AoS-only (not in the SoA moment kernel): max over
+         * the 8 children's Extnodes bands.  The child is finalized here -- a topleaf
+         * carries its cross-rank-applied band (force_exchange_pseudodata_complete), an
+         * internal topnode its just-resummed band (recursion above).  Mirrors the CPU
+         * force_treeupdate_pseudos up-propagation (forcetree.cc:1197,1320). */
+        for(int t = 0; t < 6; t++) {
+            if(Extnodes[p].hmax_per_type[t] > hmax_per_type[t]) {hmax_per_type[t] = Extnodes[p].hmax_per_type[t];}
+        }
+
         p = soa->sibling[pk];   /* advance to next sibling */
     }
 
@@ -556,6 +566,7 @@ static void topnode_resum_node_(int no_abs,
                                 | (unsigned int) multiple_flag;
     Extnodes[no_abs].vs        = vs;
     Extnodes[no_abs].hmax      = hmax;
+    for(int t = 0; t < 6; t++) Extnodes[no_abs].hmax_per_type[t] = hmax_per_type[t];
     Extnodes[no_abs].vmax      = vmax;
     Extnodes[no_abs].divVmax   = divVmax;
     Extnodes[no_abs].Flag      = GlobFlag;

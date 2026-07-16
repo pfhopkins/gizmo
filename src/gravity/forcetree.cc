@@ -680,6 +680,7 @@ struct DomainNODE
         MyFloat gasmass;
 #endif
         MyFloat hmax;
+        MyFloat hmax_per_type[6];   /* B3a substrate: cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
         MyFloat vmax;
         MyFloat divVmax;
         long N_part;
@@ -764,6 +765,7 @@ void force_exchange_pseudodata_issue(void)
             DomainMoment[i].gasmass = Nodes[no].gasmass;
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
+            for(int t = 0; t < 6; t++) DomainMoment[i].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
             DomainMoment[i].vmax = Extnodes[no].vmax;
             DomainMoment[i].divVmax = Extnodes[no].divVmax;
             DomainMoment[i].bitflags = Nodes[no].u.d.bitflags;
@@ -884,6 +886,7 @@ int force_exchange_pseudodata_complete(void)
                     Nodes[no].gasmass = DomainMoment[i].gasmass;
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
+                    for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = DomainMoment[i].hmax_per_type[t];
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
                     Nodes[no].N_part = DomainMoment[i].N_part;
