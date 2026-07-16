@@ -166,9 +166,13 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
                                           int bitmap_n_words)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
-     * This is tighter than the union of particle positions and matches what the
-     * walk's min_dist check effectively bounds.  If active_bitmap is non-NULL,
-     * restrict to ACTIVE topleaves only (Phase 9.5 tight mode). */
+     * NOTE: as of the per-topleaf cover fix the bbox COORDS no longer feed LET
+     * essentiality (the pack walks the receiver's per-topleaf cover TREE, built
+     * sender-side from replicated topleaf geometry, not this single union box);
+     * only has_cover (>=1 owned topleaf) is still consumed. The coords are kept
+     * for wire-format compatibility + debug. min_OldAcc/soft/sink below ARE still
+     * used (whole-rank worst-case scalars fed to the same predicate). If
+     * active_bitmap is non-NULL, restrict to ACTIVE topleaves (Phase 9.5). */
     out->bbox_min[0] = out->bbox_min[1] = out->bbox_min[2] = DBL_MAX;
     out->bbox_max[0] = out->bbox_max[1] = out->bbox_max[2] = -DBL_MAX;
     int found_any = 0;
@@ -1407,12 +1411,14 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     if(ForeignLeafZeta) memset(ForeignLeafZeta, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
     if(ForeignLeafSoft) memset(ForeignLeafSoft, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
 
-    /* All-local receiver cover: ship every node any LOCAL particle could open, to every
-     * receiver, with no active-particle downscope.  The shared cell predicate (conservative +
-     * walk-consistent) plus the self-sizing foreign arena keep this safe and complete -- including
-     * the inactive / TREECOL / RT consumers an active-only cover would silently drop.  The
-     * active-receiver-cover downscope is preserved ONLY behind the audit-gated, default-OFF compile
-     * guard below; re-enabling it requires a TREECOL/RT/inactive-consumer audit. */
+    /* All-local receiver cover (WHICH particles): the payload worst-case scalars
+     * (min_OldAcc/soft/sink) still cover ALL of R's particles, not just active ones,
+     * so inactive / TREECOL / RT consumers stay complete (an active-only cover would
+     * silently drop them; still behind the audit-gated, default-OFF compile guard).
+     * Note this is ORTHOGONAL to the per-topleaf cover GEOMETRY (how the boxes are
+     * grouped) that the pack now uses: per-topleaf refines min_dist selectivity while
+     * this all-local scalar cover keeps completeness. The shared cell predicate
+     * (conservative + walk-consistent) + the self-sizing foreign arena keep it safe. */
     struct LETPerRankPayload my_payload;
 #ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
     int bitmap_n_words = let_bitmap_word_count(NTopleaves);

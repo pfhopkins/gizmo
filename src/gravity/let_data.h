@@ -37,9 +37,13 @@
  * to ship.
  *
  * Worst-case bounds:
- *   bbox_min/max         : tightest AABB containing all of R's particles
- *                          (or R's topleaf bboxes — implementation choice).
- *                          min_dist(node, bbox) gives r-bound for all r-in-test.
+ *   bbox_min/max         : union AABB of R's owned topleaf boxes. RETAINED FOR
+ *                          WIRE COMPAT + has_cover ONLY -- the LET pack no longer
+ *                          uses these coords for essentiality: it walks R's
+ *                          per-topleaf cover TREE (each topleaf box tested
+ *                          separately, built sender-side from replicated topleaf
+ *                          geometry), which restores the min_dist selectivity the
+ *                          single union box destroyed for spatially-spread ranks.
  *   min_OldAcc           : min(P[i].OldAcc) over R's particles.  The
  *                          relative criterion `M*len² > r⁴ * OldAcc * C`
  *                          opens more aggressively when OldAcc is small;
