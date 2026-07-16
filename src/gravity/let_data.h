@@ -79,10 +79,28 @@ struct LETPerRankPayload {
     int    has_sink;
     int    has_cover;       /* rank owns >=1 local topleaf; receivers with has_cover==0 (empty
                                ranks) are shipped nothing -- the no-real-receiver guard. */
+    /* NOTE (per-cover scalar refinement): min_OldAcc/max_soft_by_type/min_soft/has_sink here are
+       the WHOLE-RANK worst case, DERIVED (reduced) from the per-topleaf LETTopleafScalars table so
+       they can never drift from it (SSOT). LET essentiality now reads the per-TOPLEAF scalars from
+       that table (target-local, tighter); these whole-rank values remain for has_cover + wire-compat
+       + a conservative fallback (e.g. the empty-owned-topleaf case, baked into the table by the owner). */
 };
-/* Sizeof = 14 doubles + 2 ints = 120 B (8-B aligned, no tail pad).
- * Total bandwidth for the per-rank Allgather: NTask * 120 B (e.g. 120 KB at
- * NTask=1024) -- negligible. */
+/* LETPerRankPayload sizeof = 14 doubles + 2 ints = 120 B (8-B aligned, no tail pad).
+ * Per-rank Allgather bandwidth: NTask * 120 B (e.g. 120 KB at NTask=1024) -- negligible. */
+
+/* Per-topleaf worst-case opening-criterion scalars for the LET cover tree. One record per topleaf,
+ * aggregated over the OWNER rank's particles falling in that topleaf, Allgatherv'd (mirroring the
+ * DomainMoment exchange) so every sender holds every receiver-topleaf's scalars. The LET cover tree
+ * feeds each source node the DECIDING topleaf's OWN scalars instead of the rank-wide worst case:
+ * a strictly TARGET-LOCAL refinement of the same opening predicate (fewer spurious opens; strict
+ * subset of the whole-rank essential set; the permanent under-import detector is the hard gate). */
+struct LETTopleafScalars {
+    double min_OldAcc;           /* relative-accel criterion (min over the topleaf's particles) */
+    double max_soft_by_type[6];  /* relative-softening open (max per type over the topleaf) */
+    double min_soft;             /* non-NEIGHBORS node-softening open (min over the topleaf) */
+    int    has_sink;             /* sink-direct gate (any Type-5 in the topleaf) */
+    int    _pad;                 /* 8-B align -> sizeof = 72 B */
+};
 
 /* ----------------------------------------------------------------------
  * Wire format for one shipped foreign node (LET payload exchange)
