@@ -313,7 +313,14 @@ void force_update_hmax(void)
   int *domainList_all;
   int *counts, *offset_list, *offset_hmax;
   MyFloat *domainHmax_loc, *domainHmax_all;
-  int OffsetSIZE = 2;
+  /* Per-changed-topleaf exchange record: scalar hmax + divVmax + the 6 Mode-B
+   * per-type bands.  The per-type slots ride this SAME post-density exchange so
+   * remote topleaf/ancestor per-type bands are as fresh as the scalar hmax (they
+   * were locally grown above but, without this, were only cross-rank-fresh at the
+   * last full tree build/refresh).  Required for the Mode-B SYMMETRIC targeted
+   * export band, which prunes remote topleaves by these per-type bands. */
+  enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_SIZE = 8 };
+  int OffsetSIZE = HMAX_EXCH_SIZE;
   double divVel;
 
   GlobFlag++;
@@ -422,8 +429,10 @@ void force_update_hmax(void)
 
   for(i = 0; i < DomainNumChanged; i++)
     {
-      domainHmax_loc[OffsetSIZE * i] = Extnodes[DomainList[i]].hmax;
-      domainHmax_loc[OffsetSIZE * i + 1] = Extnodes[DomainList[i]].divVmax;
+      domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_HMAX]    = Extnodes[DomainList[i]].hmax;
+      domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_DIVVMAX] = Extnodes[DomainList[i]].divVmax;
+      for(int t = 0; t < 6; t++)
+          domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_PTYPE0 + t] = Extnodes[DomainList[i]].hmax_per_type[t];
     }
 
 
@@ -461,15 +470,22 @@ void force_update_hmax(void)
         while(no >= 0)
         {
             force_drift_node(no, All.Ti_Current);
-            
-            if(domainHmax_all[OffsetSIZE * i] > Extnodes[no].hmax || domainHmax_all[OffsetSIZE * i + 1] > Extnodes[no].divVmax)
+
+            /* Grow scalar hmax/divVmax + every per-type band; keep walking ancestors
+             * while ANY of the 8 fields grew (a remote update that only grows one
+             * per-type band must still propagate up the tree, just like scalar hmax). */
+            int any_grew = 0;
+            if(domainHmax_all[OffsetSIZE * i + HMAX_EXCH_HMAX] > Extnodes[no].hmax)
+                {Extnodes[no].hmax = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_HMAX]; any_grew = 1;}
+            if(domainHmax_all[OffsetSIZE * i + HMAX_EXCH_DIVVMAX] > Extnodes[no].divVmax)
+                {Extnodes[no].divVmax = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_DIVVMAX]; any_grew = 1;}
+            for(int t = 0; t < 6; t++)
             {
-                if(domainHmax_all[OffsetSIZE * i] > Extnodes[no].hmax) {Extnodes[no].hmax = domainHmax_all[OffsetSIZE * i];}
-                if(domainHmax_all[OffsetSIZE * i + 1] > Extnodes[no].divVmax) {Extnodes[no].divVmax = domainHmax_all[OffsetSIZE * i + 1];}
+                MyFloat v = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_PTYPE0 + t];
+                if(v > Extnodes[no].hmax_per_type[t]) {Extnodes[no].hmax_per_type[t] = v; any_grew = 1;}
             }
-            else
-            {break;}
-            
+            if(!any_grew) {break;}
+
             no = Nodes[no].u.d.father;
         }
     }
