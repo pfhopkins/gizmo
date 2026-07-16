@@ -1,10 +1,11 @@
 /* hydro/hydro_force_loop.cc — host hooks + toplevel for HydroForceSpec.
  *
- * Closes the Wave 5 hydro corridor: ports the legacy GPU walker
- * hydro_evaluate_gpu (hydro/density_gpu.cc:106-481, still alive for
- * core/transport_subcycle.cc) to the runner Spec contract, plus rewrites
- * the toplevel hydro_force() (formerly hydro/hydro_toplevel.cc:710-787)
- * to dispatch via run_neighbor_loop<HydroForceSpec>.
+ * Ports the legacy GPU walker hydro_evaluate_gpu (hydro/density_gpu.cc,
+ * still alive for core/transport_subcycle.cc) to the runner Spec contract,
+ * plus rewrites the toplevel hydro_force() (formerly in
+ * hydro/hydro_toplevel.cc) to dispatch via run_neighbor_loop<HydroForceSpec>.
+ * Final consumer of the hydro corridor's shared symmetric gas topology
+ * (see hydro_corridor.h).
  *
  * Owns:
  *   - GHOST_WRITEBACK_BUNDLE(hydro_force) manifest (PARTICLE_MAX(wakeup) +
@@ -19,7 +20,7 @@
  *     in hydro/hydro_toplevel.cc:115-295, with the MaxSignalVel floor
  *     restored via fmax(out->MaxSignalVel, effective_soundspeed()))
  *   - merge_accum + compare_accum (field-wise per #ifdef, mirroring
- *     gradients commit 7 pattern)
+ *     the GradientsSpec pattern)
  *   - hydro_force() toplevel
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
@@ -93,7 +94,7 @@ GHOST_WRITEBACK_BUNDLE_END(hydro_force)
  *
  * set_oracle_brute_pass: flip oracle_dry_run for the brute oracle pass; the
  *   pair_kernel reads this through ActiveData and gates `allow_j_writes`
- *   in hydro_accumulate_neighbor (commit 8a). Brute pass also sees
+ *   in hydro_accumulate_neighbor. Brute pass also sees
  *   need_wakeup_ptr = nullptr via the ternary in load_active so no spurious
  *   wakeup events accumulate from the diagnostic pass.
  * ========================================================================== */
@@ -450,10 +451,10 @@ void HydroForceSpec::merge_accum(AccumData& dst, const AccumData& src)
 
 /* ============================================================================
  * compare_accum — oracle gate. Field-wise max-of-relative-residuals with
- * an absolute-difference floor of 1e-12 (gradients commit 7 lesson — sum-
- * to-zero cancellation fields legitimately end at ~1e-22 in some configs;
- * a pure relative residual mis-flags those as O(1) "mismatches"). Coverage
- * mirrors merge_accum exactly.
+ * an absolute-difference floor of 1e-12: sum-to-zero cancellation fields
+ * legitimately end at ~1e-22 in some configs, and a pure relative residual
+ * mis-flags those as O(1) "mismatches". Coverage mirrors merge_accum
+ * exactly.
  * ========================================================================== */
 
 double HydroForceSpec::compare_accum(const AccumData& a, const AccumData& b)
@@ -540,13 +541,14 @@ double HydroForceSpec::compare_accum(const AccumData& a, const AccumData& b)
 }
 
 /* ============================================================================
- * Toplevel: hydro_force — replaces the legacy walker in the retired body
- * of hydro/hydro_toplevel.cc:710-787. Closes the hydro corridor.
+ * Toplevel: hydro_force — replaces the legacy walker formerly in
+ * hydro/hydro_toplevel.cc. Last consumer in the hydro corridor.
  *
  * Sequence:
  *   1. hydro_force_initial_operations_preloop()  (verbatim host pre-processing)
- *   2. consume corridor CSR (MODE_A NTask=1) OR reuse gizmo_sym_active_indices
- *      (built by gizmo_gradients_prep_symlist upstream in gradients toplevel)
+ *   2. corridor ghost-value refresh, then consume the corridor CSR when
+ *      published (Mode A, any rank count — see hydro_corridor.h) OR reuse
+ *      gizmo_sym_active_indices (built upstream in gradients toplevel)
  *   3. run_neighbor_loop<HydroForceSpec>(args)  (runner handles ghost
  *      lifecycle bundle + apply_active_writeback + cleanup_device_context's
  *      need_wakeup OR-into-global)
@@ -568,6 +570,13 @@ void hydro_force(void)
     double t_preloop = timediff(t_preloop_start, my_second());
     (void)t_preloop;
 
+    /* Corridor ghost refresh FIRST, view fetch AFTER: owner-side values
+     * changed since the last corridor refresh (gradients results, MG
+     * gradient correction, dynamic-diffusion calc), and intervening loops'
+     * own runner import+cleanup may have torn the corridor pool down — the
+     * refresh re-imports and republishes the CSR view, so a fetch before it
+     * would be stale. No-op on Mode B / unpublished corridor. */
+    gizmo_hydro_corridor_refresh_ghost_values("pre_hydro_force");
     const nlr_external_csr        *corridor_csr  = gizmo_hydro_corridor_external_csr();
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
 
@@ -582,11 +591,18 @@ void hydro_force(void)
             args.external_csr      = corridor_csr;
             args.dispatch_override = NlrForceMode::A;
         } else {
+            /* Mode B (request-driven, no corridor CSR): corridor-built
+             * active list. Mode A always publishes a view when there is
+             * active gas; reaching here in Mode A is a corridor sequencing
+             * bug — fail loudly, never quietly rebuild (dual path retired). */
+            if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
+                printf("FATAL: hydro_force in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
+                fflush(stdout);
+                endrun(7317);
+            }
             args.active_list = gizmo_sym_active_indices;
             args.num_active  = gizmo_sym_num_active;
-            if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
-                args.dispatch_override = NlrForceMode::A;
-            } else if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
+            if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
                 args.dispatch_override = NlrForceMode::B;
             }
         }

@@ -302,6 +302,7 @@ struct SinkEnv1Spec {
     /* (1) Loop identity. Drives env-var prefixes (GIZMO_SINK_ENV1_*) and
      *     PHASE0_NLR `loop=` field. */
     static constexpr const char *loop_name = "sink_env1";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: sole j-write gated atomic_min(SwallowTime) (order-invariant), no read-back; tiny-N usually below threshold */
     /* Legacy detector label preserved; differs from loop_name. Predates the
      * runner-template loop_name convention. Without this, the runner default
      * would label this Spec's detector "sink_env1" instead of the historical

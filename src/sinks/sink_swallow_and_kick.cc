@@ -1061,7 +1061,14 @@ void special_rt_feedback_injection(void)
     for(k=0;k<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;k++) {mspecial_tot += All.Mass_of_SpecialParticle[k];}
     if(mspecial_tot <= 0) {return;}
     double delta_wt_sum = 0, delta_wt_sumsum, r_min = All.ForceSoftening[3] * All.cf_atime, r_max = 5. * r_min, dt = All.TimeStep, subgrid_lum = L0_cgs / (UNIT_ENERGY_IN_CGS/UNIT_TIME_IN_CGS), de_00 = subgrid_lum * dt; if(dt <= 0) {return;}
-    int n_wt = 0, i; for(i=0;i<NumPart;i++) {
+    /* Owner-only scans: bound by the LOCAL particle count, not NumPart. A live
+       ghost pool (hydro-corridor span / TRANSPORT_SUBCYCLE) extends NumPart with
+       ghost COPIES of remote particles: including them here double-counts the
+       MPI-summed weight normalization below (owner rank + ghost-holding rank),
+       and a ghost copy of the target BH would absorb the reservoir update into
+       a discarded slot. ghost_get_num_local()==NumPart when no pool is live. */
+    int n_local_real = ghost_get_num_local();
+    int n_wt = 0, i; for(i=0;i<n_local_real;i++) {
         if(is_particle_a_special_zoom_target(i)) {iBH0=i;}
         if(P[i].Type != 0) {continue;}
         Vec3<double> dp{All.cf_atime*(double)P[i].Pos[0], All.cf_atime*(double)P[i].Pos[1], All.cf_atime*(double)P[i].Pos[2]};
@@ -1073,7 +1080,7 @@ void special_rt_feedback_injection(void)
     MPI_Allreduce(&delta_wt_sum, &delta_wt_sumsum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); // collect the information on weight sums
     if(All.Time <= All.TimeBegin) {return;}
     if(delta_wt_sumsum <= 0) {return;}
-    for(i=0;i<NumPart;i++) {
+    for(i=0;i<n_local_real;i++) {   /* owner-only: see bound rationale above */
         if(P[i].Type != 0) {continue;}
         Vec3<double> dp{All.cf_atime*(double)P[i].Pos[0], All.cf_atime*(double)P[i].Pos[1], All.cf_atime*(double)P[i].Pos[2]};
         double r2 = dp.norm_sq(), wt, wt_new=0, r, de;

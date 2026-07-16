@@ -85,6 +85,7 @@ struct GrainBackrxNeighborData {
 
 struct GrainBackrxSpec {
     static constexpr const char *loop_name = "grain_backrx";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: drag back-reaction atomic_add(Pj.Vel/dp)+atomic_min(AccelTimeMin), gated !oracle_dry_run, stable Pj snapshot, no read-back -> ulp */
 
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;
     static constexpr unsigned int           neighbor_type_mask = 1u << 0;  /* gas */
@@ -247,6 +248,7 @@ struct GasGrainRTNeighborData {
 
 struct GrainRTGasSpec {
     static constexpr const char *loop_name = "grain_rt_gas";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (out merged to accum post-pair); no j-write, no atomics -> threaded eval bit-identical */
 
     /* SYMMETRIC: grain kernel radius at j filters pairs (h_to_use = P[j].KernelRadius
      * inside gasgrain_rt_gas_search_pair_kernel). SYMMETRIC mode ensures pairs
@@ -381,6 +383,7 @@ struct GrainRTGasSpec {
 
 struct GrainRTGrainSpec {
     static constexpr const char *loop_name = "grain_rt_grain";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (out.Interpolated_Radiation_Acceleration merged post-pair); no j-write, no atomics -> threaded eval bit-identical */
 
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;
     static constexpr unsigned int           neighbor_type_mask = 1u << 0;  /* gas */

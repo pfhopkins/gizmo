@@ -87,7 +87,7 @@ void mymalloc_init(void)
 /* LOCAL arena capacity check (NO MPI). Returns 1 iff `bytes` fits in THIS rank's
  * arena (FreeBytes) AND `nblocks` more blocks fit in the fixed block table
  * (MAXBLOCKS) -- a request can fit by bytes yet still exhaust the block table,
- * which would route the real mymalloc onto the emergency-hold path. Safe in ANY
+ * which would route the real mymalloc onto the fatal hard-exit path. Safe in ANY
  * context, including subset/turn (no collective): it is the building block for
  * caller-side OOM preflight. On a 0 return the caller bad-stops + skips the
  * allocation, draining gracefully instead of holding deep in the allocator. */
@@ -204,7 +204,7 @@ void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const c
     {
       printf("Task=%d: No blocks left in mymalloc_fullinfo() at %s()/%s/line %d. MAXBLOCKS=%d\n", ThisTask,
 	     func, file, line, MAXBLOCKS);
-      gizmo_emergency_hold_reviewed(813, "mymalloc: no free blocks (MAXBLOCKS exhausted) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(813, "mymalloc: no free blocks (MAXBLOCKS exhausted) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
 
   if(n > FreeBytes)
@@ -213,7 +213,7 @@ void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const c
       printf
 	("\nTask=%d: Not enough memory in mymalloc_fullinfo() to allocate %g MB for variable '%s' at %s()/%s/line %d (FreeBytes=%g MB).\n",
 	 ThisTask, n / (1024.0 * 1024.0), varname, func, file, line, FreeBytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(812, "mymalloc: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(812, "mymalloc: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
   Table[Nblocks] = (char*)Base + (TotBytes - FreeBytes);
   FreeBytes -= n;
@@ -246,7 +246,7 @@ void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const 
     {
       printf("Task=%d: No blocks left in mymalloc_fullinfo() at %s()/%s/line %d. MAXBLOCKS=%d\n", ThisTask,
 	     func, file, line, MAXBLOCKS);
-      gizmo_emergency_hold_reviewed(816, "mymalloc_movable: no free blocks (MAXBLOCKS exhausted) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(816, "mymalloc_movable: no free blocks (MAXBLOCKS exhausted) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
 
   if(n > FreeBytes)
@@ -255,7 +255,7 @@ void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const 
       printf
 	("\nTask=%d: Not enough memory in mymalloc_fullinfo() to allocate %g MB for variable '%s' at %s()/%s/line %d (FreeBytes=%g MB).\n",
 	 ThisTask, n / (1024.0 * 1024.0), varname, func, file, line, FreeBytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(817, "mymalloc_movable: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(817, "mymalloc_movable: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
   Table[Nblocks] = (char*)Base + (TotBytes - FreeBytes);
   FreeBytes -= n;
@@ -393,10 +393,10 @@ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, 
   /* NOTE: unlike myfree* (void), a myrealloc* invariant violation can't safely
    * bad-stop+return: the caller would treat the returned pointer as a
    * successfully-resized buffer and write past the old size. Until the two real
-   * callers (domain.cc, mpi_util.cc) are guarded, route to the emergency-hold
+   * callers (domain.cc, mpi_util.cc) are guarded, route to the fatal hard-exit
    * path (Class-2; the caller-guard is the named allocator Pass-B workstream). */
   if(Nblocks == 0)
-    gizmo_emergency_hold_reviewed(76879, "myrealloc: Nblocks==0 -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
+    gizmo_fatal_hard_exit_reviewed(76879, "myrealloc: Nblocks==0 -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
 
   if(p != Table[Nblocks - 1])
     {
@@ -404,7 +404,7 @@ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, 
       printf("Task=%d: Wrong call of myrealloc() at %s()/%s/line %d - not the last allocated block!\n",
 	     ThisTask, func, file, line);
       fflush(stdout);
-      gizmo_emergency_hold_reviewed(815, "myrealloc: not the last allocated block -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(815, "myrealloc: not the last allocated block -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
     }
 
   AllocatedBytes -= BlockSize[Nblocks - 1];
@@ -417,7 +417,7 @@ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, 
 	("Task=%d: Not enough memory in myremalloc(n=%g MB) at %s()/%s/line %d. previous=%g FreeBytes=%g MB\n",
 	 ThisTask, n / (1024.0 * 1024.0), func, file, line, BlockSize[Nblocks - 1] / (1024.0 * 1024.0),
 	 FreeBytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90002001, "myrealloc: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(90002001, "myrealloc: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
   Table[Nblocks - 1] = (char*)Base + (TotBytes - FreeBytes);
   FreeBytes -= n;
@@ -439,7 +439,7 @@ void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char
   if(n < MIN_ALIGNMENT) {n = MIN_ALIGNMENT;}
 
   if(Nblocks == 0)
-    gizmo_emergency_hold_reviewed(768799, "myrealloc_movable: Nblocks==0 -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
+    gizmo_fatal_hard_exit_reviewed(768799, "myrealloc_movable: Nblocks==0 -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
 
   /* first, let's find the block */
    //unsigned int nr; //
@@ -456,7 +456,7 @@ void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char
 	("Task=%d: Wrong call of myrealloc_movable() from %s()/%s/line %d - this block has not been allocated!\n",
 	 ThisTask, func, file, line);
       fflush(stdout);
-      gizmo_emergency_hold_reviewed(8151, "myrealloc_movable: block not allocated -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(8151, "myrealloc_movable: block not allocated -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
     }
 
   if(nr < Nblocks - 1)		/* the block is not the last allocated block */
@@ -470,7 +470,7 @@ void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char
 	      ("Task=%d: Wrong call of myrealloc_movable() from %s()/%s/line %d - behind block=%d there are subsequent non-movable allocated blocks\n",
 	       ThisTask, func, file, line, nr);
 	    fflush(stdout);
-	    gizmo_emergency_hold_reviewed(8152, "myrealloc_movable: non-movable block behind target -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
+	    gizmo_fatal_hard_exit_reviewed(8152, "myrealloc_movable: non-movable block behind target -- REVIEWED_HARD_ALLOCATOR_INVARIANT", __FILE__, __LINE__, __FUNCTION__);
 	  }
     }
 
@@ -485,7 +485,7 @@ void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char
 	("Task=%d: at %s()/%s/line %d: Not enough memory in myremalloc_movable(n=%g MB). previous=%g FreeBytes=%g MB\n",
 	 ThisTask, func, file, line, n / (1024.0 * 1024.0), BlockSize[nr] / (1024.0 * 1024.0),
 	 FreeBytes / (1024.0 * 1024.0));
-      gizmo_emergency_hold_reviewed(90002002, "myrealloc_movable: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
+      gizmo_fatal_hard_exit_reviewed(90002002, "myrealloc_movable: out of arena memory (FreeBytes) -- REVIEWED_HARD_OOM_FLOOR", __FILE__, __LINE__, __FUNCTION__);
     }
 
   size_t offset = n - BlockSize[nr];

@@ -2,16 +2,22 @@
  *
  * The hydro corridor is the block of neighbor-loop work spanning density()
  * through hydro_force() whose downstream consumers (cellcorrections,
- * gradients, hydro_force) share the symmetric gas-gas neighbor topology
- * (positions / KernelRadius / active membership / ghost set invariant
- * across this span; see §1.5 of OPEN_3d_hydro_corridor_design.md for the
- * topology audit and the Mass<=0 guardrail). Sequence in
- * core/accel.cc::compute_hydro_densities_and_forces:
+ * gradients, hydro_force) share the symmetric gas-gas neighbor topology.
+ * Across this span, positions, KernelRadius, active membership, and the
+ * ghost set are invariant: no drift/kick occurs inside the span,
+ * KernelRadius is frozen by force_update_hmax() before the first consumer,
+ * ActiveParticleList is frozen at step entry, and the ghost set is a
+ * function of the former. The one exception is gas cells driven to
+ * Mass<=0 mid-span (sink swallow, full SF conversion) — caught by the
+ * Mass guardrail below. What DOES change mid-span is ghost FIELD VALUES
+ * (stellar feedback dirties hydro fields before gradients; gradients
+ * produce CellP.Gradients that hydro_force needs on ghost copies).
+ * Sequence in core/accel.cc::compute_hydro_densities_and_forces:
  *
  *   ---- MODE-DECISION ENTRY: gizmo_hydro_corridor_decide_mode() ----
- *       (BEFORE density() — so density can later honor the corridor
- *        choice; commit 4 leaves density independent, future commits
- *        wire density-side dispatch to the corridor mode)
+ *       (BEFORE density(). density/ags_density run through the iterative
+ *        runner with their own per-call dispatch; the corridor mode does
+ *        not steer them.)
  *   density() / ags_density()                  [iterative runner, owns its
  *                                               own iterative CSR — NOT the
  *                                               corridor's shared symmetric
@@ -19,27 +25,21 @@
  *   force_update_hmax()                        [tree update; freezes
  *                                               KernelRadius for the rest
  *                                               of the corridor]
- *   ---- (FUTURE COMMIT 5) CSR/TOPOLOGY BEGIN ----
- *       (AFTER density()+force_update_hmax(), BEFORE cellcorrections;
- *        this is where the corridor's shared symmetric gas CSR will be
- *        built — currently still built inside hydro_gradient_calc and
- *        rebuilt by cellcorrections, both to be hoisted here)
- *   cellcorrections_calc()                     [WAVE 5 corridor consumer]
+ *   ---- TOPOLOGY BEGIN: gizmo_hydro_corridor_begin() ----
+ *       (AFTER density()+force_update_hmax(), BEFORE cellcorrections:
+ *        the one place the corridor's shared symmetric gas CSR is built)
+ *   cellcorrections_calc()                     [corridor consumer]
  *   dynamic_diff_vel_calc / rt_source_injection / opacity_interp /
  *     compute_stellar_feedback                 [intervening; dirty ghost
- *                                               field values but not
- *                                               topology — see §1.5]
- *   hydro_gradient_calc()                      [WAVE 5 corridor consumer]
+ *                                               field values, not topology]
+ *   hydro_gradient_calc()                      [corridor consumer]
  *   mg_gradient_correction_calc()              [MHD_MODIFIED_GRADIENT]
- *   hydro_force()                              [WAVE 5 corridor consumer
- *                                               — closes the corridor]
+ *   hydro_force()                              [corridor consumer —
+ *                                               closes the corridor]
  *   ---- CORRIDOR EXIT: gizmo_hydro_corridor_end() ----
  *
- * This file owns the step-scoped mode state, env-var decision logic, and
- * (later commits) the shared CSR build/refresh lifecycle + topology
- * guardrails. In commit 4 the API is STATE+LIFECYCLE infra only; no
- * consumer reads gizmo_hydro_corridor_get_mode() yet. The corridor cannot
- * be truly closed until commit 8 (HydroForceSpec) — see the design doc.
+ * This file owns the step-scoped mode state, the mode decision logic, and
+ * the shared CSR lifecycle + topology guardrails.
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -56,50 +56,72 @@ enum class GizmoHydroCorridorMode : int {
  * core/accel.cc::compute_hydro_densities_and_forces just before density().
  *
  * Decision priority (highest first):
- *   1. env GIZMO_HYDRO_CORRIDOR_FORCE_MODE = A | B   (corridor-wide override)
- *   2. env GIZMO_NLR_FORCE_MODE            = A | B   (global runner override)
- *   3. adaptive vs env GIZMO_NLR_MODEB_THRESHOLD_SUM (default if unset = a
- *      sensible large-N threshold; see implementation)
- *
- * Per-loop overrides (GIZMO_GRADIENTS_FORCE_MODE, etc.) are NOT consulted
- * here — they break corridor coherence and will be loudly diagnosed at the
- * consumer site once consumers read corridor mode (commit 5+). */
+ *   1. TRANSPORT_SUBCYCLE builds require the shared CSR every step -> Mode A.
+ *   2. adaptive: Mode B iff sum>0 && sum<=TS && max<=TM, where the summed and
+ *      per-rank-max active-gas counts are compared against the optional
+ *      NeighborLoopModeBThreshold{Sum,Max} parameters if set (<= 0 forces
+ *      Mode A), otherwise the built-in corridor defaults. */
 void gizmo_hydro_corridor_decide_mode(void);
 
 /* Read the current corridor mode. Returns UNSET when called outside the
  * corridor span (before decide_mode or after end). */
 GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void);
 
-/* Build the corridor's shared symmetric gas CSR (commit 5b).
+/* Begin the corridor's shared topology for this step.
  *
  * Called from core/accel.cc::compute_hydro_densities_and_forces between
- * force_update_hmax() and cellcorrections_calc(). Conservative scope:
- *   MODE_A && NTask == 1  -> call gizmo_gradients_prep_symlist + populate
- *                            file-static nlr_external_csr describing the
- *                            resulting gizmo_sym_* globals. Downstream
- *                            consumers (cellcorrections, gradients)
- *                            consume via gizmo_hydro_corridor_external_csr().
- *   MODE_A && NTask  > 1  -> no-op for now. Multi-rank ghost field-value
- *                            staleness after compute_stellar_feedback is not
- *                            yet handled (commit 9 targeted refresh + dirty
- *                            mark); building corridor CSR here without that
- *                            plumbing would either let gradients consume
- *                            stale ghosts or double-allocate gizmo_sym_*
- *                            when the legacy prep call inside
- *                            hydro_gradient_calc fires.
- *   MODE_B / UNSET        -> no-op. Mode B is request-driven, no CSR; UNSET
- *                            means decide_mode wasn't called (defensive).
- * Lifetime: the underlying gizmo_sym_* globals are STILL freed by the
- * legacy gizmo_hydro_cleanup_symlist_and_ghosts() after hydro_force();
+ * force_update_hmax() and cellcorrections_calc().
+ *   MODE_A (any rank count): imports the gas ghost pool (NTask>1) and builds
+ *     the shared active-index list + symmetric gas CSR once; consumers
+ *     (cellcorrections, gradients, hydro_force) consume the CSR via
+ *     gizmo_hydro_corridor_external_csr() under the runner's
+ *     caller-owned-pool contract (the runner skips its own ghost
+ *     import/cleanup — see neighbor_loop_runner.h GHOST-POOL OWNERSHIP).
+ *     Mid-span ghost staleness is handled by
+ *     gizmo_hydro_corridor_refresh_ghost_values() below, the ONLY function
+ *     that may rebuild + republish the corridor CSR view.
+ *   MODE_B: builds ONLY the shared active-index list (the request-driven
+ *     walkers' row source) and dematerializes leftover ghosts — no import,
+ *     no CSR, no arena work.
+ *   UNSET: no-op (decide_mode wasn't called — defensive).
+ *
+ * Publish gating (Mode A): the CSR view is published only when the runner's
+ * ownership contract can be satisfied — at NTask>1 that requires a LIVE
+ * ghost pool (ghost_pool_is_live()); when no import ran (zero active gas
+ * globally), nothing is published and consumers take their nothing-to-do
+ * paths.
+ * Lifetime: the underlying gizmo_sym_* globals are freed by
+ * gizmo_hydro_cleanup_symlist_and_ghosts() after hydro_force();
  * gizmo_hydro_corridor_end() only clears the corridor's file-static
  * pointer view (no extra free). */
-void gizmo_hydro_corridor_begin_csr(void);
+void gizmo_hydro_corridor_begin(void);
 
-/* Accessor for downstream corridor consumers (cellcorrections, gradients
- * skip-prep). Returns a non-null pointer iff gizmo_hydro_corridor_begin_csr
- * populated a usable Mode-A CSR for this corridor span (NTask == 1 case
- * in commit 5b). Returns nullptr otherwise — callers MUST fall back to
- * their legacy own-CSR-build path. */
+/* Refresh ghost field values mid-corridor (owner values changed: feedback
+ * before gradients; CellP.Gradients before hydro_force; MHD-CG slope-limited
+ * fields between gradient iterations). No-op unless the corridor published a
+ * Mode-A CSR view. THE ONLY function that may rebuild and republish the
+ * corridor CSR. Two paths:
+ *   FAST — when the live ghost pool is the very import the CSR was built
+ *   from (import-epoch match): value-only in-place refresh via
+ *   ghost_refresh_values(); slot identity preserved by construction, CSR
+ *   and provenance untouched.
+ *   FULL (fail-closed fallback) — pool torn down by an intervening loop's
+ *   own ghost lifecycle, epoch mismatch, or any refresh-guard failure:
+ *   full teardown + re-import + CSR rebuild + REPUBLISH with new
+ *   offsets/neighbors pointers.
+ * Because a refresh MAY republish, consumers must RE-FETCH
+ * gizmo_hydro_corridor_external_csr() after every refresh (gradients: once
+ * per MHD-CG iteration), never cache the view across a refresh.
+ * `stage` is a short diagnostic label ("pre_gradients", "mhd_cg_iter",
+ * "pre_hydro_force"). */
+void gizmo_hydro_corridor_refresh_ghost_values(const char *stage);
+
+/* Accessor for downstream corridor consumers. Returns a non-null pointer
+ * iff gizmo_hydro_corridor_begin populated a usable Mode-A CSR for this
+ * corridor span. nullptr otherwise: Mode B consumers use the corridor-built
+ * active list (request-driven, no CSR); Mode A with active gas and no view
+ * is a sequencing bug the consumers abort on (the quiet rebuild-your-own
+ * fallback is retired). */
 struct nlr_external_csr;
 const nlr_external_csr * gizmo_hydro_corridor_external_csr(void);
 
@@ -109,26 +131,24 @@ const nlr_external_csr * gizmo_hydro_corridor_external_csr(void);
  * free gizmo_sym_*; that stays with gizmo_hydro_cleanup_symlist_and_ghosts). */
 void gizmo_hydro_corridor_end(void);
 
-/* Mass<=0 topology guardrail (Wave 5 commit 5c). Defensive runtime check
- * called immediately AFTER compute_stellar_feedback(): scans
- * ActiveParticleList for any gas member with Mass<=0. If any rank flags a
- * violation (MPI_Allreduce'd for coherent abort), endrun(7311) with the
- * offending cell index + ID + Mass on the flagging rank.
+/* Mass<=0 topology guardrail. Defensive runtime check called immediately
+ * AFTER compute_stellar_feedback(): scans ActiveParticleList for any gas
+ * member with Mass<=0. If any rank flags a violation (MPI_Allreduce'd for
+ * coherent abort), endrun(7311) with the offending cell index + ID + Mass
+ * on the flagging rank.
  *
- * Gated by gizmo_verbose_diag() — debug-build observability check; zero
- * cost in production runs. The per-row `enabled` flag in CellcorrectionsSpec
- * (commit 5b) already handles Mass<=0 silently for cellcorrections's
- * narrow filter; this guardrail is the broader observability backstop that
- * becomes load-bearing once commit 9 unlocks NTask>1 corridor CSR
- * consumption (where Mass<=0 on a cross-rank ghost is harder to detect
- * per-row).
+ * Rationale: the corridor's shared CSR row list is frozen before feedback.
+ * Positions / KernelRadius / active membership / ghost set are invariant
+ * across the span; the one event that can semantically invalidate a frozen
+ * row is a gas cell driven to Mass<=0 mid-step (sink swallow, full SF
+ * conversion). If that ever happens, the row list contains a
+ * semantically-dead entry and this check catches it loudly rather than
+ * letting a consumer silently process it.
  *
- * §1.5 of OPEN_3d_hydro_corridor_design.md: the topology audit established
- * positions / KernelRadius / active-membership / ghost set are invariant
- * across the corridor span. The one exception is gas Mass<=0 events
- * (sink swallow, full SF conversion mid-step) — if those ever happen,
- * the corridor's broad active list contains "semantically-dead" rows
- * and the guardrail catches it loudly. */
+ * Gated by gizmo_verbose_diag() — observability check, zero cost in
+ * production runs. Must be promoted to always-on (or replaced by audited
+ * Mass>0 gates in every consumer kernel) when the shared CSR is consumed
+ * at NTask>1, where a dead cross-rank ghost is harder to detect per-row. */
 void gizmo_hydro_corridor_mass_guardrail_check(void);
 
 #endif /* HYDRO_CORRIDOR_H */

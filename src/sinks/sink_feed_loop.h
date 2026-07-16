@@ -504,6 +504,7 @@ struct SinkFeedSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_feed";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads Pj.SwallowID at kernel entry then atomic_exchange(&SwallowID) at commit -> cross-active claim resolution is order-dependent (read-then-write of the live swallow flag) */
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;

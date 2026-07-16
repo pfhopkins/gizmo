@@ -70,10 +70,8 @@ void compute_hydro_densities_and_forces(void)
     {
         PRINT_STATUS("Start hydrodynamics computation...");
         /* Hydro corridor entry: decide Mode A vs Mode B once for the whole
-         * corridor span (density → cellcorrections → gradients → hydro_force).
-         * Wave 5 commit 4: state+lifecycle infra only. No consumer reads
-         * gizmo_hydro_corridor_get_mode() yet; behavior unchanged except
-         * diagnostic print under GIZMO_VERBOSE_DIAG. */
+         * corridor span (density → cellcorrections → gradients → hydro_force),
+         * so every consumer in the span dispatches coherently. */
         gizmo_hydro_corridor_decide_mode();
         /* density() internally handles ghost_exchange prep + redo (neighbor-list path)
            via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
@@ -92,12 +90,13 @@ void compute_hydro_densities_and_forces(void)
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
-        /* Hydro corridor CSR begin (Wave 5 commit 5b). Builds the shared
-         * symmetric gas CSR when corridor mode is MODE_A AND NTask==1,
-         * for consumption by cellcorrections + (legacy) gradients +
-         * (legacy) hydro_force. No-op otherwise. Downstream Specs read
-         * via gizmo_hydro_corridor_external_csr(). */
-        gizmo_hydro_corridor_begin_csr();
+        /* Hydro corridor begin: in Mode A (any rank count) imports the gas
+         * ghost pool and builds the shared active list + symmetric gas CSR
+         * consumed by cellcorrections + gradients + hydro_force via
+         * gizmo_hydro_corridor_external_csr(). In Mode B builds only the
+         * shared active list (request-driven, no CSR). See hydro_corridor.h
+         * for the ownership contract and mid-span refresh points. */
+        gizmo_hydro_corridor_begin();
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
         STEP_PHASE_TIME("cellcorrections_calc", cellcorrections_calc()); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
@@ -115,13 +114,11 @@ void compute_hydro_densities_and_forces(void)
         STEP_PHASE_TIME("compute_stellar_feedback", compute_stellar_feedback());
 #endif
 
-        /* Wave 5 commit 5c: corridor Mass-guardrail. Defensive observability
-         * check (diag-gated) — scans ActiveParticleList for any gas with
-         * Mass<=0 post-feedback. The per-row enabled flag in
-         * CellcorrectionsSpec (commit 5b) already silently handles such
-         * rows; this guardrail is the broader backstop that becomes
-         * load-bearing once commit 9 unlocks NTask>1 corridor CSR
-         * consumption. See OPEN_3d_hydro_corridor_design.md §1.5. */
+        /* Corridor Mass-guardrail: defensive observability check
+         * (diag-gated) — scans ActiveParticleList for any gas with
+         * Mass<=0 post-feedback, the one event that can semantically
+         * invalidate the corridor's frozen row list mid-span. See
+         * hydro_corridor.h for when this must become always-on. */
         gizmo_hydro_corridor_mass_guardrail_check();
 
         double t_bench_grad_start = my_second();

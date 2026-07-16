@@ -146,7 +146,7 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    core/proto.h. Plain C++ linkage matches core/proto.h. */
 void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
-[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+[[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
 
 /* ---- GPU portability layer ----

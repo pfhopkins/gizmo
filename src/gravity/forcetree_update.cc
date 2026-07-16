@@ -8,6 +8,7 @@
 #include <cstdint>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "force_node_drift_sync.h"
 
 /* Phase 7.c: GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
@@ -220,7 +221,9 @@ void force_drift_node(int no, integertime time1)
   integertime time0;
   double dt_drift, dt_drift_hmax, fac;
 
-  if(time1 == Nodes[no].Ti_current)
+  /* Acquire-load: if another thread already drifted this node to time1, we both
+   * skip AND observe its published geometry (paired with the release store below). */
+  if(time1 == modeb_node_ti_current_acquire(no))
     return;
 
   time0 = Extnodes[no].Ti_lastkicked;
@@ -292,7 +295,9 @@ void force_drift_node(int no, integertime time1)
             }
         }
     }
-    Nodes[no].Ti_current = time1;
+    /* Release store: publishes Ti_current after all geometry/Extnodes writes so a
+     * threaded walk's acquire-load fast path sees fresh Ti => fresh geometry. */
+    force_drift_node_publish_current(no, time1);
 }
 
 
@@ -478,5 +483,6 @@ void force_update_hmax(void)
   myfree(counts);
   myfree(DomainList);
 
+  force_bump_hmax_refresh_generation();   /* ancestor boxes re-drifted + per-type bands re-seeded */
   CPU_Step[CPU_TREEHMAXUPDATE] += measure_time();
 }

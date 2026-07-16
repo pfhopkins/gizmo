@@ -666,6 +666,7 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
  * ========================================================================== */
 struct CBEGradSpec {
     static constexpr const char *loop_name = "cbe_grad";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (M/B lsq + phi min); no j-write, no atomics -> threaded eval bit-identical */
 
     /* Symmetric search topology because pass 1 (pairwise BJ-style limiter)
      * needs symmetric neighbor visibility to see every face the flux body

@@ -1686,6 +1686,14 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.DesNumNgb;
         id[nt++] = REAL;
 
+        strcpy(tag[nt], "NeighborLoopModeBThresholdSum");
+        addr[nt] = &All.NeighborLoopModeBThresholdSum;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "NeighborLoopModeBThresholdMax");
+        addr[nt] = &All.NeighborLoopModeBThresholdMax;
+        id[nt++] = INT;
+
 
 #ifdef SUBFIND
       strcpy(tag[nt], "DesLinkNgb");
@@ -2677,6 +2685,8 @@ void read_parameter_file(char *fname)
                     if(strcmp("MaxSizeTimestep",tag[i])==0) {*((double *)addr[i])=(1.e-3*All.TimeMax); printf("Tag %s (%s) not set in parameter file: it is often unsafe to not set a maximum timestep. We will default to assume 0.1 percent of the maximum time (=%g), but this may need to be set lower. \n",tag[i],alternate_tag[i],All.MaxSizeTimestep); continue;}
                 }
                 if(strcmp("DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the interaction kernel. Trying to set a reasonable guess of =%g based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.DesNumNgb); continue;}
+                if(strcmp("NeighborLoopModeBThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_sum */
+                if(strcmp("NeighborLoopModeBThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_max */
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
                 if(strcmp("AGS_DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the adaptive-gravity (non-fluid) interaction kernel. Trying to set a reasonable guess (=%g) based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.AGS_DesNumNgb); continue;}
 #endif
@@ -3084,6 +3094,14 @@ void read_parameter_file(char *fname)
     if((All.CourantFac<=0)||(All.CourantFac>0.5))
     {
         if(ThisTask==0) {printf("CourantFac must be >0 and <0.5 to ensure stability \n");} endrun(1);
+    }
+    if(All.NeighborLoopModeBThresholdSum < -1)
+    {
+        if(ThisTask==0) {printf("NeighborLoopModeBThresholdSum must be >= -1 (-1 = unset/use per-loop defaults, 0 = disable Mode B on adaptive paths, positive = threshold)\n");} endrun(1);
+    }
+    if(All.NeighborLoopModeBThresholdMax < -1)
+    {
+        if(ThisTask==0) {printf("NeighborLoopModeBThresholdMax must be >= -1 (-1 = unset/use per-loop defaults, 0 = disable Mode B on adaptive paths, positive = threshold)\n");} endrun(1);
     }
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {

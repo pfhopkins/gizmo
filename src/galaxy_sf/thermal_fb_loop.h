@@ -261,6 +261,7 @@ struct ThermalFBSpec {
     /* Identity. loop_name drives env-var derivation (GIZMO_THERMALFB_* per
      * nlr_loop_env_name uppercasing) and the new generic _end_bundle print. */
     static constexpr const char *loop_name = "thermalfb";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass (divisor of dIE/delta_rho/dMet) then atomic_add(&Pj.Mass); same for Cj.Density, Pj.Metallicity -> multi-source order-dependent physics (read-then-atomic-add) */
 
     /* Search policy. Legacy thermal_fb_gpu.cc:166 used NGB_SEARCH_ONEWAY +
      * j_type_bitmask=1 (gas only). */

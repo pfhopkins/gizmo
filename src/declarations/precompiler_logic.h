@@ -38,10 +38,6 @@
 #define PREVENT_PARTICLE_MERGE_SPLIT  /* particle merging/splitting doesn't make sense with frozen grids */
 #endif
 
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP
-#define MAINTAIN_TREE_IN_REARRANGE
-#endif
-
 #if (defined(HYDRO_DENSITY_SPH) || defined(HYDRO_PRESSURE_SPH)) && !defined(HYDRO_SPH)
 #define HYDRO_SPH               /* top-level flag for SPH: must be enabled if any SPH method is used */
 #endif

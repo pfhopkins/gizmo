@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts (rearrange live-pool guard) */
 #include "../mesh/kernel.h"
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* update_ISMDustChemEvo_bin_number_and_slope + get_ISMDustChemEvo_bin_mass are
@@ -719,13 +720,6 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     P[i].Time_Of_Last_MergeSplit = All.Time; P[j].Time_Of_Last_MergeSplit = All.Time;
 #endif
     
-    /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP    
-    long bin = P[i].TimeBin;
-    if(FirstInTimeBin[bin] < 0) {FirstInTimeBin[bin]=j; LastInTimeBin[bin]=j; NextInTimeBin[j]=-1; PrevInTimeBin[j]=-1;} /* only particle in this time bin on this task */
-    else {NextInTimeBin[j]=FirstInTimeBin[bin]; PrevInTimeBin[j]=-1; PrevInTimeBin[FirstInTimeBin[bin]]=j; FirstInTimeBin[bin]=j;} /* there is already at least one particle; add this one "to the front" of the list */
-    force_add_element_to_tree(i, j);
-#endif    
     /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
     
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
@@ -1140,6 +1134,21 @@ void remove_particle_from_treewalk(int i){
  */
 void rearrange_particle_sequence(void)
 {
+    /* HARD INVARIANT: no live ghost pool. This routine reorders/compacts the
+       particle array via NumPart/N_gas-bounded loops and swap-with-last moves;
+       with imported ghosts materialized in [num_local, NumPart) it would scan
+       ghost slots into the gas block, "eliminate" zero-mass ghost copies
+       (corrupting TimeBinCount and the pool bookkeeping), and shrink NumPart
+       under the pool. Callers must tear ghosts down first. Pool liveness is
+       collective (imports/cleanups are collective), so every rank fails here
+       together. */
+    if(ghost_pool_is_live()) {
+        printf("FATAL: rearrange_particle_sequence called with a live ghost pool "
+               "(num_local=%d NumPart=%d nghost=%d) on task %d — caller lifecycle bug.\n",
+               ghost_get_num_local(), NumPart, ghost_get_num_ghosts(), ThisTask);
+        fflush(stdout);
+        endrun(7314);
+    }
     int i, j, flag = 0, flag_sum, j_next;
     int count_elim, count_gaselim, count_sink_elim, tot_elim, tot_gaselim, tot_sink_elim;
     struct particle_data psave;

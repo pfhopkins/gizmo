@@ -24,6 +24,7 @@ int getNodeCount(void)
     int rank, is_rank0, nodes;
     MPI_Comm shmcomm;
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
+    gizmo_mpi_set_failfast_errhandler(shmcomm);  /* fail-fast, not MPI's default wedge-prone abort */
     MPI_Comm_rank(shmcomm, &rank);
     is_rank0 = (rank == 0) ? 1 : 0;
     MPI_Allreduce(&is_rank0, &nodes, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -42,7 +43,7 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
     char *sendbuf = (char *)sendbuf0;
     char *recvbuf = (char *)recvbuf0;
 
-    if(dest != source) gizmo_emergency_hold_reviewed(90002004, "REVIEWED_HARD_MID_PROTOCOL: mpi_util dest!=source invariant (mid-collective exchange, no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
+    if(dest != source) gizmo_fatal_hard_exit_reviewed(90002004, "REVIEWED_HARD_MID_PROTOCOL: mpi_util dest!=source invariant (mid-collective exchange, no symmetric poll)", __FILE__, __LINE__, __FUNCTION__);
     
     MPI_Type_size(sendtype, &size_sendtype);
     MPI_Type_size(recvtype, &size_recvtype);

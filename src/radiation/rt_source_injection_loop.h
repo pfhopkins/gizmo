@@ -287,6 +287,7 @@ static void rt_source_injection_pair_body(
  * ========================================================================== */
 struct RtSrcInjectionSpec {
     static constexpr const char *loop_name = "rtsrcinjection";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: radiation scatter atomic_add to Cj.Rad fields, Pj.Vel, Pj.dp; gated !oracle_dry_run; source-snapshot deltas never read back -> ulp */
 
     /* Search policy. SYMMETRIC matches legacy rt_source_injection_gpu.cc:178
      * (NGB_SEARCH_SYMMETRIC unconditional). Correctness-required under

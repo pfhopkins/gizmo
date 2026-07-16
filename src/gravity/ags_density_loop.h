@@ -342,6 +342,7 @@ struct AgsDensitySpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "ags_density";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: only j-writes are gated atomic_max(wakeup)+atomic_or(need_wakeup), both order-invariant, no read-back */
 
     /* search_mode is ONEWAY: the legacy ags_density CSR builder used
      * NGB_SEARCH_ONEWAY, and the pair predicate is one-way (r < h_i only —

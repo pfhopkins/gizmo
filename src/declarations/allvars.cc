@@ -163,6 +163,7 @@ int *DomainCount;
 int *DomainCountGas;
 int *DomainTask;
 int *DomainNodeIndex;
+int *TopNodeNodeIndex;   /* [NTopnodes] topnode -> Nodes[] slot (top-leaf router geometry SSOT) */
 int *DomainList, DomainNumChanged;
 peanokey *Key, *KeySorted;
 struct topnode_data *TopNodes;

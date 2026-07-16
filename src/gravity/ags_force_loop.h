@@ -373,6 +373,7 @@ struct AgsForceSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "ags_force";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): DM_SIDM reads Pj.Vel then atomic_add(&Pj.Vel) in the same loop; that velocity feeds both scatter probability and kick -> order-dependent (RNG is counter-based/order-indep; the read-then-write is the blocker) */
 
     /* SIDM pair-filter is r <= h_i+h_j; non-SIDM is r <= max(h_i,h_j). Both
      * are symmetric pair predicates — neighbor pool must include j with

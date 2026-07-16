@@ -22,7 +22,7 @@ extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_t
 
 /* Forward declaration of the out-of-line host All accessor (defined in
  * core/predict.cc). Retained as a stylistic intent-tag for host-snapshot
- * reads — under 93897f62 the device-pass redirect is gated, so bare All.* in host code is also correct. */
+ * reads; bare All.* in host code is equally correct. */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,7 +38,6 @@ static inline double gizmo_ghost_safety_factor(void)
 {
     double f = 1.0;
 #ifdef TURB_DIFF_DYNAMIC
-    /* Codex 2026-05-12: out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
     f = DMAX(f, gizmo_host_all_ptr()->TurbDynamicDiffFac);
 #endif
     return f;
@@ -57,7 +56,7 @@ static inline double gizmo_ghost_safety_factor(void)
 static inline void gizmo_density_prep_ghosts(double safety)
 {
     double t0 = my_second();
-    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
+    move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
     double t1 = my_second();
     ghost_exchange(safety);
@@ -100,7 +99,7 @@ static inline void gizmo_density_prep_ghosts(double safety)
  * Mode A passes Spec::radius_policy + nlr_spec_symmetric_j_radius_scale<Spec>();
  * legacy non-runner callers explicitly pass MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES
  * + 1.0 to preserve their pre-policy behavior byte-for-byte.  Compiler enforces
- * explicit-thread at every call site (codex 2026-06-07 — no LEGACY fallback). */
+ * explicit-thread at every call site (no silent LEGACY fallback default). */
 static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
                                                        int search_mode,
                                                        unsigned int supply_type_mask,
@@ -112,7 +111,7 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
                                                        double j_radius_scale)
 {
     double t0 = my_second();
-    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
+    move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
 
     int alloc_n = (num_active > 0 ? num_active : 1);
@@ -178,12 +177,12 @@ static inline int gizmo_request_filtered_ghost_import_fresh(const char *caller_n
 
 /* Hydro-density variant of gizmo_density_prep_ghosts: gas-only pool, gas-only
    active gate, ONE-WAY criterion (r_ij < h_i — correct for density; symmetric
-   max(h_i, h_j) is wrong here and over-imports by orders of magnitude per
-   Phase-0 waste-ratio diagnostic). Use from hydro density iteration only. */
+   max(h_i, h_j) is wrong here and over-imports by orders of magnitude, per
+   direct waste-ratio measurement). Use from hydro density iteration only. */
 static inline void gizmo_hydro_density_prep_ghosts(double safety)
 {
     double t0 = my_second();
-    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
+    move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
     double t1 = my_second();
     ghost_exchange_hydro_oneway(safety);
@@ -208,7 +207,7 @@ static inline void gizmo_density_redo_ghosts_if_needed(double safety)
 }
 
 /* Fresh broad downstream-handoff import after the runner-based density()
-   path — IMPORT ONLY, NO DRIFT. Codex 2026-05-12: the iterative runner's
+   path — IMPORT ONLY, NO DRIFT. The iterative runner's
    Mode A imports an EXACT-QUERY ghost pool sized to current iter actives+
    radii — narrower than the legacy broad hydro-oneway envelope, and
    unsuitable as the downstream pool consumed by cellcorrections /
@@ -252,18 +251,31 @@ static inline void gizmo_hydro_density_redo_ghosts_if_needed(double safety)
     }
 }
 
-/* Prologue for hydro_gradient_calc(): allocate the per-step active-index
-   array, refresh ghost CellP with converged density/h, and build the
-   symmetric CSR neighbor list used by gradients and hydro_force.
+/* Corridor/subcycle-INTERNAL shared-topology build (no direct consumer
+   callers: gizmo_hydro_corridor_begin owns the per-step call, the corridor
+   refresh full path rebuilds through the epilogue below, and
+   transport_subcycle_prepare_topology rebuilds after particle mutations):
+   allocate the per-step active-index array, refresh ghost CellP with
+   converged density/h, and build the symmetric CSR neighbor list used by
+   gradients and hydro_force.
 
    Multi-rank tiny-N gate: when no rank has any active gas particle, the
    ghost refresh + symlist build are pure overhead (~1-2s/step on Vista
    2-rank). MPI_Allreduce the local active-gas count once; if global == 0,
    skip the collective ghost_exchange and the kernel-side symlist build,
-   leaving an empty symlist that the gradient/hydro kernels fast-path on. */
-static inline void gizmo_gradients_prep_symlist(double safety, double search_fac)
+   leaving an empty symlist that the gradient/hydro kernels fast-path on.
+
+   is_mode_b: when the corridor runs Mode B (request-driven, tiny-N), the
+   gradient/hydro walkers use ONLY the active-index list below; they never
+   read imported ghosts (Mode B walks local particles + P2P request/reply)
+   and nothing reads the shared CSR (the only CSR consumers are Mode-A
+   external_csr and transport_subcycle, and TRANSPORT_SUBCYCLE forces Mode A).
+   So on Mode B the ghost exchange + CSR build are pure dead work — skipped
+   here; only the active-index list is built. */
+static inline void gizmo_gradients_prep_symlist(double safety, double search_fac, bool is_mode_b)
 {
-    /* active-index allocation (persists across gradients + hydro) */
+    /* active-index allocation (persists across gradients + hydro; used by the
+       request-driven Mode B walkers as their active list) */
     gizmo_sym_num_active = 0;
     for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
     gizmo_sym_active_indices = (int *) mymalloc("sym_active",
@@ -278,6 +290,17 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         MPI_Allreduce(&gizmo_sym_num_active, &gizmo_sym_num_active_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     } else {
         gizmo_sym_num_active_global = gizmo_sym_num_active;
+    }
+
+    if(is_mode_b) {
+        /* Mode B imports no ghosts and reads no shared CSR — both would be dead
+           work. But it MUST still enter with no live ghost extension in NumPart:
+           dematerialize any ghosts left materialized by an earlier phase (safe
+           no-op when none). Skip ONLY the fresh ghost import + the CSR build.
+           Other per-step code (conservation sums, timestep, next-step setup)
+           iterates NumPart, so leftover ghosts here would corrupt it. */
+        ghost_exchange_cleanup();
+        return;
     }
 
     /* When global active-gas count is 0, skip the collective ghost refresh
@@ -299,15 +322,20 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
                                     gizmo_sym_num_active, (long long)gizmo_sym_neighbor_list.total_pairs, timediff(t_sym, my_second()));}
 }
 
-/* Epilogue for hydro_gradient_calc(): refresh ghosts again so hydro_force
-   sees updated CellP.Gradients on both sides of each pair, and rebuild the
-   CSR (ghost indices may shift after re-exchange). Skipped when global
-   active-gas was 0 in prep — no work in either direction so no need to
-   rebuild ghosts or the symlist. The size-1 backstop symlist from prep
-   stays valid for the (no-op) hydro_force kernel. */
-static inline void gizmo_gradients_refresh_symlist(double safety, double search_fac)
+/* Corridor-INTERNAL full ghost re-import + CSR rebuild (no direct consumer
+   callers: gizmo_hydro_corridor_refresh_ghost_values owns the call as its
+   fail-closed full path and republishes the view afterwards). Refreshes
+   ghosts so downstream pairs see updated owner fields on both sides, and
+   rebuilds the CSR (ghost indices may shift after re-exchange). Skipped
+   when global active-gas was 0 in prep — no work in either direction. The
+   size-1 backstop symlist from prep stays valid for the (no-op) kernels. */
+static inline void gizmo_gradients_refresh_symlist(double safety, double search_fac, bool is_mode_b)
 {
     if(gizmo_sym_num_active_global == 0) return;
+    if(is_mode_b) {
+        /* Mode B built no CSR + no ghosts in prep; nothing to refresh. */
+        return;
+    }
     if(NTask > 1) {
         double t_refresh = my_second();
         free_neighbor_list(&gizmo_sym_neighbor_list);
@@ -320,15 +348,18 @@ static inline void gizmo_gradients_refresh_symlist(double safety, double search_
 }
 
 /* Epilogue for hydro_force(): free the symlist and remove ghost particles.
-   Skipped when TRANSPORT_SUBCYCLE is active — in that case the symlist and
-   ghosts stay alive for RT subcycle steps and are freed at the end of the
-   subcycle loop in run.cc. */
+   Unconditional — including under TRANSPORT_SUBCYCLE. (The old scheme that
+   kept this pool alive for the RT subcycle loop was broken by construction:
+   sink accretion, wind spawning, rearrange_particle_sequence, and RT source
+   injection all run between hydro_force and the subcycle loop, and their own
+   ghost imports/cleanups and particle-array mutations corrupted the retained
+   pool and the CSR ghost indices into it. The subcycle now builds its own
+   topology immediately before its loop — transport_subcycle_prepare_topology
+   in core/transport_subcycle.cc — after all of those have run.) */
 static inline void gizmo_hydro_cleanup_symlist_and_ghosts(void)
 {
-#ifndef TRANSPORT_SUBCYCLE
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
-#endif
 }
 
 /* init.cc only: density() was called for initial h-convergence, no subsequent

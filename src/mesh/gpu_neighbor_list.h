@@ -45,8 +45,10 @@ struct gpu_neighbor_list_t {
     double box_halves[3];
 
     /* Compact position+h array for BVH traversal cache efficiency (points into
-       spatial index memory; do NOT free from gnl — owned by gpu_spatial_index_t). */
-    float *d_compact_xyzh;
+       spatial index memory; do NOT free from gnl — owned by gpu_spatial_index_t).
+       DOUBLE positions: GIZMO's ~1e11 dynamic range makes float ABSOLUTE positions
+       invalid for neighbour inclusion (query + supply). h in slot 3 is a reach. */
+    double *d_compact_xyzh;
 };
 
 
@@ -63,9 +65,10 @@ struct gpu_spatial_index_t {
     double box_sizes[3];
     double box_halves[3];
     /* Compact position+h array: d_compact_xyzh[i*4+0..3] = x,y,z,h for particle i.
-       Fits ~32MB for 2M particles vs ~800MB for full P[], dramatically improving
-       GPU BVH traversal cache efficiency. Built in gpu_spatial_index_build. */
-    float *d_compact_xyzh;
+       DOUBLE (positions x,y,z; h reach in slot 3): float absolute positions are
+       invalid for GIZMO's dynamic range (see §37/§38). ~64MB for 2M particles vs
+       ~800MB for full P[]. Built in gpu_spatial_index_build. */
+    double *d_compact_xyzh;
     int num_total;  /* particle count when built; mismatch → invalidate */
     int valid;  /* 1 if built and usable */
     int dirty_handle = -1; /* gpu_dirty_tracker handle; -1 when not registered */
@@ -109,8 +112,8 @@ struct gpu_spatial_index_t {
      * = sub-ms); then a tiny device-side scatter kernel writes into the
      * interleaved d_compact_xyzh[i*4+0..2]. Non-pool entries are unused by the
      * BVH walk so their stale h_pos_buf values are harmless. */
-    float *h_pos_buf;           /* [3*num_total] in Kokkos::HostSpace */
-    float *d_pos_buf;           /* [3*num_total] in DEVICE_SPACE */
+    double *h_pos_buf;          /* [3*num_total] in Kokkos::HostSpace (DOUBLE positions) */
+    double *d_pos_buf;          /* [3*num_total] in DEVICE_SPACE (DOUBLE positions) */
 };
 
 
@@ -170,8 +173,10 @@ void gpu_step_sidx_invalidate_full(void);
 
 /* Dirty-index API for compact_xyzh h-field tracking.
  *
- * compact_xyzh[j*4+3] must equal arena[j].KernelRadius for every j that any
- * cached neighbor search will read as a candidate (BVH-walk reads compact for
+ * compact_xyzh[j*4+3] is the SUPPLY reach = nlr_particle_symmetric_radius(j)
+ * * (1+SIDX_H_SLACK) — the CONSERVATIVE lazy-drift candidate margin, NOT the
+ * bare KernelRadius. It must track arena[j]'s current reach for every j that
+ * any cached neighbor search reads as a candidate (BVH-walk reads compact for
  * pruning + the leaf check_tile_particles reads compact[j*4+3] for h_j in
  * SYMMETRIC mode).  Whenever code mutates arena[j].KernelRadius (or imports
  * a ghost slot that overwrites it), it must register j as dirty so the next

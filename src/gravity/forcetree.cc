@@ -262,6 +262,15 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
     }
 }
 
+/* Gravity-tree freshness generations (see forcetree.h). Plain host counters,
+ * SSOT in this TU; force_update_hmax (forcetree_update.cc) bumps the hmax one
+ * via force_bump_hmax_refresh_generation(). */
+static long g_force_treebuild_generation = 0;
+static long g_force_hmax_refresh_generation = 0;
+long force_treebuild_generation(void)        { return g_force_treebuild_generation; }
+long force_hmax_refresh_generation(void)      { return g_force_hmax_refresh_generation; }
+void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation++; }
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
@@ -405,6 +414,7 @@ let_build_attempt:
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     }
     TimeOfLastTreeConstruction = All.Time;
+    g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
     return Numnodestree;
 }
 
@@ -447,7 +457,27 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* create a set of empty nodes corresponding to the top-level domain grid. We need to generate these nodes first to make sure that we have a
      * complete top-level tree which allows the easy insertion of the pseudo-particles at the right place */
     
+    /* Root topnode 0 maps to the root tree node All.MaxPart; children are mapped
+     * inside the recursion (top-leaf router geometry SSOT, H0). */
+    TopNodeNodeIndex[0] = All.MaxPart;
+    if(TopNodes[0].Daughter < 0) {
+        /* Degenerate root-is-leaf (single top-cell): the recursion below sets no
+         * children, so set the leaf's DomainNodeIndex explicitly to keep both maps
+         * complete + consistent. */
+        DomainNodeIndex[TopNodes[0].Leaf] = All.MaxPart;
+    }
     if(force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
+    /* H0 post-build validation: every topnode must map to a valid Nodes[] slot. */
+    {
+        const int node_lo = All.MaxPart, node_hi = All.MaxPart + MaxNodes;
+        for(int tnchk = 0; tnchk < NTopnodes; tnchk++) {
+            if(TopNodeNodeIndex[tnchk] < node_lo || TopNodeNodeIndex[tnchk] >= node_hi) {
+                printf("force_treebuild: TopNodeNodeIndex[%d]=%d out of range [%d,%d) (NTopnodes=%d) — top-leaf router map incomplete\n",
+                       tnchk, TopNodeNodeIndex[tnchk], node_lo, node_hi, NTopnodes);
+                endrun(91561);
+            }
+        }
+    }
     /* if a high-resolution region in a global tree is used, we need to generate an additional set empty nodes to make sure that we have a complete top-level tree for the high-resolution inset */
 
     /* Step 13 Phase 6.5d: GPU tree-build replaces the per-particle CPU
@@ -553,6 +583,14 @@ int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y
 
                     Nodes[no].u.suns[count] = *nextfree;
 
+                    /* H0 (top-leaf router geometry SSOT): map this child topnode
+                     * (PH offset Daughter+sub) to the physical Nodes[] slot
+                     * (*nextfree) whose exact center/len is set just below.  NOTE
+                     * the topnode child offset `sub` is Peano-Hilbert while the
+                     * Nodes suns index `count` is Morton i+2j+4k — they differ, so
+                     * the router MUST read geometry via this map, never derive it. */
+                    TopNodeNodeIndex[TopNodes[topnode].Daughter + sub] = *nextfree;
+
                     lenhalf = 0.25 * Nodes[no].len;
                     Nodes[*nextfree].len = 0.5 * Nodes[no].len;
                     Nodes[*nextfree].center[0] = Nodes[no].center[0] + (2 * i - 1) * lenhalf;
@@ -563,7 +601,21 @@ int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y
                         Nodes[*nextfree].u.suns[n] = -1;
 
                     if(TopNodes[TopNodes[topnode].Daughter + sub].Daughter == -1)
+                    {
                         DomainNodeIndex[TopNodes[TopNodes[topnode].Daughter + sub].Leaf] = *nextfree;
+                        /* H0 SSOT consistency: a leaf topnode's router slot must equal
+                         * its DomainNodeIndex entry (both are *nextfree here). Guards
+                         * against future desync of the two maps. */
+                        if(TopNodeNodeIndex[TopNodes[topnode].Daughter + sub] !=
+                           DomainNodeIndex[TopNodes[TopNodes[topnode].Daughter + sub].Leaf])
+                        {
+                            printf("force_create_empty_nodes: TopNodeNodeIndex/DomainNodeIndex mismatch "
+                                   "(child topnode %d, leaf %d)\n",
+                                   TopNodes[topnode].Daughter + sub,
+                                   TopNodes[TopNodes[topnode].Daughter + sub].Leaf);
+                            endrun(91560);
+                        }
+                    }
 
                     *nextfree = *nextfree + 1;
                     *nodecount = *nodecount + 1;
@@ -628,6 +680,7 @@ struct DomainNODE
         MyFloat gasmass;
 #endif
         MyFloat hmax;
+        MyFloat hmax_per_type[6];   /* B3a substrate: cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
         MyFloat vmax;
         MyFloat divVmax;
         long N_part;
@@ -712,6 +765,7 @@ void force_exchange_pseudodata_issue(void)
             DomainMoment[i].gasmass = Nodes[no].gasmass;
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
+            for(int t = 0; t < 6; t++) DomainMoment[i].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
             DomainMoment[i].vmax = Extnodes[no].vmax;
             DomainMoment[i].divVmax = Extnodes[no].divVmax;
             DomainMoment[i].bitflags = Nodes[no].u.d.bitflags;
@@ -801,7 +855,7 @@ int force_exchange_pseudodata_complete(void)
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
      * double-complete): symmetric control-flow invariant. Soft bad-stop + status-return
      * (1) so the caller skips the foreign-moment scatter/finalize/resum -- which would run
-     * on un-exchanged moments and could itself emergency-hold in let_finalize -- and
+     * on un-exchanged moments and could itself fatal hard-exit in let_finalize -- and
      * drains at the next poll. */
     if(DomainMoment_pending == NULL) {endrun(90000076); return 1;}
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -832,6 +886,7 @@ int force_exchange_pseudodata_complete(void)
                     Nodes[no].gasmass = DomainMoment[i].gasmass;
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
+                    for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = DomainMoment[i].hmax_per_type[t];
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
                     Nodes[no].N_part = DomainMoment[i].N_part;
@@ -2414,6 +2469,13 @@ void force_treeallocate(int maxnodes, int maxpart)
     tree_allocated_flag = 1;
     DomainNodeIndex = (int *) mymalloc("DomainNodeIndex", bytes = NTopleaves * sizeof(int));
     allbytes_topleaves += bytes;
+    /* Top-leaf-router geometry SSOT (allocated immediately after DomainNodeIndex
+     * so the mymalloc LIFO free order in force_treefree is simply the reverse).
+     * Sized for ALL topnodes (internal + leaf); populated in
+     * force_create_empty_nodes. */
+    TopNodeNodeIndex = (int *) mymalloc("TopNodeNodeIndex", bytes = (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
+    allbytes_topleaves += bytes;
+    for(i = 0; i < NTopnodes; i++) TopNodeNodeIndex[i] = -1;  /* sentinel: post-build validation requires all populated */
     MaxNodes = maxnodes;
     /* Phase 9 LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
      * Index map (single source of truth):
@@ -2631,6 +2693,7 @@ void force_treefree(void)
         if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
         if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
         if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
+        myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
         tree_allocated_flag = 0;
     }

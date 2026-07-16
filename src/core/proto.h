@@ -62,6 +62,7 @@ void do_hermite_correction(void);
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
 #endif
+int gravity_treewalk_candidate_prewalk(int i); /* SSOT: active particle i will receive a real gravity tree walk this step (LET consumer) */
 void find_timesteps(void);
 #ifdef GALSF
 void compute_stellar_feedback(void);
@@ -396,9 +397,9 @@ void cellcorrections_final_operations_and_cleanup(void);
  * decide before density(), end after hydro_force(). Future consumers
  * (cellcorrections / gradients / hydro_force as runner Specs) read the
  * mode via gizmo_hydro_corridor_get_mode() — include hydro_corridor.h
- * for the enum + accessor. Wave 5 corridor port chain. */
+ * for the enum + accessor. */
 void gizmo_hydro_corridor_decide_mode(void);
-void gizmo_hydro_corridor_begin_csr(void);
+void gizmo_hydro_corridor_begin(void);
 void gizmo_hydro_corridor_mass_guardrail_check(void);
 void gizmo_hydro_corridor_end(void);
 
@@ -428,6 +429,30 @@ struct ghost_exchange_spec_t;
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
+/* True iff a ghost import is live (pool materialized, between import and cleanup);
+ * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
+ * zero-ghost pool. */
+int ghost_pool_is_live(void);
+/* Value-only in-place refresh of the CURRENT ghost pool along the provenance
+ * recorded at the last import: owners re-pack their current P/CellP for exactly
+ * the already-exported particles; receivers overwrite the existing ghost slots
+ * in place. Topology (Pos/h/active-set/slot identity) is assumed unchanged, so
+ * NumPart, the home-rank/home-index maps, and any built CSR stay valid. Returns
+ * a ghost_refresh_status; on any GHOST_REFRESH_FAIL_* the caller must fall back
+ * to a full ghost_exchange_cleanup() + reimport (fail-closed, never a silent
+ * partial refresh). Production callers use ghost_refresh_values() only. */
+enum ghost_refresh_status {
+    GHOST_REFRESH_OK              = 0,  /* in-place value refresh done */
+    GHOST_REFRESH_SKIP_SERIAL,          /* NTask<=1: no remote ghosts, nothing to do */
+    GHOST_REFRESH_FAIL_NO_POOL,         /* no live ghost pool (NumPart_before_ghost<0) */
+    GHOST_REFRESH_FAIL_NO_PROVENANCE,   /* send provenance / comm maps absent */
+    GHOST_REFRESH_FAIL_POOL_MUTATED     /* live-pool counts inconsistent with provenance */
+};
+int ghost_refresh_values(void);
+/* Monotonic count of completed ghost imports. Read by the hydro corridor, which
+ * fast-paths a value-refresh only when the live pool's epoch matches the one its
+ * published CSR was built from — see hydro/hydro_corridor.cc. */
+unsigned long long ghost_provenance_epoch(void);
 /* Canonical out-of-line host accessors for `All.*` — defined in
  * declarations/allvars.cc (the TU that owns `All`). Useful where
  * explicit host-extern intent helps readability. With the central
@@ -780,11 +805,12 @@ void run(void);
  * failed object, mutating a table/global with the invalid value, or
  * launching invalid device work (else add a tiny local return/break).
  *
- * gizmo_emergency_hold_reviewed() is the SSOT last-resort termination home. As of
- * 2026-06-04 its DEFAULT path no longer calls MPI_Abort (print + best-effort fence
- * + controlled scancel-killable host hold; MPI_Abort only behind the env-gated
- * GIZMO_UNSAFE_USE_MPI_ABORT_FOR_DEBUG). It is a Vista GPU quarantine, NOT the
- * target -- prefer converting the caller to graceful controlled-stop + poll.
+ * gizmo_fatal_hard_exit_reviewed() (core/gizmo_fatal.cc) is the SSOT last-resort
+ * termination home. Its DEFAULT path is a no-cleanup fail-fast _exit -- NO
+ * MPI_Abort, NO fence, NO finalize, NO hold (the former infinite scancel-wait
+ * hold + device fence was itself a GH200 node-lock amplifier and is retired;
+ * see OPEN_vista_fatal_policy_design). It is a last resort, NOT the target --
+ * prefer converting the caller to graceful controlled-stop + poll.
  * Use ONLY for the rare audited cases where no collective poll
  * is reachable: mid-protocol MPI transport corruption, and residual incidental
  * allocator capacity failures with no preflight coverage. NOTE on allocation:
@@ -809,8 +835,13 @@ const char *gizmo_controlled_stop_local_reason(void);
 int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
-[[noreturn]] void gizmo_emergency_hold_reviewed(int code, const char *reason,
+/* Vista never-hang fatal policy (fail-fast, cleanup-forbidden) -- core/gizmo_fatal.{h,cc}. */
+[[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
+[[noreturn]] void gizmo_fatal_fast_exit(int code, const char *reason_static);
+void gizmo_install_fatal_signal_handlers(void);
+void gizmo_install_mpi_error_handler(void);
+void gizmo_mpi_set_failfast_errhandler(MPI_Comm comm);
 void savepositions(int num);
 double my_second(void);
 void set_softenings(void);
@@ -892,6 +923,7 @@ MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
 #ifdef TRANSPORT_SUBCYCLE
 void transport_subcycle_exchange_fluxes(void);
 void transport_subcycle_kick(void);
+void transport_subcycle_prepare_topology(void);
 #endif
 
 #ifdef RADTRANSFER
@@ -1071,5 +1103,5 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
-void gizmo_kokkos_fence(void);   /* guarded best-effort device drain (emergency-hold path) */
+void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 void gizmo_gpu_sync_all(void);

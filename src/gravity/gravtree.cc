@@ -279,7 +279,16 @@ void gravity_tree(void)
 
     /* now perform final operations on results [communication loop is done] */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
-    if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS) {if(!(All.Ti_Current == 0 && RestartFlag == 0)) {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}}} else {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}} /* This will switch to the relative opening criterion for the following force computations */
+    /* Switch to the relative opening criterion for the following force computations.
+     * (Second-order ICs keep Barnes-Hut on the very first step.) */
+    double errtol_before = All.ErrTolTheta;
+    int enable_relative_opening =
+        (All.TypeOfOpeningCriterion == 1) &&
+        !(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0);
+    if(enable_relative_opening) { All.ErrTolTheta = 0; }
+    /* The opening criterion just changed; the installed LET was built/exported under the previous
+     * criterion and is not valid for the next walk. Rebuild the tree+LET before it is reused. */
+    if(errtol_before != 0 && All.ErrTolTheta == 0) { TreeReconstructFlag = 1; }
 #endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
@@ -523,12 +532,9 @@ void *gravity_primary_loop(void *p)
         for(int b = 0; b < batch_count; b++)
         {
             i = batch[b];
-#ifdef HERMITE_INTEGRATION /* if we are in the Hermite extra loops and a particle is not flagged for this, simply mark it done and move on */
-            if(HermiteOnlyFlag && !eligible_for_hermite(i)) {ProcessedFlag[i]=1; continue;}
-#endif
-#ifdef ADAPTIVE_TREEFORCE_UPDATE
-            if(!needs_new_treeforce(i)) {ProcessedFlag[i]=1; continue;}
-#endif
+            /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce);
+             * non-candidates are marked done so the finalization loop skips them. */
+            if(!gravity_treewalk_candidate_prewalk(i)) {ProcessedFlag[i]=1; continue;}
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             if(Ewald_iter)
@@ -636,3 +642,24 @@ int needs_new_treeforce(int n){
     }
 }
 #endif
+
+/* SSOT pre-walk gravity tree-walk candidacy: true iff active particle i will
+ * receive a real tree-force walk this step (and thus consume the installed LET).
+ * Shared by the CPU primary, GPU primary, and GPU Ewald walk filters (and, later,
+ * the LET-freshness check) so the freshness basis matches the actual LET consumer.
+ * Mass>0 enforces the scheduler contract (Mass<=0 = scheduled-for-deletion, never a
+ * valid gravity target) uniformly -- a defensive parity guard (the Ewald walk
+ * already filtered it; the primary walks relied on the active-list builder and the
+ * device early-return). ProcessedFlag is NOT part of candidacy -- it is per-walk
+ * done-bookkeeping each caller keeps separately. */
+int gravity_treewalk_candidate_prewalk(int i)
+{
+    if(P[i].Mass <= 0) {return 0;}
+#ifdef HERMITE_INTEGRATION
+    if(HermiteOnlyFlag && !eligible_for_hermite(i)) {return 0;}
+#endif
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+    if(!needs_new_treeforce(i)) {return 0;}
+#endif
+    return 1;
+}
