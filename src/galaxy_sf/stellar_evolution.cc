@@ -7,9 +7,15 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
+#include "stellar_evolution_functions.h"
+#undef GRAVTREE_SOURCE_HOST_OWNER_TU
 
 /* Routines for models that require stellar evolution: luminosities, mass loss, SNe rates, etc.
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ * The stellar age / luminosity / metallicity helper bodies live in
+ * stellar_evolution_functions.h (single source for host + device); the
+ * host externals below are wrappers around those cores.
  */
 #ifdef GALSF
 
@@ -18,47 +24,14 @@
     whether it should be treated as a stellar population with some total mass, with IMF-integrated properties */
 int is_particle_single_star_eligible(long i)
 {
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
-    if(P[i].Type == 0 || P[i].Type == 5) // only type=0 or type=5 (sinks) are eligible in our models here to be 'single star' candidates
-    {
-#if defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) // here's the interesting regime, where we have some criterion for deciding which cells are eligible for 'single-star' status
-        if(P[i].Type == 5) {return 1;} // all type-5 elements are assumed sinks
-        if(P[i].Type == 0) {if(P[i].Mass*UNIT_MASS_IN_SOLAR > (SINGLE_STAR_AND_SSP_HYBRID_MODEL)) {return 0;} else {return 1;}} // use a simple mass threshold to decide which model we will use, specified by using this as a compile-time parameter
-#else
-        return 1; // no hybrid model, so all particles satisfying these criteria are automatically single-star eligible
-#endif
-    }
-#endif
-    return 0; // catch - default to non-single-star (SSP), unless satisfy some of the criteria above
+    return is_particle_single_star_eligible_core(i, P);
 }
 
 
 /* return the light-to-mass ratio [in units of Lsun/Msun] of a star or stellar population with a given age; used throughout the code below */
 double evaluate_light_to_mass_ratio(double stellar_age_in_gyr, int i)
 {
-    if(is_particle_single_star_eligible(i)) // SINGLE-STAR VERSION: calculate single-star luminosity (and convert to solar luminosity-to-mass ratio, which this output assumes)
-    {
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-        double m0=P[i].Mass; if(P[i].Type == 5) {m0=P[i].Sink_Mass;}
-        return calculate_individual_stellar_luminosity(0, m0, i) / m0 * (UNIT_LUM_IN_SOLAR) / (UNIT_MASS_IN_SOLAR);
-#endif
-    }
-    else // STELLAR-POPULATION VERSION: compute integrated mass-to-light ratio of an SSP
-    {
-        double lum=1; if(stellar_age_in_gyr < 0.01) {lum=1000;} // default to a dumb imf-averaged 'young/high-mass' vs 'old/low-mass' distinction
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION // fit to updated SB99 tracks: including rotation, new mass-loss tracks, etc.
-        if(stellar_age_in_gyr < 0.0035) {lum=1136.59;} else {double log_age=log10(stellar_age_in_gyr/0.0035); lum=1500.*pow(10.,-1.8*log_age+0.3*log_age*log_age-0.025*log_age*log_age*log_age);}
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-        double t1=0.0012, t2=0.0037, f1=800., f2=1100.*pow(Z_for_stellar_evol(i),-0.1), tx=log10(stellar_age_in_gyr/t2), t_g=log10(stellar_age_in_gyr/1.2)/0.05;
-        if(stellar_age_in_gyr<=t1) {lum=f1;} else if(stellar_age_in_gyr<=t2) {lum=f1*pow(stellar_age_in_gyr/t1,log(f2/f1)/log(t2/t1));} else {lum=f2*pow(10.,-1.82*tx+0.42*tx*tx-0.07*tx*tx*tx)*(1.+1.2*exp(-0.5*t_g*t_g));}
-#endif
-#endif
-#ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
-        lum *= calculate_relative_light_to_mass_ratio_from_imf(stellar_age_in_gyr,i,-1); // account for IMF variation model [if used; currently must be custom set as desired for modules]
-#endif
-        return lum;
-    }
-    return 0; // catch
+    return evaluate_light_to_mass_ratio_core(stellar_age_in_gyr, i, P);
 }
 
 
@@ -66,33 +39,7 @@ double evaluate_light_to_mass_ratio(double stellar_age_in_gyr, int i)
     mass, age, etc. Modify your assumptions about main-sequence evolution here. ONLY relevant for SINGLE-STAR inputs. */
 double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
 {
-#if !defined(SINGLE_STAR_SINK_DYNAMICS)
-    return 0; /* not defined */
-#endif
-#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2) /* this is pre-calculated, simply return it */
-    return P[i].StarLuminosity_Solar / UNIT_LUM_IN_SOLAR;
-#endif
-    /* if above flags not defined, estimate accretion + main-sequence luminosity as simply as possible */
-    double lum=0, lum_sol=0, c_code = C_LIGHT_CODE, m_solar = mass * UNIT_MASS_IN_SOLAR;
-    double rad_eff_protostar = 5.0e-7; /* if below the deuterium burning limit, just use the potential energy efficiency at the surface of a jupiter-density object */
-    if(m_solar < 0.012) {rad_eff_protostar = 5.e-8 * pow(m_solar/0.00095,2./3.);}
-    lum = rad_eff_protostar * mdot * c_code*c_code;
-    if(m_solar >= 0.012) /* now for pre-main sequence and main sequence, need to also check the mass-luminosity relation */
-    {
-        if(m_solar < 0.43) {lum_sol = 0.185 * m_solar*m_solar;}
-        else if(m_solar < 2.) {lum_sol = m_solar*m_solar*m_solar*m_solar;}
-        else if(m_solar < 53.9) {lum_sol = 1.5 * m_solar*m_solar*m_solar * sqrt(m_solar);}
-        else {lum_sol = 32000. * m_solar;}
-    }
-#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 1) // now, account for pre-main sequence evolution and calculate accretion luminosity using protostellar radius
-    if(i > 0) {if(P[i].Type == 5) {
-        double eps_protostar=1.0, T4000_4 = pow(m_solar , 0.55), l_kh = 0.2263 * P[i].ProtoStellarRadius_inSolar*P[i].ProtoStellarRadius_inSolar * T4000_4; // protostellar temperature along Hayashi track and luminosity from KH contraction
-        lum = DMAX(lum_sol,l_kh) / UNIT_LUM_IN_SOLAR + eps_protostar * (All.G * P[i].Mass / (P[i].ProtoStellarRadius_inSolar / UNIT_LENGTH_IN_SOLAR)) * mdot; // assume GM/r liberated per unit mass. Note we need radius in code units here since everything else in 'lum' is code-units as well. for pre-ms evolution, if Hayashi-temp luminosity exceeds MS luminosity, use it. otherwise use main sequence luminosity, and assume the star is moving along the Henyey track
-        P[i].StarLuminosity_Solar = lum * UNIT_LUM_IN_SOLAR; //store total luminosity of the star in solar units
-    }}
-#endif
-    return lum;
-
+    return calculate_individual_stellar_luminosity_core(mdot, mass, i, P);
 }
 
 
@@ -100,59 +47,12 @@ double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
     ONLY relevant for STELLAR POPULATION integrated inputs. "mode" denotes if we're interested in very massive stars (or other special behaviors): for now -1=bolometric, +1=very massive */
 double calculate_relative_light_to_mass_ratio_from_imf(double stellar_age_in_gyr, int i, int mode)
 {
-#ifdef GALSF_SFR_IMF_VARIATION // fitting function from David Guszejnov's IMF calculations (ok for Mturnover in range 0.01-100) for how mass-to-light ratio varies with IMF shape/effective turnover mass
-    double log_mimf = log10(P[i].IMF_Mturnover);
-    return (0.051+0.042*(log_mimf+2)+0.031*(log_mimf+2)*(log_mimf+2)) / 0.31;
-#endif
-#ifdef GALSF_SFR_IMF_SAMPLING // account for IMF sampling model if not evolving individual stars
-    double mu = 0.0115 * P[i].Mass * UNIT_MASS_IN_SOLAR; // 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
-    double t=stellar_age_in_gyr*1000.,t1=3.7,t2=7.,t3=44.,a0=0.13,mu_min=1.e-3*mu;
-    if(t>t3) {mu*=0;} else {if(t>t2) {mu*=(1.-a0)*(1.-(t-t2)/(t3-t2));} else {if(t>t1) {mu*=1.-a0*(t-t1)/(t2-t1);}}} // expectation value is declining with time, so 'effective multiplier' is larger
-    if(mode > 0) {
-        return P[i].IMF_NumMassiveStars / DMAX(mu,mu_min); // scales just with the number of massive stars
-    } else {
-        if(t>=t3) {return 1;} else {return 0.01 + P[i].IMF_NumMassiveStars / DMAX(mu,mu_min);} // scales with a minimum and a long-timescale baseline
-    }
-#endif
-    return 1; // Chabrier or Kroupa IMF //
+    return calculate_relative_light_to_mass_ratio_from_imf_core(stellar_age_in_gyr, i, mode, P);
 }
 
 
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
-/* routine to compute the -ionizing- luminosity coming from either individual stars or an SSP */
-double particle_ionizing_luminosity_in_cgs(long i)
-{
-    if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {return 0;}
-    if(is_particle_single_star_eligible(i)) /* SINGLE STAR VERSION: use effective temperature as a function of stellar mass and size to get ionizing photon production */
-    {
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-        double l_sol=sink_lum_bol(0,P[i].Mass,i)*(UNIT_LUM_IN_SOLAR), m_sol=P[i].Mass*UNIT_MASS_IN_SOLAR, r_sol=pow(m_sol,0.738); // L/Lsun, M/Msun, R/Rsun
-        double T_eff=5780.*pow(l_sol/(r_sol*r_sol),0.25), x0=157800./T_eff, fion=0; // ZAMS effective temperature; x0=h*nu/kT for nu>13.6 eV; fion=fraction of blackbody emitted above x0
-        if(x0 < 30.) {double q=18./(x0*x0) + 1./(8. + x0 + 20.*exp(-x0/10.)); fion = exp(-1./q);} // accurate to <10% for a Planck spectrum to x0>30, well into vanishing flux //
-        return fion * l_sol * SOLAR_LUM_CGS; // return value in cgs, as desired for this routine [l_sol is in L_sun, by definition above] //
-#endif
-    }
-    else /* STELLAR POPULATION VERSION: use updated SB99 tracks: including rotation, new mass-loss tracks, etc. */
-    {
-        if(P[i].Type != 5)
-        {
-            double lm_ssp=0, star_age=evaluate_stellar_age_Gyr(i), t0=0.0035, tmax=0.02;
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-            tmax=0.15; lm_ssp=evaluate_light_to_mass_ratio(star_age,i); if(star_age<t0) {lm_ssp*=0.5;} else {lm_ssp*=0.5*pow(star_age/t0,-2.9);} /* slightly revised fit scales simply with Lbol [easier to modify]; see same references for stellar wind mass-loss rates; and extends to later ages (though most comes out at <100 Myr) */
-#else
-            if(star_age < t0) {lm_ssp=500.;} else {double log_age=log10(star_age/t0); lm_ssp=470.*pow(10.,-2.24*log_age-4.2*log_age*log_age) + 60.*pow(10.,-3.6*log_age);}
-#endif
-            if(star_age < 0.033) {lm_ssp *= 1.e-4 + calculate_relative_light_to_mass_ratio_from_imf(star_age,i,1);}
-            if(star_age >= tmax) {return 0;} // skip since old stars don't contribute
-            return lm_ssp * SOLAR_LUM_CGS * (P[i].Mass*UNIT_MASS_IN_SOLAR); // converts to cgs luminosity [lm_ssp is in Lsun/Msun, here]
-        } // (P[i].Type != 5)
-#ifdef SINK_HII_HEATING /* AGN template: light-to-mass ratio L(>13.6ev)/Mparticle in Lsun/Msun, above is dNion/dt = 5.5e54 s^-1 (Lbol/1e45 erg/s) */
-        if(P[i].Type == 5) {return 0.18 * sink_lum_bol(P[i].Sink_Mdot,P[i].Mass,i) * UNIT_LUM_IN_CGS;}
-#endif
-    }
-    return 0; // catch
-}
-#endif
+/* particle_ionizing_luminosity_in_cgs: body + host wrapper now in
+   radiation/rt_functions.h + rt_utilities.cc (RT source-spectrum ownership). */
 
 
 
@@ -688,16 +588,7 @@ void get_wind_yields(double *yields, int i)
 
 double Z_for_stellar_evol(int i)
 {
-    if(i<0) {return 1;}
-#ifdef METALS
-    double Z_solar = P[i].Metallicity[0]/All.SolarAbundances[0]; // use total metallicity
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && defined(COOL_METAL_LINES_BY_SPECIES)
-    int i_Fe=10; Z_solar = P[i].Metallicity[i_Fe]/All.SolarAbundances[i_Fe]; // use Fe, specifically, for computing stellar properties, as its most relevant here. MAKE SURE this is set to the correct abundance in the list, to match Fe!
-#endif
-    return DMIN(DMAX(Z_solar,0.01),3.); // stellar evolution tables here are not arbitrarily extrapolable, so this is bounded //
-#else
-    return 1; // metals not evolved, return unity
-#endif
+    return Z_for_stellar_evol_core(i, P);
 }
 
 
@@ -799,7 +690,26 @@ void singlestar_subgrid_protostellar_evolution_update_track(int n, double dm, do
     {
         P[n].ProtoStellarRadius_inSolar = R_main_sequence_ignition; P[n].ProtoStellarStage = 5; // using same notation for MS as SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 1
     }
-    
+    /* update the cached protostellar luminosity here, on the star's own active cadence (as the ==2 track does below);
+       StarLuminosity_Solar is the single source of truth for the luminosity, read stale-by-contract by the source-
+       luminosity + wind/T_eff routines. Accretion+MS+Kelvin-Helmholtz estimate: m_solar from Sink_Mass, accretion
+       term GM/r from the dynamical P[n].Mass, per the prior single-star luminosity model. */
+    {
+        double m_solar_L = P[n].Sink_Mass * UNIT_MASS_IN_SOLAR, rad_eff_protostar = 5.0e-7, lum_sol_L = 0;
+        if(m_solar_L < 0.012) {rad_eff_protostar = 5.e-8 * pow(m_solar_L/0.00095, 2./3.);}
+        double lum_L = rad_eff_protostar * P[n].Sink_Mdot * C_LIGHT_CODE*C_LIGHT_CODE;
+        if(m_solar_L >= 0.012)
+        {
+            if(m_solar_L < 0.43) {lum_sol_L = 0.185 * m_solar_L*m_solar_L;}
+            else if(m_solar_L < 2.) {lum_sol_L = m_solar_L*m_solar_L*m_solar_L*m_solar_L;}
+            else if(m_solar_L < 53.9) {lum_sol_L = 1.5 * m_solar_L*m_solar_L*m_solar_L * sqrt(m_solar_L);}
+            else {lum_sol_L = 32000. * m_solar_L;}
+        }
+        double T4000_4 = pow(m_solar_L, 0.55), l_kh = 0.2263 * P[n].ProtoStellarRadius_inSolar*P[n].ProtoStellarRadius_inSolar * T4000_4; // Hayashi-track temperature + KH-contraction luminosity
+        lum_L = DMAX(lum_sol_L, l_kh) / UNIT_LUM_IN_SOLAR + (All.G * P[n].Mass / (P[n].ProtoStellarRadius_inSolar / UNIT_LENGTH_IN_SOLAR)) * P[n].Sink_Mdot; // GM/r liberated per unit accreted mass (radius in code units)
+        P[n].StarLuminosity_Solar = lum_L * UNIT_LUM_IN_SOLAR;
+    }
+
 #elif (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2) /* Protostellar evolution model based on the ORION version, see Offner 2009 Appendix B */
     double fk = 1.; // fraction of kinetic energy accreta has when it arrives at the accretion shock, relative to freefall from infinity
     double f_acc = 1.; // fraction of accretion power that is radiated away (the rest is advected into the star)

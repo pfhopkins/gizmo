@@ -10,6 +10,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/kernel.h"
+#define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
+#include "sink_functions.h"
+#undef GRAVTREE_SOURCE_HOST_OWNER_TU
 
 /*! \file sink_util.c
  *  \brief util routines for memory (de)allocation and array setting for sink particles
@@ -124,46 +128,35 @@ void sink_end(void)
 }
 
 
+/* Bodies of the four accretion-luminosity helpers below live in
+ * sink_functions.h (single source for host + device); these are the host
+ * external wrappers. */
+
 /* return the eddington accretion-rate = L_edd/(epsilon_r*c*c) - for a variable radiative efficiency, this scales off of the 'canonical' value given as the constant in the parameterfile, per usual convention in the literature */
 double sink_eddington_mdot(double sink_mass)
 {
-    return (4*M_PI * GRAVITY_G_CGS * PROTONMASS_CGS / (All.SinkRadiativeEfficiency * C_LIGHT_CGS * THOMPSON_CX_CGS)) * sink_mass * UNIT_TIME_IN_CGS;
+    return sink_eddington_mdot_core(sink_mass);
 }
 
 
 /* return the bh luminosity given some accretion rate and mass (allows for non-standard models: radiatively inefficient flows, stellar sinks, etc) */
 double sink_lum_bol(double mdot, double mass, long pindex)
 {
-    double lum = evaluate_sink_radiative_efficiency(mdot,mass,pindex) * mdot * C_LIGHT_CODE*C_LIGHT_CODE; // this is automatically in -physical code units-
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    lum = calculate_individual_stellar_luminosity(mdot,mass,pindex);
-#endif
-    return All.SinkFeedbackFactor * lum;
+    return sink_lum_bol_core(mdot, mass, pindex, P);
 }
 
 
 /* return the bh radiative efficiency - allows for models with dynamical or accretion-dependent radiative efficiencies */
 double evaluate_sink_radiative_efficiency(double mdot, double mass, long pindex)
 {
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* simple classic model where radiative efficiency declines linearly below critical eddington ratio of order 1% eddington, and super-Eddington accretion is also radiatively inefficient  */
-    double lambda_0 = 0.01, lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
-    return All.SinkRadiativeEfficiency * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
-#endif
-    return All.SinkRadiativeEfficiency; // default to constant
+    return evaluate_sink_radiative_efficiency_core(mdot, mass, pindex);
 }
 
 
 /* return the bh cosmic ray acceleration efficiency - allows for models with dynamical or accretion-dependent cosmic ray efficiencies */
 double evaluate_sink_cosmicray_efficiency(double mdot, double mass, long pindex)
 {
-#ifdef SINK_COSMIC_RAYS
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* experiment with functions here to explore more/less efficient CR injection at lower/higher eddington ratios, reflecting hard/soft-type transition */
-    /* current version with this flag scales this relative to the jet kinetic power */
-    if(mdot/sink_eddington_mdot(mass) < 0.01) {return 0.5;} else {return 0.1;} /* high-Mdot uses standard SNe kinetic power, otherwise give unity power here */
-#endif
-    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant
-#endif
-    return 0;
+    return evaluate_sink_cosmicray_efficiency_core(mdot, mass, pindex);
 }
 
 

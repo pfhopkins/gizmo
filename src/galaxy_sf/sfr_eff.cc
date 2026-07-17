@@ -9,6 +9,9 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
+#include "stellar_evolution_functions.h"
+#undef GRAVTREE_SOURCE_HOST_OWNER_TU
 
 /*!
  *  routines for star formation in cosmological/galaxy/single-star/black hole simulations
@@ -118,16 +121,11 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 
 
 
-/* return the stellar age in Gyr for a given labeled age, needed throughout for stellar feedback */
+/* return the stellar age in Gyr for a given labeled age, needed throughout for stellar feedback.
+   body in stellar_evolution_functions.h (single source for host + device) */
 double evaluate_stellar_age_Gyr(long i)
 {
-    double tform_code = P[i].StellarAge; // formation time as tracked in-code
-#if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
-    if(P[i].Type==4) {tform_code = P[i].IMF_WeightedMeanStellarFormationTime;} // use this 'effective' age for this module, to reflect the spread-out duration of SF
-#endif
-    double age = evaluate_time_since_t_initial_in_Gyr(tform_code);
-    age = DMAX(age, 1.e-5); // set a floor for some routines
-    return age;
+    return evaluate_stellar_age_Gyr_core(i, P);
 }
 
 
