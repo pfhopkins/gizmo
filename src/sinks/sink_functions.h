@@ -181,7 +181,7 @@ static double sink_fb_angleweight_localcoupling_gpu(
 }
 
 
-#if defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) || defined(GRAVTREE_SOURCE_HOST_OWNER_TU)
+#if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
 /* Sink accretion-luminosity helper cores shared by host and device; the host
  * externals in sink_util.cc are one-line wrappers around these. */
 
@@ -224,7 +224,7 @@ KOKKOS_INLINE_FUNCTION double sink_lum_bol_core(double mdot, double mass, long p
     return All.SinkFeedbackFactor * lum;
 }
 
-#endif /* GRAVTREE_SOURCE_LAZY_SUPPORTED || GRAVTREE_SOURCE_HOST_OWNER_TU */
+#endif /* GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED) */
 
 #endif /* SINK_PARTICLES */
 #endif /* SINK_FUNCTIONS_H */

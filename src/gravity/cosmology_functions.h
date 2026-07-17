@@ -3,14 +3,16 @@
  * The host externals in cosmology.cc are one-line wrappers around these
  * cores, so there is a single copy of each formula.
  *
- * Body visibility: GRAVTREE_SOURCE_LAZY_SUPPORTED (defined only when every
- * gravity-tree source-payload helper enabled in this build is
- * device-callable) exposes the bodies device-wide; translation units that
- * own the host wrapper externals define GRAVTREE_SOURCE_HOST_OWNER_TU
- * before their includes and always see the bodies (host-inline), whatever
- * the compiler.
+ * Body visibility: a device translation unit that will evaluate the source
+ * payload on-device defines GRAVTREE_SOURCE_DEVICE_TU before its includes and,
+ * when GRAVTREE_SOURCE_LAZY_SUPPORTED holds (every gravity-tree source-payload
+ * helper enabled in this build is device-callable), sees the bodies as device
+ * inlines; translation units that own the host wrapper externals define
+ * GRAVTREE_SOURCE_HOST_OWNER_TU before their includes and always see the bodies
+ * (host-inline), whatever the compiler. TUs that define neither marker never
+ * parse the bodies (e.g. cooling.cc, which includes this header before proto.h).
  *
- * GR_TABULATED_COSMOLOGY[_H/_G/_W] un-defines that gate: its branches
+ * GR_TABULATED_COSMOLOGY[_H/_G/_W] un-defines GRAVTREE_SOURCE_LAZY_SUPPORTED: its branches
  * below interpolate file-loaded tables through host-only helpers
  * (DarkEnergy_a, dHfak, hubble_function_external), so all its tabular
  * work runs exclusively on host and such builds use the eager host
@@ -29,7 +31,7 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
-#if defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) || defined(GRAVTREE_SOURCE_HOST_OWNER_TU)
+#if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
 
 /* Hubble rate H(a) in code units */
 KOKKOS_INLINE_FUNCTION double hubble_function_core(double a)
@@ -85,6 +87,6 @@ KOKKOS_INLINE_FUNCTION double evaluate_time_since_t_initial_in_Gyr_core(double t
     return age;
 }
 
-#endif /* GRAVTREE_SOURCE_LAZY_SUPPORTED || GRAVTREE_SOURCE_HOST_OWNER_TU */
+#endif /* GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED) */
 
 #endif /* COSMOLOGY_FUNCTIONS_H */

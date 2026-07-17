@@ -1627,3 +1627,19 @@
  * repair (commit 5). The active-dim SPD projection landed in 4a is what
  * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
  * reachable. */
+
+
+/* Gravtree source-luminosity lazy-touch capability predicate.
+ * The per-particle source payload can be evaluated on-device at each gravity
+ * walk particle-open (lazy) only when every enabled gravtree source family has
+ * a device-callable core. All families are device-ported EXCEPT the
+ * GR_TABULATED_COSMOLOGY* set, whose expansion/gravity history is read from a
+ * host-only tabulated file. Undefined => the eager dense O(NumPart) source
+ * prepass is used (correct, just not tiny-N optimized). Any future gravtree
+ * source family lacking a device core must be added to this exclusion.
+ * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
+ * runtime is made by a separate structural (num_active) threshold. */
+#if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
+#define GRAVTREE_SOURCE_LAZY_SUPPORTED
+#endif

@@ -1053,7 +1053,7 @@ void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_ce
  * ionizing luminosity, chimes fluxes). Device + host single source of
  * truth; host externals emitted by radiation/rt_utilities.cc.
  * ====================================================================== */
-#if defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) || defined(GRAVTREE_SOURCE_HOST_OWNER_TU)
+#if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 
 #include "../galaxy_sf/stellar_evolution_functions.h"
@@ -1470,4 +1470,4 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity_chimes(int i, int mode, doub
 
 #undef SET_ACTIVE_RT_CHECK
 #endif /* RADTRANSFER || RT_USE_GRAVTREE */
-#endif /* GRAVTREE_SOURCE_LAZY_SUPPORTED || GRAVTREE_SOURCE_HOST_OWNER_TU */
+#endif /* GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED) */

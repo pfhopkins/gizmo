@@ -966,7 +966,7 @@ KOKKOS_INLINE_FUNCTION double CR_gas_heating(int target, double n_elec, double n
  * Device + host single source of truth; host externals in
  * cosmic_ray_utilities.cc. Depends on stellar-age + sink-CR-efficiency cores.
  * ====================================================================== */
-#if defined(COSMIC_RAY_SUBGRID_LEBRON) && (defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) || defined(GRAVTREE_SOURCE_HOST_OWNER_TU))
+#if defined(COSMIC_RAY_SUBGRID_LEBRON) && (defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED)))
 #include "../../galaxy_sf/stellar_evolution_functions.h"
 #include "../../sinks/sink_functions.h"
 
@@ -1025,4 +1025,4 @@ KOKKOS_INLINE_FUNCTION double cr_get_source_shieldfac(int i, struct particle_dat
     return cr_atten_fac;
 }
 
-#endif /* COSMIC_RAY_SUBGRID_LEBRON && (GRAVTREE_SOURCE_LAZY_SUPPORTED || GRAVTREE_SOURCE_HOST_OWNER_TU) */
+#endif /* COSMIC_RAY_SUBGRID_LEBRON && (GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED)) */

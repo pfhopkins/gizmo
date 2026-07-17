@@ -4,13 +4,14 @@
  * wrappers around these cores (passing the global P/CellP arrays), so each
  * formula exists once; device callers pass explicit particle-array pointers.
  *
- * Body visibility: GRAVTREE_SOURCE_LAZY_SUPPORTED (defined only when every
- * gravity-tree source-payload helper enabled in this build is
- * device-callable) exposes the bodies device-wide; translation units that
- * own the host wrapper externals define GRAVTREE_SOURCE_HOST_OWNER_TU
- * before their includes and always see the bodies (host-inline), whatever
- * the compiler.  Unsupported device builds never parse these bodies as
- * device code.
+ * Body visibility: a device translation unit that will evaluate the source
+ * payload on-device defines GRAVTREE_SOURCE_DEVICE_TU before its includes and,
+ * when GRAVTREE_SOURCE_LAZY_SUPPORTED holds (every gravity-tree source-payload
+ * helper enabled in this build is device-callable), sees the bodies as device
+ * inlines; translation units that own the host wrapper externals define
+ * GRAVTREE_SOURCE_HOST_OWNER_TU before their includes and always see the bodies
+ * (host-inline), whatever the compiler. TUs that define neither marker never
+ * parse the bodies as device code.
  *
  * Under a protostellar-evolution model, StarLuminosity_Solar is cadence-owned
  * by the stellar-evolution update; these cores READ it and never write particle
@@ -30,7 +31,7 @@
 
 #ifdef GALSF
 
-#if defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) || defined(GRAVTREE_SOURCE_HOST_OWNER_TU)
+#if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
 
 /* function to say whether a given particle should be treated as a "single star" or as -eligible to become- a single star (if it is gas), or
     whether it should be treated as a stellar population with some total mass, with IMF-integrated properties */
@@ -164,7 +165,7 @@ KOKKOS_INLINE_FUNCTION double evaluate_light_to_mass_ratio_core(double stellar_a
  * (with the RT source-spectrum helpers): it needs sink_lum_bol_core, and
  * keeping it there avoids a stellar<->sink header cycle. */
 
-#endif /* GRAVTREE_SOURCE_LAZY_SUPPORTED || GRAVTREE_SOURCE_HOST_OWNER_TU */
+#endif /* GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED) */
 
 #endif /* GALSF */
 
