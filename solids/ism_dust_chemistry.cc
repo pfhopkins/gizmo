@@ -287,7 +287,7 @@ void ISMDustChem_get_species_properties(int spec_indx, double *dust_atomic_weigh
     /******** METALLIC IRON ********/
     else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {
         *dust_atomic_weight = All.ISMDustChem_AtomicMassTable[10];
-        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[spec_indx];
+        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_FreeIron_Index]; // both free and inclusion iron use the metallic-iron bulk density (FreeIron slot); InclIron_Index is a species-field index (4), not an index into the size-3 SpeciesBulkDens array
     }
     /******** O RESERVOIR ********/
     else if (spec_indx==All.ISMDustChem_ORes_Index) {
