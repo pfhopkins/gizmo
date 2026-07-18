@@ -246,7 +246,9 @@
 #define GALSF_FB_FIRE_RT_LOCALRP            /*! turn on local radiation pressure coupling to gas - account for local multiple-scattering and isotropic local absorption */
 #define GALSF_FB_FIRE_RT_LONGRANGE          /*! continuous acceleration from starlight (uses luminosity tree) to propagate FIRE RT */
 #endif
-#define GALSF_FB_FIRE_AGE_TRACERS 16        /*! tracks a set of passive scalars corresponding to stellar ages for chemical evolution model postprocessing */
+#if !defined(GALSF_FB_FIRE_AGE_TRACERS)
+#define GALSF_FB_FIRE_AGE_TRACERS 16        /*! enrichment-age-tracer model, tracks a set of passive scalars corresponding to stellar ages for modeling metal enrichment in postprocessing */
+#endif
 
 #if !defined(ADAPTIVE_GRAVSOFT_FORGAS)
 #define ADAPTIVE_GRAVSOFT_FORGAS            /*! default choice is adaptive force softening for gas, but not stars [since ambiguously defined] */

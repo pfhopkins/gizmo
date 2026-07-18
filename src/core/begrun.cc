@@ -2878,10 +2878,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("ST_SolWeight",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s (%s) not set in parameter file: defaulting to assume the so-called natural mix of modes for pressure-free turbulence (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_Global_SolenoidalFraction); continue;}
 #endif
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-                if(strcmp("AgeTracerEventsPerTimeBin",tag[i])==0) {*((double *)addr[i])=10; printf("Tag %s (%s) not set in parameter file: defaulting to aim for ~10 age-tracer deposition events per timebin (=%g) \n",tag[i],alternate_tag[i],All.AgeTracerRateNormalization); continue;}
+                if(strcmp("AgeTracerEventsPerTimeBin",tag[i])==0) {*((double *)addr[i])=10; printf("Tag %s (%s) not set in parameter file: defaulting to aim for ~10 enrichment-age-tracer deposition events per timebin (=%g) \n",tag[i],alternate_tag[i],All.AgeTracerRateNormalization); continue;}
 #if !defined(GALSF_FB_FIRE_AGE_TRACERS_CUSTOM)
-                if(strcmp("AgeTracerBinStart",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: left-edge of first age-tracer bin is early in stellar evolution (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinStart); continue;}
-                if(strcmp("AgeTracerBinEnd",tag[i])==0) {*((double *)addr[i])=14000.; printf("Tag %s (%s) not set in parameter file: right-edge of last age-tracer bin is at ~t_Hubble (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinEnd); continue;}
+                if(strcmp("AgeTracerBinStart",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: left-edge of first enrichment-age-tracer bin, to determine log spacing (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinStart); continue;}
+                if(strcmp("AgeTracerBinEnd",tag[i])==0) {*((double *)addr[i])=13700.; printf("Tag %s (%s) not set in parameter file: right-edge of last enrichment-age-tracer bin, to determine log spacing, is at ~t_Hubble (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinEnd); continue;}
 #endif
 #endif
 #ifdef EOS_ANEOS
@@ -3227,7 +3227,7 @@ void read_parameter_file(char *fname)
 int read_agetracerlist(char *fname)
 {
     FILE *fd; int count,i=0; char buf[512]; double age_bin;
-    if(!(fd = fopen(fname, "r"))) {printf("can't read age tracer list in file '%s'\n", fname); return 1;}
+    if(!(fd = fopen(fname, "r"))) {printf("can't read enrichment-age-tracer list in file '%s'\n", fname); return 1;}
     while(1)
     {
       if(fgets(buf, 500, fd) != buf) {break;}
@@ -3236,7 +3236,7 @@ int read_agetracerlist(char *fname)
       {
           if(i >= NUM_AGE_TRACERS+1)
           {
-              PRINT_WARNING("Too many entries in age tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS);
+              PRINT_WARNING("Too many entries in enrichment-age-tracer list. You should increase NUM_AGE_TRACERS=%d",(int)NUM_AGE_TRACERS);
               endrun(314);
               break;
           }
@@ -3244,9 +3244,9 @@ int read_agetracerlist(char *fname)
           i++;
       }
     }
-    if(i < NUM_AGE_TRACERS+1) {PRINT_WARNING("Not enough entries in age tracer list. Found %d entries, but we need %d\n", i, NUM_AGE_TRACERS+1); endrun(314);}
+    if(i < NUM_AGE_TRACERS+1) {PRINT_WARNING("Not enough entries in enrichment-age-tracer list. Found %d entries, but we need %d\n", i, NUM_AGE_TRACERS+1); endrun(314);}
     fclose(fd);
-    if(ThisTask==0) {printf("Read age tracer bin set. Found %d age tracer bin edges in age tracer list.\n", i); fflush(stdout);}
+    if(ThisTask==0) {printf("Read enrichment-age-tracer bin set. Found %d age bin edges in age list.\n", i); fflush(stdout);}
     return 0;
 }
 #endif

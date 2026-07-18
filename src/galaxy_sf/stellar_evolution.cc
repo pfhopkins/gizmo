@@ -300,37 +300,39 @@ void mechanical_fb_calculate_eventrates_Rprocess(int i, double dt)
 
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-/* Finds the age tracer bin (passive scalar) corresponding to the given star's age (in Myr) */
+/* For enrichment-age-tracers, finds the age bin corresponding to the given star's age (in Myr).
+    If the age is less than the minimum age bin, include it in the first bin, and if it is greater
+    than the maximum age bin, include it in the final bin. */
 int get_age_tracer_bin(double age)
 {
-    int index = -1; int too_old_flag = -9;
+    int index = -1;
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
     /* Bins are custom with arbitrary sizes - perform a search */
-    if(age < All.AgeTracerTimeBins[0]) {index=0;} // initial bin
-        else if(age >= All.AgeTracerTimeBins[NUM_AGE_TRACERS]) {return too_old_flag;} /* do nothing here and continue */
-        else {index = binarySearch(All.AgeTracerTimeBins,age,0,NUM_AGE_TRACERS+1,NUM_AGE_TRACERS+1); /* find the bin */
-            if(age < All.AgeTracerTimeBins[index]) {PRINT_WARNING("Age tracer binary search not working %d  %f  %f  %f",index, age,All.AgeTracerTimeBins[index],All.AgeTracerTimeBins[index+1]); endrun(8888);}}
+    if(age < All.AgeTracerTimeBins[0]) {index=0;}  /* too young - return as the initial age bin */
+        else if(age >= All.AgeTracerTimeBins[NUM_AGE_TRACERS]) {index = NUM_AGE_TRACERS-1;}  /* too old - return as the final age bin */
+        else {index = binarySearch(All.AgeTracerTimeBins,age,0,NUM_AGE_TRACERS+1,NUM_AGE_TRACERS+1); /* find the age bin */
+            if(age < All.AgeTracerTimeBins[index]) {PRINT_WARNING("Enrichment-age-tracer binary search not working %d  %f  %f  %f",index, age,All.AgeTracerTimeBins[index],All.AgeTracerTimeBins[index+1]); endrun(8888);}}
 #else
     /* Bins are log-spaced we do not need to perform a search */
     double binstart=log10(All.AgeTracerBinStart), binend=log10(All.AgeTracerBinEnd), log_bin_dt=(binend - binstart)/((double)NUM_AGE_TRACERS);
-    if(age <= All.AgeTracerBinStart) {index=0;} /* initial bin */
-        else if(age >= All.AgeTracerBinEnd) {return too_old_flag;} /* do nothing here and continue [likely only in test problems] */
-        else {index=(int) floor((log10(age)-binstart)/log_bin_dt);} /* find bin */
+    if(age <= All.AgeTracerBinStart) {index=0;} /* too young - return as the initial age bin */
+        else if(age >= All.AgeTracerBinEnd) {index = NUM_AGE_TRACERS-1;}  /* too old - return as the final age bin */
+        else {index=(int) floor((log10(age)-binstart)/log_bin_dt);} /* find the age bin */
 #endif
-    if(index<0) {PRINT_WARNING("Age tracer binary search not working index=%d age=%f",index,age); endrun(8888); return too_old_flag;} // soft-stop + skip-deposit sentinel: callers treat the negative too_old_flag as out-of-range, avoiding a negative-index yields[] write
+    if(index < 0 || index >= NUM_AGE_TRACERS) {PRINT_WARNING("Enrichment-age-tracer binary search not working index=%d age=%f",index,age); endrun(8888);} // exit if invalid result
     return index; // return valid bin
 }
 
 
-/* Returns the start time, in Myr, of the age bin with index "k" */
+/* Returns the start time, in Myr, of the enrichment-age-tracer age bin with index "k" */
 double get_age_tracer_bin_start_time(int k)
 {
-    if(k<0) {return 0;} // always return 0 for arbitrarily low indices
-    if(k>NUM_AGE_TRACERS) {return get_age_tracer_bin_start_time(NUM_AGE_TRACERS);} // should never happen-set to same value as last value here
+    if(k <= 0) {return 0;}  /* return 0 Myr for arbitrarily small indices and for first bin */
+    if(k > NUM_AGE_TRACERS) {return get_age_tracer_bin_start_time(NUM_AGE_TRACERS);}  // should not happen, but set to final age bin just in case
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
-    return All.AgeTracerTimeBins[k]; // use pre-tabulated bin times, in Myr
+    return All.AgeTracerTimeBins[k]; // use pre-tabulated age bins, in Myr
 #else
-    return All.AgeTracerBinStart * pow(All.AgeTracerBinEnd/All.AgeTracerBinStart , ((double)k)/((double)NUM_AGE_TRACERS)); // uniform log-spaced bins
+    return All.AgeTracerBinStart * pow(All.AgeTracerBinEnd/All.AgeTracerBinStart , ((double)k)/((double)NUM_AGE_TRACERS)); // uniform log-spaced age bins
 #endif
 }
 #endif
@@ -440,36 +442,39 @@ void particle2in_addFB_Rprocess(struct addFB_evaluate_data_in_ *in, int i)
 
 
 
-/* Routine injects passive scalar tracer field for each star particle according to the age of that particle for post processing stellar
+/* Enrichment-age-tracer: injects passive scalar tracer field for each star particle, according to the age of that particle, for post processing stellar
   abundances. Finds the appropriate time bin(s) to inject into given the star's age and the timestep. Normalization of these fields is
   somewhat arbitrary, but normalizing such that each star deposits 1 unit in each time bin (regardless of size) per solar mass. Thus,
-  scaling is simple (just multiply field by mass of metal species produced per solar mass of star formation to get an abundance) */
+  scaling is simple (just multiply field by mass of metal species produced per solar mass of star formation to get an abundance).
+  All yields[k] were set to 0 in particle2in_addFB() before this, so below, yields[k] += just sets the values. */
 void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i)
 {
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-    if(P[i].Type != 4) {return;} // only new stars are eligible for events
+    if(P[i].Type != 4) {return;} // only stars are eligible for events
     if(P[i].AgeDeposition_ThisTimeStep<=0) {return;} // no event
 
-    double M_norm = (P[i].Mass*UNIT_MASS_IN_SOLAR) * P[i].AgeDeposition_ThisTimeStep; /* AJE: may need to switch to normalizing over logbin spacing if bins are large too avoid small number issues  - this requires undoing the normalization in post */
-    double age_myr = evaluate_stellar_age_Gyr(i) * 1000.; int k = get_age_tracer_bin(age_myr); // get age in myr and corresponding tracer bin
-    if(k==-9) {printf("Stellar age greater than maximum allows in AGE_TRACERS bins\n"); return;} // error trap for age > max bin
-    double dt=get_particle_feedback_timestep_in_physical(i)*UNIT_TIME_IN_MYR, dt_half=0.5*dt, age_initial=age_myr-dt_half, age_final=age_myr+dt_half; // get particle timestep in Myr, and age at beginning/end of timestep centered on us
+    double M_norm = (P[i].Mass*UNIT_MASS_IN_SOLAR) * P[i].AgeDeposition_ThisTimeStep; /* AJE: may need to switch to normalizing over log bin spacing if bins are large too avoid small number issues  - this requires undoing the normalization in post */
+    double age_myr = evaluate_stellar_age_Gyr(i) * 1000.; int k = get_age_tracer_bin(age_myr); // get age in Myr and corresponding age bin
+    if(k==-9) {printf("Stellar age greater than maximum allows in AGE_TRACERS bins\n"); return;} // legacy error trap for age > max bin
+    double dt=get_particle_feedback_timestep_in_physical(i)*UNIT_TIME_IN_MYR, age_initial = age_myr - 0.5*dt, age_final = age_myr + 0.5*dt; // get particle timestep in Myr, and age at beginning and end of this timestep
     if(dt <= 0) {return;} // no event possible - must have arrived here in error
-    int k_age_start = 1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES; // first index of tracers
+    int k_age_start = 1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES; // first index of enrichment-age-tracers
 
-    // now deposit tracer fields, with check if multiple bins are crossed
+    // deposit tracer weights, with check if crossing age bins
     double t_start=get_age_tracer_bin_start_time(k), t_end=get_age_tracer_bin_start_time(k+1), bin_dt=t_end-t_start; // bin edges in Myr
     double amount_returned_normalizer = dt / bin_dt; // mode when AgeTracerRateNormalization <= 0 :: there is a constant probability of event -per timestep-, with 'amount returned' depending on timestep duration
     if(All.AgeTracerRateNormalization > 0) {amount_returned_normalizer = 1.;} // mode when AgeTracerRateNormalization < 0 :: there is a constant probability per -time- (target 'number of events per bin per particle'), with 'amount returned' constant
     M_norm *= amount_returned_normalizer; // re-normalize the total amount returned, appropriate for our timestepping scheme
-    if(((k>0) && (age_initial<t_start)) || ((k<NUM_AGE_TRACERS) && (age_final>t_end))) // timestep crosses multiple -valid- bins
+    if(( (k > 0) && (age_initial < t_start)) || ((k < NUM_AGE_TRACERS-1) && (age_final > t_end))) // timestep crosses multiple age bins (but ignore correction if crossing past final age bin)
     {
-        double age=age_initial, age_step=0; if(age_initial < t_start) {k--;} // step back a bin, set variables
-        while((age<age_final) && (k<=NUM_AGE_TRACERS)) { // loop over active bins to set yields in each bin
-            bin_dt = get_age_tracer_bin_start_time(k+1) - get_age_tracer_bin_start_time(k); age_step = DMIN(t_end, age_final); // get the step to the end of bin
-            in->yields[k+k_age_start] += ((age_step - age) / dt) * M_norm; // do fractional / full injection for each bin we cross
+        double age = age_initial, age_step = 0;
+        if(age_initial < t_start) {k--;} // step back an age bin
+        while((age < age_final) && (k < NUM_AGE_TRACERS)) { // loop over active age bins to set yields in each bin
+            t_end = get_age_tracer_bin_start_time(k+1);
+            age_step = DMIN(t_end, age_final); // get the step to the end of bin
+            in->yields[k+k_age_start] += ((age_step - age) / dt) * M_norm; // do fractional or full injection for each bin we cross; yields were set to 0, so this += just sets them
             age = age_step; k++;}
-    } else {in->yields[k+k_age_start] += M_norm;} // normalization is somewhat arbitrary, but choosing "1" unit per bin per solar mass of star for convenience
+    } else {in->yields[k+k_age_start] += M_norm;} // normalization is somewhat arbitrary, but choosing "1" unit per bin per solar mass of star for convenience; yields were set to 0, so this += just sets them
     in->Msne = 1.e-9 / UNIT_MASS_IN_SOLAR; // small number just to be nonzero
 #endif
     return;
