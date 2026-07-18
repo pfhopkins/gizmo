@@ -2075,6 +2075,8 @@ This has additional hooks to use the various gizmo radiation fields if desired. 
 
 The CHIMES modules in this code have many additional options, only some of the most general are given below. So a special README and Mini-User-Guide documentation is included. In the `chimes` folder of this GIZMO install (within the cooling directory), please read both `README.txt` and `chimes_gizmo_doc.md` before using CHIMES.
 
+**SUNDIALS version requirement.** CHIMES links the [SUNDIALS](https://computing.llnl.gov/projects/sundials)/CVODE ODE solver and is written against its pre-6.0 API: it calls the context-free forms of `CVodeCreate`, `N_VNew_Serial`, `SUNDenseMatrix`, and `SUNLinSol_Dense`, and uses the `realtype` floating type. It therefore requires a **SUNDIALS install in the 2.7 - 5.x range**. SUNDIALS 6.x made a `SUNContext` argument mandatory on all of those calls, and 7.x removed `realtype` (renamed `sunrealtype`), so building CHIMES against SUNDIALS 6.0 or newer (including current Homebrew/package-manager defaults) will fail to compile without source-level API updates to the CHIMES sources. Point the `CHIMESINCL`/`CHIMESLIBS` variables in the `Makefile` at a SUNDIALS install within the supported range.
+
 
 ```bash
 ##---------------------------------------
