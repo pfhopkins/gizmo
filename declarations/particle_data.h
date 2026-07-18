@@ -300,6 +300,10 @@ extern ALIGN(32) struct particle_data
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     MyFloat Time_Of_Last_MergeSplit;
 #endif
+
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+    int Refinement_Flag;            /*!< tag read from the ICs (field 'RefinementFlag'): particles with value 1 define the nuclear-zoom refinement anchor (mass-weighted COM, or densest-particle) tracked in All.SpecialParticle_Position_ForRefinement[0] */
+#endif
     
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     MyFloat Time_Of_Last_SmoothedVelUpdate;

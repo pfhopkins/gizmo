@@ -1229,6 +1229,7 @@ enum iofields
   IO_ID,
   IO_CHILD_ID,
   IO_GENERATION_ID,
+  IO_REFINE_FLAG,
   IO_MASS,
   IO_U,
   IO_RHO,

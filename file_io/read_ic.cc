@@ -210,6 +210,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
 
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+        case IO_REFINE_FLAG:		// nuclear-zoom refinement tag; read on ALL restart flags (incl. fresh IC start) so tagged ICs work as intended //
+            for(n = 0; n < pc; n++) {P[offset + n].Refinement_Flag = *ip++;}
+            break;
+#endif
+
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; n++) {P[offset + n].Mass = *fp++;}
             break;
@@ -820,6 +826,10 @@ void read_file(char *fname, int readTask, int lastTask)
 
 
         allocate_memory();
+
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+        {int i_rf; for(i_rf = 0; i_rf < All.MaxPart; i_rf++) {P[i_rf].Refinement_Flag = 0;}} /* zero the refinement tag across the whole allocated range before reads, so a particle whose IC lacks the RefinementFlag dataset defaults to untagged rather than garbage; the block read below overwrites with the true tag where present */
+#endif
 
         size_t MyBufferSize = All.BufferSize;
         if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))

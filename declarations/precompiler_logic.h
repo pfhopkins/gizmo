@@ -1158,3 +1158,10 @@
 #endif
 #endif
 
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR // tag-derived nuclear-zoom anchor: slot 0 of SpecialParticle_Position_ForRefinement comes from IC-tagged particles instead of a Type-3 special particle. requires SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM (it reuses that module's SpecialParticle refinement array), which is enforced naturally since the producer writes to that NUCLEAR_ZOOM-gated array.
+#if !(CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR)) // 1 = mass-weighted COM of tagged particles (default); 2 = lock onto densest tagged particle
+#undef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+#define SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR (1)
+#endif
+#endif
+
