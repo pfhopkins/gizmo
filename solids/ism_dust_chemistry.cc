@@ -1619,12 +1619,12 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
             dMdt_moved=0; dNdt_moved=0; total_N=0;
             for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
                 ailower = All.ISMDustChem_GrainBinEdges[bin_i], aiupper = All.ISMDustChem_GrainBinEdges[bin_i+1], aicenter=All.ISMDustChem_GrainBinCenters[bin_i];
-                miavg = 4/3*M_PI*bulk_dens*aicenter*aicenter*aicenter;
+                miavg = 4./3.*M_PI*bulk_dens*aicenter*aicenter*aicenter;
                 mlost_shat = 0; mgained_shat = 0; mlost_coag = 0; mgained_coag = 0;
 
                 for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
                     akcenter=All.ISMDustChem_GrainBinCenters[bin_k];
-                    mk = 4/3*M_PI*bulk_dens*akcenter*akcenter*akcenter;
+                    mk = 4./3.*M_PI*bulk_dens*akcenter*akcenter*akcenter;
 
                     vikrel = vrel[bin_i][bin_k];
                     // Mass lost from bin i due to shattering collisions with grains in bin k
@@ -1635,7 +1635,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                     if (vikrel <= vcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * shattering_coagulation_polynomial(i, k, bin_i, bin_k);}
                     for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
                         ajcenter=All.ISMDustChem_GrainBinCenters[bin_j];
-                        mj = 4/3*M_PI*bulk_dens*ajcenter*ajcenter*ajcenter; // Typical mass of grains in bin j
+                        mj = 4./3.*M_PI*bulk_dens*ajcenter*ajcenter*ajcenter; // Typical mass of grains in bin j
                         vkjrel = vrel[bin_k][bin_j];
 
                         // Calculate the mass of grains injected into bin i
@@ -1662,7 +1662,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             }
                             // Check to injected mass from remnant (if there is any) of grain in bin k after shattering
                             if (mej < mk) {
-                                aremnant = DMAX(0,pow(akcenter*akcenter*akcenter - mej/(4/3*M_PI*bulk_dens),1./3.));
+                                aremnant = DMAX(0,pow(akcenter*akcenter*akcenter - mej/(4./3.*M_PI*bulk_dens),1./3.));
                                 mremnant = DMAX(0,mk-mej);
                                 if (aremnant > ailower && aremnant <= aiupper) {mkj_shat += mremnant;}
                             }
@@ -2064,7 +2064,7 @@ void ISMDustChemEvo_update_bins_given_grain_size_change(int i, int j, double *bi
             }
             else {avg_size = 0;}
             // 2: number of grains to be rebinned by shrinking grains to the max grain size but conserving mass
-            rebinned_number = new_bin_masses[l+1]/(4/3*M_PI*bulk_dens*pow(m_high_edge,3));
+            rebinned_number = new_bin_masses[l+1]/(4./3.*M_PI*bulk_dens*pow(m_high_edge,3));
             // 3: new average grain size in last bin after shrinking rebinned grains
             new_avg_size = (last_bin_num*avg_size + rebinned_number*m_high_edge) / (last_bin_num + rebinned_number);
             // 4: new total mass after we shift all excess mass back into last bin
