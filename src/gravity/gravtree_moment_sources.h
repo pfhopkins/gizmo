@@ -2,30 +2,36 @@
 #define GRAVTREE_MOMENT_SOURCES_H
 
 /*! \file gravtree_moment_sources.h
- *  \brief Host-only single source of truth for the per-particle gravity-tree
- *         source INPUT physics gates: RT source luminosity, sink bolometric
- *         luminosity + emission-angle vector, and cosmic-ray injection rate.
+ *  \brief Single source of truth for the per-particle gravity-tree source INPUT
+ *         physics gates: RT source luminosity, sink bolometric luminosity +
+ *         emission-angle vector, and cosmic-ray injection rate.
  *
  *  These per-particle quantities feed the GPU gravity walk and the node-moment
- *  build.  They are precomputed on the host because the underlying helpers
- *  (rt_get_source_luminosity, sink_lum_bol, cr_get_source_injection_rate) are
- *  not device-callable.  The gates used to be duplicated in each precompute
- *  venue (the primary GPU walk in gpu_gravtree.cc, the node-moment refresh in
- *  gpu_moment_refresh.cc, and the LET leaf synthesis in let_pack.cc); this
- *  header is the one place that physics lives.
+ *  build.  The gates used to be duplicated in each precompute venue (the primary
+ *  GPU walk in gpu_gravtree.cc, the node-moment refresh in gpu_moment_refresh.cc,
+ *  and the LET leaf synthesis in let_pack.cc); this header is the one place the
+ *  gating + payload packing lives.
  *
- *  Host-only: plain static inline, NO Kokkos / no device assumptions / no
- *  storage ownership.  It uses the exact gates the live precomputes use, and
- *  sets a validity flag per section (rt_active / bh_active) so the caller writes
- *  only ACTIVE entries into its already-bulk-zeroed arrays — matching the legacy
- *  per-venue write pattern (no extra UVM writes).  Pure refactor — no physics
- *  change.  The array payload fields are left untouched when their section is
- *  inactive; the caller must gate its copy-out on the corresponding flag.
+ *  ONE canonical helper, decoration keyed on the including TU:
+ *   - host / default TUs: static inline; calls the host wrappers sink_lum_bol /
+ *     rt_get_source_luminosity[_chimes] / cr_get_source_injection_rate (external
+ *     symbols via proto.h).  This is the eager precompute path (moment refresh,
+ *     LET pack, and the dense prefill).
+ *   - a TU that exposes the device-callable source cores (defines
+ *     GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED -- only
+ *     gpu_gravtree.cc): KOKKOS_INLINE_FUNCTION; calls sink_lum_bol_core and the
+ *     inline device dispatchers, so the SAME helper evaluates the source payload
+ *     on-device at each local particle-open with no dense O(NumPart) staging.
+ *     No forked gate/packing logic.
  *
- *  Include this AFTER allvars.h and proto.h (which declare the field types and
- *  rt_get_source_luminosity[_chimes] / cr_get_source_injection_rate).  proto.h
- *  and sinks/sink.h have no include guards, so we do not re-include them here;
- *  sink_lum_bol() is forward-declared below to keep this header self-contained.
+ *  A validity flag per section (rt_active / bh_active) tells the caller the array
+ *  payloads were filled; the caller uses them only when the flag is set
+ *  (otherwise the payload fields are indeterminate).  No physics change.
+ *
+ *  Include this AFTER allvars.h and proto.h; in a device TU also AFTER the source
+ *  *_functions.h cores (so the inline device bodies are visible).  proto.h and
+ *  sinks/sink.h have no include guards, so we do not re-include them here;
+ *  sink_lum_bol() is forward-declared below for the host path.
  */
 
 #ifdef SINK_PHOTONMOMENTUM
@@ -56,12 +62,25 @@ struct gravtree_source_inputs_t {
 #endif
 };
 
+/* Decoration + sink-luminosity binding keyed on whether this TU opens the device
+ * source cores.  Device TU (gpu_gravtree.cc): KOKKOS_INLINE_FUNCTION + the device
+ * core sink_lum_bol_core (host+device-callable).  Host/default TUs: static inline +
+ * the host wrapper sink_lum_bol.  RT/CR dispatchers keep their public names in both
+ * cases (device-inline where the bodies are open, host-external otherwise). */
+#if defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED)
+#define GRAVTREE_FILL_DECOR                       KOKKOS_INLINE_FUNCTION
+#define GRAVTREE_FILL_SINK_LUM_BOL(mdot,mass,p,P) sink_lum_bol_core((mdot),(mass),(p),(P))
+#else
+#define GRAVTREE_FILL_DECOR                       static inline
+#define GRAVTREE_FILL_SINK_LUM_BOL(mdot,mass,p,P) sink_lum_bol((mdot),(mass),(p))
+#endif
+
 /* Fill *out using the EXACT gates the live gravity precomputes use.  Only the
  * cheap validity scalars are initialised unconditionally; array payloads are
- * written only inside an active section, and the caller mirrors that by copying
- * them out only when the flag is set.  No physics change relative to the legacy
+ * written only inside an active section, and the caller mirrors that by using
+ * them only when the flag is set.  No physics change relative to the legacy
  * per-venue loops. */
-static inline void
+GRAVTREE_FILL_DECOR void
 gravtree_fill_particle_source_inputs(int p, struct particle_data *P_arr,
                                      struct gas_cell_data *CellP_arr,
                                      struct gravtree_source_inputs_t *out)
@@ -94,7 +113,7 @@ gravtree_fill_particle_source_inputs(int p, struct particle_data *P_arr,
     if(P_arr[p].Type == 5 && P_arr[p].Mass > 0 &&
        P_arr[p].DensityAroundParticle > 0 && P_arr[p].Sink_Mdot > 0) {
         out->bh_active = 1;     /* gated in regardless of the luminosity value (which may be 0) */
-        out->bh_lum    = (MyFloat) sink_lum_bol(P_arr[p].Sink_Mdot, P_arr[p].Sink_Mass, p);
+        out->bh_lum    = (MyFloat) GRAVTREE_FILL_SINK_LUM_BOL(P_arr[p].Sink_Mdot, P_arr[p].Sink_Mass, p, P_arr);
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
         out->bh_angle = P_arr[p].Sink_Specific_AngMom;
 #else
@@ -112,5 +131,8 @@ gravtree_fill_particle_source_inputs(int p, struct particle_data *P_arr,
     }
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 }
+
+#undef GRAVTREE_FILL_DECOR
+#undef GRAVTREE_FILL_SINK_LUM_BOL
 
 #endif /* GRAVTREE_MOMENT_SOURCES_H */
