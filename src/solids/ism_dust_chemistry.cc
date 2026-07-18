@@ -38,6 +38,34 @@
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 
 
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+/* host-only: computes the 4 bin-geometry-only coefficients (via superposition at the 4 unit
+   vectors, using the KOKKOS_INLINE_FUNCTION ISMDustChemEvo_explicit_shat_coag_poly from
+   ism_dust_chemistry_functions.h) so ISMDustChemEvo_fast_shat_coag_poly can replace the O(N_bins^3)
+   per-particle polynomial evaluation with an O(1) 4-term dot product against cached coefficients.
+   Runs once, called from Initialize_ISMDustChem_Global_Variables() below, before any
+   gizmo_gpu_sync_all() call pushes the populated All struct to device. Symbol owned by this TU
+   (ism_dust_chemistry.cc) only -- do not add a definition to ism_dust_chemistry_functions.h,
+   which is included non-inline by 5 different .cc files. */
+void ISMDustChemEvo_precompute_poly_coeffs(void)
+{
+    int bin_i, bin_j;
+    for (bin_i=0; bin_i<NUM_ISMDUSTCHEM_SIZE_BINS; bin_i++) {
+        double ail = All.ISMDustChem_GrainBinEdges[bin_i], aiu = All.ISMDustChem_GrainBinEdges[bin_i+1], aic = All.ISMDustChem_GrainBinCenters[bin_i];
+        for (bin_j=0; bin_j<NUM_ISMDUSTCHEM_SIZE_BINS; bin_j++) {
+            double ajl = All.ISMDustChem_GrainBinEdges[bin_j], aju = All.ISMDustChem_GrainBinEdges[bin_j+1], ajc = All.ISMDustChem_GrainBinCenters[bin_j];
+            /* Iij is bilinear in (Ni,si) vs (Nj,sj):
+             * Iij = C_NiNj*Ni*Nj + C_Njsi*si*Nj + C_Nisj*Ni*sj + C_sisj*si*sj */
+            All.ISMDustChem_C_NiNj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 1,0);
+            All.ISMDustChem_C_Njsi[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 1,0);
+            All.ISMDustChem_C_Nisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 0,1);
+            All.ISMDustChem_C_sisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 0,1);
+        }
+    }
+}
+#endif
+
+
 /* Intializes global dust variables at startup of runs */
 void Initialize_ISMDustChem_Global_Variables()
 {
@@ -119,6 +147,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_GrainBinSize = pow(10,log10(All.ISMDustChem_Grain_Size_Max/All.ISMDustChem_Grain_Size_Min)/NUM_ISMDUSTCHEM_SIZE_BINS);
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS+1;j++) {All.ISMDustChem_GrainBinEdges[j] = pow(All.ISMDustChem_GrainBinSize,j)*All.ISMDustChem_Grain_Size_Min;}
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {All.ISMDustChem_GrainBinCenters[j] = (All.ISMDustChem_GrainBinEdges[j+1]+All.ISMDustChem_GrainBinEdges[j])/2.;}
+    ISMDustChemEvo_precompute_poly_coeffs(); /* precompute coag/shat polynomial coefficients following bin edges/centers init above; must run before gizmo_gpu_sync_all() pushes All to device */
 #endif
 #endif
 }

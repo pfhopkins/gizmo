@@ -556,7 +556,8 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
  * ISMDustChem_get_species_properties, ismdustchem_spec_indx_to_outcome_kind, and the
  * GRAINSIZEEVO-gated bin helpers update_ISMDustChemEvo_bin_number_and_slope,
  * check_for_slope_limiting, ISMDustChemEvo_update_bins_given_{grain_size,mass}_change,
- * shattering_coagulation_polynomial, ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change,
+ * ISMDustChemEvo_explicit_shat_coag_poly, ISMDustChemEvo_fast_shat_coag_poly,
+ * ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change,
  * get_ISMDustChemEvo_bin_mass) migrated to solids/ism_dust_chemistry_functions.h as
  * KOKKOS_INLINE_FUNCTION (Chunk 1 of Phase 2 post-cooling-kernel port, 2026-05-26).
  *
