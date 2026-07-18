@@ -160,5 +160,40 @@ int is_particle_a_special_zoom_target(int i)
 #endif
 
 
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+/* Producer for the tag-derived nuclear-zoom anchor: computes the refinement-region center from the
+   set of IC-tagged particles (P[i].Refinement_Flag==1) and writes it into slot 0 of the SSOT array
+   All.SpecialParticle_Position_ForRefinement, which every downstream consumer (merge/split mass
+   targeting, gravity boundaries, RT source placement, sink machinery) already reads. This REPLACES
+   the Type-3 special-particle producer for slot 0; all consumers are unchanged. Called once per
+   timestep from find_timesteps(). Mode 1 (default) = mass-weighted COM of all tagged particles;
+   mode 2 = position of the single densest tagged gas cell. All ranks call it (global reduction);
+   every rank ends with an identical slot-0 value. */
+void update_tag_anchor_refinement_center(void)
+{
+    int i, k;
+#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR == 2)
+    /* lock onto the single densest tagged gas cell (Type 0) */
+    struct {double dens; int rank;} local_max, global_max;
+    local_max.dens = -MAX_REAL_NUMBER; local_max.rank = ThisTask;
+    double best_pos_local[3]={0,0,0};
+    for(i=0; i<NumPart; i++) {if(P[i].Refinement_Flag==1 && P[i].Type==0 && P[i].Mass>0) {if(CellP[i].Density > local_max.dens) {local_max.dens = CellP[i].Density; best_pos_local[0]=P[i].Pos[0]; best_pos_local[1]=P[i].Pos[1]; best_pos_local[2]=P[i].Pos[2];}}}
+    MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD); /* find rank holding the global densest tagged cell */
+    double best_pos_global[3]={0,0,0};
+    if(ThisTask == global_max.rank) {for(k=0;k<3;k++) {best_pos_global[k]=best_pos_local[k];}}
+    MPI_Bcast(best_pos_global, 3, MPI_DOUBLE, global_max.rank, MPI_COMM_WORLD); /* broadcast its position to all ranks */
+    if(global_max.dens > -MAX_REAL_NUMBER/2.) {All.SpecialParticle_Position_ForRefinement[0] = {best_pos_global[0], best_pos_global[1], best_pos_global[2]};} /* only update if at least one tagged cell exists */
+#else
+    /* mass-weighted center of mass of all tagged particles */
+    double sum_m_local=0, sum_mx_local[3]={0,0,0}, sum_m_global=0, sum_mx_global[3]={0,0,0};
+    for(i=0; i<NumPart; i++) {if(P[i].Refinement_Flag==1 && P[i].Mass>0) {sum_m_local += P[i].Mass; for(k=0;k<3;k++) {sum_mx_local[k] += P[i].Mass * P[i].Pos[k];}}}
+    MPI_Allreduce(&sum_m_local, &sum_m_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(sum_mx_local, sum_mx_global, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(sum_m_global > 0) {All.SpecialParticle_Position_ForRefinement[0] = {sum_mx_global[0] / sum_m_global, sum_mx_global[1] / sum_m_global, sum_mx_global[2] / sum_m_global};} /* only update if any tagged particles exist */
+#endif
+}
+#endif
+
+
 
 

@@ -120,6 +120,10 @@ void read_ic(char *fname)
             set_cosmo_factors_for_current_time();
         }
         gizmo_exit_bad_stop_if_requested("read_ic:alloc");   /* drains particle-storage + CommBuffer OOM, before any P/CellP/CommBuffer use */
+
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+        {int i_rf; for(i_rf = 0; i_rf < All.MaxPart; i_rf++) {P[i_rf].Refinement_Flag = 0;}} /* zero the refinement tag across the whole allocated range before reads, so a particle whose IC lacks the RefinementFlag dataset defaults to untagged rather than garbage; the block read below overwrites with the true tag where present */
+#endif
     }
 
     rest_files = num_files;
@@ -307,6 +311,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_GENERATION_ID:		// particle generation ID //
             if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
+
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+        case IO_REFINE_FLAG:		// nuclear-zoom refinement tag; read on ALL restart flags (incl. fresh IC start) so tagged ICs work as intended //
+            for(n = 0; n < pc; n++) {P[offset + n].Refinement_Flag = *ip++;}
+            break;
+#endif
 
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; n++) {P[offset + n].Mass = *fp++;}

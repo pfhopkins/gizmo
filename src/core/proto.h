@@ -48,6 +48,9 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key);
 int check_if_sufficient_mergesplit_time_has_passed(int i);
 int is_particle_a_special_zoom_target(int i);
 #endif
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+void update_tag_anchor_refinement_center(void);
+#endif
 int merge_particles_ij(int i, int j);
 int split_particle_i(int i, int n_particles_split, int i_nearest);
 void do_first_halfstep_kick(void);

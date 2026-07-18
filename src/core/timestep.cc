@@ -253,6 +253,10 @@ void find_timesteps(void)
     // ???
 #endif
 
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
+    update_tag_anchor_refinement_center(); // override slot 0 with the tag-derived anchor (COM or densest tagged cell); the Type-3 scan above leaves slot 0 unset in this mode since there are no Type-3 special particles
+#endif
+
 
 #ifdef PMGRID
     if(All.PM_Ti_endstep == All.Ti_Current)	/* need to do long-range kick */
