@@ -1439,9 +1439,10 @@ When either `ADAPTIVE_GRAVSOFT_FORGAS` or `ADAPTIVE_GRAVSOFT_FORALL` or `ADAPTIV
 #CBE_INTEGRATOR_HEATFLUX        # extend to the 13-moment closure by additionally evolving a contracted third-moment (heat-flux) vector per basis. Implies CBE_INTEGRATOR_SECONDMOMENT. More accurate near-Maxwellian, but requires more careful realizability handling far from equilibrium; still experimental.
 #CBE_INTEGRATOR_WITHGRADIENTS   # enable second-order, slope-limited (piecewise-linear) spatial reconstruction of each basis' primitive variables to the cell faces, instead of first-order (piecewise-constant) reconstruction. Strongly recommended for production accuracy.
 #CBE_INTEGRATOR_RP_GAUSSIAN     # use the exact one-sided Gaussian-basis Riemann flux solution for inter-cell/inter-basis fluxes, instead of the default compact-support ("top-hat") approximate solver. Method-comparison option (not the production default).
-#CBE_INTEGRATOR_COLLISIONS      # enable an intra-cell collision operator acting locally on the basis mixture within each cell (e.g. isotropic hard-sphere elastic scattering), allowing the method to interpolate smoothly between the collisionless and strongly-collisional (fluid) limits. Defaults to isotropic BGK-type relaxation (CBE_COLLISION_MODEL=CBE_COLLISION_MODEL_BGK_ISOTROPIC) unless CBE_COLLISION_MODEL is set explicitly.
+#CBE_INTEGRATOR_COLLISIONS      # enable an intra-cell collision operator acting locally on the basis mixture within each cell (e.g. isotropic hard-sphere elastic scattering), allowing the method to interpolate smoothly between the collisionless and strongly-collisional (fluid) limits. Defaults to isotropic BGK-type relaxation (CBE_COLLISION_MODEL=CBE_COLLISION_MODEL_BGK_ISOTROPIC) unless CBE_COLLISION_MODEL is set explicitly. Requires setting the run-time parameter CBECollisionCrossSection>0 (default 0, i.e. collisions OFF/no-op even with this flag compiled in).
 #CBE_INTEGRATOR_STRICT_FACE_SPD_GUARD  # additional (more expensive) guard strictly enforcing positive-definiteness of the reconstructed face-state stress tensor at every face, beyond the default realizability-repair operator. Safety/diagnostic option.
 #CBE_INTEGRATOR_OUTPUT_MOREINFO # output additional per-basis diagnostic information in snapshots (enables OUTPUT_ADDITIONAL_RUNINFO)
+#CBE_INTEGRATOR_OUTBUDGET_VERBOSE # per-basis outflow-budget ledger debug printf path (diagnostic only; verbose, not for production runs)
 ##-----------------------------------------------------------------------------------------------------
 ```
 
@@ -1459,11 +1460,13 @@ These flags implement a Lagrangian, finite-volume method for directly integratin
 
 **CBE\_INTEGRATOR\_RP\_GAUSSIAN**: Selects the exact one-sided Gaussian-basis Riemann flux solution for the inter-basis fluxes at each face, in place of the default compact-support ("top-hat") approximate solver. The top-hat solver truncates the flux exactly at the signal speed and is the current production default (better-behaved for e.g. long-term dynamical/orbital tests); the Gaussian solver is provided primarily for direct method comparison.
 
-**CBE\_INTEGRATOR\_COLLISIONS**: Adds an intra-cell (purely local, no inter-particle communication) collision operator that relaxes the basis mixture within each cell toward a more isotropic/thermalized state, allowing the same method to smoothly span the collisionless-to-strongly-collisional continuum (e.g. reproducing ordinary hydrodynamics in the strongly-collisional limit). Defaults to isotropic, elastic hard-sphere (BGK-type) relaxation if `CBE_COLLISION_MODEL` is not set explicitly to a different model.
+**CBE\_INTEGRATOR\_COLLISIONS**: Adds an intra-cell (purely local, no inter-particle communication) collision operator that relaxes the basis mixture within each cell toward a more isotropic/thermalized state, allowing the same method to smoothly span the collisionless-to-strongly-collisional continuum (e.g. reproducing ordinary hydrodynamics in the strongly-collisional limit). Defaults to isotropic, elastic hard-sphere (BGK-type) relaxation if `CBE_COLLISION_MODEL` is not set explicitly to a different model. This flag only enables the operator's machinery -- it is a no-op (zero cross-section) until the run-time parameter `CBECollisionCrossSection` is set `>0` (see below).
 
 **CBE\_INTEGRATOR\_STRICT\_FACE\_SPD\_GUARD**: Optional, more expensive guard that strictly enforces symmetric positive-definiteness of the reconstructed face-state stress tensor at every face (beyond the realizability-repair operator that is always applied after each conservative update). Primarily a safety/diagnostic option for stress-testing new configurations.
 
 **CBE\_INTEGRATOR\_OUTPUT\_MOREINFO**: Outputs additional per-basis diagnostic quantities to snapshots (automatically enables `OUTPUT_ADDITIONAL_RUNINFO`). Useful for debugging/validating the basis-function representation; not needed for normal production runs.
+
+**CBE\_INTEGRATOR\_OUTBUDGET\_VERBOSE**: Enables a verbose debug printf path for the per-basis outflow-budget ledger. Diagnostic only; produces substantial output and is not intended for production runs.
 
 
 
@@ -3372,6 +3375,10 @@ Reminder, for a truly 'isothermal' test with sound speed unity, set `EOS_ENFORCE
     DM_DecayRate                    0   % Gamma in s^-1
     DM_DecayHeatingFraction         0   % f_h^dec in [0,1] -- fraction of m_chi c^2 thermalized locally per decay
 
+    %-------------- Parameters for the Continuum Vlasov (CBE) integrator (CBE_INTEGRATOR on)
+    CBEMassEffFloor          0.1   % floor fraction (of cell mass) below which a basis is exempted from the per-basis mass-flux timestep criterion, so near-empty placeholder/free-slot bases cannot force a pathologically small step
+    CBECollisionCrossSection 0     % sigma/mu_p [cross-section per unit mass, code units], for the intra-cell CBE collision operator (CBE_INTEGRATOR_COLLISIONS on); 0 = disabled (no-op)
+
 **DarkEnergyConstantW**: If `GR_TABULATED_COSMOLOGY` is on, but none of the flags to actually read tabulated data are set (`GR_TABULATED_COSMOLOGY_W`, `GR_TABULATED_COSMOLOGY_H`, `GR_TABULATED_COSMOLOGY_G`), simple setting this parameter allows you to use an arbitrary constant (time-independent) value of the Dark Energy equation-of-state parameter "w". If the table is read, this will be ignored.
 
 **TabulatedCosmologyFile**: If the tabulated data is read, this specifies the name (file-path) of the file which contains the tabulated time-dependent cosmological parameters. The code will assume the file is standard ASCII text, with the relevant data in 5 columns separated by spaces. The format should be:
@@ -3393,6 +3400,10 @@ Reminder, for a truly 'isothermal' test with sound speed unity, set `EOS_ENFORCE
 **DM\_DecayRate**: If `DM_HEATING` is on, the DM particle decay rate $\Gamma$ in cgs (s$^{-1}$). A sterile-neutrino X-ray-line scenario corresponds to $\Gamma$ determined by $(m_s, \sin^2 2\theta)$. Setting this to zero disables the decay channel. The implementation neglects DM mass loss from decay ($\Gamma t \ll 1$ assumed for any realistic decaying-DM run).
 
 **DM\_DecayHeatingFraction**: If `DM_HEATING` is on, the fraction $f_h^{\rm dec} \in [0,1]$ of $m_\chi c^2$ per decay that thermalizes locally in the gas. For a 2-body decay $\chi \to \gamma + \nu$ where only the photon couples to gas, this is approximately $1/2$ (the photon carries half the rest-mass energy). Hard-aborts if outside $[0,1]$.
+
+**CBEMassEffFloor**: If `CBE_INTEGRATOR` is on, the floor fraction (of the total cell mass $m_{a}$) below which a basis' mass $m_{a,\alpha}$ is exempted from the per-basis mass-flux timestep criterion (see the method paper, \S~"Timestep Constraints"). Without this floor, a near-empty basis (e.g. an empty free slot, or one freshly reset by the realizability-repair operator) receiving a cell-scale flux would force a pathologically small timestep; the floor regularizes the effective mass used in that criterion to $m_{a,\alpha}^{\rm eff} = \max(m_{a,\alpha},\,{\tt CBEMassEffFloor}\times m_{a})$. Default `0.1` if not set in the parameterfile.
+
+**CBECollisionCrossSection**: If `CBE_INTEGRATOR_COLLISIONS` is on, this sets the intra-cell collision cross-section per unit (physical) particle mass, $\sigma/\mu_{p}$, in code units. This is the actual physical control for the collision operator: the flag alone only compiles in the machinery, and the operator is a no-op (zero collision rate) unless this parameter is set `>0`. Setting it to zero (the default) leaves the module compiled but inert.
 
 
 
