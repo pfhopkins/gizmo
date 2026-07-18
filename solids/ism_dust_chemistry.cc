@@ -16,12 +16,12 @@
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #define ACCRETION_T_CUTOFF 300  /* The cutoff temperature for gas-dust accretion. Also used as a cutoff for density enhancements of dust-dust coagulation.  */
-#if (GALSF_ISMDUSTCHEM_MODEL & 4)
+#if (GALSF_ISMDUSTCHEM_MODEL & 8)
 #define GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC 0.7 /* assumed fraction of iron dust mass locked as inclusions in silicates, this scales with the total fraction of silicate formed vs maximum amount of possible silicate dust */
 #else
 #define GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC 0 /* no iron inclusions tracked */
 #endif
-#if ((GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
 #define MAXIMUM_SUBCYCLE_STEPS 200 /* maximum number of subcycle steps for grain size evolution. The current choice is somewhat arbitrary but works for default FIRE resolution. Beware using too small of values or else coagulation and shattering wont be properly time-resolved. */
 #define ACC_SPUT_SUBCYCLE_PARAMETER 0.3 /* subcycling parameter for accretion and sputtering. This sets the maximum fraction of the smallest grain size bin that can be traversed in one timestep before subcycling must be used. Default is 30% */
 #define SHAT_COAG_SUBCYCLE_PARAMETER 0.1 /* subcycling parameter for shattering and coagulation. This sets the maximum fraction of either mass or number of grains that can be removed across all bins in one timestep for shattering and coagulation respectively. Default is 10% */
@@ -50,68 +50,58 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SilicateMetallicityFieldIndexTable[0] = 4;
     All.ISMDustChem_SilicateMetallicityFieldIndexTable[1] = 6;
     All.ISMDustChem_SilicateMetallicityFieldIndexTable[2] = 7;
+    All.ISMDustChem_SilicateMetallicityFieldIndexTable[3] = 10;
     // number of O, Mg, and Si in one formula unit of silicate dust
     All.ISMDustChem_SilicateNumberOfAtomsTable[0] = 3.63;
     All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.06;
     All.ISMDustChem_SilicateNumberOfAtomsTable[2] = 1.;
-#if (GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)
-    All.ISMDustChem_SilicateNumberOfAtomsTable[0] += 2; // add 2 more O atoms for silicates to account for excess O depletions with no known carrier
-#if (GALSF_ISMDUSTCHEM_MODEL & 32)
-    All.ISMDustChem_SilicateMetallicityFieldIndexTable[3] = 10; All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 1.; // add extra Fe as well if not accounting for separate iron species
-#endif
-#endif
-#if (!(GALSF_ISMDUSTCHEM_MODEL & 4) && !(GALSF_ISMDUSTCHEM_MODEL & 16)) 
-    All.ISMDustChem_SilicateMetallicityFieldIndexTable[3] = 10; All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0.571; // add Fe as well if not accounting for iron inclusions
-#endif
+    All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0.571;
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 2) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] += 2;}
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 4) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] += 1;}
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 8) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0;}
     All.ISMDustChem_EffectiveSilicateDustAtomicWeight = 0.; for(j=0;j<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;j++) {All.ISMDustChem_EffectiveSilicateDustAtomicWeight += All.ISMDustChem_SilicateNumberOfAtomsTable[j] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[j]];}
-    if(GALSF_ISMDUSTCHEM_MODEL & 2) {
-        All.ISMDustChem_SpeciesBulkDens[0]=3.13;
-        All.ISMDustChem_SpeciesBulkDens[1]=2.25;
-        All.ISMDustChem_SpeciesBulkDens[2]=3.21;
-        All.ISMDustChem_SpeciesBulkDens[3]=7.86;
-    }
 
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
     All.ISMDustChem_Sil_Index = 0;
     All.ISMDustChem_Carb_Index = 1;
-    All.ISMDustChem_SiC_Index = 2;
-    All.ISMDustChem_FreeIron_Index = 3;
-    All.ISMDustChem_ORes_Index = 4;
-    All.ISMDustChem_InclIron_Index = 5;
-    for (j=0;j<6;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
+    All.ISMDustChem_FreeIron_Index = 2;
+    All.ISMDustChem_ORes_Index = 3;
+    All.ISMDustChem_InclIron_Index = 4;
+
+    // Internal densities for main dust species
+    All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_Sil_Index]=3.13; // g cm^-3
+    All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_Carb_Index]=2.25;
+    All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_FreeIron_Index]=7.86;
+
+    for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
     // silicates and carbonaceous dust are always tracked
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Sil_Index] = 0;
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Carb_Index] = 1;
     All.ISMDustChem_TrackedSpeciesIDTable[0]=All.ISMDustChem_Sil_Index;
     All.ISMDustChem_TrackedSpeciesIDTable[1]=All.ISMDustChem_Carb_Index;
-#if (GALSF_ISMDUSTCHEM_MODEL & 4) || (GALSF_ISMDUSTCHEM_MODEL & 8)
-    /* 2=SiC, 3=free-flying iron, 4=O reservoir, 5=iron inclusions in silicates */
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_SiC_Index] = 2;
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_FreeIron_Index] = 3;
-    All.ISMDustChem_TrackedSpeciesIDTable[2]=All.ISMDustChem_SiC_Index;
-    All.ISMDustChem_TrackedSpeciesIDTable[3]=All.ISMDustChem_FreeIron_Index;
-#if (GALSF_ISMDUSTCHEM_MODEL & 4) && !(GALSF_ISMDUSTCHEM_MODEL & 8)
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_InclIron_Index] = 4;
-    All.ISMDustChem_TrackedSpeciesIDTable[4]=All.ISMDustChem_InclIron_Index;
-#elif !(GALSF_ISMDUSTCHEM_MODEL & 4) && (GALSF_ISMDUSTCHEM_MODEL & 8)
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_ORes_Index] = 4;
-    All.ISMDustChem_TrackedSpeciesIDTable[4]=All.ISMDustChem_ORes_Index;
-#elif (GALSF_ISMDUSTCHEM_MODEL & 4) && (GALSF_ISMDUSTCHEM_MODEL & 8)
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_ORes_Index] = 4;
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_InclIron_Index] = 5;
-    All.ISMDustChem_TrackedSpeciesIDTable[4]=All.ISMDustChem_ORes_Index;
-    All.ISMDustChem_TrackedSpeciesIDTable[5]=All.ISMDustChem_InclIron_Index;
-#endif
-#elif ((GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-#if (GALSF_ISMDUSTCHEM_MODEL & 16)
-    All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_FreeIron_Index] = 2;
-    All.ISMDustChem_TrackedSpeciesIDTable[2]=All.ISMDustChem_FreeIron_Index;
-#endif
+    j=2; /* start index for any additional species beyond silicates and carbonaceous dust which are always tracked */
+    if (GALSF_ISMDUSTCHEM_MODEL & 2)
+    {
+        All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_FreeIron_Index] = j;
+        All.ISMDustChem_TrackedSpeciesIDTable[j]=All.ISMDustChem_FreeIron_Index;
+        j++;
+    }
+    if (GALSF_ISMDUSTCHEM_MODEL & 4)
+    {
+        All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_ORes_Index] = j;
+        All.ISMDustChem_TrackedSpeciesIDTable[j]=All.ISMDustChem_ORes_Index;
+        j++;
+    }
+    if (GALSF_ISMDUSTCHEM_MODEL & 8)
+    {
+        All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_InclIron_Index] = j;
+        All.ISMDustChem_TrackedSpeciesIDTable[j]=All.ISMDustChem_InclIron_Index;
+        j++;
+    }
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     All.ISMDustChem_GrainBinSize = pow(10,log10(All.ISMDustChem_Grain_Size_Max/All.ISMDustChem_Grain_Size_Min)/NUM_ISMDUSTCHEM_SIZE_BINS);
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS+1;j++) {All.ISMDustChem_GrainBinEdges[j] = pow(All.ISMDustChem_GrainBinSize,j)*All.ISMDustChem_Grain_Size_Min;}
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {All.ISMDustChem_GrainBinCenters[j] = (All.ISMDustChem_GrainBinEdges[j+1]+All.ISMDustChem_GrainBinEdges[j])/2.;}
     ISMDustChemEvo_precompute_poly_coeffs(); /* precompute coag/shat polynomial coefficients following bin edges/centers init above */
-#endif
 #endif
 }
 
@@ -135,43 +125,34 @@ void Initialize_ISMDustChem_Particle_Variables(int i)
         if(All.Initial_ISMDustChem_Depletion > 0 && temp < temp_cutoff)
         {
             for(j=0;j<NUM_ISMDUSTCHEM_ELEMENTS;j++) {CellP[i].ISMDustChem_Dust_Metal[j] = 0.;}
-            if(GALSF_ISMDUSTCHEM_MODEL & 1) {
-                CellP[i].ISMDustChem_Dust_Metal[4] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[4]; // Silicate dust O
-                CellP[i].ISMDustChem_Dust_Metal[6] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[6]; // Silicate dust Mg
-                CellP[i].ISMDustChem_Dust_Metal[7] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[7]; // Silicate dust Si
-                CellP[i].ISMDustChem_Dust_Metal[10] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[10]; // Silicate dust Fe
-                CellP[i].ISMDustChem_Dust_Metal[2] = DMIN(P[i].Metallicity[2],CellP[i].ISMDustChem_Dust_Metal[4]+CellP[i].ISMDustChem_Dust_Metal[6]+CellP[i].ISMDustChem_Dust_Metal[7]+CellP[i].ISMDustChem_Dust_Metal[10]/All.Initial_ISMDustChem_SiliconToCarbonRatio); // Carbonaceous dust
-            }
-            if(GALSF_ISMDUSTCHEM_MODEL & 2) {
-                double sil_mass_frac=0., spec_indx; 
-                for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-                    spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[j];
-                    if (spec_indx==All.ISMDustChem_Sil_Index) {
-                        // Silicate dust
-                        CellP[i].ISMDustChem_Dust_Metal[7] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[7]; // Set Si depletion
-                        sil_mass_frac+=CellP[i].ISMDustChem_Dust_Metal[7];
-                        for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++) { 
-                            // Set element depletions for all other elements in silicates given initial Si depletion
-                            if(All.ISMDustChem_SilicateMetallicityFieldIndexTable[k] != 7){
-                                CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]] += CellP[i].ISMDustChem_Dust_Metal[7] / (All.ISMDustChem_SilicateNumberOfAtomsTable[2] * All.ISMDustChem_AtomicMassTable[7]) * (All.ISMDustChem_SilicateNumberOfAtomsTable[k] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]]);
-                                sil_mass_frac += CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]];
-                            }
+            double sil_mass_frac=0., spec_indx; 
+            for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
+                spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[j];
+                if (spec_indx==All.ISMDustChem_Sil_Index) {
+                    // Silicate dust
+                    CellP[i].ISMDustChem_Dust_Metal[7] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[7]; // Set Si depletion
+                    sil_mass_frac+=CellP[i].ISMDustChem_Dust_Metal[7];
+                    for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++) { 
+                        // Set element depletions for all other elements in silicates given initial Si depletion
+                        if(All.ISMDustChem_SilicateMetallicityFieldIndexTable[k] != 7 && All.ISMDustChem_SilicateNumberOfAtomsTable[k] > 0) { // if this element is in silicate composition and not Si itself then set depletion based on Si depletion and silicate stoichiometry
+                            CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]] += CellP[i].ISMDustChem_Dust_Metal[7] / (All.ISMDustChem_SilicateNumberOfAtomsTable[2] * All.ISMDustChem_AtomicMassTable[7]) * (All.ISMDustChem_SilicateNumberOfAtomsTable[k] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]]);
+                            sil_mass_frac += CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]];
                         }
-                        CellP[i].ISMDustChem_Dust_Species[j] = sil_mass_frac;
                     }
-                    else if (spec_indx==All.ISMDustChem_Carb_Index) {
-                        // Carbonaceous dust
-                        CellP[i].ISMDustChem_Dust_Metal[2] = DMIN(P[i].Metallicity[2],sil_mass_frac/All.Initial_ISMDustChem_SiliconToCarbonRatio); 
-                        CellP[i].ISMDustChem_Dust_Species[j] = CellP[i].ISMDustChem_Dust_Metal[2];
-                    }
-                    else if (spec_indx==All.ISMDustChem_FreeIron_Index) {
-                        // Free-flying iron
-                        CellP[i].ISMDustChem_Dust_Metal[10] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[10];
-                        CellP[i].ISMDustChem_Dust_Species[j] = (1.-GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC)*CellP[i].ISMDustChem_Dust_Metal[10];
-                    }
-                    else if (spec_indx==All.ISMDustChem_InclIron_Index) {
-                        CellP[i].ISMDustChem_Dust_Species[j] = GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*CellP[i].ISMDustChem_Dust_Metal[10];    
-                    }
+                    CellP[i].ISMDustChem_Dust_Species[j] = sil_mass_frac;
+                }
+                else if (spec_indx==All.ISMDustChem_Carb_Index) {
+                    // Carbonaceous dust
+                    CellP[i].ISMDustChem_Dust_Metal[2] = DMIN(P[i].Metallicity[2],sil_mass_frac/All.Initial_ISMDustChem_SiliconToCarbonRatio); 
+                    CellP[i].ISMDustChem_Dust_Species[j] = CellP[i].ISMDustChem_Dust_Metal[2];
+                }
+                else if (spec_indx==All.ISMDustChem_FreeIron_Index) {
+                    // Free-flying iron
+                    CellP[i].ISMDustChem_Dust_Metal[10] = All.Initial_ISMDustChem_Depletion*P[i].Metallicity[10];
+                    CellP[i].ISMDustChem_Dust_Species[j] = (1.-GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC)*CellP[i].ISMDustChem_Dust_Metal[10];
+                }
+                else if (spec_indx==All.ISMDustChem_InclIron_Index) {
+                    CellP[i].ISMDustChem_Dust_Species[j] = GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*CellP[i].ISMDustChem_Dust_Metal[10];    
                 }
             }
             for (j=1;j<NUM_ISMDUSTCHEM_ELEMENTS;j++) {CellP[i].ISMDustChem_Dust_Metal[0] += CellP[i].ISMDustChem_Dust_Metal[j];}
@@ -220,16 +201,27 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                     update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
                 }
             }
+            // Assume initial mass distribution per logarithmic grain size (a^4*dn/da) is log-normal
+            // double a0=0.1E-4, sigma = 0.6;
+            // for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
+            //     double bulk_dens, dust_atomic_weight;
+            //     ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[j], &dust_atomic_weight, &bulk_dens);
+            //     double C_norm = (CellP[i].ISMDustChem_Dust_Species[j]*P[i].Mass*UNIT_MASS_IN_CGS)*(3*a0*exp(-(sigma*sigma)/2.))/(pow(2.,5./2.)*pow(M_PI,3./2.)*sigma*bulk_dens);
+            //     // Step through grain size bins setting grain number and mass to fit initial distribution
+            //     for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
+            //         double alower = All.ISMDustChem_GrainBinEdges[k], aupper = All.ISMDustChem_GrainBinEdges[k+1];
+            //         double mass_in_bin, number_in_bin;
+            //         number_in_bin = (C_norm*exp(8*sigma*sigma)*sqrt(M_PI/2)*sigma/(pow(a0,4))) * (erf((4*sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((4*sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
+            //         mass_in_bin = (C_norm*pow(2*M_PI,3./2.)*bulk_dens*sigma*exp(sigma*sigma/2)/(3*a0)) * (erf((sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
+            //         // Deal with rounding errors for effectively empty bins
+            //         if (number_in_bin<=0 || mass_in_bin<=0) {number_in_bin=0;mass_in_bin=0;}
+            //         update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
+            //     }
+            // }
         }
         else
         {
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {CellP[i].ISMDustChem_Dust_NumberInBin[j][k]=0;CellP[i].ISMDustChem_Dust_SlopeInBin[j][k]=0;}}
-        }
-        for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-            for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
-                CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
-            }
         }
     }
 #if !defined(IO_DUST_NOT_IN_ICFILE)
@@ -242,12 +234,6 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                 bin_number = CellP[i].ISMDustChem_Dust_NumberInBin[j][k];
                 bin_mass = CellP[i].ISMDustChem_Dust_SlopeInBin[j][k];
                 update_ISMDustChemEvo_bin_number_and_slope(i,j,k,bin_number,bin_mass);
-            }
-        }
-        for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-            for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
-                CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
             }
         }
     }
@@ -270,11 +256,6 @@ void ISMDustChem_get_elem_yields_from_species_yields(double *dust_yields, double
         else if (spec_indx==All.ISMDustChem_Carb_Index) {
             dust_yields[2] += species_yields[k];
         }
-        /******** SiC ********/
-        else if (spec_indx==All.ISMDustChem_SiC_Index) {
-            dust_yields[2] += species_yields[k] * All.ISMDustChem_AtomicMassTable[2] / (All.ISMDustChem_AtomicMassTable[2] + All.ISMDustChem_AtomicMassTable[7]);
-            dust_yields[7] += species_yields[k] * All.ISMDustChem_AtomicMassTable[7] / (All.ISMDustChem_AtomicMassTable[2] + All.ISMDustChem_AtomicMassTable[7]);
-        }
         /******** METALLIC IRON ********/
         else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {
             dust_yields[10] += species_yields[k];
@@ -296,22 +277,17 @@ void ISMDustChem_get_species_properties(int spec_indx, double *dust_atomic_weigh
     /******** SILICATE ********/
     if (spec_indx==All.ISMDustChem_Sil_Index) {
         *dust_atomic_weight = All.ISMDustChem_EffectiveSilicateDustAtomicWeight;
-        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[0];
+        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[spec_indx];
     }
     /******** CARBONACEOUS ********/
     else if (spec_indx==All.ISMDustChem_Carb_Index) {
         *dust_atomic_weight = All.ISMDustChem_AtomicMassTable[2];
-        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[1];
-    }
-    /******** SiC ********/
-    else if (spec_indx==All.ISMDustChem_SiC_Index) {
-        *dust_atomic_weight = All.ISMDustChem_AtomicMassTable[2]+All.ISMDustChem_AtomicMassTable[7];
-        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[2];
+        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[spec_indx];
     }
     /******** METALLIC IRON ********/
     else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {
         *dust_atomic_weight = All.ISMDustChem_AtomicMassTable[10];
-        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[3];
+        *bulk_dens = All.ISMDustChem_SpeciesBulkDens[spec_indx];
     }
     /******** O RESERVOIR ********/
     else if (spec_indx==All.ISMDustChem_ORes_Index) {
@@ -330,9 +306,10 @@ void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, i
     /******** SILICATE ********/
     if (spec_indx==All.ISMDustChem_Sil_Index) {
         double sil_elem_abunds[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES] = {0.};
-        *key_elem = 0;
+        for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++) {if (All.ISMDustChem_SilicateNumberOfAtomsTable[k] > 0) {*key_elem = k; break;}} // start with first element in silicates
         for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++)
         {
+            if (All.ISMDustChem_SilicateNumberOfAtomsTable[k] <=0) {continue;} // if no atoms of this element in silicate composition then skip
             int index = All.ISMDustChem_SilicateMetallicityFieldIndexTable[k];
             sil_elem_abunds[k] = dust_metallicity[index] / All.ISMDustChem_AtomicMassTable[index];
             // If an element is missing nothing else to do
@@ -345,15 +322,6 @@ void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, i
     }
     /******** CARBONACEOUS ********/
     else if (spec_indx==All.ISMDustChem_Carb_Index) {if (dust_metallicity[2]>0) {*key_elem=2; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
-    /******** SiC ********/
-    else if (spec_indx==All.ISMDustChem_SiC_Index) {
-        if (dust_metallicity[2]>0 && dust_metallicity[7]>0)
-        {
-            if (dust_metallicity[7]/All.ISMDustChem_AtomicMassTable[7] < dust_metallicity[2]/All.ISMDustChem_AtomicMassTable[2]) *key_elem = 7;
-            else *key_elem = 2;
-            *key_mass = All.ISMDustChem_AtomicMassTable[*key_elem];
-        }
-    }
     /******** METALLIC IRON ********/
     else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {if (dust_metallicity[10]>0) {*key_elem=10; *key_mass=All.ISMDustChem_AtomicMassTable[*key_elem];}}
     /******** O RESERVOIR ********/
@@ -390,24 +358,8 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
 #endif
     if(t_gyr < SNeIa_age) {source_key=2;} // 1=1a, 2=II
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES]=0;} // initialize yields to null
-    if(GALSF_ISMDUSTCHEM_MODEL & 1) {
-        double C_condens_eff     = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.5), 
-               other_condens_eff = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.8);
-        dust_yields[2] = C_condens_eff * yields[2];         // C
-        dust_yields[6] = other_condens_eff * yields[6];     // Mg
-        dust_yields[7] = other_condens_eff * yields[7];     // Si
-        dust_yields[10] = other_condens_eff * yields[10];   // Fe
-        dust_yields[4] = 16 * (dust_yields[6]/All.ISMDustChem_AtomicMassTable[6] + dust_yields[7]/All.ISMDustChem_AtomicMassTable[7] + dust_yields[10]/All.ISMDustChem_AtomicMassTable[10]); // O
-        if(dust_yields[4]>yields[4]) {dust_yields[4]=yields[4];} // Just in case there's not enough O
-        for(k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++)  dust_yields[0] += dust_yields[k]; // Fraction of yields that is dust
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-        yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
-        return; // all done, if only using this model
-    } // below follows species model, will be default if above not set
-    
     double SNeII_sil_cond = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.2), 
            SNeII_C_cond   = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.2), 
-           SNeII_SiC_cond = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.0003), 
            SNeII_Fe_cond  = DMIN(1,All.ISMDustChem_SNeIIDustScaling*0.2), 
            SNeI_Fe_cond   = DMIN(1,All.ISMDustChem_SNeIaDustScaling*0.005), 
            SNeII_cond;
@@ -423,7 +375,6 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
             if (key_elem != -1) {
                 if (spec_indx==All.ISMDustChem_Sil_Index) {SNeII_cond=SNeII_sil_cond;}
                 else if (spec_indx==All.ISMDustChem_Carb_Index) {SNeII_cond=SNeII_C_cond;}
-                else if (spec_indx==All.ISMDustChem_SiC_Index) {SNeII_cond=SNeII_SiC_cond;}
                 else if (spec_indx==All.ISMDustChem_FreeIron_Index) {SNeII_cond=SNeII_Fe_cond;}
                 else {SNeII_cond=0;}
                 
@@ -463,24 +414,24 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i)
     transition_age =  0.044;
 #endif
     if(star_age <= transition_age) {return;} // no yield here if too young, otherwise continue
-    if(GALSF_ISMDUSTCHEM_MODEL & 1) {
-        double condens_eff = DMIN(1,All.ISMDustChem_AGBDustScaling*0.8);
-        if((yields[2]/All.ISMDustChem_AtomicMassTable[2])/(yields[4]/All.ISMDustChem_AtomicMassTable[4]) > 1.0) // AGB stars with abundace ratio C/O > 1 only produce carbonacous dust
-        {
-            dust_yields[2] = yields[2] - 0.75*yields[4]; dust_yields[0] = dust_yields[2]; // C
-        } else { // AGB stars with abundance C/O < 1 produce general silicate dust
-            dust_yields[6] = condens_eff * yields[6]; // Mg
-            dust_yields[7] = condens_eff * yields[7]; // Si
-            dust_yields[10] = condens_eff * yields[10]; // Fe
-            dust_yields[4] = 16 * (dust_yields[6]/All.ISMDustChem_AtomicMassTable[6] + dust_yields[7]/All.ISMDustChem_AtomicMassTable[7] + dust_yields[10]/All.ISMDustChem_AtomicMassTable[10]); // O
-            // Check to make sure we dont produce too much O dust given the leftover O dust not in CO
-            if (dust_yields[4] > yields[4]-(4./3.*yields[2])) {dust_yields[4] = yields[4]-(4./3.*yields[2]);}
-            for(k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {dust_yields[0]+=dust_yields[k];}
-        }
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
-        yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
-        return; // end routine
-    } // below follows species model, and will be default if above not set
+    
+    // Simple AGB yields routine based solely on C to O ratios
+    // double condens_eff = DMIN(1,All.ISMDustChem_AGBDustScaling*0.8);
+    // if((yields[2]/All.ISMDustChem_AtomicMassTable[2])/(yields[4]/All.ISMDustChem_AtomicMassTable[4]) > 1.0) // AGB stars with abundace ratio C/O > 1 only produce carbonacous dust
+    // {
+    //     dust_yields[2] = yields[2] - 0.75*yields[4]; dust_yields[0] = dust_yields[2]; // C
+    // } else { // AGB stars with abundance C/O < 1 produce general silicate dust
+    //     dust_yields[6] = condens_eff * yields[6]; // Mg
+    //     dust_yields[7] = condens_eff * yields[7]; // Si
+    //     dust_yields[10] = condens_eff * yields[10]; // Fe
+    //     dust_yields[4] = 16 * (dust_yields[6]/All.ISMDustChem_AtomicMassTable[6] + dust_yields[7]/All.ISMDustChem_AtomicMassTable[7] + dust_yields[10]/All.ISMDustChem_AtomicMassTable[10]); // O
+    //     // Check to make sure we dont produce too much O dust given the leftover O dust not in CO
+    //     if (dust_yields[4] > yields[4]-(4./3.*yields[2])) {dust_yields[4] = yields[4]-(4./3.*yields[2]);}
+    //     for(k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {dust_yields[0]+=dust_yields[k];}
+    // }
+    // for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {yields[k+NUM_METAL_SPECIES]=dust_yields[k];}
+    // yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
+    // return; // end routine
     double dt,Z,elem_yield,wind_rate;
     dt=GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i)*UNIT_TIME_IN_GYR;
     Z = Z_for_stellar_evol(i);
@@ -516,15 +467,15 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i)
                 for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
                     spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[j];
                     // C
-                    if (k==2 && (spec_indx==All.ISMDustChem_Carb_Index || spec_indx==All.ISMDustChem_SiC_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
+                    if (k==2 && (spec_indx==All.ISMDustChem_Carb_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
                     // O
                     else if (k==4 && (spec_indx==All.ISMDustChem_Sil_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
                     // Mg
                     else if (k==6 && (spec_indx==All.ISMDustChem_Sil_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
                     // Si
-                    else if (k==7 && (spec_indx==All.ISMDustChem_Sil_Index || spec_indx==All.ISMDustChem_SiC_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
-                    // Fe with special check if its in both silicates and metallic iron or just metallic 
-                    else if (k==10 && ((GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES==3 && spec_indx==All.ISMDustChem_FreeIron_Index) || (GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES==4 && (spec_indx==All.ISMDustChem_Sil_Index || spec_indx==All.ISMDustChem_FreeIron_Index)))) { 
+                    else if (k==7 && (spec_indx==All.ISMDustChem_Sil_Index)) {species_yields[j] *= yields[k]/dust_yields[k];}
+                    // Fe with special check if its in both silicates and metallic iron or just metallic iron
+                    else if (k==10 && ((spec_indx==All.ISMDustChem_FreeIron_Index) || (All.ISMDustChem_SilicateMetallicityFieldIndexTable[3]>0 && (spec_indx==All.ISMDustChem_Sil_Index)))) { 
                         species_yields[j] *= yields[k]/dust_yields[k];
                     }
                 }
@@ -548,7 +499,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i)
 /* Simple fit to cumulative AGB dust production for a Kroupa IMF stellar population only with specific metallicities and stellar ages (assuming stars become AGBs at the ends of the main sequence lifetime) derived from AGB dust creation data table in Zhukovska+(08) */
 double specific_Z_AGB_dust(int spec_indx, double star_age, int z_bound)
 {
-    /* spec_indx: 0 = silicate, 1 = carbon, 2 = silicon carbide, 3 = metallic iron */
+    /* spec_indx: silicate, carbon, metallic iron */
     /* z_bound: 0 = 2*Z_solar, 1 = Z_solar, 2 = 0.4*Z_solar, 3 = 0.2*Z_solar, 4 = 0.05*Z_solar*/
     double cum_return=0;
     double logt = log10(star_age);
@@ -606,33 +557,6 @@ double specific_Z_AGB_dust(int spec_indx, double star_age, int z_bound)
                 else {cum_return = 5.73E-5*(logt - 3.65) + 3.80E-4;}
             }
     }
-    else if (spec_indx==All.ISMDustChem_SiC_Index) {
-            if (z_bound == 0) {
-                if (star_age < 272) {cum_return = 3.55E-7*logt - 6.64E-7;}
-                else if (star_age < 890) {cum_return = 1.03E-4*(logt - 2.44) + 2.00E-7;}
-                else {cum_return = 8.64E-7*(logt - 2.95) + 5.31E-5;}
-            }
-            else if (z_bound == 1) {
-                if (star_age < 272) {cum_return = 3.73E-7*logt - 6.33E-7;}
-                else if (star_age < 1544) {cum_return = 2.93E-5*(logt - 2.43) +  2.75E-7;}
-                else {cum_return = 5.82E-7*(logt - 3.19) + 2.24E-5;}
-            }
-            else if (z_bound == 2) {
-                if (star_age < 235) {cum_return = 1.06E-7*logt - 1.74E-7;}
-                else if (star_age < 4812) {cum_return = 1.04E-6*(logt - 2.37) + 7.84E-8;}
-                else {cum_return = 2.47E-7*(logt - 3.68) + 1.44E-6;}
-            }
-            else if (z_bound == 3) {
-                if (star_age < 202) {cum_return = 6.38E-9*logt - 1.02E-8;}
-                else if (star_age < 3394) {cum_return = 2.48E-8*(logt - 2.31) + 4.52E-9;}
-                else {cum_return = 9.51E-9*(logt - 3.53) + 3.48E-8;}
-            }
-            else if (z_bound == 4) {
-                if (star_age < 245) {cum_return = 2.97E-11*logt - 4.81E-11;}
-                else if (star_age < 2392) {cum_return = 1.11E-10*(logt - 2.39) + 2.28E-11;}
-                else {cum_return = 3.73E-13*(logt - 3.38) + 1.33E-10;}
-            }
-    }
     else if (spec_indx==All.ISMDustChem_FreeIron_Index) {
             if (z_bound == 0) {
                 if (star_age < 525) {cum_return = 5.98E-6*logt - 9.97E-6;}
@@ -670,7 +594,7 @@ double specific_Z_AGB_dust(int spec_indx, double star_age, int z_bound)
 /* Simple fit to cumulative AGB dust mass returns for a stellar population*/
 double cumulative_AGB_dust_returns(int dust_type, double star_age, double z)
 {
-    /* dust_type: 0 = silicate, 1 = carbon, 2 = silicon carbide, 3 = metallic iron */
+    /* dust_type: silicate, carbon, metallic iron */
     double cumulative_mass;
     if (z <= 0.05)     {cumulative_mass = specific_Z_AGB_dust(dust_type,star_age,4);}
     else if (z <= 0.2) {cumulative_mass = specific_Z_AGB_dust(dust_type,star_age,4) + (z-0.05)/(0.2-0.05)*(specific_Z_AGB_dust(dust_type,star_age,3) - specific_Z_AGB_dust(dust_type,star_age,4));}
@@ -688,7 +612,7 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z)
 void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne)
 {
     int k,l;
-    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0};
+    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}};
     // Assume initial grain size distribution (dn/da) with (1) a log-normal distribution centered at large radii and (2) a power-law tail to smaller grain sizes following results from Kirchschlager et al. (2019, 2020) 
     double a0=0.1E-4, sigma=0.2, a_cut=0.1E-4, gamma=3.5, a_min=All.ISMDustChem_Grain_Size_Min; // center (cm) and standard deviation of log-normal distribution, intersect of the two distributions (cm), power for power law, and minimum size for power law (cm).
     double bulk_dens,dust_atomic_weight,C1_norm,C2_norm,high_edge,low_edge,bin_number,bin_mass; // grain mass density and normalization set to match total dust species mass returned
@@ -741,7 +665,7 @@ void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SN
 void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
 {
     int k,l;
-    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0};
+    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}};
     // Assume initial mass distribution per logarithmic grain size (a^4*dn/da) is log-normal
     double a0=0.1E-4, sigma=0.47; // center (cm) and standard deviation of log-normal distribution 
     double bulk_dens,dust_atomic_weight,C_norm,high_edge,low_edge; // grain mass density and normalization set to match total dust mass returned
@@ -808,10 +732,9 @@ double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units,
 {
     double vs7=1., local_n0=rho_cell_in_code_units*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS; // dust destruction efficiency, minimum gas shock velocity in ~10^7 cm/s which destroys dust, and number density around SNe
     double mass_shocked_in_code_units; // mass shocked to 100 km/s which destroys dust. use the weights to distribute shocked mass across the neighboring gas particles
-#if (GALSF_ISMDUSTCHEM_MODEL & 16)  || (GALSF_ISMDUSTCHEM_MODEL & 32)
-    /* From detailed SNR simulations in Kirchschlager+ 2022/24 */
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+    /* From detailed SNR simulations in Schaffler+ 2025 */
     // TBD
-
     /* From fits in Yamasawa+ 2011 */
     mass_shocked_in_code_units = 1535 * Esne51_into_cell / (pow(local_n0, 0.202) * pow(Z_cell/All.SolarAbundances[0]+0.039,0.298) * UNIT_MASS_IN_SOLAR);
 #else
@@ -828,7 +751,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
 {
     // If SNe events happened need to first destroy the appropriate amount of dust if there is any dust
     int k,l,spec_indx;
-#if ((GALSF_ISMDUSTCHEM_MODEL & 16)  || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     // Mass is injected before this function in the feedback routine so this check will fail if we don't make a temporary mass change
     // For evolving grain sizes the fraction of dust destroyed depends on the initial grain size distribution
     // This uses a novel routine presented in Choban+25 (in prep) to approximate shattering and subsequent sputtering of dust grains
@@ -895,7 +818,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
                 spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
                 // Take out the iron inclusions protected in silicate dust and then add it back in later
-                if(GALSF_ISMDUSTCHEM_MODEL & 4 && spec_indx==All.ISMDustChem_InclIron_Index) {
+                if(GALSF_ISMDUSTCHEM_MODEL & 8 && spec_indx==All.ISMDustChem_InclIron_Index) {
                     protected_frac += CellP[j].ISMDustChem_Dust_Species[spec_indx]/CellP[j].ISMDustChem_Dust_Metal[0];
                     CellP[j].ISMDustChem_Dust_Metal[10] -= CellP[j].ISMDustChem_Dust_Species[spec_indx]; // Assume all dust species are destroyed evenly but leave out iron inclusions
             }
@@ -909,7 +832,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 CellP[j].ISMDustChem_Dust_Metal[k] *= 1.-massfrac_destroyed;
                 CellP[j].ISMDustChem_Dust_Metal[0] += CellP[j].ISMDustChem_Dust_Metal[k];
             }
-            if(GALSF_ISMDUSTCHEM_MODEL & 4) { // Add the protected iron dust back in
+            if(GALSF_ISMDUSTCHEM_MODEL & 8) { // Add the protected iron dust back in
                 int incl_indx = All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_InclIron_Index];
                 CellP[j].ISMDustChem_Dust_Metal[10] += CellP[j].ISMDustChem_Dust_Species[incl_indx];
                 CellP[j].ISMDustChem_Dust_Metal[0] += CellP[j].ISMDustChem_Dust_Species[incl_indx];
@@ -918,7 +841,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             }
         }
     }
-#endif // GALSF_ISMDUSTCHEM_MODEL & 16 || GALSF_ISMDUSTCHEM_MODEL & 32
+#endif // GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     // Inject newly created dust from star
     int skip_injection = 1;
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME 
@@ -1137,43 +1060,6 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
     double dust_yields[NUM_ISMDUSTCHEM_ELEMENTS] = {0.0};
     int source = 0;
     
-    /* elemental model */
-#if (GALSF_ISMDUSTCHEM_MODEL & 1)
-    CellP[i].ISMDustChem_Dust_Metal[0] = 0.; // First renorm dust due to building numerical error that can arise from stellar feedback. This may no longer be necessary.
-    for (k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[0] += CellP[i].ISMDustChem_Dust_Metal[k];}
-    double total = CellP[i].ISMDustChem_Dust_Source[0]+CellP[i].ISMDustChem_Dust_Source[1]+CellP[i].ISMDustChem_Dust_Source[2]+CellP[i].ISMDustChem_Dust_Source[3];
-    for (k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) CellP[i].ISMDustChem_Dust_Source[k] = DMAX(0,CellP[i].ISMDustChem_Dust_Metal[0]/total*CellP[i].ISMDustChem_Dust_Source[k]);
-    
-    /* Accretion happens everywhere no matter the gas phase */
-    double rho_ref = PROTONMASS_CGS; // 1 H atom cm^-3
-    T_ref = 20.; avg_grain_radius = 0.032; /* um */ t_ref = 0.2; /* Gyr */
-    growth_timescale = t_ref * (rho_ref / rho) * pow((T_ref / temp), .5) / All.ISMDustChem_DustAccretionScaling;
-    // Calculate the fraction of mass of a certain element to be added to dust due to accretion
-    for (k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++)
-    {
-        double in_mol_frac; // fraction of element in molecular form and unable to accrete onto dust (CO is the only molecule considered)
-        if (k==2) {in_mol_frac = CellP[i].ISMDustChem_C_in_CO;}
-        else if (k==4) {in_mol_frac = CellP[i].ISMDustChem_C_in_CO * All.ISMDustChem_AtomicMassTable[4] / All.ISMDustChem_AtomicMassTable[2];}
-        else {in_mol_frac = 0.;}
-        // If no dust, metals, or all metals in dust then no accretion
-        if (P[i].Metallicity[k] == 0. || CellP[i].ISMDustChem_Dust_Metal[k] == 0. || (P[i].Metallicity[k] - CellP[i].ISMDustChem_Dust_Metal[k]) <= 0) {dF = 0.;}
-        else
-        {
-            dF = dtime_gyr * (1. - CellP[i].ISMDustChem_Dust_Metal[k] / (P[i].Metallicity[k] - in_mol_frac)) * (CellP[i].ISMDustChem_Dust_Metal[k] / growth_timescale);
-            // Check in case we use up the rest of the remaining metal in the gas phase and deal with unphysical values
-            dF = DMIN(P[i].Metallicity[k] - CellP[i].ISMDustChem_Dust_Metal[k] - in_mol_frac,DMAX(0.,dF));
-            dust_yields[k] = dF;
-            dust_yields[0] += dust_yields[k];
-        }
-    }
-    // Update dust yields and creation source
-    if (dust_yields[0] != 0.)
-    {
-        CellP[i].ISMDustChem_Dust_Source[source] += dust_yields[0];
-        for (k=0;k< NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] += dust_yields[k];}
-    }
-#endif // model == 1, elemental model
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
     /* Restrict accretion only to MC environments by assuming sticking efficiency of 1 for
      * T <= 300K and 0 otherwise. Check the three main dust species that can form through
      * accretion in the ISM silicates, carbon, and metallic iron.
@@ -1315,7 +1201,7 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
             }
             else if (spec_indx==All.ISMDustChem_FreeIron_Index) {
                 // nano-particle sized or MRN-sized iron
-                if(GALSF_ISMDUSTCHEM_MODEL & 4) {t_ref_CNM = 1.66E-6; t_ref_MC = 0.139E-3;} 
+                if(GALSF_ISMDUSTCHEM_MODEL & 8) {t_ref_CNM = 1.66E-6; t_ref_MC = 0.139E-3;} // iron is nano-sized when the iron-inclusions species (bit 8 under the current model numbering) is tracked
                 else {t_ref_CNM = 0.252E-3; t_ref_MC = 1.38E-3;} // Gyr
                 t_ref = (t_ref_CNM * t_ref_MC) / (CellP[i].ISMDustChem_MassFractionInDenseMolecular * t_ref_CNM + (1.-CellP[i].ISMDustChem_MassFractionInDenseMolecular) * t_ref_MC) / All.ISMDustChem_DustAccretionScaling;
                 key_elem_DZ = CellP[i].ISMDustChem_Dust_Metal[key_elem] / P[i].Metallicity[key_elem];
@@ -1376,13 +1262,12 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
             for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) CellP[i].ISMDustChem_Dust_Species[k] += species_yields[k];
             // update new dust mass
             for (k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {CellP[i].ISMDustChem_Dust_Metal[k] += dust_yields[k];}
-            if(GALSF_ISMDUSTCHEM_MODEL & 4) { // Update amount of free-flying iron and iron inclusions since some of the free-flying particles become inclusions in silicates. Scales with local amount of silicates
+            if(GALSF_ISMDUSTCHEM_MODEL & 8) { // Update amount of free-flying iron and iron inclusions since some of the free-flying particles become inclusions in silicates. Scales with local amount of silicates
                 ISMDustChem_update_iron_inclusions(i);
             }
         }
 #endif
     }  // if (temp <= 300)
-#endif // species model
 }
 
 
@@ -1392,88 +1277,10 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho)
     // Sputtering timescales are negligable for cool gas
     if (temp>1E4) {
         int k,j,spec_indx;
-        double dF; // change in fraction of element condensed into dust
-        double sputter_timescale, t_ref, T_ref, avg_grain_radius;
         double dust_yields[NUM_ISMDUSTCHEM_ELEMENTS] = {0.0};
-
-#if (GALSF_ISMDUSTCHEM_MODEL & 1)
-        T_ref = 2E6; avg_grain_radius = 0.032; /* um */ t_ref = 0.17; /* Gyr */
-        sputter_timescale = t_ref * (avg_grain_radius / 0.1) / (rho*1E27) * (pow((T_ref/ temp), 2.5) + 1.) / All.ISMDustChem_ThermalSputteringScaling;
-        // Calculate the fraction of mass of a certain element to be destroyed due to thermal sputtering
-        for (k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++)
-        {
-            if (CellP[i].ISMDustChem_Dust_Metal[k] <= 0.) {dF = 0.;}
-            else {dF = - dtime_gyr * (CellP[i].ISMDustChem_Dust_Metal[k] / (sputter_timescale / 3.));}
-            // can't destroy more dust then there is available and deal with unphysical values
-            dF = DMAX(-CellP[i].ISMDustChem_Dust_Metal[k],DMIN(0,dF));
-            dust_yields[k] = dF;
-            dust_yields[0] += dF;
-        }
-        
-        // Update dust yields and sources
-        if (dust_yields[0] != 0.)
-        {
-            // Assume all dust sources are destroyed evenly
-            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] *= (1.+dust_yields[0]/CellP[i].ISMDustChem_Dust_Metal[0]);}
-            for (k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++)
-            {
-                CellP[i].ISMDustChem_Dust_Metal[k] += dust_yields[k];
-            }
-            // Deal with rounding error causing total dust to not equal zero
-            int no_dust = 1;
-            for (k=2; k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {if (CellP[i].ISMDustChem_Dust_Metal[k] > 0.) {no_dust = 0; break;}}
-            if (no_dust)
-            {
-                CellP[i].ISMDustChem_Dust_Metal[0] = 0.;
-                // if all dust is destroyed need to zero creation sources
-                for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = 0.;}
-            }
-        }
-#endif // model == 1, elemental model
-#if (GALSF_ISMDUSTCHEM_MODEL & 2) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
         double species_yields[NUM_ISMDUSTCHEM_SPECIES] = {0.0};
-        T_ref = 2E6; /* K */ t_ref = 0.17; /* Gyr */
-
-        for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
-            spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
-            avg_grain_radius = 0.032; /* um */
-            // If assuming nano-particle iron, need to use different grain size
-            if ((GALSF_ISMDUSTCHEM_MODEL & 4) && spec_indx==All.ISMDustChem_FreeIron_Index) {avg_grain_radius = 0.0032; }
-            sputter_timescale = t_ref * (avg_grain_radius / 0.1) / (rho*1E27) * (pow((T_ref/ temp), 2.5) + 1.) /  All.ISMDustChem_ThermalSputteringScaling;
-            dF = - dtime_gyr * (CellP[i].ISMDustChem_Dust_Species[k] / (sputter_timescale / 3.));
-            dF = DMAX(-CellP[i].ISMDustChem_Dust_Species[k],DMIN(0,dF)); // can't destroy more dust then there is available
-            species_yields[k] += dF;
-        }
-        ISMDustChem_get_elem_yields_from_species_yields(dust_yields,species_yields); 
-        
-        // Update dust yields and creation source and deal with rounding errors when all dust is destroyed
-        if (dust_yields[0] != 0.)
-        {
-            // Assume all dust sources are destroyed evenly
-            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] *= (1.+dust_yields[0]/CellP[i].ISMDustChem_Dust_Metal[0]);}
-            // Update new dust mass
-            for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) CellP[i].ISMDustChem_Dust_Species[k] += species_yields[k];
-            // If all dust (silicates, carbonaceous, SiC, and free-flying iron) is destroyed zero everything to avoid rounding error
-            int all_dest = 1;
-            for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {if(CellP[i].ISMDustChem_Dust_Species[k]>0 && All.ISMDustChem_TrackedSpeciesIDTable[k]!=All.ISMDustChem_InclIron_Index) {all_dest = 0; break;}}
-            if (all_dest)
-            {
-                for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = 0;}
-                for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = 0.;}
-                for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = 0.;}
-            }
-            else {
-            for (k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(0,CellP[i].ISMDustChem_Dust_Metal[k]+dust_yields[k]);}
-            if(GALSF_ISMDUSTCHEM_MODEL & 4) { // Update amount of free-flying iron and iron inclusions since some of the inclusions are released as silicates are sputtered. This scales with local amount of silicates. Note if all free-flying dust is destroyed then we assume all iron inclusions are also destroyed
-                    ISMDustChem_update_iron_inclusions(i);
-                }
-            }
-        }
-#endif // dust species model w/o size evo
-
-#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
         int k_cycle, n_subcycle;
-        double species_yields[NUM_ISMDUSTCHEM_SPECIES] = {0.0};
         double carbSput, silSput, ironSput, Y_sput, dadt, dust_formula_mass, clumping_factor;
         double logt = log10(temp);
         double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
@@ -1526,17 +1333,56 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho)
         for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++)  {CellP[i].ISMDustChem_Dust_Source[k] *= dust_yields[0]/CellP[i].ISMDustChem_Dust_Metal[0];}
         for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {CellP[i].ISMDustChem_Dust_Species[k] = species_yields[k];}
         for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = dust_yields[k];}
-#endif // dust species model w/ size evo
+#else
+        double dF; // change in fraction of element condensed into dust
+        double sputter_timescale, t_ref, T_ref, avg_grain_radius;
+        T_ref = 2E6; /* K */ t_ref = 0.17; /* Gyr */
+        for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+            spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
+            avg_grain_radius = 0.032; /* um */
+            // If assuming nano-particle iron, need to use different grain size (nano when iron-inclusions species, bit 8 under the current model numbering, is tracked)
+            if ((GALSF_ISMDUSTCHEM_MODEL & 8) && spec_indx==All.ISMDustChem_FreeIron_Index) {avg_grain_radius = 0.0032; }
+            sputter_timescale = t_ref * (avg_grain_radius / 0.1) / (rho*1E27) * (pow((T_ref/ temp), 2.5) + 1.) /  All.ISMDustChem_ThermalSputteringScaling;
+            dF = - dtime_gyr * (CellP[i].ISMDustChem_Dust_Species[k] / (sputter_timescale / 3.));
+            dF = DMAX(-CellP[i].ISMDustChem_Dust_Species[k],DMIN(0,dF)); // can't destroy more dust then there is available
+            species_yields[k] += dF;
+        }
+        ISMDustChem_get_elem_yields_from_species_yields(dust_yields,species_yields); 
+        
+        // Update dust yields and creation source and deal with rounding errors when all dust is destroyed
+        if (dust_yields[0] != 0.)
+        {
+            // Assume all dust sources are destroyed evenly
+            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] *= (1.+dust_yields[0]/CellP[i].ISMDustChem_Dust_Metal[0]);}
+            // Update new dust mass
+            for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) CellP[i].ISMDustChem_Dust_Species[k] += species_yields[k];
+            // If all dust (silicates, carbonaceous, and iron) is destroyed zero everything to avoid rounding error
+            int all_dest = 1;
+            for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {if(CellP[i].ISMDustChem_Dust_Species[k]>0 && All.ISMDustChem_TrackedSpeciesIDTable[k]!=All.ISMDustChem_InclIron_Index) {all_dest = 0; break;}}
+            if (all_dest)
+            {
+                for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = 0;}
+                for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = 0.;}
+                for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = 0.;}
+            }
+            else {
+            for (k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(0,CellP[i].ISMDustChem_Dust_Metal[k]+dust_yields[k]);}
+            if(GALSF_ISMDUSTCHEM_MODEL & 8) { // Update amount of free-flying iron and iron inclusions since some of the inclusions are released as silicates are sputtered. This scales with local amount of silicates. Note if all free-flying dust is destroyed then we assume all iron inclusions are also destroyed
+                    ISMDustChem_update_iron_inclusions(i);
+                }
+            }
+        }
+#endif // size evo
     } // temperature cutoff
 }
 
 
 void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho)
 {
-#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
 
     // Gas cell volume (cm^-3), relative velocity between colliding grains (cm/s), mass of shattered grains (g), i, j, k grain velocities (cm/s), mach factor for grain velocities, cos theta for angle of impact between two grains
-    double Vcell, vikrel, vkjrel, vikcoag, vkjcoag, mshat, vgri, vgrk, vgrj, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
+    double Vcell, mshat, vgri, vgrk, vgrj, vikrel, vkjrel, vikcoag, vkjcoag, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
     double vgr[NUM_ISMDUSTCHEM_SIZE_BINS], m_bin[NUM_ISMDUSTCHEM_SIZE_BINS], vrel[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], vcoag[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], poly[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
     double nH_cgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS; // hydrogen number dens in cgs units
     // Dust physical properties
@@ -1606,29 +1452,27 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         //cos_imp_angle = 2.0*(get_random_number((MyIDType) (P[i].ID+5+k))-0.5); 
         cos_imp_angle = 2.0*gsl_rng_uniform(random_generator_fordust)-1.0;
         
-        // Precompute grain mass, relative grain velocities, and coagulation thresholds for each grain size bin pair (symmetric in bin_i, bin_k).
+        // Precompute grain mass, relative grain velocities, and coagulation thresholds for each grain size bin pair.
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
-            m_bin[bin_i] = 4./3.*M_PI*bulk_dens*All.ISMDustChem_GrainBinCenters[bin_i]*All.ISMDustChem_GrainBinCenters[bin_i]*All.ISMDustChem_GrainBinCenters[bin_i];
+            m_bin[bin_i] = 4./3.*M_PI*bulk_dens*All.ISMDustChem_GrainBinCenters[bin_i]*All.ISMDustChem_GrainBinCenters[bin_i]*All.ISMDustChem_GrainBinCenters[bin_i]; // mass of grains in each bin
             for (bin_k=bin_i;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
                 vrel[bin_i][bin_k] = vrel[bin_k][bin_i] = sqrt(vgr[bin_i]*vgr[bin_i] + vgr[bin_k]*vgr[bin_k] - 2*vgr[bin_i]*vgr[bin_k]*cos_imp_angle); // cm/s
                 aicenter=All.ISMDustChem_GrainBinCenters[bin_i]; akcenter=All.ISMDustChem_GrainBinCenters[bin_k];
-                vcoag[bin_i][bin_k] = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
-                if (vcoag[bin_i][bin_k] > vshat) vcoag[bin_i][bin_k] = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
-                vcoag[bin_k][bin_i] = vcoag[bin_i][bin_k];
+                vcoag[bin_i][bin_k] = vcoag[bin_k][bin_i] = DMIN(All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)), vshat); // cm/s; catch rare case where coagualation threshold is higher than shattering threshold
             }
-        }
+        }        
 
         // This makes a precursory pass to determine if timestep subcycling is needed given the timestep. If subcycling is needed it sets n_subcycle and loops over them, if no subcycling is needed it updates the grain size bins and ends.
         n_subcycle=0;
         k_cycle=0;
         while (k_cycle <= n_subcycle) {
             dMdt_moved=0; dNdt_moved=0; total_N=0;
-            // Precompute the coagulation/shattering polynomial for each grain size bin pair for this subcycle, since the bin number/slope values change between subcycles.
+            // Compute polynomial for each grain size bin pair for each subcycle timestelp since the mass in each bin changes as grains are shattered and coagulate and this changes the mass moved between bins for each interaction
             for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
                 for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
                     poly[bin_i][bin_k] = ISMDustChemEvo_fast_shat_coag_poly(i, k, bin_i, bin_k);
                 }
-            }
+            }    
             for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
                 ailower = All.ISMDustChem_GrainBinEdges[bin_i], aiupper = All.ISMDustChem_GrainBinEdges[bin_i+1], aicenter=All.ISMDustChem_GrainBinCenters[bin_i];
                 miavg = m_bin[bin_i];
@@ -1643,7 +1487,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                     // Mass lost from bin i due to shattering collisions with grains in bin k
                     if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * poly[bin_i][bin_k];}
                     // Mass lost from bin i due to coagulating collisions with grains in bin k
-                    if (vikrel <= vikcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * poly[bin_i][bin_k];}
+                    else if (vikrel <= vikcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * poly[bin_i][bin_k];}
                     for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
                         ajcenter=All.ISMDustChem_GrainBinCenters[bin_j];
                         mj = m_bin[bin_j]; // Typical mass of grains in bin j
@@ -1681,8 +1525,8 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * poly[bin_k][bin_j];
                         }
                         // Mass gained in bin i due to coagulating collisions between grains in bin k and bin j producing aggregate grains
-                        if (vkjrel <= vkjcoag) {
-                            aaggregate = pow((mk + mj)/(4*M_PI/3*bulk_dens),1./3.);
+                        else if (vkjrel <= vkjcoag) {
+                            aaggregate = pow((mk + mj)/(4.*M_PI/3.*bulk_dens),1./3.);
                             if (aaggregate < aiupper && aaggregate >= ailower) {mkj_coag = (mk + mj)/2;} // Counted twice so divide by 2
                             else {mkj_coag = 0;}
                             mgained_coag += All.ISMDustChem_CoagulationScaling * (vkjrel) * mkj_coag * poly[bin_k][bin_j];
@@ -1692,10 +1536,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                 // Note change in Vcell due to coagulation density enhancement only applied to coagulation mass change
                 total_mlost = (mlost_coag+mlost_shat)*M_PI*miavg; // units of g/s cm^3
                 total_mgained = (mgained_coag+mgained_shat)*M_PI; // units of g/s cm^3
-                if (k_cycle==0) {
-                    CellP[i].ISMDustChem_Shat_dMdt[k][bin_i] = (mgained_shat-mlost_shat)*clumping_factor/Vcell; // g/s
-                    CellP[i].ISMDustChem_Coag_dMdt[k][bin_i] = (mgained_coag-mlost_coag)*clumping_factor/Vcell; // g/s
-                }
                 dM[bin_i] = (total_mgained-total_mlost)*clumping_factor/Vcell*dt_subcycle*1E9*SECONDS_PER_YEAR; // grams
                 // Keep track of the net mass and number grains moved out of bins for time step subcycling check
                 if (k_cycle==0) {
@@ -1734,6 +1574,8 @@ void update_dust_photodestruction(int i, double dtime_gyr)
 {
     // still in development so off by default
     // current implementation is too effective at destroying dust 
+    // going to rework this to inject destruction similar to SNe model. 
+    // Such as assume stromgren sphere and clear dust mass within said sphere.
 #if defined(DUSTPHOTODESTRUCTION_TURNON)
     // If gas has been recently photoionized then dust should also be destroyed via photodestruction
     // The delay time is zeroed after recombination so it serves as a useful tracker of HII regions
@@ -1823,15 +1665,15 @@ void ISMDustChemEvo_renormalize_dust_fields(int i)
                 for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
                     spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[j];
                     // C
-                    if (k==2 && (spec_indx==All.ISMDustChem_Carb_Index || spec_indx==All.ISMDustChem_SiC_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
+                    if (k==2 && (spec_indx==All.ISMDustChem_Carb_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
                     // O
                     else if (k==4 && (spec_indx==All.ISMDustChem_Sil_Index || spec_indx==All.ISMDustChem_ORes_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
                     // Mg
                     else if (k==6 && (spec_indx==All.ISMDustChem_Sil_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
                     // Si
-                    else if (k==7 && (spec_indx==All.ISMDustChem_Sil_Index || spec_indx==All.ISMDustChem_SiC_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
+                    else if (k==7 && (spec_indx==All.ISMDustChem_Sil_Index)) {CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];}
                     // Fe with special check if its in both silicates and metallic iron or just metallic 
-                    else if (k==10 && ((GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES==3 && (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index)) || (GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES==4 && (spec_indx==All.ISMDustChem_Sil_Index || spec_indx==All.ISMDustChem_FreeIron_Index)))) { 
+                    else if (k==10 && ((spec_indx==All.ISMDustChem_FreeIron_Index) || (spec_indx==All.ISMDustChem_InclIron_Index) || (All.ISMDustChem_SilicateMetallicityFieldIndexTable[3]>0 && (spec_indx==All.ISMDustChem_Sil_Index)))) { 
                         CellP[i].ISMDustChem_Dust_Species[j] *= P[i].Metallicity[k]/dust_yields[k];
                     }
                 }
@@ -1862,77 +1704,6 @@ void ISMDustChem_update_iron_inclusions(int i)
     incl_frac = DMAX(DMIN(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil,GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC),0.);
     CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[free_indx]] = (1.-incl_frac) * CellP[i].ISMDustChem_Dust_Metal[10];
     CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[incl_indx]] = incl_frac * CellP[i].ISMDustChem_Dust_Metal[10];
-}
-
-
-// Debugging function to check dust element metallicites against total dust species masses.
-void check_dust_fields(int i, int update_process)
-{
-    int k,j;
-    double elem_yields[NUM_ISMDUSTCHEM_ELEMENTS] = {0.};
-    double source_total=0;
-    for (k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {source_total += CellP[i].ISMDustChem_Dust_Source[k];}
-    // silicate
-    if (All.ISMDustChem_SpeciesFieldIndexTable[0]!=-1) {
-    for (k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++)
-    {
-        elem_yields[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[0]] * All.ISMDustChem_SilicateNumberOfAtomsTable[k] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]] / All.ISMDustChem_EffectiveSilicateDustAtomicWeight;
-        }
-    }
-    // carbonaceous
-    if (All.ISMDustChem_SpeciesFieldIndexTable[1]!=-1) {
-    elem_yields[2] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[1]];
-    }
-#if (GALSF_ISMDUSTCHEM_MODEL & 4) || (GALSF_ISMDUSTCHEM_MODEL & 8)
-    // SiC
-    if (All.ISMDustChem_SpeciesFieldIndexTable[2]!=-1) {
-    elem_yields[2] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[2]] * All.ISMDustChem_AtomicMassTable[2] / (All.ISMDustChem_AtomicMassTable[2] + All.ISMDustChem_AtomicMassTable[7]);
-    elem_yields[7] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[2]] * All.ISMDustChem_AtomicMassTable[7] / (All.ISMDustChem_AtomicMassTable[2] + All.ISMDustChem_AtomicMassTable[7]);
-    }
-
-    // metallic iron
-    elem_yields[10] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[3]]
-
-    // metallic iron inclusions
-#if (GALSF_ISMDUSTCHEM_MODEL & 4) && !(GALSF_ISMDUSTCHEM_MODEL & 8)
-    elem_yields[10] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[4]];
-#elif (GALSF_ISMDUSTCHEM_MODEL & 4) && (GALSF_ISMDUSTCHEM_MODEL & 8)
-    elem_yields[10] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[5]];
-#endif
-
-    // oxygen reservoir
-#if (GALSF_ISMDUSTCHEM_MODEL & 8)
-    elem_yields[4] += CellP[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[4]];
-#endif
-#endif
-
-    for (k=2;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {elem_yields[0] += elem_yields[k];}
-    
-    int mismatch = 0;
-    for (k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++){
-        if (CellP[i].ISMDustChem_Dust_Metal[k]>0 && (fabs(CellP[i].ISMDustChem_Dust_Metal[k]-elem_yields[k])/CellP[i].ISMDustChem_Dust_Metal[k]>0.0001 || CellP[i].ISMDustChem_Dust_Metal[k]>P[i].Metallicity[k])) {mismatch+=1;}
-        if(CellP[i].ISMDustChem_Dust_Metal[k]<0) {mismatch+=1;}
-    }
-    for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
-        if(CellP[i].ISMDustChem_Dust_Species[k]<0) {mismatch+=1;}
-    }
-
-    if (mismatch>0){
-        printf("Yield mismatch process %i\n",update_process);
-        for (k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++){
-            printf("k: %i index: %f atomic: %f weight: %f \n", k, All.ISMDustChem_SilicateNumberOfAtomsTable[k],All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]], All.ISMDustChem_EffectiveSilicateDustAtomicWeight);
-        }
-        printf("total spec: %e elem:%e source:%e \n",elem_yields[0],CellP[i].ISMDustChem_Dust_Metal[0],source_total);
-        for (k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {
-            printf("k:%i spec_elem: %e elem:%e metal:%e \n",k,elem_yields[k],CellP[i].ISMDustChem_Dust_Metal[k],P[i].Metallicity[k]);
-        }
-        for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
-            printf("k;%i spec: %e \n",k,CellP[i].ISMDustChem_Dust_Species[k]);
-        }
-        for (k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {source_total += CellP[i].ISMDustChem_Dust_Source[k];}
-        fflush(stdout);
-        endrun(11);
-    }
 }
 
 
@@ -2129,11 +1900,12 @@ void ISMDustChemEvo_update_bins_given_mass_change(int i, int j, double *bin_dM, 
 }
 
 
-/* Returns explicit solution from polynomial function used for coagulation and shattering routines, parameterized on the (Ni,si,Nj,sj) values instead of reading them directly from particle/species state. */
-double ISMDustChemEvo_explicit_shat_coag_poly(double ail, double aiu, double aic, double ajl, double aju, double ajc, double Ni, double si, double Nj, double sj)
+/* Returns explicit solution from polynomial function used for coagulation and shattering routines */
+double ISMDustChemEvo_explicit_shat_coag_poly(double ail, double aiu, double aic,
+                                 double ajl, double aju, double ajc,
+                                 double Ni,  double si,
+                                 double Nj,  double sj)
 {
-    /* Interaction rate between grains of bin_i and bin_j.
-       An ugly polynomial but it's analytically solvable */
     return (12*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju))*Ni*Nj +
      6*aiu*(-2*aic*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)) +
         aiu*(3*aiu*aiu + 4*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)))*Nj*si +
@@ -2156,35 +1928,40 @@ double ISMDustChemEvo_explicit_shat_coag_poly(double ail, double aiu, double aic
 }
 
 
-/* Precompute the coag/shat polynomial coefficients, which only depend on grain bin edges/centers and not on particle/species state.
-   Since Iij = C_NiNj*Ni*Nj + C_Njsi*si*Nj + C_Nisj*Ni*sj + C_sisj*si*sj, each coefficient is extracted by evaluating the
-   explicit polynomial with the corresponding unit vector for (Ni,si,Nj,sj). Called once at initialization, after the grain
-   bin edges/centers are set up. */
+/* Precompute coag/shat polynomial coefficients since these only depend on grain bin parameters. */
 void ISMDustChemEvo_precompute_poly_coeffs(void)
 {
     int bin_i, bin_j;
-    for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
-        double ail = All.ISMDustChem_GrainBinEdges[bin_i], aiu = All.ISMDustChem_GrainBinEdges[bin_i+1], aic = All.ISMDustChem_GrainBinCenters[bin_i];
-        for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
-            double ajl = All.ISMDustChem_GrainBinEdges[bin_j], aju = All.ISMDustChem_GrainBinEdges[bin_j+1], ajc = All.ISMDustChem_GrainBinCenters[bin_j];
-            All.ISMDustChem_C_NiNj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 1,0);
-            All.ISMDustChem_C_Njsi[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 1,0);
+    for (bin_i = 0; bin_i < NUM_ISMDUSTCHEM_SIZE_BINS; bin_i++) {
+        double ail = All.ISMDustChem_GrainBinEdges[bin_i];
+        double aiu = All.ISMDustChem_GrainBinEdges[bin_i+1];
+        double aic = All.ISMDustChem_GrainBinCenters[bin_i];
+        for (bin_j = 0; bin_j < NUM_ISMDUSTCHEM_SIZE_BINS; bin_j++) {
+            double ajl = All.ISMDustChem_GrainBinEdges[bin_j];
+            double aju = All.ISMDustChem_GrainBinEdges[bin_j+1];
+            double ajc = All.ISMDustChem_GrainBinCenters[bin_j];
+            /* Extract each coefficient by evaluating with the corresponding unit vector.
+             * Since I = C_NN*Ni*Nj + C_Nsi*si*Nj + C_Nisj*Ni*sj + C_sisj*si*sj: */
+            All.ISMDustChem_C_NiNj[bin_i][bin_j]   = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 1,0);
+            All.ISMDustChem_C_Njsi[bin_i][bin_j]  = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 1,0);
             All.ISMDustChem_C_Nisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 0,1);
             All.ISMDustChem_C_sisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 0,1);
         }
     }
 }
 
-
-/* Fast polynomial evaluation used for the coagulation and shattering routines, using the precomputed bin-pair coefficients
-   combined with the particle/species Ni,si,Nj,sj values (a 4-term dot product replacing the full closed-form polynomial). */
+/* Fast polynomial evaluation used for coagulation and shattering routines */
 double ISMDustChemEvo_fast_shat_coag_poly(int i, int spec_indx, int bin_i, int bin_j)
 {
-    double Ni = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_i]; double si = CellP[i].ISMDustChem_Dust_SlopeInBin[spec_indx][bin_i];
-    double Nj = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_j]; double sj = CellP[i].ISMDustChem_Dust_SlopeInBin[spec_indx][bin_j];
-    double Iij = All.ISMDustChem_C_NiNj[bin_i][bin_j]*Ni*Nj + All.ISMDustChem_C_Njsi[bin_i][bin_j]*si*Nj + All.ISMDustChem_C_Nisj[bin_i][bin_j]*Ni*sj + All.ISMDustChem_C_sisj[bin_i][bin_j]*si*sj;
-    return DMAX(0,Iij); // Limit to 0 to avoid negative values due to rounding errors
+    double Ni = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_i];
+    double si = CellP[i].ISMDustChem_Dust_SlopeInBin [spec_indx][bin_i];
+    double Nj = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_j];
+    double sj = CellP[i].ISMDustChem_Dust_SlopeInBin [spec_indx][bin_j];
+    return DMAX(0, All.ISMDustChem_C_NiNj[bin_i][bin_j]*Ni*Nj + All.ISMDustChem_C_Njsi[bin_i][bin_j]*si*Nj
+                 + All.ISMDustChem_C_Nisj[bin_i][bin_j]*Ni*sj + All.ISMDustChem_C_sisj[bin_i][bin_j]*si*sj); // Limit to 0 to avoid negative values due to rounding errors
 }
+
+
 
 
 // Determines the new bin numbers and slopes given bin mass changes due shattering or coagulation.

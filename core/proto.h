@@ -589,7 +589,6 @@ void ISMDustChem_get_elem_yields_from_species_yields(double *dust_yields, double
 void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, int *key_elem, double *key_num_atoms, double *key_mass);
 void ISMDustChem_get_species_properties(int spec_indx, double *dust_atomic_weight, double *bulk_dens);
 void ISMDustChemEvo_renormalize_dust_fields(int i);
-void check_dust_fields(int i, int update_process);
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 void Initialize_ISMDustChemEvo_Particle_Variables(int i);
 double get_ISMDustChemEvo_bin_mass(int i, int j, int k);
@@ -608,8 +607,7 @@ void ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change(double *bin_dM, do
 void ISMDustChem_SNe_sputtering_step(int spec_indx, double *init_bin_N, double *init_bin_slope, double *init_bin_M, double *final_bin_N, double *final_bin_slope, double *final_bin_M, double bulk_dens);
 void ISMDustChem_SNe_shattering_step(int spec_indx, double *init_bin_N, double *init_bin_slope, double *init_bin_M, double *final_bin_N, double *final_bin_slope, double *final_bin_M, double bulk_dens);
 // Below functions only for debugging
-void ISMDustChemEvo_check_Z_injected(int i, double m0, double mf, double *Z_injected); 
-void ISMDustChemEvo_check_bins_after_update(int i, int update_process, double mass); 
+void ISMDustChemEvo_check_bins_after_update(int i, int update_process, double mass);
 void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slopes, double *bin_masses, int yields_process, int species_num, double total_mass);
 #endif
 #endif

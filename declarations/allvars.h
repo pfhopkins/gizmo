@@ -785,8 +785,8 @@ extern struct global_data_all_processes
     double Initial_ISMDustChem_SiliconToCarbonRatio; /* sets rough mass ratio between silicates are carbonaceous dust for given initial depletion */
     double ISMDustChem_AtomicMassTable[NUM_ISMDUSTCHEM_ELEMENTS]; /* atomic mass for each element in metallicity field */
     double ISMDustChem_SNeSputteringShutOffTime; /* amount of time to turn off thermal sputtering after SNe event to avoid double counting dust destruction */
-    int ISMDustChem_SilicateMetallicityFieldIndexTable[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES]; /* index in metallicity field for elements which make up silicate dust (O, Mg, Si, and possibly Fe) */
-    double ISMDustChem_SilicateNumberOfAtomsTable[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES]; /* number of O, Mg, Si, and possibly Fe in one formula unit of silicate dust */
+    int ISMDustChem_SilicateMetallicityFieldIndexTable[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES]; /* index in metallicity field for elements which make up silicate dust (O, Mg, Si, and Fe) */
+    double ISMDustChem_SilicateNumberOfAtomsTable[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES]; /* number of O, Mg, Si, and Fe in one formula unit of silicate dust */
     double ISMDustChem_EffectiveSilicateDustAtomicWeight; /* atomic weight of one formula unit of silicate dust, depends on which optional module you use */
     // Scaling arguements from parameter file used to adjust each dust process
     double ISMDustChem_SNeIIDustScaling;
@@ -796,17 +796,14 @@ extern struct global_data_all_processes
     double ISMDustChem_ThermalSputteringScaling;
     double ISMDustChem_AccretionTcutoffScaling;
     double ISMDustChem_SNeGasClearedOfDustScaling;
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
-    double ISMDustChem_SpeciesBulkDens[4]; /* condensed bulk density for silicates, carbonaceous, SiC, and metallic iron */
+    double ISMDustChem_SpeciesBulkDens[3]; /* condensed bulk density for silicates, carbonaceous, and metallic iron */
     int ISMDustChem_TrackedSpeciesIDTable[NUM_ISMDUSTCHEM_SPECIES]; /* contains unique ID numbers for each tracked dust species which correspond to their location in ISMDustChem_SpeciesFieldIndexTable. Returns -1 for untracked species  */
-    int ISMDustChem_SpeciesFieldIndexTable[6]; /* index in dust species field for given dust species. Length should be equal to the number of unique indices listed below. */
+    int ISMDustChem_SpeciesFieldIndexTable[NUM_ISMDUSTCHEM_SPECIES]; /* index in dust species field for given dust species. Length should be equal to the number of unique indices listed below. */
     int ISMDustChem_Sil_Index;
     int ISMDustChem_Carb_Index;
-    int ISMDustChem_SiC_Index;
     int ISMDustChem_FreeIron_Index ;
     int ISMDustChem_ORes_Index;
     int ISMDustChem_InclIron_Index;
-#endif
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     double UnitGrainNumber; /* factor to convert internal grain number unit to number of grains */
     double UnitGrainLength_in_cm; /* factor to convert internal grain length unit to cm */
@@ -1250,10 +1247,7 @@ enum iofields
   IO_ISMDUSTCHEMMOL,
   IO_MACHNUM,
   IO_DUSTCHEMGRAINBINNUMBERS,
-  IO_DUSTCHEMGRAINBINSLOPES,
   IO_DUSTCHEMGRAINBINMASS,
-  IO_DUSTCHEM_COAG_MASSRATE,
-  IO_DUSTCHEM_SHAT_MASSRATE,
   IO_SINKMASS,
   IO_SINKMASSALPHA,
   IO_SINK_ANGMOM,

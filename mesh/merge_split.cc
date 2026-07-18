@@ -623,7 +623,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 
-#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
         int l;
         double total_bin_num, total_bin_mass;
         for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
