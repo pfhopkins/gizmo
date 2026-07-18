@@ -393,7 +393,9 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                 }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
+                /* add *new* enrichment-age-tracer weights (beyond what already added for all loop_iteration != 3) as mass fractions */
                 if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
+                /* first term here corrects for the added mass in the gas cell (which dilutes the existing mass fractions/weights), second terms carries the preexisting mass fractions/weights in the surface/atmosphere */
                 if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -739,7 +741,9 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                 }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
+                /* add *new* enrichment-age-tracer weights (beyond what already added for all loop_iteration != 3) as mass fractions */
                 if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
+                /* first term here corrects for the added mass in the gas cell (which dilutes the existing mass fractions/weights), second terms carries the preexisting mass fractions/weights in the surface/atmosphere */
                 if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -888,7 +892,7 @@ void mechanical_fb_calc_toplevel(void)
     mechanical_fb_calc(2); /* additional loop for R-process */
 #endif
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-    mechanical_fb_calc(3); /* additional loop for stellar age tracers */
+    mechanical_fb_calc(3); /* additional loop for stellar enrichment-age-tracers */
 #endif
 #endif
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
