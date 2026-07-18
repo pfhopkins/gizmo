@@ -656,15 +656,18 @@
 ####################################################################################################-
 
 ############################################################################################################################-
-#------------------ ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain types)
+#------------------ ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain species)
 #----------------- Users of any of these modules should cite Choban et al., 2022/25 for the methods/implementation in GIZMO and FIRE
 ############################################################################################################################-
-#GALSF_ISMDUSTCHEM_MODEL=(2+4+8)    #- enable live dust evolution model (must select either elemental or species or other model codes as well)
-                                    #- model = 1: "dust by element" dust evolution model based off Bekki(2013)/McKinnon+(2016). Track generalized silicates and carbonaceous dust.
-                                    #- model = 2: "dust by species" dust evolution model based off Zhukovska+(2008/2016/2018). Tracks silicates (set composition), carbonaceous, SiC, and metallic iron dust along with optional iron nanoparticles and/or O reservoir dust species.
-                                    #- model = 4: additional metallic iron dust nano-particles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018)
-                                    #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
-                                    #- model = 16: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates (set composition), carbonaceous, and metallic iron
-                                    #- model = 32: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates w/ extra O and Fe (set composition) and carbonaceous
-#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16  #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
+#GALSF_ISMDUSTCHEM_MODEL=(1+2)              #- enable live dust evolution model (value deteremines the dust species tracked). Use GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION to set the silicate composition.
+                                            #- model = 1: Track silicates and carbonaceous dust.
+                                            #- model = 2: Track metallic iron dust.
+                                            #- model = 4: Track oxygen bearing dust species which is a simple match to observations of MW oxygen depletion.
+                                            #- model = 8: Track metallic iron nanoparticles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018). Requires GALSF_ISMDUSTCHEM_MODEL=2.
+#GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=(1+2+8)   #- set the silicate dust chemical composition. This changes the production, growth, and destruction rates of silicate dust, and the max depletions of Mg, Fe, Si, and O in the gas phase.
+                                            #- model = 1 (default): olivine-pyroxene mix [(Fe_0.571 Mg_1.06) Si O_3.63]
+                                            #- model = 2: add 2 extra O atoms to better match O depletions.
+                                            #- model = 4: add 1 extra Fe atom to better match Fe depletions.
+                                            #- model = 8: remove all Fe. Use with additional metallic iron species to avoid Fe limiting silicate growth.
+#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16          #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 1 or (1 + 2) only and GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION)
 ############################################################################################################################-

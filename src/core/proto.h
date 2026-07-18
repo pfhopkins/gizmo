@@ -572,7 +572,6 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
 double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct gas_cell_data *cell);
 void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, double m0, double mf, double *Z_injected);
 void ISMDustChemEvo_renormalize_dust_fields(int i, struct particle_data *pp, struct gas_cell_data *cell);
-void check_dust_fields(int i, int update_process, struct particle_data *pp, struct gas_cell_data *cell);
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 void Initialize_ISMDustChemEvo_Particle_Variables(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne, struct particle_data *pp, struct gas_cell_data *cell);

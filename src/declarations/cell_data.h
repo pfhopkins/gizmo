@@ -55,9 +55,7 @@ extern struct gas_cell_data
 #ifdef GALSF_ISMDUSTCHEM_MODEL
     MyDouble ISMDustChem_Dust_Source[NUM_ISMDUSTCHEM_SOURCES];  /*!< amount of dust from each source of dust creation. 0=gas-dust accretion, 1=Sne Ia, 2=SNe II, 3=AGB */
     MyDouble ISMDustChem_Dust_Metal[NUM_ISMDUSTCHEM_ELEMENTS];  /*!< metallicity (species-by-species) of dust */
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
-    MyDouble ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES]; /*!< metallicity of dust species types. 0=silicates, 1=carbon, 2=SiC, 3=free-flying iron, (optional) 4=oxygen reservoir, (optional) 5=iron inclusions in silicates */
-#endif
+    MyDouble ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES]; /*!< metallicity of dust species types */
     MyDouble ISMDustChem_DelayTimeSNeSputtering;       /*!< delay time for thermal sputtering due to recent SNe, used to not double count dust destruction with thermal sputtering */
 #if (!defined(RADTRANSFER) && !defined(RT_INFRARED)) && (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
     MyFloat Dust_Temperature;
@@ -65,8 +63,6 @@ extern struct gas_cell_data
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     MyDouble ISMDustChem_Dust_NumberInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
     MyDouble ISMDustChem_Dust_SlopeInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
-    MyDouble ISMDustChem_Coag_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
-    MyDouble ISMDustChem_Shat_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
 #else
     MyDouble ISMDustChem_C_in_CO;                      /*!< C metallicity locked in CO */
     MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */
