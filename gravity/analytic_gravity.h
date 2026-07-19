@@ -271,6 +271,9 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
 void GravAccel_GMCTurbInit()
 {
 #ifdef STARFORGE_GMC_TURBINIT
+#if !(STARFORGE_GMC_TURBINIT+0)
+#error "STARFORGE_GMC_TURBINIT must be set to a non-zero numerical value (the desired virial parameter)"
+#endif
     int i; for (int i : ActiveParticleList)
     {
         Vec3<double> dp = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize};
