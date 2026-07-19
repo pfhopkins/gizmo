@@ -10,6 +10,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 
 
 /*!
@@ -143,6 +144,7 @@ void parallel_sort_special_P_GrNr_ID(void)
 
 
   qsort(P, NumPart, sizeof(struct particle_data), io_compare_P_GrNr_ID);
+  wakeup_sidecar_invalidate();   /* P[] redistributed + reordered in place → rebuild WakeupDirty from P[] next scan */
 
 
   myfree(Aux);

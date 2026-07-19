@@ -14,6 +14,7 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts (rearrange live-pool guard) */
+#include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* update_ISMDustChemEvo_bin_number_and_slope + get_ISMDustChemEvo_bin_mass are
@@ -523,6 +524,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     long j = NumPart + n_particles_split;
     /* set the pointers equal to one another -- all quantities get copied, we only have to modify what needs changing */
     P[j] = P[i];
+    wakeup_sidecar_mark((int)j);   /* whole-struct copy inherits P[i].wakeup into a new slot */
     //memcpy(P[j],P[i],sizeof(struct particle_data)); // safer copy to make sure we don't just end up with a pointer re-direct
 
 #ifdef CHIMES
@@ -707,7 +709,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
             dx=d_r*dp[0]; dy=d_r*dp[1]; dz=d_r*dp[2];
         }
 #endif
-        P[i].wakeup = -1; P[j].wakeup = -1; NeedToWakeupParticles_local = 1; /* rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
+        P[i].wakeup = -1; P[j].wakeup = -1; wakeup_sidecar_mark(i); wakeup_sidecar_mark(j); NeedToWakeupParticles_local = 1; /* rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
 
     } // closes special operations required only of gas particles
 
@@ -827,7 +829,7 @@ int merge_particles_ij(int i, int j)
     double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
     if(P[i].TimeBin < P[j].TimeBin)
     {
-        P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
+        P[j].wakeup = -1; wakeup_sidecar_mark(j); NeedToWakeupParticles_local = 1;
     }
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dm_ij,de_ij;
     Vec3<double> dp_i{}, dp_j{}, dp_ij{};
@@ -1290,6 +1292,7 @@ void rearrange_particle_sequence(void)
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
+    wakeup_sidecar_invalidate();   /* particle indices compacted/reordered → rebuild WakeupDirty from P[] next scan */
 }
 
 

@@ -53,6 +53,14 @@
  * ========================================================================== */
 namespace gw_detail {
 
+/* Structural wakeup-field detector (keyed on the FIELD member pointer, never a
+ * loop name): true ONLY for &particle_data::wakeup. Lets ParticleMaxOp preserve
+ * the process_wake_ups dirty-sidecar superset invariant when a home-rank wakeup
+ * arrives via ghost writeback, with zero cost / no instantiation for every other
+ * MAX field (the `if constexpr` false branch is discarded). */
+constexpr bool gw_is_wakeup_member(short int particle_data::* m) { return m == &particle_data::wakeup; }
+template <typename MP> constexpr bool gw_is_wakeup_member(MP) { return false; }
+
 /* ParticleMinOp<FieldT, MemPtr> — generic min-reduce reverse-comm for any
  * scalar field on particle_data.
  *
@@ -180,6 +188,15 @@ struct ParticleMaxOp {
         const Delta *d = static_cast<const Delta*>(in_delta);
         if (d->value > P[d->home_index].*MemPtr) {
             P[d->home_index].*MemPtr = d->value;
+        }
+        if constexpr (gw_is_wakeup_member(MemPtr)) {
+            /* field==wakeup: keep the dirty-sidecar superset invariant on a
+             * ghost-received home wakeup, and flag local wakeup work (mirrors
+             * the generator-side need_wakeup signal; harmless if already set). */
+            if (P[d->home_index].wakeup != 0) {
+                if (WakeupDirty) { WakeupDirty[d->home_index] = 1; }
+                NeedToWakeupParticles_local = 1;
+            }
         }
     }
 

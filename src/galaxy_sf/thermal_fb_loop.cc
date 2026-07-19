@@ -133,6 +133,7 @@ void ThermalFBSpec::populate_device_context(const neighbor_loop_args& args,
                                              DeviceContext& ctx)
 {
     ctx.oracle_dry_run = false;
+    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup. Set before the num_active<=0 early return so the field is never uninitialized. */
 
     Aux *aux = nlr_aux<ThermalFBSpec>(args);
     const int N = args.num_active;

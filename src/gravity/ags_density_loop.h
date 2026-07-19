@@ -152,6 +152,7 @@ struct AgsDensityDeviceContext : NeighborLoopDeviceContextBase {
     int                     *need_wakeup_uvm;    /* UVM, single int.
                                                   * Sticky across all iters
                                                   * of one runner call. */
+    unsigned char           *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
     int                      oracle_dry_run;     /* MUST stay 0 for AGS — see
                                                   * caller-side endrun in
                                                   * ags_density() against
@@ -220,6 +221,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
                                           struct gas_cell_data*        neighbor_cell,
                                           AgsDensityAccumData&         accum,
                                           int*                         need_wakeup,
+                                          unsigned char*               wakeup_dirty_slot,
                                           int                          oracle_dry_run)
 {
     /* neighbor_cell is read for gas neighbors (CellP[j].VelPred); never
@@ -309,6 +311,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
             const short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&neighbor_particle.wakeup, wakeup_val);
             Kokkos::atomic_or(need_wakeup, 1);
+            if(wakeup_dirty_slot) { *wakeup_dirty_slot = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
         }
 #endif
 
@@ -412,6 +415,7 @@ struct AgsDensitySpec {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
         int                  *need_wakeup;       /* shared scratch in ctx */
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
         int                   oracle_dry_run;    /* propagated from ctx */
     };
 
@@ -558,6 +562,7 @@ struct AgsDensitySpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
         neighbor.need_wakeup       = dctx.need_wakeup_uvm;
+        neighbor.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
         neighbor.oracle_dry_run    = dctx.oracle_dry_run;
         return neighbor;
     }
@@ -582,6 +587,7 @@ struct AgsDensitySpec {
                                       neighbor.neighbor_cell,
                                       accum,
                                       neighbor.need_wakeup,
+                                      neighbor.wakeup_dirty_slot,
                                       neighbor.oracle_dry_run);
     }
 

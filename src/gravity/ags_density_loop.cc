@@ -141,6 +141,7 @@ void AgsDensitySpec::populate_device_context(const neighbor_loop_args& /*args*/,
     int *nw = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
     *nw = 0;
     ctx.need_wakeup_uvm = nw;
+    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
 }
 
 void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,

@@ -62,6 +62,7 @@ void hydro_accumulate_neighbor(
     int j, double dt_hydrostep_i,
     struct particle_data *P, struct gas_cell_data *CellP,
     int *TimeBinActive_arr, int *NeedToWakeup_flag,
+    unsigned char *WakeupDirty_arr,
     bool allow_j_writes)
 {
     int k;
@@ -473,6 +474,7 @@ void hydro_accumulate_neighbor(
             short int wakeup_val = (short int)(local.TimeBin + 1);
             HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);
+            if(WakeupDirty_arr) { WakeupDirty_arr[j] = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
         }
     }
 

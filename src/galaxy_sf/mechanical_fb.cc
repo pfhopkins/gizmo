@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
 #include "galsf_gpu_decls.h"      /* mechfb_{alloc,free,run_iterative,fill_call_scalars} prototypes */
@@ -174,6 +175,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                     int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
                     if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
                         P[j].wakeup = (short int)wakeup_val;
+                        wakeup_sidecar_mark(j);
                         NeedToWakeupParticles_local = 1;
                     }
                 }

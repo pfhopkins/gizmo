@@ -106,6 +106,7 @@ struct HydroForceNeighborData
     struct gas_cell_data *CellP;
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
     int                  *need_wakeup_ptr;      /* evaluating ctx UVM; nullptr under oracle dry-run */
+    unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base; nullptr under oracle dry-run */
     bool                  oracle_dry_run;       /* gates allow_j_writes */
 };
 
@@ -118,6 +119,7 @@ struct HydroForceDeviceContext : NeighborLoopDeviceContextBase
 {
     int  *TimeBinActive_uvm;   /* UVM int[TIMEBINS]; populate copies from host */
     int  *need_wakeup_uvm;     /* UVM int[1]; populate inits to 0 */
+    unsigned char *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
     bool  oracle_dry_run;      /* set true by set_oracle_brute_pass */
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* UVM double[num_active * NUM_ISMDUSTCHEM_PASSIVE_SCALARS]; host-precomputed
@@ -430,6 +432,7 @@ struct HydroForceSpec
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
         nb.oracle_dry_run     = ctx.oracle_dry_run;
         nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
+        nb.wakeup_dirty_ptr   = ctx.oracle_dry_run ? nullptr : ctx.wakeup_dirty_base;
         return nb;
     }
 
@@ -475,6 +478,7 @@ struct HydroForceSpec
             neighbor.P, neighbor.CellP,
             neighbor.TimeBinActive_ptr,
             neighbor.need_wakeup_ptr,
+            neighbor.wakeup_dirty_ptr,
             /*allow_j_writes=*/!neighbor.oracle_dry_run);
     }
 

@@ -88,6 +88,7 @@ void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
      * (codex round-7 lesson). */
     ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
     *ctx.need_wakeup_uvm = 0;
+    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
 
 #if defined(DM_SIDM)
     /* GeoFactorTable mirror for the SIDM probability lookup. ~8 KB total

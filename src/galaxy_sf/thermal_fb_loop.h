@@ -127,6 +127,7 @@ struct ThermalFBActiveState {
  * flag. Trivially copyable; runner captures by value into device lambdas. */
 struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
     const ThermalFBLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
+    unsigned char          *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
     bool                    oracle_dry_run;     /* flipped by set_oracle_brute_pass for brute pass */
 };
 
@@ -150,6 +151,7 @@ static void thermal_fb_pair_kernel(
     struct gas_cell_data& Cj,
     double r2,
     bool oracle_dry_run,
+    unsigned char* wakeup_dirty_slot,
     ThermalFBOut& out)
 {
     if (Pj.Type != 0) return;
@@ -229,6 +231,7 @@ static void thermal_fb_pair_kernel(
      * generation cascade that would otherwise emerge once shell-by-shell
      * pair-body wakeup-checks discover the stale-low MaxSignalVel. */
     Kokkos::atomic_max(&Pj.wakeup, (short int)((int)local.TimeBin + 1));
+    if (wakeup_dirty_slot) { *wakeup_dirty_slot = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
 
 #ifdef METALS
     for (int k = 0; k < NUM_METAL_SPECIES; k++) {
@@ -301,6 +304,7 @@ struct ThermalFBSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;   /* nullptr for non-gas; gas-only mask should prevent */
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
         bool                  oracle_dry_run;
     };
 
@@ -388,6 +392,7 @@ struct ThermalFBSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
+        n.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
         n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }
@@ -430,7 +435,7 @@ struct ThermalFBSpec {
         if (r2 >= h2) return;
 
         thermal_fb_pair_kernel(active.local, active.scalars, Pj, Cj,
-                                r2, neighbor.oracle_dry_run, accum);
+                                r2, neighbor.oracle_dry_run, neighbor.wakeup_dirty_slot, accum);
     }
 };
 

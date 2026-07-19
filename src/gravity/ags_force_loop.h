@@ -245,6 +245,7 @@ struct AgsForceActiveState {
  * lookup. */
 struct AgsForceDeviceContext : NeighborLoopDeviceContextBase {
     int               *need_wakeup_uvm;    /* UVM, single int; sticky across iters/subgroups */
+    unsigned char     *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
     bool               oracle_dry_run;
 #if defined(DM_SIDM)
     MyDouble          *geofactor_uvm;      /* UVM, GEOFACTOR_TABLE_LENGTH entries */
@@ -272,6 +273,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     const int             j            = neighbor.j;
     struct particle_data &Pj           = *neighbor.neighbor_particle;
     int                  *need_wakeup  = neighbor.need_wakeup;
+    unsigned char        *wakeup_dirty_base = neighbor.wakeup_dirty_base;
     const bool            oracle       = neighbor.oracle_dry_run;
     const AgsForceLocalIn& local       = active.local;
 
@@ -327,6 +329,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
             Kokkos::atomic_store(need_wakeup, 1);
+            if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
         }
     }
 #endif
@@ -346,6 +349,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
                 short int wakeup_val = (short int)(active.TimeBin + 1);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
                 Kokkos::atomic_store(need_wakeup, 1);
+                if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
             }
             for(int kv = 0; kv < 3; kv++) {
                 Kokkos::atomic_add(&Pj.Vel[kv], (MyDouble)sidm_r.dv_sidm[kv]);
@@ -356,7 +360,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     }
 #endif
 
-    (void)P_base; (void)j; (void)need_wakeup;  /* may be unused under specific physics combos */
+    (void)P_base; (void)j; (void)need_wakeup; (void)wakeup_dirty_base;  /* may be unused under specific physics combos */
 }
 
 
@@ -426,6 +430,7 @@ struct AgsForceSpec {
         int                   j;            /* for flux helpers' (j, P) signature */
         struct particle_data *P_base;       /* = dctx.P */
         int                  *need_wakeup;
+        unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base; nullptr under oracle */
         bool                  oracle_dry_run;
 #if defined(DM_SIDM)
         const MyDouble       *geofactor;
@@ -612,6 +617,7 @@ struct AgsForceSpec {
         n.j                 = j;
         n.P_base            = dctx.P;
         n.need_wakeup       = dctx.need_wakeup_uvm;
+        n.wakeup_dirty_base = dctx.oracle_dry_run ? nullptr : dctx.wakeup_dirty_base;
         n.oracle_dry_run    = dctx.oracle_dry_run;
 #if defined(DM_SIDM)
         n.geofactor         = dctx.geofactor_uvm;

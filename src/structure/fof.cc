@@ -10,6 +10,7 @@
 #include <inttypes.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 #include "../declarations/gpu_rng.h"
 #include "../mesh/neighbor_list.h"
 #include "group_search.h"
@@ -2272,6 +2273,7 @@ void read_fof(int num)
     P[i].SubNr = i;
 
   qsort(P, NumPart, sizeof(struct particle_data), io_compare_P_ID);
+  wakeup_sidecar_invalidate();   /* P[] reordered in place → rebuild WakeupDirty from P[] next scan */
   qsort(ID_list, Nids, sizeof(fof_id_list), fof_compare_ID_list_ID);
 
   for(i = 0; i < NumPart; i++)
@@ -2346,6 +2348,7 @@ void read_fof(int num)
 
   /* restore peano-hilbert order */
   qsort(P, NumPart, sizeof(struct particle_data), fof_compare_P_SubNr);
+  wakeup_sidecar_invalidate();   /* P[] reordered in place → rebuild WakeupDirty from P[] next scan */
   subfind(num);
   endrun(0);
 

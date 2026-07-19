@@ -215,6 +215,8 @@ extern int GlobFlag;
 extern char DumpFlag;
 extern int NeedToWakeupParticles;
 extern int NeedToWakeupParticles_local;
+extern unsigned char *WakeupDirty;   /*!< process_wake_ups superset index (UVM, MaxPart): when WakeupDirtyValid, set for every i<NumPart with P[i].wakeup!=0 (false positives allowed). P[i].wakeup stays authoritative. */
+extern int WakeupDirtyValid;         /*!< 0 => WakeupDirty stale (index remap / init); next process_wake_ups rebuilds from P[]. */
 
 extern int NumPart;		/*!< number of particles on the LOCAL processor */
 extern int N_gas;		/*!< number of gas particles on the LOCAL processor  */

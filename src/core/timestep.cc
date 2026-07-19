@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #if defined(DM_SIDM)
 #include "../sidm/sidm_helper_functions.h"
@@ -1345,6 +1346,16 @@ int get_timestep_bin(integertime ti_step)
 
 
 
+/* Authoritative rebuild of the wakeup dirty sidecar from P[]. Runs when the
+ * index mapping changed (domain decomp / rearrange / init) or on first use. */
+void wakeup_sidecar_rebuild(void)
+{
+    if(WakeupDirty) {
+        for(int i = 0; i < NumPart; i++) { WakeupDirty[i] = (P[i].wakeup != 0) ? 1 : 0; }
+    }
+    WakeupDirtyValid = 1;
+}
+
 void process_wake_ups(void)
 {
     int i, n, max_time_bin_active, bin, binold, prev, next; long long ntot;
@@ -1404,9 +1415,18 @@ void process_wake_ups(void)
 	MPI_Allreduce(&local_lowest_occupied_active_bin, &lowest_occupied_active_bin,
 	              1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
 
+	/* Dirty-sidecar scan: reject on the contiguous WakeupDirty byte array
+	 * instead of striding the fat P[] struct. Rebuild from P[] if the index
+	 * mapping changed since the last scan (domain decomp / rearrange / init). */
+	if(WakeupDirty && !WakeupDirtyValid) { wakeup_sidecar_rebuild(); }
 	for(i = 0; i < NumPart; i++)
 	{
-	    if(!P[i].wakeup) {continue;}
+	    if(WakeupDirty) {
+		if(!WakeupDirty[i]) {continue;}
+		if(!P[i].wakeup) {WakeupDirty[i] = 0; continue;}   /* superset false positive — self-clear */
+	    } else {
+		if(!P[i].wakeup) {continue;}
+	    }
 #if !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 	    if(P[i].Type != 0) {continue;} // only gas particles can be awakened
 #endif

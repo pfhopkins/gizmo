@@ -8,6 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
 #include "stellar_evolution_functions.h"
@@ -525,6 +526,7 @@ void star_formation_parent_routine(void)
                             continue; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so continue can't desync the post-loop Allreduces; drains at the next poll. */
                         }
                         P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
+                        wakeup_sidecar_mark(i_star);   /* whole-struct copy inherits P[i].wakeup into the new star slot */
                         ActiveParticleList.push_back(i_star);
                         NumForceUpdate++;
                         TimeBinCount[P[i_star].TimeBin]++;
