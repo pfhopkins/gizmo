@@ -250,6 +250,10 @@ void verify_and_assign_local_mechfb_integrals(void)
                consulted -- that count was rank-attributed to sources, not
                receivers, and truncated cross-rank deposits. */
         }
+        /* drain-zero: re-zero this touched cell (SSOT) so the persistent buffer
+         * stays all-zero between steps. Runs for every N_injected>0 cell (incl.
+         * Type!=0/Mass<=0, drained-but-not-applied) so no dirty cell survives. */
+        mechfb_reset_one_gas_delta(LocalGasMechFBInfoTemp, j);
     }
     return;
 }
@@ -282,8 +286,9 @@ void mechanical_fb_calc_toplevel(void)
         MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(global_num_active == 0) { return; }
 
-        LocalGasMechFBInfoTemp = mechfb_alloc_local_gas_delta(N_gas);
-        mechfb_zero_local_gas_delta(LocalGasMechFBInfoTemp, N_gas);
+        /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
+         * buffer is all-zero at entry by the drain-zero invariant below. */
+        LocalGasMechFBInfoTemp = mechfb_get_persistent_gas_delta(N_gas);
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         {int aa = 0; for(int ii : ActiveParticleList) {
@@ -297,7 +302,8 @@ void mechanical_fb_calc_toplevel(void)
 
 
     verify_and_assign_local_mechfb_integrals();
-    mechfb_free_local_gas_delta(LocalGasMechFBInfoTemp); /* free the structure (SharedSpace) */
+    /* persistent buffer: NOT freed -- reused across steps, kept all-zero by the
+     * drain-zero in verify_and_assign_local_mechfb_integrals. */
 }
 
 
