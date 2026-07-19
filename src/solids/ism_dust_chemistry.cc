@@ -109,7 +109,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_Carb_Index]=2.25;
     All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_FreeIron_Index]=7.86;
 
-    for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
+    for (j=0;j<NUM_ISMDUSTCHEM_SPECIES_IDS;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
     // silicates and carbonaceous dust are always tracked
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Sil_Index] = 0;
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Carb_Index] = 1;
@@ -745,8 +745,8 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
                 // Take out the iron inclusions protected in silicate dust and then add it back in later
                 if(GALSF_ISMDUSTCHEM_MODEL & 8 && spec_indx==All.ISMDustChem_InclIron_Index) {
-                    protected_frac += CellP[j].ISMDustChem_Dust_Species[spec_indx]/CellP[j].ISMDustChem_Dust_Metal[0];
-                    CellP[j].ISMDustChem_Dust_Metal[10] -= CellP[j].ISMDustChem_Dust_Species[spec_indx]; // Assume all dust species are destroyed evenly but leave out iron inclusions
+                    protected_frac += CellP[j].ISMDustChem_Dust_Species[k]/CellP[j].ISMDustChem_Dust_Metal[0]; // Dust_Species is packed by tracked-species slot: index by k, not the fixed species ID
+                    CellP[j].ISMDustChem_Dust_Metal[10] -= CellP[j].ISMDustChem_Dust_Species[k]; // Assume all dust species are destroyed evenly but leave out iron inclusions
             }
                 else {CellP[j].ISMDustChem_Dust_Species[k] *= 1.-massfrac_destroyed;} // Assume all dust species are destroyed evenly
             }

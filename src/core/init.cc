@@ -158,7 +158,7 @@ void init(void)
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     for(i = 0; i < SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM; i++)
     {
-        All.SpecialParticle_Position_ForRefinement[i] = {};
+        All.SpecialParticle_Position_ForRefinement[i] = {-MAX_REAL_NUMBER, -MAX_REAL_NUMBER, -MAX_REAL_NUMBER}; /* invalid sentinel (consumers treat x<=-1e10 as 'no anchor', and it is effectively infinitely far so no spurious refinement/boundary): prevents anchoring at the origin before the producer sets it, or when no tagged/special particle exists */
         All.Mass_Accreted_By_SpecialParticle[i]=0; All.Mass_of_SpecialParticle[i]=0;
     }
 #endif
