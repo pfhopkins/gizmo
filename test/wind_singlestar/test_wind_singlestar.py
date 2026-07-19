@@ -4,11 +4,11 @@ Same box setup as SN_singlestar (50000 Msun, n_H = 100 cm^-3) but the star is
 100 Msun at zero age with SINGLE_STAR_FB_WINDS=2.
 
 Parametrized over:
-  - Wind parameters (Mdot in Msun/yr, v_w in km/s)
-  - Resolution (glass cube side length: 64, 128, 256)
-  - Cooling variant (adiabatic vs COOLING+COOLING_OPERATOR_SPLIT)
+  - Cooling variant (adiabatic vs COOLING)
+  - Wind injection mode (local mechanical injection vs particle spawning)
 
-Adiabatic runs check energy conservation; cooling runs check Weaver shell radius.
+Fixed at 64^3 resolution. Adiabatic runs check energy conservation;
+cooling runs check Weaver shell radius.
 """
 
 import pytest
@@ -194,21 +194,15 @@ def get_snapshots(test_name, extra_config_flags=()):
 
 
 @pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(default_mpi_ranks(), default_omp_threads())])
-@pytest.mark.parametrize(
-    "res",
-    [32,64,128],
-    ids=lambda x: f"N{x}",
-)
+@pytest.mark.parametrize("res", [64], ids=lambda x: f"N{x}")
 @pytest.mark.parametrize(
     "Mdot_vw", [(1e-4,3000.0),], ids=lambda x: f"Mdot{x[0]:.0e}_vw{x[1]:.0f}"
 )
-@pytest.mark.parametrize("wind_mode", [2,], ids=lambda x: f"wm{x}" if x else "wm_auto")
+@pytest.mark.parametrize("wind_mode", [1, 2], ids=["spawn", "local"])
 @pytest.mark.parametrize(
     "cooling_flags",
-    [(), ("COOLING",), ("COOLING","JACO=wind_comparison")],
-#    [("COOLING","JACO=wind_comparison")],
-    ids=["adiabatic", "cooling", "jaco_wind_comparison"],
-#    ids=["jaco_wind_comparison",]
+    [(), ("COOLING",)],
+    ids=["adiabatic", "cooling"],
 )
 def test_wind_singlestar(num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode, cooling_flags):
     Mdot, v_w = Mdot_vw

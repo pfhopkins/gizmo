@@ -6,6 +6,9 @@
 /* also many logical options to force 'parent' or 'top-level' flags to be enabled for the appropriate methods, if we have enabled something using those methods */
 
 /* macro definition we will use throughout below, make sure this is defined up-top here */
+#ifdef NOGRAVITY
+#define SELFGRAVITY_OFF
+#endif
 #define DO_PREPROCESSOR_EXPAND_(VAL)  VAL ## 1
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
@@ -384,6 +387,7 @@
 #endif
 #define OUTPUT_SINK_ACCRETION_HIST // save accretion histories
 #define OUTPUT_SINK_FORMATION_PROPS // save at-formation properties of sink particles
+#define INPUT_READ_SINKPROPS
 #if ( defined(STARFORGE_GMC_TURBINIT) || defined(STARFORGE_FILAMENT_TURBINIT) ) // these flags should be given numerical values equal to the desired virial parameter
 #define TURB_DRIVING
 #define GRAVITY_ANALYTIC
@@ -405,22 +409,7 @@
 #define TURB_DIFF_METALS_LOWORDER
 #endif
 #ifdef SINGLE_STAR_FB_RAD
-#define RT_M1
-#define RT_COMOVING
-#ifndef OUTPUT_RT_RAD_FLUX
-#define OUTPUT_RT_RAD_FLUX
-#if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
-#define IO_SUPPRESS_OUTPUT_EDDINGTON_TENSOR
-#endif
-#endif
-#ifndef RT_SOURCES
-#define RT_SOURCES 32
-#endif
-#ifndef RT_SPEEDOFLIGHT_REDUCTION
-#define RT_SPEEDOFLIGHT_REDUCTION (3.0e-4)
-#endif
-#define RT_REPROCESS_INJECTED_PHOTONS
-#define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
+#define SINGLE_STAR_RT_DEFAULTS
 #define RT_OPTICAL_NIR
 #define RT_NUV
 #define RT_PHOTOELECTRIC
@@ -431,11 +420,8 @@
 #if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
 #define RT_ISRF_BACKGROUND
 #endif
-#if defined(RT_INFRARED)
-#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
 #endif
-#endif
-#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED))
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
 #ifdef COOLING
@@ -465,6 +451,25 @@
 #endif
 #endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+#ifdef SINGLE_STAR_RT_DEFAULTS
+#define RT_M1
+#define RT_COMOVING
+#define OUTPUT_RT_RAD_FLUX
+#ifndef IO_SUPPRESS_OUTPUT_EDDINGTON_TENSOR
+#define IO_SUPPRESS_OUTPUT_EDDINGTON_TENSOR
+#endif
+#ifndef RT_SOURCES
+#define RT_SOURCES 32
+#endif
+#ifndef RT_SPEEDOFLIGHT_REDUCTION
+#define RT_SPEEDOFLIGHT_REDUCTION (3.0e-4)
+#endif
+#define RT_REPROCESS_INJECTED_PHOTONS
+#define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
+#define RT_REINJECT_ACCRETED_PHOTONS
+#define RT_INJECT_PHOTONS_DISCRETELY
+#endif // closes SINGLE_STAR_RT_DEFAULTS settings
 
 
 #ifdef SINGLE_STAR_SINK_DYNAMICS

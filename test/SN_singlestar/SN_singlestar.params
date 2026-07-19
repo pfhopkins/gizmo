@@ -173,7 +173,7 @@ TabulatedCosmologyFile    CosmoTbl
 ErrTolTheta                  0.5
 ErrTolForceAcc               0.0025
 ErrTolIntAccuracy        0.01
-CourantFac               0.2
+CourantFac               0.1
 MaxRMSDisplacementFac    0.125
 MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10
