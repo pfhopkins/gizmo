@@ -52,163 +52,125 @@ void force_update_tree(void)
 
 
 
-void force_finish_kick_nodes(void)
+/* Packed per-changed-node kick record for the single fused Allgatherv in
+ * force_finish_kick_nodes (replaces the 2-5 separate field Allgathervs). Fixed
+ * layout is identical on every rank, so an MPI_BYTE exchange is field-equivalent
+ * (any padding bytes are transmitted but ignored). TU-local. */
+namespace {
+struct DomainKickPacked
 {
-  int i, j, no, ta, totDomainNumChanged;
-  int *domainList_all;
-  int *counts, *counts_dp, *offset_list, *offset_dp, *offset_vmax;
-  MyDouble *domainDp_loc, *domainDp_all;
-
+  int node;
+  MyDouble dp[3];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyDouble *domainDp_stellarlum_loc, *domainDp_stellarlum_all;
+  MyDouble rt_dp[3];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  MyDouble *domainDp_dm_loc, *domainDp_dm_all;
+  MyDouble dp_dm[3];
 #endif
-  MyFloat *domainVmax_loc, *domainVmax_all;
+  MyFloat vmax;
+};
+}  /* anonymous namespace */
+
+void force_finish_kick_nodes(void)
+{
+  int i, no, ta, totDomainNumChanged;
+  int *counts, *counts_dp, *offset_dp;
 
   /* share the momentum-data of the pseudo-particles accross CPUs */
 
   counts = (int *) mymalloc("counts", sizeof(int) * NTask);
   counts_dp = (int *) mymalloc("counts_dp", sizeof(int) * NTask);
-  offset_list = (int *) mymalloc("offset_list", sizeof(int) * NTask);
   offset_dp = (int *) mymalloc("offset_dp", sizeof(int) * NTask);
-  offset_vmax = (int *) mymalloc("offset_vmax", sizeof(int) * NTask);
 
-  domainDp_loc = (MyDouble *) mymalloc("domainDp_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    domainDp_stellarlum_loc = (MyDouble *) mymalloc("domainDp_stellarlum_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  domainDp_dm_loc = (MyDouble *) mymalloc("domainDp_dm_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-  domainVmax_loc = (MyFloat *) mymalloc("domainVmax_loc", DomainNumChanged * sizeof(MyFloat));
-
-  for(i = 0; i < DomainNumChanged; i++)
-    {
-      for(j = 0; j < 3; j++)
-	{
-	  domainDp_loc[i * 3 + j] = Extnodes[DomainList[i]].dp[j];
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        domainDp_stellarlum_loc[i * 3 + j] = Extnodes[DomainList[i]].rt_source_lum_dp[j];
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-	  domainDp_dm_loc[i * 3 + j] = Extnodes[DomainList[i]].dp_dm[j];
-#endif
-	}
-      domainVmax_loc[i] = Extnodes[DomainList[i]].vmax;
-    }
-
+  /* Exchange per-rank changed-node counts FIRST (all ranks participate in this
+   * collective), so a globally-empty update can early-out BEFORE any local
+   * payload malloc/pack, the packed Allgatherv, and the apply loop. When
+   * totDomainNumChanged==0 every rank's payload is empty, so all that work is
+   * mathematically a no-op; the early-out is exact, and symmetric across ranks
+   * (totDomainNumChanged is the same global sum on every rank). */
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
 
-  for(ta = 0, totDomainNumChanged = 0, offset_list[0] = 0, offset_dp[0] = 0, offset_vmax[0] = 0; ta < NTask;
-      ta++)
-    {
-      totDomainNumChanged += counts[ta];
-      if(ta > 0)
-	{
-	  offset_list[ta] = offset_list[ta - 1] + counts[ta - 1];
-	  offset_dp[ta] = offset_dp[ta - 1] + counts[ta - 1] * 3 * sizeof(MyDouble);
-	  offset_vmax[ta] = offset_vmax[ta - 1] + counts[ta - 1] * sizeof(MyFloat);
-	}
+  for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
+    totDomainNumChanged += counts[ta];
+
+  if(totDomainNumChanged == 0)
+    {   /* no rank changed a top-level node: nothing to pack/exchange/apply */
+      myfree(offset_dp);
+      myfree(counts_dp);
+      myfree(counts);
+      return;
     }
 
-  PRINT_STATUS(" ..exchanged kick momenta for %d top-level nodes out of %d", totDomainNumChanged, NTopleaves);
-  domainDp_all = (MyDouble *) mymalloc("domainDp_all", totDomainNumChanged * 3 * sizeof(MyDouble));
+  /* Packed single-Allgatherv path: pack each changed node's fields into one
+   * contiguous record and exchange in ONE collective instead of 2-5 separate
+   * field Allgathervs (fewer collective latencies / skew-absorption points).
+   * Field-equivalent apply. */
+  {
+    struct DomainKickPacked *rec_loc = (struct DomainKickPacked *)
+        mymalloc("fut_rec_loc", DomainNumChanged * sizeof(struct DomainKickPacked));
+    for(i = 0; i < DomainNumChanged; i++)
+      {
+        no = DomainList[i];
+        rec_loc[i].node = no;
+        rec_loc[i].dp[0] = Extnodes[no].dp[0];
+        rec_loc[i].dp[1] = Extnodes[no].dp[1];
+        rec_loc[i].dp[2] = Extnodes[no].dp[2];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    domainDp_stellarlum_all = (MyDouble *) mymalloc("domainDp_stellarlum_all", totDomainNumChanged * 3 * sizeof(MyDouble));
+        rec_loc[i].rt_dp[0] = Extnodes[no].rt_source_lum_dp[0];
+        rec_loc[i].rt_dp[1] = Extnodes[no].rt_source_lum_dp[1];
+        rec_loc[i].rt_dp[2] = Extnodes[no].rt_source_lum_dp[2];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  domainDp_dm_all =
-    (MyDouble *) mymalloc("domainDp_dm_all", totDomainNumChanged * 3 * sizeof(MyDouble));
+        rec_loc[i].dp_dm[0] = Extnodes[no].dp_dm[0];
+        rec_loc[i].dp_dm[1] = Extnodes[no].dp_dm[1];
+        rec_loc[i].dp_dm[2] = Extnodes[no].dp_dm[2];
 #endif
-  domainVmax_all = (MyFloat *) mymalloc("domainVmax_all", totDomainNumChanged * sizeof(MyFloat));
-
-  domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
-
-  MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
-		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
-
-  for(ta = 0; ta < NTask; ta++)
-    {
-      counts_dp[ta] = counts[ta] * 3 * sizeof(MyDouble);
-      counts[ta] *= sizeof(MyFloat);
-    }
-
-
-  MPI_Allgatherv(domainDp_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-		 domainDp_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
-
+        rec_loc[i].vmax = Extnodes[no].vmax;
+      }
+    /* byte counts/offsets for the fixed-size records (reuse counts_dp/offset_dp;
+     * counts[] is still the raw per-rank node count here) */
+    for(ta = 0; ta < NTask; ta++)
+      {
+        counts_dp[ta] = counts[ta] * (int) sizeof(struct DomainKickPacked);
+        offset_dp[ta] = (ta == 0) ? 0 : offset_dp[ta - 1] + counts[ta - 1] * (int) sizeof(struct DomainKickPacked);
+      }
+    PRINT_STATUS(" ..exchanged kick momenta for %d top-level nodes out of %d", totDomainNumChanged, NTopleaves);
+    struct DomainKickPacked *rec_all = (struct DomainKickPacked *)
+        mymalloc("fut_rec_all", totDomainNumChanged * sizeof(struct DomainKickPacked));
+    MPI_Allgatherv(rec_loc, DomainNumChanged * (int) sizeof(struct DomainKickPacked), MPI_BYTE,
+                   rec_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+    for(i = 0; i < totDomainNumChanged; i++)
+      {
+        no = rec_all[i].node;
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))
+          no = Nodes[no].u.d.father;
+        while(no >= 0)
+          {
+            force_drift_node(no, All.Ti_Current);
+            Extnodes[no].dp[0] += rec_all[i].dp[0];
+            Extnodes[no].dp[1] += rec_all[i].dp[1];
+            Extnodes[no].dp[2] += rec_all[i].dp[2];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MPI_Allgatherv(domainDp_stellarlum_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-                   domainDp_stellarlum_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+            Extnodes[no].rt_source_lum_dp[0] += rec_all[i].rt_dp[0];
+            Extnodes[no].rt_source_lum_dp[1] += rec_all[i].rt_dp[1];
+            Extnodes[no].rt_source_lum_dp[2] += rec_all[i].rt_dp[2];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  MPI_Allgatherv(domainDp_dm_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-		 domainDp_dm_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+            Extnodes[no].dp_dm[0] += rec_all[i].dp_dm[0];
+            Extnodes[no].dp_dm[1] += rec_all[i].dp_dm[1];
+            Extnodes[no].dp_dm[2] += rec_all[i].dp_dm[2];
 #endif
-
-  MPI_Allgatherv(domainVmax_loc, DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
-		 domainVmax_all, counts, offset_vmax, MPI_BYTE, MPI_COMM_WORLD);
-
-
-  /* DIAGNOSTIC: after MPI exchange, print totDomainNumChanged and sum of received dp */
-  /* construct momentum kicks in top-level tree */
-  for(i = 0; i < totDomainNumChanged; i++)
-    {
-      no = domainList_all[i];
-
-      if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))	/* to avoid that the local one is kicked twice */
-	no = Nodes[no].u.d.father;
-
-      while(no >= 0)
-	{
-	  force_drift_node(no, All.Ti_Current);
-
-	  Extnodes[no].dp[0] += domainDp_all[3 * i + 0];
-	  Extnodes[no].dp[1] += domainDp_all[3 * i + 1];
-	  Extnodes[no].dp[2] += domainDp_all[3 * i + 2];
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-          Extnodes[no].rt_source_lum_dp[0] += domainDp_stellarlum_all[3 * i + 0];
-          Extnodes[no].rt_source_lum_dp[1] += domainDp_stellarlum_all[3 * i + 1];
-          Extnodes[no].rt_source_lum_dp[2] += domainDp_stellarlum_all[3 * i + 2];
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-	  Extnodes[no].dp_dm[0] += domainDp_dm_all[3 * i + 0];
-	  Extnodes[no].dp_dm[1] += domainDp_dm_all[3 * i + 1];
-	  Extnodes[no].dp_dm[2] += domainDp_dm_all[3 * i + 2];
-#endif
-
-	  if(Extnodes[no].vmax < domainVmax_all[i])
-	    Extnodes[no].vmax = domainVmax_all[i];
-
-	  Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
-	  Extnodes[no].Ti_lastkicked = All.Ti_Current;
-
-	  no = Nodes[no].u.d.father;
-	}
-    }
-
-  myfree(domainList_all);
-  myfree(domainVmax_all);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    myfree(domainDp_stellarlum_all);
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  myfree(domainDp_dm_all);
-#endif
-  myfree(domainDp_all);
-  myfree(domainVmax_loc);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    myfree(domainDp_stellarlum_loc);
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  myfree(domainDp_dm_loc);
-#endif
-  myfree(domainDp_loc);
-  myfree(offset_vmax);
+            if(Extnodes[no].vmax < rec_all[i].vmax)
+              Extnodes[no].vmax = rec_all[i].vmax;
+            Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
+            Extnodes[no].Ti_lastkicked = All.Ti_Current;
+            no = Nodes[no].u.d.father;
+          }
+      }
+    myfree(rec_all);
+    myfree(rec_loc);
+  }
   myfree(offset_dp);
-  myfree(offset_list);
   myfree(counts_dp);
   myfree(counts);
 }
