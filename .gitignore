@@ -1,7 +1,18 @@
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
+*~
+.#*
+
+# AI-tool scratch dirs (same rationale as .claude/ below)
+.codex/
+
 # Build + local-run artifacts (the build and dev runs now live in src/)
 *.o
 GIZMO_config.h
 compile_time_info.cc
+src/.build_clean_stamp
 /src/GIZMO
 /src/Config.sh
 /src/Config.sh.*
@@ -48,6 +59,7 @@ test/*/test_*.out
 test/*/test_*.err
 test/*/__pycache__/
 test/*/*.png
+test/*/*.pdf
 test/*/test_helmholtz
 test/*/test_nuclear
 
