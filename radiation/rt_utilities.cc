@@ -777,6 +777,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
                     
                     CellP[i].Radiation_Temperature = (e0 + dE_fac) / (MIN_REAL_NUMBER + DMAX(0., e0 / CellP[i].Radiation_Temperature + dTE_fac));
                     CellP[i].Radiation_Temperature = DMIN(CellP[i].Radiation_Temperature, T_max);
+                    CellP[i].Radiation_Temperature = DMAX(CellP[i].Radiation_Temperature, DMAX(T_min, MIN_REAL_NUMBER)); // numerator above can go negative in extreme dynamic-range regimes; floor before use below to avoid log10(negative)=NaN propagating into the opacity table lookup
                     a0_abs = -rt_absorption_rate(i,kf); // update absorption rate using the new radiation temperature //
                 }
                 double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
@@ -1724,6 +1725,7 @@ int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes
 double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag)
 {
     if(do_emission_absorption_scattering_opacity==1) {Trad = T_dust;} // if we want the emissivity then we assume radiation emitted at T_dust
+    Trad = DMAX(Trad, MIN_REAL_NUMBER); // guard against non-positive Trad reaching log10() below: negative values cause log10=NaN, which propagates into an unguarded table-index cast further down (rt_dust_opacity.cc) and segfaults
     double fac=UNIT_SURFDEN_IN_CGS, x = 4.*log10(Trad) - 8., kappa=0, T_dust_opacitytable = T_dust; // needed for fitting functions to opacities (may come up with cheaper function later)
     double dx_excess=0; if(x > 7.) {dx_excess=x-7.; x=7.;} // cap for maximum temperatures at which fit-functions should be used //
     //if(x < -4.) {x=-4.;} // cap for minimum temperatures at which fit functions below should be used //
