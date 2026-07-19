@@ -79,14 +79,18 @@ struct LETPerRankPayload {
     int    has_sink;
     int    has_cover;       /* rank owns >=1 local topleaf; receivers with has_cover==0 (empty
                                ranks) are shipped nothing -- the no-real-receiver guard. */
+    int    n_orphans;       /* count of this rank's drift-orphan receiver-cover records (see
+                               LETOrphanRecord). Rides this Allgather so every rank learns every
+                               rank's orphan count -> the orphan-record Allgatherv is entered
+                               collectively (all ranks agree total>0) or skipped (total==0). */
     /* NOTE (per-cover scalar refinement): min_OldAcc/max_soft_by_type/min_soft/has_sink here are
        the WHOLE-RANK worst case, DERIVED (reduced) from the per-topleaf LETTopleafScalars table so
        they can never drift from it (SSOT). LET essentiality now reads the per-TOPLEAF scalars from
        that table (target-local, tighter); these whole-rank values remain for has_cover + wire-compat
        + a conservative fallback (e.g. the empty-owned-topleaf case, baked into the table by the owner). */
 };
-/* LETPerRankPayload sizeof = 14 doubles + 2 ints = 120 B (8-B aligned, no tail pad).
- * Per-rank Allgather bandwidth: NTask * 120 B (e.g. 120 KB at NTask=1024) -- negligible. */
+/* LETPerRankPayload sizeof = 14 doubles + 3 ints (+4 tail pad) = 128 B (8-B aligned).
+ * Per-rank Allgather bandwidth: NTask * 128 B (e.g. 128 KB at NTask=1024) -- negligible. */
 
 /* Per-topleaf worst-case opening-criterion scalars for the LET cover tree. One record per topleaf,
  * aggregated over the OWNER rank's particles falling in that topleaf, Allgatherv'd (mirroring the
@@ -100,6 +104,20 @@ struct LETTopleafScalars {
     double min_soft;             /* non-NEIGHBORS node-softening open (min over the topleaf) */
     int    has_sink;             /* sink-direct gate (any Type-5 in the topleaf) */
     int    _pad;                 /* 8-B align -> sizeof = 72 B */
+};
+
+/* Drift-orphan receiver-cover record.  Under ADAPTIVE_TREEFORCE_UPDATE the tree is REUSED while
+ * particles drift; a particle still RESIDENT/local on rank R can drift so its Father chain reaches a
+ * topleaf t whose DomainTask[t] != R (t is only the current tree geometry containing it -- NOT a
+ * change of which rank owns the target).  Such a target is outside every one of R's OWNED-topleaf
+ * cover boxes, so R's per-topleaf cover would drop it -> under-import.  Instead R publishes one orphan
+ * record per reached foreign topleaf t (merged worst-case over R's local orphans reaching t); every
+ * sender appends it to R's cover as an extra leaf with topleaf t's box geometry + these scalars.
+ * The receiver rank R is implied by the Allgatherv slice this record arrives in (see g_orphan_off). */
+struct LETOrphanRecord {
+    int    topleaf;              /* reached foreign topleaf t: cover-leaf geometry = DomainNodeIndex[t] box */
+    int    _pad;                 /* 8-B align */
+    struct LETTopleafScalars s;  /* merged worst-case opening scalars over R's local targets reaching t */
 };
 
 /* ----------------------------------------------------------------------
