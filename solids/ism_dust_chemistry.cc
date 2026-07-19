@@ -72,7 +72,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_Carb_Index]=2.25;
     All.ISMDustChem_SpeciesBulkDens[All.ISMDustChem_FreeIron_Index]=7.86;
 
-    for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
+    for (j=0;j<NUM_ISMDUSTCHEM_SPECIES_IDS;j++) {All.ISMDustChem_SpeciesFieldIndexTable[j] = -1;}
     // silicates and carbonaceous dust are always tracked
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Sil_Index] = 0;
     All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Carb_Index] = 1;
@@ -819,8 +819,8 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
                 // Take out the iron inclusions protected in silicate dust and then add it back in later
                 if(GALSF_ISMDUSTCHEM_MODEL & 8 && spec_indx==All.ISMDustChem_InclIron_Index) {
-                    protected_frac += CellP[j].ISMDustChem_Dust_Species[spec_indx]/CellP[j].ISMDustChem_Dust_Metal[0];
-                    CellP[j].ISMDustChem_Dust_Metal[10] -= CellP[j].ISMDustChem_Dust_Species[spec_indx]; // Assume all dust species are destroyed evenly but leave out iron inclusions
+                    protected_frac += CellP[j].ISMDustChem_Dust_Species[k]/CellP[j].ISMDustChem_Dust_Metal[0]; // Dust_Species is packed by tracked-species slot: index by k, not the fixed species ID
+                    CellP[j].ISMDustChem_Dust_Metal[10] -= CellP[j].ISMDustChem_Dust_Species[k]; // Assume all dust species are destroyed evenly but leave out iron inclusions
             }
                 else {CellP[j].ISMDustChem_Dust_Species[k] *= 1.-massfrac_destroyed;} // Assume all dust species are destroyed evenly
             }
@@ -982,7 +982,7 @@ void update_dust_processes(int i, double dtime_gyr)
     double dx_cell = Get_Particle_Size(i) * All.cf_atime; // cell size
     double surface_density_H2_0 = 5.e14 * PROTONMASS_CGS, x_exp_fac=0.00085, w0=0.2; // characteristic cgs column for -molecular line- self-shielding
     w0 = 0.035; // actual calibration from Drain, Gnedin, Richings, others: 0.2 is more appropriate as a re-calibration for sims doing local eqm without ability to resolve shielding at higher columns
-    double v_thermal_rms = 0.111*sqrt(T); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
+    double v_thermal_rms = 0.111*sqrt(temp); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
     double gradv = velocity_gradient_norm(i);
     double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
     CellP[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.));
