@@ -249,7 +249,7 @@ double return_timestep_dilation_factor(int i, int mode)
     double amax = fac_amax;
     double r_amax = fac_amax * All.ForceSoftening[3]; // modify as needed
     double index = 1;
-    int j, k; double rmin = MAX_REAL_NUMBER, r=0, a=1;
+    int j, k; double rmin = MAX_REAL_NUMBER, r=0; a=1;
     for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
     {
         double p0[3]={0}, dp[3]={0}, r2=0, pos_i[3];
