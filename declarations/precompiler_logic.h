@@ -1089,6 +1089,12 @@
 #define NUM_ISMDUSTCHEM_SOURCES (4) // Sources of dust creation/growth 0=gas-dust accretion, 1=SNe Ia, 2=SNe II, 3=AGB outflows
 #define NUM_ISMDUSTCHEM_SPECIES (2*(GALSF_ISMDUSTCHEM_MODEL & 1) + (GALSF_ISMDUSTCHEM_MODEL & 2)/2 + (GALSF_ISMDUSTCHEM_MODEL & 4)/4 + (GALSF_ISMDUSTCHEM_MODEL & 8)/8) /* number of dust species tracked, depends on the model */
 #define NUM_ISMDUSTCHEM_SPECIES_IDS (5) /* number of possible species IDs (0=silicate,1=carbon,2=free iron,3=O reservoir,4=iron inclusions); the sparse SpeciesFieldIndexTable is indexed by these fixed IDs, not the packed tracked-species count */
+#if !(GALSF_ISMDUSTCHEM_MODEL & 1)
+#error "GALSF_ISMDUSTCHEM_MODEL requires bit 1 (silicates+carbon are the base species always tracked); e.g. use (1), (1+2), ..."
+#endif
+#if (GALSF_ISMDUSTCHEM_MODEL & 8) && !(GALSF_ISMDUSTCHEM_MODEL & 2)
+#error "GALSF_ISMDUSTCHEM_MODEL bit 8 (iron inclusions in silicates) requires bit 2 (metallic iron)"
+#endif
 #define GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES 4 /* O, Mg, Si, and Fe needed to make silicates */
 #undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
