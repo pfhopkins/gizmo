@@ -265,6 +265,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     
                     cell[i].Radiation_Temperature = (e0 + dE_fac) / (MIN_REAL_NUMBER + DMAX(0., e0 / cell[i].Radiation_Temperature + dTE_fac));
                     cell[i].Radiation_Temperature = DMIN(cell[i].Radiation_Temperature, T_max);
+                    cell[i].Radiation_Temperature = DMAX(cell[i].Radiation_Temperature, DMAX(T_min, MIN_REAL_NUMBER)); // numerator above can go negative in extreme dynamic-range regimes; floor before use below to avoid log10(negative)=NaN propagating into the opacity table lookup
                     a0_abs = -rt_absorption_rate(i,kf, pp, cell); // update absorption rate using the new radiation temperature //
                 }
                 double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
