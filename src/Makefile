@@ -85,6 +85,14 @@ KOKKOS_CPPFLAGS = # populated by Kokkos Makefile.kokkos include below
 KOKKOS_CXXFLAGS = #
 KOKKOS_LDFLAGS  = #
 KOKKOS_LIBS     = #
+# CHIMES SUNDIALS/CVODE requirement (READ BEFORE ENABLING CHIMES):
+#   The bundled CHIMES network uses the pre-6.0 SUNDIALS API -- context-free
+#   CVodeCreate()/N_VNew_Serial()/SUNDenseMatrix()/SUNLinSol_Dense() and the
+#   'realtype' type. It therefore requires SUNDIALS in the 2.7 - 5.x range.
+#   SUNDIALS 6.x made a SUNContext argument mandatory on those calls, and 7.x
+#   removed 'realtype' (now 'sunrealtype'), so 6.0+ will NOT compile against the
+#   current CHIMES sources without source-level API updates. Point CHIMESINCL/
+#   CHIMESLIBS below at a SUNDIALS install in the supported range.
 CHIMESINCL = # default to empty, will only be used below if called
 CHIMESLIBS = # default to empty, will only be used below if called
 HYPRE_INCL = # hypre library for AMG-preconditioned solver in MG gradient correction
@@ -387,6 +395,11 @@ HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 endif
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+# NOTE: set these to a SUNDIALS install in the CHIMES-supported 2.7-5.x range (see the
+# note at the CHIMESINCL/CHIMESLIBS defaults above). Homebrew currently ships SUNDIALS
+# 7.x (too new: no 'realtype', context-mandatory CVode API), so `brew`'s default path
+# will not compile CHIMES; the paths below are the legacy Intel-Homebrew location and
+# must be pointed at a supported SUNDIALS to build CHIMES on this platform.
 CHIMESINCL = -I/usr/local/include/sundials
 CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
 endif

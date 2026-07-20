@@ -1775,16 +1775,16 @@ static void mode_b_remote_evaluate_into_buffer(
      * through streamed Mode-B at multi-round MUST be re-audited + oracle-checked
      * (evrard, the validated case, is mass-preserving MFM). */
 
-    /* Targeted-export eligibility (compile-time, STRUCTURAL — search_mode +
-     * radius_policy, never a caller name). Hoisted above Stage 3 because the
-     * fused self walk consumes it + the exporter + jscale. */
-    constexpr bool targeted_export_ok =
-        mode_b_targeted_export_eligible(Spec::search_mode, Spec::radius_policy);
+    /* B3a Commit 2a: the eligibility gate is RETIRED — EVERY Mode-B loop routes via
+     * targeted export (per-type node band is cross-rank-fresh + dominates every
+     * radius_policy; see mode_b_local_walker.h). Hard-coded true; the `else`
+     * broadcast arms below are compile-time-DEAD cleanup debt, NOT a runtime
+     * fallback -- physical deletion is Commit 2b. */
+    constexpr bool targeted_export_ok = true;
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
 
     /* Targeted-export reverse map: topnode indices are stable between builds →
-     * build ONCE, reuse for the fused walk. Broadcast-path loops skip it and
-     * announce. */
+     * build ONCE, reuse for the fused walk. */
     ModeBTopleafMap topleaf_map;   /* shared read-only map, built once */
     ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
     if constexpr (targeted_export_ok) {
@@ -2063,14 +2063,13 @@ static void mode_b_remote_evaluate_into_buffer(
      * N_active. B2a = SENDER cap only; the full large-N fix needs B2b receiver
      * group staging.
      *
-     * ELIGIBLE loops (ONEWAY, or SYMMETRIC with a gas-kernel policy the cross-
-     * rank scalar hmax dominates) get TARGETED export: walk the local tree per
-     * active and export ONLY to peers whose remote subtree the query reaches,
-     * carrying the exported start-nodes so the receiver resumes a bounded walk.
-     * UNCOVERED loops (non-gas / AGS / ForceSoftening) broadcast (n_nodes==0):
-     * the per-type node band is not exchanged cross-rank, so the sender cannot
-     * bound their reach on remote peers. Broadcast is correct (each receiver
-     * prunes with its own bands). Self-pair handled above; self entry stays
+     * ALL Mode-B loops get TARGETED export (B3a Commit 2a; gate retired): walk the
+     * local tree per active and export ONLY to peers whose remote subtree the query
+     * reaches, carrying the exported start-nodes so the receiver resumes a bounded
+     * walk. The per-type node band prunes the SYMMETRIC reach and is cross-rank-fresh
+     * (S2 + force_update_hmax), so the sender bounds every loop's reach on remote
+     * peers. The `else` broadcast arm (n_nodes==0 to all peers) is compile-time-DEAD
+     * cleanup debt, removed in Commit 2b. Self-pair handled above; self entry stays
      * empty. */
     /* (targeted_export_ok, jscale, exporter hoisted above Stage 3 for the fused walk.)
      * Oracle under-route probes (oracle modes only): ALSO ship each query to the

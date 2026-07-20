@@ -784,6 +784,34 @@ void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas) {
     Kokkos::fence();  /* ensure host zero is visible to the next device launch */
 }
 
+/* Persistent capacity-managed gas-delta buffer (grow-only). Replaces the per-step
+ * alloc + O(N_gas) zero + free. Invariant (upheld by the caller): the buffer is
+ * all-zero between mechfb steps -- verify_and_assign_local_mechfb_integrals
+ * re-zeros every drained (N_injected>0) cell via mechfb_reset_one_gas_delta, and
+ * only N_injected>0 cells are ever written (mechfb_gas_delta_nonzero SSOT). Being
+ * all-zero between steps makes particle reorder (domain decomposition) harmless. */
+struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas) {
+    static struct MechFBGasDelta *s_buf = nullptr;
+    static int s_cap = 0;
+    const int n = (n_gas > 0) ? n_gas : 1;
+    if (n > s_cap) {
+        if (s_buf) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(s_buf);
+        s_buf = (struct MechFBGasDelta *)
+            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(struct MechFBGasDelta));
+        Kokkos::fence();
+        for (int j = 0; j < n; ++j) mechfb_writeback_detail::mechfb_gas_delta_zero(&s_buf[j]);
+        Kokkos::fence();
+        s_cap = n;
+    }
+    return s_buf;
+}
+
+/* Host-callable single-cell reset (SSOT mechfb_gas_delta_zero); called on each
+ * drained cell to keep the persistent buffer all-zero between steps. */
+void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
+    mechfb_writeback_detail::mechfb_gas_delta_zero(&p[j]);
+}
+
 /* mechfb_run_iterative — runner-template dispatch entry for MechFBSpec.
  *
  * Validation matrix (codex r5+r6+r7 review, 2026-05-14):

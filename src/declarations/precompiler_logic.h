@@ -1569,4 +1569,57 @@
 #define AGS_DSOFT_TOL (0.5)
 #endif
 
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
+ *
+ * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at
+ * 3D because every momentum-slot access in sidm/cbe_integrator{.cc,
+ * _functions.h, _flux_functions.h} hard-coded [1]/[2]/[3] as p_x/p_y/p_z.
+ * Lifted 2026-06-02 to NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path
+ * once sidm/cbe_integrator_functions.h gained dimension-aware
+ * momentum-slot helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3,
+ * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
+ * sites were migrated through them.
+ *
+ * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
+ * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
+ * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
+ * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
+ * repair, postgravity dT block) to access stress slots via cbe_T_idx /
+ * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
+ * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
+ * cbe_build_flux_frame_Q_from_stored_moments so the flux solver sees
+ * absolute-frame Q. The frame conversion on the storage side has since
+ * been moved (codex 2026-06-04) from a continuous-time differential
+ * postgravity formula into a finite absolute-update round-trip inside
+ * do_cbe_drift_kick_kernel (see SSOT helpers cbe_relative_row_to_absolute
+ * / cbe_absolute_to_relative_row); postgravity is now reduced to a
+ * mass-closure safety net, and pi.Vel is updated directly from the
+ * post-update mass-weighted-mean basis velocity rather than through a
+ * GravAccel injection. With these pieces in place, the SECONDMOMENT-on
+ * low-D code passes the 1D uniform warm two-stream and the warm
+ * density-wave analytic gates (mass, central S, total M/p/E preserved
+ * to roundoff).
+ *
+ * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
+ * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)
+ * — that whole repair chain (diagonal floor + CS + det + SPD projection +
+ * split-largest) is slated for replacement by Fix #2b conservative-shift
+ * repair (commit 5). The active-dim SPD projection landed in 4a is what
+ * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
+ * reachable. */
 
+
+/* Gravtree source-luminosity lazy-touch capability predicate.
+ * The per-particle source payload can be evaluated on-device at each gravity
+ * walk particle-open (lazy) only when every enabled gravtree source family has
+ * a device-callable core. All families are device-ported EXCEPT the
+ * GR_TABULATED_COSMOLOGY* set, whose expansion/gravity history is read from a
+ * host-only tabulated file. Undefined => the eager dense O(NumPart) source
+ * prepass is used (correct, just not tiny-N optimized). Any future gravtree
+ * source family lacking a device core must be added to this exclusion.
+ * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
+ * runtime is made by a separate structural (num_active) threshold. */
+#if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
+#define GRAVTREE_SOURCE_LAZY_SUPPORTED
+#endif

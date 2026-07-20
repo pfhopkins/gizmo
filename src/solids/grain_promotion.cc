@@ -3,6 +3,7 @@
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 
 #include "../declarations/allvars.h"
+#include "../core/wakeup_sidecar.h"
 #include "grain_promotion.h"
 
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
@@ -41,7 +42,7 @@ void grain_promotion_parent_routine(void)
 
         P[i].Type = 0;
         TimeBinCountGas[P[i].TimeBin]++;
-        P[i].wakeup = -1;
+        P[i].wakeup = -1; wakeup_sidecar_mark(i);
         NeedToWakeupParticles_local = 1;
         Grains_promoted++;
     }

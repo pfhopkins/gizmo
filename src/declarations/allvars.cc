@@ -123,6 +123,8 @@ int TreeMomentsStaleFlag;
 long long ForceAddElementToTree_CallsSinceBuild = 0;
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
 int NeedToWakeupParticles_local;
+unsigned char *WakeupDirty = NULL;
+int WakeupDirtyValid = 0;
 int GlobFlag;
 #ifdef HERMITE_INTEGRATION
 int HermiteOnlyFlag;            /*! Flag used to indicate whether to skip non-Hermite integrated particles in the force evaluation */

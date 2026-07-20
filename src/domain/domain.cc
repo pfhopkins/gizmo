@@ -7,6 +7,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
 
@@ -440,6 +441,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   gizmo_exit_bad_stop_if_requested("domain:treeallocate"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
   reconstruct_timebins();
   gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
+  wakeup_sidecar_invalidate();      /* P[] reindexed across ranks → rebuild WakeupDirty from P[] next scan */
 }
 
 
@@ -671,6 +673,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
     gizmo_exit_bad_stop_if_requested("domain:treeallocate_light"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
     reconstruct_timebins();
+    wakeup_sidecar_invalidate();   /* light repartition rearranged + exchanged particles → rebuild WakeupDirty next scan */
 }
 
 

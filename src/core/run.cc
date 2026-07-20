@@ -1392,7 +1392,7 @@ void output_extra_log_messages(void)
 #endif
 
 #if defined(GR_TABULATED_COSMOLOGY) && defined(OUTPUT_ADDITIONAL_RUNINFO)
-    if((ThisTask == 0) && (All.ComovingIntegrationOn == 1)
+    if((ThisTask == 0) && (All.ComovingIntegrationOn == 1))
     {
         double hubble_a;
 

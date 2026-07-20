@@ -24,6 +24,15 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+/* This TU alone exposes the device-callable gravtree source-payload helpers
+ * (rt_get_source_luminosity / sink_lum_bol_core / cr_get_source_injection_rate and
+ * their stellar-evolution/cosmology leaves), so the source payload can be evaluated
+ * on-device at each local particle-open. The compile-time capability predicate
+ * GRAVTREE_SOURCE_LAZY_SUPPORTED gates body visibility; the runtime eager/lazy choice
+ * is a separate active-count threshold. Must precede the source-helper header includes. */
+#ifdef GRAVTREE_SOURCE_LAZY_SUPPORTED
+#define GRAVTREE_SOURCE_DEVICE_TU
+#endif
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/gpu_error_check.h"
@@ -36,8 +45,11 @@
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"  /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "gravtree_ewald.h"         /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
-#include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
 #include "pm_highres_region.h"      /* pmforce_is_particle_high_res SSOT (device-callable) */
+/* gravtree_moment_sources.h (the SSOT source-input fill helper) is included further
+ * below, AFTER the device-callable source cores, so that in this DEVICE_TU the helper
+ * binds its RT/sink/CR calls to the inline device bodies rather than the proto.h host
+ * decls. See the source-core include block after the walk-data struct definitions. */
 
 
 /* Single gate for the Ewald periodic-image POTENTIAL correction added in the
@@ -158,6 +170,23 @@ struct gpu_sink_walk_data_t {
 /* The device replica of sink_fb_angleweight was collapsed into gravtree_force_kernel.h
  * (grav_sink_fb_angleweight, component args), shared verbatim with the host function. */
 #endif /* SINK_PHOTONMOMENTUM */
+
+/* ---- Device-callable source cores for the lazy per-open source evaluation ----
+ * This TU opens GRAVTREE_SOURCE_DEVICE_TU, so gravtree_moment_sources.h's fill helper is
+ * KOKKOS_INLINE here and its RT/sink/CR calls must see the inline device bodies. Pull the
+ * enabled families' *_functions.h cores in FIRST (rt_functions.h is already included above
+ * under RT_USE_GRAVTREE and transitively carries the stellar-evolution/cosmology + sink
+ * leaves; sink/CR are added here for the non-RT source configs). Host/default TUs compile
+ * the helper as static-inline against the proto.h host wrappers and skip this block. */
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+#ifdef SINK_PHOTONMOMENTUM
+#include "../sinks/sink_functions.h"                       /* sink_lum_bol_core */
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"  /* cr_get_source_injection_rate */
+#endif
+#endif
+#include "gravtree_moment_sources.h" /* SSOT per-particle source-input fill helper (static-inline host / KOKKOS_INLINE device) */
 
 /* Ewald periodic-image POTENTIAL correction for the primary walk.  Under
  * pure-tree periodic gravity with EVALPOTENTIAL the CPU walk (forcetree.cc)
@@ -309,6 +338,7 @@ gpu_gravtree_walk_one(int target,
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                       const struct gpu_cr_walk_data_t *cr_data,
 #endif
+                      bool use_lazy_source,   /* evaluate the source payload on-device at each local open (no dense eager arrays; d_src_lum/d_bh_lum/d_cr_inject are NULL) */
                       const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
                       Vec3<double> &acc_out,
                       int &ninter_out,
@@ -508,6 +538,15 @@ gpu_gravtree_walk_one(int target,
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+            /* Lazy source payload for this local leaf: evaluate the SSOT helper on-device
+             * (identical gates/formula to the eager prefill) instead of reading the dense
+             * arrays. Computed once here; consumed by the RT/sink/CR blocks below. Only for
+             * local particle leaves (no<maxPart) -- foreign leaves and nodes stay
+             * moment-backed and never reach this branch. */
+            struct gravtree_source_inputs_t lazy_src;
+            if(use_lazy_source) { gravtree_fill_particle_source_inputs(no, P_dev, CellP_dev, &lazy_src); }
+#endif
 #ifdef DM_SCALARFIELD_SCREENING
             /* Set per-interaction DM state for this leaf particle (mirrors forcetree.cc:2055). */
             if(ptype != 0 && P_dev[no].Type == 1) { d_dm = dr; mass_dm_local = mass; }
@@ -555,29 +594,53 @@ gpu_gravtree_walk_one(int target,
             {
                 d_stellarlum = dr;
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+                    mass_stellarlum[kf] = use_lazy_source ? (lazy_src.rt_active ? lazy_src.src_lum[kf] : (MyFloat)0)
+                                                          : rt_data->src_lum[(long)no * N_RT_FREQ_BINS + kf];
+#else
                     mass_stellarlum[kf] = rt_data->src_lum[(long)no * N_RT_FREQ_BINS + kf];
+#endif
                 }
 #ifdef CHIMES_STELLAR_FLUXES
                 for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+                    chimes_mass_stellarlum_G0[kf]  = use_lazy_source ? (lazy_src.rt_active ? lazy_src.src_lum_G0[kf]  : 0.0) : rt_data->src_lum_G0[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_ion[kf] = use_lazy_source ? (lazy_src.rt_active ? lazy_src.src_lum_ion[kf] : 0.0) : rt_data->src_lum_ion[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+#else
                     chimes_mass_stellarlum_G0[kf] = rt_data->src_lum_G0[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
                     chimes_mass_stellarlum_ion[kf] = rt_data->src_lum_ion[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+#endif
                 }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                 /* per-sink-leaf angle-weighted luminosity (shared formula helper) */
                 mass_sinklumwt_forradfb = 0.0;
                 if(P_dev[no].Type == 5) {
-                    double bhlum_t = (double) sink_data->bh_lum[no];
-                    mass_sinklumwt_forradfb = grav_sink_fb_angleweight(bhlum_t,
-                                                                       (double) sink_data->bh_angle[no][0], (double) sink_data->bh_angle[no][1], (double) sink_data->bh_angle[no][2],
-                                                                       dr[0], dr[1], dr[2]);
+                    double bhlum_t, bha0, bha1, bha2;
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+                    if(use_lazy_source) {
+                        bhlum_t = lazy_src.bh_active ? (double)lazy_src.bh_lum : 0.0;
+                        bha0 = lazy_src.bh_active ? (double)lazy_src.bh_angle[0] : 0.0;
+                        bha1 = lazy_src.bh_active ? (double)lazy_src.bh_angle[1] : 0.0;
+                        bha2 = lazy_src.bh_active ? (double)lazy_src.bh_angle[2] : 0.0;
+                    } else
+#endif
+                    {
+                        bhlum_t = (double) sink_data->bh_lum[no];
+                        bha0 = (double) sink_data->bh_angle[no][0]; bha1 = (double) sink_data->bh_angle[no][1]; bha2 = (double) sink_data->bh_angle[no][2];
+                    }
+                    mass_sinklumwt_forradfb = grav_sink_fb_angleweight(bhlum_t, bha0, bha1, bha2, dr[0], dr[1], dr[2]);
                 }
 #endif
             }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             /* Mirror forcetree.cc:1734-1736 leaf CR source injection. */
+#if defined(GRAVTREE_SOURCE_DEVICE_TU)
+            cr_injection = use_lazy_source ? (double) lazy_src.cr_inject : (double) cr_data->cr_inject[no];
+#else
             cr_injection = (double) cr_data->cr_inject[no];
+#endif
 #endif
             /* Sink-distance + single-star timestepping tracking on particle leafs via the
              * shared helper (gravtree_force_kernel.h) — CPU-walk semantics verbatim. */
@@ -1184,19 +1247,33 @@ extern "C" int gpu_gravtree_walk_primary(void)
         return 1;
     }
 
-    /* ------------------------------------------------------------------ *
-     * Phase 2: pre-compute per-particle gravity source inputs on the CPU.  *
-     * rt_get_source_luminosity / sink_lum_bol / cr_get_source_injection_rate*
-     * are not device-callable, so the gated physics lives once in the       *
-     * shared host helper gravtree_fill_particle_source_inputs() and is       *
-     * amortised to a single host pass before the GPU kernel launch.          *
-     * ------------------------------------------------------------------  */
+    /* Per-particle gravity source inputs (RT luminosity / sink bolometric luminosity /
+     * CR injection), evaluated via the shared SSOT helper gravtree_fill_particle_source_
+     * inputs(). Two modes, same physics:
+     *   EAGER: one host pass over all NumPart fills dense SharedSpace arrays the kernel
+     *          reads by particle id.
+     *   LAZY:  no dense arrays and no O(NumPart) pass -- the kernel evaluates the same
+     *          helper on-device at each local particle-open, so the cost scales with the
+     *          active set rather than NumPart.
+     * Selected by the active-count threshold below; the result is identical either way. */
+    bool use_lazy_source = false;
+#if defined(GRAVTREE_SOURCE_LAZY_SUPPORTED) && (defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON))
+    /* Use lazy when the step touches few particles -- either an absolute count or a small
+     * fraction of the local pool. Hard-coded (no env var, no parameter). */
+    {
+        const long   GRAVTREE_SOURCE_LAZY_CAP  = 256;
+        const double GRAVTREE_SOURCE_LAZY_FRAC = 0.01;
+        use_lazy_source = ((long)num_active <= GRAVTREE_SOURCE_LAZY_CAP) ||
+                          ((double)num_active < GRAVTREE_SOURCE_LAZY_FRAC * (double)NumPart);
+    }
+#endif
+
 #ifdef RT_USE_GRAVTREE
     MyFloat *d_src_lum = NULL;
 #ifdef CHIMES_STELLAR_FLUXES
     double *d_src_lum_G0 = NULL, *d_src_lum_ion = NULL;
 #endif
-    {
+    if(!use_lazy_source) {
         long sz = (long)NumPart * N_RT_FREQ_BINS * sizeof(MyFloat);
         d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
         if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202); myfree(idx_host); return 1;}
@@ -1215,7 +1292,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat       *d_bh_lum   = NULL;
     Vec3<MyFloat> *d_bh_angle = NULL;
-    {
+    if(!use_lazy_source) {
         long sz_lum  = (long)NumPart * sizeof(MyFloat);
         long sz_ang  = (long)NumPart * sizeof(Vec3<MyFloat>);
         d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
@@ -1228,24 +1305,29 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     MyFloat *d_cr_inject = NULL;
+    /* per-step CR-age scalar: needed by the walk's CR gate in BOTH modes (cr_active_gate
+     * + grav_cr_lebron_accumulate), so it is computed unconditionally, NOT inside the
+     * eager-only dense-array block. Lazy skips only the d_cr_inject ARRAY. */
     double   t_max_cr    = 0.0;
-    {
+    if(All.Time > All.TimeBegin) {
+        double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
+        if(t_gyr > 1.0) {t_gyr = 1.0;}
+        t_max_cr = t_gyr / UNIT_TIME_IN_GYR;     /* per-step scalar; computed once, not per-particle */
+    }
+    if(!use_lazy_source) {
         long sz = (long)NumPart * sizeof(MyFloat);
         d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
         if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211); myfree(idx_host); return 1;}
         memset(d_cr_inject, 0, sz);
-        if(All.Time > All.TimeBegin) {
-            double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
-            if(t_gyr > 1.0) {t_gyr = 1.0;}
-            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;     /* per-step scalar; computed once, not per-particle */
-        }
     }
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 
-    /* Single host pass: gated physics in the shared SSOT helper, then copy ONLY
-     * the active entries into this venue's SharedSpace arrays (already bulk-zeroed
-     * above), matching the legacy per-section write pattern. */
+    /* EAGER only: single host pass over all NumPart, gated physics in the shared SSOT
+     * helper, copying ONLY active entries into the bulk-zeroed SharedSpace arrays. In
+     * LAZY mode this whole O(NumPart) pass is skipped -- the kernel evaluates the same
+     * helper on-device at each local particle-open instead. */
 #if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    if(!use_lazy_source)
     for(int p = 0; p < NumPart; p++) {
         struct gravtree_source_inputs_t in;
         gravtree_fill_particle_source_inputs(p, P, CellP, &in);
@@ -1400,6 +1482,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                                         &cr_data_dev,
 #endif
+                                        use_lazy_source,
                                         &ewald_pot_dev,
                                         acc, ninter, pot, nforeign);
         if(ok) {

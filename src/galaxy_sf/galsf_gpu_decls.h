@@ -40,6 +40,10 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars);
  * non-GPU mechanical_fb.cc TU doesn't take a backend dependency on whether
  * SharedSpace is host-readable bytewise (codex r4-followup 2026-05-14). */
 void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas);
+/* Persistent grow-only gas-delta buffer replacing per-step alloc + O(N_gas) zero
+ * + free; mechfb_reset_one_gas_delta re-zeros one drained cell (SSOT). */
+struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas);
+void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j);
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                           int n_gas);

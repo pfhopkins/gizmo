@@ -215,6 +215,8 @@ extern int GlobFlag;
 extern char DumpFlag;
 extern int NeedToWakeupParticles;
 extern int NeedToWakeupParticles_local;
+extern unsigned char *WakeupDirty;   /*!< process_wake_ups superset index (UVM, MaxPart): when WakeupDirtyValid, set for every i<NumPart with P[i].wakeup!=0 (false positives allowed). P[i].wakeup stays authoritative. */
+extern int WakeupDirtyValid;         /*!< 0 => WakeupDirty stale (index remap / init); next process_wake_ups rebuilds from P[]. */
 
 extern int NumPart;		/*!< number of particles on the LOCAL processor */
 extern int N_gas;		/*!< number of gas particles on the LOCAL processor  */
@@ -892,17 +894,20 @@ extern struct extNODE
    *
    * ONEWAY walks never read this field.
    *
-   * These bands are intentionally rank-local.  Their only consumer is the
-   * Mode B SYMMETRIC local tree-walk (mesh/mode_b_local_walker.cc), which is
-   * re-seeded on every rank at every tree build/refresh, returns only
-   * rank-local candidates, and never descends pseudo/foreign nodes.  A remote
-   * neighbor query is answered owner-side: the runner broadcasts each active
-   * to every rank, so a query against another rank's pool is pruned with THAT
-   * rank's locally-fresh bands -- no cross-rank band exchange is needed for
-   * correctness.  DomainNODE ships only the scalar hmax, which the gravity
-   * walk's opening criterion reads on pseudo/top-level nodes.  (Shipping the
-   * per-topleaf band maxima would let the sender geometrically route queries
-   * instead of broadcasting -- an efficiency option, not missing physics.) */
+   * These bands are seeded rank-local at every tree build/refresh AND maintained
+   * cross-rank: DomainNODE carries them on the full-build/refresh pseudodata
+   * exchange (up-propagated through the top tree by gpu_topnode_moment_resum), and
+   * force_update_hmax() re-exchanges them post-density alongside the scalar hmax.
+   * So a remote topleaf's (and its ancestors') per-type bands are populated and
+   * kept as fresh as the scalar hmax.  Consumer = the Mode B SYMMETRIC local
+   * tree-walk (mesh/mode_b_local_walker.cc): rank-local bands prune the candidate
+   * walk (returns only rank-local candidates, never descends pseudo/foreign
+   * subtrees); the cross-rank bands bound the sender's targeted export of remote
+   * topleaves (mode_b_node_symmetric_radius), replacing the broadcast path.
+   * (Historically these were rank-local + broadcast-answered; the cross-rank
+   * exchange + export routing were added to bound the non-gas SYMMETRIC loops --
+   * correctness for those, since the gas-biased scalar hmax cannot cover their
+   * reach.) */
   MyFloat hmax_per_type[6];
   MyFloat divVmax;
   integertime Ti_lastkicked;

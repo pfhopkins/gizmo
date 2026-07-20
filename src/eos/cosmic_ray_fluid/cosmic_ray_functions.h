@@ -959,3 +959,70 @@ KOKKOS_INLINE_FUNCTION double CR_gas_heating(int target, double n_elec, double n
     return 0;
 #endif
 }
+
+
+/* ======================================================================
+ * Subgrid-LEBRON cosmic-ray source injection (gravity-tree source payload).
+ * Device + host single source of truth; host externals in
+ * cosmic_ray_utilities.cc. Depends on stellar-age + sink-CR-efficiency cores.
+ * ====================================================================== */
+#if defined(COSMIC_RAY_SUBGRID_LEBRON) && (defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED)))
+#include "../../galaxy_sf/stellar_evolution_functions.h"
+#include "../../sinks/sink_functions.h"
+
+KOKKOS_INLINE_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *pp, struct gas_cell_data *cell);
+
+KOKKOS_INLINE_FUNCTION double cr_get_source_injection_rate(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double Edot = 0;
+#ifdef GALSF
+#ifdef GALSF_FB_MECHANICAL
+    if(pp[i].Type == 4)
+    {
+        double star_age=evaluate_stellar_age_Gyr_core(i, pp), RSNe=0, agemin=0.003401, agebrk=0.01037, agemax=0.03753;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+        agemin=0.0037; agebrk=0.7e-2; agemax=0.044; double f1=3.9e-4, f2=5.1e-4, f3=1.8e-4; // inputs for newer SNe rate (and newer Ia rate below)
+        if(star_age<agemin) {RSNe=0;} else if(star_age<=agebrk) {RSNe=f1*pow(star_age/agemin,log(f2/f1)/log(agebrk/agemin));} else if(star_age<=agemax) {RSNe=f2*pow(star_age/agebrk,log(f3/f2)/log(agemax/agebrk));} else {RSNe=0;} // core-collapse; updated with same stellar evolution models for wind mass loss [see there for references]. simple 2-part power-law provides extremely-accurate fit. models predict a totally negligible metallicity-dependence.
+        double t_Ia_min=agemax, norm_Ia=1.6e-3; if(star_age>t_Ia_min) {RSNe += norm_Ia * 7.94e-5 * pow(star_age,-1.1) / fabs(pow(t_Ia_min/0.1,-0.1) - 0.61);} // Ia DTD following Maoz & Graur 2017, ApJ, 848, 25
+        //if(star_age < 0.04) {RSNe = 3.0e-4;} else {RSNe = DMIN(3.e-4 , RSNe);} /* replace this with a 'time smoothed' version over the last ~100+ Myr */
+#else
+        if(star_age>agemin) {if(star_age<=agebrk) {RSNe=5.408e-4;} else {if(star_age<=agemax) {RSNe=2.516e-4;}}} // core-collapse rate [super-simple 2-piece constant] //
+        if(star_age>agemax) {RSNe=5.3e-8 + 1.6e-5*exp(-0.5*((star_age-0.05)/0.01)*((star_age-0.05)/0.01));} // Ia (prompt Gaussian+delay, Manucci+06)
+#endif
+        Edot = All.CosmicRay_SNeFraction * (RSNe*UNIT_TIME_IN_MYR) * (pp[i].Mass*UNIT_MASS_IN_SOLAR) * (1.0e51/UNIT_ENERGY_IN_CGS);
+    }
+#endif
+#ifdef SINK_PARTICLES
+    if(pp[i].Type == 5) {
+        double mdot_eff = pp[i].Sink_Mdot; // code units
+        mdot_eff = DMIN( mdot_eff , pp[i].Sink_Mass / (100./UNIT_TIME_IN_MYR) ); // if time-averaging over ~Gyr, can't have time-averaged injection rate above Mbh/<t> more or less (modulo order-one corrections for all this)
+        Edot = evaluate_sink_cosmicray_efficiency_core(pp[i].Sink_Mdot,pp[i].Sink_Mass,i) * mdot_eff * C_LIGHT_CODE*C_LIGHT_CODE; // injection in code units
+    }
+#endif
+#endif
+    if(Edot > 0) {return Edot * cr_get_source_shieldfac(i, pp, cell);} else {return 0;}
+}
+
+
+KOKKOS_INLINE_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double cr_atten_fac = 1;
+    if(pp[i].KernelRadius > 0 && pp[i].NumNgb > 0 && All.Time > All.TimeBegin)
+    {
+        double dx=pp[i].KernelRadius/pp[i].NumNgb, rho; // code units
+        Vec3<double> gradrho = pp[i].GradRho;
+        if(pp[i].Type==0) {rho=cell[i].Density;} else {rho=pp[i].DensityAroundParticle;}
+        if(rho > 0)
+        {
+            double gradrho_mag = gradrho.norm();
+            if(gradrho_mag > 0) {dx += rho/gradrho_mag;} // code units
+            double R_loss = ((6.37 + 3.09)*1.e-16*UNIT_TIME_IN_CGS) * (rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS); // physical units
+            double psi_loss_i = (R_loss / All.CosmicRay_Subgrid_Vstream_0) / sqrt(1. + R_loss*All.CosmicRay_Subgrid_Kappa_0/(All.CosmicRay_Subgrid_Vstream_0*All.CosmicRay_Subgrid_Vstream_0)); // physical units
+            double dtau = 0.5 * psi_loss_i * (dx*All.cf_atime); // physical units in dx, so dimensionless here
+            cr_atten_fac = exp(-DMIN(dtau, 50.));
+        }
+    }
+    return cr_atten_fac;
+}
+
+#endif /* COSMIC_RAY_SUBGRID_LEBRON && (GRAVTREE_SOURCE_HOST_OWNER_TU || (GRAVTREE_SOURCE_DEVICE_TU && GRAVTREE_SOURCE_LAZY_SUPPORTED)) */

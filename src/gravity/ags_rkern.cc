@@ -81,7 +81,13 @@ double ags_return_maxsoft(int i)
     maxsoft = DMIN(maxsoft, 1e3 * 0.5 * All.Asmth[0]); /* no more than 1/2 the size of the largest PM cell, times a 'safety factor' which can be pretty big */
 #endif
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS)
-    if(P[i].Type == 5) {maxsoft = All.SinkMaxAccretionRadius  / All.cf_atime;}   // MaxAccretionRadius is now defined in params.txt in PHYSICAL units
+    /* MaxAccretionRadius is defined in params.txt in PHYSICAL units. Enforce the
+     * recommended-policy invariant "nothing exceeds MaxKernelRadius" via DMIN
+     * (never > All.MaxKernelRadius, already the line-1 seed): keeps the Mode-B
+     * per-type node band (capped at MaxKernelRadius) a valid upper bound on this
+     * sink's AGS leaf reach. No effect where SinkMaxAccretionRadius < MaxKernelRadius
+     * (the recommended + every-tested config). */
+    if(P[i].Type == 5) {maxsoft = DMIN(maxsoft, All.SinkMaxAccretionRadius / All.cf_atime);}
 #endif
     return maxsoft;
 }

@@ -5,6 +5,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
+#include "cosmology_functions.h"
+#undef GRAVTREE_SOURCE_HOST_OWNER_TU
 
 
 /*!
@@ -47,65 +50,25 @@ void set_cosmo_factors_for_current_time(void)
 
 
 /* utility function which calculates the time difference between some initial time given
-    in whatever code units of time (e.g. scale-factor for cosmological runs) and the present time, in Gyr units. written by PFH */
+    in whatever code units of time (e.g. scale-factor for cosmological runs) and the present time, in Gyr units. written by PFH.
+    body in cosmology_functions.h (single source for host + device) */
 double evaluate_time_since_t_initial_in_Gyr(double t_initial)
 {
-    double age,a0,a1,a2,x0,x1,x2;
-    if(All.ComovingIntegrationOn)
-    {
-        a0 = t_initial;
-        a2 = All.Time;
-        if(fabs(1-(All.OmegaMatter+All.OmegaLambda))<=0.01)
-        {
-            /* use exact solution for flat universe, ignoring the radiation-dominated epoch [no stars forming then] */
-            x0 = (All.OmegaMatter/(1-All.OmegaMatter))/(a0*a0*a0);
-            x2 = (All.OmegaMatter/(1-All.OmegaMatter))/(a2*a2*a2);
-            age = (2./(3.*sqrt(1-All.OmegaMatter)))*log(sqrt(x0*x2)/((sqrt(1+x2)-1)*(sqrt(1+x0)+1)));
-            age *= 1./All.Hubble_H0_CodeUnits;
-        } else {
-            /* use simple trap rule integration */
-            a1 = 0.5*(a0+a2);
-            x0 = 1./(a0*hubble_function(a0));
-            x1 = 1./(a1*hubble_function(a1));
-            x2 = 1./(a2*hubble_function(a2));
-            age = (a2-a0)*(x0+4.*x1+x2)/6.;
-        }
-    } else {
-        /* time variable is simple time, when not in comoving coordinates */
-        age=All.Time-t_initial;
-    }
-    age *= UNIT_TIME_IN_GYR; // convert to absolute Gyr
-    if(isnan(age) || age<=0) {age = 0;}
-    return age;
+    return evaluate_time_since_t_initial_in_Gyr_core(t_initial);
 }
 
 
 
-/* this function gets called regardless of the cosmology choices: 
-    anything which modifies the growth history should live here. 
-    This is the usual hubble function H0 * E(z); so for example 
+/* this function gets called regardless of the cosmology choices:
+    anything which modifies the growth history should live here.
+    This is the usual hubble function H0 * E(z); so for example
     the proper time:
         dt = 1/hubble_function(a) * dz/(1+z) = dlna / hubble_function(a)
+    body in cosmology_functions.h (single source for host + device)
 */
 double INLINE_FUNC hubble_function(double a)
 {
-    double hubble_a;
-    
-#ifdef GR_TABULATED_COSMOLOGY_H
-    hubble_a = All.Hubble_H0_CodeUnits * hubble_function_external(a);
-#else
-    hubble_a = All.OmegaRadiation / (a*a*a*a) + All.OmegaMatter / (a*a*a) + (1 - All.OmegaMatter - All.OmegaLambda - All.OmegaRadiation) / (a*a)
-#ifdef GR_TABULATED_COSMOLOGY
-    + DarkEnergy_a(a);
-#else
-    + All.OmegaLambda;
-#endif
-    hubble_a = All.Hubble_H0_CodeUnits * sqrt(hubble_a);
-#endif
-#ifdef GR_TABULATED_COSMOLOGY_G
-    hubble_a *= dHfak(a);
-#endif
-    return (hubble_a);
+    return hubble_function_core(a);
 }
 
 

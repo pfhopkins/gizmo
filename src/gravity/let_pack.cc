@@ -183,6 +183,50 @@ static void let_topleaf_scalars_ensure(int n)
 }
 
 /* ----------------------------------------------------------------------
+ * Drift-orphan receiver-cover records (see struct LETOrphanRecord).
+ *   g_my_orphans      -- THIS rank's records for the current build (producer side).
+ *   g_orphan_all      -- every rank's records, concatenated by rank (post-Allgatherv).
+ *   g_orphan_off      -- prefix-sum offsets: rank R's records = g_orphan_all[off[R], off[R+1]).
+ * Process-lifetime scratch (like g_topleaf_scalars / the g_cover* arrays); grow-only. */
+static struct LETOrphanRecord *g_my_orphans = NULL;
+static int g_my_orphans_n = 0, g_my_orphans_cap = 0;
+static struct LETOrphanRecord *g_orphan_all = NULL;
+static int g_orphan_all_cap = 0;
+static int *g_orphan_off = NULL;
+static int g_orphan_off_cap = 0;
+
+/* Merge one local orphan target's opening scalars into an orphan record (same worst-case ops as the
+ * per-topleaf table: min OldAcc, max soft-by-type, min soft, OR has_sink). */
+static inline void let_orphan_merge(struct LETOrphanRecord *r, double oa, double soft, int ptype)
+{
+    if(oa > 0 && oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
+    if(soft > r->s.max_soft_by_type[ptype]) r->s.max_soft_by_type[ptype] = soft;
+    if(soft < r->s.min_soft) r->s.min_soft = soft;
+    if(ptype == 5) r->s.has_sink = 1;
+}
+
+/* Find (or append) THIS rank's orphan record for reached foreign topleaf t, initialised empty.
+ * Orphans are rare, so a compact list with linear-search dedup keeps the blast radius minimal (no
+ * NTopleaves-sized scratch); if orphan counts ever explode that is itself a perf signal to report. */
+static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
+{
+    for(int k = 0; k < g_my_orphans_n; k++) if(g_my_orphans[k].topleaf == t) return &g_my_orphans[k];
+    if(g_my_orphans_n >= g_my_orphans_cap) {
+        int nc = g_my_orphans_cap ? 2 * g_my_orphans_cap : 8;
+        struct LETOrphanRecord *nb = (struct LETOrphanRecord *)
+            realloc(g_my_orphans, (size_t) nc * sizeof(struct LETOrphanRecord));
+        if(!nb) { printf("let_my_orphan_for_topleaf: realloc failed (nc=%d, rank=%d). Stopping.\n",
+                         nc, ThisTask); fflush(stdout); endrun(90000095); }
+        g_my_orphans = nb; g_my_orphans_cap = nc;
+    }
+    struct LETOrphanRecord *r = &g_my_orphans[g_my_orphans_n++];
+    r->topleaf = t; r->_pad = 0;
+    r->s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) r->s.max_soft_by_type[k] = 0.0;
+    r->s.min_soft = DBL_MAX; r->s.has_sink = 0; r->s._pad = 0;
+    return r;
+}
+
+/* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
 extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
@@ -243,20 +287,22 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     let_topleaf_scalars_ensure(NTopleaves > 0 ? NTopleaves : 1);
     g_let_unbucketable = 0; g_let_unbucketable_first_id = -1;
 
-    /* Inverse map Nodes[no] -> owned-topleaf index (mirrors let_compute_local_active_bitmap), and
-     * init MY owned slice to conservative-empty. EMPTY sentinel = min_soft==DBL_MAX
-     * (ForceSoftening_KernelRadius>0 for any real particle, so a non-empty leaf always sets it). */
-    int *my_tl_lookup = (int *) mymalloc("LET_my_tl_lookup_scalars", (size_t) MaxNodes * sizeof(int));
-    for(int j = 0; j < MaxNodes; j++) my_tl_lookup[j] = -1;
+    /* Node[no] -> topleaf index, over ALL topleaves (owned AND foreign). Ownership is a property
+     * checked AFTER lookup (DomainTask[t]==ThisTask), not baked into the map -- one SSOT lookup.
+     * The owner also inits its OWN topleaf-scalar slice to conservative-empty here (EMPTY sentinel =
+     * min_soft==DBL_MAX; ForceSoftening_KernelRadius>0 for any real particle so a non-empty leaf sets it). */
+    int *tl_lookup = (int *) mymalloc("LET_tl_lookup_scalars", (size_t) MaxNodes * sizeof(int));
+    for(int j = 0; j < MaxNodes; j++) tl_lookup[j] = -1;
     for(int t = 0; t < NTopleaves; t++)
     {
-        if(DomainTask[t] != ThisTask) continue;
         int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) my_tl_lookup[no - All.MaxPart] = t;
+        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) tl_lookup[no - All.MaxPart] = t;
+        if(DomainTask[t] != ThisTask) continue;
         struct LETTopleafScalars *s = &g_topleaf_scalars[t];
         s->min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) s->max_soft_by_type[k] = 0.0;
         s->min_soft = DBL_MAX; s->has_sink = 0; s->_pad = 0;
     }
+    g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
 
     int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
     for(int kk = 0; kk < n_iter; kk++)
@@ -267,19 +313,21 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
 
-        /* map particle -> its owned topleaf via the Father chain */
+        /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
+         * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
+         * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
         int tl = -1, no = Father[i], guard = 0;
         while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
         {
-            int cand = my_tl_lookup[no - All.MaxPart];
+            int cand = tl_lookup[no - All.MaxPart];
             if(cand >= 0) { tl = cand; break; }
             no = Nodes[no].u.d.father;
         }
         if(tl < 0)
         {
-            /* UNBUCKETABLE: this particle's scalars would be lost from every leaf summary (a real
-             * under-import hazard). Count + record for the collective controlled stop in
-             * let_run_exchange -- NEVER silently fold into every leaf (perf-destroying downgrade). */
+            /* No topleaf on the Father chain at all -> genuine tree-topology corruption (NOT mere
+             * drift): the target has no geometry in ANY cover. Count for the collective controlled
+             * stop in let_run_exchange. NEVER a silent fold-into-every-leaf downgrade. */
             if(g_let_unbucketable == 0) g_let_unbucketable_first_id = (long long) P[i].ID;
             g_let_unbucketable++;
             continue;
@@ -287,19 +335,44 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
 
         double oa = (double) P[i].OldAcc;
         double soft = (double) ForceSoftening_KernelRadius(i);
-        struct LETTopleafScalars *s = &g_topleaf_scalars[tl];
-        /* per-topleaf (target-local worst case) */
-        if(oa > 0 && oa < s->min_OldAcc) s->min_OldAcc = oa;
-        if(soft > s->max_soft_by_type[t]) s->max_soft_by_type[t] = soft;
-        if(soft < s->min_soft) s->min_soft = soft;
-        if(t == 5) s->has_sink = 1;
-        /* whole-rank reduce (derived fallback) */
+
+        if(DomainTask[tl] != ThisTask)
+        {
+            /* DRIFT-ORPHAN: this LOCAL/resident target drifted into a topleaf owned by another rank
+             * (current tree geometry only -- NOT a change of which rank owns the target). Its scalars
+             * ride an orphan record so senders open nodes essential to it against topleaf tl's box;
+             * otherwise it is dropped from this rank's owned-topleaf cover (the pre-fix under-import
+             * hazard, exposed under ADAPTIVE_TREEFORCE_UPDATE tree reuse). */
+            let_orphan_merge(let_my_orphan_for_topleaf(tl), oa, soft, t);
+        }
+        else
+        {
+            struct LETTopleafScalars *s = &g_topleaf_scalars[tl];
+            /* per-topleaf (target-local worst case) */
+            if(oa > 0 && oa < s->min_OldAcc) s->min_OldAcc = oa;
+            if(soft > s->max_soft_by_type[t]) s->max_soft_by_type[t] = soft;
+            if(soft < s->min_soft) s->min_soft = soft;
+            if(t == 5) s->has_sink = 1;
+        }
+        /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
+         * empty-owned-topleaf fallback baked in below stays a true worst case. */
         if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
         if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
         if(soft < out->min_soft) out->min_soft = soft;
         if(t == 5) out->has_sink = 1;
     }
-    myfree(my_tl_lookup);
+    myfree(tl_lookup);
+
+    /* Resolve orphan-record sentinels to conservative bounds (same convention as the owned slice
+     * below): min_OldAcc==DBL_MAX -> 0 (maximally-open relaccel), min_soft==DBL_MAX -> 0. A record
+     * exists only if >=1 orphan target set min_soft, so min_soft!=DBL_MAX in practice; guard anyway. */
+    for(int k = 0; k < g_my_orphans_n; k++)
+    {
+        struct LETOrphanRecord *r = &g_my_orphans[k];
+        if(r->s.min_OldAcc == DBL_MAX) r->s.min_OldAcc = 0.0;
+        if(r->s.min_soft   == DBL_MAX) r->s.min_soft   = 0.0;
+    }
+    out->n_orphans = g_my_orphans_n;
 
     /* Resolve whole-rank sentinels. NOTE: min_OldAcc==0 does NOT disable the relative criterion --
      * it makes t_aold=0, i.e. the relaccel test is MAXIMALLY OPEN (conservative). First-step/BH logic
@@ -371,7 +444,11 @@ static struct LETCoverNode *g_cover      = NULL;  /* AABB-tree nodes, root at in
 static int                   g_cover_cap  = 0;
 static int                   g_cover_n    = 0;     /* nodes used by the current build */
 static int                  *g_cover_leaf = NULL;  /* R's owned-topleaf Nodes[] indices */
-static int                  *g_cover_leaf_tl = NULL;/* parallel: the topleaf index (g_topleaf_scalars key) */
+static int                  *g_cover_leaf_tl = NULL;/* parallel: topleaf index (geometry provenance/debug) */
+static struct LETTopleafScalars *g_cover_leaf_scal = NULL;/* parallel: this leaf's opening scalars BY VALUE --
+                                              owned leaf <- g_topleaf_scalars[t]; orphan leaf <- its record.
+                                              Self-contained so a cover leaf's scalars are decoupled from the
+                                              per-topleaf table (an orphan leaf's geometry is a foreign topleaf). */
 static int                   g_cover_leaf_cap = 0;
 
 /* Union box of the leaf range [lo,hi) into out[bmin/bmax]. */
@@ -402,8 +479,8 @@ static int cover_build(int lo, int hi)
     cover_union_box(lo, hi, bmin, bmax);
     if(hi - lo <= 1) {
         g_cover[idx].c0 = -1; g_cover[idx].c1 = -1;
-        /* leaf: this topleaf's exchanged per-topleaf scalars */
-        const struct LETTopleafScalars *s = &g_topleaf_scalars[g_cover_leaf_tl[lo]];
+        /* leaf: this cover leaf's opening scalars (owned topleaf's table entry, or an orphan record) */
+        const struct LETTopleafScalars *s = &g_cover_leaf_scal[lo];
         g_cover[idx].min_OldAcc = s->min_OldAcc;
         for(int t = 0; t < 6; t++) g_cover[idx].max_soft_by_type[t] = s->max_soft_by_type[t];
         g_cover[idx].min_soft = s->min_soft;
@@ -421,6 +498,7 @@ static int cover_build(int lo, int hi)
         while(i <= j && (double) Nodes[g_cover_leaf[j]].center[ax] >= split) j--;
         if(i < j) { int t = g_cover_leaf[i]; g_cover_leaf[i] = g_cover_leaf[j]; g_cover_leaf[j] = t;
                     int u = g_cover_leaf_tl[i]; g_cover_leaf_tl[i] = g_cover_leaf_tl[j]; g_cover_leaf_tl[j] = u;
+                    struct LETTopleafScalars sw = g_cover_leaf_scal[i]; g_cover_leaf_scal[i] = g_cover_leaf_scal[j]; g_cover_leaf_scal[j] = sw;
                     i++; j--; }
     }
     int mid = i;
@@ -450,12 +528,17 @@ static void let_build_cover_tree(int R, const uint64_t *receiver_active_bitmap)
      * topleaves, matching the active-restricted per-topleaf scalar table computed under the
      * same guard (so cover geometry and cover scalars stay consistent -- no partial feature). */
     g_cover_n = 0;
-    if(g_cover_leaf_cap < NTopleaves) {
-        int *nl = (int *) realloc(g_cover_leaf, (size_t) NTopleaves * sizeof(int));
-        int *nt = (int *) realloc(g_cover_leaf_tl, (size_t) NTopleaves * sizeof(int));
-        if(!nl || !nt) { printf("let_build_cover_tree: cover-leaf realloc failed (NTopleaves=%d, rank=%d). Stopping.\n",
-                         NTopleaves, ThisTask); fflush(stdout); endrun(90000091); }
-        g_cover_leaf = nl; g_cover_leaf_tl = nt; g_cover_leaf_cap = NTopleaves;
+    /* Cover leaves = R's owned topleaves + R's drift-orphan records (extra leaves at foreign topleaf
+     * boxes). Size for both; orphans are rare so cap grows to NTopleaves + R's orphan count. */
+    int n_orph_R = (g_orphan_off ? g_orphan_off[R + 1] - g_orphan_off[R] : 0);
+    int cap_need = NTopleaves + n_orph_R;
+    if(g_cover_leaf_cap < cap_need) {
+        int *nl = (int *) realloc(g_cover_leaf, (size_t) cap_need * sizeof(int));
+        int *nt = (int *) realloc(g_cover_leaf_tl, (size_t) cap_need * sizeof(int));
+        struct LETTopleafScalars *ns = (struct LETTopleafScalars *) realloc(g_cover_leaf_scal, (size_t) cap_need * sizeof(struct LETTopleafScalars));
+        if(!nl || !nt || !ns) { printf("let_build_cover_tree: cover-leaf realloc failed (cap_need=%d, rank=%d). Stopping.\n",
+                         cap_need, ThisTask); fflush(stdout); endrun(90000091); }
+        g_cover_leaf = nl; g_cover_leaf_tl = nt; g_cover_leaf_scal = ns; g_cover_leaf_cap = cap_need;
     }
     int nleaf = 0;
     for(int i = 0; i < NTopleaves; i++) {
@@ -464,7 +547,20 @@ static void let_build_cover_tree(int R, const uint64_t *receiver_active_bitmap)
         int no = DomainNodeIndex[i];
         if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
         g_cover_leaf[nleaf] = no;
-        g_cover_leaf_tl[nleaf] = i;   /* topleaf index -> per-topleaf scalar key */
+        g_cover_leaf_tl[nleaf] = i;                 /* geometry provenance (debug) */
+        g_cover_leaf_scal[nleaf] = g_topleaf_scalars[i];   /* owned leaf: table entry, by value */
+        nleaf++;
+    }
+    /* Drift-orphan extra leaves for R: geometry = the reached foreign topleaf's box (replicated top-tree
+     * geometry, valid on every rank), scalars = the merged orphan record. Added unconditionally (a
+     * conservative completeness extension -- never drops coverage, so safe under the active-cover mode). */
+    for(int k = g_orphan_off ? g_orphan_off[R] : 0; k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
+        int t  = g_orphan_all[k].topleaf;
+        int no = (t >= 0 && t < NTopleaves) ? DomainNodeIndex[t] : -1;
+        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        g_cover_leaf[nleaf] = no;
+        g_cover_leaf_tl[nleaf] = t;
+        g_cover_leaf_scal[nleaf] = g_orphan_all[k].s;
         nleaf++;
     }
     if(nleaf == 0) return;
@@ -1586,17 +1682,59 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         }
     }
 
-    /* Collective controlled stop if ANY rank saw an unbucketable local particle (its scalars would
-     * be lost from every leaf summary -> under-import). Should never fire (topology invariant: a local
-     * particle's Father chain reaches an owned topleaf). NOT a silent fold-into-every-leaf downgrade. */
+    /* Exchange drift-orphan receiver-cover records. The counts already rode the payload Allgather
+     * (all_payloads[r].n_orphans), so every rank agrees on the global total and enters/skips the
+     * orphan Allgatherv COLLECTIVELY (no rank-local branch around a collective). g_orphan_off[R..R+1)
+     * then selects R's records when building R's cover. */
+    {
+        if(g_orphan_off_cap < NTask + 1) {
+            int *nof = (int *) realloc(g_orphan_off, (size_t)(NTask + 1) * sizeof(int));
+            if(!nof) { printf("let orphan exchange: g_orphan_off realloc failed (NTask=%d, rank=%d). Stopping.\n",
+                             NTask, ThisTask); fflush(stdout); endrun(90000096); }
+            g_orphan_off = nof; g_orphan_off_cap = NTask + 1;
+        }
+        g_orphan_off[0] = 0;
+        for(int r = 0; r < NTask; r++) {
+            int c = all_payloads[r].n_orphans; if(c < 0) c = 0;
+            g_orphan_off[r + 1] = g_orphan_off[r] + c;
+        }
+        int total_orphans = g_orphan_off[NTask];
+        if(total_orphans > 0) {
+            if(g_orphan_all_cap < total_orphans) {
+                struct LETOrphanRecord *na = (struct LETOrphanRecord *) realloc(g_orphan_all,
+                    (size_t) total_orphans * sizeof(struct LETOrphanRecord));
+                if(!na) { printf("let orphan exchange: g_orphan_all realloc failed (total=%d, rank=%d). Stopping.\n",
+                                 total_orphans, ThisTask); fflush(stdout); endrun(90000097); }
+                g_orphan_all = na; g_orphan_all_cap = total_orphans;
+            }
+            int *rc = (int *) mymalloc("LET_orph_rc", NTask * sizeof(int));
+            int *ro = (int *) mymalloc("LET_orph_ro", NTask * sizeof(int));
+            for(int r = 0; r < NTask; r++) {
+                rc[r] = (g_orphan_off[r + 1] - g_orphan_off[r]) * (int) sizeof(struct LETOrphanRecord);
+                ro[r] =  g_orphan_off[r]                        * (int) sizeof(struct LETOrphanRecord);
+            }
+            /* Seed MY slice, then in-place Allgatherv (mirrors the per-topleaf scalar table exchange). */
+            if(g_my_orphans_n > 0)
+                memcpy((char *) g_orphan_all + ro[ThisTask], g_my_orphans,
+                       (size_t) g_my_orphans_n * sizeof(struct LETOrphanRecord));
+            MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                           g_orphan_all, rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+            myfree(ro); myfree(rc);
+        }
+    }
+
+    /* Collective controlled stop if ANY rank saw a local particle whose Father chain reaches NO topleaf
+     * at all -> genuine tree-topology corruption (its target has geometry in no cover). A particle that
+     * merely drifted under a FOREIGN topleaf is NOT unbucketable -- it is handled above as a drift-orphan
+     * cover extension. This guard is the real-corruption backstop, NOT a fold-into-every-leaf downgrade. */
     {
         long long unbuck_max = 0;
         MPI_Allreduce(&g_let_unbucketable, &unbuck_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
         if(unbuck_max > 0)
         {
             if(g_let_unbucketable > 0)
-                printf("LET per-topleaf scalars: rank=%d had %lld unbucketable local particle(s) "
-                       "(first ID=%lld): Father chain never reached an owned topleaf. Stopping.\n",
+                printf("LET cover: rank=%d had %lld local particle(s) (first ID=%lld) whose Father chain "
+                       "reached NO topleaf -- tree-topology corruption. Stopping.\n",
                        ThisTask, g_let_unbucketable, g_let_unbucketable_first_id);
             fflush(stdout);
             endrun(90000094);

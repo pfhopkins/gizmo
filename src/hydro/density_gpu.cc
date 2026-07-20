@@ -199,6 +199,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         struct hydro_data_out *kout = d_out;
         int *kTimeBinActive = d_TimeBinActive;
         int *kNeedWakeup = d_NeedToWakeup;
+        unsigned char *kWakeupDirty = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         double *ismdc = d_ismdc;
         const int ismdc_n = n_ismdc;
@@ -387,7 +388,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
-                                          kTimeBinActive, kNeedWakeup,
+                                          kTimeBinActive, kNeedWakeup, kWakeupDirty,
                                           /*allow_j_writes=*/true);
             }
 

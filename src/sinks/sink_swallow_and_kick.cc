@@ -18,6 +18,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
+#include "../core/wakeup_sidecar.h"
 #include "sink_functions.h"
 #include "sink_swk_loop.h"
 /*
@@ -811,6 +812,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     for(j = NumPart + num_already_spawned; j < NumPart + num_already_spawned + n_particles_split; j++)
     {   /* first, clone the 'dummy' particle so various fields are set appropriately */
         P[j] = P[dummy_cell_i_to_clone]; CellP[j] = CellP[dummy_cell_i_to_clone]; /* set the pointers equal to one another -- all quantities get copied, we only have to modify what needs changing */
+        wakeup_sidecar_mark(j);   /* whole-struct clone inherits the template particle's wakeup into the spawned slot */
 
 #if defined(SINK_TEST_WIND_MIXED_FASTSLOW) || defined(SINK_RIAF_SUBEDDINGTON_MODEL)
         if(P[i].Type==5) {
@@ -866,7 +868,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         NextInTimeBin[j] = NextInTimeBin[i0]; if(NextInTimeBin[i0] >= 0) {PrevInTimeBin[NextInTimeBin[i0]] = j;} NextInTimeBin[i0] = j; if(LastInTimeBin[bin] == i0) {LastInTimeBin[bin] = j;}
         P[j].Ti_begstep = All.Ti_Current; P[j].Ti_current = All.Ti_Current;
         P[j].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
-        P[j].wakeup = -1;
+        P[j].wakeup = -1; wakeup_sidecar_mark(j);
         NeedToWakeupParticles_local = 1;
         /* this is a giant pile of variables to zero out. dont need everything here because we cloned a valid particle, but handy anyways */
         P[j].Particle_DivVel = 0; CellP[j].DtInternalEnergy = 0; CellP[j].HydroAccel = {}; P[j].GravAccel = {};

@@ -1464,8 +1464,16 @@ void density(void)
             }
 #endif
 #ifdef SINK_PARTICLES
+            /* Enforce the recommended-policy invariant "nothing exceeds
+             * MaxKernelRadius" via DMIN (mirrors the drift-path AGS cap in
+             * ags_return_maxsoft): keeps this sink's setup KernelRadius <=
+             * MaxKernelRadius so the Mode-B per-type node band (capped at
+             * MaxKernelRadius) stays a valid upper bound on the sink leaf reach.
+             * No effect where SinkMaxAccretionRadius < MaxKernelRadius (every
+             * tested config sets MaxKernelRadius huge). */
             if (P[i].Type == 5) {
-                maxsoft = host_all->SinkMaxAccretionRadius / host_all->cf_atime;
+                maxsoft = DMIN(host_all->MaxKernelRadius,
+                               host_all->SinkMaxAccretionRadius / host_all->cf_atime);
             }
 #endif
             if ((P[i].KernelRadius < 0) || !isfinite(P[i].KernelRadius) ||

@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
+#include "../../core/wakeup_sidecar.h"
 #include "../../mesh/kernel.h"
 /*!
 * This file was originally part of the GADGET3 code developed by Volker Springel.
@@ -183,6 +184,7 @@ void subfind_distribute_particles(int mode)
 	}
     }
   NumPart += nimport;
+  wakeup_sidecar_invalidate();   /* particles redistributed → rebuild WakeupDirty from P[] next scan */
 
   myfree(partBuf);
 }
@@ -384,6 +386,7 @@ void subfind_exchange(void)
     }
 
   NumPart += count_get;
+  wakeup_sidecar_invalidate();   /* particles redistributed → rebuild WakeupDirty from P[] next scan */
   if(NumPart > All.MaxPart)
     {
       printf("Task=%d NumPart=%d All.MaxPart=%d\n", ThisTask, NumPart, All.MaxPart);

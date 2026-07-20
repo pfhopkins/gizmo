@@ -697,10 +697,17 @@ void hydro_gradient_calc(void)
         fflush(stdout);
     }
 
-    /* (2) Per-active scratch — off mymalloc LIFO so the symlist (above) and
-     * any runner-internal mymalloc activity stay at LIFO top. */
-    std::vector<struct temporary_data_topass> gas_grad_passer_storage(
-        (N_gas > 0 ? (size_t)N_gas : 1));
+    /* (2) Per-active gradient scratch — persistent capacity-managed buffer
+     * (grow-only). Transient scratch: every entry that is read is first zeroed
+     * by the per-active memset below, and non-active entries are never accessed
+     * (apply_active_writeback writes only passer[i] for the active home i; the
+     * finalize loops read only over ActiveParticleList). Reusing one grown-
+     * never-shrunk buffer is therefore bitwise-identical to a fresh per-call
+     * N_gas-sized vector, and drops the per-call O(N_gas) zero-init. */
+    static std::vector<struct temporary_data_topass> gas_grad_passer_storage;
+    if((size_t)N_gas > gas_grad_passer_storage.size()) {
+        gas_grad_passer_storage.resize(N_gas > 0 ? (size_t)N_gas : 1);
+    }
     struct temporary_data_topass *passer_base = gas_grad_passer_storage.data();
 
     /* (3) Zero CellP[i].Gradients.*, P[i].AGS_zeta, passer[i], etc. on host

@@ -113,6 +113,18 @@ int allocate_memory(int do_collective_preflight)
       P = (struct particle_data *) gpu_particles_uvm_alloc(bytes);
       if(P == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
       else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
+
+      /* Wakeup dirty sidecar: 1 byte/particle acceleration index for
+       * process_wake_ups (SharedSpace so device wakeup kernels can mark it).
+       * gpu_particles_uvm_alloc zeros the buffer; WakeupDirtyValid stays 0 so
+       * the first process_wake_ups full-scans P[] and rebuilds. */
+      if(!alloc_fail_local)
+        {
+          bytes = All.MaxPart * sizeof(unsigned char);
+          WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes);
+          if(WakeupDirty == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for WakeupDirty sidecar (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
+          WakeupDirtyValid = 0;
+        }
     }
 
   if(All.MaxPartGas > 0 && !alloc_fail_local)
