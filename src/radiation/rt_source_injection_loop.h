@@ -159,6 +159,7 @@ static void rt_source_injection_pair_body(
 #else
     wk = (1. - r2 * hinv * hinv) / local.KernelSum_Around_RT_Source;
 #endif
+    if (!(wk >= 0)) { wk = 0; } /* kernel weight must never be negative */
 
 #ifdef RT_EVOLVE_INTENSITIES
     int kx;
@@ -457,11 +458,16 @@ struct RtSrcInjectionSpec {
 
         /* Rejection mirrors legacy lambda at rt_source_injection_gpu.cc:205-208.
          * KernelRadius (loc.KernelRadius) is the source's UN-scaled radius;
-         * Spec::search_radius applies any ×3 scaling for the BVH/walker only. */
+         * Spec::search_radius applies any ×3 scaling for the BVH/walker only.
+         * The r2>=h2 exclusion must be unconditional: All.TimeStep reads 0 at
+         * the first step after any sync-point, and gating the exclusion on it
+         * let far-outside-kernel pairs through with a negative kernel weight. */
         const double h2 = (double)active.local.KernelRadius * (double)active.local.KernelRadius;
 #ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-        if ((All.TimeStep > 0) && (r2 >= h2)
-            && (r2 >= (double)Pj.KernelRadius * (double)Pj.KernelRadius)) return;
+        if (r2 >= h2) {
+            bool extended_reach = (All.TimeStep > 0) && (r2 < (double)Pj.KernelRadius * (double)Pj.KernelRadius);
+            if (!extended_reach) return;
+        }
 #else
         if (r2 >= h2) return;
 #endif
