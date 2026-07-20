@@ -274,6 +274,10 @@ void restart(int modus)
 	  byten(StAkb, StNModes*3*sizeof(double),modus);
 	  byten(StMode, StNModes*3*sizeof(double),modus);
 	  byten(&StTPrev, sizeof(StTPrev),modus);
+#ifdef TURB_DRIVING_TARGET_SIGMA
+	  byten(&All.TurbDriving_SmoothedVRMS, sizeof(All.TurbDriving_SmoothedVRMS), modus);
+	  byten(&All.TurbDriving_DrivingNormFactor, sizeof(All.TurbDriving_DrivingNormFactor), modus);
+#endif
 #endif
 
 	  /* write flags for active timebins */

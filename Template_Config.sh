@@ -121,6 +121,7 @@
 ####################################################################################################
 #TURB_DRIVING                   # turns on turbulent driving/stirring. see begrun for parameters that must be set
 #TURB_DRIVING_SPECTRUMGRID=128  # activates on-the-fly calculation of the turbulent velocity, vorticity, and smoothed-velocity power spectra, evaluated on a grid of linear-size TURB_DRIVING_SPECTRUMGRID elements. Requires BOX_PERIODIC
+#TURB_DRIVING_TARGET_SIGMA=0    # enables proportional control loop adjusting driving amplitude to converge measured gas RMS velocity to TurbDrive_ApproxRMSVturb, smoothed over 2 coherence times. If value > 0, only gas cells within that distance (code units) of box center contribute to the measured velocity dispersion; value=0 uses all gas cells.
 ####################################################################################################
 
 

@@ -1040,11 +1040,16 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
 #ifdef SINGLE_STAR_WIND_MODE
         P[n].wind_mode = SINGLE_STAR_WIND_MODE;
 #else
+        int desired_wind_mode;
         if (N_wind >= n_particles_for_discrete_wind_spawn){
-            P[n].wind_mode = 1; // we can spawn enough particles per wind time
+            desired_wind_mode = 1; // we can spawn enough particles per wind time
         } else{
-            P[n].wind_mode = 2; // we can't spawn enough particles per wind time, switching to FIRE wind module to reduce burstiness
+            desired_wind_mode = 2; // we can't spawn enough particles per wind time, switching to FIRE wind module to reduce burstiness
         }
+        /* hysteresis: only switch mode after at least 8 spawn events have elapsed since the last change */
+        double N_spawn_since_change = (wind_mass_loss_rate > 0) ? (All.Time - P[n].wind_mode_time) * wind_mass_loss_rate / target_mass_for_wind_spawning(n) : 0;
+        if((desired_wind_mode != old_wind_mode) && (old_wind_mode != 0) && (N_spawn_since_change < 8)) {desired_wind_mode = old_wind_mode;} // not enough time has elapsed; keep current mode
+        P[n].wind_mode = desired_wind_mode;
 #endif
 #ifdef SINGLE_STAR_FB_JETS
         double spawning_min_wind_jet_mom_ratio = 10.0; // if winds are much more powerful than jets ( (wind momentum injection/jet momentum injection) > this value) then we can safely spawn the winds and neglect the jets if we want to
@@ -1055,6 +1060,7 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
         }
 #endif
         if (old_wind_mode != P[n].wind_mode){
+            P[n].wind_mode_time = All.Time;
             printf("Wind mode change for star %llu to %d at %g. Mdot_wind %g\n",(unsigned long long)P[n].ID,P[n].wind_mode,All.Time, wind_mass_loss_rate);
         }
     }

@@ -610,6 +610,10 @@ extern struct global_data_all_processes
     double TimeNextTurbSpectrum;
     int FileNumberTurbSpectrum;
 #endif
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    double TurbDriving_SmoothedVRMS;     /* exponentially smoothed measured RMS velocity, time constant = 2*t_corr */
+    double TurbDriving_DrivingNormFactor; /* multiplicative factor on driving amplitude from proportional control loop */
+#endif
 #endif
     
 #ifdef RADTRANSFER
