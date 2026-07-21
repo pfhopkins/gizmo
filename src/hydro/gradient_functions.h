@@ -168,6 +168,24 @@ struct GasGraddata_out_
 };
 
 
+#ifdef MHD_CONSTRAINED_GRADIENT
+/* Slim output for gradient_iteration>0 (the constrained-gradient CG-MHD passes).
+ * The iter>0 writeback (out2particle_GasGrad_iter) reads ONLY FaceDotB (+ the
+ * MIDPOINT PhiGrad), so carrying the full GasGraddata_out_ (~1968 B) as the
+ * Mode-B reply / Mode-A accumulator on those passes is dead payload. Field
+ * types match the full-struct accumulation types (FaceDotB is MyFloat, the
+ * PhiGrad correction accumulates into Quantities_for_Gradients::Phi = MyDouble)
+ * so the pass-2 output is bitwise-identical to the full path. */
+struct GasGraddata_out_iter_
+{
+    MyFloat FaceDotB;
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+    MyDouble PhiGrad[3];
+#endif
+};
+#endif
+
+
 /* check if particle j is valid for gradient computation */
 KOKKOS_INLINE_FUNCTION
 int GasGrad_isactive_gpu(int j, struct particle_data *P, struct gas_cell_data *CellP)
@@ -180,6 +198,92 @@ int GasGrad_isactive_gpu(int j, struct particle_data *P, struct gas_cell_data *C
 #endif
     return 1;
 }
+
+
+#if defined(MHD_CONSTRAINED_GRADIENT)
+/* Constrained-gradient per-component FaceDotB contribution: B_L/B_R state
+ * reconstruction + slope limiting for component k, returning
+ * Face_Area_Vec[k]*(GQuant.B[k]+Q_L). Extracted verbatim from the main pass
+ * face loop; pass-neutral (grad_iter 0 and >0 call it identically). */
+KOKKOS_INLINE_FUNCTION
+double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
+                                  struct gas_cell_data *CPj, struct particle_data *Pj,
+                                  struct kernel_GasGrad *kernel, double FA_k)
+{
+    double Bjk = CPj->Bfield_component(k);
+    NGB_SHEARBOX_BOUNDARY_BCORR_(local->Pos, Pj->Pos, Bjk, -1);
+    double db_c = 0.5 * dot(CPj->Gradients.B[k], kernel->dp);
+    double db_cR = -0.5 * (local->BGrad[k][0]*kernel->dp[0] + local->BGrad[k][1]*kernel->dp[1] + local->BGrad[k][2]*kernel->dp[2]);
+
+    double Q_L, Q_R;
+    if(Bjk == local->GQuant.B[k])
+    {
+        Q_L = Q_R = Bjk;
+    } else {
+        Q_L = Bjk + db_c;
+        Q_R = local->GQuant.B[k] + db_cR;
+        double Qmax, Qmin, Qmed = 0.5*(local->GQuant.B[k] + Bjk);
+        if(local->GQuant.B[k] < Bjk) {Qmax=Bjk; Qmin=local->GQuant.B[k];} else {Qmax=local->GQuant.B[k]; Qmin=Bjk;}
+        double fac = MHD_CONSTRAINED_GRADIENT_FAC_MINMAX * (Qmax-Qmin);
+        fac += MHD_CONSTRAINED_GRADIENT_FAC_MAX_PM * fabs(Qmed);
+        double Qmax_eff = Qmax + fac;
+        double Qmin_eff = Qmin - fac;
+        fac = MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV * (Qmax-Qmin);
+        fac += MHD_CONSTRAINED_GRADIENT_FAC_MED_PM * fabs(Qmed);
+        double Qmed_max = Qmed + fac;
+        double Qmed_min = Qmed - fac;
+        if(Qmed_max>Qmax_eff) Qmed_max=Qmax_eff;
+        if(Qmed_min<Qmin_eff) Qmed_min=Qmin_eff;
+        if(local->GQuant.B[k] < Bjk)
+        {
+            if(Q_L>Qmax_eff) Q_L=Qmax_eff;
+            if(Q_L<Qmed_min) Q_L=Qmed_min;
+            if(Q_R<Qmin_eff) Q_R=Qmin_eff;
+            if(Q_R>Qmed_max) Q_R=Qmed_max;
+        } else {
+            if(Q_L<Qmin_eff) Q_L=Qmin_eff;
+            if(Q_L>Qmed_max) Q_L=Qmed_max;
+            if(Q_R>Qmax_eff) Q_R=Qmax_eff;
+            if(Q_R<Qmed_min) Q_R=Qmed_min;
+        }
+    }
+    (void)Q_R;   /* legacy limiter cross-clamps Q_R but only Q_L feeds FaceDotB */
+    return FA_k * (local->GQuant.B[k] + Q_L);
+}
+
+/* Constrained-gradient MIDPOINT Phi-gradient correction. Accumulates into
+ * phigrad_out[3]; runs MINMAX_CHECK only when both min/max pointers are
+ * non-null. Extracted verbatim from the main pass; pass-neutral. Body is the
+ * legacy MIDPOINT-and-not-DEDNER block (structurally absent in DEDNER builds,
+ * matching the legacy #if — the enclosing config always co-enables DEDNER, so
+ * this is a faithful-but-inert translation preserved for non-DEDNER configs). */
+KOKKOS_INLINE_FUNCTION
+void constrained_phigrad(struct GasGraddata_in_ *local, struct gas_cell_data *CPj,
+                         struct particle_data *Pj, struct kernel_GasGrad *kernel,
+                         int sph_gradients_flag_i, double phigrad_out[3],
+                         MyDouble *minphi_or_null, MyDouble *maxphi_or_null)
+{
+#if defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT) && !defined(DIVBCLEANING_DEDNER)
+    double dphi = CPj->PhiPred / Pj->Mass - local->GQuant.Phi;
+    if(minphi_or_null && maxphi_or_null) { MINMAX_CHECK(dphi, (*minphi_or_null), (*maxphi_or_null)); }
+    double dphi_grad_j = 0.5 * dot(kernel->dp, CPj->Gradients.Phi);
+    double dphi_grad_i = -0.5 * dot(kernel->dp, local->PhiGrad);
+    if(dphi > 0) {
+        if(dphi_grad_j>0) {dphi_grad_j=0;} else {if(dphi_grad_j<0.5*dphi) dphi_grad_j=0.5*dphi;}
+        if(dphi_grad_i<0) {dphi_grad_i=0;} else {if(dphi_grad_i>0.5*dphi) dphi_grad_i=0.5*dphi;}
+    } else {
+        if(dphi_grad_j<0) {dphi_grad_j=0;} else {if(dphi_grad_j>0.5*dphi) dphi_grad_j=0.5*dphi;}
+        if(dphi_grad_i>0) {dphi_grad_i=0;} else {if(dphi_grad_i<0.5*dphi) dphi_grad_i=0.5*dphi;}
+    }
+    double dphi_j = dphi + dphi_grad_j;
+    if(sph_gradients_flag_i) {dphi_j *= -2*kernel->wk_i;} else {dphi_j *= kernel->dwk_i/kernel->r * Pj->Mass;}
+    for(int kk=0;kk<3;kk++) {phigrad_out[kk] += dphi_j * kernel->dp[kk];}
+#else
+    (void)local; (void)CPj; (void)Pj; (void)kernel; (void)sph_gradients_flag_i;
+    (void)phigrad_out; (void)minphi_or_null; (void)maxphi_or_null;
+#endif
+}
+#endif /* MHD_CONSTRAINED_GRADIENT */
 
 
 /* Per-neighbor-pair accumulation for gradient_iteration==0 (main gradient pass).
@@ -292,46 +396,8 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
                 out->FaceCrossX[k][k2] += q;
             }
 
-            /* B_L,R state reconstruction + slope limiting */
-            double Bjk = CellP[j].Bfield_component(k);
-            NGB_SHEARBOX_BOUNDARY_BCORR_(local->Pos, P[j].Pos, Bjk, -1);
-            double db_c = 0.5 * dot(CellP[j].Gradients.B[k], kernel->dp);
-            double db_cR = -0.5 * (local->BGrad[k][0]*kernel->dp[0] + local->BGrad[k][1]*kernel->dp[1] + local->BGrad[k][2]*kernel->dp[2]);
-
-            double Q_L, Q_R;
-            if(Bjk == local->GQuant.B[k])
-            {
-                Q_L = Q_R = Bjk;
-            } else {
-                Q_L = Bjk + db_c;
-                Q_R = local->GQuant.B[k] + db_cR;
-                double Qmax, Qmin, Qmed = 0.5*(local->GQuant.B[k] + Bjk);
-                if(local->GQuant.B[k] < Bjk) {Qmax=Bjk; Qmin=local->GQuant.B[k];} else {Qmax=local->GQuant.B[k]; Qmin=Bjk;}
-                double fac = MHD_CONSTRAINED_GRADIENT_FAC_MINMAX * (Qmax-Qmin);
-                fac += MHD_CONSTRAINED_GRADIENT_FAC_MAX_PM * fabs(Qmed);
-                double Qmax_eff = Qmax + fac;
-                double Qmin_eff = Qmin - fac;
-                fac = MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV * (Qmax-Qmin);
-                fac += MHD_CONSTRAINED_GRADIENT_FAC_MED_PM * fabs(Qmed);
-                double Qmed_max = Qmed + fac;
-                double Qmed_min = Qmed - fac;
-                if(Qmed_max>Qmax_eff) Qmed_max=Qmax_eff;
-                if(Qmed_min<Qmin_eff) Qmed_min=Qmin_eff;
-                if(local->GQuant.B[k] < Bjk)
-                {
-                    if(Q_L>Qmax_eff) Q_L=Qmax_eff;
-                    if(Q_L<Qmed_min) Q_L=Qmed_min;
-                    if(Q_R<Qmin_eff) Q_R=Qmin_eff;
-                    if(Q_R>Qmed_max) Q_R=Qmed_max;
-                } else {
-                    if(Q_L<Qmin_eff) Q_L=Qmin_eff;
-                    if(Q_L>Qmed_max) Q_L=Qmed_max;
-                    if(Q_R>Qmax_eff) Q_R=Qmax_eff;
-                    if(Q_R<Qmed_min) Q_R=Qmed_min;
-                }
-            }
-
-            out->FaceDotB += Face_Area_Vec[k] * (local->GQuant.B[k] + Q_L);
+            /* B_L,R state reconstruction + slope limiting -> FaceDotB delta. */
+            out->FaceDotB += constrained_facedotb_delta(k, local, &CellP[j], &P[j], kernel, Face_Area_Vec[k]);
         }
 
 #ifdef MHD_MODIFIED_GRADIENT
@@ -344,20 +410,10 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
 #if defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT) && !defined(DIVBCLEANING_DEDNER)
         {
-            double dphi = CellP[j].PhiPred / P[j].Mass - local->GQuant.Phi;
-            MINMAX_CHECK(dphi, out->Minima.Phi, out->Maxima.Phi);
-            double dphi_grad_j = 0.5 * dot(kernel->dp, CellP[j].Gradients.Phi);
-            double dphi_grad_i = -0.5 * dot(kernel->dp, local->PhiGrad);
-            if(dphi > 0) {
-                if(dphi_grad_j>0) {dphi_grad_j=0;} else {if(dphi_grad_j<0.5*dphi) dphi_grad_j=0.5*dphi;}
-                if(dphi_grad_i<0) {dphi_grad_i=0;} else {if(dphi_grad_i>0.5*dphi) dphi_grad_i=0.5*dphi;}
-            } else {
-                if(dphi_grad_j<0) {dphi_grad_j=0;} else {if(dphi_grad_j>0.5*dphi) dphi_grad_j=0.5*dphi;}
-                if(dphi_grad_i>0) {dphi_grad_i=0;} else {if(dphi_grad_i<0.5*dphi) dphi_grad_i=0.5*dphi;}
-            }
-            double dphi_j = dphi + dphi_grad_j;
-            if(sph_gradients_flag_i) {dphi_j *= -2*kernel->wk_i;} else {dphi_j *= kernel->dwk_i/kernel->r * P[j].Mass;}
-            for(int kk=0;kk<3;kk++) {out->Gradients[kk].Phi += dphi_j * kernel->dp[kk];}
+            double phigrad_delta[3] = {0,0,0};
+            constrained_phigrad(local, &CellP[j], &P[j], kernel, sph_gradients_flag_i,
+                                phigrad_delta, &out->Minima.Phi, &out->Maxima.Phi);
+            for(int kk=0;kk<3;kk++) {out->Gradients[kk].Phi += phigrad_delta[kk];}
         }
 #endif
     }
@@ -571,6 +627,123 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         }
     }
 }
+
+
+#ifdef MHD_CONSTRAINED_GRADIENT
+/* Per-neighbor-pair accumulation for gradient_iteration>0 (constrained-gradient
+ * iteration; legacy GasGrad_evaluate with gradient_iteration>0). Computes ONLY
+ * FaceDotB (+ the MIDPOINT PhiGrad) — the fields the iter>0 writeback consumes.
+ * The full path's Face_Area / FaceCrossX / Maxima / Minima / Gradients[] and the
+ * TURB_DIFF_DYNAMIC Velocity_hat accumulation are dead on this pass (never read
+ * by out2particle_GasGrad_iter), so they are not computed. The kernel-geometry
+ * setup is byte-identical to gradient_accumulate_neighbor and the face terms go
+ * through the same shared constrained_* helpers, so the pass-2 result is
+ * bitwise-identical to running the full accumulate. */
+KOKKOS_INLINE_FUNCTION
+void gradient_accumulate_neighbor_iter(struct GasGraddata_in_ *local, struct GasGraddata_out_iter_ *out,
+                                       struct kernel_GasGrad *kernel, int j,
+                                       int sph_gradients_flag_i,
+                                       double V_i, double hinv, double hinv3, double hinv4,
+                                       int kernel_mode_i,
+                                       struct particle_data *P, struct gas_cell_data *CellP)
+{
+    if(GasGrad_isactive_gpu(j, P, CellP) == 0) return;
+
+    kernel->dp = local->Pos - P[j].Pos;
+    nearest_xyz(kernel->dp);
+    double r2 = kernel->dp.norm_sq();
+    double h_j = P[j].KernelRadius;
+
+#if !defined(HYDRO_SPH) && !defined(KERNEL_CRK_FACES)
+    if(r2 <= 0) return;
+#endif
+
+    double h2_i = kernel->h_i * kernel->h_i;
+
+    /* (main-pass TURB_DIFF_DYNAMIC Velocity_hat accumulation intentionally
+     * omitted — Velocity_hat is not an iter>0 output.) */
+
+    if((r2 >= h2_i) && (r2 >= h_j * h_j)) return;
+
+    kernel->r = sqrt(r2);
+    double u;
+    if(kernel->r < kernel->h_i)
+    {
+        u = kernel->r * hinv;
+        kernel_main(u, hinv3, hinv4, &kernel->wk_i, &kernel->dwk_i, kernel_mode_i);
+    }
+    else
+    {
+        kernel->dwk_i = kernel->wk_i = 0;
+    }
+
+    int sph_gradients_flag_j = 0;
+#if defined(MHD_CONSTRAINED_GRADIENT) || defined(KERNEL_CRK_FACES)
+    if(kernel->r < h_j)
+    {
+        sph_gradients_flag_j = SHOULD_I_USE_SPH_GRADIENTS(CellP[j].ConditionNumber);
+        int kernel_mode_j;
+#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
+        kernel_mode_j = 0;
+#else
+        if(sph_gradients_flag_j) {kernel_mode_j=0;} else {kernel_mode_j=-1;}
+#endif
+        double hinv_j, hinv3_j, hinv4_j;
+        kernel_hinv(h_j, &hinv_j, &hinv3_j, &hinv4_j);
+        u = kernel->r * hinv_j;
+        kernel_main(u, hinv3_j, hinv4_j, &kernel->wk_j, &kernel->dwk_j, kernel_mode_j);
+    }
+    else
+#endif
+    {
+        kernel->dwk_j = kernel->wk_j = 0;
+    }
+    (void)sph_gradients_flag_j;
+
+    double Particle_Size_j = P[j].Get_Particle_Size();
+    double Particle_Size_i = pow(local->Mass / local->GQuant.Density, 1./NUMDIMS);
+
+    {
+        double V_j = P[j].Mass / CellP[j].Density;
+        double Face_Area_Norm, cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local->ConditionNumber*local->ConditionNumber;
+        Vec3<double> Face_Area_Vec;
+        int k;
+        double rinv = 1.0 / (MIN_REAL_NUMBER + kernel->r);
+
+        double Vi_inv_corr_unused, Vj_inv_corr_unused;
+        compute_finitevol_faces(*local, CellP[j], *kernel, rinv, r2, V_i, V_j,
+                                Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                Face_Area_Vec, Face_Area_Norm,
+                                Vi_inv_corr_unused, Vj_inv_corr_unused);
+
+        for(k=0;k<3;k++)
+        {
+            out->FaceDotB += constrained_facedotb_delta(k, local, &CellP[j], &P[j], kernel, Face_Area_Vec[k]);
+        }
+
+#ifdef MHD_MODIFIED_GRADIENT
+        {
+            double A_dot_dp = dot(Face_Area_Vec, kernel->dp);
+            double mg_delta = 0.25 * (CellP[j].MG_cgcoeff - local->MG_cgcoeff) * A_dot_dp * A_dot_dp;
+            out->FaceDotB += mg_delta;
+        }
+#endif
+
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+        {
+            /* MIDPOINT PhiGrad correction. constrained_phigrad's body is the
+             * legacy !DEDNER block; in DEDNER configs it is inert, so PhiGrad
+             * stays 0 — bitwise-identical to the full path's out->Gradients[k].Phi
+             * (also unwritten under DEDNER). No MINMAX (min/max unused on iter>0). */
+            double phigrad_delta[3] = {0,0,0};
+            constrained_phigrad(local, &CellP[j], &P[j], kernel, sph_gradients_flag_i,
+                                phigrad_delta, nullptr, nullptr);
+            for(int kk=0;kk<3;kk++) {out->PhiGrad[kk] += phigrad_delta[kk];}
+        }
+#endif
+    }
+}
+#endif /* MHD_CONSTRAINED_GRADIENT */
 
 
 #endif /* GRADIENT_FUNCTIONS_H */

@@ -418,4 +418,103 @@ struct GradientsSpec
     static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
+
+#ifdef MHD_CONSTRAINED_GRADIENT
+/* Slim Spec for the constrained-gradient iterations (grad_iter>0). Identical to
+ * GradientsSpec except it accumulates the slim GasGraddata_out_iter_ (FaceDotB +
+ * MIDPOINT PhiGrad) instead of the full GasGraddata_out_ — the only fields the
+ * iter>0 writeback (out2particle_GasGrad_iter) consumes. This drops the dead
+ * ~1968 B reply payload (Mode B) / accumulator traffic (Mode A) on every CG
+ * iteration. Physics-preserving: pass output is bitwise-identical (see
+ * gradient_accumulate_neighbor_iter). All non-accumulator contract is aliased
+ * from GradientsSpec (SSOT); only AccumData + zero/merge/compare/writeback +
+ * populate_device_context + the slim pair body differ. Dispatch: grad_iter==0
+ * -> GradientsSpec, grad_iter>0 -> GradientsIterSpec (gradients_loop.cc). The
+ * runner learns nothing about passes. */
+struct GradientsIterSpec
+{
+    static constexpr const char *loop_name = "gradients";
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics */
+
+    static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
+    static constexpr unsigned int            neighbor_type_mask = (1u << 0);
+    static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+    static constexpr WritePattern   write_pattern              = WritePattern::ActiveReduceOnly;
+    static constexpr SidxCacheKind  sidx_cache_kind            = SidxCacheKind::GasOnly;
+    static constexpr bool mode_a_active_sources_in_sidx_pool = true;
+    static constexpr double         accum_tolerance            = 1e-10;
+    static constexpr bool           uses_ghost_writeback       = false;
+    static constexpr bool           uses_ghost_write_detector  = false;
+
+    using CallScalars   = NlrCommonScalars;
+    using ActiveData    = GradientsActiveData;
+    using AccumData     = struct GasGraddata_out_iter_;
+    using NeighborData  = GradientsNeighborData;
+    using Aux           = GradientsAux;
+
+    using ScatterData    = NoScatter;
+    using IdentityFields = NoIdentity;
+    using IterControl    = NotIterative;
+    using DeviceContext  = GradientsDeviceContext;
+
+    /* ----- Aliased host hooks (SSOT = GradientsSpec) ----- */
+    static bool is_active(int i) { return GradientsSpec::is_active(i); }
+    static double search_radius(const neighbor_loop_args& args, int active_slot, int i) {
+        return GradientsSpec::search_radius(args, active_slot, i);
+    }
+    static CallScalars populate_call_scalars(const neighbor_loop_args& args) {
+        return GradientsSpec::populate_call_scalars(args);
+    }
+
+    /* DeviceContext extension hook: ferry grad_iter (own body, gradients_loop.cc). */
+    static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
+
+    /* ----- Device hooks ----- */
+    KOKKOS_INLINE_FUNCTION
+    static void zero_accum(AccumData& accum)
+    {
+        for(size_t b = 0; b < sizeof(accum); b++) ((char*)&accum)[b] = 0;
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    static ActiveData load_active(const DeviceContext& ctx, int active_slot, int i,
+                                   double h_search, const CallScalars& scalars)
+    {
+        return GradientsSpec::load_active(ctx, active_slot, i, h_search, scalars);
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    static NeighborData load_neighbor(const DeviceContext& ctx, int j,
+                                       const IdentitySidecar& id, const ActiveData& active)
+    {
+        return GradientsSpec::load_neighbor(ctx, j, id, active);
+    }
+
+    /* Slim pair body — forwards to gradient_accumulate_neighbor_iter. */
+    KOKKOS_INLINE_FUNCTION
+    static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
+                             AccumData& accum, NoScatter& /*scatter*/)
+    {
+        if(!active.enabled) return;
+#if defined(HYDRO_MULTIFLUID)
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
+#endif
+        struct kernel_GasGrad kernel;
+        kernel.h_i = active.local.KernelRadius;
+        gradient_accumulate_neighbor_iter(
+            const_cast<struct GasGraddata_in_*>(&active.local),
+            &accum, &kernel, neighbor.j,
+            active.sph_gradients_flag_i, active.V_i,
+            active.hinv, active.hinv3, active.hinv4, active.kernel_mode_i,
+            neighbor.P, neighbor.CellP);
+    }
+
+    /* Slim writeback / merge / oracle (own bodies, gradients_loop.cc). */
+    static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i,
+                                        const AccumData& accum);
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    static double compare_accum(const AccumData& local, const AccumData& oracle);
+};
+#endif /* MHD_CONSTRAINED_GRADIENT */
+
 #endif /* GRADIENTS_LOOP_H */

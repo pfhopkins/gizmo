@@ -482,28 +482,26 @@ void GradientsSpec::merge_accum(AccumData& dst, const AccumData& src)
  * struct as a flat double[] would mix MyFloat / MyDouble, read padding as
  * payload, and miss tail bytes — explicitly per-field instead.
  * ========================================================================== */
+/* Shared oracle residual for both gradient Specs: an absolute-difference floor
+ * then a relative residual. Many MHD-CG fields (Face_Area, FaceCrossX, FaceDotB)
+ * are subtractive sums that cancel to ~machine-eps for symmetric configs; a pure
+ * relative residual would divide O(1e-22) by O(1e-22) and report spurious O(1)
+ * "mismatches". abs_tol sits ~10 orders below realistic field magnitudes
+ * (Face_Area ~ h^(NUMDIMS-1) ~ 1e-1..1e-2), so genuine O(1e-6) physics bugs still
+ * trip the gate. Single source used by GradientsSpec + GradientsIterSpec. */
+static inline double grad_compare_rel(double x, double y)
+{
+    constexpr double abs_tol = 1e-12;
+    double d = fabs(x - y);
+    if(d < abs_tol) return 0.0;
+    double m = fmax(fmax(fabs(x), fabs(y)), 1e-30);
+    return d / m;
+}
+
 double GradientsSpec::compare_accum(const AccumData& a, const AccumData& b)
 {
     double worst = 0.0;
-    auto rel = [](double x, double y) {
-        /* Absolute-difference floor: many MHD-CG fields (Face_Area,
-         * FaceCrossX) involve subtractive sums that legitimately cancel
-         * to ~machine-eps for symmetric configurations. A pure relative
-         * residual (cellcorrections-style) divides O(1e-22) numerators by
-         * O(1e-22) denominators and produces spurious O(1) "mismatches".
-         * Treat any |a-b| below abs_tol as below the signal floor; above
-         * it, use the relative residual with a relative-magnitude floor.
-         * abs_tol is set 10 orders of magnitude below typical realistic
-         * field magnitudes (Face_Area ~ h^(NUMDIMS-1) ~ 1e-1..1e-2 for
-         * standard test problems), so genuine physics bugs that move
-         * Face_Area by O(1e-6) or larger still trigger the gate. */
-        constexpr double abs_tol = 1e-12;
-        double d = fabs(x - y);
-        if(d < abs_tol) return 0.0;
-        double m = fmax(fmax(fabs(x), fabs(y)), 1e-30);
-        return d / m;
-    };
-#define CHECK(field) do { double r = rel((double)a.field, (double)b.field); \
+#define CHECK(field) do { double r = grad_compare_rel((double)a.field, (double)b.field); \
                           if(r > worst) worst = r; } while(0)
 
     for(int k = 0; k < 3; k++) {
@@ -635,6 +633,65 @@ double GradientsSpec::compare_accum(const AccumData& a, const AccumData& b)
 #undef CHECK
     return worst;
 }
+
+#ifdef MHD_CONSTRAINED_GRADIENT
+/* ============================================================================
+ * GradientsIterSpec host hooks (grad_iter>0, slim GasGraddata_out_iter_).
+ * Each mirrors the corresponding GradientsSpec hook restricted to the fields
+ * the iter>0 writeback consumes (FaceDotB + MIDPOINT PhiGrad), so behaviour is
+ * bitwise-identical to the full path on the constrained-gradient passes.
+ * ========================================================================== */
+void GradientsIterSpec::populate_device_context(const neighbor_loop_args& args,
+                                                 DeviceContext& ctx)
+{
+    Aux *aux = nlr_aux<GradientsIterSpec>(args);
+    ctx.grad_iter = (aux != nullptr) ? aux->grad_iter : 0;
+}
+
+/* Slim replay of out2particle_GasGrad_iter: FaceDotB (+ MIDPOINT PhiGrad) from
+ * the slim accum into passer[i]. Mirrors GradientsSpec::apply_active_writeback's
+ * grad_iter>0 branch, reading the dedicated slim PhiGrad field in place of
+ * out->Gradients[k].Phi. */
+void GradientsIterSpec::apply_active_writeback(const neighbor_loop_args& args,
+                                               int /*active_slot*/, int i,
+                                               const AccumData& accum_in)
+{
+    Aux *aux = nlr_aux<GradientsIterSpec>(args);
+    struct temporary_data_topass *passer = (aux != nullptr) ? aux->passer : nullptr;
+    const struct GasGraddata_out_iter_ *out = &accum_in;   /* read-only: slim writeback never mutates accum */
+
+    ASSIGN_ADD_PRESET(passer[i].FaceDotB, out->FaceDotB, 0);
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+    for(int k = 0; k < 3; k++) {
+        ASSIGN_ADD_PRESET(passer[i].PhiGrad[k], out->PhiGrad[k], 0);
+    }
+#endif
+}
+
+/* Peer-rank accum merge (Mode B remote): additive, matching GradientsSpec's
+ * MERGE_ADD(FaceDotB) + MERGE_ADD(Gradients[k].Phi). */
+void GradientsIterSpec::merge_accum(AccumData& dst, const AccumData& src)
+{
+    dst.FaceDotB += src.FaceDotB;
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+    for(int k = 0; k < 3; k++) { dst.PhiGrad[k] += src.PhiGrad[k]; }
+#endif
+}
+
+/* Oracle comparison — same rel()/abs_tol form as GradientsSpec::compare_accum,
+ * over the slim field set. */
+double GradientsIterSpec::compare_accum(const AccumData& a, const AccumData& b)
+{
+    double worst = 0.0;
+    { double r = grad_compare_rel((double)a.FaceDotB, (double)b.FaceDotB); if(r > worst) worst = r; }
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+    for(int k = 0; k < 3; k++) {
+        double r = grad_compare_rel((double)a.PhiGrad[k], (double)b.PhiGrad[k]); if(r > worst) worst = r;
+    }
+#endif
+    return worst;
+}
+#endif /* MHD_CONSTRAINED_GRADIENT */
 
 /* ============================================================================
  * Toplevel: hydro_gradient_calc — replaces the legacy walker in the retired
@@ -843,8 +900,19 @@ void hydro_gradient_calc(void)
             }
         }
 
-        /* (5c) Kernel dispatch. */
-        run_neighbor_loop<GradientsSpec>(args);
+        /* (5c) Kernel dispatch. grad_iter==0 runs the full GradientsSpec;
+         * grad_iter>0 (constrained-gradient iterations) runs the slim
+         * GradientsIterSpec, which carries only the FaceDotB(+PhiGrad) the
+         * iter>0 writeback reads — dropping the dead full-struct payload. The
+         * runner is pass-agnostic; the Spec type is the only thing that changes. */
+#ifdef MHD_CONSTRAINED_GRADIENT
+        if(grad_iter > 0) {
+            run_neighbor_loop<GradientsIterSpec>(args);
+        } else
+#endif
+        {
+            run_neighbor_loop<GradientsSpec>(args);
+        }
 
         /* (5d) Host between-iter MHD-CG block — verbatim from
          * hydro/gradients.cc:689-829. */

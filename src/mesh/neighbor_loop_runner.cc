@@ -5964,6 +5964,15 @@ template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
  * See hydro/gradients_loop.{h,cc}. */
 template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
 
+#ifdef MHD_CONSTRAINED_GRADIENT
+/* GradientsIterSpec — slim variant for the constrained-gradient iterations
+ * (grad_iter>0). Accumulates the slim GasGraddata_out_iter_ (FaceDotB +
+ * MIDPOINT PhiGrad) instead of the full GasGraddata_out_. Gated with the same
+ * #ifdef that gates the Spec definition (wave2 lesson: guard the instantiation
+ * with the Spec's own gate). See hydro/gradients_loop.{h,cc}. */
+template void run_neighbor_loop<GradientsIterSpec>(const neighbor_loop_args&);
+#endif
+
 /* HydroForceSpec — runner port of the legacy `hydro_evaluate_gpu` walker.
  * Final hydro-corridor consumer (after CellcorrectionsSpec and
  * GradientsSpec). uses_ghost_writeback=true with a snapshot-diff bundle
