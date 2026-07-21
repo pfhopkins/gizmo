@@ -4377,6 +4377,34 @@ void get_dataset_name(enum iofields blocknr, char *buf)
 }
 
 
+/*! Legacy-compatibility dataset name for HDF5 snapshot restarts. Several IO fields were
+ *  renamed in the modern code (gas kernel length KernelMaxRadius <- SmoothingLength; the
+ *  sink fields Sink_... <- legacy BH_... or Sink... names). When restarting from an older snapshot that still
+ *  carries the pre-rename name, the primary H5Dopen on the modern name fails; read_ic then
+ *  retries with the alternate name returned here. Fills buf with an empty string for any
+ *  field whose name is unchanged (no fallback attempted). HDF5-only. */
+void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf)
+{
+    buf[0] = '\0';
+    switch (blocknr)
+    {
+        case IO_KERNELRADIUS:   strcpy(buf, "SmoothingLength");        break;   /* gas kernel length */
+        case IO_HSMS:           strcpy(buf, "StellarSmoothingLength"); break;   /* non-gas kernel length */
+        case IO_SINKMASS:       strcpy(buf, "BH_Mass");               break;
+        case IO_SINKMASSALPHA:  strcpy(buf, "BH_Mass_AlphaDisk");     break;
+        case IO_SINK_ANGMOM:    strcpy(buf, "BH_Specific_AngMom");    break;
+        case IO_ACRB:           strcpy(buf, "BH_AccretionLength");    break;
+        case IO_SINKRAD:        strcpy(buf, "SinkRadius");            break;
+        case IO_SINK_FORM_MASS: strcpy(buf, "SinkInitialMass");       break;
+        case IO_SINKMDOT:       strcpy(buf, "BH_Mdot");               break;
+        case IO_SINKPROGS:      strcpy(buf, "BH_NProgs");             break;
+        case IO_SINK_DIST:      strcpy(buf, "BH_Dist");               break;
+        case IO_SINKDUSTMASSACC:strcpy(buf, "BH_Dust_Mass");          break;
+        default:                                                      break;
+    }
+}
+
+
 
 /*! This function writes a snapshot file containing the data from processors
  *  'writeTask' to 'lastTask'. 'writeTask' is the one that actually writes.

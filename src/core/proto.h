@@ -361,6 +361,7 @@ void distribute_file(int nfiles, int firstfile, int firsttask, int lasttask, int
 int get_values_per_blockelement(enum iofields blocknr);
 int get_datatype_in_block(enum iofields blocknr);
 void get_dataset_name(enum iofields blocknr, char *buf);
+void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
