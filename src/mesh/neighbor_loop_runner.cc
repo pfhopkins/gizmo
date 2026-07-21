@@ -2480,7 +2480,9 @@ static void mode_b_remote_evaluate_into_buffer(
             }
         }
         StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
-        xch.send_group_replies(group_peers, replies_for_group);
+        /* send_group_replies posts the reply Isends and waits them in finish();
+         * move the group's reply buffers into the exchange so they outlive the Isend. */
+        xch.send_group_replies(group_peers, std::move(replies_for_group));
     }
         }   /* end whole-peer group loop */
 
