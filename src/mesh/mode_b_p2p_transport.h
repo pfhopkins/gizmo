@@ -26,16 +26,20 @@
  *                          until adding the next peer would exceed budget
  *                          (always >=1 peer); post + wait that group's
  *                          query-payload Irecvs; hand envelopes to caller.
- *   send_group_replies()   Isend the group's replies and Waitall THOSE sends
- *                          immediately, so the caller can free the group's
- *                          buffers before staging the next group. The Waitall
- *                          completes promptly because every origin pre-posted
- *                          its reply Irecvs in begin(); it can still block on
- *                          MPI progress while origins compute — if that shows
- *                          up in timings, defer these Waitalls (poll/test)
- *                          rather than assuming it cannot happen.
- *   finish()               Waitall remaining query-payload Isends + all reply
- *                          Irecvs; byte-assert every reply's size via
+ *   send_group_replies()   Isend the group's replies and take ownership of the
+ *                          reply buffers (moved into the exchange), so the
+ *                          caller can drop its group storage while the sends
+ *                          stay in flight. The matching Waitall runs once in
+ *                          finish() (not per group); deadlock-free because every
+ *                          origin pre-posted its reply Irecvs in begin(). This
+ *                          lets a group's send completion overlap the round-end
+ *                          reply-recv wait (and, for a multi-group round, later
+ *                          groups' staging/eval) instead of serializing at each
+ *                          group boundary. Cost: reply buffers held per round,
+ *                          not per group.
+ *   finish()               Waitall remaining query-payload Isends + all
+ *                          reply-payload Isends + all reply Irecvs; byte-assert
+ *                          every reply's size via
  *                          MPI_Get_count (replaces the retired reply-count
  *                          handshake message: same protocol-break loudness,
  *                          one less message per peer per round); return
@@ -64,6 +68,7 @@
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 
 #include "../system/tags.h"
 #include "../declarations/allvars.h"   /* ThisTask, NTask */
@@ -106,12 +111,15 @@ public:
      * `queries_per_peer` is caller-owned and MUST stay alive and unmodified
      * until finish() returns (the Isends read from its storage).
      * queries_per_peer[ThisTask] must be empty. */
-    void begin(const std::vector<std::vector<TQuery>>& queries_per_peer)
+    void begin(const std::vector<std::vector<TQuery>>& queries_per_peer,
+               double *dt_count_exch = nullptr, double *dt_query_post = nullptr)
     {
         const int nt = NTask;
         sent_counts.assign(nt, 0);
         recv_counts.assign(nt, 0);
         recv_replies.assign(nt, std::vector<TReply>{});
+        reqs_reply_send.clear();
+        held_reply_bufs.clear();
         next_peer = 0;
         if(nt <= 1) return;
 
@@ -137,8 +145,13 @@ public:
                       MPI_COMM_WORLD, &rq);
             reqs_cnt.push_back(rq);
         }
-        MPI_Waitall((int)reqs_cnt.size(), reqs_cnt.data(), MPI_STATUSES_IGNORE);
+        {
+            const double _t0 = dt_count_exch ? MPI_Wtime() : 0.0;
+            MPI_Waitall((int)reqs_cnt.size(), reqs_cnt.data(), MPI_STATUSES_IGNORE);
+            if(dt_count_exch) *dt_count_exch += MPI_Wtime() - _t0;
+        }
 
+        const double _tpost0 = dt_query_post ? MPI_Wtime() : 0.0;
         /* All query-payload Isends (buffers caller-owned; waited in finish). */
         for(int p = 0; p < nt; p++) {
             if(p == ThisTask || sent_counts[p] <= 0) continue;
@@ -165,6 +178,7 @@ public:
             reply_recv_peer.push_back(p);
             g_mode_b_p2p_diag.bytes_reply_recv += nbytes;
         }
+        if(dt_query_post) *dt_query_post += MPI_Wtime() - _tpost0;
     }
 
     /* Stage the next whole-peer group of incoming queries. Peers are consumed
@@ -176,7 +190,8 @@ public:
      * envelopes from group_peers[i], in send order. */
     bool next_group(size_t budget_bytes,
                     std::vector<int>& group_peers,
-                    std::vector<std::vector<TQuery>>& group_queries)
+                    std::vector<std::vector<TQuery>>& group_queries,
+                    double *dt_query_recv_wait = nullptr)
     {
         const int nt = NTask;
         group_peers.clear();
@@ -208,23 +223,32 @@ public:
             g_mode_b_p2p_diag.bytes_query_recv += nbytes;
             g_mode_b_p2p_diag.peers_recv_from++;
         }
-        MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
+        {
+            const double _t0 = dt_query_recv_wait ? MPI_Wtime() : 0.0;
+            MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
+            if(dt_query_recv_wait) *dt_query_recv_wait += MPI_Wtime() - _t0;
+        }
         return true;
     }
 
-    /* Send this group's replies and wait for THOSE sends to complete, so the
-     * caller can free/reuse the group's storage immediately. The wait is
-     * deadlock-free (matching Irecvs were pre-posted in every origin's
-     * begin()) but can still block on MPI progress while origins compute; if
-     * profiling shows stalls here, defer these waits to finish() at the cost
-     * of holding reply buffers per round instead of per group.
+    /* Post this group's reply Isends and take OWNERSHIP of the reply buffers
+     * (moved into held_reply_bufs) so the caller can drop its group storage
+     * immediately while the sends stay in flight. The matching Waitall runs once
+     * in finish() (not per-group here) — deadlock-free either way (matching
+     * Irecvs were pre-posted in every origin's begin()), but waiting later lets
+     * the send completion overlap the round-end reply-recv wait instead of
+     * serializing at each group boundary. Memory cost: reply buffers held per
+     * round instead of per group (≈ equal when a round is a single group).
      * replies_for_group[i] must hold exactly recv_counts[group_peers[i]]
-     * entries (one reply per received query, in received order). */
+     * entries (one reply per received query, in received order); it is consumed
+     * (moved-from) on return. dt_reply_send_wait is retained for ABI but no
+     * longer accrues here (the wait moved to finish()). */
     void send_group_replies(const std::vector<int>& group_peers,
-                            const std::vector<std::vector<TReply>>& replies_for_group)
+                            std::vector<std::vector<TReply>>&& replies_for_group,
+                            double *dt_reply_send_wait = nullptr)
     {
-        std::vector<MPI_Request> reqs;
-        reqs.reserve(group_peers.size());
+        (void)dt_reply_send_wait;
+        const size_t base = held_reply_bufs.size();
         for(size_t i = 0; i < group_peers.size(); i++) {
             const int p = group_peers[i];
             if((int)replies_for_group[i].size() != recv_counts[p]) {
@@ -236,15 +260,20 @@ public:
                     "REVIEWED_HARD_MID_PROTOCOL: mode_b transport group reply-count mismatch",
                     __FILE__, __LINE__, __FUNCTION__);
             }
+            /* Hold the buffer (heap survives the outer-vector move) BEFORE
+             * posting the Isend, so the Isend reads a stable, owned address. */
+            held_reply_bufs.push_back(std::move(replies_for_group[i]));
+        }
+        for(size_t i = 0; i < group_peers.size(); i++) {
+            const int p = group_peers[i];
             if(recv_counts[p] <= 0) continue;
             const size_t nbytes = (size_t)recv_counts[p] * sizeof(TReply);
             MPI_Request rq;
-            MPI_Isend(replies_for_group[i].data(), (int)nbytes, MPI_BYTE,
+            MPI_Isend(held_reply_bufs[base + i].data(), (int)nbytes, MPI_BYTE,
                       p, TAG_MODE_B_REPLY_PAYLOAD, MPI_COMM_WORLD, &rq);
-            reqs.push_back(rq);
+            reqs_reply_send.push_back(rq);
             g_mode_b_p2p_diag.bytes_reply_sent += nbytes;
         }
-        MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
     }
 
     /* Wait out the remaining query-payload Isends and all reply Irecvs.
@@ -253,13 +282,20 @@ public:
      * count is a broken protocol, aborted loudly (this check replaced the
      * retired reply-count handshake message). Returns recv_replies[p] with
      * exactly sent_counts[p] entries. */
-    std::vector<std::vector<TReply>> finish()
+    std::vector<std::vector<TReply>> finish(double *dt_reply_finish_wait = nullptr)
     {
+        const double _t0 = dt_reply_finish_wait ? MPI_Wtime() : 0.0;
         MPI_Waitall((int)reqs_query_send.size(), reqs_query_send.data(),
+                    MPI_STATUSES_IGNORE);
+        /* Reply sends (posted per group in send_group_replies): wait them here
+         * so a group's send completion overlaps the reply-recv wait below
+         * instead of blocking per group. */
+        MPI_Waitall((int)reqs_reply_send.size(), reqs_reply_send.data(),
                     MPI_STATUSES_IGNORE);
         std::vector<MPI_Status> stats(reqs_reply_recv.size());
         MPI_Waitall((int)reqs_reply_recv.size(), reqs_reply_recv.data(),
                     stats.data());
+        if(dt_reply_finish_wait) *dt_reply_finish_wait += MPI_Wtime() - _t0;
         for(size_t i = 0; i < stats.size(); i++) {
             int got_bytes = 0;
             MPI_Get_count(&stats[i], MPI_BYTE, &got_bytes);
@@ -278,6 +314,8 @@ public:
         reqs_query_send.clear();
         reqs_reply_recv.clear();
         reply_recv_peer.clear();
+        reqs_reply_send.clear();
+        held_reply_bufs.clear();   /* reply sends drained above — buffers free */
         return std::move(recv_replies);
     }
 
@@ -286,6 +324,16 @@ private:
     std::vector<MPI_Request> reqs_query_send;
     std::vector<MPI_Request> reqs_reply_recv;
     std::vector<int>         reply_recv_peer;   /* parallel to reqs_reply_recv */
+    /* Reply sends in flight: send_group_replies() posts the group's reply Isends
+     * and hands ownership of the reply buffers here (they must outlive the
+     * Isend, i.e. survive to finish()'s Waitall). Waiting all groups' reply
+     * sends once in finish() — instead of per group — lets a group's reply-send
+     * completion overlap the round-end reply-recv wait (and, when a round has
+     * >1 group, later groups' staging/eval) rather than serializing at each
+     * group boundary. Deadlock-safe: the matching reply Irecvs were pre-posted
+     * in every origin's begin(). */
+    std::vector<MPI_Request>         reqs_reply_send;
+    std::vector<std::vector<TReply>> held_reply_bufs;   /* keep-alive for reqs_reply_send */
     int next_peer = 0;
 };
 

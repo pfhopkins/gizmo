@@ -1244,6 +1244,7 @@ int read_file(char *fname, int readTask, int lastTask)
                 get_dataset_name(blocknr, buf);
                 printf("reading block %d (%s)...\n", bnr, buf);
             }
+            int printed_legacy_alias = 0;   /* limit the legacy-name notice below to one line per block */
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
             if(blocknr == IO_ID && ((RestartFlag == 0 && All.ICFormat == 1) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);} /* in this special case, the old unformatted fortran binary GADGET-2 format needs to be respected, which used unsigned int for IDs */
@@ -1346,6 +1347,17 @@ int read_file(char *fname, int readTask, int lastTask)
                                         H5Eget_auto(&old_func, &old_client_data);
                                         H5Eset_auto(NULL, NULL);
                                         hdf5_dataset = H5Dopen(hdf5_grp[type], buf);
+                                        if(hdf5_dataset < 0)
+                                        {
+                                            /* modern dataset name absent: retry with the legacy pre-rename name
+                                             * (backward-compat for older HDF5 snapshots; see get_dataset_name_legacy_alias) */
+                                            char altbuf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; get_dataset_name_legacy_alias(blocknr, altbuf);
+                                            if(altbuf[0] != '\0')
+                                            {
+                                                hdf5_dataset = H5Dopen(hdf5_grp[type], altbuf);
+                                                if(hdf5_dataset >= 0 && ThisTask == readTask && !printed_legacy_alias) {printf("   (block %d: '%s' absent, reading legacy-named '%s')\n", bnr, buf, altbuf); printed_legacy_alias = 1;}
+                                            }
+                                        }
                                         H5Eset_auto(old_func, old_client_data);
 
                                       if(hdf5_dataset >= 0)
