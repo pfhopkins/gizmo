@@ -26,10 +26,110 @@ static struct peano_hilbert_data
 
 static int *Id;
 
+
+/*! Coincident particles -- bitwise-identical positions -- are never safe. Beyond having no
+ *  relative geometry for a spatial index to order them by, they break every routine that treats a
+ *  separation of zero as "the same particle" or divides by it, which is most of the pair physics.
+ *  So this is an invariant, checked on every ordering, not a one-off validation of the input.
+ *
+ *  Identical positions imply identical Peano keys, so the array sorted just above already groups
+ *  them and the scan is one pass over it: no extra sort, allocation, or communication. Reporting
+ *  is capped, and the scan stops early once the cap is reached, since the run ends regardless.
+ */
+#define COINCIDENT_REPORT_MAX 8
+#define COINCIDENT_SCAN_CAP 4096
+
+static void report_coincident_pair(int iu, int iv, long nseen)
+{
+    if(nseen < COINCIDENT_REPORT_MAX)
+    {
+        printf("Coincident particle positions: IDs %llu and %llu (types %d and %d) both at (%.17g, %.17g, %.17g)\n",
+               (unsigned long long) P[iu].ID, (unsigned long long) P[iv].ID, P[iu].Type, P[iv].Type,
+               P[iu].Pos[0], P[iu].Pos[1], P[iu].Pos[2]);
+        fflush(stdout);
+    }
+}
+
+/*! scan one key-sorted block, from the sort array (keys already in hand, nothing recomputed) */
+static long scan_block_for_coincident(struct peano_hilbert_data *m, int n, long nseen)
+{
+    long ndup = 0; int a, b;
+    for(a = 0; a < n; a = b)
+    {
+        for(b = a + 1; b < n && m[b].key == m[a].key; b++) {}   /* run of identical keys */
+        if(b - a < 2) {continue;}
+        for(int u = a; u < b; u++) for(int v = u + 1; v < b; v++)
+        {
+            int iu = m[u].index, iv = m[v].index;
+            if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2])
+            {
+                report_coincident_pair(iu, iv, nseen + ndup); ndup++;
+                if(ndup >= COINCIDENT_SCAN_CAP) {return ndup;}
+            }
+        }
+    }
+    return ndup;
+}
+
+/*! Peano key of a particle's current position, built exactly as domain.cc builds Key[]. */
+static peanokey particle_peano_key(int i)
+{
+    peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+    peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+    peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+    return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+}
+
+/*! A gas particle coincident with a collisionless one is missed by the per-block scans above,
+ *  because gas and collisionless particles are ordered separately. Catching it means merging the
+ *  two sorted blocks, which costs one key evaluation per particle, so it runs only on the first
+ *  ordering -- i.e. as validation of the input. That is not a hole in the runtime invariant: a
+ *  runtime cross-species coincidence cannot be created in the first place, since star formation
+ *  converts a particle rather than duplicating it and every spawn path enforces a minimum
+ *  separation (merge_split.cc, and the sink analog).
+ */
+#define COINCIDENT_RUN_MAX 64
+
+static long scan_across_blocks_for_coincident(long nseen)
+{
+    long ndup = 0; int a = 0, b = N_gas, members[COINCIDENT_RUN_MAX];
+    peanokey ka = (a < N_gas) ? particle_peano_key(a) : 0;
+    peanokey kb = (b < NumPart) ? particle_peano_key(b) : 0;
+    while(a < N_gas || b < NumPart)
+    {
+        peanokey k;
+        if(a >= N_gas) {k = kb;} else if(b >= NumPart) {k = ka;} else {k = (ka <= kb) ? ka : kb;}
+        int nm = 0, gas_in_run = 0;
+        while(a < N_gas && ka == k)
+        {
+            if(nm < COINCIDENT_RUN_MAX) {members[nm++] = a; gas_in_run++;}
+            a++; ka = (a < N_gas) ? particle_peano_key(a) : 0;
+        }
+        while(b < NumPart && kb == k)
+        {
+            if(nm < COINCIDENT_RUN_MAX) {members[nm++] = b;}
+            b++; kb = (b < NumPart) ? particle_peano_key(b) : 0;
+        }
+        if(gas_in_run == 0 || nm == gas_in_run) {continue;}   /* same-block pairs already covered */
+        for(int u = 0; u < gas_in_run; u++) for(int v = gas_in_run; v < nm; v++)
+        {
+            int iu = members[u], iv = members[v];
+            if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2])
+            {
+                report_coincident_pair(iu, iv, nseen + ndup); ndup++;
+                if(ndup >= COINCIDENT_SCAN_CAP) {return ndup;}
+            }
+        }
+    }
+    return ndup;
+}
+
 void peano_hilbert_order(void)
 {
   int i; PRINT_STATUS("Begin Peano-Hilbert order...");
-    
+  static int first_ordering = 1;   /* the cross-block pass is input validation: first ordering only */
+  long ndup_local = 0;
+
   if(N_gas)
     {
       mp = (struct peano_hilbert_data *) mymalloc("mp", sizeof(struct peano_hilbert_data) * N_gas);
@@ -42,6 +142,9 @@ void peano_hilbert_order(void)
 	}
 
       mysort_peano(mp, N_gas, sizeof(struct peano_hilbert_data), peano_compare_key);
+
+      /* before reorder_gas(), while mp[].index still refers to current P[] slots */
+      ndup_local += scan_block_for_coincident(mp, N_gas, ndup_local);
 
       for(i = 0; i < N_gas; i++)
 	Id[mp[i].index] = i;
@@ -70,6 +173,8 @@ void peano_hilbert_order(void)
 
       mysort_peano(mp + N_gas, NumPart - N_gas, sizeof(struct peano_hilbert_data), peano_compare_key);
 
+      ndup_local += scan_block_for_coincident(mp + N_gas, NumPart - N_gas, ndup_local);
+
       for(i = N_gas; i < NumPart; i++)
 	Id[mp[i].index] = i;
 
@@ -80,6 +185,29 @@ void peano_hilbert_order(void)
       mp += N_gas;
       myfree(mp);
     }
+
+  if(first_ordering && N_gas > 0 && NumPart > N_gas) {ndup_local += scan_across_blocks_for_coincident(ndup_local);}
+
+  /* every rank reduces the same total and so stops together: no peer is left in a collective */
+  long ndup_total = 0;
+  MPI_Allreduce(&ndup_local, &ndup_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  if(ndup_total > 0)
+    {
+      if(ThisTask == 0)
+        {
+          printf("\nProblem: found %ld coincident particle pair%s -- positions identical to the bit (first few listed above).\n"
+                 "Coincident particles are never valid: they have no relative geometry for a neighbor search or an\n"
+                 "opening criterion to act on, and any pair term that divides by their separation is undefined.\n",
+                 ndup_total, (ndup_total == 1) ? "" : "s");
+          if(first_ordering)
+            {printf("These came in with the initial conditions. Separate or merge them and rerun.\n");}
+          else
+            {printf("These appeared during the run, after step %d: this is a code bug, not a bad input.\n", All.NumCurrentTiStep);}
+          fflush(stdout);
+        }
+      endrun(223);
+    }
+  first_ordering = 0;
 
     PRINT_STATUS(" ..Peano-Hilbert done");
 }
