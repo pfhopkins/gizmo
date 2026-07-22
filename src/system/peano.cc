@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 #include <algorithm>
 
 #include "../declarations/allvars.h"
@@ -80,29 +81,117 @@ static peanokey particle_peano_key(int i)
     return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
 }
 
-/*! A gas particle coincident with a collisionless one is missed by the per-block scans above,
- *  because gas and collisionless particles are ordered separately. Catching it means merging the
- *  two sorted blocks, which costs one key evaluation per particle, so it runs only on the first
- *  ordering -- i.e. as validation of the input. That is not a hole in the runtime invariant: a
- *  runtime cross-species coincidence cannot be created in the first place, since star formation
- *  converts a particle rather than duplicating it and every spawn path enforces a minimum
- *  separation (merge_split.cc, and the sink analog).
- */
 #define COINCIDENT_RUN_MAX 64
+#define COINCIDENT_NEIGHBOUR_WINDOW 32
 
-static long scan_across_blocks_for_coincident(long nseen)
+/*! Local length scale for a coincident group: the distance to the nearest particle that is NOT at
+ *  the same position, searched over a bounded window of the ordering. Peano ordering has locality
+ *  but no strict nearest-neighbour guarantee, so this is an estimate and can only be an
+ *  overestimate of the true nearest distance -- which is why the caller also caps it by the
+ *  particle's own kernel/softening scale when that is available, and why the displacement is a
+ *  small fraction of it rather than a fraction of order one.
+ */
+static double local_separation_scale(int i, int blk_lo, int blk_hi)
+{
+    double best = 0; int lo = i - COINCIDENT_NEIGHBOUR_WINDOW, hi = i + COINCIDENT_NEIGHBOUR_WINDOW;
+    if(lo < blk_lo) {lo = blk_lo;}
+    if(hi > blk_hi) {hi = blk_hi;}
+    for(int j = lo; j < hi; j++)
+    {
+        if(j == i) {continue;}
+        double dx = P[j].Pos[0] - P[i].Pos[0], dy = P[j].Pos[1] - P[i].Pos[1], dz = P[j].Pos[2] - P[i].Pos[2];
+        double r2 = dx*dx + dy*dy + dz*dz;
+        if(r2 <= 0) {continue;}                        /* the coincident partners themselves */
+        if(best == 0 || r2 < best) {best = r2;}
+    }
+    return (best > 0) ? sqrt(best) : 0;
+}
+
+#ifdef REPAIR_COINCIDENT_POSITIONS
+/*! Deterministic unit vector from a particle ID, so a repair reproduces regardless of rank count
+ *  or particle ordering. Restricted to the active dimensions: displacing out of the plane of a
+ *  2D setup would be a physics change, not a repair. */
+static void coincident_repair_direction(MyIDType id, double n[3])
+{
+    unsigned long long h = (unsigned long long) id * 0x9E3779B97F4A7C15ULL;   /* splitmix-style mix */
+    h ^= h >> 30; h *= 0xBF58476D1CE4E5B9ULL; h ^= h >> 27; h *= 0x94D049BB133111EBULL; h ^= h >> 31;
+    double u = (double)((h >> 11) & 0x1FFFFFFFFFFFFFULL) / 9007199254740992.0;      /* [0,1) */
+    double v = (double)((h >> 40) & 0xFFFFFFULL) / 16777216.0;                      /* [0,1) */
+    double phi = 2.0 * M_PI * u;
+#if (NUMDIMS == 1)
+    n[0] = (v < 0.5) ? -1.0 : 1.0; n[1] = 0; n[2] = 0;
+#elif (NUMDIMS == 2)
+    n[0] = cos(phi); n[1] = sin(phi); n[2] = 0;
+#else
+    double ct = 2.0 * v - 1.0, st = sqrt((ct * ct < 1.0) ? (1.0 - ct * ct) : 0.0);
+    n[0] = st * cos(phi); n[1] = st * sin(phi); n[2] = ct;
+#endif
+}
+
+/*! Separate one coincident pair, preserving the pair's centre of mass. Returns 0 on success, or
+ *  nonzero if no displacement exists that is simultaneously far above floating-point roundoff and
+ *  far below the local physical scale -- in which case the caller must stop rather than perturb,
+ *  because "repair" would then be a change to the problem. */
+static int repair_coincident_pair(int iu, int iv, int blk_lo, int blk_hi)
+{
+    double s = local_separation_scale(iu, blk_lo, blk_hi);
+    const char *src = "local separation";
+    double h_kernel = ForceSoftening_KernelRadius(iu);    /* zero until the cache is first filled */
+    if(h_kernel > 0 && (s == 0 || h_kernel < s)) {s = h_kernel; src = "softening";}
+    if(s == 0) {s = All.ForceSoftening[P[iu].Type]; src = "type softening";}
+    if(s <= 0) {return 1;}
+
+    double delta = EPSILON_FOR_TREERND_SUBNODE_SPLITTING * s;
+    double xmax = fabs(P[iu].Pos[0]);
+    if(fabs(P[iu].Pos[1]) > xmax) {xmax = fabs(P[iu].Pos[1]);}
+    if(fabs(P[iu].Pos[2]) > xmax) {xmax = fabs(P[iu].Pos[2]);}
+    if(xmax < 1.0) {xmax = 1.0;}
+    if(delta < 65536.0 * DBL_EPSILON * xmax) {return 2;}   /* would be lost in the mantissa */
+    if(delta > 0.1 * s) {return 3;}                        /* must not reorder against the neighbours */
+
+    double n[3]; coincident_repair_direction((P[iu].ID < P[iv].ID) ? P[iu].ID : P[iv].ID, n);
+    double mu = P[iu].Mass, mv = P[iv].Mass, mtot = mu + mv;
+    double wu = (mtot > 0) ? (mv / mtot) : 0.5, wv = (mtot > 0) ? (mu / mtot) : 0.5;
+    double old0 = P[iu].Pos[0], old1 = P[iu].Pos[1], old2 = P[iu].Pos[2];
+    for(int k = 0; k < 3; k++) {P[iu].Pos[k] += delta * wu * n[k]; P[iv].Pos[k] -= delta * wv * n[k];}
+
+    printf("Repaired coincident pair: IDs %llu and %llu at (%.17g, %.17g, %.17g) separated by %.6g "
+           "(%s scale %.6g) -> (%.17g, %.17g, %.17g) and (%.17g, %.17g, %.17g)\n",
+           (unsigned long long) P[iu].ID, (unsigned long long) P[iv].ID, old0, old1, old2, delta, src, s,
+           P[iu].Pos[0], P[iu].Pos[1], P[iu].Pos[2], P[iv].Pos[0], P[iv].Pos[1], P[iv].Pos[2]);
+    fflush(stdout);
+    return 0;
+}
+#endif
+
+/*! Full pass over both key-sorted blocks, by particle index (valid once the reorders have run).
+ *  This covers same-block AND cross-species coincidences, at the cost of one key evaluation per
+ *  particle, so it runs only on the first ordering -- as validation of the input. Cross-species
+ *  pairs need no runtime invariant: distinct species do not integrate identically, so an
+ *  incidental overlap separates itself, and the spawn paths enforce a minimum separation anyway
+ *  (merge_split.cc and the sink analog).
+ *
+ *  With repair enabled a perturbed particle's key may shift by a cell, so this pass could in
+ *  principle mis-order afterwards. That is safe in the only direction that matters: the next
+ *  ordering re-sorts from scratch and its always-on block scan would catch anything left, so
+ *  nothing coincident can survive undetected past the following domain decomposition.
+ */
+static long coincident_pass(int do_repair, long nseen, long *nfailed)
 {
     long ndup = 0; int a = 0, b = N_gas, members[COINCIDENT_RUN_MAX];
+#ifndef REPAIR_COINCIDENT_POSITIONS
+    (void) do_repair; (void) nfailed;
+#endif
     peanokey ka = (a < N_gas) ? particle_peano_key(a) : 0;
     peanokey kb = (b < NumPart) ? particle_peano_key(b) : 0;
     while(a < N_gas || b < NumPart)
     {
         peanokey k;
         if(a >= N_gas) {k = kb;} else if(b >= NumPart) {k = ka;} else {k = (ka <= kb) ? ka : kb;}
-        int nm = 0, gas_in_run = 0;
+        int nm = 0;
         while(a < N_gas && ka == k)
         {
-            if(nm < COINCIDENT_RUN_MAX) {members[nm++] = a; gas_in_run++;}
+            if(nm < COINCIDENT_RUN_MAX) {members[nm++] = a;}
             a++; ka = (a < N_gas) ? particle_peano_key(a) : 0;
         }
         while(b < NumPart && kb == k)
@@ -110,12 +199,21 @@ static long scan_across_blocks_for_coincident(long nseen)
             if(nm < COINCIDENT_RUN_MAX) {members[nm++] = b;}
             b++; kb = (b < NumPart) ? particle_peano_key(b) : 0;
         }
-        if(gas_in_run == 0 || nm == gas_in_run) {continue;}   /* same-block pairs already covered */
-        for(int u = 0; u < gas_in_run; u++) for(int v = gas_in_run; v < nm; v++)
+        if(nm < 2) {continue;}
+        for(int u = 0; u < nm; u++) for(int v = u + 1; v < nm; v++)
         {
             int iu = members[u], iv = members[v];
             if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2])
             {
+#ifdef REPAIR_COINCIDENT_POSITIONS
+                if(do_repair)
+                {
+                    int lo = (iu < N_gas) ? 0 : N_gas, hi = (iu < N_gas) ? N_gas : NumPart;
+                    int rc = repair_coincident_pair(iu, iv, lo, hi);
+                    if(rc) {(*nfailed)++;} else {ndup++;}
+                    continue;
+                }
+#endif
                 report_coincident_pair(iu, iv, nseen + ndup); ndup++;
                 if(ndup >= COINCIDENT_SCAN_CAP) {return ndup;}
             }
@@ -143,8 +241,9 @@ void peano_hilbert_order(void)
 
       mysort_peano(mp, N_gas, sizeof(struct peano_hilbert_data), peano_compare_key);
 
-      /* before reorder_gas(), while mp[].index still refers to current P[] slots */
-      ndup_local += scan_block_for_coincident(mp, N_gas, ndup_local);
+      /* before reorder_gas(), while mp[].index still refers to current P[] slots. The first
+       * ordering is covered by the fuller index-based pass below instead, so it is skipped here. */
+      if(!first_ordering) {ndup_local += scan_block_for_coincident(mp, N_gas, ndup_local);}
 
       for(i = 0; i < N_gas; i++)
 	Id[mp[i].index] = i;
@@ -173,7 +272,7 @@ void peano_hilbert_order(void)
 
       mysort_peano(mp + N_gas, NumPart - N_gas, sizeof(struct peano_hilbert_data), peano_compare_key);
 
-      ndup_local += scan_block_for_coincident(mp + N_gas, NumPart - N_gas, ndup_local);
+      if(!first_ordering) {ndup_local += scan_block_for_coincident(mp + N_gas, NumPart - N_gas, ndup_local);}
 
       for(i = N_gas; i < NumPart; i++)
 	Id[mp[i].index] = i;
@@ -186,7 +285,18 @@ void peano_hilbert_order(void)
       myfree(mp);
     }
 
-  if(first_ordering && N_gas > 0 && NumPart > N_gas) {ndup_local += scan_across_blocks_for_coincident(ndup_local);}
+  long nfailed = 0;
+  if(first_ordering)
+    {
+      ndup_local = coincident_pass(0, 0, &nfailed);
+#ifdef REPAIR_COINCIDENT_POSITIONS
+      if(ndup_local > 0)
+        {
+          coincident_pass(1, 0, &nfailed);          /* separate them, preserving each pair's centre of mass */
+          ndup_local = coincident_pass(0, 0, &nfailed) + nfailed;   /* whatever could not be repaired remains fatal */
+        }
+#endif
+    }
 
   /* every rank reduces the same total and so stops together: no peer is left in a collective */
   long ndup_total = 0;

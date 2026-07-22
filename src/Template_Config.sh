@@ -536,6 +536,7 @@
 #GIZMO_DEBUG_RT_COOLING            # enable RT+COOLING diagnostic prints + GPU↔CPU bit-comparison probes for the cooling kernel. Substantial stdout volume when active; intended for targeted debug of GPU cooling/RT divergence. Slated for retirement once GPU cooling/RT path is fully validated.
 #FORCE_EQUAL_TIMESTEPS             # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
 #STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
+#REPAIR_COINCIDENT_POSITIONS       # particles sharing a position to the bit are an invalid input and normally stop the run; this instead separates them once, at startup, by 1e-4 of the local interparticle spacing along an ID-seeded direction, preserving each pair's center of mass. every repair is logged with the IDs and old/new positions. leave OFF unless you mean it: the stop exists so a bad IC is seen rather than silently altered
 # --------------------
 # ----- Hydrodynamics (and MHD)
 #FREEZE_HYDRO                      # zeros all fluxes from RP and doesn't let particles move (for testing additional physics layers)
