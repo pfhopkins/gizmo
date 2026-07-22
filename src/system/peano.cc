@@ -107,7 +107,7 @@ static double local_separation_scale(int i, int blk_lo, int blk_hi)
     return (best > 0) ? sqrt(best) : 0;
 }
 
-#ifdef REPAIR_COINCIDENT_POSITIONS
+#ifdef IO_REPAIR_COINCIDENT_POSITIONS
 /*! Deterministic unit vector from a particle ID, so a repair reproduces regardless of rank count
  *  or particle ordering. Restricted to the active dimensions: displacing out of the plane of a
  *  2D setup would be a physics change, not a repair. */
@@ -179,7 +179,7 @@ static int repair_coincident_pair(int iu, int iv, int blk_lo, int blk_hi)
 static long coincident_pass(int do_repair, long nseen, long *nfailed)
 {
     long ndup = 0; int a = 0, b = N_gas, members[COINCIDENT_RUN_MAX];
-#ifndef REPAIR_COINCIDENT_POSITIONS
+#ifndef IO_REPAIR_COINCIDENT_POSITIONS
     (void) do_repair; (void) nfailed;
 #endif
     peanokey ka = (a < N_gas) ? particle_peano_key(a) : 0;
@@ -205,7 +205,7 @@ static long coincident_pass(int do_repair, long nseen, long *nfailed)
             int iu = members[u], iv = members[v];
             if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2])
             {
-#ifdef REPAIR_COINCIDENT_POSITIONS
+#ifdef IO_REPAIR_COINCIDENT_POSITIONS
                 if(do_repair)
                 {
                     int lo = (iu < N_gas) ? 0 : N_gas, hi = (iu < N_gas) ? N_gas : NumPart;
@@ -289,7 +289,7 @@ void peano_hilbert_order(void)
   if(first_ordering)
     {
       ndup_local = coincident_pass(0, 0, &nfailed);
-#ifdef REPAIR_COINCIDENT_POSITIONS
+#ifdef IO_REPAIR_COINCIDENT_POSITIONS
       if(ndup_local > 0)
         {
           coincident_pass(1, 0, &nfailed);          /* separate them, preserving each pair's centre of mass */
@@ -310,7 +310,16 @@ void peano_hilbert_order(void)
                  "opening criterion to act on, and any pair term that divides by their separation is undefined.\n",
                  ndup_total, (ndup_total == 1) ? "" : "s");
           if(first_ordering)
-            {printf("These came in with the initial conditions. Separate or merge them and rerun.\n");}
+            {
+#ifdef IO_REPAIR_COINCIDENT_POSITIONS
+              printf("IO_REPAIR_COINCIDENT_POSITIONS is enabled, but these could not be repaired: no displacement\n"
+                     "exists that is at once above the resolution of the coordinates and below the local physical\n"
+                     "scale, so separating them would change the problem. Fix the input file.\n");
+#else
+              printf("These came in with the initial conditions: separate or merge them and rerun, or build with\n"
+                     "IO_REPAIR_COINCIDENT_POSITIONS to have the code separate them at startup.\n");
+#endif
+            }
           else
             {printf("These appeared during the run, after step %d: this is a code bug, not a bad input.\n", All.NumCurrentTiStep);}
           fflush(stdout);
