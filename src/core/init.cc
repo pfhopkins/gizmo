@@ -939,11 +939,20 @@ void init(void)
         }
 #endif
 #if defined(EOS_DAMAGE_POROSITY)
-        if(RestartFlag != 1)
+        /* only a fresh start initializes these: RestartFlag 1 restores them from the restart files
+         * and RestartFlag 2 reads them back from the snapshot, and they are integrated history
+         * (Grady-Kipp damage, P-alpha distention, active flaw count) that cannot be recomputed */
+        if(RestartFlag != 1 && RestartFlag != 2)
         {
             CellP[i].Damage = 0;
             CellP[i].ActiveCracks = 0;
             CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15]; /* alpha_0 per material; 1 = solid */
+        }
+        if(RestartFlag != 1)
+        {
+            /* floor the distention, which also covers a snapshot restart from a file written before
+             * these fields existed: the absent dataset reads back as zero, not as alpha_0 */
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15];}
             if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
         }
 #endif

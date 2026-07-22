@@ -797,6 +797,24 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef EOS_DAMAGE_POROSITY
+        /* damage and porosity are integrated history, not diagnostics: they cannot be recomputed
+         * from the other fields, so a snapshot restart has to read them back (init.cc initializes
+         * them only on a fresh start). A snapshot written without these datasets arrives as zeros;
+         * the distention floor in init.cc restores the material default in that case. */
+        case IO_DAMAGE_POROSITY_DAMAGE:
+            for(n = 0; n < pc; n++) {CellP[offset + n].Damage = *fp++;}
+            break;
+
+        case IO_DAMAGE_POROSITY_DISTENTION:
+            for(n = 0; n < pc; n++) {CellP[offset + n].Distention = *fp++;}
+            break;
+
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            for(n = 0; n < pc; n++) {CellP[offset + n].ActiveCracks = *fp++;}
+            break;
+#endif
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
