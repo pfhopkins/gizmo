@@ -370,6 +370,7 @@ void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
 long get_particles_in_block(enum iofields blocknr, int *typelist);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
+size_t get_input_float_bytes(enum iofields blocknr);
 int read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
 
