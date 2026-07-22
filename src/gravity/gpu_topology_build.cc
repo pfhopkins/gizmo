@@ -370,7 +370,31 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 int lo_idx = sidx[w.range_first];
                 int hi_idx = sidx[w.range_last - 1];
                 int lcp = gpu_morton_lcp_bits(keys[lo_idx], keys[hi_idx]);
-                if(lcp >= 126) {do_random = 1;}
+                if(lcp >= 126) {
+                    /* Collocated range (keys identical). Randomizing octants HERE —
+                     * at the isolation depth, node len ~ the local interparticle
+                     * separation — detaches the descendants' cubes from the true
+                     * particle positions by up to ~len, which silently breaks every
+                     * geometric cube-prune walk (neighbor export, gravity opening).
+                     * The CPU build (forcetree.cc:223) randomizes ONLY once
+                     * len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * softening, so
+                     * the mislocation is bounded by a scale no physics query can
+                     * resolve. Mirror that floor: ABOVE it, keep the deterministic
+                     * key split (identical keys -> one occupied child; the chain
+                     * descends, len halves, depth advances — no infinite recursion).
+                     * Randomize only below the floor, or when the key bits are
+                     * exhausted (mislocation then <= box/2^42, negligible).
+                     * ForceSoftening not yet cached (first build) reads as 0 ->
+                     * floor 0 -> falls through to the bit-exhaustion arm: safe. */
+                    double split_scale = 0;
+                    for(int j = w.range_first; j < w.range_last; j++) {
+                        int sj = sidx[j];
+                        double fs = (double)P_dev[stp ? stp[sj] : sj].ForceSoftening;
+                        if(j == w.range_first || fs < split_scale) {split_scale = fs;}
+                    }
+                    if((double)cl < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale
+                       || w.parent_depth >= GIZMO_GPU_MORTON_MAX_DEPTH) {do_random = 1;}
+                }
             }
             if(do_random) {
                 /* Inner lambda must NOT use KOKKOS_FUNCTION (extended __host__ __device__
