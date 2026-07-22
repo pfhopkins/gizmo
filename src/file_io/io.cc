@@ -1930,9 +1930,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
-        case IO_AMBIPOLAR:
-        case IO_HALL:
-        case IO_OHMIC:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -2061,6 +2058,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
+        case IO_AMBIPOLAR:   /* the resistivities are scalar coefficients, one per particle */
+        case IO_HALL:
+        case IO_OHMIC:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
