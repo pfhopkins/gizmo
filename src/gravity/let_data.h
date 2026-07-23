@@ -103,7 +103,10 @@ struct LETTopleafScalars {
     double max_soft_by_type[6];  /* relative-softening open (max per type over the topleaf) */
     double min_soft;             /* non-NEIGHBORS node-softening open (min over the topleaf) */
     int    has_sink;             /* sink-direct gate (any Type-5 in the topleaf) */
-    int    _pad;                 /* 8-B align -> sizeof = 72 B */
+    int    populated;            /* 1 iff this owned topleaf actually holds >=1 local target particle; 0 = empty
+                                  * (no real targets). Empty leaves formerly got a whole-rank worst-case fallback
+                                  * (port-safety over-coverage) which made them FALSE targets and defeated the
+                                  * per-topleaf PM-cull -> whole-tree LET import. Cover excludes !populated leaves. */
 };
 
 /* Drift-orphan receiver-cover record.  Under ADAPTIVE_TREEFORCE_UPDATE the tree is REUSED while

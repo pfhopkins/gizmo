@@ -222,7 +222,7 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
     struct LETOrphanRecord *r = &g_my_orphans[g_my_orphans_n++];
     r->topleaf = t; r->_pad = 0;
     r->s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) r->s.max_soft_by_type[k] = 0.0;
-    r->s.min_soft = DBL_MAX; r->s.has_sink = 0; r->s._pad = 0;
+    r->s.min_soft = DBL_MAX; r->s.has_sink = 0; r->s.populated = 1;   /* orphan = a real drifted target -> always covered */
     return r;
 }
 
@@ -300,7 +300,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         if(DomainTask[t] != ThisTask) continue;
         struct LETTopleafScalars *s = &g_topleaf_scalars[t];
         s->min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) s->max_soft_by_type[k] = 0.0;
-        s->min_soft = DBL_MAX; s->has_sink = 0; s->_pad = 0;
+        s->min_soft = DBL_MAX; s->has_sink = 0; s->populated = 0;   /* set to 1 in finalize iff the leaf holds a real target */
     }
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
 
@@ -380,21 +380,17 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; conservative-zero (maximally open) */
     if(out->min_soft   == DBL_MAX) out->min_soft   = 0.0;  /* empty cover; conservative (opens softening) */
 
-    /* Finalize MY owned topleaf slice: EMPTY leaves (min_soft still DBL_MAX) -> whole-rank fallback
-     * (conservative, no worse than today, preserves drift forgiveness for a particle that drifts in);
-     * non-empty leaves -> resolve the per-leaf min_OldAcc==DBL_MAX sentinel to conservative-zero. */
+    /* Finalize MY owned topleaf slice: an EMPTY owned topleaf (min_soft still DBL_MAX = no local target
+     * bucketed here) is flagged populated=0 and EXCLUDED from the cover below. It has no target to cover;
+     * its former whole-rank worst-case fallback made it a FALSE target that over-imported the LET (an empty
+     * leaf opening ~the whole foreign tree for zero targets). Non-empty leaves -> populated=1 + resolve the
+     * per-leaf min_OldAcc==DBL_MAX sentinel to conservative-zero. */
     for(int t = 0; t < NTopleaves; t++)
     {
         if(DomainTask[t] != ThisTask) continue;
         struct LETTopleafScalars *s = &g_topleaf_scalars[t];
-        if(s->min_soft == DBL_MAX)
-        {
-            s->min_OldAcc = out->min_OldAcc;
-            for(int k = 0; k < 6; k++) s->max_soft_by_type[k] = out->max_soft_by_type[k];
-            s->min_soft = out->min_soft;
-            s->has_sink = out->has_sink;
-        }
-        else if(s->min_OldAcc == DBL_MAX) { s->min_OldAcc = 0.0; }  /* has particles, none with positive OldAcc */
+        if(s->min_soft == DBL_MAX) { s->populated = 0; }   /* EMPTY: no real target -> excluded from the cover */
+        else { s->populated = 1; if(s->min_OldAcc == DBL_MAX) { s->min_OldAcc = 0.0; } }  /* has >=1 real target */
     }
     /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
      * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
@@ -544,6 +540,7 @@ static void let_build_cover_tree(int R, const uint64_t *receiver_active_bitmap)
     for(int i = 0; i < NTopleaves; i++) {
         if(DomainTask[i] != R) continue;
         if(receiver_active_bitmap && !let_bitmap_test(receiver_active_bitmap, i)) continue;  /* active-cover guard */
+        if(!g_topleaf_scalars[i].populated) continue;   /* empty owned leaf = no real target = no cover entry */
         int no = DomainNodeIndex[i];
         if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
         g_cover_leaf[nleaf] = no;
