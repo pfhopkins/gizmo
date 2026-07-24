@@ -249,46 +249,46 @@ GIZMO_GPU_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle
    cosmic_ray_functions.h. Included by gradient_functions.h, hydro_functions.h, and
    cooling_functions.h — NOT here, because cosmic_ray_functions.h calls functions
    declared later in this file (CR_return_mean_rigidity_in_bin_in_GV, etc.). */
-double return_CRbin_M1speed(int k_CRegy);
-double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
-double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);
-double gamma_eos_of_crs_in_bin(int k_CRegy);
+GIZMO_GPU_FUNCTION double return_CRbin_M1speed(int k_CRegy);
+GIZMO_GPU_FUNCTION double cosmicrayfluid_rsol_corrfac(int k);
+GIZMO_GPU_FUNCTION double Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy);
 void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
 double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
-double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
 void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
-double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
 double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);
 double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
 double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
-double return_CRbin_CR_charge_in_e(int target, int k_CRegy);
-int return_CRbin_CR_species_ID(int k_CRegy);
-void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
-double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
-double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
-double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
-double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_CRbin_CR_charge_in_e(int target, int k_CRegy);
+GIZMO_GPU_FUNCTION int return_CRbin_CR_species_ID(int k_CRegy);
+GIZMO_GPU_FUNCTION void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
+GIZMO_GPU_FUNCTION double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell);
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 void CR_spectrum_define_bins(void);
 void CR_initialize_multibin_quantities(void);
-void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, double dtime_cgs, int mode_driftkick, struct particle_data *pp, struct gas_cell_data *cell);
-double CR_return_slope_from_number_and_energy_in_bin(double energy_in_code_units, double number_effective_in_code_units, double bin_centered_energy_in_GeV, int k_bin);
-double CR_return_new_bin_edge_from_rate(double rate_dt_dimless, double x_m_bin, double x_p_bin, int loss_mode, int NR_key, double additional_variable_dummy);
-double CR_coulomb_energy_integrand(double x, double tau, double slope);
-double CR_reaccel_energy_integrand(double x, double tau, double slope, double delta_slope, int NR_key);
+GIZMO_GPU_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, double dtime_cgs, int mode_driftkick, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_return_slope_from_number_and_energy_in_bin(double energy_in_code_units, double number_effective_in_code_units, double bin_centered_energy_in_GeV, int k_bin);
+GIZMO_GPU_FUNCTION double CR_return_new_bin_edge_from_rate(double rate_dt_dimless, double x_m_bin, double x_p_bin, int loss_mode, int NR_key, double additional_variable_dummy);
+GIZMO_GPU_FUNCTION double CR_coulomb_energy_integrand(double x, double tau, double slope);
+GIZMO_GPU_FUNCTION double CR_reaccel_energy_integrand(double x, double tau, double slope, double delta_slope, int NR_key);
 double CR_compton_energy_integrand(double x, double tau, double slope);
-int CR_check_if_bin_is_nonrelativistic(int k_bin);
+GIZMO_GPU_FUNCTION int CR_check_if_bin_is_nonrelativistic(int k_bin);
 double CR_return_true_number_in_bin(int target, int k_bin, struct gas_cell_data *cell);
-double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell);
-double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell);
 double CR_get_number_in_bin_from_slope(int target, int k_bin, double energy, double slope);
 double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct gas_cell_data *cell);
-double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell);
 int compare_CR_rigidity_for_sort(const void *a, const void *b);
-double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy);
+GIZMO_GPU_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy);
 #endif
 #endif
 #ifdef EOS_ELASTIC
