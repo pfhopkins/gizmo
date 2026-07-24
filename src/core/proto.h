@@ -159,11 +159,11 @@ double weight_function_for_weighted_motion_smoothing(double r, int mode);
 #endif
 
 #ifdef EOS_SUBSTELLAR_ISM
-void hydrogen_molecule_partitionfunc(double temp, double result[3]);
-void hydrogen_molecule_zrot_mixture(double temp, double result[3]);
-void hydrogen_molecule_zvib(double temp, double result[3]);
-double hydrogen_molecule_energy(double temp);
-double hydrogen_molecule_gamma(double temp);
+GIZMO_GPU_FUNCTION void hydrogen_molecule_partitionfunc(double temp, double result[3]);
+GIZMO_GPU_FUNCTION void hydrogen_molecule_zrot_mixture(double temp, double result[3]);
+GIZMO_GPU_FUNCTION void hydrogen_molecule_zvib(double temp, double result[3]);
+GIZMO_GPU_FUNCTION double hydrogen_molecule_energy(double temp);
+GIZMO_GPU_FUNCTION double hydrogen_molecule_gamma(double temp);
 #endif
 
 void read_fof(int num);
@@ -295,7 +295,7 @@ GIZMO_GPU_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CR
 void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 #endif
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
-double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
+GIZMO_GPU_FUNCTION double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
 /* Get_Gas_effective_soundspeed_i is now cell[i].effective_soundspeed() */
 /* Get_Gas_Fast_MHD_wavespeed_i is now cell[i].fast_MHD_wavespeed() */
@@ -637,9 +637,9 @@ void apply_grain_dragforce(void);
 #endif
 
 #ifdef RT_INFRARED
-double get_min_allowed_dustIRrad_temperature(void);
-double dust_dE_cooling(int i, double Tgas, double Tdust, double *Tdust_fixedpoint_1, double *Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_ir_lambdadust(int i, double Tgas, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double get_min_allowed_dustIRrad_temperature(void);
+GIZMO_GPU_FUNCTION double dust_dE_cooling(int i, double Tgas, double Tdust, double *Tdust_fixedpoint_1, double *Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_ir_lambdadust(int i, double Tgas, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
@@ -702,8 +702,8 @@ void apply_dm_heating(void);
 
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-double cr_get_source_injection_rate(int i, struct particle_data *pp, struct gas_cell_data *cell);
-double cr_get_source_shieldfac(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double cr_get_source_injection_rate(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 
@@ -759,19 +759,19 @@ GIZMO_GPU_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, 
 GIZMO_GPU_FUNCTION double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
-MyFloat f_Oplus(MyFloat nHp);
+GIZMO_GPU_FUNCTION MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
+GIZMO_GPU_FUNCTION MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, const char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 int ion_name_to_index(const char *ion_name, struct gas_cell_data *cell);
 double get_starformation_rate(int i, int mode);
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF);
@@ -898,9 +898,9 @@ void pm_setup_nonperiodic_kernel(void);
 
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 #ifdef CHIMES_STELLAR_FLUXES
-double chimes_G0_luminosity(double stellar_age, double stellar_mass);
-double chimes_ion_luminosity(double stellar_age, double stellar_mass);
-int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double chimes_G0_luminosity(double stellar_age, double stellar_mass);
+GIZMO_GPU_FUNCTION double chimes_ion_luminosity(double stellar_age, double stellar_mass);
+GIZMO_GPU_FUNCTION int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 GIZMO_GPU_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION int rt_get_donation_target_bin(int bin);
@@ -917,7 +917,7 @@ GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, str
     return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
 }
 #endif
-void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef RT_SOURCE_INJECTION
@@ -936,20 +936,20 @@ void rt_set_simple_inits(int RestartFlag);
 #if defined(RT_EVOLVE_INTENSITIES)
 void rt_init_intensity_directions(void);
 #endif
-void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef RT_ISRF_BACKGROUND
-void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_cell_data *cell);
-void get_background_isrf_urad(int i, double *urad);
-double background_isrf_cmb_Teff(void);
+GIZMO_GPU_FUNCTION void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void get_background_isrf_urad(int i, double *urad);
+GIZMO_GPU_FUNCTION double background_isrf_cmb_Teff(void);
 #endif
-double slab_averaging_function(double x);
-double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
-double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double slab_averaging_function(double x);
+GIZMO_GPU_FUNCTION double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
+GIZMO_GPU_FUNCTION double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell);
 
 #ifdef RT_CHEM_PHOTOION
 /* rt_return_photon_number_density is now cell[i].rt_photon_number_density(k) */
-double rt_photoion_chem_return_temperature(int i, double internal_energy);
+GIZMO_GPU_FUNCTION double rt_photoion_chem_return_temperature(int i, double internal_energy, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_update_chemistry(void);
 void rt_get_sigma(void);
 void rt_write_chemistry_stats(void);
