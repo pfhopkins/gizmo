@@ -239,11 +239,11 @@ void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, cons
 /* Get_Particle_Size is now a member function of particle_data — use P[i].Get_Particle_Size() or pp[i].Get_Particle_Size() */
 /* Get_Particle_Expected_Area moved to core/predict_functions.h as
  * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
-KOKKOS_INLINE_FUNCTION double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
+GIZMO_GPU_FUNCTION double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef COSMIC_RAY_FLUID
 /* CR inline functions (Get_Gas_CosmicRayPressure, cosmicrayfluid_rsol_corrfac, etc.) are in
    cosmic_ray_functions.h. Included by gradient_functions.h, hydro_functions.h, and
@@ -299,12 +299,12 @@ double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
 /* Get_Gas_effective_soundspeed_i is now cell[i].effective_soundspeed() */
 /* Get_Gas_Fast_MHD_wavespeed_i is now cell[i].fast_MHD_wavespeed() */
-KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-KOKKOS_INLINE_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double yhelium(int target, struct particle_data *pp);
-KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double yhelium(int target, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef DIVBCLEANING_DEDNER
@@ -754,10 +754,10 @@ void hydro_force(void);
 void init(void);
 GIZMO_GPU_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
@@ -923,7 +923,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #ifdef RT_SOURCE_INJECTION
 void rt_source_injection(void);
 #endif
-KOKKOS_INLINE_FUNCTION MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
+GIZMO_GPU_FUNCTION MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
 
 #ifdef TRANSPORT_SUBCYCLE
 void transport_subcycle_exchange_fluxes(void);
@@ -956,7 +956,7 @@ void rt_write_chemistry_stats(void);
 #endif
 
 #endif
-KOKKOS_INLINE_FUNCTION double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell);
 
 
 int find_block(char *label,FILE *fd);
