@@ -206,6 +206,47 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Frontier")
+## Frontier (OLCF), AMD MI250X (gfx90a) via the Kokkos HIP backend.
+## Prebuilt module kokkos/4.6.02-gpu (Kokkos_ENABLE_HIP, ARCH_VEGA90A+ZEN3, built with
+## rocm-6.4.2 hipcc, shared libs, RDC off). Device TUs (GPU_OBJS) are compiled by hipcc
+## (defines __HIPCC__ => GIZMO_GPU_COMPILER, like nvcc_wrapper on Vista); host TUs + the
+## final link use the Cray CC wrapper (amd PE), which auto-adds GPU-aware MPI (GTL,
+## -lmpi_gtl_hsa), -lamdhip64, and cray-hdf5/fftw/gsl paths for the host objects.
+## Load: amd/6.4.2 rocm/6.4.2 craype-accel-amd-gfx90a kokkos/4.6.02-gpu cray-hdf5 cray-fftw gsl
+CC       =  cc
+CXX      =  CC -std=c++17
+FC       =  ftn
+OPTIMIZE = -O2
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+KOKKOS_PATH     = $(OLCF_KOKKOS_ROOT)
+KOKKOS_CPPFLAGS = -I$(OLCF_KOKKOS_ROOT)/include
+## hipcc device flags: target gfx90a + cray-mpich headers (device TUs are -c only; CC links).
+## <mpi.h> is included directly by device TUs but hipcc lacks the Cray wrapper's auto include.
+KOKKOS_CXXFLAGS = --offload-arch=gfx90a -I$(CRAY_MPICH_DIR)/include
+KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib64
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
+GPU_CXX     = hipcc --std=c++17
+GPU_CFLAGS  = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+MKL_INCL =
+MKL_LIBS =
+## cray-hdf5 include set explicitly so hipcc finds <hdf5.h> (allvars.h includes it
+## unconditionally); the Cray CC wrapper auto-adds it for host TUs, but hipcc does not.
+HDF5INCL = -I$(HDF5_ROOT)/include -DH5_USE_16_API
+HDF5LIB  = -lhdf5 -lz
+FFTW_INCL=
+FFTW_LIBS=
+GSL_INCL = -I$(OLCF_GSL_ROOT)/include
+GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## submit to Frontier batch (AMD MI250X, 8x GCD per node, gfx90a)
+endif
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Vista_CPU")
 ## Vista Grace ARM with Kokkos OpenMP backend (debug oracle for the GPU build).
 ## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP
