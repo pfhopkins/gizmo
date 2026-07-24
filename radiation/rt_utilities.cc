@@ -52,7 +52,7 @@
 int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion; use pp[i].Mass (valid for all types) not cell[i].Mass (only valid for gas)
     int active_check = 0; // default to inactive //
     
 #if defined(GALSF)
@@ -446,7 +446,7 @@ int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, 
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(pp[i].Type < 4) {return 0;} // only go forward with star or sink-type particles
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // use pp[i].Mass: cell[i].Mass is only valid for gas (Type==0)
     int active_check = 0, k; // default to inactive //
     
 #if defined(RT_INFRARED) /* special mid-through-far infrared band, which includes IR radiation temperature evolution */
