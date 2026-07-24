@@ -139,7 +139,7 @@ KOKKOS_INLINE_FUNCTION uint64_t gpu_morton_double_to_int42(double d) {
 /* clz64: count leading zeros of a uint64_t. */
 KOKKOS_INLINE_FUNCTION int gpu_morton_clz64(uint64_t x) {
     if(x == 0) {return 64;}
-#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+#if defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__
     return __clzll((unsigned long long)x);
 #else
     int n = 0;

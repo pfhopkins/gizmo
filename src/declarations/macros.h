@@ -211,7 +211,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
    the host post-kernel error check consumes and routes to a graceful stop. */
 #include "gpu_device_error_sentinel.h"
 
-#if (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
+#if (defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__)
 /* GPU-device endrun/PRINT_WARNING.  Device code cannot call MPI_Abort, but it
    must not continue after a fatal physics/error path.  Record the code+line in
    the per-TU sentinel and print the source location, then trap the kernel so the

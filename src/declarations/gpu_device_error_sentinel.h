@@ -26,7 +26,7 @@
 struct gizmo_gpu_err_sentinel_t { int set; int code; int line; };
 static __managed__ struct gizmo_gpu_err_sentinel_t gizmo_gpu_err_sentinel = {0, 0, 0};
 
-#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+#if defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__
 /* Device pass: first-set-wins record. Best-effort -- we trap immediately after,
  * and the host-side request is itself first-set-wins, so a benign race is fine. */
 static __device__ inline void gizmo_gpu_device_record_error(int code, int line) {

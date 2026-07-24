@@ -100,7 +100,7 @@ namespace {
    is the HIP equivalent. On the host pass of the same GPU TU, the
    redirect is NOT defined, so `All.foo` resolves to the host extern
    declared above. */
-#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+#if defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__
 #define All AllDeviceMirror
 #endif
 

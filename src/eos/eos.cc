@@ -50,7 +50,9 @@ double return_user_desired_target_pressure(int i)
 }
 
 /* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
+#ifndef __HIP__
 #pragma omp begin declare target
+#endif
 
 /*!
     Updates the thermodynamic quantities determined by the current internal
@@ -100,7 +102,9 @@ double return_user_desired_target_pressure(int i)
 #define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
+#ifndef __HIP__
 #pragma omp end declare target
+#endif
 
 /* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
    as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl (audit-E1 follow-up, 2026-05-20).
