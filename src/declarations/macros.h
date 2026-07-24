@@ -165,13 +165,25 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #define GIZMO_GPU_DEVICE
 #endif
 /* KOKKOS_FUNCTION / KOKKOS_INLINE_FUNCTION: defined by Kokkos headers when
-   Kokkos is active.  On non-GPU builds, define to nothing/inline
-   so code annotated with these compiles without Kokkos. */
+   Kokkos is active.  On non-GPU builds, define to nothing/inline so code
+   annotated with these compiles without Kokkos.  Under a GPU device compiler the
+   fallback MUST be host+device: some TUs include this header (via allvars.h)
+   before Kokkos_Core.hpp, so a KOKKOS_INLINE_FUNCTION-annotated decl would
+   otherwise expand to host-only `inline`, then re-declare host+device once Kokkos
+   redefines the macro -> clang 'cannot overload' (nvcc merged this silently). */
 #ifndef KOKKOS_FUNCTION
+#if defined(GIZMO_GPU_COMPILER)
+#define KOKKOS_FUNCTION __host__ __device__
+#else
 #define KOKKOS_FUNCTION
 #endif
+#endif
 #ifndef KOKKOS_INLINE_FUNCTION
+#if defined(GIZMO_GPU_COMPILER)
+#define KOKKOS_INLINE_FUNCTION __host__ __device__ inline
+#else
 #define KOKKOS_INLINE_FUNCTION inline
+#endif
 #endif
 /* Kokkos memory space abstraction: Kokkos::SharedSpace is backend-agnostic
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
