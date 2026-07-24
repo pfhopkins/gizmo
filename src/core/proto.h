@@ -902,11 +902,11 @@ double chimes_G0_luminosity(double stellar_age, double stellar_mass);
 double chimes_ion_luminosity(double stellar_age, double stellar_mass);
 int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
-int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION int rt_get_donation_target_bin(int bin);
-int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_define_effective_frequencies_in_bands(void);
 GIZMO_GPU_FUNCTION double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
