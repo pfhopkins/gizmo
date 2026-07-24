@@ -83,6 +83,9 @@ struct LETPerRankPayload {
                                LETOrphanRecord). Rides this Allgather so every rank learns every
                                rank's orphan count -> the orphan-record Allgatherv is entered
                                collectively (all ranks agree total>0) or skipped (total==0). */
+    int    n_clusters;      /* count of this rank's rule-1 cluster cover leaves (see LETCoverLeaf).
+                               Rides this Allgather exactly like n_orphans so the cluster-cover
+                               Allgatherv is entered collectively (all ranks agree total>0). */
     /* NOTE (per-cover scalar refinement): min_OldAcc/max_soft_by_type/min_soft/has_sink here are
        the WHOLE-RANK worst case, DERIVED (reduced) from the per-topleaf LETTopleafScalars table so
        they can never drift from it (SSOT). LET essentiality now reads the per-TOPLEAF scalars from
@@ -103,7 +106,10 @@ struct LETTopleafScalars {
     double max_soft_by_type[6];  /* relative-softening open (max per type over the topleaf) */
     double min_soft;             /* non-NEIGHBORS node-softening open (min over the topleaf) */
     int    has_sink;             /* sink-direct gate (any Type-5 in the topleaf) */
-    int    _pad;                 /* 8-B align -> sizeof = 72 B */
+    int    populated;            /* 1 iff this owned topleaf actually holds >=1 local target particle; 0 = empty
+                                  * (no real targets). Empty leaves formerly got a whole-rank worst-case fallback
+                                  * (port-safety over-coverage) which made them FALSE targets and defeated the
+                                  * per-topleaf PM-cull -> whole-tree LET import. Cover excludes !populated leaves. */
 };
 
 /* Drift-orphan receiver-cover record.  Under ADAPTIVE_TREEFORCE_UPDATE the tree is REUSED while
@@ -118,6 +124,18 @@ struct LETOrphanRecord {
     int    topleaf;              /* reached foreign topleaf t: cover-leaf geometry = DomainNodeIndex[t] box */
     int    _pad;                 /* 8-B align */
     struct LETTopleafScalars s;  /* merged worst-case opening scalars over R's local targets reaching t */
+};
+
+/* One RULE-1 cluster cover leaf: an arbitrary AABB over a group of R's target particles + the conservative
+ * opening scalars over that group.  A rank's targets are grouped WITHIN each populated owned topleaf by
+ * softening OCTAVE (floor(log2(ForceSoftening_KernelRadius))) -- one cluster per distinct octave present --
+ * so an over-softened subset gets its OWN tight box carrying its large softening instead of smearing that
+ * softening over the whole topleaf box (the measured LET over-import).  Clusters are Allgatherv'd (like
+ * orphan records) so every sender holds every receiver's cluster leaves for the cover-tree essentiality
+ * test.  This struct doubles as the in-memory cover-leaf scratch (clusters + orphans both become these). */
+struct LETCoverLeaf {
+    double bmin[3], bmax[3];     /* tight AABB over the group's member positions (arbitrary, NOT Nodes[]-backed) */
+    struct LETTopleafScalars s;  /* min_OldAcc / max_soft_by_type / min_soft / has_sink over the group (populated=1) */
 };
 
 /* ----------------------------------------------------------------------
