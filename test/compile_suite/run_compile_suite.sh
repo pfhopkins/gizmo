@@ -4,6 +4,7 @@
 # Usage:
 #   Local (Kokkos OpenMP):  ./test/compile_suite/run_compile_suite.sh
 #   Vista (CUDA GPU):       ./test/compile_suite/run_compile_suite.sh --gpu
+#   Frontier (HIP GPU):     ./test/compile_suite/run_compile_suite.sh --frontier
 #   Resume after fix:       ./test/compile_suite/run_compile_suite.sh --resume
 #   Resume GPU:             ./test/compile_suite/run_compile_suite.sh --gpu --resume
 #
@@ -22,13 +23,22 @@ cd "$GIZMO_ROOT"
 # Parallel job count overridable via env (e.g. NJOBS=2 for a busy laptop).
 NJOBS="${NJOBS:-8}"
 GPU_MODE=0
+FRONTIER_MODE=0
 RESUME=0
 for arg in "$@"; do
     case "$arg" in
         --gpu) GPU_MODE=1 ;;
+        --frontier) GPU_MODE=1; FRONTIER_MODE=1 ;;
         --resume) RESUME=1 ;;
     esac
 done
+
+# Extra make variables per mode. On Frontier the device compiler is hipcc (clang):
+# raise its per-TU error cap so one build shows every error, not the first 20.
+MAKE_VARS=()
+if [[ $FRONTIER_MODE -eq 1 ]]; then
+    MAKE_VARS+=('GPU_CXX=hipcc --std=c++17 -ferror-limit=0')
+fi
 
 # Save originals (only on fresh run)
 if [[ $RESUME -eq 0 ]]; then
@@ -36,8 +46,15 @@ if [[ $RESUME -eq 0 ]]; then
     cp -f Makefile.systype Makefile.systype.compile_suite_backup 2>/dev/null || true
 fi
 
+# An exported SYSTYPE takes precedence over Makefile.systype (src/Makefile), which would
+# silently defeat the mode flag. Drop it so the mode selected here is what actually builds.
+unset SYSTYPE
+
 # Set systype based on mode
-if [[ $GPU_MODE -eq 1 ]]; then
+if [[ $FRONTIER_MODE -eq 1 ]]; then
+    echo 'SYSTYPE="Frontier"' > Makefile.systype
+    echo "[compile_suite] Frontier mode: SYSTYPE=Frontier (hipcc device TUs, Cray CC host+link)"
+elif [[ $GPU_MODE -eq 1 ]]; then
     echo 'SYSTYPE="Vista"' > Makefile.systype
     echo "[compile_suite] GPU mode: SYSTYPE=Vista"
 else
@@ -217,7 +234,7 @@ CONFIGS=(
     "GRAIN_FLUID"
     "MAGNETIC GRAIN_FLUID GRAIN_BACKREACTION GRAIN_LORENTZFORCE GRAIN_COLLISIONS"
     "HYDRO_MESHLESS_FINITE_MASS BOX_PERIODIC BOX_SPATIAL_DIMENSION=2 SELFGRAVITY_OFF EOS_TILLOTSON EOS_ELASTIC GRAIN_FLUID GRAIN_BACKREACTION GRAIN_FLUID_PROMOTION INPUT_READ_KERNELRADIUS KERNEL_FUNCTION=6 OUTPUT_IN_DOUBLEPRECISION DEVELOPER_MODE"
-    "FIRE_PHYSICS_DEFAULTS=3 GALSF_ISMDUSTCHEM_MODEL=2"
+    "FIRE_PHYSICS_DEFAULTS=3 GALSF_ISMDUSTCHEM_MODEL=1+2"
     "MAGNETIC PIC_MHD PIC_SPEEDOFLIGHT_REDUCTION=0.01"
 
     # --- Gravity ---
@@ -353,10 +370,12 @@ for i in "${!CONFIGS[@]}"; do
         done
     } > Config.sh
 
-    # Clean and build
-    make clean > /dev/null 2>&1
+    # Clean and build. `make clean` expands OBJS from the CURRENT Config.sh, so it leaves
+    # the previous config's extra .o behind and the next build links them; nuke by hand.
+    /usr/bin/find . -name '*.o' -type f -delete
+    rm -f GIZMO GIZMO_config.h compile_time_info.cc
     errfile="$ERRORS_DIR/config_$(printf '%03d' $((i+1))).stderr"
-    if make -j${NJOBS} > compiler_test_stdout 2> "$errfile"; then
+    if make -j${NJOBS} ${MAKE_VARS[@]+"${MAKE_VARS[@]}"} > compiler_test_stdout 2> "$errfile"; then
         echo "PASS"
         echo "PASS $flags" >> "$RESULTS_FILE"
         PASS=$((PASS + 1))
@@ -389,7 +408,8 @@ done
 rm -f "$DONE_FILE"
 cp -f Config.sh.compile_suite_backup Config.sh 2>/dev/null || true
 cp -f Makefile.systype.compile_suite_backup Makefile.systype 2>/dev/null || true
-make clean > /dev/null 2>&1
+/usr/bin/find . -name '*.o' -type f -delete
+rm -f GIZMO GIZMO_config.h compile_time_info.cc
 
 echo ""
 echo "============================================================"
