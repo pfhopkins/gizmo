@@ -159,27 +159,59 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
 }
 
 /* ----------------------------------------------------------------------
- * Per-topleaf scalar table: global [NTopleaves], each rank fills its OWNED slice
- * (let_compute_local_payload) and it is Allgatherv'd (mirroring the DomainMoment
- * exchange) so every sender holds every receiver-topleaf's scalars. Grown-or-reused
- * across builds (process-lifetime scratch, like the cover-tree g_cover* arrays).
- * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf
- * loses its scalars from every leaf summary (a real under-import hazard) -> LOUD count +
- * collective controlled stop in let_run_exchange (never a silent fold-into-every-leaf downgrade).
+ * RULE-1 cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
+ * softening octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
+ * Allgatherv'd so every sender holds every receiver's cluster leaves for the cover-tree essentiality test.
+ *   g_my_clusters   -- THIS rank's cluster leaves for the current build (producer side).
+ *   g_cluster_all   -- every rank's cluster leaves, concatenated by rank (post-Allgatherv).
+ *   g_cluster_off   -- prefix-sum offsets: rank R's clusters = g_cluster_all[off[R], off[R+1]).
+ * g_cl_members is the transient per-build member scratch (target pos/soft/OldAcc/type + its topleaf+octave
+ * bin key) that the sort-and-reduce below turns into clusters.  All grow-only, process-lifetime.
+ * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf loses its coverage
+ * (a real under-import hazard) -> LOUD count + collective controlled stop in let_run_exchange.
  * ---------------------------------------------------------------------- */
-static struct LETTopleafScalars *g_topleaf_scalars = NULL;
-static int g_topleaf_scalars_cap = 0;
+static struct LETCoverLeaf *g_my_clusters = NULL;
+static int g_my_clusters_n = 0, g_my_clusters_cap = 0;
+static struct LETCoverLeaf *g_cluster_all = NULL;
+static int g_cluster_all_cap = 0;
+static int *g_cluster_off = NULL;
+static int g_cluster_off_cap = 0;
 static long long g_let_unbucketable = 0;          /* local count this build */
 static long long g_let_unbucketable_first_id = -1;/* first offending P[i].ID (diagnostic) */
 
-static void let_topleaf_scalars_ensure(int n)
+/* Transient per-build member scratch: one entry per owned-topleaf target, keyed by (topleaf, softening octave).
+ * Sorted by that key then reduced into clusters (one per contiguous equal-key run) at the end of the payload. */
+struct LETClusterMember { int tl; int octave; double pos[3]; double soft; double oldacc; int type; };
+static struct LETClusterMember *g_cl_members = NULL;
+static int g_cl_members_n = 0, g_cl_members_cap = 0;
+static int let_cluster_member_cmp(const void *a, const void *b)
 {
-    if(g_topleaf_scalars_cap >= n) return;
-    struct LETTopleafScalars *nt = (struct LETTopleafScalars *)
-        realloc(g_topleaf_scalars, (size_t) n * sizeof(struct LETTopleafScalars));
-    if(!nt) { printf("let_topleaf_scalars_ensure: realloc failed (n=%d, rank=%d). Stopping.\n",
-                     n, ThisTask); fflush(stdout); endrun(90000093); }
-    g_topleaf_scalars = nt; g_topleaf_scalars_cap = n;
+    const struct LETClusterMember *x = (const struct LETClusterMember *) a, *y = (const struct LETClusterMember *) b;
+    if(x->tl != y->tl) return (x->tl > y->tl) - (x->tl < y->tl);
+    return (x->octave > y->octave) - (x->octave < y->octave);
+}
+static inline void let_cl_member_push(int tl, int octave, double px, double py, double pz, double soft, double oldacc, int type)
+{
+    if(g_cl_members_n >= g_cl_members_cap) {
+        int nc = g_cl_members_cap ? 2 * g_cl_members_cap : 8192;
+        struct LETClusterMember *nb = (struct LETClusterMember *) realloc(g_cl_members, (size_t) nc * sizeof(struct LETClusterMember));
+        if(!nb) { printf("let_cl_member_push: realloc failed (n=%d, rank=%d). Stopping.\n", nc, ThisTask); fflush(stdout); endrun(90000093); }
+        g_cl_members = nb; g_cl_members_cap = nc;
+    }
+    struct LETClusterMember *m = &g_cl_members[g_cl_members_n++];
+    m->tl = tl; m->octave = octave;
+    m->pos[0] = px; m->pos[1] = py; m->pos[2] = pz;
+    m->soft = soft; m->oldacc = oldacc; m->type = type;
+}
+static inline void let_cluster_push(const struct LETCoverLeaf *c)
+{
+    if(g_my_clusters_n >= g_my_clusters_cap) {
+        int nc = g_my_clusters_cap ? 2 * g_my_clusters_cap : 4096;
+        struct LETCoverLeaf *nb = (struct LETCoverLeaf *) realloc(g_my_clusters, (size_t) nc * sizeof(struct LETCoverLeaf));
+        if(!nb) { printf("let_cluster_push: realloc failed (n=%d, rank=%d). Stopping.\n", nc, ThisTask); fflush(stdout); endrun(90000100); }
+        g_my_clusters = nb; g_my_clusters_cap = nc;
+    }
+    g_my_clusters[g_my_clusters_n++] = *c;
 }
 
 /* ----------------------------------------------------------------------
@@ -273,36 +305,29 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     }
     out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
-    /* Per-particle bounds -> PER-TOPLEAF scalar table (owned slice) + WHOLE-RANK reduce.
-     * Each local particle is bucketed to its owning topleaf via the Father chain; the topleaf's
-     * scalars are the worst case over ITS particles (target-local, tighter), and the whole-rank
-     * payload scalars below are the reduce over all owned topleaves -- a conservative fallback that
-     * can never drift from the table (SSOT). active_bitmap non-NULL -> ActiveParticleList (Phase 9.5
-     * tight); else all NumPart (Phase 9.4 conservative -- safer for RT/TREECOL non-active). */
+    /* Per-particle bounds -> RULE-1 CLUSTER MEMBERS (grouped later by topleaf+softening octave) + WHOLE-RANK
+     * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
+     * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
+     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard).
+     * active_bitmap non-NULL -> ActiveParticleList (Phase 9.5 tight); else all NumPart (Phase 9.4 conservative). */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
     out->has_sink = 0;
 
-    let_topleaf_scalars_ensure(NTopleaves > 0 ? NTopleaves : 1);
     g_let_unbucketable = 0; g_let_unbucketable_first_id = -1;
 
-    /* Node[no] -> topleaf index, over ALL topleaves (owned AND foreign). Ownership is a property
-     * checked AFTER lookup (DomainTask[t]==ThisTask), not baked into the map -- one SSOT lookup.
-     * The owner also inits its OWN topleaf-scalar slice to conservative-empty here (EMPTY sentinel =
-     * min_soft==DBL_MAX; ForceSoftening_KernelRadius>0 for any real particle so a non-empty leaf sets it). */
+    /* Node[no] -> topleaf index, over ALL topleaves (owned AND foreign). Ownership is checked AFTER lookup
+     * (DomainTask[t]==ThisTask), not baked into the map -- one SSOT lookup. */
     int *tl_lookup = (int *) mymalloc("LET_tl_lookup_scalars", (size_t) MaxNodes * sizeof(int));
     for(int j = 0; j < MaxNodes; j++) tl_lookup[j] = -1;
     for(int t = 0; t < NTopleaves; t++)
     {
         int no = DomainNodeIndex[t];
         if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) tl_lookup[no - All.MaxPart] = t;
-        if(DomainTask[t] != ThisTask) continue;
-        struct LETTopleafScalars *s = &g_topleaf_scalars[t];
-        s->min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) s->max_soft_by_type[k] = 0.0;
-        s->min_soft = DBL_MAX; s->has_sink = 0; s->populated = 0;   /* set to 1 in finalize iff the leaf holds a real target */
     }
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
+    g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
 
     int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
     for(int kk = 0; kk < n_iter; kk++)
@@ -347,12 +372,10 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         }
         else
         {
-            struct LETTopleafScalars *s = &g_topleaf_scalars[tl];
-            /* per-topleaf (target-local worst case) */
-            if(oa > 0 && oa < s->min_OldAcc) s->min_OldAcc = oa;
-            if(soft > s->max_soft_by_type[t]) s->max_soft_by_type[t] = soft;
-            if(soft < s->min_soft) s->min_soft = soft;
-            if(t == 5) s->has_sink = 1;
+            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave). The rule-1 split
+             * (one cluster per distinct octave in a topleaf) is applied by the sort-and-reduce after the loop. */
+            int octave = (soft > 1e-300) ? (int) floor(log2(soft)) : -2000000000;
+            let_cl_member_push(tl, octave, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], soft, oa, t);
         }
         /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
          * empty-owned-topleaf fallback baked in below stays a true worst case. */
@@ -380,18 +403,41 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; conservative-zero (maximally open) */
     if(out->min_soft   == DBL_MAX) out->min_soft   = 0.0;  /* empty cover; conservative (opens softening) */
 
-    /* Finalize MY owned topleaf slice: an EMPTY owned topleaf (min_soft still DBL_MAX = no local target
-     * bucketed here) is flagged populated=0 and EXCLUDED from the cover below. It has no target to cover;
-     * its former whole-rank worst-case fallback made it a FALSE target that over-imported the LET (an empty
-     * leaf opening ~the whole foreign tree for zero targets). Non-empty leaves -> populated=1 + resolve the
-     * per-leaf min_OldAcc==DBL_MAX sentinel to conservative-zero. */
-    for(int t = 0; t < NTopleaves; t++)
+    /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave), then
+     * each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max scalars
+     * (max soft-by-type, min soft, min positive OldAcc, OR has_sink). An empty owned topleaf collected no
+     * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
+     * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
+    g_my_clusters_n = 0;
+    if(g_cl_members_n > 0)
     {
-        if(DomainTask[t] != ThisTask) continue;
-        struct LETTopleafScalars *s = &g_topleaf_scalars[t];
-        if(s->min_soft == DBL_MAX) { s->populated = 0; }   /* EMPTY: no real target -> excluded from the cover */
-        else { s->populated = 1; if(s->min_OldAcc == DBL_MAX) { s->min_OldAcc = 0.0; } }  /* has >=1 real target */
+        qsort(g_cl_members, (size_t) g_cl_members_n, sizeof(struct LETClusterMember), let_cluster_member_cmp);
+        int p = 0;
+        while(p < g_cl_members_n)
+        {
+            int q = p;
+            while(q < g_cl_members_n &&
+                  g_cl_members[q].tl == g_cl_members[p].tl && g_cl_members[q].octave == g_cl_members[p].octave) q++;
+            struct LETCoverLeaf c;
+            for(int d = 0; d < 3; d++) { c.bmin[d] = DBL_MAX; c.bmax[d] = -DBL_MAX; }
+            c.s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c.s.max_soft_by_type[k] = 0.0;
+            c.s.min_soft = DBL_MAX; c.s.has_sink = 0; c.s.populated = 1;
+            for(int r = p; r < q; r++)
+            {
+                struct LETClusterMember *m = &g_cl_members[r];
+                for(int d = 0; d < 3; d++) { if(m->pos[d] < c.bmin[d]) c.bmin[d] = m->pos[d]; if(m->pos[d] > c.bmax[d]) c.bmax[d] = m->pos[d]; }
+                if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
+                if(m->oldacc > 0 && m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
+                if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
+                if(m->type == 5) c.s.has_sink = 1;
+            }
+            if(c.s.min_OldAcc == DBL_MAX) c.s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
+            if(c.s.min_soft   == DBL_MAX) c.s.min_soft   = 0.0;
+            let_cluster_push(&c);
+            p = q;
+        }
     }
+    out->n_clusters = g_my_clusters_n;
     /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
      * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
 }
@@ -439,35 +485,29 @@ struct LETCoverNode {
 static struct LETCoverNode *g_cover      = NULL;  /* AABB-tree nodes, root at index 0 */
 static int                   g_cover_cap  = 0;
 static int                   g_cover_n    = 0;     /* nodes used by the current build */
-static int                  *g_cover_leaf = NULL;  /* R's owned-topleaf Nodes[] indices */
-static int                  *g_cover_leaf_tl = NULL;/* parallel: topleaf index (geometry provenance/debug) */
-static struct LETTopleafScalars *g_cover_leaf_scal = NULL;/* parallel: this leaf's opening scalars BY VALUE --
-                                              owned leaf <- g_topleaf_scalars[t]; orphan leaf <- its record.
-                                              Self-contained so a cover leaf's scalars are decoupled from the
-                                              per-topleaf table (an orphan leaf's geometry is a foreign topleaf). */
+static struct LETCoverLeaf  *g_cover_leaves = NULL;/* R's cover leaves for the current build (clusters + orphans),
+                                              each an arbitrary AABB + its opening scalars BY VALUE (self-contained,
+                                              decoupled from any per-topleaf table). Partitioned in place by cover_build. */
 static int                   g_cover_leaf_cap = 0;
 
-/* Union box of the leaf range [lo,hi) into out[bmin/bmax]. */
+/* Union box of the leaf range [lo,hi) into out[bmin/bmax] (cover leaves carry their own AABB). */
 static void cover_union_box(int lo, int hi, double bmin[3], double bmax[3])
 {
     bmin[0]=bmin[1]=bmin[2]= DBL_MAX;
     bmax[0]=bmax[1]=bmax[2]=-DBL_MAX;
     for(int k = lo; k < hi; k++) {
-        int no = g_cover_leaf[k];
-        double h = 0.5 * (double) Nodes[no].len;
+        const struct LETCoverLeaf *L = &g_cover_leaves[k];
         for(int d = 0; d < 3; d++) {
-            double c = (double) Nodes[no].center[d];
-            if(c - h < bmin[d]) bmin[d] = c - h;
-            if(c + h > bmax[d]) bmax[d] = c + h;
+            if(L->bmin[d] < bmin[d]) bmin[d] = L->bmin[d];
+            if(L->bmax[d] > bmax[d]) bmax[d] = L->bmax[d];
         }
     }
 }
 
-/* BVH build over the leaf range [lo,hi): split at the SPATIAL MEDIAN of the
- * range's longest axis (partition g_cover_leaf in place by leaf-center along that
- * axis), so aggregate boxes are tight and the walk prunes early. Falls back to the
- * index median for a degenerate partition (coincident centers). g_cover is pre-
- * sized to 2*NTopleaves so no realloc moves g_cover[idx] during the recursion. */
+/* BVH build over the leaf range [lo,hi): split at the SPATIAL MEDIAN of the range's longest axis (partition
+ * g_cover_leaves in place by leaf-center along that axis), so aggregate boxes are tight and the walk prunes
+ * early. Falls back to the index median for a degenerate partition (coincident centers). g_cover is pre-sized
+ * to 2*nleaf so no realloc moves g_cover[idx] during the recursion. */
 static int cover_build(int lo, int hi)
 {
     int idx = g_cover_n++;
@@ -475,8 +515,8 @@ static int cover_build(int lo, int hi)
     cover_union_box(lo, hi, bmin, bmax);
     if(hi - lo <= 1) {
         g_cover[idx].c0 = -1; g_cover[idx].c1 = -1;
-        /* leaf: this cover leaf's opening scalars (owned topleaf's table entry, or an orphan record) */
-        const struct LETTopleafScalars *s = &g_cover_leaf_scal[lo];
+        /* leaf: this cover leaf's opening scalars (a rule-1 cluster, or an orphan record) */
+        const struct LETTopleafScalars *s = &g_cover_leaves[lo].s;
         g_cover[idx].min_OldAcc = s->min_OldAcc;
         for(int t = 0; t < 6; t++) g_cover[idx].max_soft_by_type[t] = s->max_soft_by_type[t];
         g_cover[idx].min_soft = s->min_soft;
@@ -490,11 +530,9 @@ static int cover_build(int lo, int hi)
     double split = 0.5 * (bmin[ax] + bmax[ax]);
     int i = lo, j = hi - 1;
     while(i <= j) {
-        while(i <= j && (double) Nodes[g_cover_leaf[i]].center[ax] <  split) i++;
-        while(i <= j && (double) Nodes[g_cover_leaf[j]].center[ax] >= split) j--;
-        if(i < j) { int t = g_cover_leaf[i]; g_cover_leaf[i] = g_cover_leaf[j]; g_cover_leaf[j] = t;
-                    int u = g_cover_leaf_tl[i]; g_cover_leaf_tl[i] = g_cover_leaf_tl[j]; g_cover_leaf_tl[j] = u;
-                    struct LETTopleafScalars sw = g_cover_leaf_scal[i]; g_cover_leaf_scal[i] = g_cover_leaf_scal[j]; g_cover_leaf_scal[j] = sw;
+        while(i <= j && 0.5 * (g_cover_leaves[i].bmin[ax] + g_cover_leaves[i].bmax[ax]) <  split) i++;
+        while(i <= j && 0.5 * (g_cover_leaves[j].bmin[ax] + g_cover_leaves[j].bmax[ax]) >= split) j--;
+        if(i < j) { struct LETCoverLeaf sw = g_cover_leaves[i]; g_cover_leaves[i] = g_cover_leaves[j]; g_cover_leaves[j] = sw;
                     i++; j--; }
     }
     int mid = i;
@@ -517,48 +555,36 @@ static int cover_build(int lo, int hi)
 /* Build receiver R's cover tree into the scratch (g_cover* / root = index 0).
  * Leaves g_cover_n = 0 if R owns no topleaves (caller's has_cover guard already
  * excludes that case). realloc failure -> loud controlled stop, never a segfault. */
-static void let_build_cover_tree(int R, const uint64_t *receiver_active_bitmap)
+static void let_build_cover_tree(int R)
 {
-    /* receiver_active_bitmap is NULL on the default all-local path (all of R's topleaves);
-     * under LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL it restricts the cover to R's ACTIVE
-     * topleaves, matching the active-restricted per-topleaf scalar table computed under the
-     * same guard (so cover geometry and cover scalars stay consistent -- no partial feature). */
     g_cover_n = 0;
-    /* Cover leaves = R's owned topleaves + R's drift-orphan records (extra leaves at foreign topleaf
-     * boxes). Size for both; orphans are rare so cap grows to NTopleaves + R's orphan count. */
-    int n_orph_R = (g_orphan_off ? g_orphan_off[R + 1] - g_orphan_off[R] : 0);
-    int cap_need = NTopleaves + n_orph_R;
+    /* Cover leaves = R's rule-1 clusters (bbox + scalars, straight from the exchange) + R's drift-orphan
+     * records (extra leaves at foreign-topleaf boxes). An empty owned topleaf produced no clusters, so it
+     * contributes nothing -- the old populated=0 exclusion is now structural. */
+    int ncl    = (g_cluster_off ? g_cluster_off[R + 1] - g_cluster_off[R] : 0);
+    int n_orph = (g_orphan_off  ? g_orphan_off[R + 1]  - g_orphan_off[R]  : 0);
+    int cap_need = ncl + n_orph;
+    if(cap_need == 0) return;
     if(g_cover_leaf_cap < cap_need) {
-        int *nl = (int *) realloc(g_cover_leaf, (size_t) cap_need * sizeof(int));
-        int *nt = (int *) realloc(g_cover_leaf_tl, (size_t) cap_need * sizeof(int));
-        struct LETTopleafScalars *ns = (struct LETTopleafScalars *) realloc(g_cover_leaf_scal, (size_t) cap_need * sizeof(struct LETTopleafScalars));
-        if(!nl || !nt || !ns) { printf("let_build_cover_tree: cover-leaf realloc failed (cap_need=%d, rank=%d). Stopping.\n",
+        struct LETCoverLeaf *nl = (struct LETCoverLeaf *) realloc(g_cover_leaves, (size_t) cap_need * sizeof(struct LETCoverLeaf));
+        if(!nl) { printf("let_build_cover_tree: cover-leaf realloc failed (cap_need=%d, rank=%d). Stopping.\n",
                          cap_need, ThisTask); fflush(stdout); endrun(90000091); }
-        g_cover_leaf = nl; g_cover_leaf_tl = nt; g_cover_leaf_scal = ns; g_cover_leaf_cap = cap_need;
+        g_cover_leaves = nl; g_cover_leaf_cap = cap_need;
     }
     int nleaf = 0;
-    for(int i = 0; i < NTopleaves; i++) {
-        if(DomainTask[i] != R) continue;
-        if(receiver_active_bitmap && !let_bitmap_test(receiver_active_bitmap, i)) continue;  /* active-cover guard */
-        if(!g_topleaf_scalars[i].populated) continue;   /* empty owned leaf = no real target = no cover entry */
-        int no = DomainNodeIndex[i];
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
-        g_cover_leaf[nleaf] = no;
-        g_cover_leaf_tl[nleaf] = i;                 /* geometry provenance (debug) */
-        g_cover_leaf_scal[nleaf] = g_topleaf_scalars[i];   /* owned leaf: table entry, by value */
-        nleaf++;
-    }
-    /* Drift-orphan extra leaves for R: geometry = the reached foreign topleaf's box (replicated top-tree
-     * geometry, valid on every rank), scalars = the merged orphan record. Added unconditionally (a
-     * conservative completeness extension -- never drops coverage, so safe under the active-cover mode). */
-    for(int k = g_orphan_off ? g_orphan_off[R] : 0; k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
+    /* R's clusters: bbox + scalars are self-contained in the exchanged record. */
+    for(int k = (g_cluster_off ? g_cluster_off[R] : 0); k < (g_cluster_off ? g_cluster_off[R + 1] : 0); k++)
+        g_cover_leaves[nleaf++] = g_cluster_all[k];
+    /* R's drift-orphans: geometry = the reached foreign topleaf's box (replicated top-tree geometry, valid on
+     * every rank), scalars = the merged orphan record. Conservative completeness extension -- never drops coverage. */
+    for(int k = (g_orphan_off ? g_orphan_off[R] : 0); k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
         int t  = g_orphan_all[k].topleaf;
         int no = (t >= 0 && t < NTopleaves) ? DomainNodeIndex[t] : -1;
         if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
-        g_cover_leaf[nleaf] = no;
-        g_cover_leaf_tl[nleaf] = t;
-        g_cover_leaf_scal[nleaf] = g_orphan_all[k].s;
-        nleaf++;
+        double h = 0.5 * (double) Nodes[no].len;
+        struct LETCoverLeaf *L = &g_cover_leaves[nleaf++];
+        for(int d = 0; d < 3; d++) { L->bmin[d] = (double) Nodes[no].center[d] - h; L->bmax[d] = (double) Nodes[no].center[d] + h; }
+        L->s = g_orphan_all[k].s;
     }
     if(nleaf == 0) return;
     int need = 2 * nleaf;                  /* balanced tree over nleaf leaves has <= 2*nleaf-1 nodes */
@@ -1181,10 +1207,10 @@ extern "C" int let_pack_for_rank(int R,
         *out_hdr_count = 0;
         return 0;
     }
-    /* Build R's per-topleaf cover tree (file-scope g_cover*, consumed by
-     * let_node_essential_for_rank during this receiver's pack). Cheap: one pass
-     * over the replicated topleaf list + a balanced build; scratch reused. */
-    let_build_cover_tree(R, receiver_active_bitmap);
+    /* Build R's rule-1 cluster cover tree (file-scope g_cover*, consumed by
+     * let_node_essential_for_rank during this receiver's pack). R's clusters were
+     * already active-restricted when R computed them, so no sender-side bitmap here. */
+    let_build_cover_tree(R);
     /* Walk the LOCAL tree from each topnode that's NOT in R's domain.  Topnodes
      * in R's domain are R's own data; they won't help R (and would create a
      * self-reference if shipped). */
@@ -1655,26 +1681,43 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
     let_exchange_payloads(&my_payload, all_payloads);
 
-    /* Exchange the per-topleaf scalar table: every rank filled its OWNED slice in
-     * let_compute_local_payload; Allgatherv (mirroring the DomainMoment layout, one slice per
-     * MULTIPLEDOMAINS) so every sender holds every receiver-topleaf's scalars for the cover-tree
-     * essentiality test. Blocking (the table must be ready before the pack loop; ~72 B/topleaf). */
-    if(NTopleaves > 0)
+    /* Exchange the per-rank RULE-1 CLUSTER cover leaves (bbox + scalars). Counts rode the payload Allgather
+     * (all_payloads[r].n_clusters), so every rank agrees on the global total and enters/skips the cluster
+     * Allgatherv COLLECTIVELY. g_cluster_off[R..R+1) then selects R's clusters when building R's cover.
+     * Mirrors the drift-orphan exchange (variable count per rank). */
     {
-        for(int m = 0; m < MULTIPLEDOMAINS; m++)
-        {
-            int *rc = (int *) mymalloc("LET_tls_rc", NTask * sizeof(int));
-            int *ro = (int *) mymalloc("LET_tls_ro", NTask * sizeof(int));
-            for(int recvTask = 0; recvTask < NTask; recvTask++)
-            {
-                rc[recvTask] = (DomainEndList[recvTask * MULTIPLEDOMAINS + m] -
-                                DomainStartList[recvTask * MULTIPLEDOMAINS + m] + 1)
-                               * (int) sizeof(struct LETTopleafScalars);
-                ro[recvTask] = DomainStartList[recvTask * MULTIPLEDOMAINS + m]
-                               * (int) sizeof(struct LETTopleafScalars);
+        if(g_cluster_off_cap < NTask + 1) {
+            int *nof = (int *) realloc(g_cluster_off, (size_t)(NTask + 1) * sizeof(int));
+            if(!nof) { printf("let cluster exchange: g_cluster_off realloc failed (NTask=%d, rank=%d). Stopping.\n",
+                             NTask, ThisTask); fflush(stdout); endrun(90000098); }
+            g_cluster_off = nof; g_cluster_off_cap = NTask + 1;
+        }
+        g_cluster_off[0] = 0;
+        for(int r = 0; r < NTask; r++) {
+            int c = all_payloads[r].n_clusters; if(c < 0) c = 0;
+            g_cluster_off[r + 1] = g_cluster_off[r] + c;
+        }
+        int total_clusters = g_cluster_off[NTask];
+        if(total_clusters > 0) {
+            if(g_cluster_all_cap < total_clusters) {
+                struct LETCoverLeaf *na = (struct LETCoverLeaf *) realloc(g_cluster_all,
+                    (size_t) total_clusters * sizeof(struct LETCoverLeaf));
+                if(!na) { printf("let cluster exchange: g_cluster_all realloc failed (total=%d, rank=%d). Stopping.\n",
+                                 total_clusters, ThisTask); fflush(stdout); endrun(90000099); }
+                g_cluster_all = na; g_cluster_all_cap = total_clusters;
             }
+            int *rc = (int *) mymalloc("LET_clus_rc", NTask * sizeof(int));
+            int *ro = (int *) mymalloc("LET_clus_ro", NTask * sizeof(int));
+            for(int r = 0; r < NTask; r++) {
+                rc[r] = (g_cluster_off[r + 1] - g_cluster_off[r]) * (int) sizeof(struct LETCoverLeaf);
+                ro[r] =  g_cluster_off[r]                         * (int) sizeof(struct LETCoverLeaf);
+            }
+            /* Seed MY slice, then in-place Allgatherv (mirrors the orphan-record exchange). */
+            if(g_my_clusters_n > 0)
+                memcpy((char *) g_cluster_all + ro[ThisTask], g_my_clusters,
+                       (size_t) g_my_clusters_n * sizeof(struct LETCoverLeaf));
             MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                           g_topleaf_scalars, rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+                           g_cluster_all, rc, ro, MPI_BYTE, MPI_COMM_WORLD);
             myfree(ro); myfree(rc);
         }
     }
