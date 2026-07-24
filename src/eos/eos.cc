@@ -50,7 +50,7 @@ double return_user_desired_target_pressure(int i)
 }
 
 /* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
-#ifndef __HIP__
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp begin declare target
 #endif
 
@@ -111,7 +111,7 @@ double return_user_desired_target_pressure(int i)
 #define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
-#ifndef __HIP__
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp end declare target
 #endif
 

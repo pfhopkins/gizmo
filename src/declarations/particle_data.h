@@ -1,6 +1,6 @@
 /* This structure holds all the information that is stored for each particle of the simulation. */
 
-#ifndef __HIP__
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp begin declare target
 #endif
 extern ALIGN(32) struct particle_data
@@ -453,6 +453,6 @@ extern ALIGN(32) struct particle_data
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */
-#ifndef __HIP__
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp end declare target
 #endif
