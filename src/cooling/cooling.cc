@@ -2939,6 +2939,7 @@ static std::vector<struct global_data_all_processes *> &gizmo_all_device_mirror_
 }
 extern "C" void gizmo_register_all_device_mirror(struct global_data_all_processes *m)
 {
+    if(!m) return;  /* HIP: ignore a pre-managed-init NULL &AllDeviceMirror capture */
     auto &reg = gizmo_all_device_mirror_registry();
     for(auto *x : reg) { if(x == m) return; }
     reg.push_back(m);
@@ -2956,7 +2957,7 @@ void gizmo_gpu_sync_all(void) {
 #if defined(GIZMO_GPU_COMPILER)
     const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
     auto &reg = gizmo_all_device_mirror_registry();
-    for(auto *m : reg) { *m = *host_all; }
+    for(auto *m : reg) { if(m) *m = *host_all; }  /* skip any residual NULL (HIP pre-init capture) */
 #endif
     Kokkos::fence();
 }

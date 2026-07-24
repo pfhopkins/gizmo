@@ -77,8 +77,17 @@ static __managed__ struct global_data_all_processes AllDeviceMirror;
 static inline void gizmo_all_device_mirror_register_this_tu(void) {
     static bool registered = false;
     if(!registered) {
-        gizmo_register_all_device_mirror(&AllDeviceMirror);
-        registered = true;
+        /* HIP: &AllDeviceMirror (a static __managed__ global) is NULL until the
+         * runtime's managed-var init constructor has run, which may fire AFTER
+         * this __attribute__((constructor)). Only mark registered once a valid
+         * (non-NULL) address is captured, so the post-init call from
+         * GIZMO_GPU_ENSURE_ALL_FRESH() registers the real address. On CUDA the
+         * address is a valid link-time constant, so this registers on first call. */
+        struct global_data_all_processes *p = &AllDeviceMirror;
+        if(p) {
+            gizmo_register_all_device_mirror(p);
+            registered = true;
+        }
     }
 }
 
