@@ -279,7 +279,7 @@ GIZMO_GPU_FUNCTION double CR_return_slope_from_number_and_energy_in_bin(double e
 GIZMO_GPU_FUNCTION double CR_return_new_bin_edge_from_rate(double rate_dt_dimless, double x_m_bin, double x_p_bin, int loss_mode, int NR_key, double additional_variable_dummy);
 GIZMO_GPU_FUNCTION double CR_coulomb_energy_integrand(double x, double tau, double slope);
 GIZMO_GPU_FUNCTION double CR_reaccel_energy_integrand(double x, double tau, double slope, double delta_slope, int NR_key);
-double CR_compton_energy_integrand(double x, double tau, double slope);
+GIZMO_GPU_FUNCTION double CR_compton_energy_integrand(double x, double tau, double slope);
 GIZMO_GPU_FUNCTION int CR_check_if_bin_is_nonrelativistic(int k_bin);
 double CR_return_true_number_in_bin(int target, int k_bin, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell);
