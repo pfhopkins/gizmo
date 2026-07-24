@@ -98,7 +98,16 @@ double return_user_desired_target_pressure(int i)
    device-side includers (cooling.cc).  Only this TU enables them so the
    host external symbol behaves exactly as the pre-refactor function. */
 #undef KOKKOS_INLINE_FUNCTION
+#ifdef GIZMO_GPU_COMPILER
+/* HD (not host-only): these eos_functions.h symbols are also called from device
+ * kernels, and clang rejects an HD proto.h decl re-declared host-only here (nvcc
+ * merged silently). Same pattern cooling.cc uses. The host-only EOS branches are
+ * guarded out of the device pass separately (EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
+ * + !device). Non-GPU builds keep the plain host strong symbol. */
+#define KOKKOS_INLINE_FUNCTION __host__ __device__
+#else
 #define KOKKOS_INLINE_FUNCTION
+#endif
 #define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
