@@ -180,6 +180,34 @@ OPT += -DUSE_MPI_IN_PLACE -DH5_USE_16_API -DNO_ISEND_IRECV_IN_DOMAIN -DHDF5_DISA
 endif
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Frontier-CPU")
+CC       =  cc  # Cray compiler wrappers (PrgEnv-gnu => gcc / g++-13)
+CXX      =  CC
+FC       =  ftn
+OPTIMIZE =  -O2 -Wno-unknown-pragmas
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+# Cray wrappers auto-wire cray-hdf5 + cray-fftw include/lib search paths; GSL is
+# a spack module (not a Cray PE module), so it needs explicit -I/-L via its root
+MKL_INCL =
+MKL_LIBS =
+GSL_INCL = -I$(OLCF_GSL_ROOT)/include
+GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
+FFTW_INCL=
+FFTW_LIBS=
+HDF5INCL = -DH5_USE_16_API
+HDF5LIB  = -lhdf5 -lz
+MPICHLIB =
+OPT     += -DUSE_MPI_IN_PLACE -DH5_USE_16_API -DNO_ISEND_IRECV_IN_DOMAIN -DHDF5_DISABLE_VERSION_CHECK
+## Frontier (OLCF), CPU-only comparison build. Modules (Jul 2026):
+##   module reset
+##   module swap PrgEnv-cray PrgEnv-gnu
+##   module load cray-hdf5 cray-fftw gsl
+## run: srun -N$NODES -n$NTASKS -c$CPT ./GIZMO ./params.txt
+endif
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Expanse")
 CC       = mpicc
 CXX      = mpicxx
