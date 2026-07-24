@@ -225,7 +225,10 @@ KOKKOS_PATH     = $(OLCF_KOKKOS_ROOT)
 KOKKOS_CPPFLAGS = -I$(OLCF_KOKKOS_ROOT)/include
 ## hipcc device flags: target gfx90a + cray-mpich headers (device TUs are -c only; CC links).
 ## <mpi.h> is included directly by device TUs but hipcc lacks the Cray wrapper's auto include.
-KOKKOS_CXXFLAGS = --offload-arch=gfx90a -I$(CRAY_MPICH_DIR)/include
+## gfx90a:xnack+ (not bare gfx90a): the code uses HIP managed/unified memory
+## (static __managed__ mirrors + Kokkos SharedSpace=HIPManagedSpace), which is
+## only host-accessible on MI250X with XNACK. Requires HSA_XNACK=1 at runtime too.
+KOKKOS_CXXFLAGS = --offload-arch=gfx90a:xnack+ -I$(CRAY_MPICH_DIR)/include
 KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib64
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX     = hipcc --std=c++17
