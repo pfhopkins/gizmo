@@ -300,8 +300,8 @@ double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 /* Get_Gas_effective_soundspeed_i is now cell[i].effective_soundspeed() */
 /* Get_Gas_Fast_MHD_wavespeed_i is now cell[i].fast_MHD_wavespeed() */
 GIZMO_GPU_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
-void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
-double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
+GIZMO_GPU_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
 GIZMO_GPU_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double yhelium(int target, struct particle_data *pp);
 GIZMO_GPU_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
@@ -669,8 +669,8 @@ void thermal_fb_calc(void);
 #ifdef COOL_METAL_LINES_BY_SPECIES
 /*double GetMetalLambda(double, double);*/
 #ifndef CHIMES
-double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
-double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long index_x1y0, long index_x1y1, double dx, double dy, double dz, double mdz);
+GIZMO_GPU_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
+GIZMO_GPU_FUNCTION double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long index_x1y0, long index_x1y1, double dx, double dy, double dz, double mdz);
 void LoadMultiSpeciesTables(void);
 void ReadMultiSpeciesTables(int iT);
 char *GetMultiSpeciesFilename(int i, int hk);
@@ -756,14 +756,14 @@ GIZMO_GPU_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data 
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
-double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
@@ -903,15 +903,15 @@ double chimes_ion_luminosity(double stellar_age, double stellar_mass);
 int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-int rt_get_donation_target_bin(int bin);
+GIZMO_GPU_FUNCTION int rt_get_donation_target_bin(int bin);
 int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_define_effective_frequencies_in_bands(void);
-double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
-double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
+GIZMO_GPU_FUNCTION double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef RT_SOLVER_EXPLICIT
 GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell) {
     return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
