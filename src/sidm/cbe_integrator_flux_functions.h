@@ -421,14 +421,14 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
                             &free_slot_fired_this_face,
-                            crho_pa, crho_pb, v_F_normal);
+                            crho_pa, crho_pb, vface);
     out.cbe_pairing_free_slot_count += (long long)free_slot_fired_this_face;
 #else
     cbe_build_pair_matching(Qface_i, Qface_j,
                             matching_basis_j_for_basis_in_i,
                             matching_basis_i_for_basis_in_j,
                             /*free_slot_fired_count_inout=*/NULL,
-                            crho_pa, crho_pb, v_F_normal);
+                            crho_pa, crho_pb, vface);
 #endif
 
     /* Flux loop. Sign convention is explicit at the call site:

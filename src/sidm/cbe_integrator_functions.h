@@ -650,11 +650,13 @@ static const double CBE_VOPPSIGN = 0.1;
  *   C_rho = |rho_fa - rho_fb| / (|rho_fa| + |rho_fb| + 1e-3*rho_cell)
  *   C     = C_c + CBE_CRHO_LAMBDA * C_rho
  * rho_fa/rho_fb are the stale-gradient reconstructed face densities of the two
- * bases; vF is the face-normal velocity (1D: subtract from the normal k=0). */
+ * bases; vface is the full face-velocity vector (= v_F_normal * A_hat), subtracted
+ * per-component so the face-centric velocities are frame-consistent for an
+ * arbitrarily-oriented face normal in 3D (reduces to the 1D k=0 subtraction). */
 KOKKOS_INLINE_FUNCTION
 double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
                         const double Qb[CBE_INTEGRATOR_NMOMENTS],
-                        double rho_fa, double rho_fb, double vF, double rho_cell)
+                        double rho_fa, double rho_fb, const double vface[3], double rho_cell)
 {
     const double eps = 1.0e-12;
     double inv_a = 1.0 / DMAX(Qa[0], MIN_REAL_NUMBER);
@@ -663,8 +665,8 @@ double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
     for(int k=0; k<NUMDIMS; k++) {
         double va = cbe_basis_p_r(Qa, k) * inv_a;
         double vb = cbe_basis_p_r(Qb, k) * inv_b;
-        double ua = va - ((k==0) ? vF : 0.0);   /* face-centric: normal=k0 in 1D */
-        double ub = vb - ((k==0) ? vF : 0.0);
+        double ua = va - vface[k];   /* face-centric: v relative to face motion along A_hat */
+        double ub = vb - vface[k];
         du2 += (ua-ub)*(ua-ub); na += ua*ua; nb += ub*ub; dot += ua*ub;
 #if defined(CBE_INTEGRATOR_SECONDMOMENT)
         double Sa = cbe_basis_T_r(Qa, k, k) * inv_a - va*va;
@@ -790,8 +792,9 @@ void cbe_apply_fs_gate(
  *                            densities (NBASIS each). When both non-NULL, the
  *                            cost includes the density-continuity term
  *                            (cbe_cost_cc_crho); NULL on either side falls back
- *                            to the velocity/trace cost. vF is the face-normal
- *                            velocity used by the face-centric velocity cost. */
+ *                            to the velocity/trace cost. vface is the full
+ *                            face-velocity vector (= v_F_normal * A_hat) used by
+ *                            the face-centric velocity cost. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_pair_matching(
     const double Q_a[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
@@ -799,7 +802,7 @@ void cbe_build_pair_matching(
     int beta_of_alpha_for_a[CBE_INTEGRATOR_NBASIS],
     int alpha_of_beta_for_b[CBE_INTEGRATOR_NBASIS],
     int *free_slot_fired_count_inout,
-    const double *rho_face_a, const double *rho_face_b, double vF)
+    const double *rho_face_a, const double *rho_face_b, const double vface[3])
 {
     const int N = CBE_INTEGRATOR_NBASIS;
     /* Density-continuity cost is used iff the caller supplied stale-gradient
@@ -813,7 +816,7 @@ void cbe_build_pair_matching(
     double C_ab[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
     for(int m=0; m<N; m++) {
         for(int n=0; n<N; n++) {
-            if(use_crho) { C_ab[m][n] = cbe_cost_cc_crho(Q_a[m], Q_b[n], rho_face_a[m], rho_face_b[n], vF, rho_cell_a); }
+            if(use_crho) { C_ab[m][n] = cbe_cost_cc_crho(Q_a[m], Q_b[n], rho_face_a[m], rho_face_b[n], vface, rho_cell_a); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
             else C_ab[m][n] = cbe_cost_trace_w2(Q_a[m], Q_b[n]);
 #else
@@ -843,7 +846,7 @@ void cbe_build_pair_matching(
         double C_ba[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
         for(int m=0; m<N; m++) {
             for(int n=0; n<N; n++) {
-                if(use_crho) { C_ba[m][n] = cbe_cost_cc_crho(Q_b[m], Q_a[n], rho_face_b[m], rho_face_a[n], vF, rho_cell_b); }
+                if(use_crho) { C_ba[m][n] = cbe_cost_cc_crho(Q_b[m], Q_a[n], rho_face_b[m], rho_face_a[n], vface, rho_cell_b); }
 #if (CBE_PAIRING_COST == CBE_COST_TRACE_W2)
                 else C_ba[m][n] = cbe_cost_trace_w2(Q_b[m], Q_a[n]);
 #else

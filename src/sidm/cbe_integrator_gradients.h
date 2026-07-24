@@ -261,10 +261,11 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
         gcrho_a = gcrho_fi; gcrho_b = gcrho_fj;
     }
 #endif
+    const double vface_zero[3] = {0.0, 0.0, 0.0};   /* gradient stencil: no single face normal, no face shift */
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
                             /*free_slot_fired_count_inout=*/NULL,
-                            gcrho_a, gcrho_b, /*vF=*/0.0);
+                            gcrho_a, gcrho_b, vface_zero);
 
     /* Primitive-gradient swap: convert Q_i, Q_j to primitive rows once per
      * basis. The LSQ delta below is on PRIMITIVE slots — the persistent
@@ -487,10 +488,11 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
         gcrho_a = gcrho_fi; gcrho_b = gcrho_fj;
     }
 #endif
+    const double vface_zero[3] = {0.0, 0.0, 0.0};   /* gradient stencil: no single face normal, no face shift */
     cbe_build_pair_matching(Q_i, Q_j, matched_j_for_i,
                             /*alpha_of_beta_for_b=*/NULL,
                             /*free_slot_fired_count_inout=*/NULL,
-                            gcrho_a, gcrho_b, /*vF=*/0.0);
+                            gcrho_a, gcrho_b, vface_zero);
 
     /* Primitive-gradient swap: COMPONENT-SEPARATED limiter.
      * The realizability constraint factorizes
