@@ -1896,6 +1896,19 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 
 
 
+/*! Width of one float-valued element of an input block, as staged in CommBuffer. HDF5 inputs are
+ *  read at the file's own precision -- H5Dread converts the stored dtype into the requested memory
+ *  type, so these blocks stage as double whatever the file holds. The MyInputFloat/MyInputPosFloat
+ *  typedefs describe the unformatted-binary layout, which must be known to the bit, and apply only
+ *  to that path. Single source of truth for the read-side element width.
+ */
+size_t get_input_float_bytes(enum iofields blocknr)
+{
+    if(All.ICFormat == 3) {return sizeof(double);}
+    return (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+}
+
+
 /*! This function tells the size of one data entry in each of the blocks
  *  defined for the output file.
  */
@@ -1917,9 +1930,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
-        case IO_AMBIPOLAR:
-        case IO_HALL:
-        case IO_OHMIC:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -1955,7 +1965,10 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
-            bytes_per_blockelement = sizeof(MyOutputFloat);
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
             break;
             
         case IO_AGE_PROTOSTAR:
@@ -2045,6 +2058,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
+        case IO_AMBIPOLAR:   /* the resistivities are scalar coefficients, one per particle */
+        case IO_HALL:
+        case IO_OHMIC:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -2240,6 +2256,23 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             endrun(214);   /* soft bad-stop: unreachable IO_LASTENTRY; nonzero sentinel so caller's bufsize/bytes does not divide by zero */
             bytes_per_blockelement = 1;
             break;
+    }
+
+    /* rescale float-valued input blocks from the compile-time binary layout to the width they are
+     * actually staged at (see get_input_float_bytes) -- for HDF5 that is double, always. Keyed on
+     * All.ICFormat, the same variable that selects the H5Dread branch in read_ic(), so the sizing
+     * here and the reader cannot disagree about which format is being read. */
+    if(mode && All.ICFormat == 3)
+    {
+        int typekey_read = get_datatype_in_block(blocknr);
+        if(typekey_read == 1 || typekey_read == 3)
+        {
+            size_t width_binary = (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+            /* every float-valued case above is a whole number of input elements wide; if some future
+             * block is not, the rescale would silently mis-size it against empty_read_buffer's unpack */
+            if(bytes_per_blockelement % ((int) width_binary)) {endrun(219);}
+            bytes_per_blockelement = (int) ((bytes_per_blockelement / width_binary) * get_input_float_bytes(blocknr));
+        }
     }
 
     return bytes_per_blockelement;

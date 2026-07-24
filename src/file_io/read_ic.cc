@@ -71,11 +71,17 @@ void read_ic(char *fname)
          * corrupt header may have set a bad-stop. Validate the input precision here too (the
          * per-file copy of this check still runs inside read_file() for multi-file ICs), then
          * drain BOTH before the header is used to size or allocate anything. */
+        /* precision check applies to the unformatted-binary formats only: their layout is implicit,
+         * so the header flag is the only record of it. HDF5 datasets carry their own dtype and are
+         * read at whatever precision they hold, so the flag cannot constrain that path. */
+        if(All.ICFormat != 3)
+        {
 #ifdef INPUT_IN_DOUBLEPRECISION
-        if(!header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);} endrun(11);}
+            if(!header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);} endrun(11);}
 #else
-        if(header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);} endrun(10);}
+            if(header.flag_doubleprecision) {if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);} endrun(10);}
 #endif
+        }
         gizmo_exit_bad_stop_if_requested("read_ic:header");   /* drains corrupt-header (soft my_fread) + precision mismatch, before any header-derived sizing/alloc */
 
         if(header.num_files <= 1)
@@ -272,14 +278,33 @@ void read_ic(char *fname)
 }
 
 
+/*! Cursor over the float-valued elements of CommBuffer. The staged width depends on the input
+ *  format (get_input_float_bytes is the SSOT): HDF5 blocks arrive as double, unformatted-binary
+ *  blocks at the compile-time MyInputFloat/MyInputPosFloat width. Dereferencing yields a double
+ *  either way, so the unpack below is written once and is correct for both.
+ */
+static_assert(sizeof(MyInputFloat) == sizeof(float) || sizeof(MyInputFloat) == sizeof(double), "MyInputFloat must be float or double: input_float_cursor treats any non-double staged width as float");
+static_assert(sizeof(MyInputPosFloat) == sizeof(float) || sizeof(MyInputPosFloat) == sizeof(double), "MyInputPosFloat must be float or double: see input_float_cursor");
+
+struct input_float_cursor
+{
+    const char *ptr; size_t width;
+    input_float_cursor(const void *buf, size_t w) : ptr((const char *) buf), width(w) {}
+    double at(long i) const {return (width == sizeof(double)) ? ((const double *) ptr)[i] : ((const float *) ptr)[i];}
+    double operator*(void) const {return at(0);}
+    double operator[](long i) const {return at(i);}
+    input_float_cursor &operator++(void) {ptr += width; return *this;}
+    input_float_cursor operator++(int) {input_float_cursor prev = *this; ptr += width; return prev;}
+    input_float_cursor &operator+=(long i) {ptr += i * (long) width; return *this;}
+};
+
 /*! This function reads out the buffer that was filled with particle data.
  */
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 {
-    long n, k; MyInputFloat *fp; MyInputPosFloat *fp_pos; MyIDType *ip; int *ip_int; float *fp_single;
-    fp = (MyInputFloat *) CommBuffer;
-    fp_pos = (MyInputPosFloat *) CommBuffer;
-    fp_single = (float *) CommBuffer;
+    long n, k; MyIDType *ip; int *ip_int;
+    input_float_cursor fp(CommBuffer, get_input_float_bytes(blocknr));
+    input_float_cursor fp_pos(CommBuffer, get_input_float_bytes(IO_POS));
     ip = (MyIDType *) CommBuffer;
     ip_int = (int *) CommBuffer;
 
@@ -772,6 +797,24 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef EOS_DAMAGE_POROSITY
+        /* damage and porosity are integrated history, not diagnostics: they cannot be recomputed
+         * from the other fields, so a snapshot restart has to read them back (init.cc initializes
+         * them only on a fresh start). A snapshot written without these datasets arrives as zeros;
+         * the distention floor in init.cc restores the material default in that case. */
+        case IO_DAMAGE_POROSITY_DAMAGE:
+            for(n = 0; n < pc; n++) {CellP[offset + n].Damage = *fp++;}
+            break;
+
+        case IO_DAMAGE_POROSITY_DISTENTION:
+            for(n = 0; n < pc; n++) {CellP[offset + n].Distention = *fp++;}
+            break;
+
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            for(n = 0; n < pc; n++) {CellP[offset + n].ActiveCracks = *fp++;}
+            break;
+#endif
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -986,21 +1029,26 @@ int read_file(char *fname, int readTask, int lastTask)
     read_status = read_file_sync_status(readTask, lastTask, read_status);
     if(read_status) {endrun(read_status); return read_status;}
 
+    /* unformatted-binary formats only -- see the matching note in read_ic(): HDF5 datasets carry
+     * their own dtype and are read at the file's precision, so the header flag does not gate them */
+    if(All.ICFormat != 3)
+    {
 #ifdef INPUT_IN_DOUBLEPRECISION
-    if(header.flag_doubleprecision == 0)
-    {
-        if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);}
-        /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
-        endrun(11); return 11;
-    }
+        if(header.flag_doubleprecision == 0)
+        {
+            if(ThisTask == 0) {printf("\nProblem: Code compiled with INPUT_IN_DOUBLEPRECISION, but input files are in single precision!\n"); fflush(stdout);}
+            /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
+            endrun(11); return 11;
+        }
 #else
-    if(header.flag_doubleprecision)
-    {
-        if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);}
-        /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
-        endrun(10); return 10;
-    }
+        if(header.flag_doubleprecision)
+        {
+            if(ThisTask == 0) {printf("\nProblem: Code not compiled with INPUT_IN_DOUBLEPRECISION, but input files are in double precision!\n"); fflush(stdout);}
+            /* Symmetric across all participants (identical header + compile flag) -- soft bad-stop + return together. */
+            endrun(10); return 10;
+        }
 #endif
+    }
     /* Precision mismatch (above) is collective-symmetric: every participant sees the same
      * header.flag_doubleprecision and the same compile flag, so all return together -- no
      * peer is stranded, and the per-turn read_ic poll finalizes cleanly (no MPI_Abort). */
@@ -1247,12 +1295,17 @@ int read_file(char *fname, int readTask, int lastTask)
             int printed_legacy_alias = 0;   /* limit the legacy-name notice below to one line per block */
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
-            if(blocknr == IO_ID && ((RestartFlag == 0 && All.ICFormat == 1) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);} /* in this special case, the old unformatted fortran binary GADGET-2 format needs to be respected, which used unsigned int for IDs */
+            /* the old unformatted fortran binary GADGET-2 format used unsigned int for IDs, so that
+             * width has to be respected when reading one. All.ICFormat is what the reader actually
+             * parses the file as (it selects every format branch below), so it gates this too --
+             * All.SnapFormat alone described the file the run WRITES, and on a format-3 read with
+             * SnapFormat=1 it mis-sized the block against the HDF5 dtype. */
+            if(blocknr == IO_ID && All.ICFormat == 1 && ((RestartFlag == 0) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);}
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
-            if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * sizeof(MyInputFloat);}
+            if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * get_input_float_bytes(blocknr);}
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
-            if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
+            if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * get_input_float_bytes(blocknr);}
 #endif
             size_t MyBufferSize = All.BufferSize;
             blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
@@ -1398,11 +1451,11 @@ int read_file(char *fname, int readTask, int lastTask)
                                                 break;
 
                                             case 1:
-#ifdef INPUT_IN_DOUBLEPRECISION
+                                                /* read at the file's own precision: HDF5 converts the
+                                                 * stored dtype into this memory type. Reading a
+                                                 * double-precision dataset as float silently collapses
+                                                 * positions onto the float grid. */
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_DOUBLE);
-#else
-                                                hdf5_datatype = H5Tcopy(H5T_NATIVE_FLOAT);
-#endif
                                                 break;
 
                                             case 2:
@@ -1410,11 +1463,7 @@ int read_file(char *fname, int readTask, int lastTask)
                                                 break;
 
                                             case 3:
-#if defined(INPUT_POSITIONS_IN_DOUBLE) || defined(INPUT_IN_DOUBLEPRECISION)
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_DOUBLE);
-#else
-                                                hdf5_datatype = H5Tcopy(H5T_NATIVE_FLOAT);
-#endif
                                                 break;
                                         }
 
