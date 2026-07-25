@@ -400,10 +400,9 @@ extern ALIGN(32) struct particle_data
      * name. Slot layout matches the moment row exactly: slot 0 = ρ;
      * slots 1..NUMDIMS = v_k; stress slots (cbe_T_idx packing) = S_kl.
      * Per basis, per slot, per spatial direction. Field-name rename
-     * deferred (out of scope; touches scatter / IO / snapshot). See
-     * OPEN_cbe_primitive_grad_design.md §3 and the helpers
-     * cbe_moments_to_primitives_row / cbe_primitives_to_moments_row in
-     * sidm/cbe_integrator_functions.h.
+     * not done (out of scope; touches scatter / IO / snapshot). See
+     * the helpers cbe_moments_to_primitives_row / cbe_primitives_to_moments_row
+     * in sidm/cbe_integrator_functions.h.
      *
      * Refreshed for AGSForce-active particles each call by
      * CBEGrad_gradient_calc() (sidm/cbe_integrator_gradients.cc);

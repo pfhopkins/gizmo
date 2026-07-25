@@ -15,8 +15,7 @@
  * Replaces gravity/ags_force_gpu.cc and the agsforce block in
  * mesh/ghost_writeback.cc (the latter retired in the cleanup commit).
  *
- * Wave 3 close-out port. Written by Phil Hopkins (phopkins@caltech.edu)
- * and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -84,8 +83,7 @@ void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
     ctx.oracle_dry_run = false;
 
     /* Sticky single-int wakeup flag, lives across all subgroups of one
-     * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm
-     * (codex round-7 lesson). */
+     * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm. */
     ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
     *ctx.need_wakeup_uvm = 0;
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
@@ -249,8 +247,8 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 }
 
 /* compare_accum — env-gated oracle compare. Mirrors merge_accum field-for-
- * field with the same #ifdef gating (codex's standing rule: partial compare
- * gives false-passes when omitted fields disagree). */
+ * field with the same #ifdef gating (partial compare gives false-passes
+ * when omitted fields disagree). */
 double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& oracle)
 {
     auto rel = [](double a, double b) {
@@ -275,8 +273,7 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
      * nonlinearly). The oracle brute pass suppresses j-writes, evaluating a
      * different physical process; exact AccumData agreement is therefore not
      * meaningful. SIDM physics is validated through conservation/statistical checks
-     * (scatter event count, wakeup activations, momentum/energy, snapshot vs IC).
-     * Phil Hopkins + Codex review, 2026-05-18. */
+     * (scatter event count, wakeup activations, momentum/energy, snapshot vs IC). */
     (void)local; (void)oracle;
 #endif
 #ifdef DM_FUZZY

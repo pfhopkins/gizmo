@@ -1,4 +1,4 @@
-/* gpu_particles_arena.h — Step 13 Phase 1
+/* gpu_particles_arena.h
  *
  * Decomp-scoped persistent SharedSpace arrays for P[] and CellP[].
  * Replaces per-kernel transient kokkos_malloc/memcpy/free pairs in
@@ -46,7 +46,7 @@ void gpu_particles_arena_acquire(int min_capacity,
  * change, ghost-exchange host-side writeback. */
 void gpu_particles_arena_invalidate(void);
 
-/* Phase 8a Round 1 — contract API for mirror-update call sites.
+/* Contract API for mirror-update call sites.
  *
  * A wrapper whose host postloop mutates P/CellP fields after the GPU kernel
  * returns has two options to keep the arena coherent:
@@ -63,14 +63,14 @@ void gpu_particles_arena_invalidate(void);
  * mirror-update site, then disable for production runs. */
 void gpu_particles_arena_mark_clean_after_scatter(const char *site);
 
-/* Phase 8a Round 2 (option D): post-full-host-drift coherence point.
+/* Post-full-host-drift coherence point.
  *
  * Used by move_particles() (and any future full-N host mutator) to refresh
  * arena from current host state and mark clean, replacing the prior
  * invalidate-then-let-the-next-acquire-slow-path pattern. Costs one full
  * memcpy here, but unlocks fast-path acquires in all subsequent wrappers
- * for the rest of the step (when combined with Round 3 wrappers that
- * also mark_clean instead of invalidating defensively).
+ * for the rest of the step (when combined with wrappers that also
+ * mark_clean instead of invalidating defensively).
  *
  * Behavior:
  *   - If arena exists with capacity >= min_capacity: memcpy host->arena,

@@ -1,18 +1,16 @@
 /* mechfb_loop.h — MechFBSpec for the runner-template port of
- * mechanical_fb_evaluate_gpu (Phase 4 / Wave 3 / 3e.1).
+ * mechanical_fb_evaluate_gpu.
  *
- * Milestone 3 (physics-complete): full Spec contract — real pair_kernel
+ * Physics-complete: full Spec contract — real pair_kernel
  * (calls mechanical_fb_pair_kernel in mechanical_fb_functions.h), real
  * load_active (builds MechFBLocalIn + MechFBSourceMode + DeviceContext
  * snapshots per active per mode), real reset_per_iter_device_context
  * (repack + mode-machine advance).
  *
- * SSOT design: ../OPEN_3d_mechfb_design.md (v0.4-final, codex-approved).
- *
- * Aux is HOST-ONLY (existing iterative-runner contract; design v0.4-final
- * correction). Mutable per-iter state visible to the device lives in
- * MechFBDeviceContext (extends NeighborLoopDeviceContextBase, captured by
- * value into the device lambda each iter).
+ * Aux is HOST-ONLY (existing iterative-runner contract). Mutable per-iter
+ * state visible to the device lives in MechFBDeviceContext (extends
+ * NeighborLoopDeviceContextBase, captured by value into the device lambda
+ * each iter).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #pragma once
@@ -70,13 +68,13 @@ struct MechFBActiveState {
      * top of the retired legacy evaluator's kernel. Without it, a
      * source in the toplevel superset that is NOT active for THIS specific
      * mode would still run pair_kernel for every neighbor — for modes 0+ that
-     * would atomic-add N_injected even with otherwise-zero deltas (codex r7
-     * 2026-05-14). pair_kernel early-returns on !is_active_this_mode;
+     * would atomic-add N_injected even with otherwise-zero deltas.
+     * pair_kernel early-returns on !is_active_this_mode;
      * after_iter_global re-checks host-side and skips the per-mode source
      * write for inactive entries. */
     bool                   is_active_this_mode;
 
-    /* Per-call cosmology + physics + unit factors (codex r6 fix). Carried
+    /* Per-call cosmology + physics + unit factors. Carried
      * per-active so the pair kernel reads scalars.* instead of bare All.* —
      * follows the density-port pattern (DensitySpec::ActiveData also stores
      * a CallScalars copy). Cost ~200 B per active; trivially copyable. */
@@ -214,7 +212,7 @@ struct MechFBSpec {
         int                          num_local_gas;             /* = N_gas */
         int                          num_local_particles;       /* = NumPart (= ghost_get_num_local()) */
 
-        /* Milestone 3.5 — ghost-side scratch + ghost-writeback validation counter.
+        /* Ghost-side scratch + ghost-writeback validation counter.
          * Aux is the SOLE OWNER of d_gas_iter: lazy alloc/grow in
          * reset_per_iter_device_context based on ghost_get_num_ghosts(); free
          * via cleanup_device_context (single free path; mechfb_run_iterative
@@ -227,7 +225,7 @@ struct MechFBSpec {
          * ghost-side MechFBGasDelta entry is shipped. End of mechfb_run_iterative
          * MPI_Allreduce-sums across ranks and rank-0 prints; nonzero proves the
          * new Mode-A-multi-rank ghost-writeback path was actually exercised
-         * (codex review 2026-05-14: "did not abort" is not sufficient evidence). */
+         * ("did not abort" alone is not sufficient evidence). */
         long long                    total_ghost_packs;
 
     };
@@ -256,7 +254,7 @@ struct MechFBSpec {
 
     static double compare_accum(const AccumData& local, const AccumData& oracle);
 
-    /* Per-active post-iter hook — STATUS-ONLY (codex r6 fix 2026-05-14).
+    /* Per-active post-iter hook — STATUS-ONLY.
      * Returns NeedsMore until iter_index >= num_modes-1, then Converged.
      * Must NOT mutate host P[i] / CellP[i] / Aux: the iterative runner calls
      * after_iter twice with oracle enabled (production accum at runner.cc:4128
@@ -278,7 +276,7 @@ struct MechFBSpec {
     static void after_iter_global(const neighbor_loop_args& args,
                                   const NlrIterDriver<MechFBSpec>& drv);
 
-    /* Per-iter device-context refresh (Phase 4.B.0 step 2c.1 SFINAE hook).
+    /* Per-iter device-context refresh (SFINAE-detected hook).
      * Runner calls this once per outer iter BEFORE per-subgroup dispatch with
      * mutable ctx. Responsibilities:
      *   - set ctx.mode_idx = iter_index, ctx.loop_iteration = aux->modes[iter_index]
@@ -291,7 +289,7 @@ struct MechFBSpec {
 
     /* Custom ghost-writeback callback (MechFBGasDelta is a parallel array, not
      * a gas_cell_data member — manifest macros don't fit; pattern from
-     * sinks/sink_swk_loop.cc:194-455). Milestone 3.5: real callback bundle in
+     * sinks/sink_swk_loop.cc:194-455). The real callback bundle in
      * mechfb_writeback_detail (mechfb_loop.cc) ships nonzero ghost-side
      * MechFBGasDelta entries to home ranks. ghost_writeback_begin populates
      * the bundle's Ctx from Aux (d_gas_iter, LocalGasMechFBInfoTemp,
@@ -339,11 +337,11 @@ struct MechFBSpec {
         /* Carry the per-call scalars on the ActiveData so pair_kernel + the
          * refactored mechanical_fb_pair_kernel / inject_cosmic_rays_into_delta
          * read scalars.* (precomputed unit factors, cf_atime/etc., CR rigidity
-         * arrays) without touching bare All.*. Density port pattern (codex r6
-         * fix). */
+         * arrays) without touching bare All.*. Follows the density-port
+         * pattern. */
         a.scalars = scalars;
 
-        /* Per-mode active mask (codex r7 fix) — mirrors the retired legacy
+        /* Per-mode active mask — mirrors the retired legacy
          * evaluator's per-mode active guard. ctx.P points at the runner-managed
          * particle array (Mode A: arena P_gpu; Mode B: owner-local P), both
          * of which have stable .SNe_ThisTimeStep / .MassReturn_ThisTimeStep /
@@ -396,8 +394,7 @@ struct MechFBSpec {
      *      set_oracle_brute_pass on the COPY. Without per-eval-pass binding,
      *      active.oracle_dry_run would stay at the original ctx's value
      *      (false) on the brute pass, j-side atomic_adds would fire twice,
-     *      and the oracle would silently miss the double-coupling. Codex
-     *      flagged this 2026-05-20 after the initial rebind-only fix.
+     *      and the oracle would silently miss the double-coupling.
      *
      * Source-owned physics fields (pos, h_search, local, source_mode,
      * loop_iteration, is_active_this_mode, scalars) are preserved here — they
@@ -428,20 +425,20 @@ struct MechFBSpec {
     /* pair_kernel — runner-template port of the legacy per-pair body.
      *
      * Delegates the actual physics to mechanical_fb_pair_kernel (signature
-     * refactored in milestone 3 to accept home/ghost gas-delta pointers +
+     * refactored to accept home/ghost gas-delta pointers +
      * num_local_gas + oracle_dry_run). The runner-port responsibilities here:
      *   1. Pre-filter (Pj.Type==0 / Mass>0, dp/r2, h_i/h_j gate, r2max gate)
      *      mirroring mechanical_fb_evaluate_gpu's inner neighbor loop.
      *   2. Route j-side writes: home gas → LocalGasMechFBInfoTemp[j];
-     *      imported ghost → d_gas_iter[j-num_local_particles] (milestone 3.5
-     *      ghost-writeback path; shipped to home ranks via custom bundle callback).
+     *      imported ghost → d_gas_iter[j-num_local_particles] (ghost-writeback
+     *      path; shipped to home ranks via custom bundle callback).
      *   3. Forward to mechanical_fb_pair_kernel with ownership-split + oracle
      *      params from ActiveData. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
-        /* Per-mode active mask (codex r7 fix) — equivalent of the retired
+        /* Per-mode active mask — equivalent of the retired
          * legacy evaluator's per-mode active guard. Sources in the toplevel superset
          * that are NOT active for THIS specific mode short-circuit the entire
          * pair body. Without this guard, mode>=0 calls for inactive sources
@@ -479,7 +476,7 @@ struct MechFBSpec {
          * the gas-only mask in load_neighbor rejects local non-gas before
          * we get here (defensive abort fires inside the helper if it doesn't).
          *
-         * Milestone 3.5 (multi-rank Mode A): the d_gas_iter buffer is lazily
+         * In multi-rank Mode A, the d_gas_iter buffer is lazily
          * allocated and zeroed each iter by reset_per_iter_device_context
          * based on ghost_get_num_ghosts(); ghost_writeback_begin/end pair
          * (declared below, defined in mechfb_loop.cc) ships nonzero deltas

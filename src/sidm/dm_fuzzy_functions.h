@@ -180,8 +180,8 @@ void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f,
 /* Behaviour note: the original sidm/dm_fuzzy.cc body writes the
    slope-limited derivatives into the pass-by-value dq_R/dq_L (which are
    never read by the caller) and leaves du_R/du_L untouched. That appears
-   to be a latent bug, but we preserve it exactly here to keep
-   B2-refactor diffs bit-identical to the pre-refactor CPU tree-walk.
+   to be a latent bug, but we preserve it exactly here to keep the
+   ported code bit-identical to the pre-port CPU tree-walk.
    The gas slope-limited values in u_R/u_L and the pass-through
    d2q_R/d2q_L are all that downstream flux code actually consumes. */
 KOKKOS_INLINE_FUNCTION

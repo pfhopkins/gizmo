@@ -13,8 +13,6 @@
  * and interpolate_fluxes_opacities_gasgrains_evaluate_gpu from
  * solids/grain_physics_gpu.cc (retired in the cleanup commit).
  *
- * See OPEN_3d_grain_physics_design.md.
- *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #include <mpi.h>
@@ -143,7 +141,7 @@ void GrainBackrxSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 /* Toplevel: grain_backrx_calc — replaces grain_backrx_evaluate_gpu +
  * ghost_writeback_{zero_,}grainbackrx.
  *
- * Hard invariant (codex-locked): active gas Grain_AccelTimeMin is reset to
+ * Hard invariant: active gas Grain_AccelTimeMin is reset to
  * MAX_REAL_NUMBER in apply_grain_dragforce() BEFORE this call. PARTICLE_MIN
  * only reduces the field; stale low values would permanently collapse gas
  * timesteps. This reset lives in grain_physics.cc, not here. */
@@ -315,7 +313,7 @@ void GrainRTGrainSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/
 /* ============================================================================
  * grain_rt_opacity_calc — toplevel for both RT Specs.
  *
- * Hard invariant (codex-locked): under MHD_BATTERY_MECHANISMS & 8, active gas
+ * Hard invariant: under MHD_BATTERY_MECHANISMS & 8, active gas
  * CellP[i].J_dust_cell is zeroed here before run_neighbor_loop<GrainRTGasSpec>.
  * GrainRTGasSpec::apply_active_writeback uses += so without this pre-zero the
  * field would accumulate stale values from previous steps.

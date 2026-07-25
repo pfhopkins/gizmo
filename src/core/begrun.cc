@@ -554,27 +554,26 @@ void begrun(void)
                             causing division-by-zero in gas_dust_heating_coeff on the first kick. */
 
 #ifdef GIZMO_NLR_ITER_HARNESS_TEST
-  /* Phase 4.B.0 step 3: synthetic iterative harness opt-in.
+  /* Synthetic iterative harness opt-in.
    *
-   * KNOWN HARNESS LIMITATION (codex 2026-05-10 step-3 review):
-   * Iterative Mode A ghost-writeback reverse-comm CANNOT be validated
-   * from this begrun-end placement: at this point the simulation has
-   * not yet entered run() and the ghost-exchange/tree machinery isn't
-   * fully primed, so `gizmo_request_filtered_ghost_import_fresh`
+   * HARNESS LIMITATION: iterative Mode A ghost-writeback reverse-comm cannot
+   * be validated from this begrun-end placement: at this point the
+   * simulation has not yet entered run() and the ghost-exchange/tree
+   * machinery isn't fully primed, so `gizmo_request_filtered_ghost_import_fresh`
    * returns 0 ghosts regardless of where rank 0 places its actives in
    * space (probe loop over 64 rank-1 candidates verified).
    *
    * The harness's IterHarnessGhostSpec subtest detects this case via
    * its probe loop and emits VP 11 SKIP with a clear message rather
    * than a misleading PASS or FAIL. Real Mode A reverse-comm coverage
-   * falls to ags_density 3d.4 (the first iterative+ghost_writeback
+   * falls to ags_density (the first iterative+ghost_writeback
    * production user). All other VPs (1, 2, 3, 4, 5, 7, 8, 9, 11
-   * ctx-reset-symmetry, 11 Mode B suppression+parity) ARE validated
+   * ctx-reset-symmetry, 11 Mode B suppression+parity) are validated
    * by the harness here.
    *
-   * Future extension to make Mode A reverse-comm testable: move this
-   * invocation to core/run.cc after first-step setup, OR build a
-   * uniform mini-IC for the harness. Both are non-trivial; deferred. */
+   * To make Mode A reverse-comm testable: move this invocation to
+   * core/run.cc after first-step setup, OR build a uniform mini-IC
+   * for the harness. Both are non-trivial. */
   {
     extern bool gizmo_nlr_iter_harness_run_enabled(void);
     extern void run_iter_harness_tests(void);
@@ -667,8 +666,7 @@ void set_units(void)
 
 #ifdef DM_HEATING
     /* CGS → code unit conversions, and parameter sanity validation. The
-     * heating rate is dE/dt/m_gas; the dimensional analysis (see
-     * OPEN_dm_heating_design.md) gives:
+     * heating rate is dE/dt/m_gas; dimensional analysis gives:
      *   <sigma v>/m_chi:  cm^3 s^-1 g^-1 → code (L^3/T/M):  × UNIT_MASS · UNIT_TIME / UNIT_LENGTH^3
      *   Gamma:            s^-1          → code (1/T):       × UNIT_TIME */
     {

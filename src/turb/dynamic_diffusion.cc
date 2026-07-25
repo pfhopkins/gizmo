@@ -32,11 +32,11 @@
 /* Legacy CPU-tree scaffolding (struct kernel_DynamicDiff, DynamicDiffdata_in,
  * DynamicDiffdata_out, DynamicDiffdata_out_iter, particle2in/out2particle
  * forward decls + bodies, and the DynamicDiff_evaluate / _primary / _secondary
- * functions at the bottom of this file) was retired in Step 5 Phase D2.5-ext.
- * Wave 5: dynamic_diff_calc() now dispatches one runner-template pass per
- * external iteration via dynamicdiff_gpu_toplevel() (DynDiffSpec). The
- * temporary_data_dyndiff + Quantities_for_Smooth_Gradients struct definitions
- * moved to turb/difffilter_loop_api.h (SSOT — shared with the GPU TU). */
+ * functions at the bottom of this file) was retired. dynamic_diff_calc() now
+ * dispatches one runner-template pass per external iteration via
+ * dynamicdiff_gpu_toplevel() (DynDiffSpec). The temporary_data_dyndiff +
+ * Quantities_for_Smooth_Gradients struct definitions moved to
+ * turb/difffilter_loop_api.h (shared with the GPU TU). */
 
 static struct temporary_data_dyndiff *DynamicDiffDataPasser;
 

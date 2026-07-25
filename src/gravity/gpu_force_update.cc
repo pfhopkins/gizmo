@@ -1,10 +1,10 @@
-/* gpu_force_update.cc — Step 13 Phase 7.c
+/* gpu_force_update.cc
  *
  * GPU replacement for force_update_tree().
  * Propagates per-particle momentum kicks (P[i].dp) through the tree via three
  * GPU-accelerated stages + host-side MPI:
  *
- *   Stage 1  gpu_force_drift_nodes()    — reuse Phase 7.a kernel; drifts all
+ *   Stage 1  gpu_force_drift_nodes()    — reuse the existing drift kernel; drifts all
  *                                         stale nodes to All.Ti_Current in one pass.
  *   Stage 2  gpu_force_kick_kernel      — per-active-particle Father-chain walk;
  *                                         atomic-accumulates dp into Extnodes[no].dp,
@@ -74,7 +74,7 @@ extern "C" void gpu_force_update_tree(void)
 {
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree (GPU)");
 
-    /* Phase 7 Round A2: sub-bucket the 1.12s force_update_tree top-level cost. */
+    /* Sub-bucket timing for the force_update_tree top-level cost. */
     double t_fut_start = my_second();
 
     GlobFlag++;
@@ -95,9 +95,8 @@ extern "C" void gpu_force_update_tree(void)
     gpu_particles_arena_acquire(NumPart, P, CellP);
     double t_fut_arena = my_second();
 
-    /* Stage 1: drift all stale nodes to Ti_Current (reuse Phase 7.a kernel).
-     * Codex 2026-05-12: out-of-line host accessor; see
-     * feedback_all_dev_trap_host_side.md. */
+    /* Stage 1: drift all stale nodes to Ti_Current (reuse the existing drift kernel).
+     * Uses an out-of-line host accessor for the host-side Ti_Current read. */
     /* Soft bad-stop on node-drift failure: flag it, then route through the
      * existing num_active<=0 -> finish_mpi path. This keeps the failing rank on
      * the SAME all-rank force_finish_kick_nodes() Allgatherv as its peers
@@ -122,13 +121,12 @@ extern "C" void gpu_force_update_tree(void)
         memcpy(active_dev, ActiveParticleList.data(), num_active * sizeof(int));
 
         struct particle_data *Pp   = gpu_particles_arena_P();
-        int                  *Fa   = Father;    /* UVM since Phase 6.6 */
-        struct NODE          *No   = Nodes;     /* UVM shifted ptr since Phase 6.8d */
-        struct extNODE       *Ex   = Extnodes;  /* UVM since Phase 6.8d */
+        int                  *Fa   = Father;    /* UVM pointer */
+        struct NODE          *No   = Nodes;     /* UVM shifted pointer */
+        struct extNODE       *Ex   = Extnodes;  /* UVM pointer */
         int                   gflag = GlobFlag;
-        /* Codex 2026-05-12: out-of-line host accessor (used host-side
-         * here, captured by-value into the device lambda). See
-         * feedback_all_dev_trap_host_side.md. */
+        /* Out-of-line host accessor, called host-side here and captured
+         * by value into the device lambda. */
         integertime           ti_cur = gizmo_host_ti_current();
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
@@ -241,7 +239,7 @@ finish_mpi:
 
     PRINT_STATUS(" ..Tree has been updated dynamically (GPU)");
 
-    /* Phase 7 Round A2 sub-buckets — env-gated; no-op when off. */
+    /* Sub-bucket timing records — env-gated; no-op when off. */
     {
         double t_fut_done = my_second();
         gizmo_step_phase_record("fut_arena_acquire", timediff(t_fut_start,    t_fut_arena));

@@ -49,7 +49,7 @@ enum nuclear_species_aprox13 {
  * respective address spaces. Namespace-scope `__device__ static constexpr`
  * arrays cannot be safely read by the host instance of a __host__ __device__
  * inline function (#20091-D); function-local constexpr removes that
- * ambiguity. See feedback_gpu §B.4b + codex 2026-05-21 Phase C review. */
+ * ambiguity. */
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
 #endif

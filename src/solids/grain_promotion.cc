@@ -1,4 +1,4 @@
-/* grain_promotion.cc — Phase 17g: grain super-particle → solid body promotion.
+/* grain_promotion.cc — grain super-particle → solid body promotion.
  * Called from core/run.cc just before rearrange_particle_sequence().
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 

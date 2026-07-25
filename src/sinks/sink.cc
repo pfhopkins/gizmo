@@ -382,7 +382,7 @@ void set_sink_mdot(int i, int n, double dt)
         if(SINK_MDOT_FROM_ALPHAMODEL>0) {t_acc_disk = 100. * t_acc_disk * (1 / (Gm_i * DMIN(reff, j*j*Gm_i))) / soundspeed2;} // Shakura-Sunyaev prescription with alpha=0.01, using minimum of sink and circularization radius
 #endif
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)
-        t_acc_disk = DMIN(t_acc_disk , 50. / UNIT_TIME_IN_YR); /* custom hack for now for 'fast' disk accretion - will be replaced by physical model later */
+        t_acc_disk = DMIN(t_acc_disk , 50. / UNIT_TIME_IN_YR); /* imposes a fast fixed disk-accretion timescale as an approximation, pending a physical model */
 #endif
 #if defined(TIDAL_TIMESTEP_CRITERION) /* limit the accretion timescale to not be more than some multiple of the maximum disk dynamical time allowed by tidal truncation */
         double tidal_tensor_mag2 = P[n].tidal_tensorps.frobenius_norm_sq();

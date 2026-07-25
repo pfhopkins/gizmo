@@ -3,16 +3,15 @@
  *
  * SSOT: included by both ism_dust_chemistry.cc (which provides the host
  * external symbols via the #undef KOKKOS_INLINE_FUNCTION pattern, mirroring
- * eos.cc/eos_functions.h) and -- in Phase 2 chunk 2 -- cooling/cooling.cc so
- * the GPU post-cooling-tail kernel can call these inline.
+ * eos.cc/eos_functions.h) and cooling/cooling.cc so the GPU post-cooling-tail
+ * kernel can call these inline.
  *
- * Chunk 1 scope: header migration only. NO call-site changes. The cooling-
- * tail call path remains host-only via the same external symbol that existed
- * pre-migration. See OPEN_post_cooling_kernel_phase2.md.
+ * Header migration only: no call-site changes. The cooling-tail call path
+ * remains host-only via the same external symbol that existed before.
  *
  * Diagnostic helpers (ISMDustChemEvo_check_bins_after_update,
  * ISMDustChemEvo_check_yields_before_update) are NOT migrated -- they have
- * zero callers in the deferred cooling hot path and remain host-only in
+ * zero callers in the cooling hot path and remain host-only in
  * ism_dust_chemistry.cc.
  *
  * Include order: after allvars.h (struct types + All) and proto.h.
@@ -30,10 +29,10 @@
 #endif
 
 /* Self-sufficient dependency includes so any TU that pulls this header gets
- * every symbol the migrated bodies use. Originally Chunk 1 leaned on
- * ism_dust_chemistry.cc's own include block; that left cooling.cc (Phase 2
- * chunk 2) missing gpu_rng.h for the shattering/coagulation RNG path under
- * GALSF_ISMDUSTCHEM_GRAINSIZEEVO. */
+ * every symbol the bodies below use. This header cannot rely on
+ * ism_dust_chemistry.cc's own include block, since cooling.cc also includes
+ * it directly and needs gpu_rng.h for the shattering/coagulation RNG path
+ * under GALSF_ISMDUSTCHEM_GRAINSIZEEVO. */
 #include "../declarations/gpu_rng.h"   /* gizmo_gpu_rand_double */
 #include "grain_collisional_outcomes.h"
 
@@ -57,13 +56,13 @@
 #define COAGULATION_DENSITY_ENHANCEMENT 2000
 #endif
 
-/* Forward declarations for every migrated function (Chunk 1 + Phase D
- * helpers). The inline bodies below reference each other regardless of
- * source-order; proto.h intentionally does NOT carry plain host prototypes
- * for these (device-callability trap for Chunk 2's post_cooling_tail kernel
- * — a plain `void foo(...)` proto.h decl seen first would force device
- * lambda calls to bind host-only). All forward decls tagged
- * KOKKOS_INLINE_FUNCTION so the eventual inline definitions match. */
+/* Forward declarations for every function defined below. The inline bodies
+ * reference each other regardless of source-order; proto.h intentionally
+ * does NOT carry plain host prototypes for these (device-callability trap
+ * for the post_cooling_tail kernel — a plain `void foo(...)` proto.h decl
+ * seen first would force device lambda calls to bind host-only). All
+ * forward decls tagged KOKKOS_INLINE_FUNCTION so the eventual inline
+ * definitions match. */
 KOKKOS_INLINE_FUNCTION int ismdustchem_spec_indx_to_outcome_kind(int spec_indx);
 KOKKOS_INLINE_FUNCTION void ISMDustChem_get_elem_yields_from_species_yields(double *dust_yields, double *species_yields);
 KOKKOS_INLINE_FUNCTION void ISMDustChem_get_species_properties(int spec_indx, double *dust_atomic_weight, double *bulk_dens);
@@ -91,11 +90,10 @@ void ISMDustChemEvo_precompute_poly_coeffs(void); /* host-only: runs once at ini
 KOKKOS_INLINE_FUNCTION void ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change(double *bin_dM, double *bin_M, double *bin_N, double *bin_slope, double *new_bin_N, double *new_bin_slope, double bulk_dens);
 #endif
 
-/* === Phase D 2026-05-21 migrations (commit 45602b53) — preserved here unchanged.
- *     These are the original two helpers Phase D moved out of ism_dust_chemistry.cc
- *     to clear #20011-D ("host function called from __host__ __device__"). Bodies
- *     untouched. The Chunk 1 expansion below adds the rest of the
- *     update_dust_processes call graph to the same header. === */
+/* === These two helpers were moved out of ism_dust_chemistry.cc to clear a
+ *     "host function called from __host__ __device__" build error. Bodies
+ *     untouched. The rest of the update_dust_processes call graph follows
+ *     below in the same header. === */
 
 /* Approximate dust cooling via electron-dust collisions for MRN sized dust in
  * plasmas from Dwek(1987)+Dwek&Werner(1981). Surpasses metal-line cooling
@@ -214,20 +212,19 @@ KOKKOS_INLINE_FUNCTION
 void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, int *key_elem, double *key_num_atoms, double *key_mass)
 {
     int k;
-    /* Entry-time defaults. Per codex 2026-05-27: on CUDA the non-silicate
-     * branches below NEVER explicitly write *key_num_atoms; on host that's
-     * fine because the default-init below persists, but nvc++ aggressive
-     * device-side optimization can elide the store as dead-code if it
-     * concludes the only downstream writer is the silicate branch. The
-     * resulting register-uninitialized read gives garbage species_yields[]
-     * in update_dust_accretion -> DustSpecies diverges first and
-     * catastrophically (matches Vista t2 oracle signature: step 88,
+    /* Entry-time defaults. On CUDA the non-silicate branches below NEVER
+     * explicitly write *key_num_atoms; on host that's fine because the
+     * default-init below persists, but nvc++ aggressive device-side
+     * optimization can elide the store as dead-code if it concludes the
+     * only downstream writer is the silicate branch. The resulting
+     * register-uninitialized read gives garbage species_yields[] in
+     * update_dust_accretion -> DustSpecies diverges first and
+     * catastrophically (matches observed signature: step 88,
      * DustSpecies=1.5e+01 while DustMetal/Source still ~5e-13). Defensive
      * per-branch reassignment below makes the function independent of the
      * entry-time init surviving any optimization. The value 1.0 is the
      * physically-correct atoms-per-formula-unit count for carbon,
-     * free iron, and the O reservoir; preserves
-     * pre-Phase-2-port behaviour exactly. */
+     * free iron, and the O reservoir; preserves prior behaviour exactly. */
     *key_elem = -1; *key_num_atoms = 1.0; *key_mass = 1.0;
     /******** SILICATE ********/
     if (spec_indx==All.ISMDustChem_Sil_Index) {
@@ -310,8 +307,7 @@ void update_dense_molecular_fields(int i, double temp, double rho, double nh0, d
     /* Pass `pp` explicitly: proto.h declares evaluate_NH_from_GradRho with
      * `struct particle_data *pp = P` default, where P is the host extern.
      * On device, P is undefined -> nvcc error "identifier 'P' is undefined
-     * in device code". Mac OMP tolerated the default; Vista CUDA caught it.
-     * Surface-and-fix Phase 2 chunk 3 sweep, 2026-05-27. */
+     * in device code". Mac OMP tolerated the default; Vista CUDA caught it. */
     double surface_density = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
     // shielding length giving effective radius of gas particle
     double l_shield = surface_density / rho;

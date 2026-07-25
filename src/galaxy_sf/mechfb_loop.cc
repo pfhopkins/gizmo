@@ -1,15 +1,12 @@
 /* mechfb_loop.cc — MechFBSpec method bodies + toplevel-facing helpers
- * for the runner-template port of mechanical_fb_evaluate_gpu
- * (Phase 4 / Wave 3 / 3e.1).
+ * for the runner-template port of mechanical_fb_evaluate_gpu.
  *
- * Milestone 3 (physics-complete): full Spec contract — real host methods,
- * oracle/state-machine plumbing, ghost_writeback bundle; real mech_fb_local_fill
- * / mech_fb_apply_aws_out / mech_fb_apply_source_mass_out (promoted from
- * `static` when the legacy mechanical_fb_gpu.cc evaluator still existed; now
- * the sole SSOT for these helpers);
+ * Full Spec contract: real host methods, oracle/state-machine plumbing,
+ * ghost_writeback bundle; real mech_fb_local_fill / mech_fb_apply_aws_out
+ * / mech_fb_apply_source_mass_out (promoted from `static` when the
+ * legacy mechanical_fb_gpu.cc evaluator still existed; now the sole SSOT
+ * for these helpers);
  * real reset_per_iter_device_context (repack + mode-machine advance).
- *
- * SSOT design: ../OPEN_3d_mechfb_design.md (v0.4-final, codex-approved).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -77,7 +74,7 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
      * mechfb_target_gas_delta as the upper bound for the local-non-gas gap. */
     aux.num_local_particles    = ghost_get_num_local();
 
-    /* Milestone 3.5 — ghost-side scratch is grown lazily per iter inside
+    /* Ghost-side scratch is grown lazily per iter inside
      * reset_per_iter_device_context (when ghost_get_num_ghosts() exceeds
      * current capacity), zeroed via Kokkos::parallel_for, freed in
      * cleanup_device_context (single free path). Initial state: null/zero. */
@@ -87,7 +84,7 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
 }
 
 /* ============================================================================
- * Public mech_fb_* helpers — promoted from `static` (milestone 3) when the
+ * Public mech_fb_* helpers — promoted from `static` when the
  * legacy mechanical_fb_gpu.cc evaluator still existed; now the sole source
  * of truth, used only by the MechFBSpec runner-port.
  * ========================================================================== */
@@ -158,8 +155,8 @@ void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
  * Mirrors the per-mode `for(aa) mech_fb_local_fill` inside the retired legacy
  * evaluator's mode loop. Reads HOST P[i] — which carries any
  * Area_weighted_sum / Mass updates the previous mode's after_iter_global
- * applied (codex r6 moved per-mode source-side host writes out of after_iter
- * to keep oracle's dual-walk from double-applying).
+ * applied (per-mode source-side host writes were moved out of after_iter
+ * to keep the oracle's dual-walk from double-applying).
  * ========================================================================== */
 void mechfb_repack_per_active_local(const neighbor_loop_args& args,
                                     MechFBSpec::Aux& aux,
@@ -179,7 +176,7 @@ void mechfb_repack_per_active_local(const neighbor_loop_args& args,
 
 /* is_active — host-side superset active check.
  *
- * CONTRACT (codex review 2026-05-14): addFB_evaluate_active_check(i, fb_iter)
+ * CONTRACT: addFB_evaluate_active_check(i, fb_iter)
  * with `fb_iter < 0` is the single canonical "any compiled mechfb mode is
  * active for this source" predicate. The body's per-event branches all
  * accept `fb_loop_iteration < 0` as a wildcard, so this returns true iff at
@@ -203,7 +200,7 @@ double MechFBSpec::search_radius(const neighbor_loop_args& args,
 /* populate_call_scalars — immutable per-call scalars (NlrCommonScalars + a
  * few mechfb-specific All.* snapshots). Reads `All` via nlr_host_all_ptr()
  * per the canonical-accessor rule (feedback_all_dev_trap_host_side.md). */
-/* Shared builder for MechFBCallScalars (codex r6 fix). Used by
+/* Shared builder for MechFBCallScalars. Used by
  * MechFBSpec::populate_call_scalars so cosmology / unit-factor / CR-rigidity
  * values are read from the canonical host All via nlr_host_all_ptr() — no
  * bare All.* inside the kernel-callable helpers. */
@@ -258,8 +255,8 @@ MechFBSpec::CallScalars MechFBSpec::populate_call_scalars(
 
 /* populate_device_context — allocate SharedSpace per_active_local + bind
  * Aux-owned LocalGasMechFBInfoTemp into ctx. d_gas_iter stays nullptr at
- * milestone 3 single-rank scope: Mode A multi-rank ghost-side writes are
- * guarded by pair_kernel's loud abort (design Appendix D + the abort in
+ * single-rank scope: Mode A multi-rank ghost-side writes are
+ * guarded by pair_kernel's loud abort (see the abort in
  * mechfb_loop.h). Initial loop_iteration/mode_idx values are set here AND
  * overwritten by reset_per_iter_device_context BEFORE iter 0 — the
  * duplication is intentional belt-and-suspenders. */
@@ -322,8 +319,8 @@ void MechFBSpec::cleanup_device_context(const neighbor_loop_args& args,
 /* apply_active_writeback — NO-OP for MechFBSpec.
  * All source-side P[i] writes (mode -2/-1 Area_weighted_sum writeback;
  * modes >=0 source mass loss) happen in MechFBSpec::after_iter_global
- * (host-side, production-only, per-iter — codex r6 oracle-safety fix moved
- * them out of after_iter so the runner's dual production+oracle walk doesn't
+ * (host-side, production-only, per-iter — moved out of after_iter for
+ * oracle safety so the runner's dual production+oracle walk doesn't
  * double-apply). This hook stays declared because the Spec contract requires
  * it but the runner's final end-of-call writeback loop has nothing left to do. */
 void MechFBSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
@@ -356,7 +353,7 @@ void MechFBSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on) {
  * happens to fall on float boundaries; we walk as float for parity with
  * the original storage. */
 double MechFBSpec::compare_accum(const AccumData& local, const AccumData& oracle) {
-    /* Codex r5 fix 2026-05-14: pure-relative denom amplifies noise near zero
+    /* Pure-relative denom amplifies noise near zero
      * (density port hit the same trap). Use an absolute floor so near-zero
      * fields don't produce spurious ORACLE MISMATCH lines:
      *   denom = max(1, |a|, |b|)
@@ -379,7 +376,7 @@ double MechFBSpec::compare_accum(const AccumData& local, const AccumData& oracle
     return max_rel;
 }
 
-/* after_iter — STATUS-ONLY (codex r6 fix 2026-05-14).
+/* after_iter — STATUS-ONLY.
  *
  * Earlier draft applied per-mode source-side host writes here, but the
  * iterative runner calls after_iter for BOTH the production accum
@@ -443,7 +440,7 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
 
     for (int slot = 0; slot < N; ++slot) {
         const int i = subgroup.active_indices[slot];
-        /* Per-mode active mask (codex r7 fix) — host-side equivalent of the
+        /* Per-mode active mask — host-side equivalent of the
          * load_active is_active_this_mode flag the device kernel checks.
          * Without this, mode -2/-1 would overwrite P[i].Area_weighted_sum
          * with the (zero) accum of sources not active for this mode under
@@ -463,7 +460,7 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
 }
 
 /* ============================================================================
- * Ghost-writeback bundle — MILESTONE 3.5 (Phase 4 / Wave 3 / 3e.1).
+ * Ghost-writeback bundle.
  *
  * Pattern: custom MechFBGasDelta ghost-writeback callback. Modeled on
  * sinks/sink_swk_loop.cc:194-455, but mechfb does NOT need snapshot-diff
@@ -485,7 +482,7 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
  *                                               the next iter.
  *   cleanup_device_context          (end of call): single free of Aux::d_gas_iter.
  *
- * MA-N validation criterion (codex review 2026-05-14): Aux::total_ghost_packs
+ * MA-N validation criterion: Aux::total_ghost_packs
  * is incremented in pack_fn via a pointer stored in Ctx, then MPI_Allreduce-
  * summed at end of mechfb_run_iterative. Nonzero proves the path was
  * exercised — "did not abort" alone is not sufficient evidence. */
@@ -590,7 +587,7 @@ static void pack_fn(void * /*vctx*/, int g, int /*num_local*/, void *out) {
 
 static void apply_fn(void * /*vctx*/, const void *in) {
     const Wire *w = static_cast<const Wire*>(in);
-    /* Defensive: silent home_index OOB hides provenance bugs (codex review). */
+    /* Defensive: silent home_index OOB hides provenance bugs. */
     if (s_ctx.home_buf == nullptr) {
         fprintf(stderr, "mechfb apply_fn: s_ctx.home_buf is null on rank %d "
                         "(begin must populate it from Aux).\n", ThisTask);
@@ -647,7 +644,7 @@ static const struct ghost_writeback_bundle bundle = { raw_cbs, 1, nullptr };
 
 /* MechFBSpec::ghost_writeback_begin — mirror Aux into the callback's s_ctx
  * BEFORE bundle begin. Aux is reachable here via args.aux per the runner-
- * template contract (DeviceContext is NOT in args; codex review 2026-05-14). */
+ * template contract (DeviceContext is NOT in args). */
 void MechFBSpec::ghost_writeback_begin(const neighbor_loop_args& args,
                                         const NeighborLoopPlan& /*plan*/) {
     auto *aux = static_cast<Aux*>(args.aux);
@@ -663,8 +660,7 @@ void MechFBSpec::ghost_writeback_begin(const neighbor_loop_args& args,
 /* MechFBSpec::ghost_writeback_end — fence device atomic writes to d_gas_iter
  * before the host-side bundle scan (delta_for_ghost_fn / pack_fn read from
  * the host). The runner does NOT unconditionally fence between the kernel
- * launch and dispatch_ghost_writeback_end — this fence is load-bearing
- * (codex review 2026-05-14). */
+ * launch and dispatch_ghost_writeback_end — this fence is load-bearing. */
 void MechFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                       const NeighborLoopPlan& /*plan*/) {
     Kokkos::fence();
@@ -676,7 +672,7 @@ void MechFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * runner re-captures ctx into each iter's kernel lambda, so the new
  * loop_iteration / per_active_local become visible to the next launch.
  *
- * Critical (codex r5): without this hook the runner would re-launch with the
+ * Critical: without this hook the runner would re-launch with the
  * iter-0 ctx forever — the mode-machine would never advance. */
 void MechFBSpec::reset_per_iter_device_context(
         const neighbor_loop_args_iterative& args_iter,
@@ -702,12 +698,12 @@ void MechFBSpec::reset_per_iter_device_context(
                     N * sizeof(MechFBLocalIn));
         /* Backend hygiene: fence after host→SharedSpace copy so the freshly
          * repacked per_active_local is visible to the next device launch
-         * (codex review 2026-05-14 — non-blocking with current backends but
-         * avoids backend-specific reordering ghosts later). */
+         * (non-blocking with current backends but avoids backend-specific
+         * reordering ghosts later). */
         Kokkos::fence();
     }
 
-    /* Milestone 3.5 — lazy d_gas_iter alloc/grow for this iter's ghost imports.
+    /* Lazy d_gas_iter alloc/grow for this iter's ghost imports.
      *
      * ghost_get_num_ghosts() returns the current rank's imported-ghost count
      * (post-import, valid by the time the runner has issued effective_args).
@@ -767,8 +763,8 @@ void mechfb_free_local_gas_delta(struct MechFBGasDelta *p) {
 }
 
 /* mechfb_zero_local_gas_delta — zero the gas-only portion of the SharedSpace
- * buffer (codex r5 followup 2026-05-14: avoid std::memset on SharedSpace from
- * a non-GPU TU; route through Kokkos so the backend semantic is explicit).
+ * buffer (avoid std::memset on SharedSpace from a non-GPU TU; route through
+ * Kokkos so the backend semantic is explicit).
  *
  * Mirrors the legacy zero loop in mechanical_fb.cc:275 — only entries where
  * P[j].Type == 0 are zeroed; non-gas entries are left untouched (saves work
@@ -814,7 +810,7 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
 
 /* mechfb_run_iterative — runner-template dispatch entry for MechFBSpec.
  *
- * Validation matrix (codex r5+r6+r7 review, 2026-05-14):
+ * Validation matrix:
  *   ✅ SINGLE-RANK Mode A                              — supported.
  *   ✅ SINGLE-RANK Mode B                              — supported.
  *   ✅ SINGLE-RANK Mode B + GIZMO_NLR_ORACLE=1         — supported (oracle-safe
@@ -827,7 +823,7 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
  *   ❌ MULTI-RANK Mode A                               — pair_kernel aborts
  *      loudly the first time a ghost-side write would happen
  *      (`j >= num_local_gas`). Custom MechFBGasDelta ghost-writeback callback
- *      + lazy d_gas_iter alloc is the milestone-3.5 follow-up; do NOT
+ *      + lazy d_gas_iter alloc is the needed follow-up; do NOT
  *      multi-rank Mode A validate until that lands.
  *   ✅ MULTI-RANK Mode B                               — supported by the
  *      collective-symmetry invariant (every rank enters with num_subgroups=1
@@ -867,16 +863,16 @@ void mechfb_run_iterative(int *active_list, int num_active,
 
     run_neighbor_loop_iterative<MechFBSpec>(args);
 
-    /* Guardrail #2 (codex r4): explicit fence before host-side scatter
+    /* Guardrail: explicit fence before host-side scatter
      * (verify_and_assign_local_mechfb_integrals) reads LocalGasMechFBInfoTemp.
      * The runner's post-iter fence covers per-iter writes; the toplevel
      * adds this final fence after the call returns. */
     Kokkos::fence();
 
-    /* Milestone 3.5 validation readout — proves the multi-rank Mode A
+    /* Validation readout — proves the multi-rank Mode A
      * ghost-writeback path was actually exercised. MA-N pass criterion:
-     * total > 0 in at least one mechfb call (codex review 2026-05-14:
-     * "did not abort" is not sufficient evidence). Single-rank / Mode B:
+     * total > 0 in at least one mechfb call ("did not abort" is not
+     * sufficient evidence). Single-rank / Mode B:
      * always 0 (no ghost imports). Cheap one-shot Allreduce + rank-0 print. */
     {
         long long local_packs = aux.total_ghost_packs;

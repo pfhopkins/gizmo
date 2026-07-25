@@ -1,6 +1,6 @@
 /* turb/difffilter_loop.cc — DiffFilterSpec / DynDiffSpec host hooks + the two
  * toplevel callers for the runner-template port of difffilter_evaluate_gpu /
- * dynamicdiff_evaluate_gpu (Wave 5, item 1).
+ * dynamicdiff_evaluate_gpu.
  *
  * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
  * live in difffilter_loop.h so the runner instantiates them from GPU TUs.
@@ -10,7 +10,7 @@
  *
  * Replaces turb/difffilter_gpu.cc.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #include <mpi.h>
 #include <cstdio>

@@ -1,5 +1,5 @@
 /* rt_source_injection_local_in.h — host-clean per-source input pack for the
- * runner-template port of rt_source_injection (Phase 4 / Wave 3).
+ * runner-template port of rt_source_injection.
  *
  * This struct lives in its own tiny header so the host orchestration TU
  * (radiation/rt_source_injection.cc) can build `std::vector<RtSrcLocalIn>`

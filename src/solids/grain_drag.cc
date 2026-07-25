@@ -272,7 +272,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 #endif
 
 #ifdef GRAIN_EVOLUTION
-    /* Per-superparticle local operators (Phase 17b). Co-located with the
+    /* Per-superparticle local operators. Co-located with the
      * drag kernel because (a) every Gas_* field they need is already in
      * registers here, (b) any back-reaction they generate piggybacks on
      * the existing GRAIN_BACKREACTION writeback infrastructure rather than

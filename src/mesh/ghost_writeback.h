@@ -127,7 +127,7 @@ void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
  *     via the bundle scaffold (PARTICLE_MIN on particle_data::SwallowTime). */
 
 
-/* sinkfeed retired in 3d.1: replaced by the bundle scaffold in
+/* sinkfeed retired: replaced by the bundle scaffold in
  * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) +
  * GAS_ADD(Injected_Sink_Energy) ops). */
 
@@ -136,7 +136,7 @@ void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
  * per-gas MechFBGasDelta reverse-comm via its mechfb_writeback_detail custom
  * generic-bundle callback. */
 
-/* Grain backreaction (B7a) retired: the ghost_writeback_{zero_,}grainbackrx
+/* Grain backreaction retired: the ghost_writeback_{zero_,}grainbackrx
  * compatibility wrappers had no remaining callers — GrainBackrxSpec in
  * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
  * j-writes via the generic ghost-writeback bundle. The multifluid intent
@@ -144,18 +144,17 @@ void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
  * under HYDRO_MULTIFLUID-only builds) is captured by the wider
  * DO_FLUID_ALTSPECIES_DRAG_CALCULATION outer guard on grain_physics_loop.{cc,h}. */
 
-/* sinkswallow retired in 3d.3 (port + cleanup): replaced by the bundle
+/* sinkswallow retired: replaced by the bundle
  * scaffold's compound callback in sinks/sink_swk_loop.cc (snapshot +
  * CR/B-aware predicate + clamped apply). */
 
-/* RadFBRP runner-template port (Phase 4 / Wave 3 / radfb_local): the
+/* RadFBRP runner-template port: the
  * legacy ghost_writeback_zero_radfbrp + ghost_writeback_radfbrp snapshot-
  * based reverse-comm path is retired; RadFBRPSpec in
  * galaxy_sf/radfb_rp_loop.{h,cc} now uses the generic ghost-writeback
  * bundle (PARTICLE_ADD_VEC3 on Vel/dp + GAS_ADD_VEC3 on VelPred). */
 
-/* RT source injection variant retired in Phase 4 / Wave 3 /
- * rt_source_injection cleanup. RtSrcInjectionSpec in
+/* RT source injection variant retired. RtSrcInjectionSpec in
  * radiation/rt_source_injection_loop.{h,cc} now owns the j-side
  * reverse-comm via the generic ghost-writeback bundle. */
 

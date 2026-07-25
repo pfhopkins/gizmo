@@ -7,9 +7,7 @@
  * companion turb/difffilter_loop.h (included only by difffilter_loop.cc and
  * mesh/neighbor_loop_runner.cc).
  *
- * See OPEN_3d_difffilter_design.md §4.
- *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef DIFFFILTER_LOOP_API_H
 #define DIFFFILTER_LOOP_API_H

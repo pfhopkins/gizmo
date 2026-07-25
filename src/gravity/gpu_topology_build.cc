@@ -1,12 +1,12 @@
-/* gpu_topology_build.cc -- Step 13 Phase 6.5c2
+/* gpu_topology_build.cc
  *
  * GPU tree-build data path: per-particle Peano-walk to topleaf, 128-bit
  * Morton key, parallel histogram + scan + scatter to bucket particles
  * by topleaf, per-topleaf Morton sort.  See gpu_topology_build.h for the
  * API.
  *
- * Topology emission (6.5c3), collocation handling (6.5c4), and overflow
- * retry are added in subsequent commits.
+ * Topology emission, collocation handling, and overflow retry are
+ * handled elsewhere.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -502,8 +502,8 @@ extern "C" int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx
     int           *soa_suns    = soa->suns_backup;
     if(!soa_center || !soa_len || !soa_suns) {return 1;}
 
-    /* Phase 6.8f: GPU kernel writeback (was host OMP loop).  Nodes_base is
-     * UVM since 6.8d, so device-side writes work directly.  All stores are
+    /* GPU kernel writeback (was host OMP loop).  Nodes_base is
+     * UVM, so device-side writes work directly.  All stores are
      * independent per-k. */
     struct NODE *Nodes_uvm = Nodes_base;
     int range = last_soa_idx - first_soa_idx;

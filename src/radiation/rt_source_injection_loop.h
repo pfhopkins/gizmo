@@ -1,5 +1,5 @@
 /* rt_source_injection_loop.h — RtSrcInjectionSpec for the runner-template port
- * of rt_source_injection (Phase 4 / Wave 3).
+ * of rt_source_injection.
  *
  * Non-iterative scatter loop: active non-gas sources with luminosity and
  * positive `KernelSum_Around_RT_Source` deposit radiation energy / flux /

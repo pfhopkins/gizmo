@@ -1,5 +1,5 @@
 /* mechanical_fb_functions.h — GPU-callable structs + per-pair kernel body
- * for the mechanical_fb default-scheme GPU port (B8).
+ * for the mechanical_fb default-scheme GPU port.
  *
  * Covers all 6 modes (-2, -1, 0, 1, 2, 3) of addFB_evaluate default scheme
  * INCLUDING cosmic-ray injection (CR_DYNAMICAL_INJECTION_IN_SNE +
@@ -34,8 +34,8 @@
 /* Cosmology + unit-factor + CR-rigidity scalars for mechfb kernel helpers.
  * Built host-side once per call via mechfb_fill_call_scalars (mechfb_loop.cc);
  * threaded into mechanical_fb_per_source_setup, mechanical_fb_pair_kernel, and
- * inject_cosmic_rays_into_delta so no helper reads bare All.* (codex r6 fix:
- * feedback_all_dev_trap_host_side.md — a per-TU All_dev mirror is unreliable). */
+ * inject_cosmic_rays_into_delta so no helper reads bare All.* directly
+ * (a per-TU All_dev mirror is unreliable). */
 struct MechFBCallScalars {
     NlrCommonScalars common;            /* cf_atime, cf_a2inv, cf_a3inv, … */
     double unit_length_in_kpc;
@@ -65,7 +65,7 @@ struct MechFBCallScalars {
 #endif
 };
 
-/* Ownership-split j-side write target + oracle gate (Phase 4 / Wave 3 / 3e.1).
+/* Ownership-split j-side write target + oracle gate.
  *
  * Picks the per-gas delta buffer for j-side atomic writes from inside the
  * pair kernel. P[] layout convention used here:
@@ -76,7 +76,7 @@ struct MechFBCallScalars {
  *   - num_local_gas       = N_gas      (local gas count this rank)
  *   - num_local_particles = NumPart    (= ghost_get_num_local() pre-import)
  *
- * MILESTONE 3.5 FIX: previously this helper used `j < num_local_gas` to
+ * Note: previously this helper used `j < num_local_gas` to
  * route home vs ghost, which silently corrupted memory whenever
  * NumPart > N_gas (any sim with non-gas particles) because imported ghosts
  * land at indices >= NumPart, NOT >= N_gas. The middle range [N_gas, NumPart)
@@ -164,7 +164,7 @@ struct MechFBSourceMode
 
 
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-/* Phase 2 kernel-callable CR injection: writes per-bin CR energy / number / direction
+/* Kernel-callable CR injection: writes per-bin CR energy / number / direction
  * deltas into MechFBGasDelta via Kokkos atomics instead of CellP directly.
  * Host scatter (in verify_and_assign_local_mechfb_integrals) normalizes direction and
  * applies to CellP[].CosmicRayEnergy/Pred/Number/Flux/FluxPred. */
@@ -173,7 +173,7 @@ static void inject_cosmic_rays_into_delta(
     double CR_energy_to_inject, double injection_velocity, int source_type,
     int target, const double *dir,
     struct particle_data *P_arr, struct gas_cell_data *cell,
-    /* Codex r6 fix: threaded per-call scalars; replaces bare-All reads of
+    /* Threaded per-call scalars; replaces bare-All reads of
      * CR_global_min/max/center rigidity arrays inside this body. */
     const struct MechFBCallScalars& scalars,
     int num_local_gas,
@@ -224,8 +224,8 @@ static void inject_cosmic_rays_into_delta(
 #endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
 
 
-/* Host-side helpers for the MechFBSpec runner-port (Phase 4 / Wave 3 / 3e.1
- * milestone 3). Defined in galaxy_sf/mechfb_loop.cc (single source of truth;
+/* Host-side helpers for the MechFBSpec runner-port.
+ * Defined in galaxy_sf/mechfb_loop.cc (single source of truth;
  * originally shared with the now-retired legacy mechanical_fb_gpu.cc
  * evaluator). All read host P only — no All.* access from these helpers. */
 void mech_fb_local_fill(int i, int loop_iteration,
@@ -280,7 +280,7 @@ static void mechanical_fb_per_source_setup(
     double wk_dummy = 0;
     kernel_main(0.0, 1.0, 1.0, &m.kernel_zero, &wk_dummy, -1);
     kernel_hinv((double)local.KernelRadius, &m.hinv, &m.hinv3, &m.hinv4);
-    /* Codex r6 fix: replace bare-All reads (All.cf_atime / All.cf_a3inv) and
+    /* Replace bare-All reads (All.cf_atime / All.cf_a3inv) and
      * macro reads (UNIT_*_IN_*) with threaded scalars. */
     double unitlength_in_kpc = scalars.unit_length_in_kpc * scalars.common.cf_atime;
     m.density_to_n = scalars.common.cf_a3inv * scalars.unit_density_in_NHcgs;
@@ -325,7 +325,7 @@ static void mechanical_fb_per_source_setup(
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
      * for this source at current velocity, subtracting it from the ejecta KE.
-     * Codex r6: All.CosmicRay_SNeFraction and UNIT_VEL_IN_KMS routed through
+     * All.CosmicRay_SNeFraction and UNIT_VEL_IN_KMS routed through
      * scalars (precomputed in populate_call_scalars). */
     m.CR_energy_to_inject = 0;
     if(v_ejecta_eff_init > 1000.0 / scalars.unit_vel_in_kms)
@@ -354,12 +354,12 @@ static void mechanical_fb_pair_kernel(
     int j,
     struct particle_data *P,
     struct gas_cell_data *CellP,
-    /* Threaded per-call scalars (codex r6 fix): cosmology factors,
+    /* Threaded per-call scalars: cosmology factors,
      * SolarAbundances[0], unit conversions, CR rigidity arrays. Replaces
      * bare All.* reads inside this body. Caller (runner-port pair_kernel)
      * builds it host-side via populate_call_scalars. */
     const struct MechFBCallScalars& scalars,
-    /* j-side ownership-split write target (Phase 4 / Wave 3 / 3e.1, milestone 3.5).
+    /* j-side ownership-split write target.
      * Three-way index split via mechfb_target_gas_delta (see helper above):
      *   home_gas_delta       : local gas range [0, num_local_gas)
      *   ghost_gas_delta      : imported-ghost range [num_local_particles, ...);

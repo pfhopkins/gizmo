@@ -5,15 +5,14 @@
  * sink_feed_loop.h so they inline from device kernels (Mode A) and host
  * walkers (Mode B / Brute oracle). This translation unit holds host-only
  * hooks: per-active radius, per-call scalars capture (with sink_feed-
- * unique RNG shift), populate/cleanup_device_context (Phase 4.A.0 UVM
- * staging for per-active SinkFeedLocalIn), apply_active_writeback,
+ * unique RNG shift), populate/cleanup_device_context (UVM staging for
+ * per-active SinkFeedLocalIn), apply_active_writeback,
  * merge_accum, ghost-writeback manifest + lifecycle hooks, and the
  * env-gated diagnostics block.
  *
- * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h. Phase 4
- * port 3d.1.
+ * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -29,7 +28,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_feed_loop.h */
 #include "../mesh/ghost_writeback.h"      /* scaffold + detector */
-#include "../mesh/ghost_writeback_ops.h"  /* manifest macros (B.iv + 3d.1 ops) */
+#include "../mesh/ghost_writeback_ops.h"  /* manifest macros */
 #include "sink_feed_loop.h"
 
 #ifdef SINK_PARTICLES
@@ -66,8 +65,8 @@ double SinkFeedSpec::search_radius(const neighbor_loop_args& args,
 SinkFeedSpec::CallScalars
 SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
-    /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. Under
-     * 93897f62 the redirect is device-pass-only, so bare All.* in this host
+    /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. The
+     * redirect is device-pass-only, so bare All.* in this host
      * hook would also be correct; the accessor documents that these reads
      * run on the host pass. */
     const struct global_data_all_processes *h = nlr_host_all_ptr();
@@ -133,7 +132,7 @@ void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 }
 
 /* ============================================================================
- * PHASE 4.A.0 DEVICE CONTEXT LIFECYCLE
+ * DEVICE CONTEXT LIFECYCLE
  *
  * populate_device_context allocates a UVM array of SinkFeedLocalIn[N] and
  * copies in from args.aux->host_locals (which the caller fills on host
@@ -224,7 +223,7 @@ void SinkFeedSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  *   - Mode B local + remote: skipped (j-side writes are local on the
  *             rank that owns j; no reverse-comm needed).
  *
- * GHOST WRITEBACK MANIFEST (3d.1 — first port with non-empty bundle).
+ * GHOST WRITEBACK MANIFEST (first port with non-empty bundle).
  * Adding a new ghost-written field for this loop = ADDING ONE LINE under
  * its physics flag's #ifdef. The scaffold (mesh/ghost_writeback.cc)
  * generates snapshot/changed/pack/exchange/apply/cleanup machinery from
@@ -271,7 +270,7 @@ double SinkFeedSpec::compare_accum(const AccumData& local, const AccumData& orac
      * same value. We include it in the byte walk; if it ever disagrees,
      * the oracle output identifies the field.
      *
-     * B3a NOTE (targeted-export peer splitting): sink_feed is modeb_eval_omp=
+     * NOTE (targeted-export peer splitting): sink_feed is modeb_eval_omp=
      * SerialOnly and its swallow selection is STRICT-SERIAL order-dependent -- it
      * reads P[j].SwallowID at pair entry and atomic_exchanges it at commit, so the
      * ORDER in which peers are visited decides which sink claims a contested

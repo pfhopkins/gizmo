@@ -11,7 +11,7 @@
  *
  *  This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  *
- *  KNOWN LIMITATIONS (Phase 0 — to be optimized):
+ *  KNOWN LIMITATIONS (to be optimized):
  *  - Sends full P[i]/CellP[i] structs per ghost (~2-5 KB/particle). Should use compact
  *    struct with only fields needed by the active kernel set (~200 bytes).
  *  - O(NTopleaves^2) overlap check between local and remote leaves. Should use spatial
@@ -49,7 +49,7 @@
  * ============================================================================
  * COMPACT GHOST STRUCT FIELD REQUIREMENTS (for future optimization)
  *
- * Phase 0 sends full P[i] + CellP[i] structs. When optimizing, the minimum
+ * Currently sends full P[i] + CellP[i] structs. When optimizing, the minimum
  * fields needed per kernel are:
  *
  * ALL kernels need from P: Pos[3], Mass, Type, KernelRadius, NumNgb, TimeBin
@@ -108,7 +108,7 @@ static int *ghost_send_home_idx = NULL;     /* [ghost_send_home_count] exported 
 static int  ghost_send_home_count = 0;      /* == total_send at last import */
 static unsigned long long g_ghost_provenance_epoch = 0; /* import counter (see above) */
 
-/* Bucket 3 (SIDX overlay, Phase 1): persistent local-tree cache for the
+/* Persistent local-tree cache (SIDX overlay) for the
  * request-driven ghost exchange path. Within a step, the local pool of
  * particles [0..NumPart_local) is stable across multiple ghost_exchange
  * calls (3-5 calls/step typical). Building tiles+BVH+compact_xyzh once per
@@ -146,13 +146,13 @@ struct ghost_local_tree_cache_t {
     float *compact_xyzh;           /* [num_pool*4] malloc; h field = supply-side policy * j_scale * safety baked in */
     int *pool_types;               /* [num_pool] malloc */
     int *j_to_pool;                /* [NumPart_when_built] malloc, j -> pool_pos or -1 */
-    /* SSOT supply-side reach contract (codex 2026-06-07).  These four fields,
-     * together with the (NumPart, safety, eligible_pool_mask) triple above,
-     * form the cache-key invariant: any mismatch on any of them forces a full
-     * rebuild (NOT a refit).  Ti and the needs_refit dirty bit continue to
-     * trigger glt_cache_refit_from_particles() instead of a rebuild — Ti is
-     * NOT a rebuild key (codex correction #1: rebuilding every step would
-     * be exactly the work explosion this design is supposed to prevent). */
+    /* SSOT supply-side reach contract. These four fields, together with the
+     * (NumPart, safety, eligible_pool_mask) triple above, form the cache-key
+     * invariant: any mismatch on any of them forces a full rebuild (NOT a
+     * refit).  Ti and the needs_refit dirty bit continue to trigger
+     * glt_cache_refit_from_particles() instead of a rebuild — Ti is NOT a
+     * rebuild key: rebuilding every step would be exactly the work
+     * explosion this design is supposed to prevent. */
     mode_b_radius_policy_t radius_policy_when_built;
     double j_radius_scale_when_built;
 };
@@ -169,8 +169,7 @@ static struct ghost_local_tree_cache_t g_glt_cache = {0,-1,-1,0.0,GHOST_TYPE_ALL
  *   (radius_policy, scale_factor = j_radius_scale * safety_factor)
  * so leaf compact h and BVH band hmax see the exact same supply-side reach
  * for every particle — closing the leaf-vs-band scale gap that would
- * otherwise let the BVH prune pairs the leaf would have accepted
- * (codex 2026-06-07 correction #3).
+ * otherwise let the BVH prune pairs the leaf would have accepted.
  *
  * Compile-flag gating on AGS_KernelRadius lives in nlr_radius_policy.h's
  * wrapper; never replicate the `#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE`
@@ -385,8 +384,8 @@ static inline void glt_recompute_tile_(int t)
     int p0 = tile->first;
     int j0 = g_glt_cache.pool[p0];
     for(int k = 0; k < 3; k++) tile->lo[k] = tile->hi[k] = P[j0].Pos[k];
-    /* SSOT supply-side reach pulled from the cache's stored policy/scale
-     * (codex 2026-06-07).  For runner-driven imports this carries the
+    /* SSOT supply-side reach pulled from the cache's stored policy/scale.
+     * For runner-driven imports this carries the
      * Spec's radius_policy + nlr_spec_symmetric_j_radius_scale<Spec>();
      * for legacy ghost_exchange wrappers it carries
      * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES + 1.0 → byte-equivalent to the
@@ -1445,7 +1444,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
 
 
 /* ============================================================================
- * Request-driven ghost exchange (Phase 2).
+ * Request-driven ghost exchange.
  *
  * Replaces the tile-overlap candidate generator + whole-tile MPI payload of
  * ghost_exchange_tile_overlap_impl with:
@@ -1473,8 +1472,8 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
  * For now the local-pool walk is a flat O(N_local_tiles * N_remote_queries)
  * scan with bbox-vs-sphere prune at the tile level; per-particle accept at
  * the leaf. A BVH speedup is straightforward later (the all-particle BVH
- * already used by the GPU neighbor list can be reused) but not a Phase-2
- * blocker — even the flat scan is dominated by per-particle work for the
+ * already used by the GPU neighbor list can be reused) but not a
+ * blocker here — even the flat scan is dominated by per-particle work for the
  * tiny-N case that motivates this restructure.
  * ============================================================================ */
 struct gx_query_t {
@@ -1484,10 +1483,10 @@ struct gx_query_t {
     int    _pad;
 };
 
-/* Per-particle supply-side reach for the [GX_WASTE] diagnostic.  Policy-aware
- * (codex 2026-06-07): under the SSOT supply contract, the diagnostic must
- * report the SAME reach the request-driven impl actually used — otherwise it
- * silently lies about whether ghost imports are oversized.  Returns 0 when
+/* Per-particle supply-side reach for the [GX_WASTE] diagnostic.  Policy-aware:
+ * under the SSOT supply contract, the diagnostic must report the SAME reach
+ * the request-driven impl actually used — otherwise it silently lies about
+ * whether ghost imports are oversized.  Returns 0 when
  * j's type is outside the spec's supply_type_mask. */
 static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec)
 {
@@ -1730,7 +1729,7 @@ static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NOD
  * runs the same collectives (gated on env + ONEWAY, both uniform); per-rank
  * geometry/route availability is folded into all-or-none Allreduce gates before
  * any routed collective.  Comparison is on sorted/deduped (home_rank,home_index)
- * SETS (codex 2026-06-26), not counts; under-route => collective controlled stop.
+ * SETS, not counts; under-route => collective controlled stop.
  * ========================================================================== */
 struct gx_oracle_id { int rank; int idx; };
 static int gx_oracle_id_cmp(const void *a, const void *b)
@@ -1991,13 +1990,13 @@ done:
     gizmo_exit_bad_stop_if_requested("ghost_exchange:route_oracle");
 }
 
-/* Broadcast discovery walk (extracted verbatim, C3a).  Walks every remote rank's
+/* Broadcast discovery walk. Walks every remote rank's
  * queries (from the Allgatherv'd all_queries) against the pre-built local supply
  * snapshot and returns the per-peer match bitmask matched[t*num_pool+p] that the
- * shared pack/install Steps 4-6 consume.  Pure local walk over already-exchanged
+ * shared pack/install steps consume.  Pure local walk over already-exchanged
  * queries -- no routing, no collectives.  CALLER OWNS the returned buffer (free
- * it).  This is the broadcast `matched` producer; C3b adds a routed producer with
- * the identical return layout so the install path stays shared. */
+ * it).  This is the broadcast `matched` producer; the routed producer below adds
+ * a routed producer with the identical return layout so the install path stays shared. */
 static char *compute_matched_broadcast(
     const struct gx_query_t *all_queries, const int *q_disps, const int *all_q_counts,
     const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
@@ -2031,7 +2030,7 @@ static char *compute_matched_broadcast(
 /* Lazy, idempotent collective broadcast of the local query lists to all ranks
  * (the legacy Step-2 Allgather/Allgatherv).  Safe to call multiple times: no-op
  * once *available.  MUST be called collectively (all ranks together).  Fills the
- * three malloc'd arrays (caller frees) + total_queries.  Enables the C3b late
+ * three malloc'd arrays (caller frees) + total_queries.  Enables the late
  * fallback: if routed discovery fails AFTER Step 2 was skipped, all ranks return
  * to the same point and run this collectively before the broadcast walk. */
 static void ensure_broadcast_queries(int *available,
@@ -2061,13 +2060,13 @@ static void ensure_broadcast_queries(int *available,
     *available = 1;
 }
 
-/* Routed `matched` producer (C3b): routes each local query to its overlapping
+/* Routed `matched` producer: routes each local query to its overlapping
  * top-leaf owners, Alltoallv's the routed queries, and walks ONLY the received
  * queries per source rank -> matched[t*num_pool+p] (IDENTICAL layout to
  * compute_matched_broadcast).  Geometry must already be acquired+validated by the
  * caller's collective gate.  Fully fail-closed: on geometry/INT-overflow/alloc
  * failure on ANY rank, all ranks return NULL together (via Allreduce barriers) so
- * the caller falls back to broadcast collectively.  ONEWAY in C3 (band-free).
+ * the caller falls back to broadcast collectively.  ONEWAY only (band-free).
  * CALLER OWNS the returned buffer (free it). */
 static char *compute_matched_routed(
     const struct gx_query_t *local_queries, int n_local_queries,
@@ -2098,9 +2097,9 @@ static char *compute_matched_routed(
     long owners_cap = 0;
     long long rq_ts = 0, rq_tr = 0;
     int  rq_total_send = 0, rq_total_recv = 0;
-    /* Split route timing (codex H2 req): construct / query-Alltoallv / walk, so
-     * the FIRE perf gate proves the flat O(nq x NTopleaves) cost actually leaves
-     * the construct bucket (and doesn't reappear elsewhere).  Decls at top so the
+    /* Split route timing: construct / query-Alltoallv / walk, so the FIRE
+     * perf gate proves the flat O(nq x NTopleaves) cost actually leaves the
+     * construct bucket (and doesn't reappear elsewhere).  Decls at top so the
      * goto-fail never jumps over an initialised automatic. */
     double tc0 = my_second(), ta0 = 0.0, tw0 = 0.0;
     if(t_route_construct) *t_route_construct = 0.0;
@@ -2300,7 +2299,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
     double t_step1 = timediff(t_step1_start, my_second());
-    /* === Step 2: LAZY query distribution (C3b) === The broadcast Allgather/
+    /* === Step 2: LAZY query distribution === The broadcast Allgather/
      * Allgatherv now runs on demand via ensure_broadcast_queries(): SKIPPED in
      * routed-production mode, run up-front for the oracle / when routed is
      * unavailable, and as a collective LATE fallback if routed fails after the
@@ -2344,8 +2343,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int from_cache = 0;
     /* All particle types are eligible as ghost sources. */
     unsigned int desired_pool_mask = GHOST_TYPE_ALL;
-    /* Cache-key invariant (codex 2026-06-07): {NumPart, safety, supply-pool
-     * coverage, radius_policy, j_radius_scale}.  Ti and dirty bits drive REFIT
+    /* Cache-key invariant: {NumPart, safety, supply-pool coverage,
+     * radius_policy, j_radius_scale}.  Ti and dirty bits drive REFIT
      * (glt_cache_refit_from_particles), NOT rebuild — see below. */
     int cache_match = (g_glt_cache.valid
                        && g_glt_cache.NumPart_when_built == NumPart
@@ -2481,7 +2480,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     double t_step3_walk_start = my_second();
 
-    /* C3b matched producer selection: for ONEWAY callers the routed top-leaf
+    /* Matched producer selection: for ONEWAY callers the routed top-leaf
      * discovery installs when top-leaf geometry is collectively available;
      * BROADCAST is the fail-closed fallback (+ compare-before-install oracle).
      * Broadcast query gather is LAZY (ensure_broadcast_queries) — skipped when
@@ -2880,7 +2879,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
  * add a wrapper line; do not duplicate logic.
  *
  * radius_policy + j_radius_scale on the spec are part of the SSOT supply-side
- * contract (codex 2026-06-07).  Legacy non-runner wrappers explicitly pass
+ * contract.  Legacy non-runner wrappers explicitly pass
  * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES + 1.0 to preserve their pre-policy
  * behavior byte-for-byte (raw P[j].KernelRadius * safety_factor as the
  * supply-side reach).  Runner Mode A passes Spec::radius_policy +
@@ -3010,7 +3009,7 @@ void ghost_exchange_cleanup(void)
      * if a smaller-num_total build happens before SIDX invalidation. The old
      * fail-safe escalated to mark_h_dirty_all, which forced a 1.5s full-pool
      * refresh on every active-sink step (3 cleanups -> 3 full refreshes,
-     * the dominant tiny-N cost per session-7 audit).
+     * measured as the dominant tiny-N cost).
      *
      * Surgical fix: filter the dirty list, dropping ghost-slot indices but
      * keeping the valid local-index entries from density iter / lazy drift.

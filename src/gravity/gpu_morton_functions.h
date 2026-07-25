@@ -1,12 +1,12 @@
-/* gpu_morton_functions.h -- Step 13 Phase 6.5b/6.5c0
+/* gpu_morton_functions.h
  *
  * KOKKOS_INLINE_FUNCTION primitives for Morton-key-based octree topology
  * construction.  These live in a header (rather than a .cc) so they can be
  * called from device kernels in other translation units without rdc/device
  * linking (per GIZMO's header-only GPU design constraint).
  *
- * Phase 6.5c0: upgraded from 63-bit (21 bits/axis) to 128-bit (42 bits/axis)
- * Morton precision to match GIZMO's CPU build (BITS_PER_DIMENSION = 42 in
+ * Uses 128-bit (42 bits/axis) Morton precision (rather than 63-bit /
+ * 21 bits/axis) to match GIZMO's CPU build (BITS_PER_DIMENSION = 42 in
  * declarations/typedefs.h).  Tree topology is now bit-equivalent to CPU
  * within FP/sort-stability tolerances on every supported simulation regime
  * (typical galaxy, normal high-res ~1e-9, hyper-refinement ~1e-12).

@@ -1,12 +1,12 @@
 /* hydro/hydro_force_loop.h — HydroForceSpec for the neighbor-loop runner.
  *
  * Ports the legacy GPU walker `hydro_evaluate_gpu` (hydro/density_gpu.cc:
- * 106-481) to the runner Spec contract. Closes the Wave 5 hydro corridor
- * (cellcorrections + gradients + hydro_force all on the runner). Pair body
+ * 106-481) to the runner Spec contract. Completes the hydro corridor on the
+ * runner (cellcorrections + gradients + hydro_force all on the runner). Pair body
  * `hydro_accumulate_neighbor` is reused verbatim from
  * hydro/hydro_functions.h — physics unchanged. The j-side write block
  * (P[j].wakeup atomic-max, MFV CellP[j].dMass atomic-add, NeedToWakeup_flag
- * store) is gated by `allow_j_writes` (commit 8a, a2cb965a) so the runner's
+ * store) is gated by `allow_j_writes` so the runner's
  * Mode B + oracle brute pass can dry-run without mutating production state.
  *
  * Ghost writeback (Mode A imported-ghost path): runner's snapshot-diff

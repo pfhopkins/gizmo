@@ -1,5 +1,5 @@
 /* solids/grain_physics_loop.h — Spec definitions for the runner-template port
- * of the grain_physics neighbor loops (B7).
+ * of the grain_physics neighbor loops.
  *
  * Three independent Specs:
  *   GrainBackrxSpec    — grain→gas momentum backreaction (GRAIN_BACKREACTION).
@@ -46,8 +46,7 @@
  * Writes: atomic j-side updates to P[j].Vel, P[j].dp, P[j].Grain_AccelTimeMin,
  *         CellP[j].VelPred (+ GRAIN_EVOLUTION fields). Ghost writeback required.
  * AccumData: empty (no i-side reduction). Oracle compare is vacuous — validation
- * relies on MA-N cross-rank ghost-writeback records count and PA-vs-PB field
- * comparison (see OPEN_3d_grain_physics_design.md §E).
+ * relies on cross-rank ghost-writeback records count and field comparison.
  * ========================================================================== */
 #if defined(GRAIN_BACKREACTION)
 

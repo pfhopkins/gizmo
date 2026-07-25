@@ -54,7 +54,7 @@
  * (which takes Q_min/Q_max over the whole neighbor stencil). The name is
  * load-bearing — keep the qualifier.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef CBE_INTEGRATOR_GRADIENTS_H
 #define CBE_INTEGRATOR_GRADIENTS_H

@@ -184,7 +184,7 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES>=2) /* simpler refinement for even smaller-scale simulations */
         mcrit_0 = m_ref_mJ = 0.003; minimum_refinement_mass_in_solar = 4.e-8; f0 = 1; // 'baseline' resolution & maximum resolution target
         r0 = 0.01; if(r_pc < r0) {f0 *= pow(r_pc/r0 , 2);} // simple additional refinement criterion vs radius interior to inner radius
-        f0 = DMAX(pow(r_pc / r0, 4) , 1.e-4); // optional alt - using for now, can revert to above.
+        f0 = DMAX(pow(r_pc / r0, 4) , 1.e-4); // alternate, steeper falloff
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES>=3)
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES>=4)
         mcrit_0 = m_ref_mJ = 0.009; f0 = 1; r0 = 0.3; if(r_pc > r0) {f0 *= pow(r_pc/r0 , 1.5);}
@@ -1061,14 +1061,14 @@ void swap_treewalk_pointers(int i, int j){
                 else if(next == j) { Nextnode[no] = i; previous_node_j = no;}
             }
             no = next;
-        } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (Phase 9 LET)
+        } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (LET)
             next = Nodes[no].u.d.nextnode;
             if(next == i) { previous_node_i = no; rearrange_set_node_nextnode(no, j);}
             else if(next == j) { previous_node_j = no; rearrange_set_node_nextnode(no, i);}
             if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, j); pre_sibling_i = no;}
             else if(Nodes[no].u.d.sibling == j) { rearrange_set_node_sibling(no, i); pre_sibling_j = no;}
             no = next;
-        } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
+        } else { // pseudoparticle (index shifted up by MaxForeignNodes)
             int pseudo_idx = no - MaxNodes - MaxForeignNodes;
             next = Nextnode[pseudo_idx];
             if(next==i) {Nextnode[pseudo_idx] = j;}
@@ -1105,11 +1105,11 @@ void remove_particle_from_treewalk(int i){
         if(no < All.MaxPart){
             next = Nextnode[no];
             if(Nextnode[no] == i) {Nextnode[no] = Nextnode[i];}
-        } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (Phase 9 LET; must match swap_treewalk_pointers)
+        } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (LET; must match swap_treewalk_pointers)
             next = Nodes[no].u.d.nextnode;
             if(next == i) {rearrange_set_node_nextnode(no, Nextnode[i]);}
             if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, Nextnode[i]);}
-        } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
+        } else { // pseudoparticle (index shifted up by MaxForeignNodes)
             next = Nextnode[no - MaxNodes - MaxForeignNodes];
             if(next == i) {Nextnode[no - MaxNodes - MaxForeignNodes] = Nextnode[i];}
         }

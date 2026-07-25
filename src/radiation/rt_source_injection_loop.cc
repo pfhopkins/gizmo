@@ -12,7 +12,7 @@
  * `rt_source_injection_run_loop` (the only entry point from the host
  * orchestration TU in radiation/rt_source_injection.cc).
  *
- * Phase 4 / Wave 3 / rt_source_injection. Written by Phil Hopkins
+ * rt_source_injection. Written by Phil Hopkins
  * (phopkins@caltech.edu) for GIZMO.
  */
 

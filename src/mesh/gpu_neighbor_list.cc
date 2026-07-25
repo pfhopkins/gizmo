@@ -336,7 +336,7 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold)
     (void)threshold; /* see deprecation comment */
 }
 
-/* Drift-time SIDX refresh (Attack B v2: incremental rebuild).
+/* Drift-time SIDX refresh (incremental rebuild).
  *
  * The unconditional full rebuild post-drift in the prior code cost
  * ~1.3s/step on fire_m11i tiny-N (the dominant tiny-N bucket post-
@@ -397,8 +397,8 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold)
  * regime (move_particles iterates every NumPart particle), Ti_current ==
  * All.Ti_Current for all j, dt = 0, virt_pos == P[j].Pos — i.e. this code
  * is a no-op in absolute value, just exercising the threadsafe drift-factor
- * code path so it's already wired when Attack C C1 flips move_particles to
- * active-only iteration.
+ * code path so it's already wired for a future active-only iteration mode
+ * in move_particles.
  *
  * Correctness invariant: the bbox covers each particle's actual location
  * at time1, regardless of whether the particle has been drifted yet. BVH
@@ -416,8 +416,7 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     /* SSOT per-particle reach under the cached policy (LEGACY for non-runner
      * callers → byte-equivalent to legacy P[j].KernelRadius aggregation). */
     const mode_b_radius_policy_t policy_capture = idx->cache_radius_policy;
-    /* Codex 2026-05-12: out-of-line host accessor; see
-     * feedback_all_dev_trap_host_side.md. Host-side drift-factor input. */
+    /* Out-of-line host accessor for the host-side drift-factor input. */
     integertime time1 = gizmo_host_ti_current();
 
     #pragma omp parallel for reduction(max:max_ratio) schedule(static)
@@ -433,11 +432,11 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         double lo1 = y0, hi1 = y0;
         double lo2 = z0, hi2 = z0;
         double hmax = nlr_particle_symmetric_radius(P_shared[j0], policy_capture);
-        /* Per-type bands recomputed alongside scalar hmax (codex 2026-06-07
-         * correction #2): under the new invariant the bands are policy-aware
-         * and would otherwise stay frozen at build-time values, contradicting
-         * the conservative-upper-bound rule.  Restart from 0 and aggregate
-         * from current particles. */
+        /* Per-type bands recomputed alongside scalar hmax: under the new
+         * invariant the bands are policy-aware and would otherwise stay
+         * frozen at build-time values, contradicting the conservative-
+         * upper-bound rule.  Restart from 0 and aggregate from current
+         * particles. */
         double hbt[TILE_NUM_PTYPES] = {0};
         {
             int t0 = (int)P_shared[j0].Type;
@@ -587,11 +586,11 @@ void gpu_step_sidx_invalidate(void)
         return;
     }
 
-    /* v2 scope: refresh the gas SIDX (the hot-path 1.3s/step bucket from
-     * density_sidx_prebuild); alltypes goes through full-free since it
+    /* Current scope: refresh the gas SIDX (the hot-path 1.3s/step bucket
+     * from density_sidx_prebuild); alltypes goes through full-free since it
      * only builds on sink-active steps and isn't on the dominant tiny-N
-     * path. Future v2.1 can extend the refresh path to alltypes once
-     * gas is validated. */
+     * path. The refresh path could be extended to alltypes once gas is
+     * validated. */
     if(g_step_sidx_alltypes.valid) gpu_spatial_index_free(&g_step_sidx_alltypes);
 
     gpu_spatial_index_t *idx = &g_step_sidx;
@@ -898,16 +897,16 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
-    /* Codex 2026-05-12 defensive guard: a cached SIDX's compact_xyzh / pool
-     * only contains the originally-built types. If the caller's type_bitmask
-     * differs from the cache's, the walker would return neighbors of types
-     * outside the caller's mask (e.g., DM neighbors leaking into a gas-only
-     * density walk → lazy-drift attempts on Type=1 → drift_particle abort
+    /* Defensive guard: a cached SIDX's compact_xyzh / pool only contains the
+     * originally-built types. If the caller's type_bitmask differs from the
+     * cache's, the walker would return neighbors of types outside the
+     * caller's mask (e.g., DM neighbors leaking into a gas-only density
+     * walk → lazy-drift attempts on Type=1 → drift_particle abort
      * 'no prediction into past allowed'). HARD-ABORT with a clear message
      * so any future Spec-author who routes a tbm-mismatched cache fails at
      * the right layer, not via downstream nonsense. The companion warning
-     * in gpu_neighbor_list.h on gpu_step_sidx_alltypes_ptr documented this
-     * invariant; pre-2026-05-12 no code enforced it. */
+     * in gpu_neighbor_list.h on gpu_step_sidx_alltypes_ptr documents this
+     * invariant. */
     if (cached_idx && cached_idx->valid && cached_idx->cache_tbm >= 0 &&
         cached_idx->cache_tbm != type_bitmask) {
         fprintf(stderr,
@@ -924,7 +923,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         fflush(stderr);
         endrun(913005);
     }
-    /* Companion HARD-ABORT for radius_policy mismatch (codex 2026-06-07).  The
+    /* Companion HARD-ABORT for radius_policy mismatch.  The
      * cached compact_xyzh[j*4+3] reflects the build-time policy's per-j reach;
      * walking it under a different Spec policy would silently use the wrong
      * leaf-side h_j and miss valid pairs.  Same shape as the cache_tbm gate. */
@@ -1140,9 +1139,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         if(gpu_dirty_tracker_is_all_dirty(handle)) { do_refresh = 1; refresh_all = 1; }
         else if(gpu_dirty_tracker_popcount(handle) > 0) { do_refresh = 1; refresh_all = 0; }
     }
-    /* Mechanism-isolation toggle (codex round-12 plan): force every cached NGL
-     * build to do a full-pool h refresh, regardless of tracker state. If this
-     * makes B-vs-B -np 2 deterministic, the divergence is in h-mark tracking
+    /* Mechanism-isolation toggle: force every cached NGL build to do a
+     * full-pool h refresh, regardless of tracker state. If this makes
+     * B-vs-B -np 2 deterministic, the divergence is in h-mark tracking
      * (missed marks or stale bitset). If divergence persists, the issue is
      * elsewhere (positions, ghost state, BVH, etc.). */
     static int g_force_h_alldirty_inited = 0;
@@ -1923,8 +1922,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double t_lazy0 = my_second();
         std::vector<int> ngb_host((size_t)gnl->total_pairs);
         gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
-        /* Codex 2026-05-12: out-of-line host accessor; see
-         * feedback_all_dev_trap_host_side.md. Lazy-drift target for CSR
+        /* Out-of-line host accessor. Lazy-drift target for CSR
          * neighbors — host-side drift_particle calls. */
         integertime time1 = gizmo_host_ti_current();
         for(int64_t idx_n = 0; idx_n < gnl->total_pairs; idx_n++) {
@@ -2121,7 +2119,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                                        neighbor_list_t *out,
                                        double search_radius_factor)
 {
-    /* Phase 7 Round A1: sub-bucket the 1.6s gradient_prep_symlist cost.
+    /* Sub-bucket the 1.6s gradient_prep_symlist cost.
      * env-gated via GIZMO_VERBOSE_DIAG; no-op when off. */
     double t_sym_start = my_second();
 
@@ -2140,7 +2138,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
      * search_radius_factor is applied to BOTH the i-side query radius and the
      * j-side kernel radius — a genuinely symmetric scaled search. This repairs
      * the j-side under-search in the shared symlist (hydro-gradient Velocity_hat
-     * wide filter under TURB_DIFF_DYNAMIC). See OPEN_3d_difffilter_design.md §3.
+     * wide filter under TURB_DIFF_DYNAMIC).
      *
      * RADIUS SEMANTICS: pass EXPLICIT raw per-active radii (P[i].KernelRadius)
      * so search_radius_factor multiplies the RAW kernel radius. With NULL

@@ -40,7 +40,7 @@ double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy)
 /* j_radius_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
  * (1.0 = legacy). TURB_DIFF_DYNAMIC wide-filter loops pass
  * All.TurbDynamicDiffFac so the Mode B reach matches the Mode A scaled-
- * symmetric NGL. See OPEN_3d_difffilter_design.md §3. */
+ * symmetric NGL. */
 static inline int particle_passes(int j,
                                   const double pos[3],
                                   double h_q,
@@ -61,7 +61,7 @@ static inline int particle_passes(int j,
         /* Type-aware: only use h_j when it's physically meaningful for
          * j's type under the active radius_policy. For non-gas types
          * without AGS opt-in, h_j contribution is 0 and the test
-         * collapses to ONEWAY r < h_q for that j. (Phil + codex 2026-05-07.)
+         * collapses to ONEWAY r < h_q for that j.
          */
         double hj = mode_b_neighbor_symmetric_radius(j, radius_policy) * j_radius_scale;
         if(hj > cutoff) cutoff = hj;
@@ -153,7 +153,7 @@ static inline double mode_b_node_symmetric_radius(int no,
  * and targeted export (mode_b_node_symmetric_radius = max_{t in mask}
  * Extnodes[no].hmax_per_type[t]).  ONEWAY uses h_q (no band).
  *
- * Post-substrate (Commit0 sink-radius cap + S2 DomainNODE per-type exchange +
+ * Post-substrate (sink-radius cap + DomainNODE per-type exchange +
  * force_update_hmax post-density per-type exchange), this band is:
  *   - a conservative UPPER BOUND over every leaf-policy-selectable source per type
  *     (allvars.h invariant; the seed is capped at MaxKernelRadius and every kernel/
@@ -175,7 +175,7 @@ static inline double mode_b_node_symmetric_radius(int no,
  * (Historically the export decision used the gas-biased cross-rank SCALAR hmax and
  * a fused walk re-tested exports against it; the non-gas SYMMETRIC loops could not
  * be bounded by scalar hmax and stayed on broadcast.  The per-type band above now
- * covers them -- the reason B3a exists.) */
+ * covers them.) */
 
 /* Build the topleaf reverse map from the DomainNodeIndex SSOT (never from a
  * slot-layout assumption). Sized to the max observed offset; entries outside

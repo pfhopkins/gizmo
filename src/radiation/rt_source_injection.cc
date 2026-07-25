@@ -25,10 +25,9 @@
  *    radiation-hydrodynamic approximations. Basically the same concept as
  *    injecting the radiation 'in a cell' surrounding the particle
  *
- *  Phase 4 / Wave 3 runner-template port (2026-05-17): the neighbor loop is now
- *  carried by RtSrcInjectionSpec via run_neighbor_loop<>. The legacy
- *  `rt_source_injection_evaluate_gpu` in rt_source_injection_gpu.cc is the
- *  cleanup commit's retirement target. This TU keeps the host orchestration:
+ *  The neighbor loop is carried by RtSrcInjectionSpec via run_neighbor_loop<>.
+ *  The legacy `rt_source_injection_evaluate_gpu` in rt_source_injection_gpu.cc
+ *  is superseded and slated for removal. This TU keeps the host orchestration:
  *  the gas self-source preloop, the rt_sourceinjection_active_check filter,
  *  the toplevel active-list build, and (under
  *  GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION) the post-runner testproblem

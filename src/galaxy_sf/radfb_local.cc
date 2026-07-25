@@ -284,10 +284,10 @@ static void hii_greedy_ionize_source(const HIISourcePrep& src,
 }
 
 /* Large-N path: existing GPU NL machinery (ghost-import + arena acquire +
- * gpu_ngb_list_build over num_all). Behavioral parity with HEAD this commit —
- * only structural change is funneling the per-source body through
- * hii_greedy_ionize_source. Redundant-ghost-import drop deferred to a separate
- * follow-up commit pending periodic-wrap candidate-counter pre-validation. */
+ * gpu_ngb_list_build over num_all). Structural change funnels the per-source
+ * body through hii_greedy_ionize_source; behavior otherwise unchanged.
+ * Redundant-ghost-import drop deferred pending periodic-wrap candidate-counter
+ * pre-validation. */
 static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
                          double uion,
                          HIIStats& s)

@@ -1,10 +1,10 @@
-/* gpu_morton.cc -- Step 13 Phase 6.5a/6.5c0
+/* gpu_morton.cc
  *
  * 128-bit Morton encoding (42 bits/axis) + parallel sort infrastructure for
  * the GPU tree-build insertion kernel.  See gpu_morton.h for the API and
  * integration plan.
  *
- * Phase 6.5c0 upgrade: keys store as Morton128 = (uint64_t hi, uint64_t lo)
+ * Keys store as Morton128 = (uint64_t hi, uint64_t lo)
  * to match GIZMO's CPU build precision (BITS_PER_DIMENSION = 42).  Encoding
  * uses the same IEEE-754 mantissa-bit-trick as the host
  * domain_double_to_int (domain/domain.cc:2711) for bit-equivalent integer

@@ -17,7 +17,7 @@
  *   ENGINE APPARATUS — touch only when changing the runner contract
  *   DIAGNOSTICS      — env-gated, declared here, defined in the .cc
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef SINK_ENV1_LOOP_H
 #define SINK_ENV1_LOOP_H
@@ -518,7 +518,7 @@ struct SinkEnv1Spec {
      * DeviceContext-typed method declarations below can see it. The
      * derived struct itself is file-scope above SinkEnv1Spec. */
 
-    /* Phase 4.A.0 device-context lifecycle. populate sets
+    /* Device-context lifecycle. populate sets
      * oracle_dry_run=false; cleanup is a no-op body (declared anyway
      * for symmetric runner-contract pairing — no UVM allocs to free). */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);

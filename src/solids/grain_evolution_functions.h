@@ -1,5 +1,5 @@
-/* grain_evolution_functions.h -- per-superparticle stochastic grain evolution
- * (Phase 17b). Header-only, KOKKOS_INLINE_FUNCTION-callable, no rdc.
+/* grain_evolution_functions.h -- per-superparticle stochastic grain evolution.
+ * Header-only, KOKKOS_INLINE_FUNCTION-callable, no rdc.
  *
  * Provides (across the GRAIN_EVOLUTION bitfield):
  *   pairwise outcomes (bits 0|1|2 = COAG|FRAG|SHAT):
@@ -18,15 +18,15 @@
  *             Composition[], and (bits 5|6) deposits or withdraws latent heat
  *             into CellP[host].DtInternalEnergy.
  *
- * No physics is implemented in C1 -- this is the no-op scaffolding pass.
- * Operators populate over commits C3..C9; activation gates them on individual
- * bits so each commit either no-ops or activates exactly one bit (bisectable).
+ * Each capability is bit-gated independently via the GRAIN_EVOLUTION bitfield,
+ * so a build can enable a subset of the physics without touching the rest
+ * (bisectable).
  *
  * Yield curves, threshold velocities, sticking coefficients, latent heats and
  * per-species bulk densities live in solids/grain_collisional_outcomes.h
- * (extracted from solids/ism_dust_chemistry.cc in commit C2 so the fluid
- * ISMDustChem module and this per-superparticle module share one
- * source-of-truth for the physics constants).
+ * (extracted from solids/ism_dust_chemistry.cc so the fluid ISMDustChem
+ * module and this per-superparticle module share one source-of-truth for
+ * the physics constants).
  *
  * Pairwise + local operators always live in the same compile unit (called
  * back-to-back per timestep from the same dispatch); no benefit to splitting.
@@ -71,10 +71,10 @@ int grain_evolution_composition_index_to_outcome_kind(int s)
  * each pair (sidm_core_flux_functions.h:62), so "local" is the actor.
  * COAG outcome convention: local always absorbs j (mass-conservative;
  * statistical bias toward lower-ID-as-absorber is harmless for stochastic
- * coagulation). FRAG/SHAT (C8/C9): both local and j shrink; symmetric.
+ * coagulation). FRAG/SHAT: both local and j shrink; symmetric.
  *
  * Thresholds: v_coag from grain_outcomes_v_coag_dominik(); v_shat from
- * grain_outcomes_elastic_props(). C7 uses silicate elastic props as the
+ * grain_outcomes_elastic_props(). Uses silicate elastic props as the
  * default species lookup (composition-weighted thresholds are a future
  * refinement). */
 template <typename LocalT, typename OutT>
@@ -86,7 +86,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
     double dv_mag = sqrt(dv.norm_sq()) * UNIT_VEL_IN_CGS / All.cf_atime; /* cgs cm/s */
 
     /* Elastic / breakup thresholds. Use silicate defaults for both pair
-     * sides in C7; refining to composition-weighted thresholds is a clean
+     * sides; refining to composition-weighted thresholds is a clean
      * extension that doesn't change the resolver's structural shape. */
     struct GrainOutcomeElasticProps ep = grain_outcomes_elastic_props(GRAIN_OUTCOME_SPECIES_SILICATE);
     double a_i_cm = local.Grain_Size;
@@ -128,7 +128,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
      * fragmentation_max = 0.1 at v = v_shat (10% mass-equivalent size
      * shrink per collision event near the SHAT threshold). Closed-form
      * monotonic in (dv/v_shat)^2 so the FRAG branch hands off smoothly to
-     * SHAT in C9 without a discontinuity.
+     * SHAT without a discontinuity.
      *
      * Size update: a_new = a_old * (1 - frag_eff)^(1/3) -- the cube-root
      * reflects the conserved super-particle mass with implicit N growth. */
@@ -211,9 +211,8 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
  * Physics: sputter shrinks each individual grain (ion-impact ejection of
  * surface atoms), so number-of-grains in the super-particle is conserved and
  * the super-particle Mass scales as Grain_Size^3. Refractory vapor is
- * dropped from the total mass budget at this commit (per the locked Phase
- * 17b plan -- bit 5 COND will reclaim it once the gas-phase
- * VolatileSpecies array is wired in C5). Sputter is energy-neutral against
+ * dropped from the total mass budget for now -- bit 5 COND will reclaim it
+ * once the gas-phase VolatileSpecies array is wired in. Sputter is energy-neutral against
  * the gas thermal pool by construction (the impinging-ion KE comes from gas
  * thermal/kinetic energy, the rearrangement is implicit), so no
  * DtInternalEnergy back-reaction; latent-heat coupling is reserved for
@@ -318,8 +317,8 @@ void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
  *   Grain_DeltaInternalEnergyHeating > 0 -> COND latent release heats gas
  *   Grain_DeltaInternalEnergyHeating < 0 -> SUBL latent absorption cools gas
  *
- * C5b is COND only -- bit 5 fires below T_snow[k] for each ice species.
- * C6 will add the SUBL branch (T > T_snow[k]) symmetrically. */
+ * Bit 5 (COND) fires below T_snow[k] for each ice species; bit 6 (SUBL)
+ * fires above T_snow[k] symmetrically. */
 KOKKOS_INLINE_FUNCTION
 void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 {
@@ -347,8 +346,8 @@ void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
     /* Per-ice-species net flux. Handles VolatileSpecies[0..2] =
      * H2O/CO/CO2 <-> grain Composition[3..5] mantles. VolatileSpecies[3]
      * (refractory vapor) is intentionally NOT handled here -- there is no
-     * source for it yet in Phase 17b (sputter -> vapor coupling reserved
-     * for later). dM > 0 = COND (gas->grain), dM < 0 = SUBL (grain->gas).
+     * source for it yet (sputter -> vapor coupling reserved for later).
+     * dM > 0 = COND (gas->grain), dM < 0 = SUBL (grain->gas).
      * Direction is set by sign of (T_snow - T_gas):
      *   T_gas < T_snow_k -> COND (gas-driven, magnitude limited by
      *                       available volatile in kernel volume)

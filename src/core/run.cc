@@ -113,8 +113,8 @@ const char *gizmo_controlled_stop_local_reason(void) { return (ControlledStop_Lo
  * gizmo_kokkos_finalize() + MPI_Finalize() shutdown. */
 int gizmo_poll_controlled_stop(void) { gizmo_collect_controlled_stop(); return gizmo_controlled_stop_code(); }
 
-/* Stage 2 (Wave no-MPI_Abort): graceful drain at an existing collective phase
- * boundary. Call ONLY on the unconditional all-rank path -- in place of, or
+/* Graceful drain at an existing collective phase
+ * boundary (no MPI_Abort). Call ONLY on the unconditional all-rank path -- in place of, or
  * immediately after, an existing MPI_Barrier / collective -- so every rank
  * reaches it in the same collective order. gizmo_collect_controlled_stop() is
  * itself an Allreduce(MAX); it synchronizes all ranks exactly like a barrier, so
@@ -219,7 +219,7 @@ void run(void)
         if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
-        /* Phase 9.6: auto-rebuild guardrail.  force_add_element_to_tree
+        /* Auto-rebuild guardrail.  force_add_element_to_tree
          * insertions stale the LET / pseudo-particle moments shipped on
          * the last full build.  When the global insertion count exceeds
          * 1% of TotNumPart, force a full rebuild on the next step.
@@ -757,7 +757,7 @@ void find_next_sync_point_and_drift(void)
         move_particles(All.Ti_nextoutput);
         gizmo_exit_bad_stop_if_requested("run:after_drift"); CPU_Step[CPU_DRIFT] += measure_time();
 
-        /* Phase 10.6: potential is computed by the unified gravity tree walk
+        /* Potential is computed by the unified gravity tree walk
          * (gravtree.cc with EVALPOTENTIAL).  COMPUTE_POTENTIAL_ENERGY and
          * OUTPUT_POTENTIAL now imply EVALPOTENTIAL via precompiler_logic.h, so
          * P[i].Potential is current after the most recent gravity walk and

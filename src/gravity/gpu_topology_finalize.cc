@@ -1,4 +1,4 @@
-/* gpu_topology_finalize.cc — Step 13 Phase 6.6
+/* gpu_topology_finalize.cc
  *
  * Replaces the sibling / father / Father[] outputs of
  * force_update_node_recursive with three GPU passes.  See
@@ -176,9 +176,9 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
 
     int          *sibling_soa = soa->sibling;
     int          *father_soa  = soa->father;
-    struct NODE  *Nodes_uvm   = Nodes_base;   /* UVM on the Kokkos path (6.8d) */
+    struct NODE  *Nodes_uvm   = Nodes_base;   /* UVM on the Kokkos path */
 
-    /* Phase 6.8f: GPU kernel writeback (was host OMP loop).  With Nodes_base
+    /* GPU kernel writeback (was host OMP loop).  With Nodes_base
      * UVM-resident, the same parallel writes happen device-side without an
      * extra page-touch on host.  Independent stores per node slot — no
      * synchronization needed.  The legacy CPU tree-walks (gravtree.cc) read
@@ -198,17 +198,16 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    /* Codex 2026-05-12: host-side scalar capture from `All.*` in a GPU TU
-     * MUST use the canonical out-of-line accessor, not bare All.* (which
-     * resolves to All_dev here and can be stale). Capture once to locals
-     * so the Kokkos lambda [=] captures the correct host values. See
-     * feedback_all_dev_trap_host_side.md. */
+    /* Host-side scalar capture from `All.*` in a GPU TU MUST use the
+     * canonical out-of-line accessor, not bare All.* (which resolves to
+     * All_dev here and can be stale). Capture once to locals so the
+     * Kokkos lambda [=] captures the correct host values. */
     const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
     int MaxPart = host_all->MaxPart;
     integertime ti_current = host_all->Ti_Current;
     int         glob_flag  = GlobFlag;
 
-    struct NODE    *Nodes_uvm    = Nodes_base;     /* UVM (6.8d) */
+    struct NODE    *Nodes_uvm    = Nodes_base;     /* UVM */
     struct extNODE *Extnodes_uvm = Extnodes_base;
 
     Kokkos::parallel_for("node_reset_ephemeral", n, KOKKOS_LAMBDA(int k) {
@@ -244,7 +243,7 @@ extern "C" void gpu_father_free(int *p)
     if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
 }
 
-/* Phase 6.8: generic SharedSpace alloc/free for Nodes_base, Extnodes_base,
+/* Generic SharedSpace alloc/free for Nodes_base, Extnodes_base,
  * Nextnode (and any future tree-storage array that needs to be GPU-addressable).
  * Pattern matches gpu_father_alloc/free; struct sizes are computed at call site
  * in forcetree.cc which has the NODE/extNODE definitions in scope. */

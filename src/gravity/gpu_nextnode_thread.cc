@@ -1,9 +1,9 @@
-/* gpu_nextnode_thread.cc — Step 13 Phase 6.4
+/* gpu_nextnode_thread.cc
  *
  * GPU kernel that recomputes the DFS-pre-order `nextnode` link for each
  * internal node, and `Nextnode` for each particle / pseudo-particle, in
  * parallel.  Replaces the CPU's serial `last`-side-effect threading inside
- * force_update_node_recursive.  Phase 6.6 retired FUNR on the GPU build:
+ * force_update_node_recursive.  FUNR is retired on the GPU build:
  * sibling/father now come from gpu_topology_finalize_{father,sibling}
  * which run before this kernel.  On the non-GPU build FUNR still runs.
  *
@@ -25,7 +25,7 @@
  *   * Apply this successor to E based on E's type:
  *       - particle (E < MaxPart):              Nextnode[E]              = succ
  *       - pseudo  (E >= MaxPart + MaxNodes + MaxForeignNodes):   Nextnode[E - MaxNodes - MaxForeignNodes]   = succ
- *           (Phase 9: foreign-node range [MaxPart+MaxNodes, +MaxForeignNodes) below pseudos;
+ *           (foreign-node range [MaxPart+MaxNodes, +MaxForeignNodes) sits below pseudos;
  *            foreign nodes carry their own NODE.u.d.nextnode and don't use Nextnode[])
  *       - internal node (otherwise):           handled by E's own thread
  *         (E's last descendant gets succ via the recursion of sibling[E]
@@ -71,7 +71,7 @@ extern "C" int gpu_nextnode_thread(void)
     int n         = Numnodestree;
     int MaxPart   = All.MaxPart;
     int MaxNodes_ = MaxNodes;
-    int MaxForeignNodes_ = MaxForeignNodes;    /* Phase 9 LET: foreign-node range size */
+    int MaxForeignNodes_ = MaxForeignNodes;    /* LET foreign-node range size */
     int NTopnodes_= NTopnodes;
 
     /* Acquire SoA — must already be allocated by gpu_nextnode_backup_suns
@@ -83,7 +83,7 @@ extern "C" int gpu_nextnode_thread(void)
     if(!soa) {printf("gpu_nextnode_thread: SoA null\n"); return 1;}
     if(!soa->suns_backup) {printf("gpu_nextnode_thread: suns_backup null — must call gpu_nextnode_backup_suns first\n"); return 1;}
 
-    /* Phase 6.8e: soa->nextnode_aux is aliased to UVM Nextnode[] (owned by
+    /* soa->nextnode_aux is aliased to UVM Nextnode[] (owned by
      * force_treeallocate, sized MaxPart+NTopnodes+MaxForeignNodes).  Just sanity-check it. */
     int aux_size = MaxPart + NTopnodes_ + MaxForeignNodes_;
     if(!soa->nextnode_aux || soa->nextnode_aux_size < aux_size) {
@@ -133,12 +133,12 @@ extern "C" int gpu_nextnode_thread(void)
                 /* particle */
                 aux_soa[prev_id] = succ;
             } else if(prev_id >= MaxPart + MaxNodes_ + MaxForeignNodes_) {
-                /* pseudo-particle (Phase 9: foreign-node range below pseudos): Nextnode/aux
+                /* pseudo-particle (foreign-node range sits below pseudos): Nextnode/aux
                  * index is id - MaxNodes_ - MaxForeignNodes_ */
                 int idx = prev_id - MaxNodes_ - MaxForeignNodes_;
                 if(idx >= 0 && idx < MaxPart + NTopnodes_) {aux_soa[idx] = succ;}
             }
-            /* Foreign nodes (Phase 9: prev_id in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes))
+            /* Foreign nodes (prev_id in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes))
              * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
              * directly from LET unpack. */
             /* internal node: skip — its own thread sets nextnode_soa, and
@@ -151,9 +151,9 @@ extern "C" int gpu_nextnode_thread(void)
     Kokkos::fence();
     gizmo_gpu_check_last_error("nx_thread", n);
 
-    /* Phase 6.8e: Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
-     * Phase 6.8f: internal-node Nodes[].u.d.nextnode writeback runs on the
-     * device now that Nodes_base is UVM (6.8d). */
+    /* Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
+     * Internal-node Nodes[].u.d.nextnode writeback runs on the
+     * device now that Nodes_base is UVM. */
     struct NODE *Nodes_uvm = Nodes_base;
     Kokkos::parallel_for("nx_writeback_aos", n, KOKKOS_LAMBDA(int k) {
         Nodes_uvm[k].u.d.nextnode = nextnode_soa[k];

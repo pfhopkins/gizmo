@@ -1,4 +1,4 @@
-/* gpu_particles_arena.cc — Step 13 Phase 1
+/* gpu_particles_arena.cc
  *
  * See gpu_particles_arena.h for design notes.
  *
@@ -24,10 +24,10 @@
 #include "../mesh/gpu_neighbor_list.h"
 
 
-/* Under UVM-canonical particles (commit 0d9e74b4), P[] and CellP[] live in
+/* Under UVM-canonical particles, P[] and CellP[] live in
  * Kokkos::SharedSpace and the arena is a pure pointer alias. Acquire copies
  * pointers; invalidate / mark_clean / refresh / set_site are pure no-ops kept
- * as stable API for callers. The Phase-8a debug-guard infrastructure
+ * as stable API for callers. The prior debug-guard infrastructure
  * (per-acquire serial counters, per-call-site tracking strings) was removed
  * since the byte-compare guard it served is unreachable under the alias
  * scheme. */

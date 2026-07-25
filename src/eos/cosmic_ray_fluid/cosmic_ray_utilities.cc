@@ -185,7 +185,7 @@ void CR_spectrum_define_bins(void)
 
 /* CR_energy_spectrum_injection_fraction: body moved to
  * eos/cosmic_ray_fluid/cosmic_ray_functions.h as KOKKOS_INLINE_FUNCTION
- * so the GPU mechanical_fb kernel (B8 Phase 2) can call it on device. */
+ * so the GPU mechanical_fb kernel can call it on device. */
 
 
 /* routine which gives diffusion coefficient as a function of energy for the 'constant diffusion coefficient' models:

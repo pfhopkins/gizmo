@@ -27,11 +27,11 @@
 #define NV_MYSIGN(x) (( x > 0 ) - ( x < 0 ))
 
 /* dynamic_diff_vel_calc() below drives the DiffFilterSpec runner loop via
-   difffilter_vel_calc_gpu_toplevel() (turb/difffilter_loop.cc). Legacy
+   difffilter_vel_calc_gpu_toplevel() (turb/difffilter_loop.cc). The legacy
    CPU-tree scaffolding (particle2in_DiffFilter, out2particle_DiffFilter,
-   DiffFilter_evaluate, and the old code_block_xchange headers) was retired
-   in Step 5 Phase D1; the legacy GPU shim difffilter_gpu.cc was retired by
-   DiffFilterSpec (Wave 5). */
+   DiffFilter_evaluate, and the old code_block_xchange headers) and the
+   legacy GPU shim difffilter_gpu.cc have been retired in favor of
+   DiffFilterSpec. */
 
 /* operations that need to be performed before entering the main loop */
 void dynamic_diff_vel_calc_initial_operations_preloop(void);

@@ -15,7 +15,7 @@
  * user into the supplied scalar coefficient. Host-only: per-cell scalar add
  * is cheap; no GPU port needed.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO 2026.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO 2026.
  */
 
 #include <mpi.h>

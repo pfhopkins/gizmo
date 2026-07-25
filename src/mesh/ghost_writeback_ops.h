@@ -1,5 +1,5 @@
 /* mesh/ghost_writeback_ops.h — physics-facing manifest macros for the
- * ghost-writeback scaffold (mesh/ghost_writeback.{h,cc}, Pass B.iv).
+ * ghost-writeback scaffold (mesh/ghost_writeback.{h,cc}).
  *
  * The science-author surface is the manifest itself:
  *
@@ -18,13 +18,13 @@
  * call ghost_writeback_begin_bundle / _end_bundle with this pointer.
  *
  * Operations available:
- *   GHOST_WRITEBACK_PARTICLE_MIN(field)         home P[j].field = min(home, ghost)        [B.iv]
- *   GHOST_WRITEBACK_PARTICLE_MAX(field)         home P[j].field = max(home, ghost)        [3d.1]
- *   GHOST_WRITEBACK_GAS_ADD(field)              snapshot-diff additive on CellP[j].field  [3d.1]
- *   GHOST_WRITEBACK_PARTICLE_ADD(field)         snapshot-diff additive on P[j].field      [3e.2]
- *   GHOST_WRITEBACK_PARTICLE_ADD_ARRAY(f, N)    snapshot-diff additive on P[j].field[N]   [3e.2]
- *   GHOST_WRITEBACK_PARTICLE_ADD_VEC3(field)    snapshot-diff additive on P[j].field (Vec3<T>) [3e.2]
- *   GHOST_WRITEBACK_GAS_MAX(field)              home CellP[j].field = max(home, ghost)    [3e.2]
+ *   GHOST_WRITEBACK_PARTICLE_MIN(field)         home P[j].field = min(home, ghost)
+ *   GHOST_WRITEBACK_PARTICLE_MAX(field)         home P[j].field = max(home, ghost)
+ *   GHOST_WRITEBACK_GAS_ADD(field)              snapshot-diff additive on CellP[j].field
+ *   GHOST_WRITEBACK_PARTICLE_ADD(field)         snapshot-diff additive on P[j].field
+ *   GHOST_WRITEBACK_PARTICLE_ADD_ARRAY(f, N)    snapshot-diff additive on P[j].field[N]
+ *   GHOST_WRITEBACK_PARTICLE_ADD_VEC3(field)    snapshot-diff additive on P[j].field (Vec3<T>)
+ *   GHOST_WRITEBACK_GAS_MAX(field)              home CellP[j].field = max(home, ghost)
  *   GHOST_WRITEBACK_GAS_ADD_VEC3(field)         snapshot-diff additive on CellP[j].field (Vec3<T>) [radfb_local]
  *   GHOST_WRITEBACK_GAS_ADD_ARRAY(f, N)         snapshot-diff additive on CellP[j].field[N]        [rt_source_injection]
  *   GHOST_WRITEBACK_GAS_ADD_2D(f, N1, N2)       snapshot-diff additive on CellP[j].field[N1][N2]   [rt_source_injection]
@@ -36,7 +36,7 @@
  *            (value > home) — NaN-safe (NaN never overwrites finite home,
  *            finite never overwrites a sticky-NaN home).
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef GHOST_WRITEBACK_OPS_H
 #define GHOST_WRITEBACK_OPS_H

@@ -1,12 +1,10 @@
 /* mesh/test_iter_harness_loop.h — synthetic iterative-Spec validation
- * harness (Phase 4.B.0 step 3).
+ * harness.
  *
  * IterHarnessSpec is a NON-PHYSICS synthetic Spec that exercises the
- * 4.B.0 iterative runner contracts before ags_density (3d.4) ports.
+ * iterative runner contracts before ags_density ports.
  * Compiled only under GIZMO_NLR_ITER_HARNESS_TEST; invoked at startup
  * via GIZMO_NLR_ITER_HARNESS_RUN=1 (begrun.cc).
- *
- * Design doc: OPEN_phase4_b0_step3_harness_design.md
  *
  * Slot-keyed test pattern in after_iter (validation points 1-5):
  *   slot 0: NeedsMore on iter 0 → Converged on iter 1.
@@ -53,7 +51,7 @@ extern int g_harness_active_indices[IterHarnessMaxActives];
 extern int g_harness_n_active_total;
 
 /* ============================================================================
- * Compile-gated test telemetry struct (codex step-3 review 2026-05-10).
+ * Compile-gated test telemetry struct.
  *
  * Populated by run_neighbor_loop_iterative<IterHarnessSpec> at end-of-call
  * under GIZMO_NLR_ITER_HARNESS_TEST. Harness driver reads these post-call
@@ -74,9 +72,8 @@ struct IterHarnessTelemetry {
     long long oracle_mismatch_count;
     int       oracle_enabled;             /* 1 if drv.oracle_enabled at end of call */
     /* Total pair count across all slots' final (convergence-iter) accums.
-     * Used by Stage B step 2 to guard against vacuous oracle-parity passes
-     * when the synthetic search radius is too small to find neighbors
-     * (codex 2026-05-10 caveat). */
+     * Used to guard against vacuous oracle-parity passes when the
+     * synthetic search radius is too small to find neighbors. */
     long long total_pairs_prod;            /* sum accum_uvm[sg][slot].n_pairs */
     long long total_pairs_oracle;          /* sum accum_oracle_uvm[sg][slot].n_pairs */
     /* Per-slot scratch + status snapshot (only sg=0, slots 0..3 — single-subgroup
@@ -208,9 +205,9 @@ struct IterHarnessSpec {
 
     /* ============ Hooks ============ */
     static CallScalars populate_call_scalars(const neighbor_loop_args& /*args*/) {
-        /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. Under
-         * 93897f62 the device-pass redirect is gated, so
-         * bare All.* in this host hook would also be correct. */
+        /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. The
+         * device-pass redirect is gated, so bare All.* in this host hook
+         * would also be correct. */
         const struct global_data_all_processes *h = nlr_host_all_ptr();
         CallScalars cs{};
         cs.common.cf_atime = h->cf_atime;
@@ -222,12 +219,12 @@ struct IterHarnessSpec {
 
     static double search_radius(const neighbor_loop_args& /*args*/,
                                   int /*slot*/, int /*i*/) {
-        /* SYNTHETIC HARNESS RADIUS — codex 2026-05-10 rationale:
+        /* SYNTHETIC HARNESS RADIUS rationale:
          *
          * The harness runs at end-of-begrun, BEFORE set_softenings() has
          * populated All.ForceSoftening[]. Using `All.ForceSoftening[0]`
          * here yielded h=0 → AdjustRadius writeback `h*1.10 = 0` → the
-         * Mode A (b.5) buffer-exceedance trigger never fired (0 > 0 is
+         * Mode A buffer-exceedance trigger never fired (0 > 0 is
          * false) → VP 3 / VP 8 rebuild assertions silently failed.
          *
          * Fix: hardcode a deterministic nonzero radius. Constraints:
@@ -236,8 +233,8 @@ struct IterHarnessSpec {
          *      true: 1.10/1.05 = 1.048 > 1).
          *   3. The radius must produce > 0 candidate pairs in the m11i
          *      IC so VP 9 (oracle parity) and VP 11 (j-side counter
-         *      symmetry) don't pass vacuously. Codex 2026-05-10 caveat:
-         *      h must be large enough to actually exercise pair work.
+         *      symmetry) don't pass vacuously — h must be large enough
+         *      to actually exercise pair work.
          *
          * Value `100.0` code units (~150 kpc for m11i internal units
          * where 1 code unit ≈ 1.47 kpc) is comparable to the virial
@@ -245,14 +242,14 @@ struct IterHarnessSpec {
          * domain decomposition can land in arbitrary regions (low-
          * density IGM, halo edges, etc.); a smaller value risked zero
          * neighbors and vacuous oracle parity (verified empirically:
-         * h=1.0 gave total_pairs=0 in step 2 first attempt). Brute
+         * h=1.0 gave total_pairs=0 on first attempt). Brute
          * oracle walks the full O(NumPart) particle set per active
          * regardless of h, so larger h only widens the tree-walker
          * candidate set and doesn't significantly increase brute cost.
          *
          * We deliberately do NOT call set_softenings() earlier just for
-         * this test (codex 2026-05-10): changing startup ordering for a
-         * synthetic test is the wrong direction. */
+         * this test: changing startup ordering for a synthetic test is
+         * the wrong direction. */
         return 100.0;      /* code units; synthetic — see comment above */
     }
 
@@ -344,7 +341,7 @@ struct IterHarnessSpec {
     }
     static void reset_per_iter_device_context(const neighbor_loop_args& /*args*/,
                                                 DeviceContext& ctx, int /*iter_index*/) {
-        /* VP 11: per-iter zero of the synthetic counter. The 2c.4 ctx_oracle
+        /* VP 11: per-iter zero of the synthetic counter. The ctx_oracle
          * symmetric reset means this runs on BOTH production and oracle
          * ctx per outer iter. */
         ctx.dummy_jflag = 0;
@@ -376,14 +373,14 @@ struct IterHarnessSpec {
 };
 
 /* ============================================================================
- * IterHarnessGhostSpec — Stage B step 3 (codex 2026-05-10).
+ * IterHarnessGhostSpec.
  *
  * Iterative spec with `uses_ghost_writeback = true`, exercising the
  * ghost-writeback machinery via existing `PARTICLE_MAX` op on a new
  * compile-gated field `particle_data::NlrIterHarnessJFlag` (declared
  * only under GIZMO_NLR_ITER_HARNESS_TEST in declarations/particle_data.h).
  *
- * Design constraints (codex non-negotiable #3, 2026-05-10):
+ * Design constraints:
  *   - Uses ONLY the existing PARTICLE_MAX op (no harness-only new ops).
  *   - Compile-gated end-to-end; production builds see none of this.
  *   - Pair_kernel writes a deterministic value to neighbor P[j] on
@@ -391,7 +388,7 @@ struct IterHarnessSpec {
  *     ghost-writeback reverse-comm observable AND tests that
  *     set_oracle_brute_pass correctly suppresses j-side writes (which
  *     existing IterHarnessSpec's narrow VP 11 ctx-reset test cannot
- *     prove — codex step-2 review 2026-05-10).
+ *     prove).
  *
  * Test pattern: same slot-keyed after_iter as IterHarnessSpec so the
  * runner's iterative control-flow is identical. ScatterData = NoScatter
@@ -495,10 +492,9 @@ struct IterHarnessGhostSpec {
                                   int /*slot*/, int /*i*/) {
         /* The ghost spec needs h LARGE ENOUGH to make rank-0's actives
          * find ghost neighbors imported from rank 1's domain — otherwise
-         * the Mode A reverse-comm reverse-comm test passes vacuously
-         * (codex 2026-05-10 step-3 review). With m11i's BoxSize ≈ 58480
-         * code units and np=2 domain decomp, h=100 (the IterHarnessSpec
-         * value) kept all neighbors on rank 0's home side.
+         * the Mode A reverse-comm test passes vacuously. With m11i's
+         * BoxSize ≈ 58480 code units and np=2 domain decomp, h=100 (the
+         * IterHarnessSpec value) kept all neighbors on rank 0's home side.
          *
          * Use BoxSize / 2 so rank-0 actives are GUARANTEED to import
          * ghosts from rank 1 regardless of where decomp put the active
@@ -507,9 +503,9 @@ struct IterHarnessGhostSpec {
          * Vista with m11i np=2. */
         /* Small deterministic radius matching IterHarnessSpec. For the
          * Mode A reverse-comm test the harness driver COLOCATES rank-0
-         * actives at rank-1's P[0].Pos via a one-shot position override
-         * (codex 2026-05-10), making h=100 sufficient to import rank-1's
-         * target particle as a ghost regardless of decomp geometry. */
+         * actives at rank-1's P[0].Pos via a one-shot position override,
+         * making h=100 sufficient to import rank-1's target particle as
+         * a ghost regardless of decomp geometry. */
         return 100.0;
     }
 

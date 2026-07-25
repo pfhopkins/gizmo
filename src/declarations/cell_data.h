@@ -656,7 +656,7 @@ extern struct gas_cell_data
         alpha=All.Tillotson_EOS_params[type][8], beta=All.Tillotson_EOS_params[type][9];
         double rho=Density, u=InternalEnergyPred;
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
-        /* Phase 17e bit 2: P-alpha porosity. Tillotson is evaluated at the matrix
+        /* P-alpha porosity. Tillotson is evaluated at the matrix
          * density rho_s = alpha*rho_bulk; bulk pressure is P_matrix/alpha. */
         double alpha_d = (Distention >= 1.0) ? Distention : 1.0;
         rho *= alpha_d;
@@ -677,7 +677,7 @@ extern struct gas_cell_data
 #endif
         SoundSpeed = sqrt(SoundSpeed);
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
-        /* Phase 17e bit 2: irreversibly update distention from current matrix
+        /* irreversibly update distention from current matrix
          * pressure, then convert matrix pressure to bulk porous pressure.
          * Sound speed retained as matrix-frame value (CFL-conservative). */
         {
