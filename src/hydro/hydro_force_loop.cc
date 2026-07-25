@@ -542,8 +542,7 @@ double HydroForceSpec::compare_accum(const AccumData& a, const AccumData& b)
 }
 
 /* ============================================================================
- * Toplevel: hydro_force — replaces the legacy walker formerly in
- * hydro/hydro_toplevel.cc. Last consumer in the hydro corridor.
+ * Toplevel: hydro_force
  *
  * Sequence:
  *   1. hydro_force_initial_operations_preloop()  (verbatim host pre-processing)

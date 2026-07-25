@@ -1,13 +1,13 @@
-/* gpu_gravtree.cc — Step 13 Phase 4 Tier 1a / Phase 2-A
+/* gpu_gravtree.cc
  *
- * GPU gravity walk (mode=0 primary-tree path).  Tier 1a–1c: core walk with
- * PMGRID, ADAPTIVE_GRAVSOFT_FORALL, SYMMETRIZE, EVALPOTENTIAL.  Phase 2-A:
+ * GPU gravity walk (mode=0 primary-tree path).  Core walk with
+ * PMGRID, ADAPTIVE_GRAVSOFT_FORALL, SYMMETRIZE, EVALPOTENTIAL, plus
  * RT cluster payloads (RT_USE_GRAVTREE, GALSF_FB_FIRE_RT_LONGRANGE,
  * CHIMES_STELLAR_FLUXES, RT_USE_TREECOL_FOR_NH).
  *
  * rt_get_source_luminosity() is not GPU-callable; it is pre-computed on CPU
  * for all local particles into a SharedSpace array (d_src_lum) before kernel
- * launch.  Node stellar luminosities come from the Phase 2-I SoA extension.
+ * launch.  Node stellar luminosities come from the SoA extension.
  * rt_kappa() is KOKKOS_INLINE_FUNCTION and runs on device for RT_LEBRON
  * fac_stellum initialisation.
  *
@@ -92,7 +92,7 @@ double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
  * ADAPTIVE_GRAVSOFT_FORGAS || AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
  * (the latter auto-defines under FORALL/CBE_INTEGRATOR/DM_FUZZY/SIDM).
  * The accessor must match the field gate — NOT include GALSF_MERGER_STARCLUSTER_PARTICLES
- * alone, which doesn't enable AGS_zeta. Phase D fix 2026-05-21 config 126. */
+ * alone, which doesn't enable AGS_zeta. */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 static KOKKOS_INLINE_FUNCTION
 double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
@@ -101,12 +101,12 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 }
 #endif
 
-/* C1 permanent invariant guard (always on; NOT a SPIKE).  A tree-node multipole must never stand in
+/* Permanent invariant guard (always enforced).  A tree-node multipole must never stand in
  * for a particle leaf where any enabled leaf interaction (AGS softening/zeta, ...) distinguishes
  * them.  In the one-shot LET that risk is a foreign TERMINAL node the shared opening predicate wanted
  * to OPEN but cannot descend (nextnode<0): if it is a tagged real single-particle leaf it is routed
  * through particle-leaf secondary semantics below (legal); otherwise it is an unopenable aggregate
- * that would be silently downgraded to a multipole, which is ILLEGAL until C2/owner-continuation
+ * that would be silently downgraded to a multipole, which is ILLEGAL until an owner-continuation path
  * exists.  The host hard-surfaces (controlled stop) when g_inv_fterm_aggregate>0 after the walk. */
 /* Device-written (Kokkos::atomic_add inside the walk) + host-read (report/reset/controlled-stop).
  * On a GPU compiler the storage MUST be device-addressable, so use the same `__managed__` idiom as
@@ -126,7 +126,7 @@ static long long g_inv_fterm_aggregate = 0;
  * (grav_weight_function_for_weighted_motion_smoothing / gravtree_ags_kernel_shared_bitflag),
  * shared verbatim with the CPU walk. */
 
-/* Phase 2-A: RT payload data passed to the GPU walk kernel.
+/* RT payload data passed to the GPU walk kernel.
  * src_lum[p * N_RT_FREQ_BINS + kf] = per-particle luminosity precomputed on
  * CPU via rt_get_source_luminosity().  Only populated when RT_USE_GRAVTREE is
  * active.  Sized for [NumPart * N_RT_FREQ_BINS] in SharedSpace. */
@@ -141,7 +141,7 @@ struct gpu_rt_walk_data_t {
 };
 #endif
 
-/* Phase 2-C: sink radiation payload.  Pre-computed on CPU before the kernel
+/* Sink radiation payload.  Pre-computed on CPU before the kernel
  * launches because sink_lum_bol() (and, under SINGLE_STAR_SINK_DYNAMICS,
  * calculate_individual_stellar_luminosity()) are not GPU-callable.
  * bh_lum[p]   = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p) when P[p]
@@ -149,8 +149,8 @@ struct gpu_rt_walk_data_t {
  * bh_angle[p] = P[p].Sink_Specific_AngMom (if SINK_FOLLOW_ACCRETED_ANGMOM)
  *               or P[p].GradRho otherwise.  Used for angle-weighted
  *               luminosity at particle leafs.  Node-level sink_lum /
- *               sink_lum_grad already live in the SoA (Phase 2-I). */
-/* Phase 2-D: COSMIC_RAY_SUBGRID_LEBRON payload.  cr_get_source_injection_rate
+ *               sink_lum_grad already live in the SoA. */
+/* COSMIC_RAY_SUBGRID_LEBRON payload.  cr_get_source_injection_rate
  * is not GPU-callable so per-particle injection is precomputed on host.
  * t_max_cr = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/
  * UNIT_TIME_IN_GYR, passed as scalar (independent of target). */
@@ -215,9 +215,9 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
 
 /* -------------------------------------------------------------------------
  * Compile-time payload gates.
- * Tier 1c + Phase 2-A flags are now unlocked.  Everything else that hasn't
- * been ported remains #error'd so wrong-physics on those configs is caught
- * at compile time rather than producing silent incorrect results.
+ * Everything not yet ported remains #error'd so wrong-physics on those
+ * configs is caught at compile time rather than producing silent incorrect
+ * results.
  * ---------------------------------------------------------------------- */
 /* ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION: ported.
  * - Softening lookup: handled by P[i].ForceSoftening cache (single source of truth in
@@ -232,11 +232,11 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * (forcetree.cc:67-69) and is read on GPU as Pp[p].ForceSoftening — single source of truth. */
 /* GALSF_MERGER_STARCLUSTER_PARTICLES (type-4 star cluster softening via
  * StarParticleEffectiveSize) handled inline in gpu_force_softening_kernel_radius
- * below — enabled for Phase 2-D. */
+ * below. */
 /* ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (type-0 softening cap) handled inline
- * in gpu_force_softening_kernel_radius below — enabled for Phase 2-C. */
-/* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE + COMPUTE_JERK_IN_GRAVTREE: ported in Phase 5
- * (ATFU). Tidal tensor accumulation + jerk both mirror forcetree.cc:2081-2292.
+ * in gpu_force_softening_kernel_radius below. */
+/* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE + COMPUTE_JERK_IN_GRAVTREE: ported (ATFU).
+ * Tidal tensor accumulation + jerk both mirror forcetree.cc:2081-2292.
  * All sub-cases are ported; see the entries below for details. */
 /* COMPUTE_TIDAL_TENSOR + PMGRID: ported.  shortrange_table_tidal is mirrored
  * to SharedSpace at the top of gpu_gravtree_walk_primary() and consumed in the
@@ -250,7 +250,7 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * The shell-theorem fac2_tidal override at the top of the tidal accumulation
  * block handles this case alongside the standard non-spherical formula. */
 /* SINK_PHOTONMOMENTUM, SINK_COMPTON_HEATING, SINK_DYNFRICTION_FROMTREE:
- * ported in Phase 2-C. */
+ * ported. */
 /* SPECIAL_POINT_MOTION + SPECIAL_POINT_WEIGHTED_MOTION: ported.
  * Walk-side accumulation of nearest-special-particle vel/acc lives in the
  * SINK_CALC_DISTANCES branches (leaf-particle and node paths). The Acc_Total_PrevStep
@@ -260,8 +260,8 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * grav_weight_function_for_weighted_motion_smoothing() (gravtree_force_kernel.h). */
 /* SINK_CALC_DISTANCES, SINGLE_STAR_SINK_DYNAMICS, SINGLE_STAR_TIMESTEPPING,
  * SINGLE_STAR_FIND_BINARIES, SINGLE_STAR_FB_TIMESTEPLIMIT, SINGLE_STAR_STARFORGE_DEFAULTS:
- * ported in Phase 2-B. */
-/* COSMIC_RAY_SUBGRID_LEBRON: ported in Phase 2-D. Reads SoA cr_injection at
+ * ported. */
+/* COSMIC_RAY_SUBGRID_LEBRON: ported. Reads SoA cr_injection at
  * node accepts + per-particle precomputed d_cr_inject at leaf nodes (since
  * cr_get_source_injection_rate is not GPU-callable). */
 /* COUNT_MASS_IN_GRAVTREE: ported. tree_mass accumulator declared at function entry,
@@ -282,9 +282,9 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * NEIGHBORS_MUST_BE_COMPUTED activates the sphere-box intersection opening criterion
  * in the walk loop above (mirrors forcetree.cc:2122-2130). HERMITE_INTEGRATION
  * additionally requires COMPUTE_JERK_IN_GRAVTREE which is auto-defined and already
- * ported (Phase 5): GravJerk written at line ~1155 and scattered back at line ~1478,
+ * ported: GravJerk written at line ~1155 and scattered back at line ~1478,
  * read by the Hermite predictor in core/kicks.cc:212 and gravtree.cc:571. */
-/* ADAPTIVE_TREEFORCE_UPDATE: Phase 5.  Pre-walk skip-flag filtering in the
+/* ADAPTIVE_TREEFORCE_UPDATE: pre-walk skip-flag filtering in the
  * dispatcher + jerk accumulation in the walk kernel.  Skip-flag particles
  * (needs_new_treeforce()==0) bypass the GPU walk and use the CPU post-loop
  * jerk extrapolation path at gravtree.cc:512-520 (GravAccel += GravJerk*dt). */
@@ -315,13 +315,13 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * Returns 1 on success (acc written), 0 on failure (pseudo-particle hit;
  * host must run CPU walk for this target).  Mirrors force_treeevaluate()
  * mode=0 with SINK/CR/DM/tidal payload branches stripped (gated above).
- * Phase 2-A RT payloads (RT_USE_GRAVTREE, treecol, CHIMES, FIRE longrange)
+ * RT payloads (RT_USE_GRAVTREE, treecol, CHIMES, FIRE longrange)
  * are included here; they accumulate into CellP_dev[target] which the host
  * scatter loop copies back to CellP[].
  * ---------------------------------------------------------------------- */
 static KOKKOS_INLINE_FUNCTION int
 gpu_gravtree_walk_one(int target,
-                      int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9: foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
+                      int maxPart, int maxNodes, int maxForeignNodes,    /* foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
                       const struct gpu_gravity_tree_soa_t *tree_soa,
@@ -343,7 +343,7 @@ gpu_gravtree_walk_one(int target,
                       Vec3<double> &acc_out,
                       int &ninter_out,
                       double &pot_out,
-                      int &n_foreign_out)   /* Phase 9.3 diag: #foreign node visits */
+                      int &n_foreign_out)   /* diagnostic: #foreign node visits */
 {
     Vec3<double> pos = P_dev[target].Pos;
     int ptype = P_dev[target].Type;
@@ -374,7 +374,7 @@ gpu_gravtree_walk_one(int target,
     const int ags_bitflag_primary = gravtree_ags_kernel_shared_bitflag(ptype);
 
     /* ------------------------------------------------------------------ *
-     * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
+     * SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.              *
      * Mirrors forcetree.cc:1509-1526.                                     *
      * ------------------------------------------------------------------ */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
@@ -443,7 +443,7 @@ gpu_gravtree_walk_one(int target,
 #endif
 
     /* ------------------------------------------------------------------ *
-     * RT cluster local accumulators (Phase 2-A).  All gated by the same   *
+     * RT cluster local accumulators.  All gated by the same               *
      * #ifdefs as the CPU walk in forcetree.cc.                             *
      * ------------------------------------------------------------------ */
 #ifdef RT_USE_TREECOL_FOR_NH
@@ -511,7 +511,7 @@ gpu_gravtree_walk_one(int target,
     Vec3<double> acc = {0,0,0};
     int ninter = 0;
     double pot = 0.0;
-    int n_foreign = 0;  /* Phase 9.3 diag */
+    int n_foreign = 0;  /* diagnostic */
 
     int no = maxPart;   /* root */
 
@@ -662,13 +662,13 @@ gpu_gravtree_walk_one(int target,
             }
 #endif /* SINK_CALC_DISTANCES */
         }
-        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — remote (Phase 9: foreign-node range below pseudos; foreign nodes treated as internal in the else branch below) */
+        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — remote (foreign-node range below pseudos; foreign nodes treated as internal in the else branch below) */
         {
             return 0; /* host runs CPU walk for this target */
         }
         else /* tree node */
         {
-            if(no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes) n_foreign++;  /* Phase 9.3 diag */
+            if(no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes) n_foreign++;  /* diagnostic */
             int idx = no - maxPart;
             Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)tree_soa->s[idx][0], (MyFloat)tree_soa->s[idx][1], (MyFloat)tree_soa->s[idx][2]};
             MyFloat len_node = tree_soa->len[idx];
@@ -689,7 +689,7 @@ gpu_gravtree_walk_one(int target,
             int in_foreign_n = (no >= maxPart + maxNodes);
             int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
-            /* C1: foreign-leaf identity lookup.  foreign_slot = no-(MaxPart+MaxNodes) = idx-maxNodes
+            /* Foreign-leaf identity lookup.  foreign_slot = no-(MaxPart+MaxNodes) = idx-maxNodes
              * -- the foreign-only sidecar index, EXPLICIT and bounds-checked so it can never be
              * confused with the per-node SoA index idx (= no-MaxPart). */
             int    fl_tag = 0, fl_type = -1;
@@ -748,8 +748,8 @@ gpu_gravtree_walk_one(int target,
                 /* Foreign LET policy.  A foreign tagged leaf (fl_tag==1) is a TERMINAL leaf source:
                  * its nextnode is the DFS CONTINUATION after the leaf, NOT a child to descend.  So a
                  * predicate OPEN on it cannot mean "descend" (there is nowhere to descend) -- it must
-                 * mean "accept this already-leaf source with leaf semantics" (C1 supplies the leaf
-                 * identity at the payload load below).  foreign_force_multipole (the nextnode<0 sentinel
+                 * mean "accept this already-leaf source with leaf semantics" (the identity lookup
+                 * above supplies the leaf identity at the payload load below).  foreign_force_multipole (the nextnode<0 sentinel
                  * case) is the other terminal that must be accepted, not descended.  Both fall through to
                  * the accept path; only a genuine descendable node takes nextnode.  (Pre-fix the descend
                  * guard keyed on foreign_force_multipole alone, so a tagged leaf whose continuation
@@ -775,7 +775,7 @@ gpu_gravtree_walk_one(int target,
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
-            /* C1: a tagged real foreign single-particle leaf must be consumed with particle-leaf
+            /* A tagged real foreign single-particle leaf must be consumed with particle-leaf
              * secondary-source semantics.  The node payload above already supplied mass/h_p and the
              * synthesized RT/sink/CR/tidal (singleton-aggregate == particle value); restore the two
              * leaf-identity fields the node moment cannot carry (Type + AGS_zeta) via the shared seam
@@ -980,7 +980,7 @@ gpu_gravtree_walk_one(int target,
 #endif
 
             /* ------------------------------------------------------------ *
-             * RT cluster payloads (Phase 2-A).  Structure mirrors           *
+             * RT cluster payloads.  Structure mirrors                      *
              * forcetree.cc: OUTSIDE the PM short-range gate, so for an      *
              * out-of-range source fac_accel is the raw un-truncated value   *
              * here (used by the TREECOL column estimate, which has no       *
@@ -1112,7 +1112,7 @@ gpu_gravtree_walk_one(int target,
     if(ptype == 0) {CellP_dev[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;}
 #endif
 
-    /* Phase 2-B: sink-distance / single-star timestepping outputs.
+    /* Sink-distance / single-star timestepping outputs.
      * Mirrors forcetree.cc:2499-2526 (mode=0). Scatter from P_dev back to P[]
      * happens in the host post-walk loop (primary driver). */
 #ifdef SINK_CALC_DISTANCES
@@ -1184,18 +1184,17 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * (run.cc:629) and only rebuilds the tree occasionally. The GPU walk
      * cannot call these host-only helpers from inside the Kokkos kernel,
      * so we apply the drift once up-front here: drift all particles, then
-     * drift all nodes whose Ti_current lags All.Ti_Current.  Phase 7.a:
-     * the node drift loop is now a single GPU kernel that mutates UVM
-     * Nodes/Extnodes AND the SoA mirror in one pass — no host loop, no
-     * AoS->SoA reseed afterwards.  Cost is O(active drifted nodes) with
-     * GPU parallelism over Numnodestree (early-out when Ti_current matches). */
-    /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
+     * drift all nodes whose Ti_current lags All.Ti_Current.  The node drift
+     * loop is a single GPU kernel that mutates UVM Nodes/Extnodes AND the
+     * SoA mirror in one pass — no host loop, no AoS->SoA reseed afterwards.
+     * Cost is O(active drifted nodes) with GPU parallelism over
+     * Numnodestree (early-out when Ti_current matches). */
+    /* Sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
     double t_grv_start = my_second();
-    /* Codex 2026-05-12 v2 (post-dbg27): host-side wrapper in GPU TU must
-     * use the out-of-line host accessor `gizmo_host_ti_current()` (defined
-     * in core/predict.cc). Retained as belt-and-suspenders documentation
-     * of host-snapshot intent for this call site; under 93897f62 the
-     * device-pass redirect is gated so direct host reads are also correct. */
+    /* Host-side wrapper in the GPU TU must use the out-of-line host accessor
+     * `gizmo_host_ti_current()` (defined in core/predict.cc) rather than a
+     * bare All.Ti_Current read, so the host-snapshot intent at this call
+     * site stays correct even when the device-pass redirect is active. */
     integertime ti_curr_host = gizmo_host_ti_current();
     move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
     double t_grv_mp = my_second();
@@ -1223,7 +1222,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(num_active <= 0) {myfree(idx_host); return 0;}
     double t_grv_active_list = my_second();
 
-    /* Acquire Phase 1 arena (P_dev + CellP_dev in SharedSpace) */
+    /* Acquire the arena (P_dev + CellP_dev in SharedSpace) */
     gpu_particles_arena_set_site("gpu_gravtree_walk_primary");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data    *P_dev    = gpu_particles_arena_P();
@@ -1232,7 +1231,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
-    /* Phase 6.8e: soa->nextnode_aux aliases UVM Nextnode[] (set by
+    /* soa->nextnode_aux aliases UVM Nextnode[] (set by
      * force_treeallocate); no per-walk memcpy needed. */
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     /* CellP is legitimately NULL on a gas-free (DM-only) problem (TotN_gas==0).
@@ -1381,7 +1380,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
     int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
-    int *d_foreign = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));  /* Phase 9.3 diag */
+    int *d_foreign = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));  /* diagnostic */
     if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot || !d_foreign) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
@@ -1393,7 +1392,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     int maxPart = All.MaxPart;
     int maxNodes_snap = MaxNodes;
-    int maxForeignNodes_snap = MaxForeignNodes;    /* Phase 9 LET */
+    int maxForeignNodes_snap = MaxForeignNodes;    /* LET */
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
     /* host-evaluate the first-step predicate once; captured by value into the device walk */
@@ -1457,7 +1456,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
-    /* C1 invariant guard: reset the per-walk counters. */
+    /* Invariant guard: reset the per-walk counters. */
     g_inv_fleaf_routed = g_inv_fterm_aggregate = 0;
 
     double t_grv_pre_kernel = my_second();
@@ -1497,10 +1496,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
-    /* C1 permanent invariant guard.  The routed count is informational (env-gated) -- it is the C1
+    /* Permanent invariant guard.  The routed count is informational (env-gated) -- it is the
      * success signal alongside the np2-np1 force-ledger collapse.  An untagged predicate-OPEN foreign
      * terminal is an unopenable aggregate that would silently downgrade leaf-sensitive physics to a
-     * multipole; until C2/owner-continuation exists this hard-surfaces as a controlled stop. */
+     * multipole; until an owner-continuation path exists this hard-surfaces as a controlled stop. */
     if(getenv("GIZMO_GRAV_INVARIANT")) {
         printf("[INV rank=%d] foreign-leaf routed=%lld | aggregate forced-accept (ILLEGAL)=%lld\n",
                ThisTask, g_inv_fleaf_routed, g_inv_fterm_aggregate);
@@ -1579,7 +1578,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
             }
 #endif
 
-            /* Phase 5: tidal tensor + GravJerk scatter-back (ATFU/jerk path). */
+            /* Tidal tensor + GravJerk scatter-back (ATFU/jerk path). */
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
             P[i].tidal_tensorps = P_dev[i].tidal_tensorps;
 #endif
@@ -1603,7 +1602,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 #endif
 
-            /* Phase 2-B: sink-distance / single-star timestepping scatter-back */
+            /* Sink-distance / single-star timestepping scatter-back */
 #ifdef SINK_CALC_DISTANCES
             P[i].Min_Distance_to_Sink = P_dev[i].Min_Distance_to_Sink;
             P[i].Min_xyz_to_Sink      = P_dev[i].Min_xyz_to_Sink;
@@ -1629,16 +1628,16 @@ extern "C" int gpu_gravtree_walk_primary(void)
             costtotal_added += d_ninter[a];
             if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = d_ninter[a];}
 
-            /* Round-3c arena mirror-update collapsed: under UVM-canonical
-             * (commit 0d9e74b4) P_dev = arena_P aliases host P[], so the
-             * struct copy P_dev[i] = P[i] is self-assignment. */
+            /* No arena mirror-update here: under UVM-canonical
+             * P_dev = arena_P aliases host P[], so the
+             * struct copy P_dev[i] = P[i] would be self-assignment. */
 
             nsucceeded++;
         }
     }
     Costtotal += costtotal_added;
 
-    /* Phase 9.3 diagnostic: print GPU walk summary + first 10 particles for LET vs no-LET comparison */
+    /* Diagnostic: print GPU walk summary + first 10 particles for LET vs no-LET comparison */
     if(ThisTask == 0 && gizmo_verbose_diag()) {
         long long tot_foreign = 0;
         for(int a = 0; a < num_active; a++) { if(!d_failed[a]) tot_foreign += d_foreign[a]; }
@@ -1660,7 +1659,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         fflush(stdout);
     }
 
-    /* Phase 8a Round 3c: replace invalidate with mark_clean. Per-active-i
+    /* mark_clean (not invalidate): the per-active-i
      * P_dev[i]=P[i] mirror in the scatter loop above keeps arena coherent
      * for the touched indices; untouched i's were unchanged from acquire-time
      * (kernel output went to d_* buffers, not arena). Verified safe with
@@ -1702,8 +1701,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     myfree(idx_host);
 
-    /* Phase 7+ sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off.
-     * Codex flagged grav_tree_walk=2.07s as suspiciously similar to other
+    /* Sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off.
+     * grav_tree_walk cost can look suspiciously similar to other
      * full-NumPart taxes; this breakdown isolates which is to blame. */
     {
         double t_grv_done = my_second();
@@ -1725,7 +1724,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
 
 /* ========================================================================= *
- * Phase 2-E: GPU Ewald-correction walk (pure-tree periodic gravity).         *
+ * GPU Ewald-correction walk (pure-tree periodic gravity).                   *
  *                                                                            *
  * Mirrors force_treeevaluate_ewald_correction() mode=0 (forcetree.cc:2631).  *
  * Runs as a second pass over active targets when Ewald_iter==1, after the    *
@@ -1789,7 +1788,7 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out)
  * written), 0 if a pseudo-particle was encountered (defer to CPU). */
 static KOKKOS_INLINE_FUNCTION int
 gpu_ewald_walk_one(int target,
-                   int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9 LET */
+                   int maxPart, int maxNodes, int maxForeignNodes,    /* LET */
                    struct particle_data *P_dev,
                    const struct gpu_gravity_tree_soa_t *tree_soa,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
@@ -1819,7 +1818,7 @@ gpu_ewald_walk_one(int target,
             mass  = P_dev[no].Mass;
             is_leaf = 1;
         }
-        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — defer to CPU (Phase 9: foreign-node range below) */
+        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — defer to CPU (foreign-node range below) */
         {
             return 0;
         }
@@ -1909,8 +1908,8 @@ extern "C" int gpu_ewald_walk_primary(void)
     if(num_active_total <= 0) {return 0;}
 
     /* Particles have already been drifted by the primary walk (Ewald_iter==0);
-     * the tree SoA mirror is still valid. Just re-acquire (cache-hit).  Phase
-     * 6.8e: soa->nextnode_aux aliases UVM Nextnode[]; no per-walk memcpy. */
+     * the tree SoA mirror is still valid. Just re-acquire (cache-hit).
+     * soa->nextnode_aux aliases UVM Nextnode[]; no per-walk memcpy. */
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
     const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -1945,7 +1944,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     /* snapshot scalars */
     const int maxPart            = All.MaxPart;
     const int maxNodes_snap      = MaxNodes;
-    const int maxForeignNodes_sn = MaxForeignNodes;    /* Phase 9 LET */
+    const int maxForeignNodes_sn = MaxForeignNodes;    /* LET */
     const double boxsize     = All.BoxSize;
     const double boxhalf     = 0.5 * All.BoxSize;
     const double fac_intp    = g_ewald_fac_intp;

@@ -1,4 +1,4 @@
-/* gpu_pseudo_update.cc — Step 13 Phase 6.7
+/* gpu_pseudo_update.cc
  *
  * GPU/SoA-native replacements for the three CPU end-game stages in
  * force_treebuild and force_refresh_node_moments.  See
@@ -19,14 +19,14 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
-#include "let_data.h"   /* C1: ForeignLeaf{Tag,Type,Zeta}[] host sidecar (scattered into SoA below) */
+#include "let_data.h"   /* ForeignLeaf{Tag,Type,Zeta}[] host sidecar (scattered into SoA below) */
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
 #include "gravtree_moment_kernel.h"
 
 
 /* ===================================================================== */
-/* Phase 6.7a — gpu_force_flag_localnodes                                */
+/* gpu_force_flag_localnodes                                             */
 /* ===================================================================== */
 
 extern "C" int gpu_force_flag_localnodes(void)
@@ -137,7 +137,7 @@ extern "C" int gpu_force_flag_localnodes(void)
     }
 
     /* AoS writeback: mirror bitflags_soa[0..NTopnodes) → Nodes[].u.d.bitflags.
-     * Required so that force_exchange_pseudodata (still CPU in 6.7a/b) reads
+     * Required so that force_exchange_pseudodata (still CPU) reads
      * the correct bitflags from AoS.  Inside-topleaf bitflags were already
      * written by gpu_moment_writeback_to_aos at the end of gpu_moment_refresh;
      * only the topnode range [0, NTopnodes) needs patching here. */
@@ -149,7 +149,7 @@ extern "C" int gpu_force_flag_localnodes(void)
 }
 
 /* ===================================================================== */
-/* Phase 6.7b — gpu_scatter_pseudo_to_soa                                */
+/* gpu_scatter_pseudo_to_soa                                             */
 /* ===================================================================== */
 
 extern "C" int gpu_scatter_pseudo_to_soa(void)
@@ -182,7 +182,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
                 soa->vmax[k]    = (MyGravFloat) Extnodes[no].vmax;
                 soa->divVmax[k] = (MyGravFloat) Extnodes[no].divVmax;
                 /* Merge the MULTIPLEPARTICLES bit from the exchanged data;
-                 * preserve all topology bits already set by 6.7a. */
+                 * preserve all topology bits already set by gpu_force_flag_localnodes. */
                 soa->bitflags[k] = (soa->bitflags[k] & ~(1u << BITFLAG_MULTIPLEPARTICLES))
                                  | (Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES));
                 /* Vec3 moment fields */
@@ -263,7 +263,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
 }
 
 /* ===================================================================== */
-/* Phase 6.7c — gpu_topnode_moment_resum                                 */
+/* gpu_topnode_moment_resum                                              */
 /* ===================================================================== */
 
 /* Read one (already finalized, i.e. normalized) child topnode's moments out of the SoA into the
@@ -348,7 +348,7 @@ static void topnode_resum_node_(int no_abs,
     MyFloat mass = 0;
     Vec3<MyFloat> s = {}, vs = {};
     MyFloat hmax = 0, vmax = 0, divVmax = 0, maxsoft = 0;
-    MyFloat hmax_per_type[6] = {};   /* B3a substrate: per-type band, max over children (not in the shared moment kernel) */
+    MyFloat hmax_per_type[6] = {};   /* per-type band, max over children (not in the shared moment kernel) */
     long count_particles = 0;
     int multiple_flag = 0;
 
@@ -648,7 +648,7 @@ extern "C" int gpu_topnode_moment_resum(void)
 }
 
 /* ===================================================================== */
-/* Phase 9.2-pre — gpu_scatter_foreign_to_soa                            */
+/* gpu_scatter_foreign_to_soa                                            */
 /*                                                                        */
 /* Mirror foreign-node AoS Nodes[]/Extnodes[] fields into SoA for the     */
 /* range [slot_base_abs, slot_base_abs + count).  Called from             */
@@ -699,7 +699,7 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         soa->nextnode[k] = Nodes[no].u.d.nextnode;
         soa->father[k]   = Nodes[no].u.d.father;
 
-        /* C1 foreign-leaf identity sidecar: mirror the host ForeignLeaf* arrays into the SoA at
+        /* foreign-leaf identity sidecar: mirror the host ForeignLeaf* arrays into the SoA at
          * foreign_slot (= no-(MaxPart+MaxNodes) = k-MaxNodes), the foreign-only index the walk uses
          * -- NOT k.  Bounds-checked against both the SoA foreign capacity and the host array size. */
         {

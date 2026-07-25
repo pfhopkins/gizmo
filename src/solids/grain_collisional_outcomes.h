@@ -5,8 +5,8 @@
  * formulae that are referenced by both the bin-based fluid grain-evolution
  * module (solids/ism_dust_chemistry.cc, GALSF_ISMDUSTCHEM_GRAINSIZEEVO) and
  * the per-superparticle stochastic grain-evolution module
- * (solids/grain_evolution.cc + grain_evolution_functions.h, GRAIN_EVOLUTION,
- * Phase 17b). The two modules are mutually exclusive (different
+ * (solids/grain_evolution.cc + grain_evolution_functions.h, GRAIN_EVOLUTION).
+ * The two modules are mutually exclusive (different
  * mass-conservation models) but share the underlying microphysics, and we do
  * not want to maintain two copies of polynomial fits, threshold tables, and
  * elastic constants that drift apart.
@@ -53,12 +53,13 @@
 
 /* Stable species enum used as the lookup key for both consumers. ISMDustChem
  * dispatches its runtime spec_indx (== All.ISMDustChem_*_Index) into this
- * enum at the point of call; Phase 17b dispatches its Composition[] index. */
+ * enum at the point of call; the stochastic grain-evolution module (GRAIN_EVOLUTION)
+ * dispatches its Composition[] index. */
 enum GrainOutcomeSpecies {
     GRAIN_OUTCOME_SPECIES_SILICATE = 0,
     GRAIN_OUTCOME_SPECIES_CARBON   = 1,
     GRAIN_OUTCOME_SPECIES_IRON     = 2,
-    /* Ice species used by Phase 17b only (bits 5/6); ISMDustChem never
+    /* Ice species used by GRAIN_EVOLUTION only (bits 5/6); ISMDustChem never
      * dispatches to these. Elastic-props lookup falls back to silicate
      * defaults for ice species (no shattering/coagulation thresholds defined
      * in the literature for cold ice mantles in this regime — the operators
@@ -98,7 +99,7 @@ struct GrainOutcomeElasticProps grain_outcomes_elastic_props(int kind)
 
 /* Dominik-Tielens / Hirashita-Chen coagulation-velocity formula. Returns
  * v_coag in cm/s. Matches the inline expression in
- * update_dust_shattering_and_coagulation (lines 1618 and 1657 prior to C2):
+ * update_dust_shattering_and_coagulation (lines 1618 and 1657):
  *
  *   v_coag = 10 * 2.14 * sqrt((a_i^3 + a_j^3) / (a_i + a_j)^3)
  *               * gamma^(5/6) / (E*^(1/3) * mu^(5/6) * sqrt(rho_bulk))
@@ -109,7 +110,7 @@ struct GrainOutcomeElasticProps grain_outcomes_elastic_props(int kind)
  * the underlying physics formula). */
 /* Bit-identical contract: this expression is character-for-character the
  * same as the inline form previously in update_dust_shattering_and_coagulation
- * (lines 1618 and 1657 prior to C2). Do not refactor x*x*x to pow(x,3) or
+ * (lines 1618 and 1657). Do not refactor x*x*x to pow(x,3) or
  * vice versa here without re-validating the FIRE regression. */
 KOKKOS_INLINE_FUNCTION
 double grain_outcomes_v_coag_dominik(double a_i, double a_j,
@@ -124,12 +125,12 @@ double grain_outcomes_v_coag_dominik(double a_i, double a_j,
  * gives da/dt in cm/Gyr (this is the conversion the caller applies; the
  * polynomial returns the raw fit value). Coefficients verbatim from the
  * prior inline definitions in update_dust_sputtering. */
-/* Per-ice-species microphysics for Phase 17b condensation/sublimation
- * (bits 5/6 of GRAIN_EVOLUTION). Indexed by ice slot:
+/* Per-ice-species microphysics for GRAIN_EVOLUTION condensation/sublimation
+ * (bits 5/6). Indexed by ice slot:
  *   ICE_INDEX_H2O = 0, ICE_INDEX_CO = 1, ICE_INDEX_CO2 = 2.
  * Refractory vapor (volatile species index 3 in VolatileSpecies[]) is not
- * handled here -- there is no source for it yet in Phase 17b (sputter->
- * vapor coupling is reserved for a later commit). Numerical values from
+ * handled here -- there is no source for it yet (sputter->
+ * vapor coupling is reserved for later). Numerical values from
  * standard cosmochemistry references (Sandford+1988; Fraser+2001;
  * Burke+2010); these match conventions used in protoplanetary-disk
  * chemistry codes. */

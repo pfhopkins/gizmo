@@ -1,15 +1,15 @@
-/* gpu_morton.h -- Step 13 Phase 6.5a/6.5c0
+/* gpu_morton.h
  *
  * Morton encoding + parallel sort infrastructure for the GPU tree-build
- * insertion kernel (Phase 6.5c2+).  The Phase 6.5 build flow is:
+ * insertion kernel.  The build flow is:
  *
  *   1. Compute a 126-bit Morton key per local particle from its global
  *      domain-bbox-relative position (this header / TU).
  *   2. For each topleaf, sort the local particles assigned to it by their
  *      Morton key (this header / TU).
  *   3. LCP-analyse the sorted keys to find octree split points
- *      (Phase 6.5b -- gpu_morton_functions.h).
- *   4. Emit tree topology into the SoA `Nodes_dev` mirror (Phase 6.5c3).
+ *      (gpu_morton_functions.h).
+ *   4. Emit tree topology into the SoA `Nodes_dev` mirror.
  *
  * The Morton encoding mirrors GIZMO's CPU build precision: 42 bits per axis
  * via the IEEE-754 mantissa-bit-trick (matches host domain_double_to_int
@@ -19,7 +19,7 @@
  *
  * Particles whose positions land within a Morton cell of size below GIZMO's
  * collocation threshold (EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale)
- * will share keys and fall through to the RNG branch in 6.5c4, matching CPU
+ * will share keys and fall through to the RNG branch, matching CPU
  * semantics.
  *
  * Scratch storage lives in static file-scope state, allocated lazily and

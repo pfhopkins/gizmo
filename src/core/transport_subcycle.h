@@ -4,7 +4,7 @@
  * sub-steps per hydro step. Each sub-step does a full MPI-aware flux exchange
  * (code_block_xchange pattern) to correctly handle cross-domain interactions.
  *
- * Written by Mike Grudic with Claude for GIZMO.
+ * Written by Mike Grudic for GIZMO.
  */
 
 #ifndef TRANSPORT_SUBCYCLE_H

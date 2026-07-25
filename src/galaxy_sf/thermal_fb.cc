@@ -39,9 +39,9 @@ void determine_where_addthermalFB_events_occur(void)
     for (int i : ActiveParticleList)
     {
         /* Cosmology-aware stellar filter — mirrors mechanical_fb.cc:75-82.
-         * Pre-port code strict-gated on Type==4 only; that missed valid
-         * stars (Types 2/3) in non-cosmological sims. Fix landed 3e.2
-         * (Phil confirmed 2026-05-15; SSOT'd with ThermalFBSpec::is_active). */
+         * Legacy code strict-gated on Type==4 only; that missed valid
+         * stars (Types 2/3) in non-cosmological sims. SSOT'd with
+         * ThermalFBSpec::is_active. */
         if(All.ComovingIntegrationOn) {
             if(P[i].Type != 4) {continue;}
         } else {
@@ -54,15 +54,15 @@ void determine_where_addthermalFB_events_occur(void)
 }
 
 
-/* Deposit thermal feedback to gas — runner-template caller (Phase 4 / Wave 3 / 3e.2).
+/* Deposit thermal feedback to gas — runner-template caller.
  *
  * Replaces the legacy active-list construction + thermal_fb_evaluate_gpu call.
  * ThermalFBSpec::is_active is the SSOT active predicate (former
- * addthermalFB_evaluate_active_check is retired in this commit; all paths
- * route through Spec::is_active). The runner handles ghost-import collective,
- * Mode-A/B dispatch, oracle gating, j-side ghost-writeback (via the manifest
- * bundle in thermal_fb_loop.cc), and per-active apply_active_writeback
- * (source-side Mass / dp loss). */
+ * addthermalFB_evaluate_active_check is retired; all paths route through
+ * Spec::is_active). The runner handles ghost-import collective, Mode-A/B
+ * dispatch, oracle gating, j-side ghost-writeback (via the manifest bundle
+ * in thermal_fb_loop.cc), and per-active apply_active_writeback (source-side
+ * Mass / dp loss). */
 void thermal_fb_calc(void)
 {
     PRINT_STATUS(" ..depositing thermal feedback to gas");
@@ -102,7 +102,7 @@ void thermal_fb_calc(void)
      *      Mode B: per-active local + remote walkers; no ghost bundle (j-side
      *              writes are local). Oracle dual-walk routes through
      *              set_oracle_brute_pass(ctx, true) for the brute pass.
-     *      Phase 4.A.0 populate_device_context stages host_locals → UVM
+     *      populate_device_context stages host_locals → UVM
      *      ctx.per_active_local before kernel launch; cleanup frees UVM. */
     neighbor_loop_args args = nlr_default_args();
     args.active_list = active_list;

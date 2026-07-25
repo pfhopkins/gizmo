@@ -1,8 +1,7 @@
 /*
  * sidm/cbe_integrator_gradients.cc
  *
- * CBE pre-force gradient module — Wave-CBE Phase 2 commit #5 corrective
- * architecture pivot (2026-05-26, v5). Out-of-line host hooks for
+ * CBE pre-force gradient module. Out-of-line host hooks for
  * CBEGradSpec plus the toplevel driver CBEGrad_gradient_calc(). Mirrors
  * sidm/dm_fuzzy_loop.cc (DMGradSpec / DMGrad_gradient_calc) — same shape,
  * two passes orchestrated at the toplevel via Aux::loop_iteration.
@@ -19,17 +18,17 @@
  * ill-conditioning guard used by hydro NV_T inversion
  * (hydro/density_loop.cc:514-525). Pass-1 writeback rescales the
  * already-persistent field in place by phi[m][k] — it MUST NOT re-zero or
- * re-compute the field (codex guard, 2026-05-26).
+ * re-compute the field.
  *
- * Primitive-gradient swap (2026-06-06 — OPEN_cbe_primitive_grad_design.md):
- * the stored field now holds primitive gradients (∂ρ, ∂v, ∂S) rather than
- * moment gradients (∂m, ∂p, ∂T), packed in the same slot layout. The
- * writeback math is unchanged (M^{-1} · B, then per-(m,k) rescale by phi)
- * — only the upstream LSQ accumulator B is now built from primitive
- * deltas (see cbe_integrator_gradients.h pair bodies). The field name
- * `Gradients_CBE_basis_moments` is now STALE; rename out of scope.
+ * Primitive-gradient swap: the stored field now holds primitive gradients
+ * (∂ρ, ∂v, ∂S) rather than moment gradients (∂m, ∂p, ∂T), packed in the
+ * same slot layout. The writeback math is unchanged (M^{-1} · B, then
+ * per-(m,k) rescale by phi) — only the upstream LSQ accumulator B is now
+ * built from primitive deltas (see cbe_integrator_gradients.h pair
+ * bodies). The field name `Gradients_CBE_basis_moments` is now STALE;
+ * rename out of scope.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -312,8 +311,7 @@ void CBEGrad_gradient_calc(void)
      *             1 = pairwise BJ-style limiter -> rescales the same field
      *                 in place. Each pass is a fresh set of runner calls,
      *                 so pass 1's standard P[] ghost import sees pass-0's
-     *                 freshly-written gradients on ghosts (codex guard,
-     *                 2026-05-26). */
+     *                 freshly-written gradients on ghosts. */
     for(int pass = 0; pass < 2; pass++) {
         /* Pre-zero only on pass 0; pass 1 rescales the persistent field. */
         if(pass == 0) {

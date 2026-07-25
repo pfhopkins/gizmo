@@ -1,4 +1,4 @@
-/* gpu_gravity_tree.cc — Step 13 Phase 3
+/* gpu_gravity_tree.cc
  *
  * See gpu_gravity_tree.h for design notes.
  *
@@ -57,7 +57,7 @@ static void free_arrays_(void)
     if(soa_.foreign_leaf_zeta) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_zeta); soa_.foreign_leaf_zeta = NULL;}
     if(soa_.foreign_leaf_soft) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_soft); soa_.foreign_leaf_soft = NULL;}
     soa_.foreign_leaf_cap = 0;
-    /* Phase 6.8e: nextnode_aux is an alias to Nextnode[] (UVM, owned by
+    /* nextnode_aux is an alias to Nextnode[] (UVM, owned by
      * forcetree.cc).  Do NOT free or clear here — the alias persists across
      * SoA realloc cycles and is set/cleared exclusively by
      * gpu_gravity_tree_alias_nextnode().  free_arrays_ runs whenever capacity
@@ -100,7 +100,7 @@ static void free_arrays_(void)
     if(soa_.MaxFeedbackVel) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
 #endif
 #endif
-    /* Unconditional Extnodes mirrors (Phase 6.1a). */
+    /* Unconditional Extnodes mirrors. */
     if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
     if(soa_.hmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.hmax);           soa_.hmax           = NULL;}
     if(soa_.vmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vmax);           soa_.vmax           = NULL;}
@@ -114,13 +114,13 @@ static void free_arrays_(void)
     if(soa_.vs_dm)          {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vs_dm);          soa_.vs_dm          = NULL;}
 #endif
     soa_.nnodes = 0;
-    /* Phase 6.8e: do NOT touch nextnode_aux / nextnode_aux_size here — the
+    /* Do NOT touch nextnode_aux / nextnode_aux_size here — the
      * alias is owned by force_treeallocate and outlives SoA realloc cycles. */
 }
 
 static int alloc_arrays_(int n)
 {
-    /* Phase 6.1b: moment/force fields retyped as MyGravFloat (flag-gated:
+    /* moment/force fields retyped as MyGravFloat (flag-gated:
      * float when GIZMO_MIXED_PRECISION_GRAVITY set, double otherwise).
      * Geometric (center, len) stays MyFloat — opening-criterion precision. */
     soa_.center   = (Vec3<MyFloat>     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
@@ -140,7 +140,7 @@ static int alloc_arrays_(int n)
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
     }
-    /* C1 foreign-leaf identity sidecar mirror -- sized MaxForeignNodes (foreign-only), NOT n, and
+    /* Foreign-leaf identity sidecar mirror -- sized MaxForeignNodes (foreign-only), NOT n, and
      * indexed by foreign_slot = no-(MaxPart+MaxNodes) by both the scatter and the walk.  acquire()
      * adds MaxForeignNodes to its capacity request, so this runs with the current MaxForeignNodes. */
     soa_.foreign_leaf_cap = (MaxForeignNodes > 0) ? MaxForeignNodes : 0;
@@ -204,7 +204,7 @@ static int alloc_arrays_(int n)
     if(!soa_.MaxFeedbackVel) {printf("gpu_gravity_tree: MaxFeedbackVel alloc failed (%d)\n", n); return 0;}
 #endif
 #endif
-    /* Unconditional Extnodes mirrors (Phase 6.1a; retyped 6.1b). */
+    /* Unconditional Extnodes mirrors (retyped for mixed-precision gravity). */
     soa_.node_vs = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
     soa_.hmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
     soa_.vmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
@@ -228,7 +228,7 @@ static int alloc_arrays_(int n)
     return 1;
 }
 
-/* Phase 7.a: seed_node_ / seed_dirty_ / dirty_[] / mark_dirty / dirty_count_
+/* seed_node_ / seed_dirty_ / dirty_[] / mark_dirty / dirty_count_
  * are all gone.  The GPU build pipeline (gpu_nextnode_backup_suns ->
  * gpu_topology_emit_bfs -> gpu_topology_finalize_father ->
  * gpu_topology_finalize_sibling -> gpu_moment_refresh ->
@@ -243,7 +243,7 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
 {
     if(min_nodes <= 0) {min_nodes = 1;}
 
-    /* Phase 9.2-pre: extend SoA capacity to cover the LET foreign-node range
+    /* Extend SoA capacity to cover the LET foreign-node range
      * [MaxNodes, MaxNodes+MaxForeignNodes).  Foreign nodes installed by
      * let_unpack_and_install are scattered into SoA at slot_base + j with
      * absolute index = MaxPart + MaxNodes + slot, so SoA index =
@@ -316,7 +316,7 @@ extern "C" int gpu_gravity_soa_drift_certified(integertime ti)
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)
 {
-    /* Phase 6.8e: alias soa->nextnode_aux to the SharedSpace Nextnode[] owned
+    /* Alias soa->nextnode_aux to the SharedSpace Nextnode[] owned
      * by force_treeallocate.  No separate buffer, no per-walk memcpy.  Called
      * once per (allocate / free) cycle from forcetree.cc. */
     soa_.nextnode_aux      = Nextnode_host;
@@ -327,7 +327,7 @@ extern "C" struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void) {return soa
 extern "C" int gpu_gravity_tree_capacity(void)                       {return soa_capacity_;}
 extern "C" int gpu_gravity_tree_valid(void)                          {return soa_valid_;}
 
-/* Phase 6.4: snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
+/* Snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
  * SoA's suns_backup buffer.  Called from force_treebuild_single right
  * before force_update_node_recursive overwrites the union with the d struct.
  * If the SoA hasn't been allocated yet (first acquire after a fresh
@@ -342,7 +342,7 @@ extern "C" void gpu_nextnode_backup_suns(int n)
      * free_arrays_(), and destroy the suns_backup we store below — corrupting
      * the nextnode kernel's input on the first treebuild. */
     int cap = (MaxNodes > 0) ? MaxNodes + 1 : n;
-    /* Phase 9.2-pre: include LET foreign-node range. */
+    /* Include LET foreign-node range. */
     if(MaxForeignNodes > 0) {cap += MaxForeignNodes;}
     if(soa_capacity_ < cap || !soa_.suns_backup) {
         free_arrays_();
@@ -353,7 +353,7 @@ extern "C" void gpu_nextnode_backup_suns(int n)
     }
     /* Seed the topnode range (centers / lengths / suns_backup)
      * directly from UVM AoS into the SoA.  Nodes_base / Extnodes_base are
-     * SharedSpace (6.8d); read/write happens inside the lambda.  emit_bfs
+     * SharedSpace; read/write happens inside the lambda.  emit_bfs
      * reads soa->center / soa->len for the topnode range to compute new
      * child centers — without this seed it would read garbage. */
     struct NODE             *Nodes_uvm   = Nodes_base;

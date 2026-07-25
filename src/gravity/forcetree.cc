@@ -13,7 +13,7 @@
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
 #include "gravtree_ewald.h"          /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
-#include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
+#include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
 #ifdef SUBFIND
@@ -151,7 +151,7 @@ static int last;
 /*! variables for short-range lookup table.  Non-static so the GPU gravity
  *  walk in gpu_gravtree.cc can read them via extern declarations.  Sized at
  *  NTAB floats = 4 KB each — fine to leave in host memory on Kokkos OMP;
- *  for true device offload they will need mirroring (Phase 4 follow-up). */
+ *  for true device offload they will need mirroring. */
 float shortrange_table[NTAB], shortrange_table_potential[NTAB];
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 /* Non-static so the GPU walk in gpu_gravtree.cc can read this via extern (mirrors
@@ -231,7 +231,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * is the conservative union (KernelRadius / AGS_KernelRadius / ForceSoftening
  * across all types).  Capping at All.MaxKernelRadius applies to kernel radii
  * only; ForceSoftening is uncapped so the band dominates the leaf-policy reach
- * even when FS > All.MaxKernelRadius (codex 2026-06-07). */
+ * even when FS > All.MaxKernelRadius. */
 double force_hmax_per_type_particle_radius(int i)
 {
     return nlr_particle_symmetric_radius_capped(P[i],
@@ -291,7 +291,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     int let_retry = 0;
     const int LET_MAX_RETRY = 3;
 let_build_attempt:
-    /* Phase 9.6: reset force_add_element insertion counter at each full build. */
+    /* reset force_add_element insertion counter at each full build. */
     ForceAddElementToTree_CallsSinceBuild = 0;
     do
     {
@@ -332,9 +332,9 @@ let_build_attempt:
      * before the GPU gravity walk reads any moments. */
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(90000065);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(90000066);}
-    /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
+    /* GPU kernel resets GravCost + ephemeral fields for all
      * nodes.  On the CPU path FUNR does this work inline; on the GPU path
-     * FUNR is retired (6.6) so the kernel takes its place.  Replaces a
+     * FUNR is retired so the kernel takes its place.  Replaces a
      * host loop over Numnodestree -- the worst sparse-active scaling. */
     if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
     if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
@@ -346,11 +346,11 @@ let_build_attempt:
      * Nodes[no].u.d.father, which is only valid post-writeback (the SoA→AoS
      * writeback overwrites the union slot from the build-time u.suns layout). */
     force_refresh_hmax_per_type_host(Numnodestree);
-    /* Phase 6.7a: set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
+    /* set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
-     * which still run on CPU in 6.7a). */
+     * which still run on CPU). */
     if(gpu_force_flag_localnodes() != 0) {endrun(90000071);}
-    /* Phase 10.3 (B): post the pseudo-data Iallgathervs first, then run the
+    /* Non-blocking overlap: post the pseudo-data Iallgathervs first, then run the
      * LET MPI round concurrently, then wait/unpack pseudo-data and resum.
      * LET pack reads only LOCAL Nodes/Extnodes (which are already valid from
      * gpu_moment_refresh above) and does not depend on foreign topleaves; so
@@ -488,7 +488,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     }
     /* if a high-resolution region in a global tree is used, we need to generate an additional set empty nodes to make sure that we have a complete top-level tree for the high-resolution inset */
 
-    /* Step 13 Phase 6.5d: GPU tree-build replaces the per-particle CPU
+    /* GPU tree-build replaces the per-particle CPU
      * insertion loop for inside-topleaf topology.  Order on GPU compile:
      *   1. force_insert_pseudo_particles (modifies foreign-topleaf u.suns).
      *   2. Acquire SoA + Peano-walk mirrors.
@@ -497,8 +497,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
      *   4. gpu_topology_emit_bfs: BFS from each topleaf root, emits
      *      inside-topleaf internal-node topology into SoA suns_backup,
      *      center, len, father.
-     *   5. Writeback inside-topleaf range AoS u.suns/center/len.  Phase 6.6
-     *      retired force_update_node_recursive; this writeback now exists so
+     *   5. Writeback inside-topleaf range AoS u.suns/center/len.  This
+     *      writeback exists (with force_update_node_recursive retired) so
      *      that any non-GPU CPU consumer of AoS u.suns sees complete topology
      *      between force_treebuild_single and the final
      *      gpu_topology_writeback_d_to_aos in force_treebuild.
@@ -508,7 +508,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     {
         force_insert_pseudo_particles();
 
-        /* Phase 6.8a: the old mark_all_dirty + acquire pair triggered seed_full_
+        /* the old mark_all_dirty + acquire pair triggered seed_full_
          * to copy AoS topnode center/len into SoA before BFS.  That seeding now
          * happens inside gpu_nextnode_backup_suns below (single GPU kernel reads
          * UVM AoS, writes SoA suns_backup + center + len for [0..numnodes)). */
@@ -548,7 +548,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
 
     /* now compute the multipole moments recursively */
     last = -1;
-    /* Phase 6.6: force_update_node_recursive retired on GPU build.  The GPU
+    /* force_update_node_recursive retired on GPU build.  The GPU
      * finalize stage in force_treebuild (gpu_topology_finalize_father,
      * gpu_topology_finalize_sibling, gpu_moment_refresh, gpu_nextnode_thread)
      * now produces all of FUNR's outputs (sibling, father, Father[], moments,
@@ -667,7 +667,7 @@ void force_insert_pseudo_particles(void)
         index = DomainNodeIndex[i];
         
         if(DomainTask[i] != ThisTask)
-            Nodes[index].u.suns[0] = All.MaxPart + MaxNodes + MaxForeignNodes + i;    /* Phase 9: pseudo-particles live above the foreign-node range */
+            Nodes[index].u.suns[0] = All.MaxPart + MaxNodes + MaxForeignNodes + i;    /* pseudo-particles live above the foreign-node range */
     }
 }
 
@@ -676,7 +676,7 @@ void force_insert_pseudo_particles(void)
 
 
 
-/*! Pseudo-particle exchange wire format.  Lifted to file scope (Phase 10.3) so
+/*! Pseudo-particle exchange wire format.  Lifted to file scope so
  *  the issue/complete halves of force_exchange_pseudodata can share the type
  *  across the LET overlap window. */
 struct DomainNODE
@@ -688,7 +688,7 @@ struct DomainNODE
         MyFloat gasmass;
 #endif
         MyFloat hmax;
-        MyFloat hmax_per_type[6];   /* B3a substrate: cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
+        MyFloat hmax_per_type[6];   /* cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
         MyFloat vmax;
         MyFloat divVmax;
         long N_part;
@@ -738,8 +738,8 @@ struct DomainNODE
 #endif
     };
 
-/*! Phase 10.3: state shared between force_exchange_pseudodata_issue() and
- *  ..._complete() for the (B) non-blocking-overlap pattern.  let_run_exchange
+/*! State shared between force_exchange_pseudodata_issue() and
+ *  ..._complete() for the non-blocking-overlap pattern.  let_run_exchange
  *  runs concurrently with the pseudodata Iallgathervs in the GPU build path. */
 static struct DomainNODE *DomainMoment_pending = NULL;
 static MPI_Request *pseudo_requests_pending = NULL;
@@ -824,7 +824,7 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Phase 10.3: post one MPI_Iallgatherv per MULTIPLEDOMAINS slice; the requests
+    /* Post one MPI_Iallgatherv per MULTIPLEDOMAINS slice; the requests
      * are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
@@ -1221,7 +1221,7 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.bitflags &= (~((1 << BITFLAG_MULTIPLEPARTICLES)));    /* this clears the bits */
     Nodes[no].u.d.bitflags |= multiple_flag;
     Nodes[no].maxsoft = maxsoft;
-    /* Phase 7.a: no GPU SoA hook here — force_treeupdate_pseudos is the CPU
+    /* No GPU SoA hook here — force_treeupdate_pseudos is the CPU
      * pseudo-path; on GPU builds it is replaced by gpu_topnode_moment_resum
      * (gpu_pseudo_update.cc) which writes the SoA directly.  This function
      * compiles on both, but the GPU build never calls it. */
@@ -1296,8 +1296,8 @@ void force_flag_localnodes(void)
  *  insertion site; the 9.6 ForceAddElementToTree_CallsSinceBuild guardrail
  *  bounds drift to ancestor nodes between full rebuilds).
  *
- *  Phase 10.2 (Crossing 4 retirement, scope-α): Father/Nextnode/Extnodes are
- *  UVM (SharedSpace) since Phase 6.6/6.8d/6.8e, so the CPU mutations below
+ *  Father/Nextnode/Extnodes are
+ *  UVM (SharedSpace), so the CPU mutations below
  *  are GPU-visible without a copy.  We additionally mirror the parent node's
  *  hmax/vmax/len into the SoA walk view, because the next gpu_force_drift_nodes
  *  early-outs when the parent's Ti_current already matches All.Ti_Current
@@ -1328,7 +1328,7 @@ void force_add_element_to_tree(int iparent, int ichild)
     double new_vmax = moment_vmax_running_max(Extnodes[father].vmax, P[ichild].Vel[0], P[ichild].Vel[1], P[ichild].Vel[2]);
     Extnodes[father].vmax = (MyFloat) new_vmax;
 
-    /* Phase 10.2 (α): keep SoA walk-mirror coherent with the AoS Extnodes
+    /* Keep SoA walk-mirror coherent with the AoS Extnodes
      * change above.  hmax and vmax are read by the walk's opening criteria
      * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
      * Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
@@ -1343,7 +1343,7 @@ void force_add_element_to_tree(int iparent, int ichild)
         }
     }
 
-    /* Phase 9.6 diagnostic: each insertion stales the LET / pseudo-particle
+    /* Each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at
      * the insertion site, but ancestor topnodes (and any rank's foreign view
      * of them) carry the pre-insertion moments until the next rebuild. */
@@ -1374,7 +1374,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 {
     struct NODE *nop = 0;
     int no, ptype, ninteractions=0, nexp, task, maxPart = All.MaxPart;
-    long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* Phase 9: maxForeignNodes shifts pseudo-particle range above the foreign-node range */
+    long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* maxForeignNodes shifts pseudo-particle range above the foreign-node range */
     double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
     double pmass;
@@ -1646,7 +1646,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
             }
             else /* we have an  internal node */
             {
-                if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo particle (Phase 9: foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
+                if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
                 {
                     /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
                      * retired). Reaching a non-empty pseudo means this target's gravity is not
@@ -1699,7 +1699,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * Force multipole treatment instead so the node's contribution is accumulated. */
                 int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
 
-                /* C1: foreign-leaf identity lookup (host sidecar; foreign_slot = no-(maxPart+maxNodes),
+                /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(maxPart+maxNodes),
                  * EXPLICIT and bounds-checked -- not the node index no-maxPart). */
                 int    fl_tag = 0, fl_type = -1;
                 double fl_zeta = 0.0, fl_soft = 0.0;
@@ -1776,7 +1776,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     /* Foreign LET policy (mirrors the GPU walk exactly).  A foreign tagged leaf
                      * (fl_tag==1) is a TERMINAL leaf source: its nextnode is the DFS CONTINUATION after
                      * the leaf, NOT a child to descend.  A predicate OPEN on it must mean "accept this
-                     * already-leaf source with leaf semantics" (C1 restores the leaf identity below),
+                     * already-leaf source with leaf semantics" (the leaf identity is restored below),
                      * never "descend".  foreign_force_multipole (the nextnode<0 sentinel) is the other
                      * terminal that must be accepted.  Both fall through to the accept path; only a
                      * genuine descendable node takes nextnode.  (Pre-fix the descend guard keyed on
@@ -1788,10 +1788,10 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     int must_accept_foreign_terminal = foreign_force_multipole || foreign_real_leaf;
                     if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
                     if(pred == GRAV_OPEN_NODE && !must_accept_foreign_terminal) {no = nop->u.d.nextnode; continue;}
-                    /* C1 permanent invariant guard (predicate-keyed; mirrors the GPU walk): a
+                    /* Permanent invariant guard (predicate-keyed; mirrors the GPU walk): a
                      * predicate-OPEN foreign terminal forced to multipole that is NOT a tagged real
                      * leaf is an unopenable aggregate that would silently downgrade leaf-sensitive
-                     * physics. Hard-surface (controlled stop) until C2/owner-continuation exists. */
+                     * physics. Hard-surface (controlled stop) until an owner-continuation fix exists. */
                     if(pred == GRAV_OPEN_NODE && foreign_force_multipole && fl_tag != 1) {
                         printf("[GRAV-INVARIANT VIOLATION rank=%d] CPU walk: predicate-OPEN foreign-terminal "
                                "node %d accepted as multipole but not a tagged real leaf (unopenable "
@@ -1804,7 +1804,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
-                /* C1: a tagged real foreign single-particle leaf is consumed with particle-leaf
+                /* A tagged real foreign single-particle leaf is consumed with particle-leaf
                  * secondary semantics -- restore the Type + AGS_zeta the node moment cannot carry,
                  * via the shared seam (identical to the GPU walk). */
                 if(fl_tag == 1) { grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p); }
@@ -2176,7 +2176,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
             }
             else            /* we have an  internal node */
             {
-                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
+                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (foreign-node range below pseudos) */
                 {
                     /* LET-incompleteness DETECTOR (the MPI export round-trip is retired): reaching a
                      * non-empty pseudo means this target's Ewald correction is not covered by the local
@@ -2485,7 +2485,7 @@ void force_treeallocate(int maxnodes, int maxpart)
     allbytes_topleaves += bytes;
     for(i = 0; i < NTopnodes; i++) TopNodeNodeIndex[i] = -1;  /* sentinel: post-build validation requires all populated */
     MaxNodes = maxnodes;
-    /* Phase 9 LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
+    /* LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
      * Index map (single source of truth):
      *   [0,                                     MaxPart)                                  -> particles
      *   [MaxPart,                               MaxPart+MaxNodes)                         -> local tree nodes
@@ -2520,19 +2520,18 @@ void force_treeallocate(int maxnodes, int maxpart)
     }
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
     Numforeignnodes = 0;
-    /* Phase 10.5: FOF/SUBFIND/twopoint pseudo-particle threshold ported from
-     * `MaxPart+MaxNodes` to `MaxPart+MaxNodes+MaxForeignNodes` (matches the
+    /* FOF/SUBFIND/twopoint pseudo-particle threshold uses
+     * `MaxPart+MaxNodes+MaxForeignNodes` (matches the
      * forcetree.cc/let_pack.cc convention).  FOF/SUBFIND build their own local
      * trees and never call `let_run_exchange()`, so during their walks
      * Numforeignnodes==0 and the foreign range is empty; the threshold update
      * is correct in both regimes (LET-active gravity walks and LET-inactive
-     * halo-finding walks).  The Phase 9 LET-FOF/SUBFIND startup gate is
-     * therefore retired. */
+     * halo-finding walks). */
     long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
-    /* Phase 6.8d: Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
-     * kernels can read/write them directly.  Same pattern as Father[] (6.6) and
-     * Nextnode[] (6.8e below).  Skip mymalloc accounting; kokkos_malloc has its
-     * own.  Phase 9: extended by MaxForeignNodes for foreign-tree storage. */
+    /* Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
+     * kernels can read/write them directly.  Same pattern as Father[] and
+     * Nextnode[] below.  Skip mymalloc accounting; kokkos_malloc has its
+     * own.  Extended by MaxForeignNodes for foreign-tree storage. */
     bytes = (size_t) total_node_slots * sizeof(struct NODE);
     Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes);
     if(!Nodes_base)
@@ -2560,9 +2559,9 @@ void force_treeallocate(int maxnodes, int maxpart)
     }
     Nodes = Nodes_base - All.MaxPart;
     Extnodes = Extnodes_base - All.MaxPart;
-    /* Phase 6.8e: Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
+    /* Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
      * this pointer (no separate buffer, no per-walk memcpy).
-     * Phase 9: indexed via Nextnode[no - MaxNodes - MaxForeignNodes] for pseudo-particles
+     * Indexed via Nextnode[no - MaxNodes - MaxForeignNodes] for pseudo-particles
      * after the foreign range; foreign nodes carry their next-sibling pointers in NODE.u.d
      * directly so they don't consume Nextnode[] slots, but we extend the buffer so the
      * pseudo-particle range stays in bounds after the index shift. */
@@ -2579,7 +2578,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         return;
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
-    /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
+    /* Father[] is UVM (SharedSpace) so the GPU father kernel can
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
      * mymalloc accounting; the matching gpu_father_free lives in force_treefree. */
@@ -2594,7 +2593,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(90000085);
         return;
     }
-    /* C1: foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
+    /* Foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
      * allocator (gpu_tree_alloc_bytes), the SAME discipline as Nodes_base/Extnodes_base/Nextnode --
      * freed in force_treefree, re-allocated on every force_treebuild retry.  Sized MaxForeignNodes,
      * indexed by foreign_slot = no - (MaxPart+MaxNodes).  Zero-initialized so every slot defaults to
@@ -2628,8 +2627,8 @@ void force_treeallocate(int maxnodes, int maxpart)
             ("Allocated %g MByte for tree, and %g Mbyte for top-leaves.  (presently allocated %g MB)\n",
              allbytes / (1024.0 * 1024.0), allbytes_topleaves / (1024.0 * 1024.0),
              AllocatedBytes / (1024.0 * 1024.0));
-            /* Step 13 Phase 2: gravity-node sizing audit. Lists active payload #ifdefs
-             * that inflate NODE/extNODE; informs the compact-node variants in Phase 6. */
+            /* Gravity-node sizing audit. Lists active payload #ifdefs
+             * that inflate NODE/extNODE; informs the compact-node variants. */
             printf("Gravity tree node sizes: sizeof(NODE)=%zu B, sizeof(extNODE)=%zu B; "
                    "MyGravFloat=%zu B (mixed-precision gravity %s). Active payload flags:",
                    sizeof(struct NODE), sizeof(struct extNODE), sizeof(MyGravFloat),
@@ -2688,7 +2687,7 @@ void force_treefree(void)
 {
     if(tree_allocated_flag)
     {
-        /* Phase 6.8d/e: SharedSpace (UVM) frees for GPU-addressable tree
+        /* SharedSpace (UVM) frees for GPU-addressable tree
          * storage.  Order is reverse-of-alloc (LIFO discipline preserved for
          * the residual mymalloc'd DomainNodeIndex). */
         if(Father)        {gpu_father_free(Father); Father = NULL;}
@@ -2696,7 +2695,7 @@ void force_treefree(void)
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
-        /* C1: free the foreign-leaf sidecar (SharedSpace, same allocator as the foreign-node arena). */
+        /* Free the foreign-leaf sidecar (SharedSpace, same allocator as the foreign-node arena). */
         if(ForeignLeafTag)  {gpu_tree_free_bytes(ForeignLeafTag);  ForeignLeafTag  = NULL;}
         if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
         if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
@@ -2955,7 +2954,7 @@ void force_refresh_node_moments(void)
     int i, k, no;
     PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 
-    /* Phase 6.2: GPU moment-refresh kernel computes local-tree node
+    /* GPU moment-refresh kernel computes local-tree node
      * moments + writes back to AoS. After this returns, Nodes[] /
      * Extnodes[] are in the same state CPU steps 1-4 below would
      * produce, so the CPU pseudo-particle path can run unchanged. */

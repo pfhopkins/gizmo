@@ -564,13 +564,13 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
  * ISMDustChemEvo_explicit_shat_coag_poly, ISMDustChemEvo_fast_shat_coag_poly,
  * ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change,
  * get_ISMDustChemEvo_bin_mass) migrated to solids/ism_dust_chemistry_functions.h as
- * KOKKOS_INLINE_FUNCTION (Chunk 1 of Phase 2 post-cooling-kernel port, 2026-05-26).
+ * KOKKOS_INLINE_FUNCTION.
  *
  * Lambda_Dust_HighTemperature_Gas_ISM and ISMDustChem_Return_Mass_Where_Dust_Shocked
- * also live there (Phase D 2026-05-21, #20011-D fix).
+ * also live there.
  *
  * Plain host-only declarations are intentionally NOT carried in proto.h for the
- * migrated set: a first-declaration trap can bind device-lambda calls in Chunk 2
+ * migrated set: a first-declaration trap can bind device-lambda calls
  * (cooling/cooling.cc post_cooling_tail kernel) to the host-only proto.h decl
  * before the inline body from the header is seen. TUs that need these symbols
  * must `#include "../solids/ism_dust_chemistry_functions.h"`. */
@@ -793,8 +793,7 @@ void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
 void run(void);
-/* Controlled-stop / bad-stop machinery (Wave-CBE 2026-05-28; generalized
- * 2026-06-02 for the Vista no-MPI_Abort policy — see OPEN_endrun_audit_memo).
+/* Controlled-stop / bad-stop machinery for the Vista no-MPI_Abort policy.
  *
  * Vista policy: a bad stop is the DEFAULT termination. The flagging rank
  * records the stop (no MPI / no alloc / no Kokkos here, so it is safe inside
@@ -813,8 +812,8 @@ void run(void);
  * gizmo_fatal_hard_exit_reviewed() (core/gizmo_fatal.cc) is the SSOT last-resort
  * termination home. Its DEFAULT path is a no-cleanup fail-fast _exit -- NO
  * MPI_Abort, NO fence, NO finalize, NO hold (the former infinite scancel-wait
- * hold + device fence was itself a GH200 node-lock amplifier and is retired;
- * see OPEN_vista_fatal_policy_design). It is a last resort, NOT the target --
+ * hold + device fence was itself a GH200 node-lock amplifier and is retired).
+ * It is a last resort, NOT the target --
  * prefer converting the caller to graceful controlled-stop + poll.
  * Use ONLY for the rare audited cases where no collective poll
  * is reachable: mid-protocol MPI transport corruption, and residual incidental
@@ -1104,7 +1103,7 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
 
 /* Kokkos/GPU lifecycle and sync functions (defined in cooling/cooling.cc).
    Declared unconditionally — the call sites in main.cc/begrun.cc/run.cc are
-   retired (Step 5 C4); these sync functions are always compiled
+   retired; these sync functions are always compiled
    offload is active.  Declarations are harmless without definitions. */
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);

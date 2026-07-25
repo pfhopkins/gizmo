@@ -91,12 +91,12 @@ static inline void gizmo_all_device_mirror_register_this_tu(void) {
     }
 }
 
-/* Layer 1: broad safety net. Fires before main() in every GPU TU that
+/* Broad safety net. Fires before main() in every GPU TU that
  * includes this header. Per-TU anonymous-namespace + static keeps the
  * function file-local. __attribute__((constructor)) is harder to elide
  * than an anonymous-namespace static object's constructor (which was
- * silently dropped in ~28 of ~30 TUs during 2026-05-17 dev — see
- * OPEN_allmir_m11i_treeforce_hang.md). */
+ * observed silently dropped in ~28 of ~30 TUs on Vista's nvcc/Kokkos
+ * toolchain). */
 namespace {
     __attribute__((constructor))
     static void _gizmo_all_device_mirror_autoreg(void) {

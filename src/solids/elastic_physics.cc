@@ -28,7 +28,7 @@ void tillotson_eos_init(void)
 
     // initialize pre-computed material properties //
     // columns 0-11: a, b, u_0, rho_0, A, B, u_s, u_s_prime, alpha, beta, mu (shear modulus), Y_0 (HEL) [CGS]
-    // columns 12-15 (Phase 17e damage/porosity, used only under EOS_DAMAGE_POROSITY):
+    // columns 12-15 (damage/porosity, used only under EOS_DAMAGE_POROSITY):
     //   12 = k_Weibull [1/cm^3], 13 = m_Weibull [-], 14 = mu_DP (Drucker-Prager friction) [-], 15 = alpha_0 (initial distention) [-]
     // columns 16-17 (Jutzi 2008 P-alpha crush thresholds, EOS_DAMAGE_POROSITY bit 2):
     //   16 = P_e [dyn/cm^2] (elastic limit), 17 = P_s [dyn/cm^2] (solid/full-compaction pressure)
@@ -48,7 +48,7 @@ void tillotson_eos_init(void)
             if((k_t==2)||(k_t==6)||(k_t==7)) {All.Tillotson_EOS_params[j_t][k_t] /= UNIT_SPECEGY_IN_CGS;}
             if(k_t==3) {All.Tillotson_EOS_params[j_t][k_t] /= UNIT_DENSITY_IN_CGS;}
             if((k_t==4)||(k_t==5)||(k_t==10)||(k_t==11)||(k_t==16)||(k_t==17)) {All.Tillotson_EOS_params[j_t][k_t] /= UNIT_PRESSURE_IN_CGS;}
-            // slots 12-15 (damage/porosity dimensionless except k_Weibull) intentionally not converted here; k_Weibull conversion is applied where consumed in Phase 17e C5
+            // slots 12-15 (damage/porosity dimensionless except k_Weibull) intentionally not converted here; k_Weibull conversion is applied where consumed
         }
     }
     return;
@@ -93,7 +93,7 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
             if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
         }
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
-        /* Phase 17e bit 0: Grady-Kipp damage update at kick (mode==0) only */
+        /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
         if(mode == 0)
         {
             double D_new, A_new;

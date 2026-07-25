@@ -11,11 +11,10 @@
  * (sink_feed_pair_kernel) are absorbed below — the pair body's per-call
  * scalars now travel through SinkFeedCallScalars instead of direct All.*
  * reads (TRAP 1 compliance), and per-active host-staged inputs travel
- * through the SinkFeedDeviceContext extension wired in Phase 4.A.0
- * (mesh/neighbor_loop_runner.h §DeviceContext extension trait).
+ * through the SinkFeedDeviceContext extension (see mesh/neighbor_loop_runner.h's
+ * DeviceContext extension trait).
  *
- * Phase 4 port 3d.1.  Written by Phil Hopkins (phopkins@caltech.edu) and
- * Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef SINK_FEED_LOOP_H
 #define SINK_FEED_LOOP_H
@@ -156,7 +155,7 @@ struct SinkFeedActiveState {
     int                  origin_rank;
 };
 
-/* Phase 4.A.0 DeviceContext extension. Carries a UVM-resident pointer
+/* DeviceContext extension. Carries a UVM-resident pointer
  * to the per-active host-fill array so device-side load_active can read
  * it. Allocated + populated by populate_device_context (on host, before
  * the runner's stage_active kernel); freed by cleanup_device_context
@@ -529,7 +528,7 @@ struct SinkFeedSpec {
      * fires a handful of times per step) and keeps cache correctness aligned
      * with physics.  If perf data later motivates caching, add
      * gizmo_mark_force_softening_dirty_* plumbing at the softening-recompute
-     * site — do NOT broaden the policy to fit a cache (codex 2026-06-07). */
+     * site — do NOT broaden the policy to fit a cache. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
     static constexpr double accum_tolerance = 1e-10;
@@ -539,7 +538,7 @@ struct SinkFeedSpec {
     using CallScalars   = SinkFeedCallScalars;
     using ActiveData    = SinkFeedActiveState;
     using AccumData     = SinkFeedOut;
-    using DeviceContext = SinkFeedDeviceContext;     /* Phase 4.A.0 extension */
+    using DeviceContext = SinkFeedDeviceContext;
 
     /* NeighborData carries NON-CONST pointers — sink_feed's pair_kernel
      * does atomic_exchange + atomic_add into neighbor_particle.SwallowID
@@ -583,7 +582,7 @@ struct SinkFeedSpec {
                                       int active_slot, int i);
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
 
-    /* Phase 4.A.0 device-context lifecycle. populate allocates the
+    /* Device-context lifecycle. populate allocates the
      * ctx.per_active_local UVM array and copies in from args.aux->host_locals.
      * cleanup frees the UVM. Both run on host (pre/post device dispatch). */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
@@ -644,7 +643,7 @@ struct SinkFeedSpec {
         return neighbor;
     }
 
-    /* Oracle brute-pass hook (Phase 4.A.0 contract): runner copies ctx and
+    /* Oracle brute-pass hook: runner copies ctx and
      * calls this before the brute evaluate pass to suppress j-side writes.
      * Without it, oracle would atomic_exchange / atomic_add into P[j] /
      * CellP[j] twice (tree + brute) and corrupt additive fields. */

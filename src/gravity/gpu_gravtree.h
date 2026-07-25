@@ -1,10 +1,10 @@
-/* gpu_gravtree.h — Step 13 Phase 4 Tier 1a
+/* gpu_gravtree.h
  *
  * Core gravity tree walk on GPU (no optional payloads).
  *
  * Runs BEFORE the OpenMP-parallelized CPU primary loop (gravity_primary_loop)
  * as an opportunistic accelerator. For each active particle:
- *   - GPU thread walks the local tree using the Phase-3 SoA mirror.
+ *   - GPU thread walks the local tree using the SoA mirror.
  *   - If it encounters a pseudo-particle (remote node owned by another rank),
  *     it sets failed[i]=1 and exits. The host then leaves ProcessedFlag[i]
  *     unset so the CPU primary loop handles it (with the existing MPI export
@@ -14,7 +14,7 @@
  *
  * GPU gravity tree (always active on Kokkos builds). PMGRID, ADAPTIVE_GRAVSOFT_*,
  * EVALPOTENTIAL, RT/SINK/SINGLE_STAR/CR/TIDAL/JERK payloads, periodic Ewald,
- * HERMITE/ATFU, and FIRE_BHS MencInRcrit are all supported via the Phase 9-10
+ * HERMITE/ATFU, and FIRE_BHS MencInRcrit are all supported via the
  * LET work.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.

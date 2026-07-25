@@ -14,7 +14,7 @@
  * GIZMO_NLR_ORACLE (mesh/neighbor_loop_runner.cc). The runner calls
  * both walks for each query and diffs results.
  *
- * Design constraints (codex 2026-05-07):
+ * Design constraints:
  *   - Walk uses Nodes[]/Nextnode[] for pruning. Node bounds come from
  *     force_drift_node(); they are conservative for current Ti_Current.
  *   - Returned candidates are LOCAL real P[] indices in [0, num_local)
@@ -58,10 +58,10 @@ double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);
  * radius_policy controls how SYMMETRIC search uses h_j for non-gas types.
  * Most callers want MODE_B_RADIUS_DEFAULT (gas KR only).
  *
- * Stage 4 contract change: previous int*+capacity signature replaced by
+ * Contract: previous int*+capacity signature replaced by
  * std::vector<int>& to remove the per-query num_local-sized allocation
  * the runner used to make ahead of each call (~24 MB × N_active on
- * fire_m11i — the dominant tiny-N cost post-Stage 2). Geometric growth
+ * fire_m11i — a dominant tiny-N cost). Geometric growth
  * via push_back handles correctness for any-size match set without
  * imposing full-pool memory traffic on tiny-N. */
 /* Lazy per-node drift accounting for a threaded walk. A walk drifts a stale
@@ -89,7 +89,7 @@ struct ModeBDriftCounters {
 /* j_radius_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
  * (1.0 = legacy). TURB_DIFF_DYNAMIC wide-filter loops pass
  * All.TurbDynamicDiffFac so the Mode B reach matches the Mode A scaled-
- * symmetric NGL. See OPEN_3d_difffilter_design.md §3.
+ * symmetric NGL.
  *
  * drift_ctr (optional, default nullptr): per-thread lazy-drift accounting for a
  * threaded caller; nullptr for a serial walk. */
@@ -196,7 +196,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   double j_radius_scale = 1.0,
                                   ModeBDriftCounters* drift_ctr = nullptr);
 
-/* Targeted-export eligibility gate RETIRED (B3a Commit 2a). Every Mode-B loop now
+/* Targeted-export eligibility gate RETIRED. Every Mode-B loop now
  * routes via targeted export: the sender's SYMMETRIC node prune uses the cross-rank
  * PER-TYPE band (mode_b_node_symmetric_radius), which dominates every radius_policy
  * (allvars.h invariant; seed capped at MaxKernelRadius, kernel/AGS radii <=
@@ -205,7 +205,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
  * gas-kernel-only restriction (gas-biased scalar hmax under-covered non-gas / AGS /
  * ForceSoftening loops: sink_env1/2/feed/swk, ags_force, grain) is gone. The
  * broadcast source path in neighbor_loop_runner.cc is now compile-time-dead cleanup
- * debt (targeted_export_ok hard-coded true); its physical deletion is Commit 2b. */
+ * debt (targeted_export_ok hard-coded true), pending physical deletion. */
 
 /* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
  *

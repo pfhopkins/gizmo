@@ -53,10 +53,9 @@ void cellcorrections_final_operations_and_cleanup(void)
         }}
 }
 
-/* cellcorrections_calc() moved to hydro/cellcorrections_loop.cc — runner-Spec
- * port. The final per-active closure (Density = Mass/Volume_1 +
- * set_eos_pressure) remains here as cellcorrections_final_operations_and_cleanup
- * above; the new toplevel calls it after the runner dispatch. See
- * OPEN_3d_hydro_corridor_design.md commit 5a. */
+/* cellcorrections_calc() moved to hydro/cellcorrections_loop.cc. The final
+ * per-active closure (Density = Mass/Volume_1 + set_eos_pressure) remains
+ * here as cellcorrections_final_operations_and_cleanup above; the toplevel
+ * calls it after the runner dispatch. */
 
 #endif // parent if statement for all code in the HYDRO_VOLUME_CORRECTIONS block

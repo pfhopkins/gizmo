@@ -8,10 +8,10 @@
  * after_iter (bisection convergence check), merge_accum, compare_accum,
  * set_oracle_brute_pass, and dm_dispersion_finalize_post_runner.
  *
- * Phase 4 Wave-4 / 3d.D. Replaces disp_density_evaluate_gpu();
+ * Replaces disp_density_evaluate_gpu();
  * dm_dispersion_gpu.cc retired by DMDispersionSpec.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>

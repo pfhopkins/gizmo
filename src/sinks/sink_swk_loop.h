@@ -11,8 +11,7 @@
  *   (const SinkSwkActiveState&, particle_data&, gas_cell_data*,
  *    SinkSwallowOut&, bool oracle_dry_run).
  *
- * Phase 4 port 3d.3.  Written by Phil Hopkins (phopkins@caltech.edu) and
- * Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef SINK_SWK_LOOP_H
 #define SINK_SWK_LOOP_H
@@ -47,7 +46,7 @@ int sink_isactive(int i);
  * Per-source (active sink) input + output structs. Single source of truth
  * for the sink_swk physics types; previously lived in
  * sink_swallow_and_kick_functions.h alongside a duplicate pair-kernel body
- * (now retired in this commit per codex SSOT review 2026-05-10).
+ * (now retired).
  *
  * SinkSwallowLocalIn carries per-active host-staged inputs; SinkSwallowOut
  * is the per-active accumulator (also SinkSwkSpec::AccumData). The runner's
@@ -150,9 +149,9 @@ struct SinkSwallowOut {
  * confirmed via grep: no gizmo_gpu_rand* in sink_swallow_and_kick_functions.h
  * or this loop's pair body).
  *
- * The 6 sink-specific scalars below correspond to the audit table in
- * OPEN_3d_sinkswk_design.md §B.4 (10 distinct All.* reads; 3 covered
- * by NlrCommonScalars; 1 reused from sink_feed; 6 NEW here). */
+ * The 6 sink-specific scalars below correspond to the audit table of
+ * All.* reads (10 distinct reads; 3 covered by NlrCommonScalars; 1
+ * reused from sink_feed; 6 NEW here). */
 struct SinkSwkCallScalars {
     NlrCommonScalars common;                       /* cf_atime, cf_a2inv, cf_hubble_a, comoving_integration_on, ... */
     double sink_radius_grav;                       /* SinkParticle_GravityKernelRadius */
@@ -197,7 +196,7 @@ struct SinkSwkActiveState {
     double                 sink_mass_withdisk;
 };
 
-/* Phase 4.A.0 DeviceContext extension. Carries:
+/* DeviceContext extension. Carries:
  *   per_active_local — UVM array of SinkSwallowLocalIn[num_active], host-staged
  *                      by populate_device_context, read on device by load_active.
  *   oracle_dry_run   — set by SinkSwkSpec::set_oracle_brute_pass on the brute
@@ -487,18 +486,18 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                  * callback in sink_swk_loop.cc reverse-communicates these
                  * deltas to the home rank (the CR-fields fix vs legacy).
                  *
-                 * Drive-by bug-fix vs legacy sink_swallow_pair_kernel
-                 * (sinks/sink_swallow_and_kick_functions.h, retired in
-                 * 3d.3): the legacy CR helper call passed
+                 * Bug fix vs legacy sink_swallow_pair_kernel
+                 * (sinks/sink_swallow_and_kick_functions.h, now retired):
+                 * the legacy CR helper call passed
                  *   evaluate_cr_transport_reductionfactor(j, kc, 0, &CellP[j])
                  * which inside the helper indexed cell[target] = cell[j]
                  * = (&CellP[j])[j] = CellP[2j] -- out-of-bounds for
                  * j > num_total/2, wrong-cell read otherwise. Canonical
                  * call shape (matches galaxy_sf/mechanical_fb_functions.h)
                  * is (target=0, cell=&CellP[j]), which we use here.
-                 * Phil-approved 2026-05-10: physics correctness wins; both
-                 * runner Modes A and B now use this corrected indexing
-                 * (no Mode A/Mode B asymmetry introduced).
+                 * Physics correctness wins; both runner Modes A and B now
+                 * use this corrected indexing (no Mode A/Mode B asymmetry
+                 * introduced).
                  *
                  * CR_energy_spectrum_injection_fraction is unaffected:
                  * the helper passes the cell arg only to
@@ -660,7 +659,7 @@ struct SinkSwkSpec {
     using CallScalars   = SinkSwkCallScalars;
     using ActiveData    = SinkSwkActiveState;
     using AccumData     = SinkSwallowOut;
-    using DeviceContext = SinkSwkDeviceContext;     /* Phase 4.A.0 extension */
+    using DeviceContext = SinkSwkDeviceContext;     /* device-context extension */
 
     /* NeighborData carries non-const pointers — sink_swk pair body does
      * many j-side atomic writes. */
@@ -689,7 +688,7 @@ struct SinkSwkSpec {
                                       int active_slot, int i);
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
 
-    /* Phase 4.A.0 device-context lifecycle. */
+    /* Device-context lifecycle. */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 

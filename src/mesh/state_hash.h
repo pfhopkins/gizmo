@@ -1,11 +1,10 @@
 /* State-hash diagnostic harness — for detecting where two multi-rank
  * runs first diverge in physical/particle state.
  *
- * Motivation (codex 2026-05-07): the call-19 NGL divergence has been proven
- * to NOT be a walker bug (same-state oracle: bad_rows=0). The bug is upstream
- * multi-rank state divergence. The most useful next diagnostic is a per-step
- * state hash so that comparing two B-vs-B logs identifies the first step
- * where the hashes diverge — i.e. ground zero.
+ * Motivation: a per-step state hash lets comparing two B-vs-B logs identify
+ * the first step where the hashes diverge — i.e. ground zero — which is
+ * useful when a walker bug has been ruled out (same-state oracle: bad_rows=0)
+ * and the divergence must instead be upstream multi-rank state divergence.
  *
  * Env-gated on GIZMO_STATE_HASH=1. Off by default. When off, all functions
  * compile to a static-bool check + return — no work.

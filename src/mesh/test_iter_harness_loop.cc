@@ -1,10 +1,9 @@
-/* mesh/test_iter_harness_loop.cc — synthetic iterative harness driver
- * (Phase 4.B.0 step 3 Stage A).
+/* mesh/test_iter_harness_loop.cc — synthetic iterative harness driver.
  *
  * Compiled only under GIZMO_NLR_ITER_HARNESS_TEST. Invoked from begrun.cc
  * at startup if GIZMO_NLR_ITER_HARNESS_RUN=1.
  *
- * Stage A coverage:
+ * Coverage:
  *   VP 1 (slot 2 converged iter 0)
  *   VP 2 (slot 0 converged iter 1)
  *   VP 4 (IterScratch persistence across iters)
@@ -14,7 +13,7 @@
  *                  production and oracle ctx — verified by env opt-in)
  *   Mode A diagnostic counters (csr_rebuild_count etc.) exposed.
  *
- * Stage B (next): VP 3, 6, 8, 9, 10, 12; multi-subgroup; oracle parity;
+ * Not yet covered: VP 3, 6, 8, 9, 10, 12; multi-subgroup; oracle parity;
  * negative tests (max-iter abort, audit mangling, Mode A + oracle stub).
  */
 
@@ -40,8 +39,8 @@
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh */
 
 /* ============================================================================
- * IterHarnessGhostSpec ghost-writeback bundle (Stage B step 3, codex
- * 2026-05-10 non-negotiable #3: existing PARTICLE_MAX op only).
+ * IterHarnessGhostSpec ghost-writeback bundle — uses only the existing
+ * PARTICLE_MAX op.
  *
  * Single-op manifest: PARTICLE_MAX over P[j].NlrIterHarnessJFlag (the
  * compile-gated synthetic harness field added in declarations/particle_data.h
@@ -96,10 +95,9 @@ bool gizmo_nlr_iter_harness_ghost_enabled(void)          { return env_truthy("GI
  * Output format: "HARNESS_VP_NN <PASS|FAIL|SKIP>: <message>"
  * grep-able from stdout under any of the matrix runs.
  *
- * Codex 2c.4 step-3 review (2026-05-10): PENDING/unvalidated VPs use SKIP,
- * NOT PASS. SKIP increments its own counter and does NOT contribute to
- * the harness's PASS tally. PASS lines mean a runner contract was
- * actually exercised + asserted.
+ * PENDING/unvalidated VPs use SKIP, NOT PASS. SKIP increments its own
+ * counter and does NOT contribute to the harness's PASS tally. PASS
+ * lines mean a runner contract was actually exercised + asserted.
  * ========================================================================== */
 enum class VpStatus { Pass = 0, Fail = 1, Skip = 2 };
 static int s_pass_count = 0;
@@ -145,9 +143,9 @@ static void run_one_harness_iterative_call(int rank,
     const int n_actives_this_rank =
         (gizmo_nlr_iter_harness_empty_rank_enabled() && rank == 1) ? 0 : 4;
 
-    /* Codex step-3 review (2026-05-10): hard-abort if this rank expects to
-     * have actives but doesn't have enough particles for the test pattern.
-     * Silent invalid indices in a test harness mask bugs. */
+    /* Hard-abort if this rank expects to have actives but doesn't have
+     * enough particles for the test pattern. Silent invalid indices in a
+     * test harness mask bugs. */
     if (n_actives_this_rank > 0 && NumPart < 4) {
         std::fprintf(stderr,
             "[iter_harness] FATAL rank=%d NumPart=%d < 4 required for the "
@@ -213,7 +211,7 @@ static void run_one_harness_iterative_call(int rank,
 }
 
 /* ============================================================================
- * IterHarnessGhostSpec subtest (Stage B step 3 — codex 2026-05-10 review fix).
+ * IterHarnessGhostSpec subtest (Stage B step 3).
  *
  * Routes by mode + oracle + empty-rank env into one of three test modes,
  * each proving a different facet of the ghost-writeback contract:
@@ -275,8 +273,7 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
     }
 
     /* ====================================================================
-     * Cross-rank-target geometry — bounded probe (codex 2026-05-10 step-3
-     * final design).
+     * Cross-rank-target geometry — bounded probe.
      *
      * Naive "broadcast rank1.P[0].Pos and let rank-0 import there" fails
      * in non-uniform ICs (m11i): rank-1.P[0]'s spatial position may not
@@ -581,11 +578,11 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
 }
 
 /* ============================================================================
- * Multi-subgroup positive subtest (Stage B step 4 narrow, codex c).
+ * Multi-subgroup positive subtest.
  *
  * Two subgroups; one is asymmetrically empty across ranks (sg=1 has 2
- * actives on rank 0, 0 on rank 1). This exercises the 2c.3 multi-
- * subgroup machinery:
+ * actives on rank 0, 0 on rank 1). This exercises the multi-subgroup
+ * machinery:
  *   - per-iter Allreduce on local_active_per_sg (sum across ranks).
  *   - skip globally-converged subgroups (global_active_per_sg[sg]==0).
  *   - lockstep collective participation by ranks with empty subgroups.
@@ -722,7 +719,7 @@ void run_iter_harness_tests(void)
         endrun(0);
     }
 
-    /* Stage B step 4 (codex c narrow): VP 10 positive multi-subgroup. */
+    /* VP 10 positive multi-subgroup. */
     if (gizmo_nlr_iter_harness_multi_subgroup_enabled()) {
         run_iter_harness_multi_subgroup_subtest(rank, nproc);
         if (rank == 0) {
@@ -754,10 +751,9 @@ void run_iter_harness_tests(void)
     /* ========================================================================
      * VP 7: apply_active_writeback exactly-once-per-slot, ACROSS ALL RANKS.
      *
-     * Codex step-3 review (2026-05-10): g_harness_writeback_count is rank-
-     * local. Aggregate rank-local pass/fail via MPI_Allreduce(MAX) on a
-     * uint64 fail bitmap so a rank-1 failure can't be silently swallowed
-     * by rank 0's PASS print.
+     * g_harness_writeback_count is rank-local. Aggregate rank-local
+     * pass/fail via MPI_Allreduce(MAX) on a uint64 fail bitmap so a
+     * rank-1 failure can't be silently swallowed by rank 0's PASS print.
      * ====================================================================== */
     {
         int local_fail = 0;
@@ -951,7 +947,7 @@ void run_iter_harness_tests(void)
     }
 
     /* ========================================================================
-     * Pair-sanity guard (codex 2026-05-10 caveat for Stage B): VPs that test
+     * Pair-sanity guard (Stage B): VPs that test
      * pair / j-side / oracle behavior must not pass vacuously when the
      * synthetic radius produces zero neighbors. The synthetic radius is now
      * 1.0 code units (~Mpc) — should yield hundreds of pairs per active in
@@ -1012,11 +1008,11 @@ void run_iter_harness_tests(void)
         emit_vp(9, VpStatus::Skip, "oracle not enabled (GIZMO_NLR_ORACLE unset)");
     }
 
-    /* VP 11 — ctx-reset symmetry (NARROW scope; codex step-2 review 2026-05-10).
+    /* VP 11 — ctx-reset symmetry (NARROW scope).
      *
      * Asserts that `populate_device_context` and
      * `reset_per_iter_device_context` fired on BOTH the production ctx
-     * AND the oracle ctx_oracle (the codex 2c.4 post-review fix that
+     * AND the oracle ctx_oracle (the fix that
      * added the symmetric reset on ctx_oracle). The check is structural:
      * nothing in the basic IterHarnessSpec ever WRITES to
      * ctx.dummy_jflag (pair_kernel writes to AccumData::jflag instead),
@@ -1056,12 +1052,12 @@ void run_iter_harness_tests(void)
     }
 
     /* ========================================================================
-     * VPs 6, 10, 12: v1-OUT-OF-SCOPE (codex 2026-05-10 step-4 narrow).
+     * VPs 6, 10, 12: not yet implemented.
      * VP 10 covered by separate subtest under GIZMO_NLR_ITER_HARNESS_MULTI_SUBGROUP=1.
      * VPs 6 (max-iter abort, endrun(1155)) and 12 (subgroup-mangling audit
      * abort) require bash parent-process expect-abort wrappers; left to a
      * future harness extension. These are guardrail tests, not core port
-     * validation — their absence does NOT block ags_density 3d.4 readiness. */
+     * validation — their absence does not block ags_density readiness. */
     emit_vp(6,  VpStatus::Skip,
         "v1 OUT OF SCOPE: max-iter abort negative test needs bash parent-process "
         "wrapper to match endrun(1155)+message. Guardrail, not port-blocker.");

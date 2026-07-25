@@ -1,15 +1,15 @@
-/* gpu_peano_walk_functions.h -- Step 13 Phase 6.5c1
+/* gpu_peano_walk_functions.h
  *
  * KOKKOS_INLINE_FUNCTION primitives for device-side Peano-Hilbert key
  * computation and TopNodes-tree walking.  Mirrors the host implementation
  * in system/peano.cc (peano_and_morton_key) and gravity/forcetree.cc lines
  * 236-249 (TopNodes walk + DomainNodeIndex lookup).
  *
- * Why device-side: Phase 6.5 GPU tree-build kernel needs to assign each
+ * Why device-side: the GPU tree-build kernel needs to assign each
  * particle to its topleaf before sorting and emitting topology.  Doing
- * this on host would be a silent rollback of the Phase 6 goal of
- * eliminating per-tree-build CPU cost.  Per-particle Peano walk is
- * embarrassingly parallel and well-suited to GPU.
+ * this on host would be a silent rollback of the goal of eliminating
+ * per-tree-build CPU cost.  Per-particle Peano walk is embarrassingly
+ * parallel and well-suited to GPU.
  *
  * Lookup tables: subpix3[48][8] and rottable3[48][8] from system/peano.cc
  * are replicated here as static constexpr arrays.  Each is 384 bytes; both

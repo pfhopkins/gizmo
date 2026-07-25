@@ -11,15 +11,14 @@
 #include "grain_collisional_outcomes.h"
 
 
-/* Chunk 1 (Phase 2 post-cooling-kernel port, 2026-05-26) -- single source
- * of truth for update_dust_processes and its full hot-path call graph now
- * lives in ism_dust_chemistry_functions.h. This .cc retains only host-only
- * helpers (Initialize_*, SNe/wind/AGB yield helpers, renormalize, the three
- * diagnostic check_* functions) plus the eos.cc-style non-inline include
- * below that emits the host external symbols for the migrated set.
+/* Single source of truth for update_dust_processes and its full hot-path
+ * call graph lives in ism_dust_chemistry_functions.h. This .cc retains only
+ * host-only helpers (Initialize_*, SNe/wind/AGB yield helpers, renormalize,
+ * the three diagnostic check_* functions) plus the eos.cc-style non-inline
+ * include below that emits the host external symbols for the migrated set.
  *
- * Chunk 1 contract: no call-site changes anywhere; pre-existing host call
- * chain (cooling_parent_routine -> host scatter loop ->
+ * No call-site changes anywhere; the host call chain
+ * (cooling_parent_routine -> host scatter loop ->
  * finish_cooling_host_deferred_dust_updates -> update_dust_processes)
  * resolves to the same external symbol it did before. */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

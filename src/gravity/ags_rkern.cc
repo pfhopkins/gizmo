@@ -131,7 +131,7 @@ double get_particle_volume_ags(int j) { return get_particle_volume_ags_P(j, P); 
  * Output : Tinv_out = full 3x3 inverse of the raw moment matrix.
  * Returns: cn_expansion (neighbor-expansion signal), cn_final + status (diag).
  *
- * Robustness (codex 2026-06: blocker): matrix_invert_ndims() returns Tinv=0 and
+ * Robustness: matrix_invert_ndims() returns Tinv=0 and
  * ConditionNumber=1 for an exactly-singular matrix (Mat3::invert sets inv=0 on
  * det==0). So acceptance CANNOT key off the condition number alone — we also
  * require a finite, non-zero inverse, and we report a large cn_expansion for
@@ -218,11 +218,10 @@ int AGSForce_isactive(int i)
 }
 
 
-/* AGSForce_calc() lives in gravity/ags_force_loop.cc (Wave 3 close-out port).
- * Moved out of this TU to keep ags_rkern.cc host-only (carries unrelated
- * host helpers AGSForce_isactive, ags_gravity_kernel_shared_BITFLAG,
- * ags_return_minsoft/maxsoft, ags_invert_nvt_for_faces); see
- * reference_runner_port_checklist.md §5. */
+/* AGSForce_calc() lives in gravity/ags_force_loop.cc. Moved out of this TU
+ * to keep ags_rkern.cc host-only (carries unrelated host helpers
+ * AGSForce_isactive, ags_gravity_kernel_shared_BITFLAG,
+ * ags_return_minsoft/maxsoft, ags_invert_nvt_for_faces). */
 
 
 #endif // AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE

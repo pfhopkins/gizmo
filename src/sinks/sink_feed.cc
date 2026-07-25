@@ -94,18 +94,17 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
 
 
 /* Caller-side scatter manifest for sink_feed. Per-loop physics; the
- * runner doesn't see this. Operations match the pair_kernel per-field
- * write semantics (the oracle protects merge_accum specifically; this
- * scatter manifest must agree on op semantics field-for-field — drift is
- * silent because it lives downstream of the runner's oracle gate).
+ * runner doesn't see this. Operations must match the pair_kernel's
+ * per-field write semantics field-for-field — drift here is silent
+ * since it lives downstream of the runner's correctness checks.
  *
  * Adding a new scattered field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef.
  *
  * Two scatter targets, deliberately not unified into one abstraction
- * (codex invariant 8: don't collapse merge_accum / scatter / ghost-
- * writeback into one): SinkTempInfo[j_tempinfo] for additive aggregates,
- * P[i] direct for the potential-min value+pos pair. */
+ * (don't collapse merge_accum / scatter / ghost-writeback into one):
+ * SinkTempInfo[j_tempinfo] for additive aggregates, P[i] direct for
+ * the potential-min value+pos pair. */
 static void sink_feed_scatter_to_temp_info(const int *active_list,
                                             int num_active,
                                             const struct SinkFeedOut *per_active_accum)
@@ -174,9 +173,9 @@ void sink_feed_loop(void)
      * Inside run_neighbor_loop: Mode A path runs detector_begin →
      * writeback_begin (snapshot ghost fields) → kernel → writeback_end
      * (snapshot-diff reverse-comm to home ranks) → detector_end. Mode B
-     * paths skip the bundle. Phase 4.A.0 populate_device_context
-     * stages host_locals into UVM ctx.per_active_local before the
-     * device kernel; cleanup_device_context frees it on exit. */
+     * paths skip the bundle. populate_device_context stages host_locals
+     * into UVM ctx.per_active_local before the device kernel;
+     * cleanup_device_context frees it on exit. */
     neighbor_loop_args args = nlr_default_args();
     args.active_list = active_list;
     args.num_active  = num_active;

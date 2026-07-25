@@ -123,7 +123,7 @@ void determine_where_SNe_occur(void)
 /* this is a temporary structure for quantities used ONLY in the loops below,
  for example for ensuring conservation if there are many overlapping events.
  Struct type MechFBGasDelta is defined in mechanical_fb_functions.h so the
- GPU port (B8) can share the exact layout. */
+ GPU port can share the exact layout. */
 static struct MechFBGasDelta *LocalGasMechFBInfoTemp;
 
 
@@ -164,14 +164,13 @@ void verify_and_assign_local_mechfb_integrals(void)
                      * pair-body wakeup-check, which then propagates shell-by-shell
                      * with waker_bin - offset per generation, cascading bins down.
                      * Coupled to the process_wake_ups floor at lowest_occupied_
-                     * active_bin (commit c4c270bf), this gets the receiver active
-                     * at the right pace immediately, killing the cascade at its
-                     * root. Standard hydro-convention encoding via max_source_wakeup
-                     * accumulator -- no special encoding, no EOS/MaxSignalVel
-                     * refresh (which would be silent suppression of legitimate
-                     * wakeup -- regression from the prior 97ab9ea0 attempt at
-                     * this site that this block replaces). Deferred-dU branch
-                     * intentionally NOT marked: u unchanged there, no perturbation. */
+                     * active_bin, this gets the receiver active at the right pace
+                     * immediately, killing the cascade at its root. Standard
+                     * hydro-convention encoding via max_source_wakeup accumulator
+                     * -- no special encoding, no EOS/MaxSignalVel refresh (which
+                     * would be silent suppression of legitimate wakeup). Deferred-dU
+                     * branch intentionally NOT marked: u unchanged there, no
+                     * perturbation. */
                     int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
                     if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
                         P[j].wakeup = (short int)wakeup_val;
@@ -198,7 +197,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #if defined(COSMIC_RAY_FLUID)
-            /* Apply CR deltas accumulated by the B8 Phase 2 GPU kernel. On CPU-only
+            /* Apply CR deltas accumulated by the batched GPU kernel. On CPU-only
              * builds, the existing inject_cosmic_rays in the pair loop writes
              * directly to CellP, so these delta fields remain zero and this block
              * is a no-op. */
@@ -267,7 +266,7 @@ void mechanical_fb_calc_toplevel(void)
 {
     PRINT_STATUS("Start mechanical feedback computation...");
 
-    /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
+    /* GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechfb_loop.{h,cc} (runner-template
        port); the legacy galaxy_sf/mechanical_fb_gpu.cc evaluator has been deleted. */
     {

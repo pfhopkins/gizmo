@@ -1,9 +1,6 @@
-/* damage_porosity_functions.h -- Phase 17e damage and P-alpha porosity rate
+/* damage_porosity_functions.h -- damage and P-alpha porosity rate
  * equations and yield-criterion modifier. Body guarded by EOS_DAMAGE_POROSITY
  * (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi 2008).
- *
- * Stubs in C2; physics wired in C3 (P-alpha) / C4 (Drucker-Prager) / C5
- * (Grady-Kipp).
  *
  * Tillotson_EOS_params slot map for damage/porosity:
  *   [12] = k_Weibull [1/cm^3]   (flaw number density)

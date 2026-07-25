@@ -1,5 +1,5 @@
 /*! \file let_pack.cc
- *  \brief Step 13 Phase 9.1c-e -- Locally Essential Tree (LET) pack, exchange,
+ *  \brief Locally Essential Tree (LET) pack, exchange,
  *         and unpack.  Replaces the iterative gravity export loop with a
  *         one-shot subtree exchange.
  *
@@ -25,10 +25,10 @@
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
  *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
- *  Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
- *  MaxForeignNodes, endrun() with the LETAllocFactor restart message.
- *  Future option (b) -- graceful shrink + temporary fallback to legacy export
- *  -- documented but not implemented unless practical memory limits require.
+ *  Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
+ *  endrun() with the LETAllocFactor restart message.  A graceful-shrink
+ *  fallback to the legacy export path is not implemented; add it only if
+ *  practical memory limits ever require it.
  */
 
 #include <mpi.h>
@@ -46,7 +46,7 @@
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "../core/step_phases.h"              /* gizmo_verbose_diag() */
 #include "let_data.h"
-#include "gravtree_opening.h"   /* shared Stage-2 opening predicate (cell/AABB variant) */
+#include "gravtree_opening.h"   /* shared opening predicate (cell/AABB variant) */
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
@@ -77,7 +77,7 @@
 
 
 /* ----------------------------------------------------------------------
- * Phase 9.5: active-only LET helpers
+ * Active-only LET helpers.
  *
  * Each rank computes a per-topleaf bitmap (one bit per topleaf, NTopleaves
  * total) where bit tl == 1 iff topleaf tl is owned by ThisTask AND at least
@@ -125,7 +125,7 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
 
     /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
      * make_list_of_active_particles ran for the current step), set all MY
-     * topleaves' bits.  Preserves Phase 9.4 conservative behavior. */
+     * topleaves' bits.  Preserves conservative (ship-everything) fallback behavior. */
     if(ActiveParticleList.empty())
     {
         for(int t = 0; t < NTopleaves; t++)
@@ -159,7 +159,7 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
 }
 
 /* ----------------------------------------------------------------------
- * RULE-1 cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
+ * Cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
  * softening octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
  * Allgatherv'd so every sender holds every receiver's cluster leaves for the cover-tree essentiality test.
  *   g_my_clusters   -- THIS rank's cluster leaves for the current build (producer side).
@@ -272,7 +272,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
      * only has_cover (>=1 owned topleaf) is still consumed. The coords are kept
      * for wire-format compatibility + debug. min_OldAcc/soft/sink below ARE still
      * used (whole-rank worst-case scalars fed to the same predicate). If
-     * active_bitmap is non-NULL, restrict to ACTIVE topleaves (Phase 9.5). */
+     * active_bitmap is non-NULL, restrict to ACTIVE topleaves only. */
     out->bbox_min[0] = out->bbox_min[1] = out->bbox_min[2] = DBL_MAX;
     out->bbox_max[0] = out->bbox_max[1] = out->bbox_max[2] = -DBL_MAX;
     int found_any = 0;
@@ -305,11 +305,11 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     }
     out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
-    /* Per-particle bounds -> RULE-1 CLUSTER MEMBERS (grouped later by topleaf+softening octave) + WHOLE-RANK
+    /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf+softening octave) + WHOLE-RANK
      * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
      * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
      * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard).
-     * active_bitmap non-NULL -> ActiveParticleList (Phase 9.5 tight); else all NumPart (Phase 9.4 conservative). */
+     * active_bitmap non-NULL -> restrict to ActiveParticleList (tight); else all NumPart (conservative). */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
@@ -372,8 +372,8 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         }
         else
         {
-            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave). The rule-1 split
-             * (one cluster per distinct octave in a topleaf) is applied by the sort-and-reduce after the loop. */
+            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave) -- one cluster
+             * per distinct octave in a topleaf, applied by the sort-and-reduce after the loop. */
             int octave = (soft > 1e-300) ? (int) floor(log2(soft)) : -2000000000;
             let_cl_member_push(tl, octave, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], soft, oa, t);
         }
@@ -454,20 +454,19 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
 }
 
 /* ============================================================================
- * Per-receiver COVER TREE. The receiver R's owned-topleaf geometric boxes
- * ([center - len/2, center + len/2]) arranged as a balanced binary AABB tree, so
- * LET essentiality tests each source node against a HIERARCHY of compact per-
- * topleaf covers instead of one whole-rank union box. The single union box spans
- * ~the whole domain for a spatially-spread rank, driving min_dist(node,cover)->0,
- * which defeats the PM cutoff + theta cull and imports ~the whole global tree;
- * per-topleaf covers restore that selectivity. Built sender-side each exchange
- * from REPLICATED top-tree geometry (DomainTask/DomainNodeIndex/Nodes topnodes)
- * + R's existing payload scalars -- no wire-format change. The opening predicate
- * (gravtree_open_decision_cell) is the untouched SSOT; this only refines WHICH
- * cover boxes are fed to it. Scratch is grown once and reused across receivers/
- * exchanges (no allocation in the pack recursion). The tree for "the receiver
- * currently being packed" is file-scope state (g_cover*), set by let_pack_for_rank
- * before its pack loop -- same idiom as g_let_pack_oom.
+ * Per-receiver COVER TREE. Receiver R's owned-topleaf boxes ([center-len/2,
+ * center+len/2]) arranged as a balanced binary AABB tree, so essentiality tests
+ * each source node against a HIERARCHY of compact per-topleaf covers instead of
+ * one whole-rank union box. A single union box spans ~the whole domain for a
+ * spatially-spread rank, driving min_dist(node,cover)->0, which defeats the PM
+ * cutoff + theta cull and imports ~the whole global tree; per-topleaf covers
+ * restore that selectivity. Built sender-side each exchange from replicated
+ * top-tree geometry + R's payload scalars (no wire-format change); the opening
+ * predicate itself (gravtree_open_decision_cell) is untouched -- this only
+ * refines which cover boxes feed it. Scratch is grown once and reused across
+ * receivers/exchanges (no allocation in the pack recursion); the tree for the
+ * receiver currently being packed is file-scope state (g_cover*), set by
+ * let_pack_for_rank before its pack loop.
  * ========================================================================== */
 /* Cover-tree node carries BOTH geometry (box) AND the conservative per-cover scalar bounds,
  * combined up the tree from the per-topleaf table (min OldAcc / max soft-by-type / min soft /
@@ -845,7 +844,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag = 0;
 
-    /* C1 foreign-leaf identity sidecar: this singleton ships as a synthesized terminal multipole,
+    /* Foreign-leaf identity sidecar: this singleton ships as a synthesized terminal multipole,
      * but the receiver must consume it with particle-leaf secondary-source semantics.  The node
      * moment already carries every other source field (and for a singleton equals the particle
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
@@ -971,7 +970,7 @@ static void pack_recurse(int no, int sib_terminator,
      * for single particle. */
     if(!(Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))
     {
-        /* C1: this single-particle source-tree node is shipped as a multipole, so the receiver
+        /* This single-particle source-tree node is shipped as a multipole, so the receiver
          * must consume it as a real foreign leaf.  Recover the underlying particle from the
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
@@ -1200,32 +1199,22 @@ extern "C" int let_pack_for_rank(int R,
         *out_hdr_count = 0;
         return 0;
     }
-    /* Phase 9.5 (experimental active-receiver-cover mode only): short-circuit when receiver R
+    /* Experimental active-receiver-cover mode only: short-circuit when receiver R
      * has zero active particles.  receiver_active_bitmap is NULL on the default all-local path. */
     if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
     {
         *out_hdr_count = 0;
         return 0;
     }
-    /* Build R's rule-1 cluster cover tree (file-scope g_cover*, consumed by
+    /* Build R's cluster cover tree (file-scope g_cover*, consumed by
      * let_node_essential_for_rank during this receiver's pack). R's clusters were
      * already active-restricted when R computed them, so no sender-side bitmap here. */
     let_build_cover_tree(R);
-    /* Walk the LOCAL tree from each topnode that's NOT in R's domain.  Topnodes
-     * in R's domain are R's own data; they won't help R (and would create a
-     * self-reference if shipped). */
-    /* Iterate via DomainNodeIndex over OUR topleaves, then use the topleaf's
-     * subtree (root via nextnode / sibling chain) as the pack starting point.
-     * Actually we need to ship from ROOT downward filtering by essential, since
-     * R needs to traverse from the root to find what to multipole-vs-open. */
-
-    /* Strategy: walk our local topnode tree from root (Nodes[All.MaxPart]).  For
-     * each topleaf owned by US (so R doesn't already have it as pseudo), we
-     * enter pack_recurse from that topleaf with sib_terminator = topleaf.sibling. */
-
-    /* NOTE: simpler -- pack each of our local topleaves' subtrees independently.
-     * R will see each shipped subtree as the foreign-content for that topleaf
-     * (the unpack step rewrites Nodes[topleaf_in_R].u.d.nextnode = subtree_root). */
+    /* Pack each of OUR topleaves' subtrees independently, entering pack_recurse from the
+     * topleaf with sib_terminator = topleaf.sibling (topleaves already in R's domain are R's
+     * own data and are skipped -- shipping them would be a self-reference).  R sees each
+     * shipped subtree as the foreign content for that topleaf: the unpack step rewrites
+     * Nodes[topleaf_in_R].u.d.nextnode = subtree_root. */
     for(int i = 0; i < NTopleaves; i++)
     {
         if(DomainTask[i] != ThisTask) continue;
@@ -1342,7 +1331,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
                                    long long *foreign_needed_out)
 {
     double t_let_start = my_second();
-    /* Phase 1: exchange node-counts AND header-counts */
+    /* First exchange node-counts and header-counts */
     int *send_counts_int = (int *) mymalloc("LET_send_counts",     NTask * sizeof(int));
     int *recv_counts_int = (int *) mymalloc("LET_recv_counts",     NTask * sizeof(int));
     int *send_hdr_counts = (int *) mymalloc("LET_send_hdr_counts", NTask * sizeof(int));
@@ -1473,9 +1462,9 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
  *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
  *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
  *
- * Buffer-overflow policy (Phase 9.0): if Numforeignnodes would exceed
- * MaxForeignNodes, return LET_OVERFLOW_RETRYABLE without installing; the
- * force_treebuild loop ratchets the arena and retries.
+ * Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
+ * return LET_OVERFLOW_RETRYABLE without installing; the force_treebuild loop
+ * ratchets the arena and retries.
  * ---------------------------------------------------------------------- */
 extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
@@ -1544,7 +1533,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             }
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
 
-            /* C1: install the foreign-leaf identity sidecar at this slot's foreign_slot
+            /* Install the foreign-leaf identity sidecar at this slot's foreign_slot
              * (= no - (MaxPart+MaxNodes), NOT the SoA index no-MaxPart). Non-leaf records carry
              * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
             int foreign_slot = abs_idx - (All.MaxPart + MaxNodes);
@@ -1638,7 +1627,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
-    /* C1: reset the foreign-leaf identity sidecar for the fresh exchange.  These host arrays are
+    /* Reset the foreign-leaf identity sidecar for the fresh exchange.  These host arrays are
      * read only by host code (the CPU walk and gpu_scatter_foreign_to_soa); the GPU mirror lives in
      * the tree SoA and is fully rewritten by the scatter after install.  let_run_exchange runs at
      * tree-build time, after the previous step's gravity walk has fenced and returned, so no GPU
@@ -1681,7 +1670,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
     let_exchange_payloads(&my_payload, all_payloads);
 
-    /* Exchange the per-rank RULE-1 CLUSTER cover leaves (bbox + scalars). Counts rode the payload Allgather
+    /* Exchange the per-rank CLUSTER cover leaves (bbox + scalars). Counts rode the payload Allgather
      * (all_payloads[r].n_clusters), so every rank agrees on the global total and enters/skips the cluster
      * Allgatherv COLLECTIVELY. g_cluster_off[R..R+1) then selects R's clusters when building R's cover.
      * Mirrors the drift-orphan exchange (variable count per rank). */
@@ -1859,8 +1848,8 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
  *       (AoS + SoA) so the walk skips it instead of hitting the pseudo.
  *
  * Anything else -- a topleaf still pointing into the pseudo range that is not
- * provably empty by BOTH measures -- is a LET correctness failure: Phase 9.4
- * retired the CPU gravity export path, so the LET MUST supply every non-empty
+ * provably empty by BOTH measures -- is a LET correctness failure: the CPU
+ * gravity export path has been retired, so the LET MUST supply every non-empty
  * foreign subtree.  Abort loudly with full context.
  *
  * mass is the physics criterion; N_part is the structural-invariant guard --

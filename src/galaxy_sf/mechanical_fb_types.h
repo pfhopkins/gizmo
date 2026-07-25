@@ -34,7 +34,7 @@ struct MechFBGasDelta
     double Mass_Where_Dust_Shocked;
 #endif
 #if defined(COSMIC_RAY_FLUID)
-    /* Phase 2 CR fields. CR_dir_weighted accumulates Σ (Σ_bin dEcr) × dir̂ across
+    /* CR_dir_weighted accumulates Σ (Σ_bin dEcr) × dir̂ across
      * all sources; host scatter normalizes to a unit vector and projects onto B
      * if MAGNETIC, then applies per-bin flux = CR_energy_injected[k] × c_red(k). */
     double CR_energy_injected[N_CR_PARTICLE_BINS];

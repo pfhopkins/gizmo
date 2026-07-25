@@ -14,9 +14,9 @@
  *   IMPORTED-GHOST LIFECYCLE     — write detector + writeback wrappers
  *   DIAGNOSTICS (env-gated)      — compare_accum (PERMANENT), and
  *                                   diagnostic_dump_* (SPIKE / cross-validation
- *                                   probes; scheduled retire after 3d ports)
+ *                                   probes, to be removed once no longer needed)
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -65,7 +65,7 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     return scalars;
 }
 
-/* Phase 4.A.0 device-context lifecycle. sink_env1 has no UVM-allocated
+/* Device-context lifecycle. sink_env1 has no UVM-allocated
  * per-active state (unlike sink_feed/sink_swk), so populate only seeds
  * the oracle dry-run flag and cleanup is a no-op. The pair is declared
  * for symmetric runner-contract pairing. */
@@ -216,10 +216,10 @@ void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  *                       GIZMO_NLR_ORACLE=1)
  *
  * SPIKE_DIAGNOSTIC     : diagnostic_dump_active, diagnostic_dump_neighbor_list
- *                       (cross-validation probes from the Mode B bring-up;
- *                       scheduled retire after 3d ports complete)
+ *                       (cross-validation probes from the Mode B bring-up,
+ *                       to be removed once no longer needed)
  *
- * Canonical env vars (Pass B.i):
+ * Canonical env vars:
  *   GIZMO_NLR_ORACLE=1                gates compare_accum invocation
  *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
  *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      per-active accumulator dump (SPIKE)

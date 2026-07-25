@@ -57,7 +57,7 @@
  * `#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE` for radius-policy use. */
 struct particle_data;
 
-/* Type-aware "symmetric radius" policy bitmask (Phil + codex 2026-06-07).
+/* Type-aware "symmetric radius" policy bitmask.
  *
  * For SYMMETRIC pair search, the test is r < max(h_i, h_j).  h_j depends on
  * j's type AND on which physics the Spec implements:

@@ -198,9 +198,9 @@ static void sink_env2_scatter_to_temp_info(const int *active_list,
 
 void sink_environment_second_loop(void)
 {
-    /* Stage E2: pure aggregator (Bulge-Disk kinematic decomposition).
-     * Phase 4 3d.2 — runner-driven via SinkEnv2Spec. Same active set +
-     * radii + j_type_bitmask as Stage E1 (sink_environment_loop). */
+    /* Stage E2: pure aggregator (Bulge-Disk kinematic decomposition),
+     * runner-driven via SinkEnv2Spec. Same active set + radii +
+     * j_type_bitmask as Stage E1 (sink_environment_loop). */
     CPU_Step[CPU_SINK_ENV] += measure_time();
 
     /* ---------- engine: build active list ---------- */

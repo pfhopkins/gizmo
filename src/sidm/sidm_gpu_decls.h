@@ -10,7 +10,7 @@
 #define SIDM_GPU_DECLS_H
 
 
-/* ---- cbe_integrator (C1) ---- */
+/* ---- cbe_integrator ---- */
 void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
                                  const int *active_indices, int num_active,
                                  const double *dt_host);

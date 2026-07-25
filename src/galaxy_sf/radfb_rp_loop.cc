@@ -28,8 +28,7 @@
  * NOT called via Spec::is_active because is_active is a bool predicate and
  * the gate produces per-source LocalIn + search-radius payload).
  *
- * Phase 4 / Wave 3 / radfb_local. Written by Phil Hopkins
- * (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -102,9 +101,8 @@ double RadFBRPSpec::search_radius(const neighbor_loop_args& args,
  * accessor (feedback_all_dev_trap_host_side rule). Pair kernel reads NO
  * All.* / UNIT_* macros directly — all such reads route through scalars.
  * (NOTE: rt_kappa, called from inside the pair body, retains its own
- * legacy All.* reach. That is documented + tracked in
- * OPEN_rt_kappa_per_cell_cache.md and is NOT a regression — matches
- * legacy radfb_local_gpu.cc behavior.) */
+ * legacy All.* reach. That is NOT a regression — matches legacy
+ * radfb_local_gpu.cc behavior.) */
 RadFBRPCallScalars radfb_rp_build_call_scalars(void)
 {
     const struct global_data_all_processes *h = nlr_host_all_ptr();
@@ -139,7 +137,7 @@ RadFBRPSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
  * populate allocates a UVM array of RadFBRPLocalIn[N] and copies in from
  * args.aux->host_locals. cleanup frees it. The runner separately calls
  * populate for drv.ctx AND drv.ctx_oracle — each gets its own UVM buffer
- * (oracle-safe per Phase 4.B.0 step 2c.4 P1).
+ * (oracle-safe).
  * ========================================================================== */
 
 void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
@@ -234,7 +232,7 @@ IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
  * AFTER_ITER_GLOBAL — post-iter staging hook. NO physics-side writes.
  *
  * Mutates per_active_local UVM buffers on both drv.ctx and drv.ctx_oracle
- * (the runner allocates them independently per 2c.4 P1). Does NOT touch
+ * (the runner allocates them independently). Does NOT touch
  * P[i], CellP[i], or any source/neighbor physics state — this is pure
  * iter-to-iter scalar bridging through the runner's intended per-active
  * iterative state (IterScratch → per_active_local).

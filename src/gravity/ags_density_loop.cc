@@ -7,23 +7,24 @@
  * TU holds:
  *   - host-side per-active radius + per-call scalar capture
  *   - populate / cleanup of the device context (single sticky-call-scope
- *     need_wakeup_uvm scratch — no per-iter reset per codex round-7)
+ *     need_wakeup_uvm scratch — no per-iter reset, since it accumulates
+ *     across all iters of the call)
  *   - apply_active_writeback (no-op for AgsDensitySpec — after_iter writes
- *     post-processed values to P[i] directly on host; codex round-7)
+ *     post-processed values to P[i] directly on host)
  *   - merge_accum (Mode B remote peer merge — manifest pattern)
- *   - after_iter (legacy convergence test + bisection — design v0.4.3 §2.1;
- *     also syncs P[i].AGS_KernelRadius every iter per codex round-8)
- *   - after_iter_global (iter > 10 print only — design v0.4.3 §6)
+ *   - after_iter (legacy convergence test + bisection; also syncs
+ *     P[i].AGS_KernelRadius every iter)
+ *   - after_iter_global (iter > 10 print only)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
  *   - set_oracle_brute_pass HARD-STUB (controlled stop on true; AGS validation
  *     used two-binary parity, not in-runner oracle)
  *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
  *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
- * Phase 4 port 3d.4. Replaces the now-deleted gravity/ags_density_gpu.cc
- * (retired in the post-3d.4 cleanup commit after two-binary parity passed).
+ * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
+ * cleanup after two-binary parity passed).
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -49,17 +50,16 @@
  * precompiler_logic.h so after_iter's minsoft/maxsoft clamp matches the AGS
  * radius solver in gravity/ags_rkern.cc. */
 
-/* Codex round-10 (2026-05-11) targeted diagnostic trace.
+/* Targeted diagnostic trace.
  *
  * Compile with -DGIZMO_NLR_AGS_DEBUG_ID_TRACE=<particle_ID> to enable
  * per-particle per-iter state dump for the specified ID. Used to diagnose
- * the first-Vista-validation regression (runner crashes endrun(888) on
- * type-5 sink ID=2190205 with soft=0; legacy passes same config). See
- * OPEN_3d_agsdensity_design.md §3.5 hard-gate sequence.
+ * a first-Vista-validation regression (runner crashes endrun(888) on
+ * type-5 sink ID=2190205 with soft=0; legacy passes same config).
  *
  * Production builds without the macro carry no overhead and no print
  * sites. The legacy mirror in ags_rkern.cc was deleted with the rest of
- * the legacy body in the 3d.4 cleanup commit. */
+ * the legacy body in the cleanup. */
 #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
 static inline void ags_debug_trace_id_state(const char *label, int i)
 {
@@ -93,9 +93,9 @@ double AgsDensitySpec::search_radius(const neighbor_loop_args& args,
  * trivially-copyable CallScalars staging).
  *
  * Uses nlr_host_all_ptr() for explicit host-snapshot intent — the underlying
- * macro redirect retired in 93897f62 (now device-pass-only), but the
- * accessor convention documents which side of host/device this read lives
- * on. Bug originally surfaced here via codex round-10 trace (AGS_DesNumNgb=0
+ * macro redirect is now device-pass-only, but the accessor convention
+ * documents which side of host/device this read lives on. A bug here
+ * originally surfaced via debug-trace instrumentation (AGS_DesNumNgb=0
  * → bisection inversion → radius collapse → endrun(888)). */
 AgsDensitySpec::CallScalars
 AgsDensitySpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
@@ -119,9 +119,9 @@ AgsDensitySpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
  * cleanup propagates ctx.need_wakeup_uvm into NeedToWakeupParticles_local
  * (legacy ags_density_gpu.cc:210 path) and frees the UVM.
  *
- * STICKY ACROSS ITERS — codex round-7 caught that per-iter reset would
- * lose non-final-iter wakeups (iter 1 writes, iter N doesn't, cleanup
- * sees 0). The flag accumulates across all iters of the iterative call;
+ * STICKY ACROSS ITERS — a per-iter reset would lose non-final-iter
+ * wakeups (iter 1 writes, iter N doesn't, cleanup sees 0). The flag
+ * accumulates across all iters of the iterative call;
  * legacy ran one evaluator-call per outer iter so the legacy
  * *d_need_wakeup was per-call too. There is NO reset_per_iter_device_context
  * hook for AgsDensitySpec.
@@ -171,8 +171,7 @@ void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
     if(on) {
         printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
                "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
-               "the in-runner oracle is unavailable for AgsDensitySpec). "
-               "See OPEN_3d_agsdensity_design.md §3a / §7.\n"); fflush(stdout);
+               "the in-runner oracle is unavailable for AgsDensitySpec).\n"); fflush(stdout);
         endrun(90001019);
         gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
     }
@@ -181,9 +180,9 @@ void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
 /* ============================================================================
  * APPLY_ACTIVE_WRITEBACK — NO-OP for AgsDensitySpec.
  *
- * Codex round-7 caught that the original per_active_accum[active_slot]
- * write was multi-subgroup-collision-prone (active_slot is subgroup-local).
- * The cleaner design is: after_iter writes the post-processed values
+ * The original per_active_accum[active_slot] write was multi-subgroup-
+ * collision-prone (active_slot is subgroup-local). The cleaner design is:
+ * after_iter writes the post-processed values
  * directly to P[i] on host (legacy semantics — rkern.cc:179-196 does the
  * same). The caller's post-runner finalize pass reads P[i] for the
  * final-final operations (rkern.cc:431-453). No host aux buffer needed.
@@ -306,7 +305,7 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
     }
 #endif
 
-    /* Codex round-8 blocker 1 — final-radius writeback: the runner owns
+    /* Final-radius writeback: the runner owns
      * its own per-active radii_uvm[sg][slot] (mutated via AdjustRadius
      * returns), but P[i].AGS_KernelRadius is what the post-runner
      * caller finalize pass + downstream physics reads. Sync P[i] to
@@ -315,10 +314,10 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
      * writeback channel. Updated below at each return path. */
     P[i].AGS_KernelRadius = (MyFloat)current_h;
 
-    /* Codex round-8 blocker 2 — Mode A per-iter state visibility: the
+    /* Mode A per-iter state visibility: the
      * P[i].* writes below are visible to subsequent Mode A pair_kernel
      * walks because of UVM-canonical particle aliasing (system/
-     * gpu_particles_arena.cc commit 0d9e74b4: arena.P / arena.CellP
+     * gpu_particles_arena.cc: arena.P / arena.CellP
      * are pure pointer aliases of host P / CellP under SharedSpace).
      * Mode B request-driven walks rebuild the per-call slab from host
      * P each call, so the host writes are also visible there. No
@@ -610,8 +609,8 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
     if(new_h > maxsoft) new_h = maxsoft;
     if(scratch.set_to_maxrkern == 1) new_h = maxsoft;
 
-    /* Sync P[i] to the radius the runner will use next iter (codex round-8
-     * blocker 1). Without this, P[i].AGS_KernelRadius would hold the
+    /* Sync P[i] to the radius the runner will use next iter.
+     * Without this, P[i].AGS_KernelRadius would hold the
      * iter-K value while radii_uvm[sg][slot] holds iter-(K+1) — and the
      * post-runner finalize pass would see the stale K value. */
     P[i].AGS_KernelRadius = (MyFloat)new_h;
@@ -635,7 +634,7 @@ IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ct
  *
  * Legacy `ags_density` printed "AGS-ngb iteration N: need to repeat for K
  * particles" at iter > 10 (rkern.cc:413). The runner calls
- * after_iter_global BEFORE the per-subgroup MPI_Allreduce (codex round-9),
+ * after_iter_global BEFORE the per-subgroup MPI_Allreduce,
  * so `drv.global_active_total` here is the PREVIOUS iter's count, not the
  * current iter's. Rather than print a misleading number or duplicate
  * the Allreduce here (would be a TRAP-7 violation), we drop the count
@@ -652,19 +651,19 @@ void AgsDensitySpec::after_iter_global(const neighbor_loop_args& /*args*/,
 }
 
 /* ============================================================================
- * GHOST WRITEBACK MANIFEST (3d.4 — first iterative ghost-writeback user).
+ * GHOST WRITEBACK MANIFEST (first iterative ghost-writeback user).
  *
  * Single op: PARTICLE_MAX(wakeup). Operates on positive-int wakeup values
- * (TimeBin+1 hydro convention) after the commit `198214cc` writer fix —
+ * (TimeBin+1 hydro convention) after the writer fix —
  * cross-rank propagation now correctly delivers the largest TimeBin+1 to
- * the home rank's P[j].wakeup. See OPEN_3d_agsdensity_design.md §3a.
+ * the home rank's P[j].wakeup.
  *
  * The bundle only applies P[j].wakeup on the home rank (PARTICLE_MAX merge);
  * it does NOT raise NeedToWakeupParticles_local. The global wakeup flag is
  * raised from the sticky need_wakeup_uvm counter on any rank that generated
  * a wakeup inside the pair body (see cleanup_device_context), and
  * timestep.cc's MPI_Allreduce then makes all ranks process the reverse-comm'd
- * P[j].wakeup. (Pre-3d.4 the now-deleted ghost_writeback_wakeup helper set
+ * P[j].wakeup. (Previously the now-deleted ghost_writeback_wakeup helper set
  * the global flag itself; the runner's bundle does not have that side
  * effect.)
  * ========================================================================== */
@@ -725,13 +724,12 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *
  * Replaces the legacy ags_density() body that used to live in
  * gravity/ags_rkern.cc; the legacy body and its GIZMO_NLR_AGSDENSITY_USE_LEGACY
- * two-binary-parity compile gate were retired by the 3d.4 cleanup commit
- * after parity passed on Vista.
+ * two-binary-parity compile gate were retired after parity passed on Vista.
  *
  *   1. Hard-stub oracle: endrun if GIZMO_NLR_ORACLE=1 is set
  *      (AgsDensitySpec::after_iter mutates P[i], which contaminates
- *      brute-pass pair_kernel reads of P[j].AGS_vsig — see design v0.4.3
- *      §3a / §7). Two-binary parity was the validation route before the
+ *      brute-pass pair_kernel reads of P[j].AGS_vsig).
+ *      Two-binary parity was the validation route before the
  *      legacy path was retired; the in-runner oracle remains hard-stubbed.
  *
  *   2. Per-active pre-loop init (legacy rkern.cc:94-98): for each
@@ -747,7 +745,7 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *      ranks see the same subgroup ordering (empty-on-this-rank subgroups
  *      get nullptr active_indices + num_active_local=0).
  *
- *   4. Ghost lifecycle (per design v0.4.3 §1, kept verbatim caller-side):
+ *   4. Ghost lifecycle (kept verbatim caller-side):
  *      ghost_exchange_cleanup() + gizmo_density_prep_ghosts(). The runner's
  *      internal `rebuild_mode_a_arena_and_ctx_for_current_active_union`
  *      handles per-iter ghost regrow on Mode A; Mode B P2P doesn't need
@@ -779,7 +777,7 @@ void ags_density(void)
                 "[ags_density] FATAL: GIZMO_NLR_ORACLE=1 is incompatible with "
                 "AgsDensitySpec. after_iter mutates P[i] (NumNgb, AGS_vsig, ...) "
                 "which contaminates the brute oracle pass's pair_kernel reads of "
-                "P[j].AGS_vsig. See OPEN_3d_agsdensity_design.md §3a / §7.\n");
+                "P[j].AGS_vsig.\n");
             fflush(stderr);
         }
         endrun(81350);
@@ -794,7 +792,7 @@ void ags_density(void)
     double t00_truestart = my_second();
 
     /* Canonical host All accessor — stylistic intent-tag for host-snapshot
-     * reads in this scope. Under 93897f62 the redirect is device-pass-only,
+     * reads in this scope. The redirect is device-pass-only,
      * so bare All.* would also be correct here; the accessor documents that
      * these reads run on the host pass. Used at three sites below outside
      * Spec::populate_call_scalars. */
@@ -815,7 +813,7 @@ void ags_density(void)
         }
     }
 
-    /* Codex round-10 pre-solve hard guard. If any ags-active particle
+    /* Pre-solve hard guard. If any ags-active particle
      * enters with AGS_KernelRadius <= 0, the convergence test will
      * spuriously "converge" at h=0 (maxsoft clamp via AGS_Prev*AGS_DSOFT_TOL
      * collapses), leaving the particle with soft=0 → endrun(888) in
@@ -969,8 +967,8 @@ void ags_density(void)
     /* (7) Timing accounting. */
     double t1 = WallclockTime = my_second();
     double timeall = timediff(t00_truestart, t1);
-    /* Per design v0.4.3 §1 NOT IN SCOPE: refined sub-accounting
-     * (timecomp/timewait/timecomm split) is a Wave 2 follow-on. Lump
+    /* NOT IN SCOPE: refined sub-accounting
+     * (timecomp/timewait/timecomm split) is a future follow-on. Lump
      * everything in MISC for now — matches the legacy line 458 fallback. */
     CPU_Step[CPU_AGSDENSMISC] += timeall;
 }

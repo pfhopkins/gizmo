@@ -1,12 +1,11 @@
 /*! \file let_data.h
- *  \brief Step 13 Phase 9.1b -- Locally Essential Tree (LET) wire-format and
+ *  \brief Locally Essential Tree (LET) wire-format and
  *         per-rank-payload data structures.
  *
- *  Phase 9 of the Step-13 GPU domain/gravity port replaces the iterative
- *  do-while(ndone<NTask) gravity export with a one-shot LET exchange: each
- *  rank ships every other rank the local-tree subtrees that are "essential"
- *  for that rank's particles, then walks its own particles through the
- *  resulting foreign tree without mid-walk MPI.
+ *  Replaces the iterative do-while(ndone<NTask) gravity export with a
+ *  one-shot LET exchange: each rank ships every other rank the local-tree
+ *  subtrees that are "essential" for that rank's particles, then walks its
+ *  own particles through the resulting foreign tree without mid-walk MPI.
  *
  *  This header defines:
  *    - struct LETPerRankPayload  -- ~96 bytes / remote rank, broadcast via
@@ -15,11 +14,7 @@
  *    - struct LETNodeWire        -- fixed-size record for one shipped foreign
  *      node, packed contiguously: { remote_id, NODE, extNODE }.  Remote_id
  *      is the source rank's Nodes_base[] index, used as the lookup key in
- *      the unpack pointer-remap step (9.1e).
- *
- *  See ~/.claude/projects/.../memory/handoff_step13_phase9_walk_audit.md for
- *  the audit of all 20 walk-kernel opening branches that drove the LET
- *  payload design.
+ *      the unpack pointer-remap step.
  */
 #ifndef GIZMO_LET_DATA_H
 #define GIZMO_LET_DATA_H
@@ -218,7 +213,7 @@ extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreig
  * leaves a subtree; all other topology is wire-local. */
 
 /* ----------------------------------------------------------------------
- * Per-subtree header (Phase 9.1e_v2)
+ * Per-subtree header
  *
  * Sender emits one LETSubtreeHeader per OUR topleaf shipped to a given
  * receiver R.  The header tells the receiver:
@@ -245,7 +240,7 @@ struct LETSubtreeHeader {
 };
 
 /* ----------------------------------------------------------------------
- * Function prototypes (defined in let_pack.cc, 9.1c-e)
+ * Function prototypes (defined in let_pack.cc)
  * ---------------------------------------------------------------------- */
 
 #ifdef __cplusplus
@@ -257,18 +252,18 @@ extern "C" {
  *
  *  If active_bitmap is non-NULL: bbox spans only ACTIVE topleaves on this
  *  rank, and per-particle bounds (OldAcc, softening, has_sink) span only
- *  ActiveParticleList.  This is the Phase 9.5 "tight" mode -- safe iff the
+ *  ActiveParticleList.  This is the "tight" mode -- safe iff the
  *  receiver's walk only consults LET data for its active particles.
  *
  *  If active_bitmap is NULL: bbox spans all MY topleaves and per-particle
- *  bounds span all NumPart.  Phase 9.4 conservative mode -- always safe,
+ *  bounds span all NumPart.  Conservative mode -- always safe,
  *  including for RT/TREECOL walks that may consult foreign-tree column
  *  density for non-active particles. */
 void let_compute_local_payload(struct LETPerRankPayload *out,
                                const uint64_t *active_bitmap,
                                int bitmap_n_words);
 
-/*! Phase 9.5: compute this rank's active-topleaf bitmap.  bitmap is sized
+/*! Compute this rank's active-topleaf bitmap.  bitmap is sized
  *  n_words = (NTopleaves+63)/64 uint64_t.  Bit tl is set iff topleaf tl is
  *  owned by this rank AND at least one particle in ActiveParticleList lives
  *  in it.  If ActiveParticleList is empty, all of MY topleaves' bits are set
@@ -337,10 +332,9 @@ let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  *  the corresponding foreign subtree root.  Returns LET_OK on success.
  *
  *  CRITICAL: if Numforeignnodes would exceed MaxForeignNodes after install,
- *  endrun() with the LETAllocFactor restart message (matches Phase 9.0
- *  buffer-overflow policy).  Future option (b) -- graceful shrink + revert
- *  to legacy export -- documented in handoff_step13_phase9_locked.md but
- *  not implemented unless practical memory limits demand it. */
+ *  endrun() with the LETAllocFactor restart message.  Future option (b) --
+ *  graceful shrink + revert to legacy export -- not implemented unless
+ *  practical memory limits demand it. */
 let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                             const int *recv_count_per_rank,
                             int recv_count_total,

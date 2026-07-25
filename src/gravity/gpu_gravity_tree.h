@@ -1,10 +1,10 @@
-/* gpu_gravity_tree.h — Step 13 Phase 3
+/* gpu_gravity_tree.h
  *
  * GPU-resident SoA mirror of the gravity tree (NODE / extNODE arrays).
  *
  * Build still happens on CPU (force_treebuild → Nodes_base AoS); this layer
- * provides the SoA mirror so a GPU walk kernel (Phase 4) can do coalesced
- * reads. Retired in Phase 6 once the tree builds directly on the GPU.
+ * provides the SoA mirror so a GPU walk kernel can do coalesced
+ * reads. Retired once the tree builds directly on the GPU.
  *
  * Lifetime: acquire() takes Nodes_host + Extnodes_host pointers and a
  * capacity. If the SoA already mirrors the latest CPU tree, returns the
@@ -41,14 +41,14 @@ extern "C" {
 /* SoA view exposed to GPU kernels. All pointers live in SharedSpace; indices
  * match the AoS Nodes[] convention (callers index by [no - All.MaxPart] when
  * using the base array, or by absolute Nodes[] index after applying the
- * NTopnodes offset — Phase 4 will pick a convention and lock it in). */
+ * NTopnodes offset — the exact indexing convention is not yet finalized). */
 struct gpu_gravity_tree_soa_t {
     /* Geometric / opening criterion — KEEP MyFloat (double) always. Node
      * center and sidelength drive the opening criterion directly; reducing
      * precision here would lose geometric accuracy independent of flag state. */
     Vec3<MyFloat>  *center;     /* geometric center of node */
     MyFloat        *len;        /* sidelength */
-    /* Multipole (currently monopole) — Phase 6.1b: MyGravFloat (= float when
+    /* Multipole (currently monopole): MyGravFloat (= float when
      * GIZMO_MIXED_PRECISION_GRAVITY is set, double otherwise). Force-kernel
      * accumulators and moment storage. Narrowing cast happens at seed time
      * from the MyFloat-typed NODE. */
@@ -57,12 +57,12 @@ struct gpu_gravity_tree_soa_t {
     /* Walk traversal — integer bookkeeping, untouched by precision flag. */
     int            *sibling;
     int            *nextnode;
-    int            *father;     /* parent node index (Phase 6.2: needed by GPU moment-refresh dependency-counter walk) */
+    int            *father;     /* parent node index (needed by GPU moment-refresh dependency-counter walk) */
     unsigned int   *bitflags;
     /* Force kernel */
     MyGravFloat    *maxsoft;
     long           *N_part;
-    /* C1 foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
+    /* Foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
      * MaxForeignNodes and indexed by foreign_slot = no - (MaxPart+MaxNodes) == (node SoA idx) -
      * MaxNodes -- a DIFFERENT index than every other array above (which use no - MaxPart).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
@@ -80,15 +80,15 @@ struct gpu_gravity_tree_soa_t {
      * following it). */
     int            *nextnode_aux;
     int             nextnode_aux_size;
-    /* Phase 6.4: build-time suns[8] per internal node, snapshotted before
+    /* Build-time suns[8] per internal node, snapshotted before
      * force_update_node_recursive overwrites the union with the d struct.
      * Sized [capacity * 8].  The GPU nextnode-threading kernel reads from
      * here to reconstruct DFS-order links in parallel. */
     int            *suns_backup;
 
-    /* --- Phase 2-I optional payloads: gated by the same flags as the AoS
+    /* --- Optional payloads: gated by the same flags as the AoS
      *     NODE definition in allvars.h. Each block is present iff the host
-     *     NODE carries the field. Moment/force storage → MyGravFloat (6.1b).
+     *     NODE carries the field. Moment/force storage → MyGravFloat.
      *     CHIMES arrays stay double — chemistry tolerances force it. */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyGravFloat    *gasmass;          /* [nnodes] */
@@ -127,8 +127,8 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat    *MaxFeedbackVel;
 #endif
 #endif
-    /* Unconditional Extnodes mirrors — Phase 6.1a. Needed by the GPU moment
-     * kernel (6.2/6.3) which replaces force_update_node_recursive; these are
+    /* Unconditional Extnodes mirrors. Needed by the GPU moment
+     * kernel which replaces force_update_node_recursive; these are
      * always computed during moment accumulation regardless of which physics
      * flags are on. The prior SINK_DYNFRICTION_FROMTREE/COMPUTE_JERK_IN_GRAVTREE
      * guard on node_vs was removed — vs is now always present. */
@@ -138,8 +138,8 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat       *divVmax;       /* Extnodes[].divVmax */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     /* 6-component symmetric tensor moment: [xx,yy,zz,xy,xz,yz]. Flat layout
-     * [nnodes * 6]. Accumulated by GPU moment kernel starting in Phase 6.3;
-     * walk consumption is Tier 3 (walk guard unchanged, see Phase-4 handoff). */
+     * [nnodes * 6]. Accumulated by GPU moment kernel; walk consumption not
+     * yet wired in (walk guard unchanged). */
     MyGravFloat       *tidal_tensorps;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
@@ -149,7 +149,7 @@ struct gpu_gravity_tree_soa_t {
 #endif
 };
 
-/* Acquire SoA mirror sized for at least min_nodes.  Phase 7.a: simplified to
+/* Acquire SoA mirror sized for at least min_nodes.  Simplified to
  * a pure capacity-grow / pointer-grab.  No AoS->SoA seeding ever happens
  * here — the build pipeline (gpu_nextnode_backup_suns -> emit_bfs ->
  * finalize_father -> finalize_sibling -> moment_refresh -> nextnode_thread)
@@ -161,7 +161,7 @@ void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
 
-/* Phase 6.8e: Nextnode[] is allocated in SharedSpace by force_treeallocate
+/* Nextnode[] is allocated in SharedSpace by force_treeallocate
  * (forcetree.cc).  This setter aliases soa->nextnode_aux to that pointer; no
  * separate buffer, no per-walk memcpy.  Pass NULL/0 from force_treefree to
  * clear the alias before the underlying buffer is freed. */
@@ -177,7 +177,7 @@ struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void);
 int gpu_gravity_tree_capacity(void);
 int gpu_gravity_tree_valid(void);
 
-/* Phase 7.a: GPU pre-walk drift kernel — replaces the host loop in
+/* GPU pre-walk drift kernel — replaces the host loop in
  * gpu_gravtree_walk_primary that called force_drift_node + mark_dirty per
  * stale-Ti_current node.  Mutates Nodes[]/Extnodes[] (UVM) and SoA mirrors
  * in a single kernel; no AoS->SoA reseed afterwards.  Returns 0 on success,
@@ -209,7 +209,7 @@ int gpu_gravity_soa_drift_certified(integertime time1);
  * gpu_gravity_soa_ensure_drifted already sets. */
 void gpu_gravity_soa_mark_drift_certified(integertime time1);
 
-/* Phase 6.2: GPU moment-refresh kernel. Computes local-tree node moments
+/* GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
  * payloads) directly on the device, using dependency-counter atomics on
  * device-local scratch and bulk seed of the SharedSpace SoA.
@@ -220,7 +220,7 @@ void gpu_gravity_soa_mark_drift_certified(integertime time1);
  * (force_exchange_pseudodata + force_treeupdate_pseudos) sees identical
  * values to what it would have produced.
  *
- * `active_root_node` reserved for Phase 9 subtree-hint optimization. Initial
+ * `active_root_node` reserved for a future subtree-hint optimization. Initial
  * callers pass -1 (= whole tree from MaxPart..MaxPart+Numnodestree).
  *
  * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
@@ -237,14 +237,14 @@ void gpu_moment_refresh_release(void);
  * could call it directly. Caller must have a valid SoA acquired. */
 void gpu_moment_writeback_to_aos(int n);
 
-/* Phase 6.4: snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
+/* Snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
  * SoA's suns_backup buffer.  MUST be called BEFORE force_update_node_recursive
  * overwrites the union with the d struct.  Idempotent; safe to call multiple
  * times during the force_treebuild retry loop (each call refreshes from AoS).
  * Allocates the suns_backup buffer on first use if needed. */
 void gpu_nextnode_backup_suns(int n);
 
-/* Phase 6.4: GPU nextnode-threading kernel.  Recomputes the DFS pre-order
+/* GPU nextnode-threading kernel.  Recomputes the DFS pre-order
  * `nextnode` link for each internal node (in soa->nextnode + AoS Nodes[].u.d.nextnode)
  * and `Nextnode` for each particle / pseudo-particle (in soa->nextnode_aux + AoS Nextnode[]).
  * Inputs: SoA's suns_backup (populated via gpu_nextnode_backup_suns), sibling[].

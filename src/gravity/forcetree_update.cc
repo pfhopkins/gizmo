@@ -10,7 +10,7 @@
 #include "../core/proto.h"
 #include "force_node_drift_sync.h"
 
-/* Phase 7.c: GPU replacement for force_update_tree. */
+/* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
 
 /* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
@@ -40,7 +40,7 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
 
 void force_update_tree(void)
 {
-    /* Phase 7.d: GPU path is the only path — CPU fallback retired. */
+    /* GPU path is the only path — CPU fallback retired. */
     gpu_force_update_tree();
     return;
 }
@@ -240,7 +240,7 @@ void force_drift_node(int no, integertime time1)
 #endif
 
     if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}
-    /* Mode B per-type bands: upward-only inflate (codex 2026-06-07). The bands
+    /* Mode B per-type bands: upward-only inflate. The bands
      * include static-ish sources like P[j].ForceSoftening (per
      * force_hmax_per_type_particle_radius), so decaying the band below the
      * actual FS value would under-bound the node-prune. force_update_hmax()
@@ -325,7 +325,7 @@ void force_update_hmax(void)
         int per_type_band = (int)P[i].Type;
         double per_type_htmp = force_hmax_per_type_particle_radius(i);
 
-        /* Scalar `hmax`/`divVmax` eligibility (legacy semantics, codex 2026-06-07):
+        /* Scalar `hmax`/`divVmax` eligibility (legacy semantics):
          * non-AGS-FORALL builds → gas only; AGS-FORALL builds → any Mass>0 type.
          * Non-eligible particles still update per-type bands above, but MUST NOT
          * leak their divVel / KernelRadius into the scalar band (which feeds
