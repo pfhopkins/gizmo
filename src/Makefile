@@ -213,7 +213,10 @@ ifeq ($(SYSTYPE),"Frontier")
 ## (defines __HIPCC__ => GIZMO_GPU_COMPILER, like nvcc_wrapper on Vista); host TUs + the
 ## final link use the Cray CC wrapper (amd PE), which auto-adds GPU-aware MPI (GTL,
 ## -lmpi_gtl_hsa), -lamdhip64, and cray-hdf5/fftw/gsl paths for the host objects.
-## Load: amd/6.4.2 rocm/6.4.2 craype-accel-amd-gfx90a kokkos/4.6.02-gpu cray-hdf5 cray-fftw gsl
+## Load: amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a kokkos/4.6.02-gpu
+##       cray-hdf5 cray-fftw gsl hypre/3.0.0-mpi
+## (hypre only needed for MHD_MODIFIED_GRADIENT; see the HYPRE block at the end of this
+## section. cray-mpich/9.0.1 is what the hypre module is built against.)
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -247,9 +250,12 @@ GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-## Frontier: `module load hypre` sets OLCF_HYPRE_ROOT (the OLCF module convention,
-## as for gsl/kokkos above). HYPRE_ROOT/HYPRE_DIR honored as fallbacks for a
-## hand-built install. Both lib and lib64 are searched (OLCF modules use either).
+## Frontier: `module load hypre/3.0.0-mpi` sets OLCF_HYPRE_ROOT (the OLCF module
+## convention, as for gsl/kokkos above); its libraries are under lib64. That version
+## builds against amd/6.4.2 + cray-mpich/9.0.1, which is the compiler the
+## kokkos/4.6.02-gpu module also requires; the newer hypre modules need amd/7.x and so
+## cannot be combined with that Kokkos build. HYPRE_ROOT/HYPRE_DIR are honored as
+## fallbacks for a hand-built install; both lib and lib64 are searched.
 ifdef OLCF_HYPRE_ROOT
 HYPRE_INCL = -I$(OLCF_HYPRE_ROOT)/include
 HYPRE_LIBS = -L$(OLCF_HYPRE_ROOT)/lib -L$(OLCF_HYPRE_ROOT)/lib64 -lHYPRE
