@@ -1096,6 +1096,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
+            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K, hands off to the CIE metal tables so this isn't double-counted in the transition region */
             if(LambdaNeb > 0) { Lambda += LambdaNeb; }
         }
 #endif
