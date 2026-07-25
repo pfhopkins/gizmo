@@ -246,6 +246,21 @@ GSL_INCL = -I$(OLCF_GSL_ROOT)/include
 GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+## Frontier: `module load hypre` sets OLCF_HYPRE_ROOT (the OLCF module convention,
+## as for gsl/kokkos above). HYPRE_ROOT/HYPRE_DIR honored as fallbacks for a
+## hand-built install. Both lib and lib64 are searched (OLCF modules use either).
+ifdef OLCF_HYPRE_ROOT
+HYPRE_INCL = -I$(OLCF_HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(OLCF_HYPRE_ROOT)/lib -L$(OLCF_HYPRE_ROOT)/lib64 -lHYPRE
+else ifdef HYPRE_ROOT
+HYPRE_INCL = -I$(HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(HYPRE_ROOT)/lib -L$(HYPRE_ROOT)/lib64 -lHYPRE
+else ifdef HYPRE_DIR
+HYPRE_INCL = -I$(HYPRE_DIR)/include
+HYPRE_LIBS = -L$(HYPRE_DIR)/lib -L$(HYPRE_DIR)/lib64 -lHYPRE
+endif
+endif
 ## submit to Frontier batch (AMD MI250X, 8x GCD per node, gfx90a)
 endif
 
