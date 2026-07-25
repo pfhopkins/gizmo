@@ -1083,7 +1083,23 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
-        
+
+#if defined(RT_CHEM_PHOTOION)
+        /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
+           GIZMO's tabulated metal-line cooling below assumes collisional (CIE) ionization, which under-predicts the forbidden-line cooling of
+           -photoionized- gas; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2
+           coefficient in erg cm^3 s^-1 (= Zg * x_e * x_H+ * C(T,n_e); the volumetric rate ~ n_e*n_H+, so it is n^2 like the other channels --
+           it lowers the equilibrium T by raising Lambda(T), not by any density-independence). Valid for photoionized gas (nHp>0, free electrons). */
+        if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
+            double T4 = T * 1.0e-4, lnT4 = log(T4), ne_2 = nHcgs * n_elec / 100.; /* n_e in units of 100 cm^-3 */
+            double log10_fneb = 0.692 + lnT4*(-0.586 + lnT4*(0.816 + lnT4*(-0.505 + lnT4*(0.118 + lnT4*(0.00766 - 0.00508*lnT4)))));
+            double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
+                * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
+                / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
+            if(LambdaNeb > 0) { Lambda += LambdaNeb; }
+        }
+#endif
+
 #ifdef COOL_METAL_LINES_BY_SPECIES
         /* can restrict to low-densities where not self-shielded, but let shieldfac (in ne) take care of this self-consistently */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
