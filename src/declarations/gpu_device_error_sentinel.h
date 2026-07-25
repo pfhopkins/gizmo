@@ -26,16 +26,22 @@
 struct gizmo_gpu_err_sentinel_t { int set; int code; int line; };
 static __managed__ struct gizmo_gpu_err_sentinel_t gizmo_gpu_err_sentinel = {0, 0, 0};
 
-#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
-/* Device pass: first-set-wins record. Best-effort -- we trap immediately after,
- * and the host-side request is itself first-set-wins, so a benign race is fine. */
-static __device__ inline void gizmo_gpu_device_record_error(int code, int line) {
+/* HD (not __device__-only): host-side management functions that call endrun still
+ * get compiled in the device pass, and clang rejects a __device__-only callee from
+ * a __host__ caller (nvcc prunes it silently). The sentinel write is device-only;
+ * on host this is a no-op (the host endrun path is the soft-stop request, which
+ * does not route through here). first-set-wins; we trap immediately after, and the
+ * host-side request is itself first-set-wins, so a benign race is fine. */
+static __host__ __device__ inline void gizmo_gpu_device_record_error(int code, int line) {
+#if defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__
     if(atomicCAS(&gizmo_gpu_err_sentinel.set, 0, 1) == 0) {
         gizmo_gpu_err_sentinel.code = code;
         gizmo_gpu_err_sentinel.line = line;
     }
-}
+#else
+    (void)code; (void)line;
 #endif
+}
 
 /* Host pass: consume (read + clear) this TU's sentinel. Returns 1 if a device
  * endrun was recorded since the last consume, else 0. Clearing avoids a later

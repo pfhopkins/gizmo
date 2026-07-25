@@ -50,7 +50,9 @@ double return_user_desired_target_pressure(int i)
 }
 
 /* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp begin declare target
+#endif
 
 /*!
     Updates the thermodynamic quantities determined by the current internal
@@ -96,11 +98,22 @@ double return_user_desired_target_pressure(int i)
    device-side includers (cooling.cc).  Only this TU enables them so the
    host external symbol behaves exactly as the pre-refactor function. */
 #undef KOKKOS_INLINE_FUNCTION
+#ifdef GIZMO_GPU_COMPILER
+/* HD (not host-only): these eos_functions.h symbols are also called from device
+ * kernels, and clang rejects an HD proto.h decl re-declared host-only here (nvcc
+ * merged silently). Same pattern cooling.cc uses. The host-only EOS branches are
+ * guarded out of the device pass separately (EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
+ * + !device). Non-GPU builds keep the plain host strong symbol. */
+#define KOKKOS_INLINE_FUNCTION __host__ __device__
+#else
 #define KOKKOS_INLINE_FUNCTION
+#endif
 #define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
+#ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp end declare target
+#endif
 
 /* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
    as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl (audit-E1 follow-up, 2026-05-20).

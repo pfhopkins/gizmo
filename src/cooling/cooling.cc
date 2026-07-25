@@ -40,7 +40,7 @@ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullp
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
-double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 /* Forward decls for symbols called by eos_functions.h / rt_functions.h under
    various FIRE / COOL_MOLECFRAC / SINGLE_STAR flag combinations.  Must be declared
    before the including headers so overload resolution inside their inline bodies
@@ -2939,6 +2939,7 @@ static std::vector<struct global_data_all_processes *> &gizmo_all_device_mirror_
 }
 extern "C" void gizmo_register_all_device_mirror(struct global_data_all_processes *m)
 {
+    if(!m) return;  /* HIP: ignore a pre-managed-init NULL &AllDeviceMirror capture */
     auto &reg = gizmo_all_device_mirror_registry();
     for(auto *x : reg) { if(x == m) return; }
     reg.push_back(m);
@@ -2956,7 +2957,7 @@ void gizmo_gpu_sync_all(void) {
 #if defined(GIZMO_GPU_COMPILER)
     const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
     auto &reg = gizmo_all_device_mirror_registry();
-    for(auto *m : reg) { *m = *host_all; }
+    for(auto *m : reg) { if(m) *m = *host_all; }  /* skip any residual NULL (HIP pre-init capture) */
 #endif
     Kokkos::fence();
 }
