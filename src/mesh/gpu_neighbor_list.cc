@@ -936,7 +936,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             "walking it under a different policy returns wrong leaf-h_j values "
             "and silently misses valid pairs.  Spec author: ensure Spec::radius_policy "
             "matches the cache's owner (or declare SidxCacheKind::None to rebuild "
-            "per call). See OPEN_radius_policy_runner_design.md.\n",
+            "per call).\n",
             caller_label ? caller_label : "?",
             (unsigned)radius_policy, (unsigned)cached_idx->cache_radius_policy);
         fflush(stderr);

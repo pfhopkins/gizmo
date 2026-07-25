@@ -171,8 +171,7 @@ void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
     if(on) {
         printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
                "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
-               "the in-runner oracle is unavailable for AgsDensitySpec). "
-               "See OPEN_3d_agsdensity_design.md §3a / §7.\n"); fflush(stdout);
+               "the in-runner oracle is unavailable for AgsDensitySpec).\n"); fflush(stdout);
         endrun(90001019);
         gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
     }
@@ -778,7 +777,7 @@ void ags_density(void)
                 "[ags_density] FATAL: GIZMO_NLR_ORACLE=1 is incompatible with "
                 "AgsDensitySpec. after_iter mutates P[i] (NumNgb, AGS_vsig, ...) "
                 "which contaminates the brute oracle pass's pair_kernel reads of "
-                "P[j].AGS_vsig. See OPEN_3d_agsdensity_design.md §3a / §7.\n");
+                "P[j].AGS_vsig.\n");
             fflush(stderr);
         }
         endrun(81350);

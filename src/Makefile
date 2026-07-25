@@ -787,7 +787,7 @@ turb/difffilter_loop.o: turb/difffilter_loop.cc $(INCL) $(CONFIG) compile_time_i
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 solids/grain_drag.o: solids/grain_drag.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-## galaxy_sf/dm_dispersion_gpu.o retired by DMDispersionSpec (3d.D port).
+## galaxy_sf/dm_dispersion_gpu.o retired by DMDispersionSpec.
 galaxy_sf/dm_dispersion.o: galaxy_sf/dm_dispersion.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/dm_dispersion_loop.o: galaxy_sf/dm_dispersion_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
@@ -809,7 +809,7 @@ gravity/ags_force_loop.o: gravity/ags_force_loop.cc $(INCL) $(CONFIG) compile_ti
 ## dm_fuzzy_loop.o.
 sidm/dm_fuzzy_loop.o: sidm/dm_fuzzy_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-## sinks/sink_environment_gpu.o retired (3d.2 cleanup); legacy
+## sinks/sink_environment_gpu.o retired; legacy
 ## sink_environment_second_evaluate_gpu absorbed by SinkEnv2Spec runner port.
 sidm/cbe_integrator_gpu.o: sidm/cbe_integrator_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
@@ -821,7 +821,7 @@ galaxy_sf/thermal_fb.o: galaxy_sf/thermal_fb.cc $(INCL) $(CONFIG) compile_time_i
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/thermal_fb_loop.o: galaxy_sf/thermal_fb_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-## sinks/sink_feed_gpu.o retired (3d.1); legacy `sink_feed_gpu.cc` out of build,
+## sinks/sink_feed_gpu.o retired; legacy `sink_feed_gpu.cc` out of build,
 ## file deletion deferred to cleanup commit.
 sinks/sink_feed.o: sinks/sink_feed.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
@@ -830,7 +830,7 @@ sinks/sink_feed_loop.o: sinks/sink_feed_loop.cc $(INCL) $(CONFIG) compile_time_i
 sinks/sink_env2_loop.o: sinks/sink_env2_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 ## sinks/sink_environment.o + sink_env1_loop.o promoted to nvcc_wrapper after
-## the descope-fix audit (2026-05-21): sink_env1_loop.h now includes
+## the descope-fix audit: sink_env1_loop.h now includes
 ## Kokkos_Core.hpp unconditionally for Kokkos::atomic_min on P[j].SwallowTime
 ## under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. mpicxx compilation
 ## would trip the catastrophic KOKKOS_ENABLE_CUDA / __CUDACC__ diagnostic.
@@ -846,19 +846,14 @@ galaxy_sf/mechfb_loop.o: galaxy_sf/mechfb_loop.cc $(INCL) $(CONFIG) compile_time
 solids/grain_physics_loop.o: solids/grain_physics_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 ## sinks/sink_swallow_and_kick_gpu.cc + sinks/sink_swallow_and_kick_functions.h
-## deleted in 3d.3 (port + cleanup folded into one commit per codex SSOT review).
+## deleted (port + cleanup folded into one commit per SSOT).
 ## New build rules for 3d.3:
 sinks/sink_swk_loop.o: sinks/sink_swk_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 sinks/sink_swallow_and_kick.o: sinks/sink_swallow_and_kick.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-## radfb_local_gpu.o retired in Phase 4 / Wave 3 / radfb_local cleanup commit
+## radfb_local_gpu.o retired in radfb_local cleanup commit
 ## (legacy radiation_pressure_winds_gpu replaced by runner-template port).
-## Phase 4 / Wave 3 / radfb_local port: radfb_rp_loop.cc owns BOTH the
-## Spec hooks AND the `radiation_pressure_winds_consolidated` toplevel
-## caller (so the two-file Spec module stays self-contained). radfb_local.cc
-## is unaffected by this port (HII_heating_singledomain stays in
-## STARFORM_OBJS, host-only).
 galaxy_sf/radfb_rp_loop.o: galaxy_sf/radfb_rp_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/gpu_particles_arena.o: system/gpu_particles_arena.cc $(INCL) $(CONFIG) compile_time_info.cc

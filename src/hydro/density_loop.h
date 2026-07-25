@@ -324,8 +324,7 @@ struct DensitySpec {
     /* J-side write invariant. */
     static_assert(uses_ghost_writeback == false,
         "density() must remain pure i-side accumulation; if a j-side "
-        "write is added, register a ghost_writeback op explicitly and "
-        "update OPEN_3d_density_design.md §8 validation matrix.");
+        "write is added, register a ghost_writeback op explicitly");
 
     /* ====================================================================
      * Host hooks. Bodies in hydro/density_loop.cc.

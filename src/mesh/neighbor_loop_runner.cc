@@ -4895,7 +4895,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                   "NotIterative Specs must call run_neighbor_loop instead.");
     static_assert(nlr_spec_has_after_iter_v<Spec>,
                   "Iterative Spec is missing `static IterResult after_iter(const AfterIterContext<Spec>&, const AccumData&);`. "
-                  "Required when IterControl = Iterative. See OPEN_phase4_b0_iterative_design.md §3.");
+                  "Required when IterControl = Iterative.");
     static_assert(std::is_trivially_copyable_v<typename Spec::IterScratch>,
                   "Spec::IterScratch must be std::is_trivially_copyable_v. "
                   "Use `using IterScratch = NoIterScratch;` for the empty form.");
@@ -5269,8 +5269,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         static_assert(nlr_spec_has_active_subgroup_key_v<Spec>,
                       "Spec::actives_partition_by_subgroup=true requires "
                       "Spec::active_subgroup_key(const DeviceContext&, int, "
-                      "const CallScalars&) returning int (= bm key). See "
-                      "OPEN_3d_agsdensity_design.md §5a.");
+                      "const CallScalars&) returning int (= bm key).");
         partition_expected_bm_key.resize(args.num_subgroups);
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             partition_expected_bm_key[sg] = args.subgroups[sg].j_type_bitmask;
@@ -5313,12 +5312,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     const int i    = sgr.active_indices[slot];
                     const int key  = Spec::active_subgroup_key(drv.ctx, i, drv.cs);
                     if (static_cast<unsigned int>(key) != expect) {
-                        printf("[run_neighbor_loop_iterative<%s>] FATAL: Spec contract "
-                               "violation: actives_partition_by_subgroup key drift. "
+                        printf("[run_neighbor_loop_iterative<%s>] FATAL: "
+                               "actives_partition_by_subgroup key drift. "
                                "sg=%d iter=%d slot=%d i=%d expected_bm=%u got_key=%d. "
                                "active_subgroup_key MUST be a pure function of "
-                               "state that does not change across iterations. See "
-                               "OPEN_3d_agsdensity_design.md §5a.\n",
+                               "state that does not change across iterations.\n",
                                Spec::loop_name, sg, drv.iter_index, slot, i,
                                expect, key); fflush(stdout);
                         local_partition_bad = 1;

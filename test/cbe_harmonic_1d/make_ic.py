@@ -105,15 +105,13 @@ def main():
     vmoments = np.zeros((N, 3 * nbasis))           # NBASIS=nbasis, NMOMENTS=3
 
     if mode == "empty":
-        # The intended "1 massive + 1 empty basis" multibasis IC (canonical
-        # OPEN_cbe_method_CANONICAL S.O.4b). basis0 = the normal single-basis
+        # The intended "1 massive + 1 empty basis" multibasis IC, 
+        # basis0 = the normal single-basis, 
         # hot Gaussian (mass m_cell, v_rel=0, sigma_v). basis1 = a FLOOR-MASS,
         # COLD slot, given a small velocity OPPOSITE to its imminent infall
         # (the populated basis has zero mean vel, so the sign is set by which
         # side of x_c the cell sits on: at x>x_c infall is toward -x, so the
-        # empty slot gets +v_eps; v_empty = v_eps*sign(x-x_c)). Documented
-        # parameter choices (to confirm w/ Phil+codex): floor_frac below the
-        # free-slot eps_rho gate so the empty basis as a SOURCE is floor-gated.
+        # empty slot gets +v_eps; v_empty = v_eps*sign(x-x_c)). 
         assert nbasis == 2, "empty mode requires nbasis=2"
         floor_frac = 1.0e-10                              # empty-basis mass = floor_frac*m_cell
         sigma_empty = 0.05 * sigma_v                      # cold
