@@ -116,8 +116,8 @@ double return_user_desired_target_pressure(int i)
 #endif
 
 /* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
-   as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl (audit-E1 follow-up, 2026-05-20).
-   Migration preserves public API and external linkage exactly: existing host
+   as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl.
+   This preserves public API and external linkage exactly: existing host
    callers (kicks/predict/sfr_eff/merge_split/init/density/density_loop/cooling-
    scatter-fallback) continue to call this symbol unchanged.  The header pattern
    matches the established Get_Gas_Molecular_Mass_Fraction / yhelium etc. setup
@@ -126,7 +126,7 @@ double return_user_desired_target_pressure(int i)
    Do NOT include cooling_functions.h here — doing so creates __host__ non-inline
    strong symbols for ThermalProperties/convert_u_to_temp/find_abundances_and_rates
    that override cooling.cc's inline versions at link time, producing wrong results
-   on CUDA (bisected to commits f8d2619f..63474bcd). */
+   on CUDA (bisected empirically). */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     set_eos_pressure_impl(i, pp, cell);

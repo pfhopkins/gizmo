@@ -10,7 +10,7 @@
  *
  * This file was originally written by Qirong Zhu, for GIZMO, based on
  * Phil Hopkins's adaptive gravitational softening routine. Modified by Phil
- * and adapted to the runner-template pattern by Claude for GIZMO.
+ * and adapted to the runner-template pattern.
  */
 
 #include <mpi.h>

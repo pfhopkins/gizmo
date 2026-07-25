@@ -166,9 +166,8 @@ static void sink_swk_scatter(const int *active_list, int num_active,
 
 
 #ifdef GIZMO_NLR_JSIDE_HASH_TEST
-/* Mandatory j-side hash harness (per OPEN_3d_sinkswk_design.md sec E.2).
- * Walks owner-local j's, Allreduce'd cross-mode invariants. Removed in
- * cleanup commit. */
+/* j-side hash harness: walks owner-local j's, Allreduce's cross-mode
+ * invariants. */
 static inline uint64_t sk_splitmix64(uint64_t x)
 {
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -206,7 +205,7 @@ static void sink_swk_dump_jside_hashes(const char *label,
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
     /* CR coverage: ID-keyed pair-hashes for energy, energyPred, flux, fluxPred.
      * Sums alone hide spatially wrong updates (same total, different per-cell
-     * distribution) — codex review 2026-05-10. */
+     * distribution). */
     uint64_t cre_h = 0, crep_h = 0, crf_h = 0, crfp_h = 0;
 #endif
     for(int j = 0; j < num_local; j++) {
@@ -986,9 +985,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         }
         /* New particle's KernelRadius was just initialized. Mark h-dirty for
          * all caches that survive across this spawn (caches whose range covers
-         * j). Pool-membership for this new index will be handled in commit C
-         * via notify_pool_changed; for now this h-dirty mark keeps the
-         * compact_xyzh.h slot fresh-on-next-build. */
+         * j). Pool-membership for this new index is handled separately via
+         * notify_pool_changed; this h-dirty mark keeps the compact_xyzh.h
+         * slot fresh-on-next-build. */
         gizmo_mark_kernel_radius_dirty_indices(&j, 1);
 #endif
 #endif
@@ -1099,7 +1098,7 @@ void special_rt_feedback_injection(void)
         P[iBH0].unspawned_wind_mass += MdotJetMsunYr * dt * (6.304e25 * UNIT_TIME_IN_CGS/UNIT_MASS_IN_CGS); // will sent to jets subroutine, for spawning, alongside radiation injection //
         double n_unspawned = P[iBH0].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(iBH0)); // number of spawned gas cells that can be made from the mass in the reservoir
         if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
-        P[iBH0].Sink_Specific_AngMom[0]=1; P[iBH0].Sink_Specific_AngMom[1]=0; P[iBH0].Sink_Specific_AngMom[2]=0; // HACK FOR NOW!!!! (will fix to desired direction in future)
+        P[iBH0].Sink_Specific_AngMom[0]=1; P[iBH0].Sink_Specific_AngMom[1]=0; P[iBH0].Sink_Specific_AngMom[2]=0; // placeholder direction; not yet set to the desired physical direction
     }
     return;
 }

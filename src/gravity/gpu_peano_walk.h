@@ -1,7 +1,7 @@
-/* gpu_peano_walk.h -- Step 13 Phase 6.5c1
+/* gpu_peano_walk.h
  *
  * Host-side mirror lifecycle for the device Peano walk.  GPU kernels that
- * need to map particles to topleaves (Phase 6.5c2 onward) call into the
+ * need to map particles to topleaves call into the
  * device-side primitives in gpu_peano_walk_functions.h, which read from
  * SharedSpace mirrors of TopNodes[] and DomainNodeIndex[].  This header
  * declares the host-side lifecycle:

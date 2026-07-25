@@ -61,7 +61,7 @@
 #endif
 
 #if defined(EOS_DAMAGE_POROSITY)
-/* Phase 17e: damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
+/* damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
 #endif
@@ -71,7 +71,7 @@
 #endif
 
 #if defined(PLANET_HEATING)
-/* Phase 17f: radiogenic + accretional heating; solid material required */
+/* radiogenic + accretional heating; solid material required */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
 #endif
@@ -175,7 +175,7 @@
 #define CBE_PAIRING_COST            CBE_COST_TRACE_W2 /* harness §4.4 production default (flipped) */
 #endif
 #ifndef CBE_PAIRING_USE_FREE_SLOT
-#define CBE_PAIRING_USE_FREE_SLOT   1                 /* harness §4.4 production default (flipped in C6c from C6b temp 0) */
+#define CBE_PAIRING_USE_FREE_SLOT   1                 /* production default */
 #endif
 #ifndef CBE_PAIRING_ASSIGN
 #define CBE_PAIRING_ASSIGN          CBE_ASSIGN_GREEDY /* harness §4.1 + Phil */
@@ -1236,7 +1236,7 @@
 #define OUTPUT_DUST_TO_GAS_RATIO // helpful if these special modules are on to see this output and save it for use in analysis
 #endif
 
-/* Phase 10.6: COMPUTE_POTENTIAL_ENERGY / OUTPUT_POTENTIAL / EVALPOTENTIAL are now equivalent.
+/* COMPUTE_POTENTIAL_ENERGY / OUTPUT_POTENTIAL / EVALPOTENTIAL are now equivalent.
  * Any one set implies the others.  The standalone gravity/potential.cc (separate force_treebuild
  * + export-style force_treeevaluate_potential) is retired; potentials come from the unified
  * gravity tree walk (gravtree.cc with EVALPOTENTIAL). */
@@ -1571,28 +1571,27 @@
 
 /* CBE_INTEGRATOR_SECONDMOMENT dimension fence.
  *
- * The original (pre-Commit-4, codex 2026-05-25) guard fenced ALL CBE at
- * 3D because every momentum-slot access in sidm/cbe_integrator{.cc,
- * _functions.h, _flux_functions.h} hard-coded [1]/[2]/[3] as p_x/p_y/p_z.
- * Lifted 2026-06-02 to NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path
- * once sidm/cbe_integrator_functions.h gained dimension-aware
- * momentum-slot helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3,
- * _v_load_3) and the init / conservation / flux / drift-kick / postgrav
- * sites were migrated through them.
+ * The original guard fenced ALL CBE at 3D because every momentum-slot
+ * access in sidm/cbe_integrator{.cc, _functions.h, _flux_functions.h}
+ * hard-coded [1]/[2]/[3] as p_x/p_y/p_z. This was lifted to
+ * NUMDIMS = 1, 2, 3 for the no-SECONDMOMENT path once
+ * sidm/cbe_integrator_functions.h gained dimension-aware momentum-slot
+ * helpers (cbe_basis_p_r/_w/_a, _load_3, _store_3, _v_load_3) and the
+ * init / conservation / flux / drift-kick / postgrav sites were migrated
+ * through them.
  *
- * The SECONDMOMENT D!=3 fence is lifted as of commit 4b (2026-06-03).
- * Commit 4a migrated all stress-block helpers (cbe_face_K_and_vn_from_Q,
- * cbe_flux_hllc_vacuum, cbe_basis_row_is_realizable,
- * cbe_basis_row_project_central_stress_to_PSD, cbe_clamp_face_Q, drift-kick
- * repair, postgravity dT block) to access stress slots via cbe_T_idx /
- * cbe_basis_T_r/_w with loops bounded by NUMDIMS, so the layout-dependent
- * code is dim-agnostic. Commit 4b added the relative-frame T_abs boost in
- * cbe_build_flux_frame_Q_from_stored_moments so the flux solver sees
- * absolute-frame Q. The frame conversion on the storage side has since
- * been moved (codex 2026-06-04) from a continuous-time differential
- * postgravity formula into a finite absolute-update round-trip inside
- * do_cbe_drift_kick_kernel (see SSOT helpers cbe_relative_row_to_absolute
- * / cbe_absolute_to_relative_row); postgravity is now reduced to a
+ * The SECONDMOMENT D!=3 fence has since been lifted as well: all
+ * stress-block helpers (cbe_face_K_and_vn_from_Q, cbe_flux_hllc_vacuum,
+ * cbe_basis_row_is_realizable, cbe_basis_row_project_central_stress_to_PSD,
+ * cbe_clamp_face_Q, drift-kick repair, postgravity dT block) access stress
+ * slots via cbe_T_idx / cbe_basis_T_r/_w with loops bounded by NUMDIMS, so
+ * the layout-dependent code is dim-agnostic. The relative-frame T_abs
+ * boost in cbe_build_flux_frame_Q_from_stored_moments lets the flux
+ * solver see absolute-frame Q. The frame conversion on the storage side
+ * was moved from a continuous-time differential postgravity formula into
+ * a finite absolute-update round-trip inside do_cbe_drift_kick_kernel
+ * (see SSOT helpers cbe_relative_row_to_absolute /
+ * cbe_absolute_to_relative_row); postgravity is now reduced to a
  * mass-closure safety net, and pi.Vel is updated directly from the
  * post-update mass-weighted-mean basis velocity rather than through a
  * GravAccel injection. With these pieces in place, the SECONDMOMENT-on
@@ -1603,10 +1602,9 @@
  * Caveat: the 3D-only Cauchy-Schwarz + det-test repair sub-block at
  * sidm/cbe_integrator_functions.h is intentionally gated #if (NUMDIMS == 3)
  * — that whole repair chain (diagonal floor + CS + det + SPD projection +
- * split-largest) is slated for replacement by Fix #2b conservative-shift
- * repair (commit 5). The active-dim SPD projection landed in 4a is what
- * carries realizability when this commit (4b) makes 1D/2D SECONDMOMENT
- * reachable. */
+ * split-largest) is slated for replacement by a conservative-shift repair.
+ * The active-dim SPD projection is what carries realizability now that
+ * 1D/2D SECONDMOMENT is reachable. */
 
 
 /* Gravtree source-luminosity lazy-touch capability predicate.

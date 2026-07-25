@@ -7,7 +7,7 @@
  * hydro variable; this module only re-partitions it locally and (in C3+)
  * routes radiative cooling/Compton/conduction to T_e.
  *
- * C2 (this commit) adds ONLY the Spitzer e-i Coulomb equilibration source.
+ * Currently implements only the Spitzer e-i Coulomb equilibration source.
  * Because ν_eq dt can be >> 1 in cluster cores (stiff), we solve it
  * ANALYTICALLY: at fixed total u, the temperature difference T_e - T_i decays
  * exponentially with rate α = (1 + n_e/n_i) ν_eq. The (1 + n_e/n_i) factor
@@ -16,8 +16,8 @@
  *
  * Cosmology: u inputs are physical specific energy in code units; rho_phys
  * is obtained by callers as Density * cf_a3inv * UNIT_DENSITY_IN_CGS. T_e,
- * T_i, n_e, n_i are all physical cgs. cf_atime=1 only in v1; the full
- * comoving-units pass for cooling+battery+2T is its own deliverable.
+ * T_i, n_e, n_i are all physical cgs. cf_atime=1 for now; the full
+ * comoving-units pass for cooling+battery+2T is a separate addition.
  *
  * References:
  *   Spitzer 1962, "Physics of Fully Ionized Gases" 2nd ed., §5.3
@@ -72,7 +72,7 @@ double two_temp_coulomb_log(double T_e, double n_e)
  * For mixed H+He plasma, the exact prefactor sum is Σ_s (n_s Z_s²/A_s) lnΛ_s.
  * For primordial fully-ionized (X=0.76, Y=0.24): Σ = 0.82 ρ/m_p, vs n_e =
  * 0.88 ρ/m_p; using n_e here is a ~7% overestimate of the rate. Acceptable
- * for v1; refined in C3 once mu_meanwt becomes available at the call site.
+ * for now; refine once mu_meanwt becomes available at the call site.
  * ========================================================================== */
 KOKKOS_INLINE_FUNCTION
 double two_temp_nu_eq(double T_e, double n_e)

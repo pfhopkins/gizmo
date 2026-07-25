@@ -238,9 +238,8 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 #endif
 
 
-/* Phase 2 chunk 2 surface-and-fix 2026-05-27: subordinate the
- * SINGLE_STAR_SINK_FORMATION-bit-256 fallback to any other already-selected
- * MOLECFRAC method. The original gate `(SINGLE_STAR_SINK_FORMATION & 256) ||
+/* Subordinate the SINGLE_STAR_SINK_FORMATION-bit-256 fallback to any other
+ * already-selected MOLECFRAC method. The original gate `(SINGLE_STAR_SINK_FORMATION & 256) ||
  * (COOL_MOLECFRAC == 2)` triggered simultaneously with the COOL_MOLECFRAC==5
  * block above for any Config carrying GALSF_FB_FIRE_STELLAREVOLUTION>2 +
  * COOLING + GALSF_SFR_CRITERION & 256 (e.g. an isodisk_mechfb run with the
@@ -359,15 +358,15 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 /* ==========================================================================
  * set_eos_pressure_impl — compute pressure and soundspeed from EOS.
  *
- * Migrated from eos/eos.cc body 2026-05-20 (audit-E1 follow-up).  This is the
- * device-callable inline body.  The public host symbol `set_eos_pressure` in
- * eos.cc is now a one-line wrapper that calls this function.
+ * Migrated from eos/eos.cc.  This is the device-callable inline body.  The
+ * public host symbol `set_eos_pressure` in eos.cc is now a one-line wrapper
+ * that calls this function.
  *
  * Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
  * linkage.  This header does NOT include cooling_functions.h — doing so creates
  * __host__ non-inline strong symbols for ThermalProperties/convert_u_to_temp/
  * find_abundances_and_rates that override cooling.cc's inline versions at link
- * time, producing wrong results on CUDA (bisected to commits f8d2619f..63474bcd).
+ * time, producing wrong results on CUDA (confirmed by bisection).
  *
  * Branches that call host-only routines (eos_compute, aneos_compute,
  * calculate_tillotson_eos, return_user_desired_target_pressure/density) are

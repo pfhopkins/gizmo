@@ -1,5 +1,5 @@
 /* galaxy_sf/radfb_rp_loop.h — RadFBRPSpec for the runner-template port of
- * radiation_pressure_winds_gpu (Phase 4 / Wave 3 / radfb_local).
+ * radiation_pressure_winds_gpu (radfb_local).
  *
  * Iterative two-pass scatter loop: active Type-4 (stellar) particles —
  * cosmo-aware (+ Types 2/3 non-cosmo) — scatter UV / IR / jet radiation-
@@ -22,10 +22,9 @@
  * on pair-ordinal `nn` (gone with the runner API). New stream keys on
  * (loc.ID ^ Pj.ID) plus a per-loop XOR shift RADFBRP_RNG_SHIFT (collision-
  * audited against feedback_rng_loop_uniqueness.md). Order-independent +
- * oracle-safe; population statistics identical. See
- * OPEN_3d_radfb_local_design.md "RNG stream" section.
+ * oracle-safe; population statistics identical.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO. */
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifndef RADFB_RP_LOOP_H
 #define RADFB_RP_LOOP_H
 
@@ -110,8 +109,7 @@ RadFBRPCallScalars radfb_rp_build_call_scalars(void);
  * RadFBRPCallScalars carries the cosmology + run-invariant unit conversion
  * factors needed by the inline pair kernel. Direct local-RP scalar reads
  * route through scalars; canonical rt_kappa retains legacy transitive All.*
- * reach (matches legacy radfb_local_gpu.cc; cleanup tracked in
- * OPEN_rt_kappa_per_cell_cache.md).
+ * reach (matches legacy radfb_local_gpu.cc; cleanup still pending).
  * ========================================================================== */
 struct RadFBRPCallScalars {
     NlrCommonScalars common;             /* cf_atime, cf_a2inv, cf_a3inv, ... */
@@ -260,7 +258,7 @@ static void radfb_rp_pair_kick(
      * reused from the runner pair body. This preserves legacy opacity
      * behavior including the transitive All.* / cooling-stack reach.
      * Longer-term, replace hot pair calls with an rt_kappa-populated
-     * per-cell cache — see OPEN_rt_kappa_per_cell_cache.md. */
+     * per-cell cache. */
     double cf_a   = scalars.common.cf_atime;
     double h_phys = h_j * cf_a;
     double sigma_cell = ((double)loc.wt_sum / (h_j * h_j))

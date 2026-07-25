@@ -14,19 +14,19 @@
 #include "../declarations/allvars.h"
 
 
-/* ---- sink_feed (3d.1) ----
+/* ---- sink_feed ----
  * Ported to runner template; declarations live in sinks/sink_feed_loop.h.
  * Legacy `sink_feed_evaluate_gpu` + `gizmo_gpu_sync_all_sinkfeed` retired
  * (sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h removed from
- * build in this commit; source files deleted in follow-up cleanup). */
+ * the build; source files since deleted). */
 
 
 /* ---- sink_swallow_and_kick ----
- * Ported to runner template in 3d.3; declarations live in sinks/sink_swk_loop.h
+ * Ported to runner template; declarations live in sinks/sink_swk_loop.h
  * (SinkSwkSpec + SinkSwallowLocalIn + SinkSwallowOut). Legacy
  * sink_swallow_and_kick_evaluate_gpu + gizmo_gpu_sync_all_sinkswallow retired
  * (sinks/sink_swallow_and_kick_gpu.cc + sinks/sink_swallow_and_kick_functions.h
- * deleted in this commit). */
+ * deleted). */
 
 
 /* ---- sink_environment ----
@@ -35,7 +35,7 @@
  * accumulator type is sink_env_gpu_out below, which is also SinkEnv1Spec::AccumData.
  * Results are scattered into SinkTempInfo on the host by the runner caller
  * (sink_environment.cc). Stage E2 (Bulge-Disk aggregator under
- * SINK_GRAVACCRETION==0) was ported in 3d.2 and now runs through
+ * SINK_GRAVACCRETION==0) was ported to the runner template and now runs through
  * run_neighbor_loop<SinkEnv2Spec> (sinks/sink_env2_loop.h); only the
  * AccumData struct (sink_env_second_gpu_out) remains here for the
  * caller-side scatter manifest to share with the Spec.
@@ -80,7 +80,7 @@ struct sink_env_gpu_out {
 
 /* Stage E2 — second environment pass: Bulge-Disk kinematic decomposition
  * (SINK_GRAVACCRETION==0). Pure aggregator, no j-writes. Ported to
- * runner template in 3d.2 (sinks/sink_env2_loop.h). Output struct
+ * runner template (sinks/sink_env2_loop.h). Output struct
  * remains here for the caller-side scatter manifest in
  * sinks/sink_environment.cc to share with SinkEnv2Spec::AccumData. */
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)

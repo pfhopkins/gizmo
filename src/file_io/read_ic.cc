@@ -41,12 +41,12 @@ void read_ic(char *fname)
     CPU_Step[CPU_MISC] += measure_time();
 
 #ifdef CBE_INTEGRATOR
-    /* C7 (2026-05-30): reset per-type VlasovMoments-loaded flags before
-     * any HDF5 open. Static globals are zero-initialized at process
-     * start but this defensive reset covers any future case where
-     * read_ic() is called more than once in-process. The flags are then
-     * set per PartType in the optional-block HDF5 reader inside the
-     * `if(hdf5_dataset >= 0)` branch after H5Dread succeeds. */
+    /* Reset per-type VlasovMoments-loaded flags before any HDF5 open.
+     * Static globals are zero-initialized at process start but this
+     * defensive reset covers any future case where read_ic() is called
+     * more than once in-process. The flags are then set per PartType in
+     * the optional-block HDF5 reader inside the `if(hdf5_dataset >= 0)`
+     * branch after H5Dread succeeds. */
     for(int t = 0; t < 6; t++) { CBE_Moments_LoadedFromIC_PType[t] = 0; }
 #endif
 
@@ -188,7 +188,7 @@ void read_ic(char *fname)
     myfree(CommBuffer);
 
 #ifdef CBE_INTEGRATOR
-    /* C7 IC reader multi-rank fix: CBE_Moments_LoadedFromIC_PType[] is set
+    /* Multi-rank fix: CBE_Moments_LoadedFromIC_PType[] is set
      * inside read_file()'s H5Dread block, which only fires on the task
      * that actually reads the file (primaryTask via distribute_file for
      * the single-file case, or each task's own file when num_files>=NTask).
@@ -759,7 +759,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
-        case IO_CBE_MOMENTS:   /* C7 (2026-05-30): real reader — see comment */
+        case IO_CBE_MOMENTS:   /* VlasovMoments reader — see comment below */
 #ifdef CBE_INTEGRATOR
             /* CommBuffer holds the per-particle flat array of
              * NBASIS*NMOMENTS MyInputFloat values, stored basis-major:
@@ -1180,7 +1180,7 @@ int read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_FLUIDTYPE
 #endif
 #ifdef CBE_INTEGRATOR
-                   /* C7 IC reader: allow VlasovMoments through during
+                   /* Allow VlasovMoments through during
                     * RestartFlag==0 so the loaded values reach
                     * do_cbe_initialization. Without this, blockpresent()
                     * returns 1 but the dataset is silently skipped, and
@@ -1486,7 +1486,7 @@ int read_file(char *fname, int readTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_in_file);
                                         H5Dclose(hdf5_dataset);
 #ifdef CBE_INTEGRATOR
-                                        /* C7 (2026-05-30): per-type flag set ONLY here, inside the
+                                        /* Per-type flag set ONLY here, inside the
                                          * `if(hdf5_dataset >= 0)` block after a successful H5Dread.
                                          * Setting it inside empty_read_buffer's case would mark
                                          * absent-dataset zeros as "loaded" and silently corrupt the

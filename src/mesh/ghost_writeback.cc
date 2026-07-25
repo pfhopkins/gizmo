@@ -16,7 +16,7 @@
 
 
 /* ============================================================================
- * Generic ghost-writeback scaffold (Pass B.iv + B.iv.1 bundle-level exchange).
+ * Generic ghost-writeback scaffold (bundle-level exchange).
  *
  * begin_bundle: per-callback snapshot when num_ghosts>0; exactly-once
  *               arena_invalidate when num_ghosts>0. Strict no-op when
@@ -276,8 +276,8 @@ struct ghost_delta_hydro_t {
  * The standalone ghost_writeback_{zero_,}agsforce path was retired when
  * AgsForceSpec migrated to the generic ghost_writeback bundle scaffold
  * (PARTICLE_ADD_VEC3 on Vel/dp, PARTICLE_ADD on NInteractions, PARTICLE_MAX
- * on wakeup) wired up directly in gravity/ags_force_loop.cc. Deleted in the
- * sidm_core hygiene commit; no callers remained. */
+ * on wakeup) wired up directly in gravity/ags_force_loop.cc. Deleted once
+ * migrated; no callers remained. */
 
 
 
@@ -292,7 +292,7 @@ struct ghost_delta_hydro_t {
 
 
 /* ThermalFB snapshot-based ghost_writeback_thermalfb / ghost_writeback_zero_thermalfb
- * retired in 3e.2 cleanup; replaced by generic bundle in thermal_fb_loop.cc. */
+ * retired; replaced by generic bundle in thermal_fb_loop.cc. */
 
 
 
@@ -305,7 +305,7 @@ struct ghost_delta_hydro_t {
  * callers remained. */
 
 
-    /* --- Grain backreaction (B7a) variant (RETIRED) -------------------------
+    /* --- Grain backreaction variant (RETIRED) --------------------------------
      * The ghost_writeback_{zero_,}grainbackrx compatibility wrappers were
      * retired once GrainBackrxSpec migrated to the generic bundle scaffold:
      * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
@@ -316,13 +316,13 @@ struct ghost_delta_hydro_t {
 
 
 
-/* RadFBRP variant retired in Phase 4 / Wave 3 / radfb_local cleanup.
+/* RadFBRP variant retired.
  * RadFBRPSpec in galaxy_sf/radfb_rp_loop.{h,cc} now owns the j-side
  * reverse-comm via the generic ghost-writeback bundle (PARTICLE_ADD_VEC3
  * on Vel/dp + GAS_ADD_VEC3 on VelPred). */
 
-/* RT source injection variant retired in Phase 4 / Wave 3 /
- * rt_source_injection cleanup. RtSrcInjectionSpec in
+/* RT source injection variant retired.
+ * RtSrcInjectionSpec in
  * radiation/rt_source_injection_loop.{h,cc} now owns the j-side
  * reverse-comm via the generic ghost-writeback bundle. Three new
  * generic ops added at the same time to mesh/ghost_writeback_ops.h
@@ -356,7 +356,7 @@ void ghost_write_detector_register_writeback(void) { gwd_wb_count++; }
  *
  * CellP may be NULL when this fires for a DM/sidm/CBE-only run with no gas
  * particles allocated (AgsDensity opted into the detector via the default
- * runner hook in commit 73af8554, and AgsDensity is the first detector
+ * runner hook, and AgsDensity is the first detector
  * client that can run with CellP unallocated). Skip the CellP snapshot in
  * that case; the gwd_CellP_snap pointer stays NULL from begin(). */
 void ghost_write_detector_resnapshot_after_lazy_drift(void)
@@ -390,7 +390,7 @@ void ghost_write_detector_begin(const char *kernel_name)
     memcpy(gwd_P_snap, P + local, n * sizeof(struct particle_data));
     /* CellP=NULL guard: DM-only / sidm-only / CBE-only runs have no gas
      * particles and no CellP backing. The detector was added via the
-     * default runner hook in 73af8554 for AgsDensity, which is the first
+     * default runner hook for AgsDensity, which is the first
      * detector client that can fire with CellP unallocated. Leave
      * gwd_CellP_snap=NULL in that case; end() skips the CellP memcmp. */
     if(CellP != NULL) {

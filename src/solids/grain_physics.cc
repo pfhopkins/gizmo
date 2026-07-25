@@ -100,13 +100,13 @@ void apply_grain_dragforce(void)
 #ifdef GRAIN_COLLISIONS
 /* return_grain_cross_section_per_unit_mass / prob_of_grain_interaction /
    calculate_interact_kick were host-only functions with implicit global-P
-   access and GSL RNG. They have been moved to:
+   access and GSL RNG. They now live as:
      - solids/grain_helper_functions.h (return_grain_cross_section_per_unit_mass_P,
        prob_of_grain_interaction_tab)
      - sidm/sidm_helper_functions.h (calculate_interact_kick_rng)
-   as KOKKOS_INLINE_FUNCTION forms that thread particle_data and the
+   KOKKOS_INLINE_FUNCTION forms that thread particle_data and the
    GeoFactorTable as explicit args and use the counter-based gpu_rng.
-   CPU callers pass `GeoFactorTable` directly; the B2 AGSForce GPU kernel
+   CPU callers pass `GeoFactorTable` directly; the AGSForce GPU kernel
    passes a SharedSpace mirror. */
 #endif
 

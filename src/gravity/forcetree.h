@@ -49,8 +49,8 @@ void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
 int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y, peano1D z, int *nodecount, int *nextfree);
 int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched (caller skips dependent pseudo-update) */
-void force_exchange_pseudodata_issue(void);    /* Phase 10.3: split for non-blocking overlap with LET */
-int  force_exchange_pseudodata_complete(void); /* Phase 10.3: pair to _issue; nonzero = unmatched (pending==NULL) */
+void force_exchange_pseudodata_issue(void);    /* split for non-blocking overlap with LET */
+int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) */
 void force_insert_pseudo_particles(void);
 void force_add_element_to_tree(int igas, int istar);
 

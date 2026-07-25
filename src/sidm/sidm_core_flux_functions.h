@@ -109,7 +109,7 @@ SidmScatterResult sidm_core_flux_compute_pair(
     out.si_count++;
 
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
-    /* Phase 17b pairwise outcomes (COAG/FRAG/SHAT). The SIDM scatter
+    /* Pairwise grain-evolution outcomes (COAG/FRAG/SHAT). The SIDM scatter
      * machinery already handles "does a collision fire" via the prob
      * gate; this resolver decides what HAPPENS to grain mass + size when
      * a collision fires, by comparing |dv| to per-species thresholds. */

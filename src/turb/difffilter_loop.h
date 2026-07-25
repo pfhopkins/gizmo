@@ -1,10 +1,9 @@
 /* turb/difffilter_loop.h — DiffFilterSpec + DynDiffSpec for the runner-template
- * port of difffilter_evaluate_gpu / dynamicdiff_evaluate_gpu (Wave 5, item 1).
+ * port of difffilter_evaluate_gpu / dynamicdiff_evaluate_gpu.
  *
  * Both are non-iterative, scaled-symmetric gas-gas loops, pure i-side reduce
  * (no j-side writes, no ghost writeback). The symmetric search reaches
- * max(fac*h_i, fac*h_j) via the Spec hook symmetric_neighbor_radius_scale()
- * — see OPEN_3d_difffilter_design.md §2-3.
+ * max(fac*h_i, fac*h_j) via the Spec hook symmetric_neighbor_radius_scale().
  *
  * SSOT for the DiffFilter / DynamicDiff per-pair physics — supersedes the
  * legacy turb/difffilter_gpu.cc (retired in this commit).
@@ -13,7 +12,7 @@
  * has no include guards; the inline pair kernels below call kernel_main /
  * kernel_hinv). Same pattern as sink_feed_loop.h / thermal_fb_loop.h.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef DIFFFILTER_LOOP_H
 #define DIFFFILTER_LOOP_H
@@ -253,8 +252,8 @@ struct DynDiffCallScalars {
 /* AccumData — fuses the legacy out0 + out_iter. dynamic_fac[/_const] additive
  * over all iterations; filter_width_hat max; the remaining fields are iter-0
  * only (apply_active_writeback gates them). maxima/minima are max/min
- * reductions, zero-initialized — see OPEN_3d_difffilter_design.md §6 for why
- * this fuses legacy kernel-init (±1e30) + host-scatter-from-0 exactly. */
+ * reductions, zero-initialized — this fuses legacy kernel-init (±1e30) +
+ * host-scatter-from-0 exactly. */
 struct DynDiffAccum {
     double dynamic_fac[3][3];
 #ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
@@ -390,7 +389,7 @@ struct DynDiffSpec {
         a.dynamic_numerator   = (double)Ci.Dynamic_numerator;
         a.dynamic_denominator = (double)Ci.Dynamic_denominator;
         a.filter_width_bar    = (double)Ci.FilterWidth_bar;
-        /* SHOULD_I_USE_SPH_GRADIENTS inlined (no macro coupling) — codex. */
+        /* SHOULD_I_USE_SPH_GRADIENTS inlined (no macro coupling). */
         a.sph_gradients_flag  = ((double)Ci.ConditionNumber > CONDITION_NUMBER_DANGER) ? 1 : 0;
         a.valid = ((double)ctx.P[i].Mass > 0 && (double)Ci.Density > 0
                    && a.kernel_radius > 0) ? 1 : 0;

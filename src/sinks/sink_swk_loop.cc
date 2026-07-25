@@ -6,7 +6,7 @@
  * sink_swk_loop.h so they inline from device kernels (Mode A) and host
  * walkers (Mode B / Brute oracle). This translation unit holds host-only
  * hooks: per-active radius, per-call scalars capture, populate/cleanup
- * device-context (Phase 4.A.0 UVM staging), apply_active_writeback,
+ * device-context (UVM staging), apply_active_writeback,
  * merge_accum (ACCUM_ADD / ACCUM_ADD_VEC3 / ACCUM_MIN / ACCUM_ADD_ARRAY
  * Spec-local manifest), the ghost-writeback compound callback (snapshot
  * + CR-aware delta predicate + pack + clamped apply + cleanup),
@@ -18,14 +18,13 @@
  * change behavior for secondary-only writes (B/BPred under
  * SINK_RETURN_BFLUX paths). Compound callback preserves the legacy
  * predicate exactly while adding CR-field changes to the trip set
- * (the deliberate CR fix vs legacy Mode A — see OPEN_3d_sinkswk_design.md
- * §C.4 + sink_swk_loop.h pair body comment).
+ * (the deliberate CR fix vs legacy Mode A — see sink_swk_loop.h pair
+ * body comment).
  *
  * Replaces sinks/sink_swallow_and_kick_gpu.cc and
  * mesh/ghost_writeback.cc::ghost_writeback_{zero_,}sinkswallow.
  *
- * Phase 4 port 3d.3.  Written by Phil Hopkins (phopkins@caltech.edu) and
- * Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -58,8 +57,8 @@ double SinkSwkSpec::search_radius(const neighbor_loop_args& args,
 SinkSwkSpec::CallScalars
 SinkSwkSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
-    /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. Under
-     * 93897f62 the redirect is device-pass-only, so bare All.* in this host
+    /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. The
+     * All-mirror redirect is device-pass-only, so bare All.* in this host
      * hook would also be correct; the accessor documents that these reads
      * run on the host pass. */
     const struct global_data_all_processes *h = nlr_host_all_ptr();
@@ -160,7 +159,7 @@ void SinkSwkSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accu
 }
 
 /* ============================================================================
- * PHASE 4.A.0 DEVICE CONTEXT LIFECYCLE
+ * DEVICE CONTEXT LIFECYCLE
  * ========================================================================== */
 
 void SinkSwkSpec::populate_device_context(const neighbor_loop_args& args,
@@ -329,7 +328,7 @@ static int delta_for_ghost_fn(void *vctx, int g, int num_local)
     /* B/BPred-only changes (the SINK_RETURN_BFLUX block in the pair body
      * writes them BEFORE the SwallowID-match branch via atomic_add — Mode B
      * applies them locally, so Mode A's reverse-comm must catch them too).
-     * Codex review 2026-05-10: same Mode A/B asymmetry pattern as CR. */
+     * Same Mode A/B asymmetry pattern as CR, below. */
     if(!modified) {
         for(int k = 0; k < 3 && !modified; k++) {
             if(CellP[j].B[k]     != s.B[k])     modified = 1;
@@ -498,10 +497,10 @@ void SinkSwkSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 
 double SinkSwkSpec::compare_accum(const AccumData& local, const AccumData& oracle)
 {
-    /* Mirrors merge_accum field-for-field with the same #ifdef gating
-     * (codex review 2026-05-10: a partial compare gives false-passes whenever
-     * the omitted fields disagree). Counters disagree -> hard mismatch (1.0).
-     * Scalars / vectors / arrays use relative comparison. */
+    /* Mirrors merge_accum field-for-field with the same #ifdef gating —
+     * a partial compare gives false-passes whenever the omitted fields
+     * disagree. Counters disagree -> hard mismatch (1.0). Scalars / vectors
+     * / arrays use relative comparison. */
     auto rel = [](double a, double b) {
         double denom = std::fmax(std::fabs(a), std::fabs(b));
         double diff  = std::fabs(a - b);

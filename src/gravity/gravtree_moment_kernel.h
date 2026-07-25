@@ -8,21 +8,21 @@
  * gravtree_force_kernel.h (the per-interaction CONTRIBUTION) and gravtree_opening.h (the node
  * opening DECISION).
  *
- * Contract (mirrors gravtree_force_kernel.h §38.3): helpers operate on small POD accumulators and
+ * Contract (mirrors the contract in gravtree_force_kernel.h): helpers operate on small POD accumulators and
  * source structs. Each venue OWNS loading its sources (from P_dev / scratch / SoA) and storing the
  * finished node (to scratch / SoA / AoS), casting to/from its native storage types; the helpers own
  * ONLY the physics/numerics between. This is what lets one physics body serve both the atomic and
  * the plain venue and stay bit-exact: the only per-venue difference is the WRITE POLICY (plain add /
  * Kokkos atomic add) injected as a template argument, plus the caller-side load casts.
  *
- * Kokkos-header discipline (feedback_gpu §B.4b + the K1b codex ruling): this header includes NO
+ * Kokkos-header discipline: this header includes NO
  * Kokkos header and names NO Kokkos symbol. The plain write policy (moment_plain_ops) lives here
  * unconditionally; the atomic policy (moment_atomic_ops) is defined in gpu_moment_refresh.cc where
  * Kokkos is already in scope, and passed in as the Ops template argument. forcetree.cc therefore
  * acquires NO Kokkos dependency from including this header (it consumes only the plain per-particle
  * hmax/vmax bound primitives at force_add_element_to_tree).
  *
- * Three source forms (§38.3 _source_from_leaf / _source_from_node split):
+ * Three source forms (_source_from_leaf / _source_from_node split):
  *   - from_particle           : a leaf particle's contribution (gas/sink/RT/sink-distance gates).
  *   - from_child_raw          : a child whose moments are still UN-normalized (Σ m x), as produced
  *                               by gpu_moment_refresh's scratch before the single end-of-pass

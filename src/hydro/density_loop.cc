@@ -5,7 +5,7 @@
  * hydro ghost handoff. The device pair body lives in density_loop.h because
  * the runner instantiates it from GPU translation units.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>            /* MPI_Datatype used in declarations/typedefs.h via gpu_all_mirror.h's transitive include */
@@ -119,8 +119,8 @@ double DensitySpec::search_radius(const neighbor_loop_args& args,
 /* ====================================================================
  * populate_call_scalars — per-call CallScalars snapshot.
  *
- * Phase-2 NLR host-All accessor rule (commit 781ecfb2 / 09618c0f):
- * read host_all via nlr_host_all_ptr() — NEVER bare All.*.
+ * NLR host-All accessor rule: read host_all via nlr_host_all_ptr()
+ * — NEVER bare All.*.
  * NlrCommonScalars provides cf_atime/cf_a2inv/comoving_integration_on
  * (etc.) via the shared helper.
  * ==================================================================== */
@@ -500,11 +500,10 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
      * discarded here; finalize re-inverts from Aux for the persistent
      * CellP writes.
      *
-     * Codex round 8 blocker fix 2026-05-12: FaceClosureError nudge at
-     * legacy line 326 modifies ncorr_ngb, which changes desnumngb and
-     * therefore the convergence trajectory. Deferring to finalize was
-     * wrong; the nudge must fire mid-iter. Tinv is kept in scope
-     * specifically so the face-leak computation can run. */
+     * FaceClosureError nudge at legacy line 326 modifies ncorr_ngb, which
+     * changes desnumngb and therefore the convergence trajectory. It
+     * cannot be deferred to finalize; the nudge must fire mid-iter. Tinv
+     * is kept in scope specifically so the face-leak computation can run. */
     double ConditionNumber = 0.0;
     double face_closure_error_local = 0.0;  /* gas-only; nudge gated below */
     if (args.P[i].Type == 0) {
@@ -613,9 +612,9 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
     }
 
     /* ---- (d) ncorr_ngb from effective CN + FaceClosureError nudge
-     * (mirrors density.cc:324-327). Codex round 8 fix: FaceClosureError
-     * nudge fires INSIDE the iter loop, modifies ncorr_ngb, changes
-     * convergence trajectory. Cannot be deferred. ---- */
+     * (mirrors density.cc:324-327). FaceClosureError nudge fires INSIDE
+     * the iter loop, modifies ncorr_ngb, changes convergence trajectory.
+     * Cannot be deferred. ---- */
     double ncorr_ngb = 1.0;
     if (args.P[i].Type == 0) {
         const double c0 = 0.1 * (double)CONDITION_NUMBER_DANGER;
@@ -920,16 +919,7 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
  * Reads Aux.per_active_final_accum (converged AccumData per active)
  * and Aux.per_active_final_h (converged radius per active). Writes
  * P[i] / CellP[i] freely — this is the only path that does so for
- * density's port. host_all is the canonical accessor for All.* reads
- * (per Phase-2 trap rule).
- *
- * Codex round 9 (Chunk 2 review) will scrutinize:
- *   - Per-active normalization parity with legacy line 253-268.
- *   - NV_T inversion + FaceClosureError + ConditionNumber persistence
- *     parity with legacy line 271-304.
- *   - Branch preservation across the legacy 620-795 block (every
- *     #ifdef present).
- *   - Accum-scatter parity with legacy density_gpu.cc:336-401.
+ * density's port. host_all is the canonical accessor for All.* reads.
  *
  * Degenerate empty-active-gas cases are guarded locally where normalization
  * would otherwise divide by zero.
@@ -1379,7 +1369,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  *   (6) density_finalize_post_runner reads Aux + writes P/CellP.
  *   (7) gizmo_hydro_density_import_ghosts_fresh_no_drift: build the broad
  *       downstream hydro-oneway ghost pool consumed by cellcorrections_calc,
- *       hydro_gradient_calc, hydro_force. Codex 2026-05-12: the iterative
+ *       hydro_gradient_calc, hydro_force. the iterative
  *       runner's exact-query Mode A pool is too narrow / wrong shape to
  *       be evolved by redo_ghosts_if_needed; we build the broad pool fresh
  *       from converged radii after the runner has cleaned its internal pool.
@@ -1398,9 +1388,8 @@ void density(void)
     const double t00_truestart = my_second();
 
     /* (1) Ghost lifecycle: caller does NOT call gizmo_hydro_density_prep_ghosts
-     *     before the runner. Codex round-11 blocker fix 2026-05-12: a
-     *     pre-runner global ghost import would mutate state outside the
-     *     Mode B corridor snapshot — violating the project-overriding
+     *     before the runner. A pre-runner global ghost import would mutate
+     *     state outside the Mode B corridor snapshot — violating the
      *     "Mode B must not touch globals on tiny-N path" rule and
      *     contaminating oracle validation. Instead:
      *       - Mode A iterative runner owns Mode A's ghost import,

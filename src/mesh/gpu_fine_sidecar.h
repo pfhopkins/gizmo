@@ -1,10 +1,9 @@
 #ifndef GPU_FINE_SIDECAR_H
 #define GPU_FINE_SIDECAR_H
 
-/* Device-resident sidecar for the bounded fine-tree receiver walk (Candidate L,
- * OPEN_topleaf_router_design.md §45).  Mirrors the host receiver's exact supply
- * substrate to the device so the Step-3 device walk never reads scattered host
- * P[]/managed arrays:
+/* Device-resident sidecar for the bounded fine-tree receiver walk.  Mirrors the
+ * host receiver's exact supply substrate to the device so the device walk
+ * never reads scattered host P[]/managed arrays:
  *   d_supply_{x,y,z}  DOUBLE  supply positions (built from P[pool[p]].Pos)
  *   d_supply_h        DOUBLE  supply reach = gx_policy_scaled_h(j) (NO SIDX slack;
  *                             NEVER the host float compact_xyzh)
@@ -12,13 +11,14 @@
  *   d_j_to_pool       int     [NumPart]  absolute P-index -> pool slot / -1
  *   d_fine_band       DOUBLE  [nnodes*FINEBAND_NTYPES]  per-node per-type opener band
  *
- * PASSIVE / ORACLE-ONLY at S2a: the arrays are allocated + uploaded + verifiable,
- * with NO consumer yet (the device walk is S2b).  Broadcast stays authoritative.
- * The host owner (ghost_exchange.cc) stages every host buffer with its own SSOT
- * (gx_policy_scaled_h, P[]), so the device reach == the host receiver reach by
- * construction; this TU only owns the device memory + deep_copy + readback.
+ * PASSIVE / ORACLE-ONLY currently: the arrays are allocated + uploaded + verifiable,
+ * with no consumer yet (the device walk lands separately).  Broadcast stays
+ * authoritative.  The host owner (ghost_exchange.cc) stages every host buffer with
+ * its own SSOT (gx_policy_scaled_h, P[]), so the device reach == the host receiver
+ * reach by construction; this TU only owns the device memory + deep_copy +
+ * readback.
  *
- * Temporary validation scaffolding (teardown ledger §39). */
+ * Temporary validation scaffolding. */
 
 #ifdef __cplusplus
 extern "C" {

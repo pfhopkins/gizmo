@@ -1,5 +1,5 @@
 /* ags_functions.h — GPU-callable AGS helpers (particle size/volume) and
- * AGS_ATOMIC_{ADD,STORE} dispatch macros for j-side writes in the B2
+ * AGS_ATOMIC_{ADD,STORE} dispatch macros for j-side writes in the
  * AGSForce GPU port.
  *
  * Get_Particle_Size_AGS / get_particle_volume_ags used to be host-only

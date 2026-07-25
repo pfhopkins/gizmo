@@ -4,7 +4,7 @@
  *
  * Pure KOKKOS_INLINE_FUNCTION forms that take particle_data and the
  * GeoFactorTable as explicit arguments, so the same code path works on
- * CPU tree-walk and the B2 AGSForce GPU kernel. g_geo_tab is pulled in
+ * CPU tree-walk and the AGSForce GPU kernel. g_geo_tab is pulled in
  * from sidm/sidm_helper_functions.h.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.

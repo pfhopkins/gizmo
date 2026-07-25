@@ -1,4 +1,4 @@
-/* gpu_peano_walk.cc -- Step 13 Phase 6.5c1
+/* gpu_peano_walk.cc
  *
  * Host-side mirror lifecycle for the device Peano walk.  See
  * gpu_peano_walk.h for the API and gpu_peano_walk_functions.h for the
@@ -9,7 +9,7 @@
  *     domain decomposition (TopNodes) and force_treebuild (DomainNodeIndex
  *     via force_create_empty_nodes).  We mirror them into SharedSpace
  *     after both are valid -- typically just before the GPU build kernel
- *     fires (Phase 6.5d wires the call site).
+ *     fires.
  *   - Mirrors are sized to MaxTopNodes + 1 / NTopleaves so the realloc
  *     path is rare.  Free + re-alloc when host arrays grow beyond the
  *     mirror capacity.

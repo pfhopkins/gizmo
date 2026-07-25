@@ -1,15 +1,15 @@
-/* sinks/sink_env2_loop.cc — host-only hooks for SinkEnv2Spec (Phase 4 3d.2).
+/* sinks/sink_env2_loop.cc — host-only hooks for SinkEnv2Spec.
  *
  * Mechanical-after-pattern port mirroring sinks/sink_env1_loop.cc. sink_env2
  * is pure i-side (no j-writes); merge_accum is two ACCUM_ADD lines; no
  * ghost-writeback bundle, no oracle dry-run hook needed (oracle's brute
  * pass is safe without side-effect suppression). populate_device_context
- * stages per-active Jgas/Jstar from host into UVM (Phase 4.A.0 extension).
+ * stages per-active Jgas/Jstar from host into UVM.
  *
  * Replaces the SINK_GRAVACCRETION==0 branch of
  * sinks/sink_environment_gpu.cc::sink_environment_second_evaluate_gpu.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -66,7 +66,7 @@ void SinkEnv2Spec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 }
 
 /* ============================================================================
- * PHASE 4.A.0 DEVICE CONTEXT LIFECYCLE
+ * DEVICE CONTEXT LIFECYCLE
  *
  * Stage host-side per-active Jgas/Jstar (from SinkTempInfo[t].* on the
  * caller side) into a UVM array for device-side load_active. Same pattern

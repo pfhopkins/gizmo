@@ -210,7 +210,7 @@ extern size_t HighMark_turbpower;
 #endif
 extern int TreeReconstructFlag;
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
-extern long long ForceAddElementToTree_CallsSinceBuild; /*!< Phase 9.6 diagnostic: force_add_element_to_tree calls accumulated since last full tree build.  Insertions stale the LET / pseudo-particle moments; auto-rebuild when this exceeds 1% of TotNumPart. */
+extern long long ForceAddElementToTree_CallsSinceBuild; /*!< diagnostic: force_add_element_to_tree calls accumulated since last full tree build.  Insertions stale the LET / pseudo-particle moments; auto-rebuild when this exceeds 1% of TotNumPart. */
 extern int GlobFlag;
 extern char DumpFlag;
 extern int NeedToWakeupParticles;
@@ -266,8 +266,8 @@ extern int HermiteOnlyFlag;     /*!< flag to only do Hermite integration for app
 
 extern int MaxNodes;        /*!< maximum allowed number of internal nodes */
 extern int Numnodestree;    /*!< number of (internal) nodes in each tree */
-extern int MaxForeignNodes;  /*!< Phase 9 LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [MaxPart+MaxNodes+MaxForeignNodes, ...). */
-extern int Numforeignnodes;  /*!< Phase 9 LET: count of foreign nodes currently installed (<= MaxForeignNodes); reset on each LET exchange. */
+extern int MaxForeignNodes;  /*!< LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [MaxPart+MaxNodes+MaxForeignNodes, ...). */
+extern int Numforeignnodes;  /*!< LET: count of foreign nodes currently installed (<= MaxForeignNodes); reset on each LET exchange. */
 
 extern int *Nextnode;        /*!< gives next node in tree walk  (nodes array) */
 extern int *Father;        /*!< gives parent node in tree (Prenodes array) */
@@ -337,7 +337,7 @@ extern FILE *FdSinkFormationDetails;
 extern FILE *FdCbeDiagnostics;
 #endif
 #ifdef CBE_INTEGRATOR
-/* C7 (2026-05-30): per-particle-type presence flag for the VlasovMoments
+/* Per-particle-type presence flag for the VlasovMoments
  * IC dataset. Set in read_ic.cc inside the `if(hdf5_dataset >= 0)` block
  * on successful H5Dread; consumed by do_cbe_initialization in sidm/
  * cbe_integrator.cc to choose between "trust loaded moments" vs
@@ -707,9 +707,9 @@ enum iofields
   IO_DELAY_TIME_HII,
   IO_MOLECULARFRACTION,
   IO_SHOCKMACHNUM,
-  IO_DAMAGE_POROSITY_DAMAGE,      /* Phase 17e: Grady-Kipp scalar D in [0,1] */
-  IO_DAMAGE_POROSITY_DISTENTION,  /* Phase 17e: Jutzi P-alpha alpha in [1,alpha_0] */
-  IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Phase 17e: Grady-Kipp active-crack radius */
+  IO_DAMAGE_POROSITY_DAMAGE,      /* Grady-Kipp scalar D in [0,1] */
+  IO_DAMAGE_POROSITY_DISTENTION,  /* Jutzi P-alpha alpha in [1,alpha_0] */
+  IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Grady-Kipp active-crack radius */
   IO_FLUIDTYPE,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };

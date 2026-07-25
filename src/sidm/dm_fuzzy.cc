@@ -20,7 +20,7 @@
 
 
 /* do_dm_fuzzy_flux_computation / _old moved to sidm/dm_fuzzy_functions.h
-   as KOKKOS_INLINE_FUNCTION so both the CPU tree-walk and the B2 AGSForce
+   as KOKKOS_INLINE_FUNCTION so both the CPU tree-walk and the AGSForce
    GPU kernel can share a single body. */
 
 

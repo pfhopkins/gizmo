@@ -1,5 +1,5 @@
 /* galaxy_sf/thermal_fb_loop.h — ThermalFBSpec for the runner-template port of
- * thermal_fb_evaluate_gpu (Phase 4 / Wave 3 / 3e.2).
+ * thermal_fb_evaluate_gpu.
  *
  * Non-iterative scatter loop: active Type-4 (stellar) particles with
  * SNe_ThisTimeStep>0 deposit thermal energy / ejecta mass into surrounding gas
@@ -9,7 +9,7 @@
  *
  * SSOT for thermal_fb physics types and per-pair kernel — supersedes the
  * pre-port `thermal_fb_functions.h` and the legacy `thermal_fb_gpu.cc`,
- * both retired in 3e.2.
+ * both retired.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifndef THERMAL_FB_LOOP_H
@@ -49,7 +49,7 @@ void thermal_fb_local_fill(int i,
                             struct ThermalFBLocalIn *loc);
 /* Per-call cosmology + run-invariant unit conversion factors. Routes All.*
  * reads through nlr_host_all_ptr() for explicit host-snapshot intent;
- * correct from any TU under the 93897f62 device-pass-only redirect. SSOT —
+ * correct from any TU under the device-pass-only redirect. SSOT —
  * Spec::populate_call_scalars forwards here. */
 ThermalFBCallScalars thermal_fb_build_call_scalars(void);
 
@@ -89,7 +89,7 @@ struct ThermalFBCallScalars {
  * an extra P_host indirection in the per-active post-runner loop. Type is
  * Vec3<MyDouble> (NOT Vec3<MyFloat>) to match P[i].Vel's declared precision
  * — narrowing to float here would silently downgrade source-side momentum
- * book-keeping vs legacy (caught by codex review 2026-05-15). */
+ * book-keeping vs legacy. */
 struct ThermalFBLocalIn {
     Vec3<MyDouble> Pos;
     Vec3<MyDouble> Vel;
@@ -226,8 +226,8 @@ static void thermal_fb_pair_kernel(
     /* Mark this directly-perturbed gas receiver for positive wakeup using
      * the standard hydro-convention encoding (source.TimeBin + 1). atomic_max
      * preserves any earlier-written more-aggressive wakeup. Coupled with the
-     * process_wake_ups floor at lowest_occupied_active_bin (commit c4c270bf),
-     * the receiver wakes at the right pace immediately, killing the multi-
+     * process_wake_ups floor at lowest_occupied_active_bin, the receiver
+     * wakes at the right pace immediately, killing the multi-
      * generation cascade that would otherwise emerge once shell-by-shell
      * pair-body wakeup-checks discover the stale-low MaxSignalVel. */
     Kokkos::atomic_max(&Pj.wakeup, (short int)((int)local.TimeBin + 1));

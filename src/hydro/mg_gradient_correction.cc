@@ -115,7 +115,7 @@ static inline void mg_add_remote_entry(int i, int remote_task, int remote_index,
 }
 
 
-/* Legacy CPU tree-walk MG build path retired 2026-04-28 (Step 5 B6.5);
+/* Legacy CPU tree-walk MG build path has been retired;
  * mg_build_matrix_modern (symmetric-CSR, called from mg_gradient_correction_calc)
  * is the only build path. See git log for the deleted legacy evaluators,
  * dedup helpers, and the modern-vs-legacy validation harness. */
@@ -990,7 +990,7 @@ static void mg_solve_pardiso(void)
 /* ==================================================================================== */
 
 /* ==================================================================================== */
-/* Matrix build via a caller-supplied symmetric CSR walk (Step 5 B6).                   */
+/* Matrix build via a caller-supplied symmetric CSR walk.                               */
 /*                                                                                        */
 /* Pre-condition: the caller has built an active row list and symmetric neighbor list.   */
 /* For the global MG solve this row list must cover all local gas cells, not just the    */
@@ -1141,8 +1141,8 @@ static void mg_build_allgas_neighbor_list(int **mg_active_indices_out, int *mg_n
 
 
 /* ==================================================================================== */
-/* Validation harness (Step 5 B6.3) — RETIRED 2026-04-28 (Step 5 B6.5).                 */
-/* Legacy path is retired; harness no longer needed. Vista field_loop PASS confirmed.    */
+/* Validation harness — RETIRED.                                                        */
+/* Legacy path is retired; harness no longer needed (modern path validated).             */
 /* ==================================================================================== */
 
 

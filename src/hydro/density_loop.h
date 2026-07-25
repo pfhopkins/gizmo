@@ -9,8 +9,8 @@
  *     (active, neighbor, accum, scalars). NO `int j` — runner doesn't
  *     pass it; if a body needs j it lives in NeighborData.
  *   - AccumData fields LITERALLY match density_functions.h:50-104
- *     density_evaluate_data_out_ (codex's "literal field-by-field"
- *     gate): NV_T_face_weights/ParticleVel/GradH_numer = Vec3<MyDouble>;
+ *     density_evaluate_data_out_ (literal field-by-field port):
+ *     NV_T_face_weights/ParticleVel/GradH_numer = Vec3<MyDouble>;
  *     NV_D/NV_A = MyFloat[3][3]; GradRho/Gas_B = Vec3<MyFloat>/Vec3<MyDouble>;
  *     Sink_dr_to_NearestGasNeighbor nested under BH_ACCRETE_NEARESTFIRST
  *     || SINGLE_STAR_TIMESTEPPING; GasVel under TURB_DRIVING || GRAIN_FLUID
@@ -32,7 +32,7 @@
  *     header lines 1272-1282).
  *   - mode_a_csr_buffer_factor = 1.3 == legacy DENSITY_H_BUFFER_FACTOR.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef DENSITY_LOOP_H
 #define DENSITY_LOOP_H
@@ -59,8 +59,7 @@
 int density_isactive(int i);
 
 /* ============================================================================
- * (1) CallScalars — per OPEN_3d_density_design.md §14.D, deduplicated
- *     against NlrCommonScalars.
+ * (1) CallScalars — deduplicated against NlrCommonScalars.
  *
  * NlrCommonScalars (mesh/neighbor_loop_runner.h:350) already carries:
  *   cf_atime, cf_a2inv, cf_a3inv, cf_hubble_a, newton_G, hubble,
@@ -74,7 +73,7 @@ int density_isactive(int i);
  *
  * Post-runner host-only finalization (density_finalize_post_runner) does
  * NOT read CallScalars — it reads host_all->cf_atime, host_all->cf_a2inv,
- * host_all->Time, etc. directly via nlr_host_all_ptr() per design §14.E.
+ * host_all->Time, etc. directly via nlr_host_all_ptr().
  * CallScalars is the device-facing / per-iter-hot-path channel; host_all
  * is the host-only-finalize channel. Keep the split — that's the rule
  * the runner contract uses to separate device-hot-path scalars from
@@ -178,11 +177,10 @@ struct DensityAccumData {
 /* ============================================================================
  * (3) IterScratch — per-active state living across iterations.
  *
- * Per OPEN_3d_density_design.md §4. Legacy bisection brackets (Left[i],
- * Right[i] at density.cc:149-150) + a converged latch (replaces the
- * legacy P[i].TimeBin negation pattern at density.cc:479/591/617 — see
- * §1a oracle-compatibility rationale) + iter-count tracking for the
- * iter>10 underflow warning at density.cc:441-452.
+ * Legacy bisection brackets (Left[i], Right[i] at density.cc:149-150) +
+ * a converged latch (replaces the legacy P[i].TimeBin negation pattern
+ * at density.cc:479/591/617, for oracle compatibility) + iter-count
+ * tracking for the iter>10 underflow warning at density.cc:441-452.
  *
  * Mutated host-side inside after_iter only. Not visible inside pair_kernel. */
 struct DensityIterScratch {
@@ -259,7 +257,7 @@ struct DensitySpec {
 
     /* Write policy */
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
-    /* SIDX cache: GAS-ONLY. Codex 2026-05-12: an earlier draft used
+    /* SIDX cache: GAS-ONLY. An earlier draft used
      * AllTypes here, which violated the cache-mask invariant — the
      * all-types cache's compact_xyzh / pool includes DM (Type=1) which
      * a gas-only neighbor_type_mask walk should never see. Walker would
@@ -691,8 +689,8 @@ struct DensitySpec {
 #if defined(SINK_PARTICLES)
                 if (i_active.Type == 5) {
                     /* Read-only MIN reductions; the j-side SwallowID/SwallowTime/Sink_Ngb_Flag
-                     * writes from the CPU path are sink_swk/sink_feed responsibilities
-                     * (already ported in 3d.1/3d.3), NOT density. */
+                     * writes from the CPU path are sink_swk/sink_feed responsibilities,
+                     * NOT density. */
                     short int TimeBin_j = Pj.TimeBin;
                     if (TimeBin_j < 0) { TimeBin_j = -TimeBin_j - 1; }
                     if (accum.Sink_TimeBinGasNeighbor > TimeBin_j) {

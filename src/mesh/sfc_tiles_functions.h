@@ -77,7 +77,7 @@ int bbox_overlaps_sphere_gpu(const double box_lo[3], const double box_hi[3],
 /* j_radius_scale: multiplier applied to the j-side kernel radius in SYMMETRIC
  * mode (1.0 = legacy behavior). Scaled-symmetric callers (TURB_DIFF_DYNAMIC
  * wide-filter loops) pass All.TurbDynamicDiffFac so the pair reach becomes
- * max(h_i, fac*h_j) — see OPEN_3d_difffilter_design.md §3. Applied at query
+ * max(h_i, fac*h_j). Applied at query
  * time; the cached compact_xyzh / SIDX hmax stay keyed on raw radii. */
 KOKKOS_INLINE_FUNCTION
 int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], double h_i, double h2_i,

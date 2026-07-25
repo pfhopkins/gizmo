@@ -1,5 +1,5 @@
 /* Device-resident fine-tree receiver-walk sidecar — device memory owner.
- * See mesh/gpu_fine_sidecar.h + OPEN_topleaf_router_design.md §45.
+ * See mesh/gpu_fine_sidecar.h.
  *
  * This TU owns ONLY the device arrays + their deep_copy/readback + the stored
  * freshness key.  All host staging (positions from P[], reach from the host SSOT
@@ -8,7 +8,7 @@
  * reach by construction and no reach formula is duplicated on the device side.
  *
  * PASSIVE / ORACLE-ONLY at S2a: nothing consumes the device arrays yet (the
- * bounded device walk is S2b).  Temporary validation scaffolding (teardown §39). */
+ * bounded device walk is S2b). */
 
 #include <mpi.h>   /* required BEFORE allvars.h: declarations/typedefs.h uses MPI_Datatype/MPI_LONG_LONG */
 #include <cstdio>

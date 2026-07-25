@@ -1,8 +1,8 @@
-/* gpu_force_drift.cc — Step 13 Phase 7.a
+/* gpu_force_drift.cc
  *
  * GPU pre-walk drift kernel: replaces the CPU host loop in
  * gpu_gravtree_walk_primary that called force_drift_node + mark_dirty for
- * every node with stale Ti_current.  After Phase 7.a:
+ * every node with stale Ti_current.  This kernel:
  *   - mutates Nodes[]/Extnodes[] (UVM AoS) directly inside a Kokkos kernel,
  *   - mirrors the same fields into the SoA used by the GPU walk,
  *   - has zero CPU-side AoS->SoA reseed (the entire dirty_[]/seed_dirty_/
@@ -113,8 +113,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
     int      MaxPart        = All.MaxPart;
     int      n_local_nodes  = Numnodestree;
-    int      n_foreign_nodes = Numforeignnodes;       /* Phase 9.2b */
-    int      maxNodes_snap  = MaxNodes;               /* Phase 9.2b: foreign-range base */
+    int      n_foreign_nodes = Numforeignnodes;
+    int      maxNodes_snap  = MaxNodes;               /* foreign-range base */
     int      n_nodes        = n_local_nodes + n_foreign_nodes;
 
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
@@ -163,7 +163,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #endif
 
     Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int kk) {
-        /* Phase 9.2b: kk in [0, n_local_nodes) drives local nodes; kk in
+        /* kk in [0, n_local_nodes) drives local nodes; kk in
          * [n_local_nodes, n_local_nodes + n_foreign_nodes) drives foreign
          * nodes installed by LET unpack (slot index in [0, Numforeignnodes)).
          * SoA index `k` differs from iteration index for foreign nodes:
@@ -247,15 +247,14 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
             if(Extnodes_uvm[no].hmax > 0) {
                 Extnodes_uvm[no].hmax = (MyFloat)((double)Extnodes_uvm[no].hmax * decay_fac);
             }
-            /* Mode B per-type bands: upward-only inflate (codex 2026-06-07).
+            /* Mode B per-type bands: upward-only inflate.
              * Bands include static-ish sources (P[j].ForceSoftening) that
              * don't shrink under drift, so decaying below the actual FS value
              * would under-bound the node-prune. force_update_hmax() re-grows
              * bands per-particle each call; we just must not shrink them
              * here. Scalar `hmax` keeps its legacy bidirectional decay above.
-             * Without this guard, expansion regions (positive divVmax) still
-             * track via the upward branch — fixing the previous "frozen
-             * stale-low" concern documented in the prior comment. */
+             * Without this guard, expansion regions (positive divVmax) would
+             * fail to track via the upward branch. */
             if(decay_fac > 1.0) {
                 for(int t = 0; t < 6; t++) {
                     if(Extnodes_uvm[no].hmax_per_type[t] > 0) {

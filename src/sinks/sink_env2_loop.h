@@ -4,16 +4,16 @@
  * branch only; pure i-side aggregator (no j-writes). Replaces
  * sinks/sink_environment_gpu.cc::sink_environment_second_evaluate_gpu.
  *
- * Phase 4 port 3d.2.  Mechanical-after-pattern port, mirroring sink_env1's
+ * Mechanical-after-pattern port, mirroring sink_env1's
  * template (Pass A+B). The only material additions vs sink_env1 are:
- *   - per-active input vectors (Jgas, Jstar) staged via the Phase 4.A.0
+ *   - per-active input vectors (Jgas, Jstar) staged via the
  *     DeviceContext extension (UVM-resident SinkEnv2PerActiveIn array).
  *     load_active reads them on device and stamps into ActiveData.
  *   - SinkEnv2-specific CallScalars is just NlrCommonScalars (common
  *     cosmology only); no sink-specific globals beyond the comoving flag,
  *     which is already in NlrCommonScalars.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef SINK_ENV2_LOOP_H
 #define SINK_ENV2_LOOP_H
@@ -56,7 +56,7 @@ struct SinkEnv2PerActiveIn {
 /* Active-particle state passed into the pair body. Top-level pos +
  * h_search are runner-walker-facing fields (sink_env1 precedent —
  * Mode B walker reads these directly from the active struct). The
- * Jgas / Jstar fields come from the per-active UVM array (Phase 4.A.0
+ * Jgas / Jstar fields come from the per-active UVM array (the
  * DeviceContext extension). Trivially copyable for byte-level MPI
  * transfer in the Mode B remote path. */
 struct SinkEnv2ActiveState {
@@ -70,7 +70,7 @@ struct SinkEnv2ActiveState {
     int               origin_rank;
 };
 
-/* Phase 4.A.0 DeviceContext extension. Carries the UVM-resident
+/* DeviceContext extension. Carries the UVM-resident
  * per-active inputs (Jgas / Jstar) so load_active can read per-slot.
  * Allocated by populate_device_context, freed by cleanup_device_context
  * (RAII guard at runner exit on every dispatch path). Trivially
@@ -167,7 +167,7 @@ struct SinkEnv2Spec {
     using CallScalars   = NlrCommonScalars;          /* common only — no extra globals */
     using ActiveData    = SinkEnv2ActiveState;
     using AccumData     = struct sink_env_second_gpu_out;
-    using DeviceContext = SinkEnv2DeviceContext;     /* Phase 4.A.0 extension */
+    using DeviceContext = SinkEnv2DeviceContext;
 
     /* NeighborData uses const pointers — sink_env2 is read-only on j-side
      * (mirrors sink_env1; differs from sink_feed which needs non-const for
@@ -199,7 +199,7 @@ struct SinkEnv2Spec {
                                       int active_slot, int i);
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
 
-    /* Phase 4.A.0 device-context lifecycle. populate copies host_inputs
+    /* Device-context lifecycle. populate copies host_inputs
      * into a UVM array; cleanup frees. cleanup runs unconditionally via
      * NlrDeviceContextCleanupGuard at runner exit on every path. */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);

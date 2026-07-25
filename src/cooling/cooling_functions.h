@@ -573,9 +573,8 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
 
 /* The host wrapper `set_eos_pressure` (declared in proto.h) remains in
    eos/eos.cc — NOT inlined here. nvcc inlining of the wrapper with
-   __managed__ All_dev context produces wrong results on CUDA (bisected to
-   commits f8d2619f..63474bcd). Non-GPU TUs link against eos.cc's host
-   symbol via proto.h declaration.
+   __managed__ All_dev context produces wrong results on CUDA. Non-GPU TUs
+   link against eos.cc's host symbol via proto.h declaration.
    NOTE: the device-callable `set_eos_pressure_impl` (in eos/eos_functions.h)
    IS called from the post-cooling device kernel when
    POST_COOLING_DEVICE_EOS_SUPPORTED is defined — see cooling/cooling.cc:465

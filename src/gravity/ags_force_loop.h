@@ -1,4 +1,4 @@
-/* gravity/ags_force_loop.h — AGS-force neighbor loop module (Wave 3 close-out).
+/* gravity/ags_force_loop.h — AGS-force neighbor loop module.
  *
  * Defines AgsForceSpec for the iterative-shaped runner-template contract
  * (mesh/neighbor_loop_runner.h). Replaces gravity/ags_force_gpu.cc (bespoke
@@ -29,7 +29,7 @@
  * sidm/{cbe_integrator,dm_fuzzy,sidm_core}_flux_functions.h remain the SSOT
  * for CBE/DM_FUZZY/SIDM scatter physics.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef AGS_FORCE_LOOP_H
 #define AGS_FORCE_LOOP_H
@@ -181,11 +181,10 @@ struct AgsForceOut {
     double    cbe_face_residual_max;       /* MAX over faces of |sum_basis F_m*A| */
     double    cbe_face_residual_sum;       /* SUM over faces of |sum_basis F_m*A| */
     long long cbe_bracket_fail_count;      /* SUM over faces of root-find bracket fails */
-    /* Wave-CBE Commit 4 + Commit 5 face-reconstruction clamp counters,
-     * populated by cbe_clamp_face_Q. Density-only clamp (Commit 4 Phase 1)
-     * zeroes the basis row when Q_face[m][0] <= MIN_REAL_NUMBER; stress
-     * SPD repair (Commit 5) projects [Sxx..Syz] to the nearest SPD tensor
-     * with eigenvalue floor when NMOMENTS >= 10. */
+    /* Face-reconstruction clamp counters, populated by cbe_clamp_face_Q.
+     * Density-only clamp zeroes the basis row when Q_face[m][0] <=
+     * MIN_REAL_NUMBER; stress SPD repair projects [Sxx..Syz] to the
+     * nearest SPD tensor with eigenvalue floor when NMOMENTS >= 10. */
     long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
     long long cbe_recon_S_clamp_count;     /* SUM over faces+sides of S SPD repairs */
     /* Wave-CBE Commit 6c: SUM over directional basis rows for which the
@@ -209,7 +208,7 @@ struct AgsForceOut {
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
-    /* Phase 17b pairwise outcomes; multiplicative erosion sentinel = 1.0
+    /* Pairwise outcomes; multiplicative erosion sentinel = 1.0
      * in zero_accum (multiplicative identity). */
     double Grain_DeltaCoagMass;
     double Grain_DeltaCoag_CompositionMass[GRAIN_NUM_SPECIES];
@@ -244,7 +243,7 @@ struct AgsForceActiveState {
 };
 
 /* DeviceContext extension. need_wakeup_uvm is sticky across all subgroups of
- * one toplevel call (same lifecycle as ags_density's, codex round-7 lesson).
+ * one toplevel call (same lifecycle as ags_density's).
  * geofactor_uvm mirrors GeoFactorTable on device for the SIDM probability
  * lookup. */
 struct AgsForceDeviceContext : NeighborLoopDeviceContextBase {
@@ -386,8 +385,7 @@ struct AgsForceSpec {
     static constexpr unsigned int            neighbor_type_mask = 0xFFFFFFFFu;  /* per-subgroup override */
     /* AGS-force pair physics: h_j reach is P[j].AGS_KernelRadius for every type
      * (gas and non-gas).  Symmetric filter at ags_force_loop.h:296,304 reads
-     * kernel.h_j = Pj.AGS_KernelRadius and rejects only r > max(h_i, h_j).
-     * See OPEN_radius_policy_runner_design.md audit table for the cite. */
+     * kernel.h_j = Pj.AGS_KernelRadius and rejects only r > max(h_i, h_j). */
     static constexpr mode_b_radius_policy_t  radius_policy      =
         MODE_B_RADIUS_GAS_AGS | MODE_B_RADIUS_NONGAS_AGS;
 
@@ -476,8 +474,7 @@ struct AgsForceSpec {
          * #20094-D + #20011-D. Same pattern + branches as
          * AgsDensitySpec::active_subgroup_key (gravity/ags_density_loop.h).
          * Reads Type via ctx.particle_type(i) and ComovingIntegrationOn via
-         * scalars.common.comoving_integration_on (codex round-9 path).
-         * Phase D fix 2026-05-21 (config 107 MAGNETIC+GRAIN_*). */
+         * scalars.common.comoving_integration_on. */
         const short int t = ctx.particle_type(i);
 
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
@@ -517,7 +514,7 @@ struct AgsForceSpec {
 
     /* Fill ActiveData[slot] on device. Reads directly from ctx.P[i] — no
      * host-staged per-active local UVM (same simplification ags_density
-     * adopted post-codex-r7). */
+     * adopted). */
     KOKKOS_INLINE_FUNCTION
     static ActiveData load_active(const DeviceContext& dctx,
                                    int /*active_slot*/, int i,

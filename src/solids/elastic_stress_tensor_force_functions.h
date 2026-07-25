@@ -54,7 +54,7 @@ void elastic_stress_tensor_force_compute_pair(
         double nvt[NUMDIMS*NUMDIMS] = {0}, norm_m = 0, wtfac = 0;
         if(ij_switch == 0) { wtfac = wt_i; } else { wtfac = wt_j; }
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
-        /* Phase 17e bit 0: damaged material carries (1-D) of its deviatoric stress */
+        /* damaged material carries (1-D) of its deviatoric stress */
         {
             double D_side = (ij_switch == 0) ? (double)local.Damage : (double)CPj.Damage;
             if(D_side < 0.0) { D_side = 0.0; } else if(D_side > 1.0) { D_side = 1.0; }

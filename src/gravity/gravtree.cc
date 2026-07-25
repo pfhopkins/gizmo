@@ -162,9 +162,9 @@ void gravity_tree(void)
         TakeLevel = -1;
     }
     if(TakeLevel >= 0) {
-        /* Under UVM-canonical particles (commit 0d9e74b4), arena_P aliases host
-         * P[] — the Round-3d mirror write to P_arena_zero[i] is a self-assignment,
-         * so the single host write is sufficient for both views. */
+        /* Under UVM-canonical particles, arena_P aliases host P[] — an arena
+         * mirror write to P_arena_zero[i] is a self-assignment, so the single
+         * host write is sufficient for both views. */
         for(i = 0; i < NumPart; i++) { P[i].GravCost[TakeLevel] = 0; }
     } /* re-zero the cost [will be re-summed] */
 
@@ -188,9 +188,9 @@ void gravity_tree(void)
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
 
-        /* Step 13 Phase 4: speculative GPU pre-pass. Walks the local tree
-         * on GPU for each active particle; on success, writes GravAccel
-         * and marks ProcessedFlag so the CPU primary loop below skips it.
+        /* Speculative GPU pre-pass: walks the local tree on GPU for each
+         * active particle; on success, writes GravAccel and marks
+         * ProcessedFlag so the CPU primary loop below skips it.
          * On pseudo-particle hit, leaves the particle untouched for the
          * CPU loop + MPI export machinery to handle unchanged. Ewald_iter
          * splits primary (==0) vs Ewald-correction (==1) walks; both are
@@ -242,22 +242,17 @@ void gravity_tree(void)
                 gizmo_request_controlled_stop(914040, "gravtree: Nexport>0 -- particles need foreign gravity not covered by LET (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
             }
 
-            /* Phase 9.4: export-back loop is retired under GPU offload, so the arena
+            /* Export-back loop is retired under GPU offload, so the arena
              * is not invalidated by host-side P[] writes here.
-             * Phase 8a Round 3b (2026-05-03): the prior "no-op safety net"
-             * gpu_particles_arena_invalidate() that was here is REMOVED. The
-             * comment authored above said it was already a no-op when arena state
-             * is coherent. With the arena-coherence work in Round 1-2-3, the
-             * arena IS coherent at this point (gpu_gravtree_walk_primary
-             * invalidates internally at line 1979 if its host scatter happens;
-             * mirror-update conversions in subsequent Round 3 commits will
-             * replace that with mark_clean too). The redundant double-invalidate
-             * here was costing nothing in old code but blocks fast-path
-             * acquires after Round 2D's refresh. Removing it.
+             * There is no gpu_particles_arena_invalidate() call at this point:
+             * the arena is coherent here (gpu_gravtree_walk_primary invalidates
+             * internally if its host scatter happens). A redundant
+             * double-invalidate would cost nothing but blocks fast-path
+             * acquires after the arena refresh, so it is intentionally absent.
              *
-             * If we ever surface a pre-acquire host mutation that makes arena
-             * stale at this point, the GIZMO_GPU_ARENA_DEBUG=1 byte-compare
-             * guard will abort with site name. Ship the trip wire instead of
+             * If a pre-acquire host mutation ever makes the arena stale at this
+             * point, the GIZMO_GPU_ARENA_DEBUG=1 byte-compare guard will abort
+             * with the site name -- rely on that trip wire instead of a
              * cargo-cult invalidate. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
@@ -446,7 +441,7 @@ void gravity_tree(void)
 
     } /* end of loop over active particles*/
 
-    /* Round-3d arena mirror-update is a no-op under UVM-canonical (arena_P
+    /* Arena mirror-update is a no-op under UVM-canonical (arena_P
      * aliases host P[]); the post-loop above already wrote canonical state. */
 
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */

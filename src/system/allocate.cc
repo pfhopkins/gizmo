@@ -12,7 +12,7 @@
  * Kokkos::SharedSpace (CudaUVMSpace on GH200) via gpu_particles_uvm_alloc()
  * rather than through mymalloc.  The GPU particles arena then aliases these
  * pointers — no host->device memcpy on arena_acquire, no coherence dance,
- * no invalidate.  See HANDOFF_fire_m11i_arena_sweep.md.
+ * no invalidate.
  *
  * The kokkos_malloc call lives in gpu_particles_arena.cc (a GPU TU) so that
  * this host TU does not have to include <Kokkos_Core.hpp> directly, which
@@ -44,7 +44,7 @@ int allocate_memory(int do_collective_preflight)
 
   NTaskTimesThreads = maxThreads * NTask;
 
-  /* GRACEFUL-OOM (codex 2026-06-04): allocate_memory() never fatal hard-exits on a
+  /* GRACEFUL-OOM: allocate_memory() never fatal hard-exits on a
    * capacity failure -- it requests a SOFT controlled-stop and RETURNS a nonzero code;
    * the caller drains it at its own all-rank poll. do_collective_preflight only selects
    * the arena preflight's fit-check:

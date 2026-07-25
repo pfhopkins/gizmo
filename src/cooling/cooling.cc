@@ -84,8 +84,8 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
  * intentionally NOT called inside do_the_cooling_for_particle (host or device).
  * Their bodies call ThermalProperties (which calls convert_u_to_temp ->
  * hydrogen_molecule chain), doubling the device stack depth and causing CUDA OOM
- * on the H200. Phase 2 chunk 2 (2026-05-27) routes both into a separate
- * post_cooling_tail device kernel:
+ * on the H200. Both are instead routed into a separate post_cooling_tail
+ * device kernel:
  *   - set_eos_pressure_impl runs in the device tail when
  *     POST_COOLING_DEVICE_EOS_SUPPORTED (otherwise the GPU-path scatter loop
  *     calls the host wrapper).
@@ -345,11 +345,10 @@ void cooling_parent_routine(void)
             compact_dtime[j] = dt;
         }
 
-/* RETIREMENT NOTE (Step 5 B2): the [GPU_RT_DIAG] A/B comparison blocks below
- * are dormant under the default build (gated by GIZMO_DEBUG_RT_COOLING).
- * Retire together with the GIZMO_DEBUG_RT_COOLING flag in the eventual
- * cleanup pass that retires that flag. Until then they remain available for
- * GPU↔CPU bit-comparison debugging of the cooling kernel. */
+/* The [GPU_RT_DIAG] A/B comparison blocks below are dormant under the
+ * default build (gated by GIZMO_DEBUG_RT_COOLING). They remain available
+ * for GPU vs CPU bit-comparison debugging of the cooling kernel and should
+ * be retired together with the GIZMO_DEBUG_RT_COOLING flag. */
 #ifdef GIZMO_DEBUG_RT_COOLING
         /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
         static int gpu_rt_diag_count = 0;
@@ -414,8 +413,8 @@ void cooling_parent_routine(void)
         }
 #endif /* GIZMO_DEBUG_RT_COOLING */
 
-        /* Post-cooling tail device kernel (Phase 2 chunk 2, 2026-05-27).
-         * Three blocks, each independently #ifdef-gated:
+        /* Post-cooling tail device kernel. Three blocks, each independently
+         * #ifdef-gated:
          *   - POST_COOLING_DEVICE_EOS_SUPPORTED -> set_eos_pressure_impl
          *     (defined iff EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/
          *     HYDRO_GENERATE_TARGET_MESH are all inactive; see
@@ -432,13 +431,13 @@ void cooling_parent_routine(void)
          *     (dust). The kernel body mirrors finish_cooling_host_deferred_dust_updates
          *     byte-for-byte so the GPU path and the CPU OMP fallback (below)
          *     compute the same physics for every supported Config (multi-path
-         *     principle, Phil directive 6).
-         * Kernel launches whenever EITHER family is active. The post-Chunk-2
-         * GPU-path scatter loop skips finish_cooling_host_deferred_dust_updates
+         *     principle).
+         * Kernel launches whenever EITHER family is active. The GPU-path
+         * scatter loop below skips finish_cooling_host_deferred_dust_updates
          * (the device kernel above did it) and skips set_eos_pressure when
          * POST_COOLING_DEVICE_EOS_SUPPORTED (likewise). Solid-EOS+dust builds
          * still get device dust here AND host set_eos_pressure in the scatter
-         * loop -- the two gates are orthogonal by design (codex 2026-05-26).
+         * loop -- the two gates are orthogonal by design.
          * Separate kernel from the cooling loop above to keep per-launch
          * device stack depth bounded -- set_eos_pressure_impl and
          * update_dust_processes each call ThermalProperties (->
@@ -486,8 +485,7 @@ void cooling_parent_routine(void)
 #endif
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
         /* ORACLE: re-run the public host wrapper(s) on the scratch arrays.
-         * Match the device kernel's gate structure (codex Phase 2 chunk 2 rule
-         * "oracle covers the whole tail, not just EOS"): set_eos_pressure runs
+         * Match the device kernel's gate structure (         * "oracle covers the whole tail, not just EOS"): set_eos_pressure runs
          * when POST_COOLING_DEVICE_EOS_SUPPORTED; finish_cooling_host_deferred_dust_updates
          * runs when GALSF_ISMDUSTCHEM_MODEL (with the same dtime + Mass + Type
          * guard the kernel uses). Wrappers are the host reference path; matching
@@ -506,7 +504,7 @@ void cooling_parent_routine(void)
          * scalars, dust scalars + arrays, molecfrac scalars, DelayTimeHII --
          * accumulating bounded per-class max-rel summaries plus a global
          * mismatch count above oracle_tol and the first offending particle ID.
-         * No per-particle output (codex Phase 2 chunk 2 rule "oracle covers
+         * No per-particle output ("oracle covers
          * the whole tail"). Per-class maxima keep the oracle line bounded
          * regardless of array length / particle count. */
         for(int j = 0; j < batch_n; j++) {
@@ -588,7 +586,7 @@ void cooling_parent_routine(void)
         oracle_n_compared += batch_n;
 #endif
 
-        /* Scatter batch back. Post Chunk 2 (2026-05-27):
+        /* Scatter batch back:
          *   - set_eos_pressure runs on host ONLY when POST_COOLING_DEVICE_EOS_SUPPORTED
          *     is undefined (solid-EOS or HYDRO_GENERATE_TARGET_MESH builds).
          *     Otherwise the device tail kernel above already ran it.
@@ -662,7 +660,7 @@ void cooling_parent_routine(void)
      * Reported N_compared is the GLOBAL SUM of cells actually device-vs-host
      * compared (only the GPU branch fills it), NOT the local rank's N_active
      * (which can include cells dispatched via the CPU fallback path that has
-     * no host-vs-device comparison). Codex 2026-05-30 review: the label must
+     * no host-vs-device comparison). the label must
      * reflect what was actually compared so the oracle output stays honest. */
     double local_max[15] = {
         /* 0-3 EOS */            oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs,
@@ -887,18 +885,18 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
 
 #ifdef TWO_TEMPERATURE_PLASMA
-        /* C2/C3a/C3b: 2-T plasma post-cooling update. Two operations, in order:
+        /* 2-T plasma post-cooling update. Two operations, in order:
            (1) Apply the radiative delta to u_e. Of the cooling-step Δu_total =
-               unew - uold, the hydro work component went to ions (D3 default
+               unew - uold, the hydro work component went to ions (default
                f_e=0); the radiative component went to electrons. The cooling
-               iteration already evaluated rates at T_e (see C3b lambda above)
+               iteration already evaluated rates at T_e (see the lambda above)
                so this is consistent.
-           (2) Spitzer analytic e-i equilibration (C2): redistributes (u_e, u_i)
+           (2) Spitzer analytic e-i equilibration: redistributes (u_e, u_i)
                at fixed total via exp(-alpha*dt) decay of (T_e - T_i).
            n_i (ion number density used in both energy partition and Spitzer
            rate denominator alpha = (1 + n_e/n_i) nu_eq) = n_H + n_He = n_H * (1
            + yhelium), independent of ionization state since each helium nucleus
-           contributes one heavy particle to the kinetic energy budget (C3a). */
+           contributes one heavy particle to the kinetic energy budget. */
         {
             const double rho_phys     = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
             const double n_e_phys     = cell[i].n_e_cell;
@@ -915,7 +913,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             const double du_total_code = cell[i].InternalEnergy - u_old_code;
             const double du_rad_code   = du_total_code - hydro_du_code;
             /* (1) absorb radiative delta into u_e (always to electrons), plus
-               C4a fraction f_e of NON-conduction hydro dissipation, plus C4b
+               fraction f_e of NON-conduction hydro dissipation, plus the
                full conduction contribution (Spitzer-Härm electron heat under
                TWO_TEMPERATURE_PLASMA bit 2). f_e=0 default -> only radiative
                + conduction (if bit 2 active); f_e=1 -> electrons absorb full du. */
@@ -1040,10 +1038,10 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     ratefact = nHcgs * nHcgs / rho;
     u = u_upper = u_lower =  u_old; /* initialize values */
 #ifdef TWO_TEMPERATURE_PLASMA
-    /* 2-T plasma (Phase 16 C3b): the radiative cooling rate is physically a
-       function of T_e, not T_total. Inside the rootfind we track T_e
-       implicitly: of the trial du, the hydro-source portion goes to ions and
-       the remaining radiative portion goes to electrons (D3 default f_e=0).
+    /* 2-T plasma: the radiative cooling rate is physically a function of
+       T_e, not T_total. Inside the rootfind we track T_e implicitly: of the
+       trial du, the hydro-source portion goes to ions and the remaining
+       radiative portion goes to electrons (default f_e=0).
        u_e_trial = u_e_old + (du - hydro_du), and T_e_trial = (2/3) rho
        u_e_trial / (n_e k_B). Pass T_e_trial in place of T_total to CoolingRate
        so all rate components (line cooling, free-free, recombination, photo-
@@ -1054,12 +1052,12 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     const double u_e_old_cgs_2T = cell[target].u_e_cell * UNIT_SPECEGY_IN_CGS;
     const double n_e_phys_2T    = cell[target].n_e_cell;
     const double hydro_du_2T    = ratefact * cell[target].DtInternalEnergy * dt / nHcgs;
-    /* C4a: fraction of hydro dissipation deposited into electrons. f_e=0 (default,
+    /* Fraction of hydro dissipation deposited into electrons. f_e=0 (default,
        collisionless-shock limit, ions absorb all dissipation) recovers pure
        (du - hydro_du) for u_e_trial; f_e=1 makes electrons absorb the same du as
        u_total (single-fluid limit). */
     const double f_e_2T         = All.TwoTemp_ShockElectronFraction;
-    /* C4b: under bit 2 of TWO_TEMPERATURE_PLASMA, conduction is electron heat
+    /* Under bit 2 of TWO_TEMPERATURE_PLASMA, conduction is electron heat
        (Spitzer-Härm) and routes 100% to u_e regardless of f_e. The non-
        conduction hydro work continues to follow f_e. Conduction's contribution
        is captured separately in the hydro pair loop and stored in

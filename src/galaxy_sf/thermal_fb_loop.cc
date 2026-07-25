@@ -10,7 +10,7 @@
  * ghost-writeback manifest + lifecycle hooks, compare_accum, and
  * thermal_fb_local_fill (the per-source host pack — SSOT).
  *
- * Phase 4 / Wave 3 / 3e.2. Written by Phil Hopkins (phopkins@caltech.edu)
+ * Written by Phil Hopkins (phopkins@caltech.edu)
  * for GIZMO.
  */
 
@@ -52,8 +52,7 @@ bool ThermalFBSpec::is_active(int i)
     /* Cosmology-aware "is-stellar" gate — mirrors mechanical_fb.cc:75-82.
      * Pre-port thermal_fb.cc gated strictly on Type==4 regardless of cosmo
      * mode, which is a long-standing latent inconsistency with the mechfb
-     * convention: in non-cosmological sims, Types 2/3/4 are all valid stars.
-     * Fix landed in 3e.2 per directive 5 (Phil confirmed 2026-05-15). */
+     * convention: in non-cosmological sims, Types 2/3/4 are all valid stars. */
     if (All.ComovingIntegrationOn) {
         if (P[i].Type != 4) return false;
     } else {
@@ -77,8 +76,8 @@ double ThermalFBSpec::search_radius(const neighbor_loop_args& args,
 
 /* thermal_fb_build_call_scalars — SSOT for the per-call cosmology + unit-
  * conversion struct. Routes `All.*` reads through nlr_host_all_ptr() as
- * stylistic intent-tagging for host-snapshot semantics (under 93897f62 the
- * device-pass redirect is gated so bare host reads are
+ * stylistic intent-tagging for host-snapshot semantics (the device-pass
+ * redirect is gated so bare host reads are
  * also correct). The kernel reads NO `All.*` and NO `UNIT_*` macros — all
  * such reads route through scalars. SSOT — single owner is
  * Spec::populate_call_scalars. */
@@ -123,7 +122,7 @@ ThermalFBSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 }
 
 /* ============================================================================
- * PHASE 4.A.0 DEVICE-CONTEXT LIFECYCLE
+ * DEVICE-CONTEXT LIFECYCLE
  *
  * populate allocates a UVM array of ThermalFBLocalIn[N] and copies in from
  * args.aux->host_locals. cleanup frees it. Mirrors SinkFeedSpec exactly.
@@ -182,7 +181,7 @@ void ThermalFBSpec::apply_active_writeback(const neighbor_loop_args& args,
 
     /* All arithmetic stays in MyDouble — Vel and Mass are both declared
      * MyDouble in particle_data, so no narrowing cast (the legacy did the
-     * same; codex review 2026-05-15 caught a MyFloat narrowing here). */
+     * same; avoids a MyFloat narrowing here). */
     for (int k = 0; k < 3; k++) {
         P[i].dp[k] -= (MyDouble)M_coupled * loc.Vel[k];
     }
@@ -277,7 +276,7 @@ void thermal_fb_local_fill(int i,
  * GHOST_WRITEBACK_GAS_MAX op (cross-rank max-reduce) to match the device-side
  * atomic_max semantics. The legacy ghost_writeback_thermalfb path applied
  * snapshot-diff additive on this field, which over-shoots when multiple
- * remote ranks each produce post>snap. See OPEN_3d_thermalfb_design.md.
+ * remote ranks each produce post>snap.
  * ========================================================================== */
 
 GHOST_WRITEBACK_BUNDLE_BEGIN(thermalfb)
@@ -342,7 +341,7 @@ double ThermalFBSpec::compare_accum(const AccumData& local, const AccumData& ora
     const double vb = (double)oracle.M_coupled;
     /* Denom floor = max(1, |a|, |b|) keeps relative comparisons stable when
      * M_coupled is tiny (e.g. early-step transient): avoids amplifying
-     * floating-point noise on small denominators (codex review 2026-05-15). */
+     * floating-point noise on small denominators. */
     const double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
     return std::fabs(va - vb) / denom;
 }

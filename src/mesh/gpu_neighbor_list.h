@@ -74,10 +74,10 @@ struct gpu_spatial_index_t {
     int dirty_handle = -1; /* gpu_dirty_tracker handle; -1 when not registered */
     /* Type bitmask used at the most recent build. The cached compact_xyzh /
      * pool only includes the originally-built types; later callers MUST pass
-     * the same tbm to gpu_ngb_list_build. Codex 2026-05-12: density port
-     * exposed a bug where a gas-only caller (tbm=1) used the all-types cache
-     * (tbm=0x3f), causing the walker to return DM neighbors and lazy-drift
-     * to abort on Type=1 particles. gpu_ngb_list_build now hard-aborts on
+     * the same tbm to gpu_ngb_list_build. A mismatch (e.g. a gas-only caller
+     * with tbm=1 reusing an all-types cache built with tbm=0x3f) causes the
+     * walker to return neighbors of the wrong types and lazy-drift to abort
+     * on unexpected particle types. gpu_ngb_list_build now hard-aborts on
      * mismatch instead of silently mis-walking. Default -1 = "no build yet". */
     int cache_tbm = -1;
     /* Radius-policy the cached compact_xyzh / tile-hmax bands were built under.
@@ -305,8 +305,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                          * All.TurbDynamicDiffFac for the TURB_DIFF_DYNAMIC
                          * wide-filter loops so the pair reach is the genuinely
                          * symmetric max(fac*h_i, fac*h_j). Applied at query time;
-                         * cached compact_xyzh / SIDX hmax stay keyed on raw radii.
-                         * See OPEN_3d_difffilter_design.md §3. */
+                         * cached compact_xyzh / SIDX hmax stay keyed on raw radii. */
                         double j_kernel_radius_scale = 1.0,
                         /* radius_policy: Spec::radius_policy from the runner;
                          * controls per-particle reach used to (re)populate

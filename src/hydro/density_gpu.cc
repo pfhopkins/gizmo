@@ -1,17 +1,17 @@
 /* density_gpu.cc — GPU-accelerated hydro evaluator via Kokkos.
  *
  * GPU translation unit (Kokkos/nvcc_wrapper). Provides hydro_evaluate_gpu()
- * — Riemann/flux loop (B4).
+ * — Riemann/flux loop.
  *
  * The legacy density_evaluate_gpu / density_gpu_session_* path was retired
- * in Phase 4.B.2 when density() migrated to the runner template
- * (hydro/density_loop.cc). The legacy gradient_evaluate_gpu walker was
- * retired in hydro corridor commit 7 (GradientsSpec) + commit 7b cleanup
- * — gradients now live in hydro/gradients_loop.{h,cc}.
+ * when density() migrated to the runner template (hydro/density_loop.cc).
+ * The legacy gradient_evaluate_gpu walker was retired when gradients moved
+ * to the runner Spec contract (GradientsSpec) — gradients now live in
+ * hydro/gradients_loop.{h,cc}.
  *
  * Architecture follows the cooling.cc pattern:
  *   - declarations/gpu_all_mirror.h provides static __managed__ AllDeviceMirror
- *     per TU with device-pass `#define All AllDeviceMirror` redirect (93897f62)
+ *     per TU with device-pass `#define All AllDeviceMirror` redirect
  *   - Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE> for device-accessible data
  *   - CPU gather → GPU kernel → CPU scatter
  *
@@ -63,7 +63,7 @@
 
 
 /* ================================================================
-   GPU neighbor list construction (B1)
+   GPU neighbor list construction
    ================================================================
    Strategy:
    - Build tiles + BVH on CPU (recursive, serial — fine for ~100s of tiles)
@@ -85,7 +85,7 @@
  * hydro/gradients_loop.{h,cc}. */
 
 /* ================================================================
-   GPU hydro force kernel (B3b)
+   GPU hydro force kernel
    ----------------------------------------------------------------
    Kernel writes (host-visible, by index):
      i-side (active sources, indexed by aa->ii):
@@ -111,9 +111,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
-    double t_hyd_start = my_second(); /* Phase 7 sub-bucket timing */
+    double t_hyd_start = my_second(); /* sub-bucket timing */
 
-    /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
+    /* Persistent decomp-scoped arena. Replaces per-call
      * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
     gpu_particles_arena_set_site("density_gpu_hydro");
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
@@ -472,7 +472,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 
-    /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
+    /* sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
     {
         double t_postloop_end = my_second();
         gizmo_step_phase_record("hydro_arena",       timediff(t_hyd_start,    t_hyd_arena));

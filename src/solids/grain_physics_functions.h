@@ -1,5 +1,5 @@
 /* grain_physics_functions.h — GPU-callable structs + per-pair kernel bodies
- * for the grain_physics neighbor loops (B7).
+ * for the grain_physics neighbor loops.
  *
  * Covers two independent loops:
  *   1. grain_backrx_evaluate (GRAIN_BACKREACTION): grain→gas momentum
@@ -22,7 +22,7 @@
 
 
 /* -------------------------------------------------------------------------
- *  GPU-callable grain extinction efficiency (used by B7b kernels).
+ *  GPU-callable grain extinction efficiency (used by the RT opacity kernels below).
  *  Mirrors solids/grain_physics.cc:return_grain_extinction_efficiency_Q.
  *  Kept GPU-safe: no ThisTask/PRINT_WARNING fallback (that path only fires
  *  when neither RADTRANSFER nor RT_USE_GRAVTREE is on, i.e. a non-RT build
@@ -54,7 +54,7 @@ static double grain_extinction_Q_inline(int i, int k_freq, struct particle_data 
 
 
 /* -------------------------------------------------------------------------
- *  B7a: grain_backrx (GRAIN_BACKREACTION)
+ *  grain_backrx (GRAIN_BACKREACTION)
  * ------------------------------------------------------------------------- */
 #if defined(GRAIN_BACKREACTION)
 
@@ -66,7 +66,7 @@ struct GrainBackrxLocalIn
     MyFloat Gas_Density;
     MyFloat Grain_AccelTimeMin;
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-    /* Phase 17b grain->gas back-reaction accumulators for COND/SUBL.
+    /* grain->gas back-reaction accumulators for COND/SUBL.
      * Distributed to gas neighbors with the same -wk_i/gas_rho weight as
      * Grain_DeltaMomentum (see grain_backrx_pair_kernel). */
     MyFloat Grain_DeltaVolatileMass[GRAIN_NUM_VOLATILE_SPECIES];
@@ -124,7 +124,7 @@ static void grain_backrx_pair_kernel(
     Kokkos::atomic_min(&P[j].Grain_AccelTimeMin, (MyFloat)taccel_cand);
 
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-    /* Phase 17b: scatter COND/SUBL back-reaction. Same kernel weight `wt`
+    /* Scatter COND/SUBL back-reaction. Same kernel weight `wt`
      * as the momentum scatter so mass and energy are deposited consistently
      * with the existing grain_backrx convention.
      *
@@ -161,7 +161,7 @@ static void grain_backrx_pair_kernel(
 
 
 /* -------------------------------------------------------------------------
- *  B7b: gas↔grain RT opacity coupling (RT_OPACITY_FROM_EXPLICIT_GRAINS)
+ *  gas↔grain RT opacity coupling (RT_OPACITY_FROM_EXPLICIT_GRAINS)
  *  Bidirectional — two independent kernels:
  *    - gas searches grains:    writes InterpolatedGeometricDustCrossSection +
  *                              Interpolated_Opacity[k_freq] to gas source.

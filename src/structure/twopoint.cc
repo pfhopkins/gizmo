@@ -72,22 +72,22 @@ void twopoint(void)
      * The modern symmetric NL walks individual pair lists with no node-level
      * aggregation; correct but much slower at large radii.
      *
-     * FUTURE PROPER PORT: this routine should NOT use the normal symmetric
-     * NL infrastructure at all. Two-point correlation is fundamentally an
-     * "all-against-all long-range" problem with binned distance accumulators
-     * — exactly what the gravity tree already supports. The proper port
-     * walks the modern GRAVITY TREE (Nodes_base / SoA in gravity/forcetree.cc)
-     * with a custom op that, instead of accumulating gravitational potential
-     * via mass moments, accumulates BINNED PAIR COUNT via node->mass for
-     * nodes that fall cleanly within a single radial bin. The walk pattern
-     * is identical to gravtree; only the accumulated quantity differs.
-     * That port preserves the O(N log N) scaling at large radii.
+     * PROPER PORT (not yet done): this routine should NOT use the normal
+     * symmetric NL infrastructure at all. Two-point correlation is
+     * fundamentally an "all-against-all long-range" problem with binned
+     * distance accumulators — exactly what the gravity tree already
+     * supports. The proper port walks the modern GRAVITY TREE (Nodes_base /
+     * SoA in gravity/forcetree.cc) with a custom op that, instead of
+     * accumulating gravitational potential via mass moments, accumulates
+     * BINNED PAIR COUNT via node->mass for nodes that fall cleanly within a
+     * single radial bin. The walk pattern is identical to gravtree; only the
+     * accumulated quantity differs. That port preserves the O(N log N)
+     * scaling at large radii.
      *
-     * The user signed off on shipping the interim NL-based implementation
-     * because OUTPUT_TWOPOINT_ENABLED runs ~1x per 1e4-1e5 timesteps, so the
-     * O(N) per-pair cost is tolerable for now. The proper gravity-tree port
-     * is needed before any production run with TotNumPart > ~1e8 enables this
-     * module.
+     * The interim NL-based implementation is acceptable because
+     * OUTPUT_TWOPOINT_ENABLED runs ~1x per 1e4-1e5 timesteps, so the O(N)
+     * per-pair cost is tolerable. The gravity-tree port is needed before any
+     * production run with TotNumPart > ~1e8 enables this module.
      *
      * Pair-counting in the interim implementation is global with no
      * double-count: each pair (i, j) is counted once on the rank that owns i

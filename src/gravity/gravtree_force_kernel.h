@@ -207,7 +207,7 @@ struct grav_pm_shortrange_t {
 #endif
 };
 
-/* C1 foreign-leaf source seam (shared by the CPU and GPU walks -- the single home for foreign-leaf
+/* Foreign-leaf source seam (shared by the CPU and GPU walks -- the single home for foreign-leaf
  * secondary-source semantics, so the two walks cannot drift).  A foreign single particle is shipped as a
  * synthesized terminal multipole; the node payload carries mass/pos/etc. (singleton-exact), but it CANNOT
  * carry the leaf-identity fields the force needs.  When the accepted foreign node is a tagged real leaf,
@@ -925,7 +925,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_specialweighted(double r2, const
         double wt_special = grav_weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
         prox.weight_sum_for_special_point_smoothing += wt_special;
         prox.vel_of_nearest_special = node_vs;
-        prox.acc_of_nearest_special = {}; /* no accel for now, that will be computed later, but keep this if needed */
+        prox.acc_of_nearest_special = {}; /* accel not computed here; left zeroed */
     }
 }
 #endif

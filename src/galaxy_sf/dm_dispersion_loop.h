@@ -7,7 +7,7 @@
  * Neighbor set: DM particles (Type==1, Mass>0).
  * Write pattern: ActiveReduceOnly (read-only on j; no ghost writeback).
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef DM_DISPERSION_LOOP_H
 #define DM_DISPERSION_LOOP_H

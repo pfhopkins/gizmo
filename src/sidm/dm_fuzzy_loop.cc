@@ -13,9 +13,7 @@
  * host-only routines (do_dm_fuzzy_drift_kick, do_dm_fuzzy_initialization)
  * stay in sidm/dm_fuzzy.cc — runner-port checklist §5.
  *
- * See OPEN_3d_dm_fuzzy_design.md.
- *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #include <mpi.h>
 #include <cstdio>

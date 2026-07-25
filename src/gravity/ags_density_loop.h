@@ -2,30 +2,26 @@
  * neighbor loop module.
  *
  * Defines AgsDensitySpec for the iterative neighbor-loop runner
- * (mesh/neighbor_loop_runner.h). 3d.4 in the Phase 4 sequencing plan
- * (OPEN_3d_sequencing_plan.md). First production user of the
- * `IterControl = Iterative` + `uses_ghost_writeback = true` path that
- * Phase 4.B.0 built and that the step-0 prep-commit (`ac3540c1` +
- * `4b76b094`) extended with the partition-by-subgroup contract +
- * rebuild-every-iter correctness fallback.
+ * (mesh/neighbor_loop_runner.h). Uses the `IterControl = Iterative` +
+ * `uses_ghost_writeback = true` path, extended with the partition-by-
+ * subgroup contract + rebuild-every-iter correctness fallback.
  *
- * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
- * post-3d.4 cleanup commit after two-binary parity validation passed).
+ * Replaces the now-deleted gravity/ags_density_gpu.cc (retired after
+ * two-binary parity validation passed).
  *
  * Per-pair physics: ports the body at ags_density_gpu.cc:118-205 verbatim,
  * with NlrCommonScalars / per-active host-fill routing instead of direct
  * All.* reads (TRAP 1) and the wakeup write going through the
- * hydro-convention `atomic_max(TimeBin+1)` landed in commit `198214cc`
- * instead of the buggy `atomic_store(-1)` sentinel.
+ * hydro-convention `atomic_max(TimeBin+1)` instead of the buggy
+ * `atomic_store(-1)` sentinel.
  *
- * Three hard 3d.4 gates per OPEN_3d_agsdensity_design.md v0.4.2 §3.5 +
- * §10.2: partition-key assertion (debug-gated, validates `bm key drift`
- * is impossible across iters); CSR fallback rule (`mode_a_rebuild_csr_every_iter`
- * defaults false; flip to true only if a real PA-A divergence appears);
- * and cross-rank positive-wakeup propagation (validated by the two-binary
- * parity route, since retired).
+ * Three hard gates: partition-key assertion (debug-gated, validates `bm
+ * key drift` is impossible across iters); CSR fallback rule
+ * (`mode_a_rebuild_csr_every_iter` defaults false; flip to true only if a
+ * real PA-A divergence appears); and cross-rank positive-wakeup
+ * propagation (validated by the two-binary parity route, since retired).
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef AGS_DENSITY_LOOP_H
 #define AGS_DENSITY_LOOP_H
@@ -75,11 +71,11 @@ struct AgsDensityCallScalars {
 };
 
 /* (Per-active state previously held in AgsDensityLocalIn + ctx.per_active_local
- * UVM is now read directly from ctx.P[i] in load_active. Codex round-7 caught
- * that the UVM array was indexed by subgroup-local active_slot which collides
- * across bm subgroups — see design v0.4.3 §5a follow-up. ctx.P is path-correct
- * on both Mode A (arena P_gpu) and Mode B (request-driven slab), and the
- * fields we read (Pos, Vel, TimeBin) are read-only.) */
+ * UVM is now read directly from ctx.P[i] in load_active. The old UVM array
+ * was indexed by subgroup-local active_slot, which collides across bm
+ * subgroups. ctx.P is path-correct on both Mode A (arena P_gpu) and Mode B
+ * (request-driven slab), and the fields we read (Pos, Vel, TimeBin) are
+ * read-only.) */
 
 /* AccumData. Per-iter i-side accumulators. Matches legacy ags_density_gpu.cc
  * out struct (Ngb, DrkernNgb, AGS_zeta, Particle_DivVel, AGS_vsig) plus
@@ -142,8 +138,8 @@ struct AgsDensityIterScratch {
  * need_wakeup_uvm is allocated + zeroed ONCE in populate_device_context
  * and propagated to NeedToWakeupParticles_local ONCE in
  * cleanup_device_context (at end of the whole iterative call). It is NOT
- * reset per iter — codex round-7 caught that per-iter reset would lose
- * non-final-iter wakeups (e.g. iter-1 sets need_wakeup, iter-N doesn't,
+ * reset per iter — a per-iter reset would lose non-final-iter wakeups
+ * (e.g. iter-1 sets need_wakeup, iter-N doesn't,
  * cleanup sees 0). Sticky matches the legacy GPU evaluator's per-CALL
  * d_need_wakeup semantic (legacy ags_density() ran one evaluator-call
  * per outer iter so the distinction didn't surface, but the runner does
@@ -157,9 +153,9 @@ struct AgsDensityDeviceContext : NeighborLoopDeviceContextBase {
                                                   * caller-side endrun in
                                                   * ags_density() against
                                                   * GIZMO_NLR_ORACLE=1.
-                                                  * Codex round-7: oracle is
-                                                  * unsafe because after_iter
-                                                  * mutates P[i] which
+                                                  * Oracle is unsafe here
+                                                  * because after_iter
+                                                  * mutates P[i], which
                                                   * contaminates the brute
                                                   * pass's pair_kernel reads
                                                   * of P[j].AGS_vsig. */
@@ -193,18 +189,15 @@ struct AgsDensityActiveState {
  *      P[i].* reads (TRAP 1). All gates preserved: ADAPTIVE_GRAVSOFT_FORALL,
  *      DM_FUZZY, CBE_INTEGRATOR (gate the wakeup test); GALSF (suppress
  *      wakeup for type-4 cosmo, type-2/3 non-cosmo); AGS_FACE_CALCULATION_IS_ACTIVE
- *      (NV_T accumulation). See OPEN_3d_agsdensity_design.md §1.1 for the
- *      full #ifdef coverage table.
+ *      (NV_T accumulation).
  *
  *   2. Wakeup write uses hydro-convention atomic_max(local.TimeBin + 1)
- *      instead of legacy atomic_store(-1). Bug fix landed in commit
- *      `198214cc` ("fix AGS wakeup reverse-comm convention"); legacy
- *      sentinel `-1` would silently drop under MAX reverse-comm. See
- *      design v0.4.2 §3a.
+ *      instead of legacy atomic_store(-1); the legacy `-1` sentinel would
+ *      silently drop under MAX reverse-comm.
  *
  *   3. j-side writes are suppressed when ctx.oracle_dry_run is true so the
  *      runner's brute oracle pass doesn't double-apply (matches sink_feed
- *      pattern; design v0.4.2 §7).
+ *      pattern).
  *
  *   4. *need_wakeup is atomic_or-d to 1 on any wakeup write (local or
  *      ghost-side). Caller copies to NeedToWakeupParticles_local after
@@ -306,8 +299,8 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
             /* Hydro-convention wakeup write — `active.TimeBin + 1` (positive).
              * Cross-rank propagation works through ghost_writeback's MAX
              * reverse-comm. Legacy wrote (short int)-1, which the MAX path
-             * silently dropped against home=0; fixed in commit `198214cc`
-             * before this port landed. */
+             * silently dropped against home=0; fixed before this port
+             * landed. */
             const short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&neighbor_particle.wakeup, wakeup_val);
             Kokkos::atomic_or(need_wakeup, 1);
@@ -351,9 +344,9 @@ struct AgsDensitySpec {
      * NGB_SEARCH_ONEWAY, and the pair predicate is one-way (r < h_i only —
      * no h_j check). Symmetric search would over-include neighbors via
      * h_j logic and inflate NumNgb. AGSForce_calc is
-     * symmetric (overlap filter r > h_i + h_j) — that loop will be a
-     * separate port in Wave 3. (Codex round-7 caught this; was wrongly
-     * MODE_B_SEARCH_SYMMETRIC in the scaffold.)
+     * symmetric (overlap filter r > h_i + h_j) — that loop is a
+     * separate port. (Previously wrongly set to MODE_B_SEARCH_SYMMETRIC
+     * in the scaffold.)
      *
      * neighbor_type_mask is overridden per-subgroup by the runner from
      * subgroups[sg].j_type_bitmask (multi-bm support — ags_density
@@ -388,10 +381,10 @@ struct AgsDensitySpec {
 
     static constexpr int    max_iters                       = MAXITER;
     static constexpr double mode_a_csr_buffer_factor        = 2.0;
-    /* CSR correctness fallback per design v0.4.3 §10.2. The first-Vista
-     * regression that motivated flipping this to true was traced (codex
-     * round-10) to an unrelated bug: per-TU All_dev was unsynced, so
-     * AGS_DesNumNgb came through as 0 and bisection inverted. Root cause
+    /* CSR correctness fallback. A regression that motivated flipping this
+     * to true was traced to an unrelated bug: per-TU All_dev was
+     * unsynced, so AGS_DesNumNgb came through as 0 and bisection
+     * inverted. Root cause
      * fixed in populate_call_scalars via gizmo_gpu_host_all_ptr(); leaving
      * this at the optimized default (false). Flip to true only if a NEW
      * divergence is observed that cannot be otherwise explained. */
@@ -442,14 +435,14 @@ struct AgsDensitySpec {
 
     /* DeviceContext lifecycle. populate allocates + zeros need_wakeup_uvm;
      * cleanup frees it AND propagates the sticky-across-iters flag into
-     * NeedToWakeupParticles_local. NO per-iter reset (codex round-7:
-     * per-iter reset loses non-final-iter wakeups). */
+     * NeedToWakeupParticles_local. NO per-iter reset — a per-iter reset
+     * would lose non-final-iter wakeups. */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 
     /* Oracle brute-pass hook — REQUIRED by runner contract but stays a
-     * no-op-with-warning here. AgsDensitySpec hard-stubs oracle (codex
-     * round-7): after_iter mutates P[i] for the convergence test, which
+     * no-op-with-warning here. AgsDensitySpec hard-stubs oracle: after_iter
+     * mutates P[i] for the convergence test, which
      * contaminates the brute oracle pass's pair_kernel reads of
      * P[j].AGS_vsig (the wakeup threshold). Caller (ags_rkern.cc::ags_density)
      * endruns if GIZMO_NLR_ORACLE=1 is set. Two-binary parity (runner-build
@@ -457,17 +450,17 @@ struct AgsDensitySpec {
      * retired; the in-runner oracle remains hard-stubbed for AGS. */
     static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
-    /* Partition-key hook (design v0.4.3 §5a). Returns the bm key for the
+    /* Partition-key hook. Returns the bm key for the
      * subgroup this active belongs to.
      *
      * Inlined verbatim from ags_gravity_kernel_shared_BITFLAG
      * (gravity/ags_rkern.cc:45-79) WITHOUT the legacy helper's All.*
-     * read (codex round-9 blocker): legacy reads All.ComovingIntegrationOn
+     * read: legacy reads All.ComovingIntegrationOn
      * under GALSF; here we route through scalars.common.comoving_integration_on
      * which is host-snapshotted at populate_call_scalars time. Type comes
      * via ctx.particle_type(i) (path-correct: arena P on Mode A,
      * request-driven slab on Mode B). NO globals; the host-side debug
-     * partition assertion (runner.cc step 0) and any future device-side
+     * partition assertion in runner.cc and any future device-side
      * caller both see consistent values.
      *
      * Decision tree must match legacy bit-for-bit so the runner's per-iter
@@ -500,7 +493,7 @@ struct AgsDensitySpec {
 
 #if defined(GALSF) && ( (ADAPTIVE_GRAVSOFT_FORALL & 16) || (ADAPTIVE_GRAVSOFT_FORALL & 8) || (ADAPTIVE_GRAVSOFT_FORALL & 4) )
         /* GALSF branch reads comoving_integration_on through scalars,
-         * not the All global (codex round-9). */
+         * not the All global. */
         if(scalars.common.comoving_integration_on) {
             if(t == 4) { return 17; }       /* 2^0 + 2^4 */
         } else {
@@ -521,9 +514,9 @@ struct AgsDensitySpec {
 
     /* Build ActiveData[slot] on device. Reads per-active state directly
      * from ctx.P[i] — path-correct (Mode A: arena P_gpu; Mode B: request-
-     * driven slab). No per_active_local UVM staging — codex round-7 caught
-     * that the legacy UVM was indexed by subgroup-local active_slot which
-     * collides across bm subgroups in the multi-subgroup port.
+     * driven slab). No per_active_local UVM staging — the legacy UVM was
+     * indexed by subgroup-local active_slot, which collides across bm
+     * subgroups in the multi-subgroup port.
      *
      * Read fields are: Pos, Vel, TimeBin. All read-only — pair_kernel
      * never writes to P[i], only to neighbor P[j] (wakeup write). */

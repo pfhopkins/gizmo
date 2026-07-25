@@ -8,11 +8,9 @@
  * `gradient_accumulate_neighbor` (hydro/gradient_functions.h:189) — pair
  * physics is byte-for-byte preserved.
  *
- * Hydro corridor commit 7: second corridor consumer (after cellcorrections
- * 5a/5b/5c); ahead of HydroForceSpec (commit 8). Broad active row policy
- * matching the legacy GPU walker (Type==0 && Mass>0); narrow GasGrad_isactive
- * gate stays at the neighbor side inside the pair body. See
- * OPEN_3d_gradientsspec_design.md and OPEN_3d_hydro_corridor_design.md.
+ * Broad active row policy matching the legacy GPU walker (Type==0 && Mass>0);
+ * narrow GasGrad_isactive gate stays at the neighbor side inside the pair
+ * body.
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -248,7 +246,7 @@ struct GradientsSpec
      * Mass sign trick (negate as flag for SPH gradients), MHD-CG iter>0
      * Mass=0 sentinel (read from ctx.grad_iter), and per-active
      * kernel/mode/V_i precompute. No defensive safety early-outs added —
-     * preserves current GPU walker behavior exactly (codex round-7 guard). */
+     * preserves current GPU walker behavior exactly. */
     KOKKOS_INLINE_FUNCTION
     static ActiveData load_active(const DeviceContext& ctx,
                                    int /*active_slot*/, int i,

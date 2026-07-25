@@ -4,7 +4,7 @@
  * core function. This correctly handles cross-domain interactions via MPI.
  * The tree walk is repeated each sub-step (future optimization: cache neighbor lists).
  *
- * Written by Mike Grudic with Claude for GIZMO.
+ * Written by Mike Grudic for GIZMO.
  */
 
 #include <mpi.h>

@@ -1,4 +1,4 @@
-/* grain_promotion.h — Phase 17g: Type 3 grain super-particle → Type 0 solid body conversion.
+/* grain_promotion.h — Type 3 grain super-particle → Type 0 solid body conversion.
  * Header-only helpers; grain_promotion.cc provides grain_promotion_parent_routine().
  * Requires includer to have pulled in allvars.h.
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */

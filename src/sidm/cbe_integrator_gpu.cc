@@ -15,7 +15,7 @@
  * inadvertently overwriting unrelated P[i] fields touched by other code
  * between the gather and the scatter.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
 #include <mpi.h>
@@ -48,16 +48,16 @@
  * Kernel: do_cbe_drift_kick_kernel(pi, dt, dT_out).
  * Writes: pi.CBE_basis_moments[NBASIS][NMOMENTS] AND pi.Vel[0..2], plus the
  *        predictor reset's pi.CBE_basis_moments_pred / pi.CBE_VelPred (pred =
- *        post-kick conserved state). The absolute-update round-trip (codex
- *        2026-06-04) derives V_new from the post-update mass-weighted-mean
- *        basis velocity and writes it to pi.Vel directly. The GPU narrow
- *        scatter therefore must copy all of these fields back from compact_P.
+ *        post-kick conserved state). The absolute-update round-trip derives
+ *        V_new from the post-update mass-weighted-mean basis velocity and
+ *        writes it to pi.Vel directly. The GPU narrow scatter therefore must
+ *        copy all of these fields back from compact_P.
  * Reads: All.Time, All.TimeBegin, All.Ti_Current (via the kernel's basis-
  *        resplit branch); All-mirror handles the device read.
  *
- * Wave-CBE Commit 5 (2026-05-26): the kernel now returns a per-particle
- * SPD-repair trace increment (sum over basis of trace_after - trace_before)
- * via *dT_out. Compact per-active scratch dT_scratch[a] is host-summed and
+ * The kernel returns a per-particle SPD-repair trace increment (sum over
+ * basis of trace_after - trace_before) via *dT_out. Compact per-active
+ * scratch dT_scratch[a] is host-summed and
  * forwarded to cbe_step_diagnostics_observe_repair (col-7/8). The whole
  * accumulator path is guarded on OUTPUT_ADDITIONAL_RUNINFO ||
  * CBE_INTEGRATOR_OUTPUT_MOREINFO so production builds pay zero overhead
@@ -136,8 +136,8 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
      * below already relies on this); host reads of dT_scratch[a] follow. */
 
     /* Narrow scatter: kernel writes CBE_basis_moments AND pi.Vel (the latter
-     * from the absolute-update round-trip's V_new = MMV derivation, codex
-     * 2026-06-04), AND the predictor reset writes CBE_basis_moments_pred /
+     * from the absolute-update round-trip's V_new = MMV derivation), AND
+     * the predictor reset writes CBE_basis_moments_pred /
      * CBE_VelPred (pred = post-kick conserved state). All must be scattered
      * back to P_host — the OMP path updates in place, but the GPU path runs on
      * the compact copy, so dropping the pred fields here would leave host pred
@@ -173,11 +173,11 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
  * cbe_postgravity_evaluate_gpu — per-active post-AGSForce finalization.
  *
  * Kernel: do_cbe_postgravity_kernel(pi).
- * Writes: pi.CBE_basis_moments_dt[basis][0] only (mass-closure safety net;
- *         codex 2026-06-04). The CBE bulk-velocity injection into
- *         pi.GravAccel is GONE in the post-2026-06-04 design — bulk V is
- *         now derived from the post-update mass-weighted-mean basis
- *         velocity inside the drift-kick absolute round-trip.
+ * Writes: pi.CBE_basis_moments_dt[basis][0] only (mass-closure safety net).
+ *         The CBE bulk-velocity injection into pi.GravAccel is gone in the
+ *         current design — bulk V is now derived from the post-update
+ *         mass-weighted-mean basis velocity inside the drift-kick absolute
+ *         round-trip.
  * Reads: pi.Mass, pi.CBE_basis_moments_dt[basis][0], pi.CBE_basis_moments[basis][0].
  *
  * Called with active_indices = ActiveParticleList.data(),

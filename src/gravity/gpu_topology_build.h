@@ -1,13 +1,9 @@
-/* gpu_topology_build.h -- Step 13 Phase 6.5c2+
+/* gpu_topology_build.h
  *
  * GPU tree-build orchestration: assigns local particles to topleaves via
  * device-side Peano walk, computes 128-bit Morton keys, sorts particles
- * within each topleaf range, and (in 6.5c3+) emits internal-node topology
- * directly into the SoA `Nodes_dev` mirror.
- *
- * 6.5c2 implements the data path through the per-topleaf Morton sort.
- * Topology emission, collocation handling, and overflow retry follow in
- * 6.5c3 / 6.5c4.  Wiring into force_treebuild lands in 6.5d.
+ * within each topleaf range, and emits internal-node topology directly
+ * into the SoA `Nodes_dev` mirror.
  *
  * Internal scratch lives in static SharedSpace buffers, reused across
  * tree builds.  Lifecycle: data path allocates / grows on first call;
@@ -56,7 +52,7 @@ const int *gpu_topology_build_topleaf_start(void);   /* [NTopleaves + 1] */
 const int *gpu_topology_build_topleaf_count(void);   /* [NTopleaves]     */
 const int *gpu_topology_build_particle_topleaf(void);/* [npart] -- inverse */
 
-/* Phase 6.5c3 BFS topology emission: take the Morton-sorted-per-topleaf
+/* BFS topology emission: take the Morton-sorted-per-topleaf
  * data laid out by gpu_topology_build_data_path and emit internal-node
  * topology (center, len, father, suns_backup) directly into the
  * gpu_gravity_tree SoA mirror.
@@ -74,21 +70,21 @@ const int *gpu_topology_build_particle_topleaf(void);/* [npart] -- inverse */
  *
  * Return codes:
  *    0   success
- *    1   MaxNodes overflow during emission (6.5c4 will add retry path)
+ *    1   MaxNodes overflow during emission (retry path not yet implemented)
  *    2   collocation detected: a sub-range of >1 particles share full LCP
- *        (= 126 bits).  6.5c4 will add the RNG-fallback branch.
+ *        (= 126 bits).  RNG-fallback branch not yet implemented.
  *    >=3 other failure (allocation, missing dependencies, etc.).
  *
  * `start_node_index` -- the SoA index at which the BFS may begin allocating
  * new internal nodes (= Numnodestree at call time). */
 int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out);
 
-/* Phase 6.5d helper: copy GPU-built topology (suns_backup, center, len)
+/* Helper: copy GPU-built topology (suns_backup, center, len)
  * back into the AoS Nodes_base[] array for the SoA index range
  * [first_soa_idx, last_soa_idx).  Required while force_update_node_recursive
- * still walks AoS u.suns to set sibling/father for the whole tree (Phase
- * 6.7+ retires force_update_node_recursive on the GPU compile path,
- * eliminating this writeback).
+ * still walks AoS u.suns to set sibling/father for the whole tree; retiring
+ * force_update_node_recursive on the GPU compile path will eliminate this
+ * writeback.
  *
  * Runs as an OMP host loop -- Nodes_base is host malloc, not SharedSpace.
  * The SoA fields live in SharedSpace UVM so reads incur first-touch page

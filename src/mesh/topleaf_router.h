@@ -1,5 +1,6 @@
 /* topleaf_router.h -- host lifecycle for the top-leaf-targeted request-driven
- * ghost router (FIRE perf-regression fix; helper-only stage).
+ * ghost router (FIRE perf-regression fix; helper functions only, not yet
+ * wired into any runtime path).
  *
  * Plain-C declarations only (no Kokkos) so a host TU may include it.  The pure
  * device/host routing helpers live in topleaf_router_functions.h (GPU header).
@@ -17,8 +18,8 @@
  *
  * Validity is explicit: if any precondition is missing the cache is marked
  * INVALID and the caller MUST fall back to broadcast discovery -- never route
- * with stale/approximate bounds.  This stage adds NO call sites on any runtime
- * path; the entry points exist for the oracle/transport stages to wire.
+ * with stale/approximate bounds.  This header adds NO call sites on any runtime
+ * path; the entry points exist for future oracle/transport wiring.
  *
  * LIFECYCLE CONTRACT (binding for the wiring stages):
  *   - The geometry cache snapshots Nodes[DomainNodeIndex[leaf]] at acquire time.
@@ -29,7 +30,7 @@
  *     trusted across a domain/tree rebuild boundary unless the router has been
  *     re-acquired (or invalidated) in between.
  *   - topleaf_router_geometry_invalidate() marks the cache (and band) INVALID
- *     without freeing storage; C2 MUST call it from the same sites that fire the
+ *     without freeing storage; the caller MUST call it from the same sites that fire the
  *     ghost local-tree invalidation (drift/domain/tree rebuild), so a missing
  *     re-acquire fails closed to broadcast instead of routing on stale geometry.
  *
@@ -81,7 +82,7 @@ int           topleaf_router_ntopleaves(void);   /* leaf count the caches were b
 /* Route a batch of queries to their overlapping top-leaf owners, EXCLUDING
  * self_rank (ghost import is remote-only).  CSR output: query i routes to
  * owners[off[i] .. off[i+1]).  oneway != 0 => ONEWAY (band ignored, reach=h);
- * oneway == 0 => SYMMETRIC (requires a valid band — not used in C2).
+ * oneway == 0 => SYMMETRIC (requires a valid band; not currently used).
  * periodic_flags/box_sizes MUST be the receiver walk's convention (passed by the
  * caller so the opener and the receiver share one SSOT).  Returns the total
  * number of owner entries written (>=0), or -1 if geometry/band is invalid or

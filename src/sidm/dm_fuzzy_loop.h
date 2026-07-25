@@ -11,13 +11,13 @@
  * outputs; apply_active_writeback gates the scatter on the pass.
  *
  * SSOT for the DMGrad per-pair physics — supersedes the legacy
- * sidm/dm_fuzzy_gpu.cc (retired in this commit).
+ * sidm/dm_fuzzy_gpu.cc (retired).
  *
  * Caller TUs must `#include "../mesh/kernel.h"` BEFORE this header (kernel.h
  * has no include guards; the inline pair kernel below calls kernel_main /
  * kernel_hinv). Same pattern as difffilter_loop.h / dm_dispersion_loop.h.
  *
- * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef DM_FUZZY_LOOP_H
 #define DM_FUZZY_LOOP_H
@@ -50,8 +50,7 @@ struct DMGradCallScalars {
 /* AccumData — per-active reduction; fuses pass-0 and pass-1 outputs. All fields
  * additive; merge_accum sums them. apply_active_writeback gates which subset is
  * scattered on the current pass. (The legacy DMGradDataPasser Maxima/Minima are
- * NOT carried — they were write-only dead code; see OPEN_3d_dm_fuzzy_design.md
- * §2(c).) */
+ * NOT carried — they were write-only dead code.) */
 struct DMGradAccum {
     double grad_rho[3];          /* pass 0: gradient of AGS_Density            */
     double grad2_rho[3][3];      /* pass 1: grad2_rho[k2][k] = d/dx_k2 of       */

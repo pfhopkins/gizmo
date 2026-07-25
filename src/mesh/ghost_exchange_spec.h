@@ -55,8 +55,8 @@ struct ghost_exchange_spec_t {
     const double       (*query_pos)[3];
     const double        *query_h;
 
-    /* SSOT supply-side per-particle reach contract (Phil + codex 2026-06-07).
-     * Mirrors what local Mode A's gpu_ngb_list_build uses for the same Spec
+    /* SSOT supply-side per-particle reach contract. Mirrors what local
+     * Mode A's gpu_ngb_list_build uses for the same Spec
      * so the local CSR and the ghost-import candidate set are computed from
      * the IDENTICAL per-particle h_j formula on every rank.  Without this,
      * runner-driven imports under non-default Specs would silently disagree
@@ -71,7 +71,7 @@ struct ghost_exchange_spec_t {
      * + 1.0 explicitly; this preserves their pre-policy behavior byte-for-byte
      * (raw P[j].KernelRadius * safety_factor).  The struct provides no
      * defaults so the compiler enforces explicit-thread at every call site
-     * (codex 2026-06-07: "No LEGACY fallback in runner-driven paths"). */
+     * — no LEGACY fallback is allowed in runner-driven paths. */
     mode_b_radius_policy_t  radius_policy;
     double                  j_radius_scale;
 };

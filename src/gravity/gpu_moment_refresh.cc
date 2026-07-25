@@ -1,4 +1,4 @@
-/* gpu_moment_refresh.cc — Step 13 Phase 6.2
+/* gpu_moment_refresh.cc
  *
  * GPU implementation of the local-tree moment refresh that mirrors the
  * CPU code in force_refresh_node_moments (gravity/forcetree.cc:3826).
@@ -12,7 +12,7 @@
  *              pending counter (counts internal-node children).
  *   3) parts : each particle atomically accumulates into Father[i]'s
  *              scratch slot. Uses precomputed per-particle RT / sink /
- *              CR arrays (mirrors the gpu_gravtree.cc Phase 2-A..D
+ *              CR arrays (mirrors the gpu_gravtree.cc precomputed-input
  *              pattern).
  *   4) walk  : each thread starts at node k. If pending[k] != 0 it
  *              aborts (a descendant will reach this node). Otherwise it
@@ -35,8 +35,7 @@
  *   N_SINK / sink_vel / sink_acc / MaxFeedbackVel) /
  *   ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION / DM_SCALARFIELD_SCREENING.
  *
- * Per the Phase 6.2 design directive (handoff_step13_phase62_design.md),
- * payload-list expansions are factored into KOKKOS_INLINE_FUNCTION
+ * Payload-list expansions are factored into KOKKOS_INLINE_FUNCTION
  * helpers so each payload appears at most a handful of times; the X-style
  * directives `MOMENT_FOR_EACH_*` keep zero / accum / norm / writeback in
  * lock-step.
@@ -44,7 +43,7 @@
  * Memory model notes
  *   * Moment accumulators live in `Kokkos::View<...>` allocations on
  *     `Kokkos::DefaultExecutionSpace` (= device-local scratch). This avoids
- *     the MI250X HIPManaged atomic penalty noted in the Phase 6 plan.
+ *     the MI250X HIPManaged atomic penalty.
  *     `Kokkos::deep_copy` flushes results into the SharedSpace SoA before
  *     the host-side AoS writeback.
  *   * Per-particle precomputed inputs (RT lum, sink lum, CR injection)
@@ -130,7 +129,7 @@ gpu_force_softening_kernelradius(const struct particle_data *Pp, int p)
 
 /* =================================================================== */
 /* Per-particle precomputed inputs (RT, sink, CR). Same pattern as     */
-/* gpu_gravtree.cc Phase 2-A..D. Allocated in SharedSpace so the device */
+/* gpu_gravtree.cc precomputed-input pattern. Allocated in SharedSpace so the device */
 /* kernel can read them, but populated on host because the CPU helpers  */
 /* (rt_get_source_luminosity, sink_lum_bol, cr_get_source_injection_rate)*/
 /* are not GPU-callable.                                                */
@@ -289,12 +288,12 @@ static int *father_mirror_ensure_(int N)
 }
 
 /* =================================================================== */
-/* Phase 6.7.0 refactor: bundle scratch Views + factor per-payload     */
-/* reductions into KOKKOS_INLINE_FUNCTION helpers.  Phase 6.7c's       */
-/* gpu_moment_refresh_topnodes() reuses the exact same helpers for the */
-/* topnode-subtree ancestor re-sum, avoiding ~250 lines of duplicated  */
-/* #ifdef-guarded payload logic.  All behavior here is bit-identical   */
-/* to the prior inline implementation; this is purely a SoT refactor.  */
+/* Bundle scratch Views + factor per-payload reductions into            */
+/* KOKKOS_INLINE_FUNCTION helpers.  gpu_moment_refresh_topnodes()       */
+/* reuses the exact same helpers for the topnode-subtree ancestor       */
+/* re-sum, avoiding ~250 lines of duplicated #ifdef-guarded payload     */
+/* logic.  All behavior here is bit-identical to the prior inline       */
+/* implementation; this is purely a refactor.                          */
 /* =================================================================== */
 namespace {
 
@@ -710,7 +709,7 @@ static void mr_zero_payloads_(const mr_scratch_t& scr, int k, unsigned int saved
 
 /* Helper: bottom-up child→parent propagation.  Atomically adds curr's
  * accumulated moments + max-reduces hmax/vmax/divVmax/maxsoft into kp.
- * Used by Kernel 4 (walk-up); reused by Phase 6.7c for topnode-subtree
+ * Used by Kernel 4 (walk-up); also reused for the topnode-subtree
  * ancestor re-sum after MPI pseudodata exchange. */
 KOKKOS_INLINE_FUNCTION
 static void mr_propagate_to_parent_(const mr_scratch_t& scr, int curr, int kp)
@@ -733,8 +732,8 @@ static void mr_normalize_payloads_(const mr_scratch_t& scr, int k, const Vec3<My
 
 /* Pending-counter init launcher.  For each k in [0..n_iter), atomically
  * increments pending[father(k) - MaxPart] when father falls within
- * [range_lo, range_hi).  Phase 6.7c passes a restricted iteration
- * range + filter for the topnode-subtree variant. */
+ * [range_lo, range_hi).  The topnode-subtree variant passes a
+ * restricted iteration range + filter. */
 static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> pending,
                                      int *father_soa, int MaxPart,
                                      int n_iter, int range_lo, int range_hi)
@@ -747,14 +746,14 @@ static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> 
     });
 }
 
-} /* anonymous namespace (Phase 6.7.0 helpers) */
+} /* anonymous namespace (moment-refresh helpers) */
 
 /* =================================================================== */
 /*  Main entry: gpu_moment_refresh                                      */
 /* =================================================================== */
 extern "C" int gpu_moment_refresh(int active_root_node)
 {
-    (void) active_root_node; /* Phase 9 hook; unused for now */
+    (void) active_root_node; /* reserved hook, currently unused */
     if(Numnodestree <= 0) {return 0;}
     /* Defensive idempotent sync of AllDevice before any device-side All.* read. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -784,10 +783,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     int *fmirror = father_mirror_ensure_(N);
     if(!fmirror) {return 1;}   /* soft bad-stop: persistent pools kept; caller drains at next poll */
 
-    /* ---------------- 2. device-local scratch (Phase 6.7.0) ------------ */
+    /* ---------------- 2. device-local scratch --------------------------- */
     /* Bundled into mr_scratch_t so the per-payload helpers (zero /
      * propagate / normalize / pending_init) above can be reused unchanged
-     * by gpu_moment_refresh_topnodes() in Phase 6.7c. */
+     * by gpu_moment_refresh_topnodes(). */
     mr_scratch_t scr;
     if(mr_scratch_bind_(scr, n) != 0) {return 1;}   /* soft bad-stop: pool freed by ensure on failure; caller drains at next poll */
 

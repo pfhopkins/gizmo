@@ -92,8 +92,8 @@ int build_tile_bvh(sfc_tile_t *tiles, int ntiles, tile_bvh_node_t **bvh_out);
  * same source see IDENTICAL supply-side reach.  Used by ghost_exchange to bake
  * j_radius_scale * safety_factor into the cached bands (and the matching leaf
  * compact h) under the SAME contract — closes the band-vs-leaf scale gap that
- * would otherwise let the BVH prune away pairs the leaf would have accepted
- * (codex 2026-06-07 correction #3).  Default 1.0 preserves existing callers. */
+ * would otherwise let the BVH prune away pairs the leaf would have accepted.
+ * Default 1.0 preserves existing callers. */
 int build_sfc_tiles(struct particle_data *P, int num_total,
                     int type_bitmask, int target_tile_size,
                     sfc_tile_t **tiles_out, int **pool_indices_out,

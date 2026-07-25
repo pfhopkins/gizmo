@@ -308,10 +308,9 @@ void gizmo_full_drift_to(integertime time1)
      * to only Type 0 + AGS-active types if profiling shows this is too eager.) */
     gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     gizmo_step_phase_record("mp_full_drift_time", timediff(t_start, my_second()));
-    /* Phase 8a Round 2 option D: one post-drift arena coherence point.
-     * Under UVM-canonical (current branch) the arena IS the host P/CellP
-     * (alias), so refresh is a diagnostic-counter no-op; kept for forward
-     * compat with non-aliased arena builds. */
+    /* One post-drift arena coherence point. Under UVM-canonical builds the
+     * arena IS the host P/CellP (alias), so refresh is a diagnostic-counter
+     * no-op; kept for forward compat with non-aliased arena builds. */
     gpu_particles_arena_refresh_from_host(NumPart, P, CellP, "move_particles_post_drift");
 }
 
