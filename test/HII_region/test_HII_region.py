@@ -57,7 +57,7 @@ def plot_quantiles_vs_r(r, quantity, r_bins=R_BINS, label=None, marker=None, mar
 
 
 def compute_profiles(snap_file):
-    """Load snapshot and compute radial profiles of xe, urad_NUV, urad_ONIR."""
+    """Load snapshot and compute radial profiles of xe, urad_NUV, urad_ONIR, T."""
     from astropy import units as u
     code_to_evcm3 = (u.km**2 / u.s**2 * u.Msun / u.pc**3).to(u.eV / u.cm**3)
 
@@ -67,14 +67,15 @@ def compute_profiles(snap_file):
         r = np.linalg.norm(pos - star_pos, axis=1)
 
         xe = F["PartType0/ElectronAbundance"][:]
+        T_gas = F["PartType0/Temperature"][:]
         rho = F["PartType0/Density"][:]
         mass = F["PartType0/Masses"][:]
         photon_energy = F["PartType0/PhotonEnergy"][:]
         urad_eV_cm3 = photon_energy * (rho / mass)[:, None] * code_to_evcm3
 
     # Band indices: 0=EUV, 1=FUV, 2=NUV, 3=ONIR, 4=FIR
-    stat_names = ["xe", "urad_NUV", "urad_ONIR"]
-    stat_data = [xe, urad_eV_cm3[:, 2], urad_eV_cm3[:, 3]]
+    stat_names = ["xe", "urad_NUV", "urad_ONIR", "T"]
+    stat_data = [xe, urad_eV_cm3[:, 2], urad_eV_cm3[:, 3], T_gas]
     profiles = {
         name: binned_statistic(r, data, "median", R_BINS)[0]
         for name, data in zip(stat_names, stat_data)
@@ -83,7 +84,43 @@ def compute_profiles(snap_file):
     profiles["_xe"] = xe
     profiles["_urad_NUV"] = urad_eV_cm3[:, 2]
     profiles["_urad_ONIR"] = urad_eV_cm3[:, 3]
+    profiles["_T"] = T_gas
     return profiles
+
+
+def make_temperature_snapshot_plot(label, output_dir, test_dir):
+    """Plot T vs r for every snapshot in output_dir, colored by simulation time."""
+    snaps = sorted(glob(f"{output_dir}/snapshot_*.hdf5"))
+    if not snaps:
+        return
+    times = []
+    for s in snaps:
+        with h5py.File(s, "r") as F:
+            times.append(float(F["Header"].attrs["Time"]))
+    tmin, tmax = min(times), max(times)
+    fig, ax = plt.subplots()
+    cmap = plt.cm.viridis
+    for s, t in zip(snaps, times):
+        with h5py.File(s, "r") as F:
+            if "PartType5" not in F:
+                continue
+            pos = F["PartType0/Coordinates"][:]
+            star_pos = F["PartType5/Coordinates"][0]
+            r = np.linalg.norm(pos - star_pos, axis=1)
+            T_gas = F["PartType0/Temperature"][:]
+        color = cmap((t - tmin) / max(tmax - tmin, 1e-30))
+        T_med = binned_statistic(r, T_gas, "median", R_BINS)[0]
+        centers = R_BIN_CENTERS
+        valid = np.isfinite(T_med) & (T_med > 0)
+        if valid.any():
+            ax.loglog(centers[valid], T_med[valid], color=color, alpha=0.8)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(tmin, tmax))
+    plt.colorbar(sm, ax=ax, label=r"$t$ (code units)")
+    ax.set_xlabel(r"$r\;(\rm pc)$")
+    ax.set_ylabel(r"$T\;(\rm K)$")
+    ax.set_title(label)
+    fig.savefig(str(test_dir / f"T_vs_r_snapshots_{label.replace('+','_')}.png"), bbox_inches="tight")
+    plt.close(fig)
 
 
 def make_comparison_plots(all_profiles, test_dir):
@@ -92,6 +129,7 @@ def make_comparison_plots(all_profiles, test_dir):
         ("xe", r"$x_e$", "xe"),
         ("urad_NUV", r"$u_{\rm rad,\,NUV}\;(\rm eV\,cm^{-3})$", "urad_NUV"),
         ("urad_ONIR", r"$u_{\rm rad,\,ONIR}\;(\rm eV\,cm^{-3})$", "urad_ONIR"),
+        ("T", r"$T\;(\rm K)$", "T"),
     ]
     for field, ylabel, fname in plot_configs:
         for i, (label, profiles) in enumerate(all_profiles.items()):
@@ -196,6 +234,14 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     profiles = compute_profiles(final_snap)
 
+    # Photoionized gas should sit at a physical HII-region temperature (~1e4 K). This guards against
+    # the too-hot regime (missing nebular cooling and/or an over-hard ionizing band -> tens of kK) as
+    # well as spurious over-cooling. Use the peak of the binned-median T(r) profile, which is robust to
+    # single-cell spikes near the source/front (same quantity shown in the T_vs_r plot).
+    T_hii_peak = np.nanmax(profiles["T"])
+    assert 7000.0 < T_hii_peak < 11000.0, \
+        f"HII-region peak temperature {T_hii_peak:.0f} K outside expected [7000, 11000] K"
+
     # Label for plots and caching
     if extra_config_flags:
         label = "+".join(extra_config_flags)
@@ -204,6 +250,9 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
     _all_profiles[label] = profiles
     # Capture ionization-front time evolution before the next variant overwrites output/
     _all_ifront_evolution[label] = compute_ifront_evolution(TEST_NAME, extra_config_flags)
+
+    # T vs r for every snapshot in this variant's output directory
+    make_temperature_snapshot_plot(label, variant_output_dir(TEST_NAME, extra_config_flags), TEST_DIR)
 
     if not extra_config_flags:
         # Baseline: cache for subcycled comparison
