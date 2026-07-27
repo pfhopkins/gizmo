@@ -44,6 +44,16 @@
 #include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 #include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
 #include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
+#include "mode_b_local_walker.h"  /* mode_b_walk_and_export / mode_b_walk_from_start_nodes */
+#ifdef _OPENMP
+#include <omp.h>                 /* threaded sender export + receiver walk below */
+#endif
+
+/* Defined in neighbor_loop_runner.cc. Declared here rather than including the
+ * runner header, which is a heavy template TU. Lets this file's diagnostic output
+ * share ONE gate with PHASE0_NLR, so Mode-A and Mode-B runs are collectable in the
+ * same configuration and remain comparable. */
+bool gizmo_nlr_phase0_diag_enabled(void);
 
 /*
  * ============================================================================
@@ -136,6 +146,10 @@ struct ghost_local_tree_cache_t {
     double safety_factor_when_built;
     unsigned int eligible_type_mask_when_built;
     int needs_refit;
+    /* What this cache entry actually holds (GX_POOL_IDENTITY / GX_POOL_GEOMETRY).
+     * Geometry is skipped for calls whose producer never walks it, so `valid`
+     * alone does not imply tiles/bvh/compact_xyzh are present. */
+    unsigned int caps;
     int ntiles;
     int num_pool;
     int bvh_nnodes;
@@ -156,8 +170,29 @@ struct ghost_local_tree_cache_t {
     mode_b_radius_policy_t radius_policy_when_built;
     double j_radius_scale_when_built;
 };
-static struct ghost_local_tree_cache_t g_glt_cache = {0,-1,-1,0.0,GHOST_TYPE_ALL,0,0,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL,
-                                                      MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
+/* Designated initialisers: the positional form silently mis-assigns whenever a
+ * field is added to the struct above. */
+static struct ghost_local_tree_cache_t g_glt_cache = {
+    .valid = 0,
+    .NumPart_when_built = -1,
+    .Ti_when_built = -1,
+    .safety_factor_when_built = 0.0,
+    .eligible_type_mask_when_built = GHOST_TYPE_ALL,
+    .needs_refit = 0,
+    .caps = 0u,
+    .ntiles = 0,
+    .num_pool = 0,
+    .bvh_nnodes = 0,
+    .bvh_root = 0,
+    .tiles = NULL,
+    .pool = NULL,
+    .bvh = NULL,
+    .compact_xyzh = NULL,
+    .pool_types = NULL,
+    .j_to_pool = NULL,
+    .radius_policy_when_built = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
+    .j_radius_scale_when_built = 1.0,
+};
 
 /* gx_policy_scaled_h — SSOT supply-side reach inside ghost_exchange.cc.
  *
@@ -231,6 +266,7 @@ static void glt_cache_free(void)
     g_glt_cache.radius_policy_when_built = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES;
     g_glt_cache.j_radius_scale_when_built = 1.0;
     g_glt_cache.needs_refit = 0;
+    g_glt_cache.caps = 0u;
     g_glt_cache.ntiles = 0;
     g_glt_cache.num_pool = 0;
     g_glt_cache.bvh_nnodes = 0;
@@ -253,11 +289,15 @@ extern "C" void ghost_exchange_local_tree_invalidate_full(void)  { glt_cache_fre
  * safe to read (absent, or dirtied and awaiting refit -> compact_xyzh stale).
  * EXCLUDES ghosts by construction (the pool is the owned-local set the local
  * BVH walk uses); compact_xyzh[p*4+3] is the baked gx_policy_scaled_h reach. */
-extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out)
+extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out,
+                                               unsigned int required_caps)
 {
-    if(!out) return -1;
+    if(!out || !required_caps) return -1;
     if(!g_glt_cache.valid || g_glt_cache.needs_refit) return -1;
-    if(!g_glt_cache.pool || !g_glt_cache.pool_types || !g_glt_cache.compact_xyzh) return -1;
+    if((g_glt_cache.caps & required_caps) != required_caps) return -1;
+    if(!g_glt_cache.pool || !g_glt_cache.pool_types) return -1;
+    if((required_caps & GX_POOL_GEOMETRY)
+       && (!g_glt_cache.compact_xyzh || !g_glt_cache.tiles)) return -1;
     out->pool                  = g_glt_cache.pool;
     out->pool_types            = g_glt_cache.pool_types;
     out->compact_xyzh          = g_glt_cache.compact_xyzh;
@@ -307,7 +347,7 @@ extern "C" void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end)
 
 /* TEMPORARY top-leaf-router oracle gate (stripped after the router is blessed).
  * GIZMO_GHOST_ROUTE_ORACLE=1 enables the compute-and-compare oracle in the
- * request-driven path: broadcast stays authoritative; routed discovery is
+ * request-driven path: broadcast is the comparison reference; routed discovery is
  * computed only to verify it imports the SAME ghost set.  Env => identical on
  * every rank => collective-safe. */
 static int ghost_route_oracle_enabled(void)
@@ -335,22 +375,24 @@ enum gx_producer_mode {
 
 /* Which producer actually INSTALLED the ghost set this call (telemetry only; the
  * installer downstream is producer-agnostic).  broadcast = Allgatherv+global walk;
- * oneway_routed_bvh = the existing ONEWAY routed BVH arm; symm_device_fine = the
- * Step-5 SYMM device-fine routed arm (reserved; not installed until 5a-iii). */
+ * oneway_routed_bvh = the ONEWAY tile/BVH arm, reachable only as the oracle's
+ *   comparison reference (it is NOT a fallback: an eligible spec that fails stops);
+ * walk_export = the host walk-export producer, used by both search modes. */
 enum gx_installed_producer {
     GX_INSTALLED_BROADCAST = 0,
-    GX_INSTALLED_ONEWAY_ROUTED_BVH
+    GX_INSTALLED_ONEWAY_ROUTED_BVH,
+    GX_INSTALLED_WALK_EXPORT        /* routed set from the host walk-export producer (either mode) */
 };
 
 static const char *gx_installed_producer_name(enum gx_installed_producer p)
 {
     switch(p) {
         case GX_INSTALLED_ONEWAY_ROUTED_BVH: return "oneway_routed_bvh";
+        case GX_INSTALLED_WALK_EXPORT:      return "walk_export";
         case GX_INSTALLED_BROADCAST:         return "broadcast";
     }
     return "broadcast";
 }
-
 
 /* TEMPORARY H1 flat-vs-hierarchical owner-set oracle gate (stripped after the
  * hierarchical router is blessed).  GIZMO_GHOST_ROUTE_HIER_ORACLE=1: when routed
@@ -591,6 +633,68 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
 static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
 static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
+/* Is this spec eligible for the walk-export routed producer (sender fine-tree
+ * export + bounded receiver walk)?  Keyed on the SEARCH MODE and structural spec
+ * fields only — never on a caller name, so every loop of a given class routes.
+ *
+ * ONEWAY: always eligible.  Its reach is the query's own radius, which the sender
+ * knows exactly, so routing needs nothing from the supply side.  The traversal AND
+ * export opener are both R_open = h_q (mode_b_local_walker.cc, the R_open branch
+ * and the topleaf export re-test), and the accept ignores h_j entirely
+ * (ghost_exchange_functions.h gx_pair_accept, ONEWAY branch).  Query h already
+ * carries the spec safety factor, so a widened query cannot outgrow the opener.
+ * KEEP THOSE THREE IN STEP: if ONEWAY accept ever gains an h_j term, or the opener
+ * stops using h_q, this eligibility no longer holds and must be re-derived.
+ *
+ * SYMMETRIC: eligible only when the supply-side reach is bounded by the per-type
+ * node band the sender opener walks against — otherwise a reach beyond the band
+ * silently under-imports.  Two structural conditions:
+ *   supply_band_dominated  the spec's reach is proven bounded by that band
+ *   safety_factor <= 1     a widened query (TURB_DIFF_DYNAMIC) outgrows the
+ *                          band until the opener is scaled to match
+ * Fails closed: anything unproven keeps the broadcast path it uses today.
+ * Rank-uniform — search_mode and both fields are spec constants, identical on
+ * every rank, so this never splits ranks across a collective. */
+static inline int gx_walk_export_eligible(const struct ghost_exchange_spec_t *spec)
+{
+    if(!spec) return 0;
+    if(spec->search_mode == NGB_SEARCH_ONEWAY) return 1;
+    return spec->search_mode == NGB_SEARCH_SYMMETRIC
+           && spec->supply_band_dominated
+           && spec->safety_factor <= 1.0;
+}
+
+/* Announce, ONCE per caller per run, that a SYMMETRIC caller is on broadcast.
+ * Once-only so a timing arm is never perturbed by per-call stdout; loud enough
+ * that an unpromoted caller cannot hide in a log. */
+static void gx_report_symm_broadcast(const struct ghost_exchange_spec_t *spec)
+{
+    enum { GX_SYMM_REPORT_MAX = 64 };   /* > the number of SYMMETRIC specs in the tree */
+    static const char *seen[GX_SYMM_REPORT_MAX];
+    static int n_seen = 0;
+    static int table_full_reported = 0;
+    if(ThisTask != 0 || !spec) return;
+    const char *name = spec->caller_name ? spec->caller_name : "?";
+    /* compare by CONTENT: callers pass distinct string objects (spec literals,
+     * Spec::loop_name), so pointer identity would let one caller report twice. */
+    for(int k = 0; k < n_seen; k++) { if(strcmp(seen[k], name) == 0) return; }
+    if(n_seen >= GX_SYMM_REPORT_MAX) {
+        /* Never degrade to per-call printing: that would flood a log and perturb
+         * the very timing this report exists to keep honest. Say so once, then stop. */
+        if(!table_full_reported) {
+            table_full_reported = 1;
+            printf("GHOST_SYMM_BCAST caller=<table full at %d> reason=further_callers_unreported\n",
+                   GX_SYMM_REPORT_MAX);
+            fflush(stdout);
+        }
+        return;
+    }
+    seen[n_seen++] = name;
+    printf("GHOST_SYMM_BCAST caller=%s reason=%s\n", name,
+           spec->supply_band_dominated ? "safety_gt_1" : "band_unproven");
+    fflush(stdout);
+}
+
 static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 {
     /* Tiny-N corridor counter: increments on API entry, before any
@@ -619,11 +723,17 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * request_type_mask, so a spec with request_type_mask=0u + an explicit list
      * would import zero ghosts).  Every ONEWAY request also uses request-driven,
      * regardless of caller: routed ONEWAY discovery is a property of the search
-     * mode, not of any specific loop.  Non-explicit SYMMETRIC callers remain on
-     * tile-overlap pending the SYMMETRIC routing migration. */
+     * mode, not of any specific loop.  SYMMETRIC requests use request-driven when
+     * the spec proves supply-band domination (gx_walk_export_eligible); all other
+     * SYMMETRIC callers stay on tile-overlap/broadcast.  Which producer then
+     * supplies the matched set inside the request-driven path is a separate,
+     * likewise structural decision (same predicate). */
     const int explicit_queries = (spec && spec->n_queries >= 0);
     const int want_request_driven = explicit_queries
-                                    || (spec && spec->search_mode == NGB_SEARCH_ONEWAY);
+                                    || (spec && spec->search_mode == NGB_SEARCH_ONEWAY)
+                                    || gx_walk_export_eligible(spec);
+    if(spec && spec->search_mode == NGB_SEARCH_SYMMETRIC && !gx_walk_export_eligible(spec))
+        gx_report_symm_broadcast(spec);
     const char *selected_impl;
     if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
@@ -632,7 +742,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
         ghost_exchange_result result = ghost_exchange_tile_overlap_impl(spec);
         selected_impl = "tile_overlap";
         if(result != GHOST_EXCHANGE_COMPLETED) {
-            /* Stage 0A: tile could not fit particle slots (or its counts exceeded
+            /* Tile admission failed: it could not fit particle slots (or its counts exceeded
              * the int transport range) COLLECTIVELY — every rank returns the same
              * result (Allreduce in the tile impl), so all ranks take this branch
              * together. Drain any unrelated pending controlled-stop, then fall
@@ -1170,7 +1280,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * pack consumes int counts/displacements; a value exceeding INT_MAX cannot
      * be represented and must NOT silently wrap into a false "fits" decision.
      * Such a representation overflow is reported distinctly from a particle-slot
-     * overflow (Stage 0A admission below). Per-peer counts are bounded by one
+     * overflow (the collective slot admission below). Per-peer counts are bounded by one
      * rank's pool (<= INT_MAX); the prefix sums + totals are the overflow risk. */
     int *recv_disp = (int *) mymalloc("ghost_rd", NTask * sizeof(int));
     int *send_disp = (int *) mymalloc("ghost_sd", NTask * sizeof(int));
@@ -1214,7 +1324,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
         free(tile_first); free(local_meta); free(pool);
     };
 
-    /* === Stage 0A admission: collective particle-slot fit ===
+    /* === Admission: collective particle-slot fit ===
      * Decide tile-vs-fallback BEFORE materialising any ghosts (NumPart unchanged
      * to here). Two DISTINCT failure modes — a representation overflow must never
      * masquerade as a capacity decision:
@@ -1483,6 +1593,19 @@ struct gx_query_t {
     int    _pad;
 };
 
+/* Fixed-size export envelope carried from sender to supply rank: one query plus
+ * the start nodes its sender walk reached on that peer.  A (query,peer) needing
+ * more than NODELISTLENGTH nodes SPLITS into multiple envelopes (the Mode-B
+ * export convention); the receiver walks each independently and dedups through
+ * the matched bitmap, so a split costs an extra envelope and nothing else. */
+struct gx_export_envelope_t {
+    double pos[3];
+    double h;
+    int    n_nodes;
+    int    nodes[NODELISTLENGTH];
+    int    _pad;
+};
+
 /* Per-particle supply-side reach for the [GX_WASTE] diagnostic.  Policy-aware:
  * under the SSOT supply contract, the diagnostic must report the SAME reach
  * the request-driven impl actually used — otherwise it silently lies about
@@ -1667,7 +1790,7 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                 int pool_pos = tile->first + s;
                 if(pool_pos < 0 || pool_pos >= num_pool) continue;
                 int already = match_bitmask[pool_pos];
-                if(already && !n_exact_hits) continue;   /* dedup-skip (production); diagnostic counts all hits */
+                if(already && !n_exact_hits) continue;   /* already matched: skip unless the caller wants unbiased hit counts */
                 /* Supply-mask filter at leaf: skip particles of a type the
                  * caller didn't ask for (no-op when tree was built with the
                  * same mask, but required when tree is shared across callers). */
@@ -1724,7 +1847,7 @@ static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NOD
  * TEMPORARY top-leaf-router oracle (GIZMO_GHOST_ROUTE_ORACLE; stripped after the
  * router is blessed).  Recomputes ghost discovery via top-leaf-targeted routing
  * and verifies the resulting imported ghost set is IDENTICAL to the broadcast
- * one.  Broadcast stays authoritative; routed results are compared, never used.
+ * one.  Broadcast is the comparison reference; routed results are compared, never used.
  * ONEWAY callers only in this stage (band-free).  Collective-safe: every rank
  * runs the same collectives (gated on env + ONEWAY, both uniform); per-rank
  * geometry/route availability is folded into all-or-none Allreduce gates before
@@ -1803,7 +1926,7 @@ static void ghost_route_oracle_compare(
         int gate = 0;
         MPI_Allreduce(&local_ok, &gate, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         if(!gate) {
-            if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: geometry unavailable on >=1 rank; broadcast authoritative]\n", this_call, cname);
+            if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: geometry unavailable on >=1 rank; broadcast reference used]\n", this_call, cname);
             goto done;
         }
     }
@@ -1853,7 +1976,7 @@ static void ghost_route_oracle_compare(
     /* Barrier 1 */
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) {
-        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: route/alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: route/alloc/int-range fail on >=1 rank; broadcast reference used]\n", this_call, cname);
         goto done;
     }
 
@@ -1868,7 +1991,7 @@ static void ghost_route_oracle_compare(
     /* Barrier 2 */
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) {
-        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: recv alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: recv alloc/int-range fail on >=1 rank; broadcast reference used]\n", this_call, cname);
         goto done;
     }
     gizmo_mpi_alltoallv_typed(rq_send, rq_sc, rq_sd, rq_recv, rq_rc, rq_rd,
@@ -1920,7 +2043,7 @@ static void ghost_route_oracle_compare(
     /* Barrier 3 */
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) {
-        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: walk/pack alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: walk/pack alloc/int-range fail on >=1 rank; broadcast reference used]\n", this_call, cname);
         goto done;
     }
 
@@ -1936,7 +2059,7 @@ static void ghost_route_oracle_compare(
     /* Barrier 4 */
     MPI_Allreduce(&aborted, &bad_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(bad_any) {
-        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: pair recv alloc/int-range fail on >=1 rank; broadcast authoritative]\n", this_call, cname);
+        if(ThisTask == 0) printf("[GX_ROUTE_ORACLE call=%d caller=%s SKIP: pair recv alloc/int-range fail on >=1 rank; broadcast reference used]\n", this_call, cname);
         goto done;
     }
     gizmo_mpi_alltoallv_typed(gid_send, gid_sc, gid_sd, gid_recv, gid_rc, gid_rd,
@@ -2229,6 +2352,230 @@ fail:
     return NULL;
 }
 
+/* Walk-export routed producer — the discovery path for every spec that passes
+ * gx_walk_export_eligible().  Sender: per local query mode_b_walk_and_export -> per-peer
+ * NodeList -> fixed-size envelopes -> Alltoallv.  Receiver: mode_b_walk_from_start_nodes
+ * (resume from the exported NodeList) -> gx_pair_accept (the ghost-exchange SSOT predicate)
+ * -> matched[t*num_pool+p] bitmap, the same layout the shared Steps 4-6 install consume.
+ * MODE-GENERIC (search_mode is passed through): this is the install target for both search
+ * modes, so ONEWAY and SYMMETRIC discover on ONE substrate rather than two.
+ *
+ * COLLECTIVE-SAFE (C MPI buffers): every C allocation preceding a collective — the index
+ * arrays before the Alltoall, the envelope buffers before the Alltoallv, the matched bitmap
+ * — is Allreduce-checked, so a NULL on ANY rank makes ALL ranks return the same status and
+ * ranks never diverge across a collective.  NOT covered: the C++ containers
+ * (ModeBExportSink, the per-peer envelope vectors) throw std::bad_alloc rank-locally rather
+ * than returning NULL, so an allocation failure there aborts that rank instead of returning
+ * a uniform status.  Returns a caller-owned matched bitmap on GX_WALK_EXPORT_OK, else NULL.
+ *
+ * THREADING (host): the sender-query loop and the received-envelope walk are both
+ * `omp parallel for` — per-thread export sink and per-thread send buffers on the sender,
+ * pre-sized per-envelope candidate slots on the receiver, so each thread writes only its own
+ * index.  The walker's lazy node drift is the one shared mutation and is serialized under
+ * critical(_modebdrift_).  Merge, accept and bitmap set run serially afterwards, which keeps
+ * the resulting SET order-independent and therefore deterministic across thread counts.
+ *
+ * MEMORY SHAPE: the threaded receiver materializes one candidate list per received envelope
+ * before the serial accept pass.  That is bounded by the exported envelope volume, which is
+ * measured sparse; a pathologically clustered geometry with very large tot_r would grow it,
+ * so it is a known scaling watch-point rather than a fixed bound. */
+enum { GX_WALK_EXPORT_OK = 0, GX_WALK_EXPORT_UNAVAILABLE = 1, GX_WALK_EXPORT_ALLOC_FAIL = 2 };
+struct gx_walk_export_result {
+    int status;   /* GX_WALK_EXPORT_OK / _UNAVAILABLE / _ALLOC_FAIL, uniform across ranks */
+};
+
+static char *compute_matched_walk_export(
+    const struct ghost_exchange_spec_t *spec,
+    const struct gx_query_t *local_queries, int n_local_queries,
+    int num_pool, unsigned int supply_mask, int search_mode,
+    const int periodic_flags[3], const double box_sizes[3],
+    struct gx_walk_export_result *res)
+{
+    if(res) memset(res, 0, sizeof(*res));
+    /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
+     * envelope Alltoallv below / the caller's compare Allreduce). */
+    int ok_local = (All.MaxPart > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
+    int ok_all = 0;
+    MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return NULL; }
+
+    /* (b) SENDER: build per-peer envelope lists (export is a byproduct of the walk).
+     * THREADED, following the same shape the runner uses: the topleaf map is built once
+     * and READ-ONLY during the walk (shared); each thread uses its own ModeBExportSink + its own
+     * per-peer send buffers; the walker's node lazy-drift is race-safe (omp
+     * critical(_modebdrift_) + release/acquire).  Merge is serial.  The routed SET is
+     * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
+    ModeBTopleafMap map; map.build();
+    std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
+    {
+#ifdef _OPENMP
+        int nthr = omp_get_max_threads();
+#else
+        int nthr = 1;
+#endif
+        if(nthr < 1) nthr = 1;
+        std::vector<ModeBExportSink> tsink(nthr);
+        for(int th = 0; th < nthr; th++) tsink[th].ensure_size(NTask);
+        std::vector<std::vector<std::vector<struct gx_export_envelope_t>>> tsend(nthr);
+        for(int th = 0; th < nthr; th++) tsend[th].assign(NTask, std::vector<struct gx_export_envelope_t>{});
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 16)
+#endif
+        for(int qi = 0; qi < n_local_queries; qi++) {
+#ifdef _OPENMP
+            const int tid = omp_get_thread_num();
+#else
+            const int tid = 0;
+#endif
+            ModeBExportSink &sink = tsink[tid];
+            sink.clear_all();
+            mode_b_walk_and_export(local_queries[qi].pos, local_queries[qi].h,
+                                   supply_mask, search_mode, spec->radius_policy,
+                                   /*cand_out=*/NULL, map, sink, spec->j_radius_scale, /*drift_ctr=*/NULL);
+            for(int t = 0; t < NTask; t++) {
+                if(t == ThisTask) continue;
+                long nn = (long)sink.nodes_per_peer[t].size();
+                if(nn <= 0) continue;
+                const std::vector<int> &nl = sink.nodes_per_peer[t];
+                for(long base = 0; base < nn; base += NODELISTLENGTH) {
+                    struct gx_export_envelope_t e;
+                    e.pos[0] = local_queries[qi].pos[0];
+                    e.pos[1] = local_queries[qi].pos[1];
+                    e.pos[2] = local_queries[qi].pos[2];
+                    e.h = local_queries[qi].h;
+                    e.n_nodes = (int)((nn - base < NODELISTLENGTH) ? (nn - base) : NODELISTLENGTH);
+                    for(int k = 0; k < e.n_nodes; k++) e.nodes[k] = nl[base + k];
+                    e._pad = 0;
+                    tsend[tid][t].push_back(e);
+                }
+            }
+        }
+        /* serial merge: concatenate per-thread envelopes per peer. */
+        for(int th = 0; th < nthr; th++) {
+            for(int t = 0; t < NTask; t++)
+                send[t].insert(send[t].end(), tsend[th][t].begin(), tsend[th][t].end());
+        }
+    }
+
+    /* (c) EXCHANGE: counts Alltoall + typed Alltoallv of fixed-size envelopes. */
+    int *sc = (int *) calloc(NTask, sizeof(int));
+    int *sd = (int *) calloc(NTask, sizeof(int));
+    int *rc = (int *) calloc(NTask, sizeof(int));
+    int *rd = (int *) calloc(NTask, sizeof(int));
+    if(!sc || !sd || !rc || !rd) {
+        /* index-array alloc failure is per-rank; make it collective before the Alltoall. */
+        int a_ok_local = 0, a_ok_all = 0;
+        MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        free(sc); free(sd); free(rc); free(rd);
+        if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL;
+    } else {
+        int a_ok_local = 1, a_ok_all = 0;
+        MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
+    }
+    /* Per-peer counts are bounded by this rank's query set, but the prefix sums and
+     * totals are not: the typed Alltoallv below consumes int displacements, so a value
+     * past INT_MAX cannot be represented and would wrap into a NEGATIVE displacement,
+     * making the memcpy that fills sendbuf an out-of-bounds write before MPI is ever
+     * reached.  Same failure mode, and the same collective treatment, as the Step-4
+     * transport guard: detect before mutating anything, agree across ranks, and report
+     * a uniform status rather than truncating. */
+    long tot_s = 0, tot_r = 0;
+    int env_range_ok = 1;
+    for(int t = 0; t < NTask; t++) {
+        long n = (long)send[t].size();
+        if(n > INT_MAX) { env_range_ok = 0; n = 0; }
+        sc[t] = (int)n;
+    }
+    MPI_Alltoall(sc, 1, MPI_INT, rc, 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {
+        if(tot_s <= INT_MAX) sd[t] = (int)tot_s; else { sd[t] = 0; env_range_ok = 0; }
+        if(tot_r <= INT_MAX) rd[t] = (int)tot_r; else { rd[t] = 0; env_range_ok = 0; }
+        tot_s += sc[t];
+        tot_r += rc[t];
+    }
+    if(tot_s > INT_MAX || tot_r > INT_MAX) env_range_ok = 0;
+    {
+        int range_ok_all = 0;
+        MPI_Allreduce(&env_range_ok, &range_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!range_ok_all) {
+            if(ThisTask == 0) {
+                printf("ERROR: walk-export envelope counts exceed int MPI transport range (caller=%s)\n",
+                       spec->caller_name ? spec->caller_name : "?");
+                fflush(stdout);
+            }
+            free(sc); free(sd); free(rc); free(rd);
+            if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE;
+            return NULL;
+        }
+    }
+    struct gx_export_envelope_t *sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
+    struct gx_export_envelope_t *recv    = (struct gx_export_envelope_t *) malloc((size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t));
+    /* buffer alloc — collective before the Alltoallv (a NULL recv would fault the collective). */
+    int buf_ok_local = (sendbuf && recv) ? 1 : 0, buf_ok_all = 0;
+    MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!buf_ok_all) { free(sendbuf); free(recv); free(sc); free(sd); free(rc); free(rd);
+                      if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
+    for(int t = 0; t < NTask; t++)
+        if(sc[t] > 0) memcpy(sendbuf + sd[t], send[t].data(), (size_t)sc[t] * sizeof(struct gx_export_envelope_t));
+    gizmo_mpi_alltoallv_typed(sendbuf, sc, sd, recv, rc, rd,
+                              sizeof(struct gx_export_envelope_t), MPI_COMM_WORLD);
+    free(sendbuf); free(sc); free(sd);
+
+    /* (d) matched bitmap — collective before the RECEIVER walk (the caller reduces over the
+     * compare, so a NULL here on one rank would diverge the caller's Allreduce). */
+    char *matched_walk_export = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), 1);
+    int m_ok_local = (matched_walk_export != NULL) ? 1 : 0, m_ok_all = 0;
+    MPI_Allreduce(&m_ok_local, &m_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!m_ok_all) { free(matched_walk_export); free(recv); free(rc); free(rd);
+                    if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
+
+    /* (e) RECEIVER: bounded resume-walk from the exported NodeList -> SSOT accept -> bitmap.
+     * HOST-THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized per-envelope
+     * cand slot — each thread writes ONLY its own index (no shared write), walker race-safe.  The
+     * ACCEPT + bitmap set run SERIALLY afterward (cheap): this keeps the matched_walk_export bitmap race-free
+     * AND the installed set order-independent (a bit is set or not), so the set is deterministic. */
+    {
+        std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 16)
+#endif
+        for(long k = 0; k < tot_r; k++) {
+            const struct gx_export_envelope_t *e = &recv[k];
+            std::vector<int> &cvk = per_recv_cands[k];
+            cvk.clear();
+            mode_b_walk_from_start_nodes(e->pos, e->h, supply_mask, search_mode,
+                                         spec->radius_policy, e->nodes, e->n_nodes,
+                                         cvk, spec->j_radius_scale, NULL);
+        }
+        for(int t = 0; t < NTask; t++) {
+            if(t == ThisTask) continue;
+            char *mf = matched_walk_export + (size_t)t * num_pool;
+            for(int r = 0; r < rc[t]; r++) {
+                const long k = (long)rd[t] + r;
+                const struct gx_export_envelope_t *e = &recv[k];
+                const std::vector<int> &cvk = per_recv_cands[k];
+                for(size_t c = 0; c < cvk.size(); c++) {
+                    int j = cvk[c];
+                    if(j < 0 || j >= g_glt_cache.NumPart_when_built) continue;
+                    int pp = g_glt_cache.j_to_pool ? g_glt_cache.j_to_pool[j] : -1;
+                    if(pp < 0 || pp >= num_pool) continue;
+                    double hj_dbl = gx_policy_scaled_h(j, g_glt_cache.radius_policy_when_built,
+                                                       g_glt_cache.j_radius_scale_when_built,
+                                                       g_glt_cache.safety_factor_when_built);
+                    if(gx_pair_accept(e->pos, e->h, P[j].Pos[0], P[j].Pos[1], P[j].Pos[2],
+                                      hj_dbl, search_mode, periodic_flags, box_sizes)) {
+                        mf[pp] = 1;   /* idempotent: set semantics, duplicates are a no-op */
+                    }
+                }
+            }
+        }
+    }
+    free(recv); free(rc); free(rd);
+    if(res) res->status = GX_WALK_EXPORT_OK;
+    return matched_walk_export;
+}
+
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
@@ -2237,7 +2584,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     const unsigned int supply_mask  = spec->supply_type_mask;
     const int  search_mode = spec->search_mode;
     double t_ghost_start = my_second();
-
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
@@ -2343,10 +2689,27 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int from_cache = 0;
     /* All particle types are eligible as ghost sources. */
     unsigned int desired_pool_mask = GHOST_TYPE_ALL;
+    /* Tile/BVH/compact geometry is built ONLY for a call that actually walks it.
+     * The walk-export producer discovers through the tree and reads nothing
+     * position-dependent from this cache (it needs pool membership to index the
+     * matched set, and takes its supply band from Extnodes), so when it is the
+     * authority the geometry would be built and never read.  Structural, keyed on
+     * the same predicate as producer selection — no caller names. */
+    /* ONE predicate drives BOTH what the cache holds and which producers may run
+     * below: geometry is skipped exactly when no consumer of it can execute.  The
+     * diag path is part of that condition — it re-enables the broadcast walk, which
+     * reads this geometry — so a second, weaker copy of this test here would let a
+     * diag run walk NULL tiles.  Keep this as the single definition. */
+    const int oracle_on  = ghost_route_oracle_enabled();
+    const int walk_export_only    = gx_walk_export_eligible(spec)
+                           && !gizmo_nlr_phase0_diag_enabled()
+                           && !oracle_on;
+    const unsigned int wanted_caps = GX_POOL_IDENTITY | (walk_export_only ? 0u : GX_POOL_GEOMETRY);
     /* Cache-key invariant: {NumPart, safety, supply-pool coverage,
-     * radius_policy, j_radius_scale}.  Ti and dirty bits drive REFIT
-     * (glt_cache_refit_from_particles), NOT rebuild — see below. */
+     * radius_policy, j_radius_scale} + the parts actually held.  Ti and dirty
+     * bits drive REFIT (glt_cache_refit_from_particles), NOT rebuild — see below. */
     int cache_match = (g_glt_cache.valid
+                       && ((g_glt_cache.caps & wanted_caps) == wanted_caps)
                        && g_glt_cache.NumPart_when_built == NumPart
                        && g_glt_cache.safety_factor_when_built == safety_factor
                        && ((g_glt_cache.eligible_type_mask_when_built & desired_pool_mask) == desired_pool_mask)
@@ -2364,11 +2727,21 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         h_pool_types   = g_glt_cache.pool_types;
         from_cache = 1;
         g_glt_cache_hits++;
-        if(g_glt_cache.needs_refit || g_glt_cache.Ti_when_built != All.Ti_Current) {
+        /* Refit refreshes position-dependent geometry only; an identity-only
+         * entry has none and its membership does not move with the particles. */
+        if((g_glt_cache.caps & GX_POOL_GEOMETRY)
+           && (g_glt_cache.needs_refit || g_glt_cache.Ti_when_built != All.Ti_Current)) {
             glt_cache_refit_from_particles();
         }
     } else {
+        /* RANK-LOCAL BRANCH — NO MPI CALLS IN HERE.  cache_match keys on rank-local
+         * NumPart, so ranks enter this independently; any collective placed here
+         * deadlocks as soon as one rank rebuilds and another does not. */
         g_glt_cache_misses++;
+        /* Call-local on purpose: a file-static would latch across calls, and every
+         * later rebuild would then skip fill+install while still publishing the
+         * pool pointers below -- a NULL walk. */
+        int cache_alloc_failed = 0;
         /* Free any stale entry before rebuild (cache key changed). */
         if(g_glt_cache.valid) glt_cache_free();
 
@@ -2384,12 +2757,19 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
          * scale into tile->hmax / tile->hmax_by_type[]; the loop below bakes it
          * into c_compact[p*4+3] via gx_policy_scaled_h.  No leaf-vs-band scale
          * gap, no BVH-prune-misses-pairs failure mode. */
-        int tmp_ntiles = build_sfc_tiles(P, NumPart, (int)desired_pool_mask, TILE_TARGET_SIZE,
+        int tmp_ntiles = 0;
+        tile_bvh_node_t *tmp_bvh = NULL;
+        int tmp_bvh_nnodes = 0;
+        if(wanted_caps & GX_POOL_GEOMETRY) {
+            tmp_ntiles = build_sfc_tiles(P, NumPart, (int)desired_pool_mask, TILE_TARGET_SIZE,
                                          &tmp_tiles, &tmp_pool, &tmp_num_pool,
                                          spec->radius_policy,
                                          spec->j_radius_scale * safety_factor);
-        tile_bvh_node_t *tmp_bvh = NULL;
-        int tmp_bvh_nnodes = build_tile_bvh(tmp_tiles, tmp_ntiles, &tmp_bvh);
+            tmp_bvh_nnodes = build_tile_bvh(tmp_tiles, tmp_ntiles, &tmp_bvh);
+        } else {
+            /* Membership only — same selection, none of the position-dependent work. */
+            tmp_num_pool = build_sfc_supply_pool(P, NumPart, (int)desired_pool_mask, &tmp_pool);
+        }
         int tmp_bvh_root = tmp_bvh_nnodes - 1;
 
         /* Allocate persistent cache buffers + copy. */
@@ -2398,30 +2778,55 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         size_t sz_bvh     = (size_t)(tmp_bvh_nnodes > 0 ? tmp_bvh_nnodes : 1) * sizeof(tile_bvh_node_t);
         size_t sz_compact = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * 4 * sizeof(float);
         size_t sz_types   = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * sizeof(int);
-        sfc_tile_t      *c_tiles   = (sfc_tile_t *)      malloc(sz_tiles);
-        int             *c_pool    = (int *)             malloc(sz_pool);
-        tile_bvh_node_t *c_bvh     = (tile_bvh_node_t *) malloc(sz_bvh);
-        float           *c_compact = (float *)           malloc(sz_compact);
-        int             *c_types   = (int *)             malloc(sz_types);
+        const int with_geometry = (wanted_caps & GX_POOL_GEOMETRY) ? 1 : 0;
+        sfc_tile_t      *c_tiles   = with_geometry ? (sfc_tile_t *)      malloc(sz_tiles)   : NULL;
+        int             *c_pool    =                 (int *)             malloc(sz_pool);
+        tile_bvh_node_t *c_bvh     = with_geometry ? (tile_bvh_node_t *) malloc(sz_bvh)     : NULL;
+        float           *c_compact = with_geometry ? (float *)           malloc(sz_compact) : NULL;
+        int             *c_types   =                 (int *)             malloc(sz_types);
         /* Reverse map j -> pool_pos (-1 if j is not in this build's pool). Sized
          * to NumPart_when_built; bounds-checked at narrow-refit lookup time. */
         size_t sz_jtop = (size_t)(NumPart > 0 ? NumPart : 1) * sizeof(int);
         int             *c_jtop    = (int *)             malloc(sz_jtop);
+        /* An allocation failure here would otherwise be a segfault: the buffers are
+         * written unconditionally just below, and this producer is now the only
+         * supplier, so there is nothing to fall back to.  The request is RANK-LOCAL
+         * on purpose -- this branch is entered per-rank (cache_match keys on
+         * rank-local NumPart), so a collective here would deadlock whenever ranks
+         * disagree about rebuilding.  The matching drain runs just past the branch,
+         * where every rank converges and before anything reads the pool. */
+        if(!c_pool || !c_types || !c_jtop
+           || (with_geometry && (!c_tiles || !c_bvh || !c_compact))) {
+            printf("ERROR: supply-cache allocation failed on task %d (num_pool=%d NumPart=%d geometry=%d)\n",
+                   ThisTask, tmp_num_pool, NumPart, with_geometry);
+            fflush(stdout);
+            free(c_tiles); free(c_pool); free(c_bvh); free(c_compact); free(c_types); free(c_jtop);
+            c_tiles = NULL; c_pool = NULL; c_bvh = NULL; c_compact = NULL; c_types = NULL; c_jtop = NULL;
+            if(tmp_bvh)   myfree(tmp_bvh);
+            if(tmp_tiles) myfree(tmp_tiles);
+            if(tmp_pool)  myfree(tmp_pool);
+            gizmo_request_controlled_stop(7724, "ghost_exchange: supply-cache allocation failed",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            cache_alloc_failed = 1;
+        }
+        if(!cache_alloc_failed) {
         for(int j = 0; j < NumPart; j++) c_jtop[j] = -1;
         if(tmp_ntiles > 0)     memcpy(c_tiles, tmp_tiles, (size_t)tmp_ntiles * sizeof(sfc_tile_t));
         if(tmp_num_pool > 0)   memcpy(c_pool,  tmp_pool,  (size_t)tmp_num_pool * sizeof(int));
         if(tmp_bvh_nnodes > 0) memcpy(c_bvh,   tmp_bvh,   (size_t)tmp_bvh_nnodes * sizeof(tile_bvh_node_t));
         for(int p = 0; p < tmp_num_pool; p++) {
             int j = tmp_pool[p];
-            c_compact[p*4+0] = (float)P[j].Pos[0];
-            c_compact[p*4+1] = (float)P[j].Pos[1];
-            c_compact[p*4+2] = (float)P[j].Pos[2];
-            /* SSOT: leaf compact h uses the SAME formula as build_sfc_tiles'
-             * per-particle aggregation above (= gx_policy_scaled_h).  Result:
-             * leaf h_j == tile band band's contribution from this particle. */
-            c_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
-                                                        spec->j_radius_scale,
-                                                        safety_factor);
+            if(with_geometry) {
+                c_compact[p*4+0] = (float)P[j].Pos[0];
+                c_compact[p*4+1] = (float)P[j].Pos[1];
+                c_compact[p*4+2] = (float)P[j].Pos[2];
+                /* SSOT: leaf compact h uses the SAME formula as build_sfc_tiles'
+                 * per-particle aggregation above (= gx_policy_scaled_h).  Result:
+                 * leaf h_j == tile band band's contribution from this particle. */
+                c_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
+                                                            spec->j_radius_scale,
+                                                            safety_factor);
+            }
             c_types[p] = (int)P[j].Type;
             if(j >= 0 && j < NumPart) c_jtop[j] = p;
         }
@@ -2453,13 +2858,19 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         g_glt_dirty_clear_();
         g_glt_cache.eligible_type_mask_when_built = desired_pool_mask;
         g_glt_cache.needs_refit = 0;
+        g_glt_cache.caps = wanted_caps;
         g_glt_cache.valid = 1;
+        }   /* end fill+install (skipped when the cache allocation failed) */
 
         h_tiles = c_tiles; h_pool = c_pool; num_pool = tmp_num_pool;
         ntiles = tmp_ntiles; h_bvh = c_bvh; bvh_nnodes = tmp_bvh_nnodes;
         bvh_root = tmp_bvh_root;
         h_compact_xyzh = c_compact; h_pool_types = c_types;
     }
+    /* Both branches converge here, so this poll is reached by every rank: it drains a
+     * rank-local supply-cache allocation failure into an all-rank controlled stop
+     * BEFORE anything below dereferences the pool. */
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:supply_cache_alloc");
     (void)bvh_nnodes;
 
     /* Periodic flags / box sizes for the BVH walker. */
@@ -2482,26 +2893,41 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
     /* Matched producer selection: for ONEWAY callers the routed top-leaf
      * discovery installs when top-leaf geometry is collectively available;
-     * BROADCAST is the fail-closed fallback (+ compare-before-install oracle).
+     * broadcast is the fail-closed path for any spec that is not routing-eligible.
      * Broadcast query gather is LAZY (ensure_broadcast_queries) — skipped when
      * routed installs. */
-    int want_routed = (search_mode == NGB_SEARCH_ONEWAY);
+    /* Routed set from the walk-export producer, built further below so it reads the same
+     * supply-cache snapshot as the rest of this call. */
+    char *matched_walk_export = NULL;
+    struct gx_walk_export_result walk_export_res;
+    memset(&walk_export_res, 0, sizeof(walk_export_res));
+
+    /* The tile/BVH walk is no longer ONEWAY's discovery path: the walk-export producer
+     * supplies the same set from a bounded walk, so running both would be duplicate work.
+     * It remains reachable only as the comparison reference when the route oracle is on. */
+    int want_routed = (search_mode == NGB_SEARCH_ONEWAY)
+                      && (!gx_walk_export_eligible(spec) || ghost_route_oracle_enabled());
     int route_pre_ok_local = want_routed ? ((topleaf_router_geometry_acquire() == 0) ? 1 : 0) : 0;
     int route_pre_available = 0;
     if(want_routed)
         MPI_Allreduce(&route_pre_ok_local, &route_pre_available, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    int oracle_on = ghost_route_oracle_enabled();
-
     char *matched = NULL;
     int   used_routed = 0;
-    enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry (5a-i) */
+    enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry only */
     int   use_hier = 1;   /* H2: hierarchical route constructor (production) */
     double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
 
+    /* walk_export_only (defined with the cache capabilities above) means: no consumer of the
+     * tile/BVH geometry runs on this call, so the broadcast walk is skipped and the
+     * geometry was never built.  On producer failure there is no geometry-based
+     * fallback left, which is why that case is a controlled stop rather than a
+     * silent switch to a walk whose inputs are absent.  Rank-uniform (spec constants
+     * + diag + oracle env), so ranks never split across the collectives below. */
     /* Up-front broadcast gather when broadcast is needed regardless of routed outcome
-     * (oracle compare, or routed unavailable). Collective + uniform. */
-    if(oracle_on || !route_pre_available) {
+     * (oracle compare, or routed unavailable). Collective + uniform.  Skipped when the
+     * walk-export producer is the sole supplier (walk_export_only). */
+    if((oracle_on || !route_pre_available) && !walk_export_only) {
         double tb = my_second();
         ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
                                  &all_q_counts, &q_disps, &all_queries, &total_queries);
@@ -2519,8 +2945,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
 
-    if(!matched) {
-        /* LATE collective fallback: routed unavailable or failed after the skip. */
+    if(!matched && !walk_export_only) {
+        /* LATE collective fallback: routed unavailable or failed after the skip.  (walk_export_only SKIPS this
+         * — that path installs at the producer below and its failure is caught by the controlled
+         * stop before Step 4, so matched is never NULL entering the count/pack loops.) */
         double tb = my_second();
         ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
                                  &all_q_counts, &q_disps, &all_queries, &total_queries);
@@ -2554,7 +2982,22 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      *       snapshot bug (over-import; physics still correct but the invariant is
      *       broken) -> hard stop 7722.
      * Both are drained IMMEDIATELY below, BEFORE any Step-4 count/pack/send touches
-     * `matched`, so a bad ghost set never reaches the install path. */
+     * `matched`.
+     * SCOPE, and it is narrow: this compares the tile/BVH routed set against broadcast.
+     * For a walk-export-eligible spec the set installed further down is the WALK-EXPORT
+     * set, which this comparison never inspects -- so passing here says nothing about
+     * what ships.  The once-per-run notice below states that rather than leaving the
+     * reader to infer it. */
+    if(oracle_on && gx_walk_export_eligible(spec) && ThisTask == 0) {
+        static int reported_oracle_scope = 0;
+        if(!reported_oracle_scope) {
+            reported_oracle_scope = 1;
+            printf("GHOST_ROUTE_ORACLE scope=reference_only: it does not inspect the "
+                   "walk-export set installed for eligible specs, so a clean result here "
+                   "is not a check on the shipped set\n");
+            fflush(stdout);
+        }
+    }
     if(installed_producer == GX_INSTALLED_ONEWAY_ROUTED_BVH && oracle_on && matched) {
         char *matched_bcast = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                                         h_compact_xyzh, h_tiles, ntiles,
@@ -2667,12 +3110,70 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
 
     double t_step3_walk = timediff(t_step3_walk_start, my_second());
-    const char *qdist = used_routed ? "routed" : "bcast";
+    /* An eligible SYMM spec installs the routed set BELOW this print, so used_routed is
+     * not yet set for it; report the path that will actually be used or the parity grep
+     * reads "bcast" on a routed call. A producer failure after this point prints
+     * GX_R1_FALLBACK, which already invalidates the run as a routed timing arm. */
+    const char *qdist = (used_routed || gx_walk_export_eligible(spec)) ? "routed" : "bcast";
     if(ThisTask == 0 && gizmo_verbose_diag()) {
         printf("[GX_RD rank=0 step3 build_tiles+bvh+compact=%.4f s discovery=%.4f s ntiles=%d num_pool=%d total_queries=%d qdist=%s]\n",
                t_step3_build, t_step3_walk, ntiles, num_pool,
                (qdist[0] == 'r' ? -1 : total_queries), qdist);
         fflush(stdout);
+    }
+
+    /* Walk-export discovery: produce the routed set (sender export + bounded receiver
+     * walk, collective-safe) and INSTALL it for an eligible spec via the shared
+     * ownership-transfer.  Placed here so it reads the SAME g_glt_cache snapshot as the
+     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept), so the
+     * only way this set can differ from a full walk is routing COVERAGE, which is what
+     * the per-spec supply-band domination proof establishes. */
+    const int walk_export_install = gx_walk_export_eligible(spec);
+    if(walk_export_install && NTask > 1) {
+        matched_walk_export = compute_matched_walk_export(spec, local_queries, n_local_queries,
+                                                  num_pool, supply_mask, search_mode,
+                                                  periodic_flags, box_sizes, &walk_export_res);
+        /* Install via the shared ownership-transfer, so Steps 4-6 are reached by exactly
+         * one path whichever producer supplied the set. */
+        if(matched_walk_export && walk_export_res.status == GX_WALK_EXPORT_OK) {
+            if(matched) free(matched);
+            matched = matched_walk_export; matched_walk_export = NULL;
+            installed_producer = GX_INSTALLED_WALK_EXPORT;
+            used_routed = 1;
+        } else if(ThisTask == 0) {
+            /* Report what ACTUALLY happens next, which depends on whether a reference
+             * set exists.  In production (walk_export_only) none does, so the stop below
+             * fires.  Under diag/oracle the broadcast walk ran, so the call continues on
+             * that set -- correct physics, but NOT the routed substrate, so the run is
+             * not a valid routed arm either way.
+             * The GX_R1_FALLBACK token is kept only because the current run-validity
+             * checks grep for it; it does not describe the mechanism.  Rename it to match
+             * the surrounding names, or fold it into the general import-failure
+             * reporting, once nothing greps for the old spelling. */
+            printf("[GX_R1_FALLBACK call=%d caller=%s reason=producer_status_%d -> %s; INVALID as a routed arm]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), walk_export_res.status,
+                   walk_export_only ? "controlled stop (no correctness-proven fallback)"
+                                    : "continuing on the broadcast reference set");
+            fflush(stdout);
+        }
+        free(matched_walk_export); matched_walk_export = NULL;
+    }
+
+    /* An eligible caller skipped the broadcast walk, so if the walk-export producer
+     * did not install (UNAVAILABLE/ALLOC_FAIL) there is no set to install and no
+     * substrate left that is known to be correct.  The tile/BVH and broadcast walks
+     * both read the same cached geometry, which has been measured producing wrong
+     * densities on a decomposition where the cached geometry went stale, so falling
+     * back to either would trade a visible failure for a silent one.  Stop instead.
+     * walk_export_only and the producer status are rank-uniform, so all ranks stop together.
+     * The dominant failure mode is envelope allocation under memory pressure; the
+     * recovery that fits it is a retry at reduced import padding inside this producer,
+     * which does not exist yet — until it does, the honest outcome is this stop. */
+    if(walk_export_only && matched == NULL) {
+        gizmo_request_controlled_stop(7723,
+            "ghost_exchange: walk-export producer unavailable and no correctness-proven fallback exists",
+            __FILE__, __LINE__, __FUNCTION__);
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:walk_export_unavailable");
     }
 
     /* === Step 4: per-peer counts + index list === */
@@ -2711,7 +3212,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int total_send = count_range_ok ? (int)total_send_ll : 0;
     int total_recv = count_range_ok ? (int)total_recv_ll : 0;
 
-    /* Check space (mirrors legacy guard); both failure modes are terminal here. */
+    /* Check space (mirrors legacy guard).  Request-driven is the last-resort
+     * Mode-A discovery — there is NO further fallback — so a count/displacement
+     * overflow of the int MPI transport range, or ghosts that would not fit
+     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below. */
     if(!count_range_ok) {
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
@@ -2797,13 +3301,15 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     send_home_idx         = NULL;
     g_ghost_provenance_epoch++;
 
-    /* TEMPORARY: post-install C2 oracle — ONLY for broadcast-authoritative mode
-     * (!used_routed).  When routed transport installed (used_routed), the
-     * compare-before-install check above (GX_ROUTE_TRANSPORT) already validated
-     * the routed set; re-running this would be redundant + expensive and its
-     * "broadcast authoritative" premise no longer holds.  used_routed is uniform
-     * across ranks (route_pre_available + compute_matched_routed are collective),
-     * so this gate stays collective-safe. */
+    /* Post-install ghost-set comparison, and it runs ONLY when broadcast supplied the
+     * installed set (!used_routed) -- its whole premise is that broadcast is the
+     * reference, which is false once anything else installed.
+     * It therefore does NOT inspect the walk-export set, which is what installs for an
+     * eligible spec.  That is not an oversight to fix here: no independent reference is
+     * left to compare against once the broadcast walk is skipped, which is why the
+     * notice earlier in this call says so out loud.
+     * used_routed is uniform across ranks (both producers are collective), so this gate
+     * stays collective-safe. */
     if(ghost_route_oracle_enabled() && search_mode == NGB_SEARCH_ONEWAY && !used_routed) {
         ghost_route_oracle_compare(spec, this_call, local_queries, n_local_queries,
                                    h_tiles, ntiles, h_pool, num_pool,
@@ -2815,6 +3321,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     double t_step6 = timediff(t_step6_start, my_second());
     double t_ghost_total = timediff(t_ghost_start, my_second());
 
+
     /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
      * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
     if(gizmo_verbose_diag()) {
@@ -2822,7 +3329,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
                (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
                (used_routed ? "routed" : "bcast"),
-               (used_routed ? (use_hier ? "hier" : "flat") : "-"),
+               (installed_producer == GX_INSTALLED_ONEWAY_ROUTED_BVH ? (use_hier ? "hier" : "flat") : "-"),
                gx_installed_producer_name(installed_producer),
                (bcast_queries_available ? "gathered" : "skipped"),
                t_step1, t_step2, t_step3_build, t_step3_walk,
@@ -2887,20 +3394,31 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
  * — see ghost_symlist_lifecycle.h. */
 void ghost_exchange(double safety_factor)
 {
+    /* supply_band_dominated=0: all-types supply spans every particle type, whose
+     * reaches are not yet shown bounded by the per-type opener band. Stays on the
+     * broadcast path until that bound is established per type. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 0};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro(double safety_factor)
 {
+    /* supply_band_dominated=1: gas-only supply at the legacy all-types kernel
+     * radius. Every KernelRadius is held at or below MaxKernelRadius (density
+     * sink setup clamps it; ags_return_maxsoft clamps the drift path), which is
+     * exactly the quantity the per-type node band is built from — so the band is
+     * a valid upper bound on this spec's reach and routed discovery is complete.
+     * safety_factor is checked separately at dispatch (a >1 factor widens the
+     * query beyond the band until the opener scales with it). */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_SYMMETRIC, safety_factor, "hydro_symmetric", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 1};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro_oneway(double safety_factor)
 {
+    /* ONEWAY routes on search mode alone; the flag is unread here. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 0};
     ghost_exchange_impl(&sp);
 }
 

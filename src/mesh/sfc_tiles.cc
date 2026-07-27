@@ -21,6 +21,28 @@
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h */
 
 
+int build_sfc_supply_pool(struct particle_data *P, int num_total,
+                          int type_bitmask, int **pool_indices_out)
+{
+    int num_pool = 0;
+    for(int i = 0; i < num_total; i++) {
+        if(!((1 << P[i].Type) & type_bitmask)) continue;
+        if(P[i].Mass <= 0) continue;
+        num_pool++;
+    }
+    if(!pool_indices_out) return num_pool;
+
+    int *pool = (int *) mymalloc("sfc_pool", (num_pool > 0 ? num_pool : 1) * sizeof(int));
+    int p = 0;
+    for(int i = 0; i < num_total; i++) {
+        if(!((1 << P[i].Type) & type_bitmask)) continue;
+        if(P[i].Mass <= 0) continue;
+        pool[p++] = i;
+    }
+    *pool_indices_out = pool;
+    return num_pool;
+}
+
 int build_sfc_tiles(struct particle_data *P, int num_total,
                     int type_bitmask, int target_tile_size,
                     sfc_tile_t **tiles_out, int **pool_indices_out,
@@ -28,23 +50,9 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
                     mode_b_radius_policy_t radius_policy,
                     double scale_factor)
 {
-    /* Step 1: Build pool index array (particles matching type/mass filter, in P[] order).
-       Since P[] is already SFC-sorted, pool_indices preserves SFC order. */
-    int num_pool = 0;
-    int i;
-    for(i = 0; i < num_total; i++) {
-        if(!((1 << P[i].Type) & type_bitmask)) continue;
-        if(P[i].Mass <= 0) continue;
-        num_pool++;
-    }
-
-    int *pool = (int *) mymalloc("sfc_pool", (num_pool > 0 ? num_pool : 1) * sizeof(int));
-    int p = 0;
-    for(i = 0; i < num_total; i++) {
-        if(!((1 << P[i].Type) & type_bitmask)) continue;
-        if(P[i].Mass <= 0) continue;
-        pool[p++] = i;
-    }
+    /* Step 1: pool membership (shared definition — see build_sfc_supply_pool). */
+    int *pool = NULL;
+    int num_pool = build_sfc_supply_pool(P, num_total, type_bitmask, &pool);
 
     /* Step 2: Compute number of tiles */
     int ntiles = (num_pool + target_tile_size - 1) / target_tile_size;

@@ -94,6 +94,16 @@ int build_tile_bvh(sfc_tile_t *tiles, int ntiles, tile_bvh_node_t **bvh_out);
  * compact h) under the SAME contract — closes the band-vs-leaf scale gap that
  * would otherwise let the BVH prune away pairs the leaf would have accepted.
  * Default 1.0 preserves existing callers. */
+/* Supply-pool membership: the particles eligible to be shipped as ghosts, in
+ * P[] order (SFC-sorted, so the pool inherits that ordering).  Membership is
+ * type-mask + positive mass ONLY — no positions, no radii — so a pool built
+ * once stays valid while particles move.  This is the single definition of
+ * membership: build_sfc_tiles() selects through it, and callers that need the
+ * pool WITHOUT tile/BVH geometry call it directly.  Returns num_pool and, when
+ * pool_indices_out is non-NULL, a mymalloc'd index array the caller owns. */
+int build_sfc_supply_pool(struct particle_data *P, int num_total,
+                          int type_bitmask, int **pool_indices_out);
+
 int build_sfc_tiles(struct particle_data *P, int num_total,
                     int type_bitmask, int target_tile_size,
                     sfc_tile_t **tiles_out, int **pool_indices_out,
