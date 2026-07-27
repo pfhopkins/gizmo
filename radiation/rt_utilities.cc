@@ -999,6 +999,7 @@ void get_background_isrf_urad(int i, double *urad){
     }
 }
 
+#ifdef RT_INFRARED  /* uses All.InitRadiationTemp (declared only under RT_INFRARED); only called from RT_INFRARED code paths */
 double background_isrf_cmb_Teff(){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
@@ -1007,6 +1008,7 @@ double background_isrf_cmb_Teff(){
     double urad_CMB_CGS_eV = fac_uCMB * 0.262, Trad_CMB = 2.73 * fac_TCMB;
     return (urad_ISRF_CGS_eV * Trad_ISRF + urad_CMB_CGS_eV * Trad_CMB) / (urad_ISRF_CGS_eV + urad_CMB_CGS_eV); // weighting by SED energy
 }
+#endif
 
 #endif
 
