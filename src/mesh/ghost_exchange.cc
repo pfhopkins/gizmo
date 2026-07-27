@@ -423,9 +423,6 @@ static inline void glt_recompute_tile_(int t)
         for(int k = 0; k < 3; k++) { tile->lo[k] = 0; tile->hi[k] = 0; }
         return;
     }
-    int p0 = tile->first;
-    int j0 = g_glt_cache.pool[p0];
-    for(int k = 0; k < 3; k++) tile->lo[k] = tile->hi[k] = P[j0].Pos[k];
     /* SSOT supply-side reach pulled from the cache's stored policy/scale.
      * For runner-driven imports this carries the
      * Spec's radius_policy + nlr_spec_symmetric_j_radius_scale<Spec>();
@@ -437,6 +434,16 @@ static inline void glt_recompute_tile_(int t)
     const mode_b_radius_policy_t policy = g_glt_cache.radius_policy_when_built;
     const double j_scale = g_glt_cache.j_radius_scale_when_built;
     const double safety  = g_glt_cache.safety_factor_when_built;
+    /* Eliminated elements (Mass <= 0) are excluded from the band and the bbox:
+     * the pool is mass-filtered when built, but a cached entry outlives a
+     * Mass->0 marking until rearrange_particle_sequence() compacts it away, and
+     * a dead slot's stale reach would otherwise widen what this rank advertises
+     * as supply.  Dropping it can only remove pairs WITH the dead element, which
+     * must not be discovered anyway; live pairs carry their own reach.  The leaf
+     * walk applies the same test, so leaf h and band hmax stay on one reach.
+     * The bbox is seeded from the first live member rather than the tile's first
+     * member, which may itself be dead. */
+    int seeded = 0;
     for(int s = 0; s < tile->count; s++) {
         int p = tile->first + s;
         int j = g_glt_cache.pool[p];
@@ -447,14 +454,22 @@ static inline void glt_recompute_tile_(int t)
         g_glt_cache.compact_xyzh[p*4+2] = (float)P[j].Pos[2];
         g_glt_cache.compact_xyzh[p*4+3] = (float)h;
         g_glt_cache.pool_types[p] = pt;
-        for(int k = 0; k < 3; k++) {
-            if(P[j].Pos[k] < tile->lo[k]) tile->lo[k] = P[j].Pos[k];
-            if(P[j].Pos[k] > tile->hi[k]) tile->hi[k] = P[j].Pos[k];
+        if(P[j].Mass <= 0) continue;
+        if(!seeded) {
+            for(int k = 0; k < 3; k++) tile->lo[k] = tile->hi[k] = P[j].Pos[k];
+            seeded = 1;
+        } else {
+            for(int k = 0; k < 3; k++) {
+                if(P[j].Pos[k] < tile->lo[k]) tile->lo[k] = P[j].Pos[k];
+                if(P[j].Pos[k] > tile->hi[k]) tile->hi[k] = P[j].Pos[k];
+            }
         }
         if(h > tile->hmax) tile->hmax = h;
         if(pt >= 0 && pt < TILE_NUM_PTYPES && h > tile->hmax_by_type[pt])
             tile->hmax_by_type[pt] = h;
     }
+    /* Every member dead: same empty-tile shape as count <= 0 above. */
+    if(!seeded) { for(int k = 0; k < 3; k++) { tile->lo[k] = 0; tile->hi[k] = 0; } }
 }
 
 /* Pull one BVH node's lo/hi/hmax/hmax_by_type from its children/leaf-tile.
@@ -1811,6 +1826,14 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                  * The pool walked here is always g_glt_cache's, so its build-time
                  * policy/scale/safety reproduce the cached double reach exactly. */
                 int j_neighbor = pool[pool_pos];
+                /* The pool is mass-filtered when it is built, but this pool is
+                 * cached across calls and an entry outlives a Mass->0 marking
+                 * until rearrange_particle_sequence() compacts it away.  Zero mass
+                 * is the code's marker for an eliminated element, which must never
+                 * be offered as a ghost source, so re-check it here instead of
+                 * trusting build time.  Ahead of the reach recompute so a dead
+                 * slot costs one compare. */
+                if(P[j_neighbor].Mass <= 0) continue;
                 double hj_dbl = gx_policy_scaled_h(j_neighbor, g_glt_cache.radius_policy_when_built,
                                                    g_glt_cache.j_radius_scale_when_built,
                                                    g_glt_cache.safety_factor_when_built);
