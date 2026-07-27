@@ -48,10 +48,18 @@ _VARIANT_COLORS = ["C0", "C2", "C1", "C3", "C4", "C5", "C6", "C7"]
 # Input setup (ICs + cooling tables)
 # --------------------------------------------------------------------------------------
 def generate_ics():
-    """Generate the canonical HII_region ICs in HII_REGION_DIR if absent."""
+    """Generate the canonical HII_region ICs in HII_REGION_DIR.
+
+    Regenerates whenever the IC is absent OR older than its generator
+    (make_HII_region_ics.py), so an edit to the generator (e.g. changing the stellar
+    mass) always takes effect instead of silently reusing a stale IC left over from a
+    previous checkout or run. A fresh clone has no IC (it is gitignored) and so always
+    regenerates from the committed generator."""
     import sys
     ic_file = HII_REGION_DIR / f"{HII_REGION_NAME}_ics.hdf5"
-    if not ic_file.exists():
+    generator = HII_REGION_DIR / "make_HII_region_ics.py"
+    stale = (not ic_file.exists()) or (ic_file.stat().st_mtime < generator.stat().st_mtime)
+    if stale:
         if str(HII_REGION_DIR) not in sys.path:
             sys.path.insert(0, str(HII_REGION_DIR))
         from make_HII_region_ics import make_HII_region_ics
