@@ -33,13 +33,12 @@ _all_ifront = {}
     ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
 )
 def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags):
-    profiles, label = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
     hii.assert_hii_temperature(profiles)
 
     _all_profiles[label] = profiles
-    _all_ifront[label] = hii.compute_ifront_evolution(TEST_NAME, extra_config_flags)
-    final_snap = hii.get_final_snapshot(TEST_NAME, extra_config_flags)
-    rif = hii.compute_ifront_radius(final_snap)[1]
+    _all_ifront[label] = evo
+    rif = evo[1][-1]  # final-snapshot I-front radius (last point of the evolution)
 
     if not extra_config_flags:
         _baseline["profiles"] = profiles

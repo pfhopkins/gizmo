@@ -18,6 +18,7 @@ import h5py
 from glob import glob
 from matplotlib import pyplot as plt
 from scipy.stats import binned_statistic
+from scipy.optimize import curve_fit
 from pathlib import Path
 from gizmo.test import (
     build_and_run_test,
@@ -255,36 +256,61 @@ def make_comparison_plots(all_profiles, test_dir):
         plt.close()
 
 
+def _ionization_sigmoid(r, r_if, w):
+    """Ionization fraction vs radius: ~1 (ionized) inside, ~0 (neutral) outside, crossing
+    0.5 at the I-front radius r_if with transition width w. The argument is clipped so the
+    exp can't overflow on cells far from the front."""
+    return 1.0 / (1.0 + np.exp(np.clip((r - r_if) / w, -50.0, 50.0)))
+
+
+def _ifront_bin_guess(r, hii):
+    """Bin-interpolated radius where the binned-mean ionization fraction crosses 0.5
+    (log-linear interpolation between bin centers). NaN if there is no clean crossing.
+    Used to seed the sigmoid fit in compute_ifront_radius."""
+    mean_hii, _, _ = binned_statistic(r, hii, "mean", R_BINS)
+    valid = np.isfinite(mean_hii)
+    if valid.sum() < 2:
+        return np.nan
+    mh, cc = mean_hii[valid], R_BIN_CENTERS[valid]
+    above = mh >= 0.5
+    if not above.any() or above.all():
+        return np.nan
+    idx = np.where(above[:-1] & ~above[1:])[0]
+    if len(idx) == 0:
+        return np.nan
+    i = idx[-1]
+    x0, x1 = np.log(cc[i]), np.log(cc[i + 1])
+    y0, y1 = mh[i], mh[i + 1]
+    return np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0))
+
+
 def compute_ifront_radius(snap_file):
-    """Return (time, r_ifront) for a snapshot. r_ifront is where binned-mean
-    PartType0/HII crosses 0.5 (linear interp in log r); NaN if no crossing."""
+    """Return (time, r_ifront) for a snapshot. r_ifront is the ionization-front radius from
+    a sigmoid fit of the ionization fraction (PartType0/HII) vs radius, seeded at the
+    bin-interpolated 50% crossing. Falls back to the bin guess if the fit fails, and returns
+    NaN if there is no usable front (no clean 0.5 crossing)."""
     with h5py.File(snap_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
-        if "PartType5" not in F:
+        if "PartType5" not in F or "PartType0/HII" not in F:
             return time, np.nan
         pos = F["PartType0/Coordinates"][:]
         star_pos = F["PartType5/Coordinates"][0]
         r = np.linalg.norm(pos - star_pos, axis=1)
-        if "PartType0/HII" not in F:
-            return time, np.nan
         hii = F["PartType0/HII"][:]
-    mean_hii, _, _ = binned_statistic(r, hii, "mean", R_BINS)
-    centers = R_BIN_CENTERS
-    valid = np.isfinite(mean_hii)
-    if valid.sum() < 2:
+    guess = _ifront_bin_guess(r, hii)
+    if not np.isfinite(guess):
         return time, np.nan
-    mh = mean_hii[valid]
-    cc = centers[valid]
-    above = mh >= 0.5
-    if not above.any() or above.all():
-        return time, np.nan
-    idx = np.where(above[:-1] & ~above[1:])[0]
-    if len(idx) == 0:
-        return time, np.nan
-    i = idx[-1]
-    x0, x1 = np.log(cc[i]), np.log(cc[i + 1])
-    y0, y1 = mh[i], mh[i + 1]
-    r_if = np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0))
+    # Fit a sigmoid to the (unbinned) ionization fraction vs radius, seeded at the bin guess.
+    try:
+        popt, _ = curve_fit(
+            _ionization_sigmoid, r, hii,
+            p0=[guess, 0.1 * guess],
+            bounds=([R_BINS[0], 1e-3], [R_BINS[-1], R_BINS[-1]]),
+            maxfev=10000,
+        )
+        r_if = float(popt[0])
+    except (RuntimeError, ValueError):
+        r_if = guess
     return time, r_if
 
 
@@ -316,7 +342,9 @@ def make_ifront_evolution_plot(all_evo, test_dir):
 # --------------------------------------------------------------------------------------
 def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_config_flags=()):
     """Build+run one variant, validate the final snapshot, compute profiles, assert the
-    HII-region temperature, and emit the per-snapshot T(r) plot. Returns (profiles, label)."""
+    HII-region temperature, and emit the per-snapshot T(r) plot plus the I-front-position-
+    vs-time plot for this variant. Returns (profiles, label, ifront_evolution), where
+    ifront_evolution is the (times, radii) tuple from compute_ifront_evolution."""
     prepare_inputs(test_dir, test_name)
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
     final_snap = get_final_snapshot(test_name, extra_config_flags)
@@ -329,4 +357,8 @@ def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_confi
 
     label = "+".join(extra_config_flags) if extra_config_flags else "baseline"
     make_temperature_snapshot_plot(label, variant_output_dir(test_name, extra_config_flags), test_dir)
-    return profiles, label
+    # I-front position vs time for this variant (every HII test gets this plot; a multi-variant
+    # test like the subcycle one overwrites it with a combined plot using the returned evolutions).
+    ifront_evolution = compute_ifront_evolution(test_name, extra_config_flags)
+    make_ifront_evolution_plot({label: ifront_evolution}, test_dir)
+    return profiles, label, ifront_evolution

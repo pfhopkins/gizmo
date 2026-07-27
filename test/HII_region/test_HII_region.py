@@ -18,5 +18,5 @@ TEST_DIR = Path(__file__).parent
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_HII_region(num_mpi_ranks, num_omp_threads):
-    profiles, _ = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads)
+    profiles, _, _ = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads)
     hii.assert_hii_temperature(profiles)
