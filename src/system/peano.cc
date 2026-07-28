@@ -44,9 +44,11 @@ static void report_coincident_pair(int iu, int iv, long nseen)
 {
     if(nseen < COINCIDENT_REPORT_MAX)
     {
-        printf("Coincident particle positions: IDs %llu and %llu (types %d and %d) both at (%.17g, %.17g, %.17g)\n",
+        double dx = P[iu].Pos[0] - P[iv].Pos[0], dy = P[iu].Pos[1] - P[iv].Pos[1], dz = P[iu].Pos[2] - P[iv].Pos[2];
+        double sep = sqrt(dx*dx + dy*dy + dz*dz);
+        printf("Coincident particle positions: IDs %llu and %llu (types %d and %d) at (%.17g, %.17g, %.17g), separation %.6g\n",
                (unsigned long long) P[iu].ID, (unsigned long long) P[iv].ID, P[iu].Type, P[iv].Type,
-               P[iu].Pos[0], P[iu].Pos[1], P[iu].Pos[2]);
+               P[iu].Pos[0], P[iu].Pos[1], P[iu].Pos[2], sep);
         fflush(stdout);
     }
 }
@@ -83,6 +85,8 @@ static peanokey particle_peano_key(int i)
 
 #define COINCIDENT_RUN_MAX 64
 #define COINCIDENT_NEIGHBOUR_WINDOW 32
+/*! Fraction of a repair displacement below which a separation is treated as coincidence. */
+#define COINCIDENT_DETECT_FRACTION 1.0e-2
 
 /*! Local length scale for a coincident group: the distance to the nearest particle that is NOT at
  *  the same position, searched over a bounded window of the ordering. Peano ordering has locality
@@ -91,9 +95,21 @@ static peanokey particle_peano_key(int i)
  *  particle's own kernel/softening scale when that is available, and why the displacement is a
  *  small fraction of it rather than a fraction of order one.
  */
+/*! The separation below which two coordinates carry no information: displacing by less than this
+ *  is lost in the mantissa, so particles this close cannot be told apart or pushed apart. */
+static double coordinate_resolution_floor(int i)
+{
+    double xmax = fabs(P[i].Pos[0]);
+    if(fabs(P[i].Pos[1]) > xmax) {xmax = fabs(P[i].Pos[1]);}
+    if(fabs(P[i].Pos[2]) > xmax) {xmax = fabs(P[i].Pos[2]);}
+    if(xmax < 1.0) {xmax = 1.0;}
+    return 65536.0 * DBL_EPSILON * xmax;
+}
+
 static double local_separation_scale(int i, int blk_lo, int blk_hi)
 {
     double best = 0; int lo = i - COINCIDENT_NEIGHBOUR_WINDOW, hi = i + COINCIDENT_NEIGHBOUR_WINDOW;
+    double floor2 = coordinate_resolution_floor(i); floor2 *= floor2;
     if(lo < blk_lo) {lo = blk_lo;}
     if(hi > blk_hi) {hi = blk_hi;}
     for(int j = lo; j < hi; j++)
@@ -101,10 +117,45 @@ static double local_separation_scale(int i, int blk_lo, int blk_hi)
         if(j == i) {continue;}
         double dx = P[j].Pos[0] - P[i].Pos[0], dy = P[j].Pos[1] - P[i].Pos[1], dz = P[j].Pos[2] - P[i].Pos[2];
         double r2 = dx*dx + dy*dy + dz*dz;
-        if(r2 <= 0) {continue;}                        /* the coincident partners themselves */
+        if(r2 <= floor2) {continue;}                   /* the coincident partners themselves: a partner
+                                                          a few ulp away is as uninformative as one at
+                                                          exactly zero, and must not become the scale */
         if(best == 0 || r2 < best) {best = r2;}
     }
     return (best > 0) ? sqrt(best) : 0;
+}
+
+/*! Length scale that sets what a meaningful separation is here. Order matters: the distance to the
+ *  nearest other particle comes from positions alone, so it is trustworthy this early -- the first
+ *  ordering runs before any density or kernel iteration. The kernel/softening radius is consulted
+ *  only when it is SMALLER, so a not-yet-filled or stale cache can shrink the scale but never
+ *  inflate it, and the parameter softening is the last resort. */
+static double coincident_local_scale(int i, int blk_lo, int blk_hi, const char **src)
+{
+    double s = local_separation_scale(i, blk_lo, blk_hi); *src = "local separation";
+    double h_kernel = ForceSoftening_KernelRadius(i);     /* zero until the cache is first filled */
+    if(h_kernel > 0 && (s == 0 || h_kernel < s)) {s = h_kernel; *src = "softening";}
+    if(s == 0) {s = All.ForceSoftening[P[i].Type]; *src = "type softening";}
+    return s;
+}
+
+/*! Bitwise-identical positions are the invariant the rest of the code actually depends on, but a
+ *  pair that merely starts a few ulp apart converges to bitwise-identical on its own: with equal
+ *  mass and velocity the two co-move, and roundoff in the force sum erases an offset that small
+ *  within a few hundred steps. Validating the input therefore has to use a tolerance, not equality.
+ *  The threshold is a small fraction of the displacement a repair would apply, and the code never
+ *  places anything closer than EPSILON_FOR_TREERND_SUBNODE_SPLITTING times the local scale, so this
+ *  cannot flag a pair the code itself would regard as separated. With no usable scale it degrades
+ *  to the exact test. */
+static int positions_are_coincident(int iu, int iv, int blk_lo, int blk_hi)
+{
+    if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2]) {return 1;}
+    const char *src; double s = coincident_local_scale(iu, blk_lo, blk_hi, &src);
+    if(!(s > 0)) {return 0;}
+    double tol = COINCIDENT_DETECT_FRACTION * EPSILON_FOR_TREERND_SUBNODE_SPLITTING * s;
+    if(tol < coordinate_resolution_floor(iu)) {return 0;}   /* below this nothing can be separated anyway */
+    double dx = P[iu].Pos[0] - P[iv].Pos[0], dy = P[iu].Pos[1] - P[iv].Pos[1], dz = P[iu].Pos[2] - P[iv].Pos[2];
+    return (dx*dx + dy*dy + dz*dz) < tol*tol;
 }
 
 #ifdef IO_REPAIR_COINCIDENT_POSITIONS
@@ -134,19 +185,11 @@ static void coincident_repair_direction(MyIDType id, double n[3])
  *  because "repair" would then be a change to the problem. */
 static int repair_coincident_pair(int iu, int iv, int blk_lo, int blk_hi)
 {
-    double s = local_separation_scale(iu, blk_lo, blk_hi);
-    const char *src = "local separation";
-    double h_kernel = ForceSoftening_KernelRadius(iu);    /* zero until the cache is first filled */
-    if(h_kernel > 0 && (s == 0 || h_kernel < s)) {s = h_kernel; src = "softening";}
-    if(s == 0) {s = All.ForceSoftening[P[iu].Type]; src = "type softening";}
+    const char *src; double s = coincident_local_scale(iu, blk_lo, blk_hi, &src);
     if(s <= 0) {return 1;}
 
     double delta = EPSILON_FOR_TREERND_SUBNODE_SPLITTING * s;
-    double xmax = fabs(P[iu].Pos[0]);
-    if(fabs(P[iu].Pos[1]) > xmax) {xmax = fabs(P[iu].Pos[1]);}
-    if(fabs(P[iu].Pos[2]) > xmax) {xmax = fabs(P[iu].Pos[2]);}
-    if(xmax < 1.0) {xmax = 1.0;}
-    if(delta < 65536.0 * DBL_EPSILON * xmax) {return 2;}   /* would be lost in the mantissa */
+    if(delta < coordinate_resolution_floor(iu)) {return 2;}   /* would be lost in the mantissa */
     if(delta > 0.1 * s) {return 3;}                        /* must not reorder against the neighbours */
 
     double n[3]; coincident_repair_direction((P[iu].ID < P[iv].ID) ? P[iu].ID : P[iv].ID, n);
@@ -203,12 +246,13 @@ static long coincident_pass(int do_repair, long nseen, long *nfailed)
         for(int u = 0; u < nm; u++) for(int v = u + 1; v < nm; v++)
         {
             int iu = members[u], iv = members[v];
-            if(P[iu].Pos[0] == P[iv].Pos[0] && P[iu].Pos[1] == P[iv].Pos[1] && P[iu].Pos[2] == P[iv].Pos[2])
+            int blo = (iu < N_gas) ? 0 : N_gas, bhi = (iu < N_gas) ? N_gas : NumPart;
+            if(positions_are_coincident(iu, iv, blo, bhi))
             {
 #ifdef IO_REPAIR_COINCIDENT_POSITIONS
                 if(do_repair)
                 {
-                    int lo = (iu < N_gas) ? 0 : N_gas, hi = (iu < N_gas) ? N_gas : NumPart;
+                    int lo = blo, hi = bhi;
                     int rc = repair_coincident_pair(iu, iv, lo, hi);
                     if(rc) {(*nfailed)++;} else {ndup++;}
                     continue;
@@ -305,23 +349,31 @@ void peano_hilbert_order(void)
     {
       if(ThisTask == 0)
         {
-          printf("\nProblem: found %ld coincident particle pair%s -- positions identical to the bit (first few listed above).\n"
+          printf("\nProblem: found %ld coincident particle pair%s (first few listed above).\n"
                  "Coincident particles are never valid: they have no relative geometry for a neighbor search or an\n"
                  "opening criterion to act on, and any pair term that divides by their separation is undefined.\n",
                  ndup_total, (ndup_total == 1) ? "" : "s");
           if(first_ordering)
             {
+              printf("The input check also counts pairs that are not identical to the bit but sit far below the local\n"
+                     "scale: with equal mass and velocity such a pair co-moves, and roundoff erases the offset until\n"
+                     "the positions collapse onto each other mid-run.\n");
 #ifdef IO_REPAIR_COINCIDENT_POSITIONS
               printf("IO_REPAIR_COINCIDENT_POSITIONS is enabled, but these could not be repaired: no displacement\n"
                      "exists that is at once above the resolution of the coordinates and below the local physical\n"
                      "scale, so separating them would change the problem. Fix the input file.\n");
 #else
               printf("These came in with the initial conditions: separate or merge them and rerun, or build with\n"
-                     "IO_REPAIR_COINCIDENT_POSITIONS to have the code separate them at startup.\n");
+                     "IO_REPAIR_COINCIDENT_POSITIONS to have the code separate them at startup. Separating them by\n"
+                     "hand only works if the displacement is a real fraction of the local spacing -- a nudge of a\n"
+                     "few ulp is undone by roundoff within a few hundred steps.\n");
 #endif
             }
           else
-            {printf("These appeared during the run, after step %d: this is a code bug, not a bad input.\n", All.NumCurrentTiStep);}
+            {printf("These appeared during the run, after step %lld: they were not bitwise-coincident in the input,\n"
+                    "but two particles can converge to the same position if they start within a few ulp of each\n"
+                    "other, so check the input for near-duplicate pairs before concluding this is a code bug.\n",
+                    (long long) All.NumCurrentTiStep);}
           fflush(stdout);
         }
       endrun(223);
