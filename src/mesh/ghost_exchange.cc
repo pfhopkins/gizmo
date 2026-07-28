@@ -139,9 +139,25 @@ static unsigned long long g_ghost_provenance_epoch = 0; /* import counter (see a
  * 9.5M pool) per rank. Tolerable on Vista host. Allocated via plain
  * malloc/free to avoid mymalloc-stack LIFO violation when the cache
  * outlives the function frame. */
+/* Membership/order epoch for the supply pool.  Rank-local and compared only for
+ * equality: it answers "is the pool I cached still the same set, in the same
+ * order?", nothing more.  Bumped ONLY where particles are created, eliminated,
+ * or moved between slots (rearrange_particle_sequence); NEVER by drift, h, or a
+ * radius policy, none of which can change membership.  64-bit so wraparound is
+ * not a case anyone has to reason about. */
+static long long g_supply_identity_epoch = 0;
+
+extern "C" void ghost_exchange_supply_identity_changed(const char *reason)
+{
+    (void)reason;   /* named at the call site so the reason is greppable there */
+    g_supply_identity_epoch++;
+}
+
 struct ghost_local_tree_cache_t {
     int valid;
     int NumPart_when_built;
+    /* Identity generation this entry's pool/j_to_pool were built against. */
+    long long identity_epoch_when_built;
     integertime Ti_when_built;
     double safety_factor_when_built;
     unsigned int eligible_type_mask_when_built;
@@ -175,6 +191,7 @@ struct ghost_local_tree_cache_t {
 static struct ghost_local_tree_cache_t g_glt_cache = {
     .valid = 0,
     .NumPart_when_built = -1,
+    .identity_epoch_when_built = -1,
     .Ti_when_built = -1,
     .safety_factor_when_built = 0.0,
     .eligible_type_mask_when_built = GHOST_TYPE_ALL,
@@ -260,6 +277,7 @@ static void glt_cache_free(void)
     if(g_glt_cache.j_to_pool)    { free(g_glt_cache.j_to_pool);    g_glt_cache.j_to_pool = NULL; }
     g_glt_cache.valid = 0;
     g_glt_cache.NumPart_when_built = -1;
+    g_glt_cache.identity_epoch_when_built = -1;
     g_glt_cache.Ti_when_built = -1;
     g_glt_cache.safety_factor_when_built = 0.0;
     g_glt_cache.eligible_type_mask_when_built = GHOST_TYPE_ALL;
@@ -273,6 +291,21 @@ static void glt_cache_free(void)
     g_glt_cache.bvh_root = 0;
     /* Cache gone -> no narrow-refit basis remains; force full on next build. */
     g_glt_dirty_mark_all_();
+}
+
+/* Drop ONLY the position/radius-dependent half, keeping pool/j_to_pool/num_pool.
+ * Used when a caller needs geometry under a different radius policy or scale:
+ * membership does not depend on those, so re-deriving it would be pure waste. */
+static void glt_cache_free_geometry_(void)
+{
+    if(g_glt_cache.tiles)        { free(g_glt_cache.tiles);        g_glt_cache.tiles = NULL; }
+    if(g_glt_cache.bvh)          { free(g_glt_cache.bvh);          g_glt_cache.bvh = NULL; }
+    if(g_glt_cache.compact_xyzh) { free(g_glt_cache.compact_xyzh); g_glt_cache.compact_xyzh = NULL; }
+    if(g_glt_cache.pool_types)   { free(g_glt_cache.pool_types);   g_glt_cache.pool_types = NULL; }
+    g_glt_cache.ntiles = 0;
+    g_glt_cache.bvh_nnodes = 0;
+    g_glt_cache.bvh_root = 0;
+    g_glt_cache.caps &= ~GX_POOL_GEOMETRY;
 }
 
 extern "C" void ghost_exchange_local_tree_invalidate_drift(void)
@@ -295,9 +328,15 @@ extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out,
     if(!out || !required_caps) return -1;
     if(!g_glt_cache.valid || g_glt_cache.needs_refit) return -1;
     if((g_glt_cache.caps & required_caps) != required_caps) return -1;
-    if(!g_glt_cache.pool || !g_glt_cache.pool_types) return -1;
+    /* Identity is pool membership/order alone. pool_types is geometry-class — it is
+     * read by the leaf supply-mask filter, a geometry walker — so it is required
+     * only alongside the rest of the geometry. (A full rebuild happens to fill it
+     * for identity-only entries too; it is absent only after the geometry half has
+     * been dropped for a policy change.) */
+    if(!g_glt_cache.pool) return -1;
     if((required_caps & GX_POOL_GEOMETRY)
-       && (!g_glt_cache.compact_xyzh || !g_glt_cache.tiles)) return -1;
+       && (!g_glt_cache.compact_xyzh || !g_glt_cache.tiles
+           || !g_glt_cache.bvh || !g_glt_cache.pool_types)) return -1;
     out->pool                  = g_glt_cache.pool;
     out->pool_types            = g_glt_cache.pool_types;
     out->compact_xyzh          = g_glt_cache.compact_xyzh;
@@ -419,8 +458,11 @@ static inline void glt_recompute_tile_(int t)
     sfc_tile_t *tile = &g_glt_cache.tiles[t];
     tile->hmax = 0;
     for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tile->hmax_by_type[tt] = 0;
+    /* Empty tiles carry an INVERTED box so they stay neutral under the BVH's
+     * min/max union and always fail the sphere-overlap test; a zeroed box would
+     * stretch every ancestor to the coordinate origin and defeat pruning there. */
     if(tile->count <= 0) {
-        for(int k = 0; k < 3; k++) { tile->lo[k] = 0; tile->hi[k] = 0; }
+        for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; }
         return;
     }
     /* SSOT supply-side reach pulled from the cache's stored policy/scale.
@@ -468,8 +510,8 @@ static inline void glt_recompute_tile_(int t)
         if(pt >= 0 && pt < TILE_NUM_PTYPES && h > tile->hmax_by_type[pt])
             tile->hmax_by_type[pt] = h;
     }
-    /* Every member dead: same empty-tile shape as count <= 0 above. */
-    if(!seeded) { for(int k = 0; k < 3; k++) { tile->lo[k] = 0; tile->hi[k] = 0; } }
+    /* Every member dead: same inverted empty-tile box as count <= 0 above. */
+    if(!seeded) { for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; } }
 }
 
 /* Pull one BVH node's lo/hi/hmax/hmax_by_type from its children/leaf-tile.
@@ -2583,9 +2625,16 @@ static char *compute_matched_walk_export(
                     if(j < 0 || j >= g_glt_cache.NumPart_when_built) continue;
                     int pp = g_glt_cache.j_to_pool ? g_glt_cache.j_to_pool[j] : -1;
                     if(pp < 0 || pp >= num_pool) continue;
-                    double hj_dbl = gx_policy_scaled_h(j, g_glt_cache.radius_policy_when_built,
-                                                       g_glt_cache.j_radius_scale_when_built,
-                                                       g_glt_cache.safety_factor_when_built);
+                    /* Reach comes from THIS caller's spec, not from whatever policy
+                     * the cached pool happened to be built under.  The sender walk
+                     * above already uses the spec, so taking it from the cache here
+                     * would let a caller inherit another caller's j-side reach now
+                     * that pool membership is reused across differing radius
+                     * policies.  Only the tile/BVH/compact geometry may use the
+                     * build-time policy, because its leaf h was baked with it. */
+                    double hj_dbl = gx_policy_scaled_h(j, spec->radius_policy,
+                                                       spec->j_radius_scale,
+                                                       spec->safety_factor);
                     if(gx_pair_accept(e->pos, e->h, P[j].Pos[0], P[j].Pos[1], P[j].Pos[2],
                                       hj_dbl, search_mode, periodic_flags, box_sizes)) {
                         mf[pp] = 1;   /* idempotent: set semantics, duplicates are a no-op */
@@ -2728,16 +2777,102 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                            && !gizmo_nlr_phase0_diag_enabled()
                            && !oracle_on;
     const unsigned int wanted_caps = GX_POOL_IDENTITY | (walk_export_only ? 0u : GX_POOL_GEOMETRY);
-    /* Cache-key invariant: {NumPart, safety, supply-pool coverage,
-     * radius_policy, j_radius_scale} + the parts actually held.  Ti and dirty
-     * bits drive REFIT (glt_cache_refit_from_particles), NOT rebuild — see below. */
-    int cache_match = (g_glt_cache.valid
-                       && ((g_glt_cache.caps & wanted_caps) == wanted_caps)
+    /* TWO validities, because the cache holds two payloads with different
+     * dependencies.  IDENTITY (pool, j_to_pool, num_pool) is membership and order:
+     * it depends on {NumPart, type mask, epoch} and on nothing positional, so it
+     * survives drift and survives a caller arriving with a different radius policy.
+     * GEOMETRY (tiles, bvh, compact_xyzh, pool_types) additionally depends on
+     * {safety, radius_policy, j_radius_scale} and on live positions/h, so it is
+     * rebuilt on a policy change and REFIT (not rebuilt) on drift.
+     *
+     * Keeping these separate is the point: rebuilding the identity map costs a
+     * full pass over the local particles, and callers within a step differ in
+     * radius policy far more often than the particle set changes.
+     *
+     * Mask is compared for EXACT equality, not coverage. Reuse across a narrowed
+     * mask is unproven here — a narrower request would also make in-place Type
+     * changes membership-relevant, which the epoch does not track — so anything
+     * other than the all-types pool falls through to a full rebuild. */
+    const int mask_reusable = (desired_pool_mask == GHOST_TYPE_ALL);
+    const int identity_valid = (g_glt_cache.valid
+                       && (g_glt_cache.caps & GX_POOL_IDENTITY)
+                       && g_glt_cache.pool && g_glt_cache.j_to_pool
+                       && mask_reusable
+                       && g_glt_cache.eligible_type_mask_when_built == desired_pool_mask
                        && g_glt_cache.NumPart_when_built == NumPart
+                       && g_glt_cache.identity_epoch_when_built == g_supply_identity_epoch);
+    const int geometry_valid = (identity_valid
+                       && (g_glt_cache.caps & GX_POOL_GEOMETRY)
                        && g_glt_cache.safety_factor_when_built == safety_factor
-                       && ((g_glt_cache.eligible_type_mask_when_built & desired_pool_mask) == desired_pool_mask)
                        && g_glt_cache.radius_policy_when_built == spec->radius_policy
                        && g_glt_cache.j_radius_scale_when_built == spec->j_radius_scale);
+    const int want_geometry = (wanted_caps & GX_POOL_GEOMETRY) ? 1 : 0;
+    int cache_match = identity_valid && (!want_geometry || geometry_valid);
+    int geometry_rebuilt = 0;
+
+    /* Identity still good, geometry stale or absent: rebuild geometry ONLY, over
+     * the pool we already hold.  This is the case a single fused key could not
+     * express, and it is the common one — successive callers in a step share the
+     * particle set and differ only in radius policy. */
+    if(identity_valid && want_geometry && !geometry_valid) {
+        glt_cache_free_geometry_();
+        sfc_tile_t *g_tiles = NULL;
+        int g_ntiles = build_sfc_tiles_from_pool(P, g_glt_cache.pool, g_glt_cache.num_pool,
+                                                 TILE_TARGET_SIZE, &g_tiles,
+                                                 spec->radius_policy,
+                                                 spec->j_radius_scale * safety_factor);
+        tile_bvh_node_t *g_bvh = NULL;
+        int g_bvh_nnodes = build_tile_bvh(g_tiles, g_ntiles, &g_bvh);
+        size_t gz_tiles   = (size_t)(g_ntiles > 0 ? g_ntiles : 1) * sizeof(sfc_tile_t);
+        size_t gz_bvh     = (size_t)(g_bvh_nnodes > 0 ? g_bvh_nnodes : 1) * sizeof(tile_bvh_node_t);
+        size_t gz_compact = (size_t)(g_glt_cache.num_pool > 0 ? g_glt_cache.num_pool : 1) * 4 * sizeof(float);
+        size_t gz_types   = (size_t)(g_glt_cache.num_pool > 0 ? g_glt_cache.num_pool : 1) * sizeof(int);
+        sfc_tile_t      *gc_tiles   = (sfc_tile_t *)      malloc(gz_tiles);
+        tile_bvh_node_t *gc_bvh     = (tile_bvh_node_t *) malloc(gz_bvh);
+        float           *gc_compact = (float *)           malloc(gz_compact);
+        int             *gc_types   = (int *)             malloc(gz_types);
+        if(!gc_tiles || !gc_bvh || !gc_compact || !gc_types) {
+            /* Same fail-closed shape as the full rebuild below: this producer is the
+             * only supplier, so drop the whole entry and let the full path re-decide
+             * rather than publishing a half-built one. */
+            free(gc_tiles); free(gc_bvh); free(gc_compact); free(gc_types);
+            if(g_bvh)   myfree(g_bvh);
+            if(g_tiles) myfree(g_tiles);
+            glt_cache_free();
+        } else {
+            if(g_ntiles > 0)      memcpy(gc_tiles, g_tiles, (size_t)g_ntiles * sizeof(sfc_tile_t));
+            if(g_bvh_nnodes > 0)  memcpy(gc_bvh,   g_bvh,   (size_t)g_bvh_nnodes * sizeof(tile_bvh_node_t));
+            for(int p = 0; p < g_glt_cache.num_pool; p++) {
+                int j = g_glt_cache.pool[p];
+                gc_compact[p*4+0] = (float)P[j].Pos[0];
+                gc_compact[p*4+1] = (float)P[j].Pos[1];
+                gc_compact[p*4+2] = (float)P[j].Pos[2];
+                gc_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
+                                                              spec->j_radius_scale, safety_factor);
+                gc_types[p] = (int)P[j].Type;
+            }
+            if(g_bvh)   myfree(g_bvh);
+            if(g_tiles) myfree(g_tiles);
+            g_glt_cache.tiles        = gc_tiles;
+            g_glt_cache.bvh          = gc_bvh;
+            g_glt_cache.compact_xyzh = gc_compact;
+            g_glt_cache.pool_types   = gc_types;
+            g_glt_cache.ntiles       = g_ntiles;
+            g_glt_cache.bvh_nnodes   = g_bvh_nnodes;
+            g_glt_cache.bvh_root     = g_bvh_nnodes - 1;
+            g_glt_cache.safety_factor_when_built  = safety_factor;
+            g_glt_cache.radius_policy_when_built  = spec->radius_policy;
+            g_glt_cache.j_radius_scale_when_built = spec->j_radius_scale;
+            g_glt_cache.Ti_when_built = All.Ti_Current;
+            g_glt_cache.needs_refit = 0;
+            g_glt_cache.caps |= GX_POOL_GEOMETRY;
+            /* Geometry was just seeded from current P[]; marks predating it are
+             * obsolete, exactly as after a full build. */
+            g_glt_dirty_clear_();
+            cache_match = 1;
+            geometry_rebuilt = 1;
+        }
+    }
     if(cache_match) {
         h_tiles        = g_glt_cache.tiles;
         h_pool         = g_glt_cache.pool;
@@ -2749,7 +2884,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         h_compact_xyzh = g_glt_cache.compact_xyzh;
         h_pool_types   = g_glt_cache.pool_types;
         from_cache = 1;
-        g_glt_cache_hits++;
+        /* A geometry-only rebuild reused the pool but did real build work, so it is
+         * not a hit. Counting it as one would overstate the cache and hide the very
+         * cost this split exists to measure. */
+        if(geometry_rebuilt) g_glt_cache_misses++; else g_glt_cache_hits++;
         /* Refit refreshes position-dependent geometry only; an identity-only
          * entry has none and its membership does not move with the particles. */
         if((g_glt_cache.caps & GX_POOL_GEOMETRY)
@@ -2871,6 +3009,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         g_glt_cache.bvh_nnodes = tmp_bvh_nnodes;
         g_glt_cache.bvh_root  = tmp_bvh_root;
         g_glt_cache.NumPart_when_built = NumPart;
+        g_glt_cache.identity_epoch_when_built = g_supply_identity_epoch;
         g_glt_cache.Ti_when_built = All.Ti_Current;
         g_glt_cache.safety_factor_when_built = safety_factor;
         g_glt_cache.radius_policy_when_built = spec->radius_policy;
@@ -2904,7 +3043,11 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     if(ThisTask == 0 && gizmo_verbose_diag()) {
         printf("[GX_RD_CACHE rank=0 call=%d caller=%s %s build=%.4f num_pool=%d ntiles=%d pool_mask=0x%x hits=%ld misses=%ld refits=%ld narrow=%ld ghost_epoch=%llu pool_epoch=%llu ghost_start=%d ghost_count=%d]\n",
                this_call, (spec->caller_name ? spec->caller_name : "?"),
-               (from_cache ? "HIT" : "MISS"), t_step3_build, num_pool, ntiles,
+               /* A geometry-only rebuild reused the pool but paid the full tile+BVH+
+                * compact build, so it is neither a hit nor a miss and is labelled
+                * for what it is; `build` on this line is that build's cost. */
+               (geometry_rebuilt ? "GEOM_REBUILD" : (from_cache ? "HIT" : "MISS")),
+               t_step3_build, num_pool, ntiles,
                g_glt_cache.eligible_type_mask_when_built,
                g_glt_cache_hits, g_glt_cache_misses, g_glt_cache_refits, g_glt_cache_narrow_refits,
                (unsigned long long)gpu_sidx_ghost_epoch(),

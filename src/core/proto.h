@@ -476,6 +476,10 @@ extern "C" {
 #endif
 void ghost_exchange_local_tree_invalidate_drift(void);
 void ghost_exchange_local_tree_invalidate_full(void);
+/* Announce that the local particle set changed membership or order, so cached
+ * supply pools keyed on it stop matching. Rank-local, O(1), frees nothing.
+ * `reason` documents the call site. */
+void ghost_exchange_supply_identity_changed(const char *reason);
 void ghost_exchange_local_tree_mark_h_dirty_indices(const int *indices, int n);
 void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end);
 #ifdef __cplusplus
