@@ -75,16 +75,18 @@ void compute_hydro_densities_and_forces(void)
         gizmo_hydro_corridor_decide_mode();
         /* density() internally handles ghost_exchange prep + redo (neighbor-list path)
            via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
-        double t_bench_density_start = my_second();
+        double t_bench_density_start = my_second(); double child0_density = CPU_ChildCharged;
         density();		/* computes density, and pressure */
-        double t_bench_density_only = timediff(t_bench_density_start, my_second());
+        double t_bench_density_only = cpu_minus_children(timediff(t_bench_density_start, my_second()), child0_density);
         gizmo_step_phase_record("density", t_bench_density_only);
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
         STEP_PHASE_TIME("ags_density", ags_density());
 #endif
-        double t_hmax_start = my_second();
+        double t_hmax_start = my_second(); double child0_hmax = CPU_ChildCharged;
         force_update_hmax();	/* update kernel lengths in tree */
-        double t_bench_hmax = timediff(t_hmax_start, my_second());
+        /* hmax wall is charged by force_update_hmax's own chain call; this bracket
+         * only feeds the per-phase record, so it must not charge the bucket again. */
+        double t_bench_hmax = cpu_minus_children(timediff(t_hmax_start, my_second()), child0_hmax);
         gizmo_step_phase_record("force_update_hmax", t_bench_hmax);
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
 
@@ -121,7 +123,7 @@ void compute_hydro_densities_and_forces(void)
          * hydro_corridor.h for when this must become always-on. */
         gizmo_hydro_corridor_mass_guardrail_check();
 
-        double t_bench_grad_start = my_second();
+        double t_bench_grad_start = my_second(); double child0_grad = CPU_ChildCharged;
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT
         {   /* determine whether the active gas fraction is large enough to justify the global MG solve */
@@ -141,7 +143,7 @@ void compute_hydro_densities_and_forces(void)
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif
-        double t_bench_grad = timediff(t_bench_grad_start, my_second());
+        double t_bench_grad = cpu_minus_children(timediff(t_bench_grad_start, my_second()), child0_grad);
         gizmo_step_phase_record("hydro_gradient_calc", t_bench_grad);
         PRINT_STATUS(" ..gradient computation done.");
 
@@ -152,9 +154,9 @@ void compute_hydro_densities_and_forces(void)
 #ifdef TURB_DIFF_DYNAMIC
         STEP_PHASE_TIME("dynamic_diff_calc", dynamic_diff_calc()); /* This MUST be called immediately following gradient calculations */
 #endif
-        double t_bench_hydro_start = my_second();
+        double t_bench_hydro_start = my_second(); double child0_hydro = CPU_ChildCharged;
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
-        double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
+        double t_bench_hydro = cpu_minus_children(timediff(t_bench_hydro_start, my_second()), child0_hydro);
         gizmo_step_phase_record("hydro_force", t_bench_hydro);
         /* Hydro corridor exit: reset mode to UNSET. Any unexpected
          * gizmo_hydro_corridor_get_mode() outside the corridor span will
@@ -167,7 +169,6 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_DENSCOMPUTE] += t_bench_density_only;
         CPU_Step[CPU_DENSWAIT] += t_bench_grad;
         CPU_Step[CPU_HYDCOMPUTE] += t_bench_hydro;
-        CPU_Step[CPU_TREEHMAXUPDATE] += t_bench_hmax;
         PRINT_STATUS(" ..hydro force computation done.");
 
     } else {

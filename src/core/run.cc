@@ -1184,6 +1184,7 @@ void write_cpu_log(void)
 	      "   treewalk   %10.2f  %5.1f%%\n"
 	      "   treecomm   %10.2f  %5.1f%%\n"
 	      "   treeimbal  %10.2f  %5.1f%%\n"
+	      "   treemisc   %10.2f  %5.1f%%\n"
 #ifdef PMGRID
           "pm-gravity    %10.2f  %5.1f%%\n"
 #endif
@@ -1197,22 +1198,19 @@ void write_cpu_log(void)
 #ifdef TURB_DIFF_DYNAMIC
           "dyndiff       %10.2f  %5.1f%%\n"
           "   compute    %10.2f  %5.1f%%\n"
-          "   comm       %10.2f  %5.1f%%\n"
-          "   wait       %10.2f  %5.1f%%\n"
           "   misc       %10.2f  %5.1f%%\n"
           "velsmooth     %10.2f  %5.1f%%\n"
           "   compute    %10.2f  %5.1f%%\n"
-          "   comm       %10.2f  %5.1f%%\n"
-          "   wait       %10.2f  %5.1f%%\n"
-          "   misc       %10.2f  %5.1f%%\n"
 #endif
 	      "hydro/fluids  %10.2f  %5.1f%%\n"
 	      "   density    %10.2f  %5.1f%%\n"
 	      "   gradients  %10.2f  %5.1f%%\n"
 	      "   hydro_frc  %10.2f  %5.1f%%\n"
-	      "   comm+wait  %10.2f  %5.1f%%\n"
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
+          "ghost import  %10.2f  %5.1f%%\n"
+          "ngb build     %10.2f  %5.1f%%\n"
+          "pair kernel   %10.2f  %5.1f%%\n"
 	      "domain        %10.2f  %5.1f%%\n"
           "peano         %10.2f  %5.1f%%\n"
 #ifdef FOF
@@ -1258,6 +1256,7 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2], (All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV], (All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2], (All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_TREEMISC], (All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef PMGRID
     All.CPU_Sum[CPU_MESH], (All.CPU_Sum[CPU_MESH]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
@@ -1272,28 +1271,22 @@ void write_cpu_log(void)
 #ifdef TURB_DIFF_DYNAMIC
     (All.CPU_Sum[CPU_DYNDIFFCOMPUTE] + All.CPU_Sum[CPU_DYNDIFFWAIT] + All.CPU_Sum[CPU_DYNDIFFCOMM] + All.CPU_Sum[CPU_DYNDIFFMISC]), (All.CPU_Sum[CPU_DYNDIFFCOMPUTE] + All.CPU_Sum[CPU_DYNDIFFWAIT] + All.CPU_Sum[CPU_DYNDIFFCOMM] + All.CPU_Sum[CPU_DYNDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DYNDIFFCOMPUTE], (All.CPU_Sum[CPU_DYNDIFFCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DYNDIFFWAIT], (All.CPU_Sum[CPU_DYNDIFFWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DYNDIFFCOMM], (All.CPU_Sum[CPU_DYNDIFFCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DYNDIFFMISC], (All.CPU_Sum[CPU_DYNDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
     (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE] + All.CPU_Sum[CPU_IMPROVDIFFWAIT] + All.CPU_Sum[CPU_IMPROVDIFFCOMM] + All.CPU_Sum[CPU_IMPROVDIFFMISC]), (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE] + All.CPU_Sum[CPU_IMPROVDIFFWAIT] + All.CPU_Sum[CPU_IMPROVDIFFCOMM] + All.CPU_Sum[CPU_IMPROVDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE], (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_IMPROVDIFFWAIT], (All.CPU_Sum[CPU_IMPROVDIFFWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_IMPROVDIFFCOMM], (All.CPU_Sum[CPU_IMPROVDIFFCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_IMPROVDIFFMISC], (All.CPU_Sum[CPU_IMPROVDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
-    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
-              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDMISC]
-              + All.CPU_Sum[CPU_HYDWAIT] + All.CPU_Sum[CPU_TREEHMAXUPDATE],
-    (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
-              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDMISC]
-              + All.CPU_Sum[CPU_HYDWAIT] + All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
+              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_TREEHMAXUPDATE],
+    (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
+              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSCOMPUTE], (All.CPU_Sum[CPU_DENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSWAIT], (All.CPU_Sum[CPU_DENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDWAIT],
-              (All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_HYDMISC] + All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_HYDMISC] + All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_GHOSTIMPORT], (All.CPU_Sum[CPU_GHOSTIMPORT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_NGB_BUILD], (All.CPU_Sum[CPU_NGB_BUILD]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_PAIR_KERNEL], (All.CPU_Sum[CPU_PAIR_KERNEL]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DOMAIN], (All.CPU_Sum[CPU_DOMAIN]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_PEANO], (All.CPU_Sum[CPU_PEANO]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef FOF

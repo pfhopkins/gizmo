@@ -68,7 +68,7 @@ void dynamic_diff_calc(void) {
     /* allocate buffers to arrange communication */
     DynamicDiffDataPasser = (struct temporary_data_dyndiff *) mymalloc("DynamicDiffDataPasser", N_gas * sizeof(struct temporary_data_dyndiff));
     CPU_Step[CPU_DYNDIFFMISC] += measure_time();
-    t0 = my_second();
+    t0 = my_second(); double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..begin initializing smoothed quantities.");
 
     /* Because of smoothing operation, we don't zero these out, they get set to their current value */
@@ -327,8 +327,8 @@ void dynamic_diff_calc(void) {
     myfree(DynamicDiffDataPasser);
  
     /* collect some timing information */
-    t1 = WallclockTime = my_second();
-    timeall = timediff(t0, t1);
+    t1 = my_second(); cpu_chain_sync(t1);
+    timeall = cpu_minus_children(timediff(t0, t1), child0_span);
     CPU_Step[CPU_DYNDIFFCOMPUTE] += timeall;
     PRINT_STATUS(" ..dynamic diffusion calculations done.");
 }

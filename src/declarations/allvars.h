@@ -201,6 +201,8 @@ extern char CPU_Symbol[CPU_PARTS];
 extern char CPU_SymbolImbalance[CPU_PARTS];
 extern char CPU_String[CPU_STRING_LEN + 1];
 extern double WallclockTime;    /*!< This holds the last wallclock time measurement for timings measurements */
+extern double CPU_ChildCharged;         /*!< running total charged to child CPU_Step buckets inside enclosing timed spans */
+extern double CPU_ChildCharged_at_sync; /*!< value of the above at the last chain sync point */
 extern int Flag_FullStep;	/*!< Flag used to signal that the current step involves all particles */
 extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperiodic,
   HighMark_pmnonperiodic,  HighMark_gasdensity, HighMark_hydro, HighMark_GasGrad;

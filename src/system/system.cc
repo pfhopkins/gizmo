@@ -43,15 +43,64 @@ double my_second(void)
    */
 }
 
+/* A negative residual means a child bucket was charged time its parent span did
+ * not own. Report once per rank 0 rather than per step: the condition repeats
+ * every step once it occurs, and an unthrottled per-rank message floods the log
+ * on large runs. */
+static void cpu_report_negative_residual(const char *where, double dt)
+{
+  static int reported = 0;
+  if(reported || ThisTask != 0) {return;}
+  reported = 1;
+  printf("WARNING: %s residual %g s is negative (child buckets over-charged); "
+         "timing attribution for this span is unreliable\n", where, dt);
+  fflush(stdout);
+}
+
+/* Charge a sub-interval to its own CPU_Step bucket and record that it has been
+ * charged. Timed spans that enclose it (measure_time below, or an explicit
+ * bracket via cpu_minus_children) subtract what is recorded here, so a second
+ * of wall time is charged to exactly one bucket. Use this -- not a bare
+ * CPU_Step[b] += dt -- for any bucket accumulated inside an enclosing span. */
+void cpu_charge_child(int bucket, double dt)
+{
+  CPU_Step[bucket] += dt;
+  CPU_ChildCharged += dt;
+}
+
+/* Elapsed time of a bracket-timed span, less whatever was charged to child
+ * buckets inside it. child0 is CPU_ChildCharged sampled when the span opened.
+ * A materially negative residual means the span's child bookkeeping is wrong
+ * (a child charged time it did not own), so report it rather than hide it. */
+double cpu_minus_children(double elapsed, double child0)
+{
+  double dt = elapsed - (CPU_ChildCharged - child0);
+  if(dt < -1.0e-6) {cpu_report_negative_residual("timing span", dt);}
+  return (dt > 0.0) ? dt : 0.0;
+}
+
+/* Close the measure_time() chain at time t WITHOUT charging the interval: the
+ * caller accounts for its own span with an explicit bracket instead. Syncing
+ * the child marker here is what keeps the next chain call from subtracting
+ * children that the caller's bracket already subtracted. Every direct
+ * assignment to WallclockTime must go through this. */
+void cpu_chain_sync(double t)
+{
+  WallclockTime = t;
+  CPU_ChildCharged_at_sync = CPU_ChildCharged;
+}
+
 double measure_time(void)	/* strategy: call this at end of functions to account for time in this function, and before another (nontrivial) function is called */
 {
   double t, dt;
 
   t = my_second();
-  dt = t - WallclockTime;
+  dt = t - WallclockTime - (CPU_ChildCharged - CPU_ChildCharged_at_sync);
   WallclockTime = t;
+  CPU_ChildCharged_at_sync = CPU_ChildCharged;
 
-  return dt;
+  if(dt < -1.0e-6) {cpu_report_negative_residual("measure_time", dt);}
+  return (dt > 0.0) ? dt : 0.0;
 }
 
 double report_time(void)       /* strategy: call this to measure sub-times of functions*/

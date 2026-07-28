@@ -61,8 +61,8 @@ static inline void gizmo_density_prep_ghosts(double safety)
     double t1 = my_second();
     ghost_exchange(safety);
     double t_ghost = timediff(t1, my_second());
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* gizmo_request_filtered_ghost_import — drift + caller-list ghost import.
@@ -145,8 +145,8 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
     double t_ghost = timediff(t1, my_second());
     free(qh);
     free(qpos);
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* gizmo_request_filtered_ghost_import_fresh — collective-safe variant.
@@ -194,8 +194,8 @@ static inline void gizmo_hydro_density_prep_ghosts(double safety)
     double t1 = my_second();
     ghost_exchange_hydro_oneway(safety);
     double t_ghost = timediff(t1, my_second());
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* Epilogue for density(): if h grew beyond the ghost pool during density
@@ -209,7 +209,7 @@ static inline void gizmo_density_redo_ghosts_if_needed(double safety)
         double t0 = my_second();
         ghost_exchange_cleanup();
         ghost_exchange(safety);
-        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
+        cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
     }
 }
 
@@ -242,7 +242,7 @@ static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safet
     ghost_exchange_cleanup();
     double t0 = my_second();
     ghost_exchange_hydro_oneway(safety);
-    CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
+    cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
 }
 
 /* Hydro-typed companion to gizmo_density_redo_ghosts_if_needed: gas-only
@@ -254,7 +254,7 @@ static inline void gizmo_hydro_density_redo_ghosts_if_needed(double safety)
         double t0 = my_second();
         ghost_exchange_cleanup();
         ghost_exchange_hydro_oneway(safety);
-        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
+        cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
     }
 }
 

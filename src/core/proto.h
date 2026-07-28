@@ -874,6 +874,9 @@ void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
 double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode);
 double measure_time(void);
+void cpu_charge_child(int bucket, double dt);
+double cpu_minus_children(double elapsed, double child0);
+void cpu_chain_sync(double t);
 double report_time(void);
 
 /* on some DEC Alphas, the correct prototype for pow() is missing,

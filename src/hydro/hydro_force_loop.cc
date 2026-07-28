@@ -614,8 +614,8 @@ void hydro_force(void)
     double t_postloop = timediff(t_postloop_start, my_second());
     (void)t_postloop;
 
-    double t1 = WallclockTime = my_second();
-    (void)t1; (void)t00_truestart;
-
     gizmo_hydro_cleanup_symlist_and_ghosts();
+
+    double t1 = my_second(); cpu_chain_sync(t1);
+    (void)t1; (void)t00_truestart;
 }

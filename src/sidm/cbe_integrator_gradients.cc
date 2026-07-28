@@ -271,7 +271,7 @@ void CBEGradSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 void CBEGrad_gradient_calc(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    const double t00 = my_second();
+    const double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating CBE basis-moment gradients\n");
 
     /* Partition local actives by shared AGS neighbor-type bitmask. bm==0
@@ -295,7 +295,9 @@ void CBEGrad_gradient_calc(void)
                       MPI_UINT64_T, MPI_BOR, MPI_COMM_WORLD);
     }
     if(global_bm_presence == 0) {
-        CPU_Step[CPU_AGSDENSMISC] += timediff(t00, my_second());
+        { const double t_end = my_second();
+          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_chain_sync(t_end); }
         return;   /* no AGSForce-active particles anywhere */
     }
     /* (CPU accounting bucket: parallel DMGrad_gradient_calc — both paths
@@ -347,7 +349,9 @@ void CBEGrad_gradient_calc(void)
         }
     }
 
-    CPU_Step[CPU_AGSDENSMISC] += timediff(t00, my_second());
+    { const double t_end = my_second();
+          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_chain_sync(t_end); }
 }
 
 #endif /* CBE_INTEGRATOR_WITHGRADIENTS */

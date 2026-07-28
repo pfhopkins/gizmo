@@ -1519,7 +1519,7 @@ void density(void)
 
     /* (8) Timing. Mirrors legacy density.cc:798-802 (PRINT_STATUS at end). */
     const double t1 = my_second();
-    WallclockTime = t1;
+    cpu_chain_sync(t1);
     const double timeall = timediff(t00_truestart, t1);
     if (ThisTask == 0) {
         PRINT_STATUS("  density computation done (%.4f s) via runner", timeall);

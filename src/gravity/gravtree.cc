@@ -100,7 +100,7 @@ void gravity_tree(void)
         }
     }
 
-    CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second();
+    CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second(); double child0_span = CPU_ChildCharged;
 #ifndef SELFGRAVITY_OFF
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
@@ -451,7 +451,7 @@ void gravity_tree(void)
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
-    t1 = WallclockTime = my_second(); timeall = timediff(t0, t1);
+    t1 = my_second(); cpu_chain_sync(t1); timeall = cpu_minus_children(timediff(t0, t1), child0_span);
     timetree = timetree1 + timetree2; timewait = timewait1 + timewait2; timecomm = timecommsumm1 + timecommsumm2;
     MPI_Reduce(&timetree, &sumt, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&timetree, &maxt, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);

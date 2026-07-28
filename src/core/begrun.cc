@@ -883,16 +883,12 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Domain decomp  = '%c' / '%c'\n", CPU_Symbol[CPU_DOMAIN], CPU_SymbolImbalance[CPU_DOMAIN]);
     fprintf(FdBalance, "Peano-Hilbert  = '%c' / '%c'\n", CPU_Symbol[CPU_PEANO], CPU_SymbolImbalance[CPU_PEANO]);
     fprintf(FdBalance, "Density compute= '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMPUTE], CPU_SymbolImbalance[CPU_DENSCOMPUTE]);
-    fprintf(FdBalance, "Density imbal  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT], CPU_SymbolImbalance[CPU_DENSWAIT]);
-    fprintf(FdBalance, "Density commu  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMM], CPU_SymbolImbalance[CPU_DENSCOMM]);
+    fprintf(FdBalance, "Gradients      = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT], CPU_SymbolImbalance[CPU_DENSWAIT]);
     fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC], CPU_SymbolImbalance[CPU_DENSMISC]);
+    fprintf(FdBalance, "Ghost import   = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT], CPU_SymbolImbalance[CPU_GHOSTIMPORT]);
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
-    fprintf(FdBalance, "Hydro imbalance= '%c' / '%c'\n", CPU_Symbol[CPU_HYDWAIT], CPU_SymbolImbalance[CPU_HYDWAIT]);
-    fprintf(FdBalance, "Hydro comm     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMM], CPU_SymbolImbalance[CPU_HYDCOMM]);
-    fprintf(FdBalance, "Hydro misc     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDMISC], CPU_SymbolImbalance[CPU_HYDMISC]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
-    fprintf(FdBalance, "Potential      = '%c' / '%c'\n", CPU_Symbol[CPU_POTENTIAL], CPU_SymbolImbalance[CPU_POTENTIAL]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
     fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT], CPU_SymbolImbalance[CPU_SNAPSHOT]);
     fprintf(FdBalance, "Sink           = '%c' / '%c'\n", CPU_Symbol[CPU_SINKS], CPU_SymbolImbalance[CPU_SINKS]);
@@ -909,21 +905,12 @@ void open_outputfiles(void)
     fprintf(FdBalance, "AGS-comm       = '%c' / '%c'\n", CPU_Symbol[CPU_AGSDENSCOMM], CPU_SymbolImbalance[CPU_AGSDENSCOMM]);
     fprintf(FdBalance, "AGS-misc       = '%c' / '%c'\n", CPU_Symbol[CPU_AGSDENSMISC], CPU_SymbolImbalance[CPU_AGSDENSMISC]);
     fprintf(FdBalance, "DynDiffusn-comp= '%c' / '%c'\n", CPU_Symbol[CPU_DYNDIFFCOMPUTE], CPU_SymbolImbalance[CPU_DYNDIFFCOMPUTE]);
-    fprintf(FdBalance, "DynDiffusn-imbl= '%c' / '%c'\n", CPU_Symbol[CPU_DYNDIFFWAIT], CPU_SymbolImbalance[CPU_DYNDIFFWAIT]);
-    fprintf(FdBalance, "DynDiffusn-comm= '%c' / '%c'\n", CPU_Symbol[CPU_DYNDIFFCOMM], CPU_SymbolImbalance[CPU_DYNDIFFCOMM]);
     fprintf(FdBalance, "DynDiffusn-misc= '%c' / '%c'\n", CPU_Symbol[CPU_DYNDIFFMISC], CPU_SymbolImbalance[CPU_DYNDIFFMISC]);
     fprintf(FdBalance, "MultiDiff-comp = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFCOMPUTE], CPU_SymbolImbalance[CPU_IMPROVDIFFCOMPUTE]);
-    fprintf(FdBalance, "MultiDiff-imbl = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFWAIT], CPU_SymbolImbalance[CPU_IMPROVDIFFWAIT]);
-    fprintf(FdBalance, "MultiDiff-comm = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFCOMM], CPU_SymbolImbalance[CPU_IMPROVDIFFCOMM]);
-    fprintf(FdBalance, "MultiDiff-misc = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFMISC], CPU_SymbolImbalance[CPU_IMPROVDIFFMISC]);
     fprintf(FdBalance, "Miscellaneous  = '%c' / '%c'\n", CPU_Symbol[CPU_MISC], CPU_SymbolImbalance[CPU_MISC]);
-    /* Step-15-era buckets surfaced during the GPU optimization pass. */
-    fprintf(FdBalance, "GPU ngb-build  = '%c' / '%c'\n", CPU_Symbol[CPU_GPU_NGB_BUILD],     CPU_SymbolImbalance[CPU_GPU_NGB_BUILD]);
-    fprintf(FdBalance, "SIDX refresh   = '%c' / '%c'\n", CPU_Symbol[CPU_SIDX_REFRESH],      CPU_SymbolImbalance[CPU_SIDX_REFRESH]);
-    fprintf(FdBalance, "Lazy drift hk  = '%c' / '%c'\n", CPU_Symbol[CPU_LAZY_DRIFT],        CPU_SymbolImbalance[CPU_LAZY_DRIFT]);
-    fprintf(FdBalance, "GPU kernel     = '%c' / '%c'\n", CPU_Symbol[CPU_GPU_KERNEL],        CPU_SymbolImbalance[CPU_GPU_KERNEL]);
-    fprintf(FdBalance, "Grav precomp   = '%c' / '%c'\n", CPU_Symbol[CPU_GRAV_PRECOMP],      CPU_SymbolImbalance[CPU_GRAV_PRECOMP]);
-    fprintf(FdBalance, "Force-upd-tree = '%c' / '%c'\n", CPU_Symbol[CPU_FORCE_UPDATE_TREE], CPU_SymbolImbalance[CPU_FORCE_UPDATE_TREE]);
+    /* Neighbor-loop engine and sink sub-phase buckets. */
+    fprintf(FdBalance, "Ngb-list build = '%c' / '%c'\n", CPU_Symbol[CPU_NGB_BUILD],     CPU_SymbolImbalance[CPU_NGB_BUILD]);
+    fprintf(FdBalance, "Pair kernel    = '%c' / '%c'\n", CPU_Symbol[CPU_PAIR_KERNEL],        CPU_SymbolImbalance[CPU_PAIR_KERNEL]);
     fprintf(FdBalance, "Sink env       = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_ENV],          CPU_SymbolImbalance[CPU_SINK_ENV]);
     fprintf(FdBalance, "Sink feed/swk  = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_FEEDSWK],      CPU_SymbolImbalance[CPU_SINK_FEEDSWK]);
     fprintf(FdBalance, "\n");

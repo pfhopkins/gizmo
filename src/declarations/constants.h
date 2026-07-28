@@ -211,8 +211,12 @@
 #define CPU_TREEHMAXUPDATE 9
 #define CPU_DOMAIN         10
 #define CPU_DENSCOMPUTE    11
+/* Slot 12: holds the GRADIENTS bracket (printed as "gradients"); the name is
+ * kept so slot numbers, and the meaning of columns in old logs, do not shift. */
 #define CPU_DENSWAIT       12
 #define CPU_DENSCOMM       13
+/* Slot 14: "misc_hydro" catch-all; also receives the drift charged by the
+ * shared ghost-import helpers, whose callers include non-hydro loops. */
 #define CPU_DENSMISC       14
 #define CPU_HYDCOMPUTE     15
 #define CPU_HYDWAIT        16
@@ -224,6 +228,9 @@
  * reflect its real meaning. No "kicks" bucket exists in legacy CPU_Step;
  * kick wall time falls into CPU_MISC by default. */
 #define CPU_FIND_TIMESTEPS 20
+/* Slot 21: RETIRED. The potential is computed in-tree together with the force,
+ * so no separate potential phase exists and nothing charges this bucket. The
+ * slot number is kept so old logs and parsers keep their column meaning. */
 #define CPU_POTENTIAL      21
 #define CPU_MESH           22
 #define CPU_PEANO          23
@@ -250,19 +257,19 @@
 #define CPU_IMPROVDIFFWAIT    44
 #define CPU_IMPROVDIFFCOMM    45
 #define CPU_RTNONFLUXOPS  46
-/* Categories repurposed from the original CPU_DUMMY00..10 slots to track
- * GPU-era costs surfaced during the step-15 optimization pass. Single double
- * increment per call site — same overhead as any existing CPU_Step bucket,
- * unconditional (unlike STEP_PHASES which is env-gated). */
-#define CPU_GPU_NGB_BUILD     47  /* GPU CSR neighbor-list build (gpu_ngb_list_build) */
-#define CPU_SIDX_REFRESH      48  /* Attack-B SIDX drift-time incremental refresh */
-#define CPU_LAZY_DRIFT        49  /* Attack-C lazy-drift hook (drift neighbors before kernel) */
-#define CPU_GRAV_PRECOMP      50  /* gravity per-step precompute (active list, scratch alloc, kernel setup) */
-#define CPU_FORCE_UPDATE_TREE 51  /* force_update_tree (kick propagation through existing tree) */
+/* Categories carved from the original CPU_DUMMY00..10 slots. One double
+ * increment per call site — the same cost as any other CPU_Step bucket.
+ * Slots marked "reserved" have no writer; they are kept so slot numbers, and
+ * therefore the meaning of columns in existing logs, never shift. */
+#define CPU_NGB_BUILD         47  /* neighbor-list (CSR) construction, all callers */
+#define CPU_SIDX_REFRESH      48  /* reserved: never charged */
+#define CPU_LAZY_DRIFT        49  /* reserved: never charged */
+#define CPU_GRAV_PRECOMP      50  /* reserved: never charged */
+#define CPU_FORCE_UPDATE_TREE 51  /* reserved: never charged */
 #define CPU_SINK_ENV          52  /* sink_environment GPU kernel + scatter */
 #define CPU_SINK_FEEDSWK      53  /* sink_feed + sink_swallow_and_kick combined */
-#define CPU_GPU_KERNEL        54  /* combined density/gradient/hydro GPU kernel parallel_for+fence time */
-#define CPU_DUMMY08           55  /* reserved */
+#define CPU_PAIR_KERNEL       54  /* neighbor-loop pair-kernel launch + fence (runner only) */
+#define CPU_GHOSTIMPORT       55  /* imported-ghost exchange, all callers (hydro, gravity, sinks, feedback) */
 #define CPU_DUMMY09           56  /* reserved */
 #define CPU_DUMMY10           57  /* reserved */
 
