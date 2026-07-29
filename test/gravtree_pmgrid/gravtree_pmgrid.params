@@ -4,7 +4,7 @@
 % No COOLING/METALS — clean gravity+hydro only.
 %
 InitCondFile                       ../gmc_cooling/gmc_cooling_ics
-OutputDir                          output_gpu
+OutputDir                          output
 PartAllocFactor                    10
 TimeMax                            0.05
 TimeBetSnapshot                    0.025

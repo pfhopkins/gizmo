@@ -8,8 +8,8 @@
 %-------------------------------------------------------------------------
 
 %----  Relevant files (filenames and directories)
-InitCondFile  gmc_cooling_ics
-OutputDir     output_phase5_cpu
+InitCondFile  ../gmc_cooling/gmc_cooling_ics
+OutputDir output
 
 %---- File formats (input and output)
 ICFormat    3  % 1=unformatted (gadget) binary, 3=hdf5, 4=cluster
@@ -26,7 +26,7 @@ NumFilesWrittenInParallel   1  % must be < N_processors & power of 2
 
 %---- Output frequency 
 TimeOfFirstSnapshot     0.  % time (code units) of first snapshot
-TimeBetSnapshot         0.1  % time between (if OutputListOn=0), code units
+TimeBetSnapshot  0.025
 TimeBetStatistics       2.52e-02 % time between additional statistics (e.g. energy)
 
 %---- CPU run-time and checkpointing time-limits
@@ -37,7 +37,7 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0    % Beginning of the simulation
-TimeMax 0.001
+TimeMax  0.025
 
 %---- Maximum and minimum timesteps allowed
 MaxSizeTimestep         2.52e-02  % in code units, set for your problem
@@ -247,3 +247,5 @@ AGS_MaxNumNgbDeviation  0.10  % tolerance in Nngb (make larger than gas)
 %--- Dedner 2002 div-cleaning parameters
 DivBcleaningParabolicSigma   1.0 % (3D~0.7-1.0,2D~0.2-0.3)
 DivBcleaningHyperbolicSigma  1.0 % (~1)
+
+TreeRebuild_ActiveFraction         0.005

@@ -1,7 +1,7 @@
 ########################################
 # hernquist_sidm test — DM_SIDM activating test for the B2 AGSForce GPU port.
 # Kokkos/GPU variant (default). For a CPU reference build, use SYSTYPE=MacBookCellar
-# (non-Kokkos) or Config_cpu_reference.sh.
+# (non-Kokkos) or Config_reference.sh.
 ########################################
 
 

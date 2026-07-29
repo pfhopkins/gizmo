@@ -1,9 +1,9 @@
-InitCondFile                       ./isodisk_mechfb_sinks_ics_seeded
-OutputDir                          output_cpu_phase2c
-TimeMax                            1e-5
+InitCondFile                       ./thermalfb_snap003
+OutputDir                          output
+TimeMax                            0.0301
 BoxSize                            200
-TimeBetSnapshot                    1e-5
-MaxSizeTimestep                    0.001
+TimeBetSnapshot                    0.005
+MaxSizeTimestep                    0.0005
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
 UnitLength_in_cm                   3.085678e+21
@@ -40,12 +40,3 @@ ResubmitCommand                    none
 TreeRebuild_ActiveFraction         0.005
 CoolingTablePath                   ./TREECOOL
 SpeciesAbundPath                   ./spcool_tables/spcool_
-SeedSinkPerUnitMass                1e-4
-
-SeedSinkMass                       1.0e-7
-SinkAccretionFactor                1.0
-SinkEddingtonFactor                1.0
-SinkNgbFactor                      3.0
-SinkMaxAccretionRadius             0.02
-SinkRadiativeEfficiency            0.1
-SinkFeedbackFactor                 1.0

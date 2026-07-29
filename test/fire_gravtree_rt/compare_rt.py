@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Compare GPU vs CPU RT outputs from the fire_gravtree_rt test.
+"""Compare RT outputs from two fire_gravtree_rt runs of the same params.
+
+Usage: compare_rt.py [reference_dir] [test_dir]   (defaults: output_reference output_kokkos)
+
+The two runs use the same Config.sh and the same fire_gravtree_rt.params; they
+differ only in which build produced them (see README.md), so run one, rename
+output/, then run the other.
 
 PhotonEnergy (= Rad_E_gamma) is the snapshot-level output of RT_USE_GRAVTREE_SAVE_RAD_ENERGY.
-Matches particles by ParticleID. Uses scale-normalized metric: max|diff|/max|cpu|.
+Matches particles by ParticleID. Uses scale-normalized metric: max|diff|/max|reference|.
 """
 import h5py, numpy as np, sys, os
 
@@ -21,8 +27,11 @@ def load_snap(outdir, snap_idx):
     f.close()
     return data
 
-cpu = load_snap("output_cpu", SNAP)
-gpu = load_snap("output_gpu", SNAP)
+REF_DIR = sys.argv[1] if len(sys.argv) > 1 else "output_reference"
+TEST_DIR = sys.argv[2] if len(sys.argv) > 2 else "output_kokkos"
+
+cpu = load_snap(REF_DIR, SNAP)
+gpu = load_snap(TEST_DIR, SNAP)
 
 if 'ids' not in cpu or 'ids' not in gpu:
     print("ERROR: missing ParticleIDs"); sys.exit(1)
@@ -75,6 +84,6 @@ for field in sorted(fields_checked):
 
 print()
 if all_pass:
-    print("RESULT: PASS — GPU RT matches CPU within 1e-4")
+    print("RESULT: PASS — RT matches the reference within 1e-4")
 else:
     print("RESULT: FAIL — see above"); sys.exit(1)

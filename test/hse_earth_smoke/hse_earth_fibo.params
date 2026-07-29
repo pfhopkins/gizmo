@@ -1,0 +1,62 @@
+% HSE Earth-analog smoke test — Phase 17h IC validation gate.
+% Earth-mass, olivine mantle (68%) + iron core (32%), self-gravity ON,
+% Tillotson EOS, all CGS code units.  Goal: body remains in HSE for >=10 t_dyn.
+% t_dyn(surface) ~ 810 s -> TimeMax = 1e4 s = ~12 t_dyn.
+
+InitCondFile                       hse_earth_fibo_ics
+OutputDir                          output_fibo
+SnapshotFileBase                   snapshot
+
+TimeBegin                          0.0
+TimeMax                            800.0
+TimeBetSnapshot                    100.0
+TimeBetStatistics                  100.0
+OutputListOn                       0
+
+MaxSizeTimestep                    5.0
+MinSizeTimestep                    1.0e-6
+CourantFac                         0.3
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+MaxHsml                            1.0e9
+
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+
+SofteningGas                       1.0e7
+SofteningHalo                      1.0e7
+SofteningDisk                      1.0e7
+SofteningBulge                     1.0e7
+SofteningStars                     1.0e7
+SofteningBndry                     1.0e7
+
+MaxMemSize                         1500
+PartAllocFactor                    5
+BufferSize                         100
+
+ResubmitOn                         0
+ResubmitCommand                    none
+
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% Tillotson params for slot [0] (universal fallback). Per-CompositionType
+% slots (1..6) populated by tillotson_eos_init() built-in table — particles
+% with CompositionType=3 (iron) and 5 (olivine) use those slots automatically.
+% Slot [0] gets olivine values to match the dominant outer material.
+Tillotson_EOS_params_a             0.5
+Tillotson_EOS_params_b             1.4
+Tillotson_EOS_params_u_0           5.5e12
+Tillotson_EOS_params_rho_0         3.5
+Tillotson_EOS_params_A             1.31e12
+Tillotson_EOS_params_B             4.9e11
+Tillotson_EOS_params_u_s           4.5e10
+Tillotson_EOS_params_u_s_prime     1.5e11
+Tillotson_EOS_params_alpha         5.0
+Tillotson_EOS_params_beta          5.0
+Tillotson_EOS_params_mu            8.13e11
+Tillotson_EOS_params_Y0            9.0e10

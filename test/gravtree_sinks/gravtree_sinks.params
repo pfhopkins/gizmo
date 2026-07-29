@@ -1,5 +1,5 @@
 InitCondFile                       ./thermalfb_snap003
-OutputDir                          output_cpu_1step_np2
+OutputDir                          output
 TimeMax                            2e-5
 BoxSize                            200
 TimeBetSnapshot                    2e-5

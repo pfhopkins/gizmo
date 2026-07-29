@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Compare GPU vs CPU outputs from the gravtree_sinks Phase 2-B test.
+"""Compare gravity forces between two gravtree_sinks runs of the same params.
 
-Validates that SINK_CALC_DISTANCES + SINGLE_STAR_* GPU walk gives the same
-gravity forces as the CPU walk at snapshot_000 (first gravity call from
-identical positions, before trajectory divergence).
+Usage: compare_sinks.py [reference_dir] [test_dir]  (defaults: output_reference output_kokkos)
 
-Validation metrics (scale-normalized: max|diff|/max|cpu|):
+Validates that the SINK_CALC_DISTANCES + SINGLE_STAR_* walk gives the same
+gravity forces in both builds at snapshot_000 (first gravity call from
+identical positions, before trajectory divergence). Both runs use the same
+Config.sh and gravtree_sinks.params; see README.md for the two-build workflow.
+
+Validation metrics (scale-normalized: max|diff|/max|reference|):
   - PartType0/Coordinates  : position unchanged at snap_000 (< 1e-12)
   - PartType0/Velocities   : velocity kick (< 1e-8 reldiff from force accumulation)
   - PartType5/Coordinates  : sink position unchanged (< 1e-12)
@@ -14,8 +17,8 @@ Validation metrics (scale-normalized: max|diff|/max|cpu|):
 
 import h5py, numpy as np, sys, os
 
-CPU_DIR = "output_cpu_1step_np2"
-GPU_DIR = "output_gpu_1step_np2"
+CPU_DIR = sys.argv[1] if len(sys.argv) > 1 else "output_reference"
+GPU_DIR = sys.argv[2] if len(sys.argv) > 2 else "output_kokkos"
 SNAP    = 0
 
 
@@ -78,7 +81,7 @@ gpu = load_snap(GPU_DIR, SNAP)
 
 GAS_TOLS = {
     "Coordinates": 1e-12,
-    "Velocities":  1e-4,   # FP rounding from GPU vs CPU walk ordering; Phase 2-A baseline ~6e-5
+    "Velocities":  1e-4,   # FP rounding from walk ordering differing between builds; measured ~6e-5
     "Min_Distance_to_Sink": 1e-6,
     "Min_Sink_Approach_Time": 1e-4,
     "Min_Sink_FeedbackTime": 1e-4,
@@ -89,7 +92,7 @@ SINK_TOLS = {
 }
 
 all_pass = True
-print(f"=== gravtree_sinks Phase 2-B: snapshot_{SNAP:03d} CPU vs GPU ===")
+print(f"=== gravtree_sinks: snapshot_{SNAP:03d} CPU vs GPU ===")
 if "PartType0" in cpu and "PartType0" in gpu:
     all_pass &= compare_ptype(cpu["PartType0"], gpu["PartType0"], "PartType0 (gas)", GAS_TOLS)
 else:
@@ -101,6 +104,6 @@ else:
 
 print()
 if all_pass:
-    print("RESULT: PASS — GPU sink walk matches CPU within tolerances")
+    print("RESULT: PASS — sink walk matches the reference within tolerances")
 else:
     print("RESULT: FAIL — see above"); sys.exit(1)
