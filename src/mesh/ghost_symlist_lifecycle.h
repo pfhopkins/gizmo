@@ -198,21 +198,6 @@ static inline void gizmo_hydro_density_prep_ghosts(double safety)
     cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
-/* Epilogue for density(): if h grew beyond the ghost pool during density
-   iteration, re-exchange with the converged hmax so subsequent neighbour
-   ops have a complete ghost set.  Internally guarded (NTask==1 returns 0).
-   ALL-TYPES — must match the prep. AGS / DM-dispersion / fuzzy-DM density
-   iterations call this and need cross-type ghosts. */
-static inline void gizmo_density_redo_ghosts_if_needed(double safety)
-{
-    if(ghost_exchange_needs_redo()) {
-        double t0 = my_second();
-        ghost_exchange_cleanup();
-        ghost_exchange(safety);
-        cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
-    }
-}
-
 /* Fresh broad downstream-handoff import after the runner-based density()
    path — IMPORT ONLY, NO DRIFT. The iterative runner's
    Mode A imports an EXACT-QUERY ghost pool sized to current iter actives+
@@ -220,9 +205,9 @@ static inline void gizmo_density_redo_ghosts_if_needed(double safety)
    unsuitable as the downstream pool consumed by cellcorrections /
    gradients / hydro_force. Legacy density() handled this implicitly
    because its top-of-routine prep_ghosts was already a broad pool that
-   persisted through finalize + redo_ghosts_if_needed (cleanup+import only,
-   no drift). The runner path cleans its exact-query pool at runner-return;
-   this helper then rebuilds the broad downstream pool from converged radii.
+   persisted through finalize. The runner path cleans its exact-query pool at
+   runner-return; this helper then rebuilds the broad downstream pool from
+   converged radii.
    Cleanup-first is safe even if no pool exists (ghost_exchange_cleanup
    early-returns on NumPart_before_ghost < 0).
 
@@ -243,19 +228,6 @@ static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safet
     double t0 = my_second();
     ghost_exchange_hydro_oneway(safety);
     cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
-}
-
-/* Hydro-typed companion to gizmo_density_redo_ghosts_if_needed: gas-only
-   pool, one-way criterion. Use from hydro density() iteration so the redo
-   matches the gas-only one-way prep (gizmo_hydro_density_prep_ghosts). */
-static inline void gizmo_hydro_density_redo_ghosts_if_needed(double safety)
-{
-    if(ghost_exchange_needs_redo()) {
-        double t0 = my_second();
-        ghost_exchange_cleanup();
-        ghost_exchange_hydro_oneway(safety);
-        cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
-    }
 }
 
 /* Corridor/subcycle-INTERNAL shared-topology build (no direct consumer

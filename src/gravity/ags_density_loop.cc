@@ -749,8 +749,7 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *      ghost_exchange_cleanup() + gizmo_density_prep_ghosts(). The runner's
  *      internal `rebuild_mode_a_arena_and_ctx_for_current_active_union`
  *      handles per-iter ghost regrow on Mode A; Mode B P2P doesn't need
- *      ghosts. So the legacy outer do-while around
- *      gizmo_density_redo_ghosts_if_needed is GONE — single runner call.
+ *      ghosts, so no outer re-exchange loop is needed around the call.
  *
  *   5. run_neighbor_loop_iterative<AgsDensitySpec>(args) — owns the iter
  *      loop, per-iter pair_kernel dispatch, per-iter after_iter call which

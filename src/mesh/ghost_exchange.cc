@@ -631,15 +631,6 @@ static void glt_cache_refit_from_particles(void)
     g_glt_cache_refits++;
 }
 
-/* saved per-leaf hmax at time of ghost exchange, for h-growth detection */
-static double *saved_leaf_hmax = NULL;
-static int saved_leaf_hmax_n = 0;
-/* Supply mask used to build saved_leaf_hmax. ghost_exchange_needs_redo() must
- * recompute the per-tile hmax with the SAME mask so its pool + tiling match the
- * baseline by construction (a mismatched pool would change the tile count and
- * force spurious / divergent redos). Overwritten on every tile build. */
-static unsigned int saved_tile_supply_mask = GHOST_TYPE_ALL;
-
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
 static inline int ghost_toptree_leaf(peanokey key)
@@ -840,10 +831,10 @@ extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec)
     ghost_exchange_impl(spec);
 }
 
-/* Tile-build SSOT, shared by the tile ghost-exchange pool and
- * ghost_exchange_needs_redo() so both compute an identical pool + tiling + per-
- * tile supply hmax. Particles are chunked GHOST_TILE_TARGET at a time in pool
- * order; baseline-create and redo-recompute MUST use the same value. */
+/* Tile-build SSOT for the tile ghost-exchange pool: particles are chunked
+ * GHOST_TILE_TARGET at a time in pool order, giving the pool + tiling + per-tile
+ * supply hmax. Any second consumer of this tiling must use the same value or the
+ * two disagree about which particles share a tile. */
 static constexpr int GHOST_TILE_TARGET = 64;
 
 /* Does particle i join the tile supply pool? Mass-positive + type in supply_mask. */
@@ -1024,8 +1015,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
             /* Rank owns no supply-pool particles for this mask -> empty sentinel
              * tile. Zero bbox/hmax, NO pool[] access (pool may be a 1-elt stub).
              * active_count=0 + hmax=0 means it neither needs nor supplies ghosts
-             * downstream; ghost_exchange_needs_redo() uses the same empty-pool
-             * convention so baselines stay consistent. */
+             * downstream. */
             for(k = 0; k < 3; k++) { local_meta[t].lo[k] = 0; local_meta[t].hi[k] = 0; }
             continue;
         }
@@ -1109,15 +1099,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
             gx_topn_calls++;
         }
     }
-
-    /* Save per-tile hmax + the supply mask for h-growth detection. The mask is
-     * the contract ghost_exchange_needs_redo() recomputes against (SSOT pool +
-     * effective radius), so its tiling matches this baseline by construction. */
-    if(saved_leaf_hmax) {free(saved_leaf_hmax); saved_leaf_hmax = NULL;}
-    saved_leaf_hmax_n = local_ntiles;
-    saved_tile_supply_mask = supply_mask;
-    saved_leaf_hmax = (double *) malloc(local_ntiles * sizeof(double));
-    for(int t = 0; t < local_ntiles; t++) saved_leaf_hmax[t] = local_meta[t].hmax;
 
     double t_ghost_tiles = timediff(t_ghost_start, my_second());
 
@@ -3594,95 +3575,6 @@ void ghost_exchange_hydro_oneway(double safety_factor)
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway", -1, NULL, NULL,
                                        MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 0};
     ghost_exchange_impl(&sp);
-}
-
-
-/*!
- * \brief Check whether any leaf's hmax grew since the last ghost exchange.
- *
- * Recomputes per-leaf hmax from current particle KernelRadius values and
- * compares against the values saved during the last ghost_exchange() call.
- * Returns 1 if any leaf's hmax grew by more than 10%, meaning the ghost
- * pool may be incomplete and a re-exchange is needed.
- */
-int ghost_exchange_needs_redo(void)
-{
-    /* NTask is global + uniform, so every rank returns together here. */
-    if(NTask <= 1) return 0;
-
-    /* COLLECTIVE-SAFETY CONTRACT: this routine ends in an MPI_Allreduce that
-     * every rank MUST reach. NO rank may return early on a local condition
-     * (no baseline, tile-count mismatch, ...) or the others deadlock. Each
-     * such condition sets needs_redo_local and falls through to the collective.
-     *
-     * The recompute uses the SAME pool predicate, effective radius, and tile
-     * size the baseline used (saved_tile_supply_mask) so the tiling is identical
-     * by construction — a divergent pool would change the tile count per rank
-     * and force spurious / asymmetric redos. */
-    /* Two independent local conditions, OR-reduced in ONE collective:
-     *   GROWTH  — this rank measured tile-hmax growth (or its tiling changed)
-     *   MISSING — this rank has no baseline, so it CANNOT verify its coverage
-     * Either bit set on ANY rank forces a global redo. MISSING fails
-     * conservatively: "unable to verify" must not read as "verified unchanged."
-     * A direct request-driven exchange leaves no tile baseline today; the
-     * backend-neutral baseline (tracked) will remove that MISSING case. */
-    enum { GHOST_REDO_GROWTH = 1, GHOST_REDO_MISSING_BASELINE = 2 };
-    int local_flags = 0;
-    double *current_hmax = NULL;
-    int ntiles = 0;
-    const int have_baseline = (saved_leaf_hmax && saved_leaf_hmax_n > 0);
-
-    if(!have_baseline) {
-        local_flags |= GHOST_REDO_MISSING_BASELINE;
-    } else {
-        int nlocal = (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart;
-        int num_pool = 0, i;
-        for(i = 0; i < nlocal; i++) { if(ghost_tile_pool_includes(i, saved_tile_supply_mask)) num_pool++; }
-        ntiles = (num_pool + GHOST_TILE_TARGET - 1) / GHOST_TILE_TARGET;
-        if(ntiles < 1) ntiles = 1;
-
-        if(ntiles != saved_leaf_hmax_n) {
-            local_flags |= GHOST_REDO_GROWTH; /* tiling changed -> redo */
-        } else {
-            current_hmax = (double *) malloc(ntiles * sizeof(double));
-            memset(current_hmax, 0, ntiles * sizeof(double));
-            int p = 0;
-            for(i = 0; i < nlocal; i++) {
-                if(!ghost_tile_pool_includes(i, saved_tile_supply_mask)) continue;
-                int t = p / GHOST_TILE_TARGET;
-                if(t >= ntiles) t = ntiles - 1;
-                double hi = ghost_tile_effective_radius(i, saved_tile_supply_mask);
-                if(hi > current_hmax[t]) current_hmax[t] = hi;
-                p++;
-            }
-            for(int t = 0; t < ntiles; t++) {
-                if(current_hmax[t] > saved_leaf_hmax[t] * 1.1) { local_flags |= GHOST_REDO_GROWTH; break; }
-            }
-        }
-    }
-
-    /* Single collective: OR the flags so either condition on any rank wins. */
-    int global_flags = 0;
-    MPI_Allreduce(&local_flags, &global_flags, 1, MPI_INT, MPI_BOR, MPI_COMM_WORLD);
-    int needs_redo = (global_flags != 0) ? 1 : 0;
-
-    if(needs_redo && ThisTask == 0) {
-        if(global_flags & GHOST_REDO_MISSING_BASELINE) {
-            PRINT_STATUS("Ghost exchange redo forced: a rank lacks a tile baseline (conservative re-exchange).");
-        } else if(current_hmax) {
-            double max_growth = 0;
-            for(int t = 0; t < ntiles; t++) {
-                if(saved_leaf_hmax[t] > 0) {
-                    double growth = (current_hmax[t] - saved_leaf_hmax[t]) / saved_leaf_hmax[t];
-                    if(growth > max_growth) max_growth = growth;
-                }
-            }
-            PRINT_STATUS("Ghost exchange redo needed: rank-0 local max tile hmax growth = %.1f%%", 100.0 * max_growth);
-        }
-    }
-
-    if(current_hmax) free(current_hmax);
-    return needs_redo;
 }
 
 

@@ -1370,9 +1370,9 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  *   (7) gizmo_hydro_density_import_ghosts_fresh_no_drift: build the broad
  *       downstream hydro-oneway ghost pool consumed by cellcorrections_calc,
  *       hydro_gradient_calc, hydro_force. the iterative
- *       runner's exact-query Mode A pool is too narrow / wrong shape to
- *       be evolved by redo_ghosts_if_needed; we build the broad pool fresh
- *       from converged radii after the runner has cleaned its internal pool.
+ *       runner's exact-query Mode A pool is too narrow / wrong shape to grow
+ *       into the downstream one, so we build the broad pool fresh from
+ *       converged radii after the runner has cleaned its internal pool.
  *       IMPORT-ONLY (no drift): post-density move_particles at All.Ti_Current
  *       breaks downstream hydro's drift contract (SP4 abort
  *       'no prediction into past allowed').
@@ -1399,12 +1399,12 @@ void density(void)
      *         on touched candidates only.
      *       - Downstream consumers (cellcorrections_calc, hydro_gradient_calc,
      *         hydro_force) consume a broad hydro-oneway pool built fresh
-     *         post-finalize via gizmo_hydro_density_prep_ghosts_fresh at
-     *         step (7) below. The runner's narrow exact-query Mode A pool
+     *         post-finalize via gizmo_hydro_density_import_ghosts_fresh_no_drift
+     *         at step (7) below. The runner's narrow exact-query Mode A pool
      *         is wrong shape for downstream — fresh broad rebuild from
-     *         converged radii is the correct handoff. (Replaces legacy's
-     *         redo_ghosts_if_needed-from-existing-broad-pool idiom, which
-     *         only works when the pre-density pool was itself broad.) */
+     *         converged radii is the correct handoff. (The older idiom grew the
+     *         pre-density pool instead, which only works when that pool was
+     *         itself broad.) */
     const double gsl_safety = gizmo_ghost_safety_factor();
 
     /* (2) Build active list. */

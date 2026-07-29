@@ -433,7 +433,6 @@ void ghost_exchange_hydro_oneway(double safety_factor);
 struct ghost_exchange_spec_t;
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec);
 void ghost_exchange_cleanup(void);
-int ghost_exchange_needs_redo(void);
 /* True iff a ghost import is live (pool materialized, between import and cleanup);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
