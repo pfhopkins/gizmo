@@ -3560,11 +3560,19 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
  * — see ghost_symlist_lifecycle.h. */
 void ghost_exchange(double safety_factor)
 {
-    /* supply_band_dominated=0: all-types supply spans every particle type, whose
-     * reaches are not yet shown bounded by the per-type opener band. Stays on the
-     * broadcast path until that bound is established per type. */
+    /* supply_band_dominated=1: this spec's reach is P[j].KernelRadius (the legacy
+     * all-types policy) for every type, times safety_factor (checked <= 1 at
+     * dispatch). The per-type opener band is seeded per particle from the
+     * conservative source union capped at All.MaxKernelRadius (ForceSoftening
+     * uncapped; force_hmax_per_type_particle_radius) and exchanged cross-rank on
+     * the nodes the export walk descends — so under the standing invariant that
+     * no P[].KernelRadius of any type exceeds All.MaxKernelRadius (drift clamps
+     * in predict.cc; the density-convergence maxsoft clamp; the sink accretion-
+     * radius cap in ags_rkern.cc), the band dominates this reach per type.
+     * Any future physics path that writes a non-gas KernelRadius must preserve
+     * that invariant or routed discovery under-imports. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 0};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 1};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro(double safety_factor)
