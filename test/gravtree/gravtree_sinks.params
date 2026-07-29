@@ -1,4 +1,4 @@
-InitCondFile                       ./thermalfb_snap003
+InitCondFile                       ../isodisk_thermalfb/isodisk_thermalfb_ics
 OutputDir                          output_sinks
 TimeMax                            2e-5
 BoxSize                            200
@@ -38,8 +38,8 @@ MaxMemSize                         8000
 ResubmitOn                         0
 ResubmitCommand                    none
 TreeRebuild_ActiveFraction         0.005
-CoolingTablePath                   ./TREECOOL
-SpeciesAbundPath                   ./spcool_tables/spcool_
+CoolingTablePath                   ../isodisk_thermalfb/TREECOOL
+SpeciesAbundPath                   ../isodisk_thermalfb/spcool_tables/spcool_
 
 SeedSinkMass                       1.0e-7
 SinkAccretionFactor                1.0

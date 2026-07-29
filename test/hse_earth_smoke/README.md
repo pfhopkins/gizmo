@@ -44,6 +44,7 @@ The IC builders import from `initial_conditions/eos_tools` (`hse_solver`,
 by `test/aneos_giant_impact`.
 
 ## Files
+
 - `make_ics.py`, `make_ics_basalt.py`, `make_ics_fibo.py`, `make_ics_fibo_hguess.py` — IC builders (see table)
 - `analyze_hse.py` — HSE diagnostics over an output directory
 - `Config.sh` — default build (`EOS_TILLOTSON`, `ADAPTIVE_GRAVSOFT_FORGAS`, double precision in/out)

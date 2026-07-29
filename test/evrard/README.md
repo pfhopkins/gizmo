@@ -35,6 +35,7 @@ but its test file was a byte-identical copy that hardcoded `test_name =
 `FORALL` at all. It is a Config variant, and is now stored as one.
 
 ## Files
+
 - `Config.sh`, `Config_forall.sh` — build configs (see table)
 - `evrard.params` — the default run
 - `evrard_agswalk.params` — short gravity-walk validation run
