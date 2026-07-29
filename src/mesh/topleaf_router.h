@@ -68,7 +68,18 @@ struct gx_supply_pool_view {
     int          radius_policy_when_built;
     double       j_scale_when_built;
 };
-int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out);
+/* Which parts of the supply cache a consumer requires.  IDENTITY (pool,
+ * pool_types, num_pool) is membership only: type-mask + positive mass, so it
+ * stays valid as particles move.  GEOMETRY (compact_xyzh, tiles) carries
+ * positions and the baked per-member reach, and is built only for the walkers
+ * that need it.  A consumer that reads geometry without requesting it would
+ * silently read NULL, so the request is mandatory and checked. */
+#define GX_POOL_IDENTITY  0x1u
+#define GX_POOL_GEOMETRY  0x2u
+
+/* Fills `out` and returns num_pool, or -1 if the cache cannot satisfy
+ * `required_caps` (absent, stale-awaiting-refit, or that part not built). */
+int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out, unsigned int required_caps);
 
 /* --- geometry cache --- */
 int  topleaf_router_geometry_acquire(void);     /* 0 = built & valid; nonzero = invalid (fall back to broadcast) */

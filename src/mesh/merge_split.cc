@@ -1157,6 +1157,20 @@ void rearrange_particle_sequence(void)
     struct gasVariables gasVarsSave;
 #endif
 
+    /* Whether this call actually changed the local particle set: creations and
+     * eliminations change membership, and the gas-block pass moves entries
+     * between slots. Cached supply pools keyed on membership/order are only
+     * invalidated when one of these is true, so a call that finds nothing to do
+     * costs them nothing. Captured here because the counters are consumed below. */
+    int identity_changed = 0;
+    if(Gas_split > 0) identity_changed = 1;
+#ifdef GALSF
+    if(Stars_converted) identity_changed = 1;
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    if(Grains_promoted) identity_changed = 1;
+#endif
+
     int do_loop_check = 0;
     if(Gas_split>0)
     {
@@ -1287,6 +1301,13 @@ void rearrange_particle_sequence(void)
 #ifdef SINK_PARTICLES
     All.TotSinks -= tot_sink_elim;
 #endif
+
+    if(count_elim) identity_changed = 1;
+    /* Rank-local on purpose: each rank caches its own supply pool and reaches this
+     * point independently, so a collective here would be both wrong and a
+     * deadlock risk. The consumer decides what to rebuild; nothing is freed from
+     * here. */
+    if(identity_changed) ghost_exchange_supply_identity_changed("rearrange_particle_sequence");
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}

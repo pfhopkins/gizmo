@@ -451,7 +451,7 @@ extern "C" int topleaf_router_band_build(void)
     if(!g_geom_valid) return 1;   /* need leaf geometry/topology first */
 
     struct gx_supply_pool_view v;
-    int num_pool = ghost_exchange_supply_pool_view(&v);
+    int num_pool = ghost_exchange_supply_pool_view(&v, GX_POOL_IDENTITY | GX_POOL_GEOMETRY);
     if(num_pool < 0) return 1;     /* supply cache invalid -> band unavailable */
 
     const int ntl = g_geom_ntl;
@@ -567,7 +567,7 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
 
     /* --- Gate 1: geometry + supply present on ALL ranks (benign not-ready) --- */
     struct gx_supply_pool_view v;
-    int num_pool   = ghost_exchange_supply_pool_view(&v);
+    int num_pool   = ghost_exchange_supply_pool_view(&v, GX_POOL_IDENTITY | GX_POOL_GEOMETRY);
     int avail_local = (g_geom_valid && num_pool >= 0) ? 1 : 0;
     int avail_all   = 0;
     MPI_Allreduce(&avail_local, &avail_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);

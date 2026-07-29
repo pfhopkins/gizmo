@@ -159,7 +159,7 @@ int main(int argc, char **argv)
   for(i = 0; i < CPU_PARTS; i++) {All.CPU_Sum[i] = CPU_Step[i] = 0;}
 
   CPUThisRun = 0;
-  WallclockTime = my_second();
+  cpu_chain_sync(my_second());
 
   begrun();			/* set-up run  */
 

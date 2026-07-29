@@ -749,8 +749,7 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *      ghost_exchange_cleanup() + gizmo_density_prep_ghosts(). The runner's
  *      internal `rebuild_mode_a_arena_and_ctx_for_current_active_union`
  *      handles per-iter ghost regrow on Mode A; Mode B P2P doesn't need
- *      ghosts. So the legacy outer do-while around
- *      gizmo_density_redo_ghosts_if_needed is GONE — single runner call.
+ *      ghosts, so no outer re-exchange loop is needed around the call.
  *
  *   5. run_neighbor_loop_iterative<AgsDensitySpec>(args) — owns the iter
  *      loop, per-iter pair_kernel dispatch, per-iter after_iter call which
@@ -789,7 +788,7 @@ void ags_density(void)
     }
 
     CPU_Step[CPU_MISC] += measure_time();
-    double t00_truestart = my_second();
+    double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
 
     /* Canonical host All accessor — stylistic intent-tag for host-snapshot
      * reads in this scope. The redirect is device-pass-only,
@@ -885,8 +884,8 @@ void ags_density(void)
         /* No globally-active AGS particles. Skip the runner call entirely
          * (runner asserts num_subgroups >= 1 at entry). */
         myfree(AGS_Prev);
-        double t1 = WallclockTime = my_second();
-        CPU_Step[CPU_AGSDENSMISC] += timediff(t00_truestart, t1);
+        double t1 = my_second(); cpu_chain_sync(t1);
+        CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00_truestart, t1), child0_span);
         return;
     }
 
@@ -965,8 +964,8 @@ void ags_density(void)
     myfree(AGS_Prev);
 
     /* (7) Timing accounting. */
-    double t1 = WallclockTime = my_second();
-    double timeall = timediff(t00_truestart, t1);
+    double t1 = my_second(); cpu_chain_sync(t1);
+    double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
     /* NOT IN SCOPE: refined sub-accounting
      * (timecomp/timewait/timecomm split) is a future follow-on. Lump
      * everything in MISC for now — matches the legacy line 458 fallback. */

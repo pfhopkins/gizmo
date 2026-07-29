@@ -45,7 +45,6 @@
  * Caller routing table:
  *
  *   gizmo_density_prep_ghosts          { req=Type0  sup=Type0  r=KernelRadius }
- *   gizmo_density_redo_ghosts_if_needed{ req=Type0  sup=Type0  r=KernelRadius }
  *   gizmo_gradients_prep_symlist       { req=Type0  sup=Type0  r=KernelRadius }
  *   gizmo_gradients_refresh_symlist    { req=Type0  sup=Type0  r=KernelRadius }
  *   sink_environment_loop              { req=Type5  sup=caller mask r=KernelRadius_sink }

@@ -115,6 +115,8 @@ char CPU_SymbolImbalance[CPU_PARTS] = {
     'R', 'S', 'T', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',  'N', 'O'};//, 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'};
 char CPU_String[CPU_STRING_LEN + 1];
 double WallclockTime;		/*!< This holds the last wallclock time measurement for timings measurements */
+double CPU_ChildCharged;
+double CPU_ChildCharged_at_sync;
 int Flag_FullStep;		/*!< Flag used to signal that the current step involves all particles */
 
 

@@ -897,6 +897,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
+    const double cpu_rows_child0 = CPU_ChildCharged;
     /* Defensive guard: a cached SIDX's compact_xyzh / pool only contains the
      * originally-built types. If the caller's type_bitmask differs from the
      * cache's, the walker would return neighbors of types outside the
@@ -1061,6 +1062,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                    type_bitmask, idx_for_stubs ? 1 : 0, sidx_id_eo, num_total);
             fflush(stdout);
         }
+        cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
     }
 
@@ -1856,13 +1858,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double compact_fence  = (num_active > 0) ? timediff(t_compact_launch_out, t_nl3) : 0;
         double noop_launch = timediff(t_noop_launch_in, t_noop_launch_out);
         double noop_fence  = timediff(t_noop_launch_out, t_noop_fence_out);
-        printf("[DIAG_NGL caller=%s tbm=0x%x N=%d Ntot=%d pairs=%d ovflw=%d sidx_cached=%d] "
+        printf("[DIAG_NGL caller=%s tbm=0x%x N=%d Ntot=%d pairs=%lld ovflw=%d sidx_cached=%d] "
                "sidx_dec=%.3f refresh_lnch=%.3f refresh_fnc=%.3f drain=%.3f "
                "noop_lnch=%.4f noop_fnc=%.4f "
                "fused_lnch=%.3f fused_fnc=%.3f scan=%.3f "
                "compact_lnch=%.3f compact_fnc=%.3f free=%.3f total=%.3f\n",
                caller_label ? caller_label : "?", type_bitmask, num_active, num_total,
-               total, overflow_count, sidx_cached_now,
+               (long long)total, overflow_count, sidx_cached_now,
                timediff(t_entry, t_after_sidx),
                refresh_launch, refresh_fence,
                drain_fence,
@@ -2073,6 +2075,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
     HDBG("return");
     #undef HDBG
+    /* Charge list-build wall, less any kernel time already charged inside it,
+     * so the two rows never overlap. */
+    cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
 }
 
 

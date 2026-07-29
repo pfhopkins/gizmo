@@ -333,7 +333,9 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
                 1.0,
                 /* Synthetic harness — legacy KernelRadius-for-all-types reach + scale 1.0. */
                 MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
-                1.0);
+                1.0,
+                /* Probe places particles by hand, so no band bound holds: broadcast. */
+                0);
 
             int local_remote_ghosts = 0;
             if (rank == 0) {

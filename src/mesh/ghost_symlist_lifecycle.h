@@ -61,8 +61,8 @@ static inline void gizmo_density_prep_ghosts(double safety)
     double t1 = my_second();
     ghost_exchange(safety);
     double t_ghost = timediff(t1, my_second());
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* gizmo_request_filtered_ghost_import — drift + caller-list ghost import.
@@ -108,7 +108,8 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
                                                        const double *active_radii,
                                                        double safety,
                                                        mode_b_radius_policy_t radius_policy,
-                                                       double j_radius_scale)
+                                                       double j_radius_scale,
+                                                       int supply_band_dominated)
 {
     double t0 = my_second();
     move_particles(gizmo_host_ti_current());
@@ -135,7 +136,8 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
         (const double (*)[3]) qpos,
         (const double *) qh,
         radius_policy,
-        j_radius_scale
+        j_radius_scale,
+        supply_band_dominated
     };
 
     double t1 = my_second();
@@ -143,8 +145,8 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
     double t_ghost = timediff(t1, my_second());
     free(qh);
     free(qpos);
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* gizmo_request_filtered_ghost_import_fresh — collective-safe variant.
@@ -155,8 +157,12 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
  * ranks can have zero received ghosts while importer ranks have nonzero
  * ghosts, causing only some ranks to enter the collective exchange.
  *
- * Same caller restriction as the base routine: runner-migrated loops MUST
- * NOT call this directly.
+ * Same caller restriction as the base routine: loop/Spec/consumer code whose
+ * dispatch flows through run_neighbor_loop<Spec> MUST NOT call this directly —
+ * the runner is the sanctioned caller and decides, per the chosen path, whether
+ * an imported-ghost prep is needed (Mode B paths skip it entirely). The runner's
+ * Mode-A prep (neighbor_loop_runner.cc) calling this IS the intended path, not a
+ * violation of the restriction.
  */
 static inline int gizmo_request_filtered_ghost_import_fresh(const char *caller_name,
                                                            int search_mode,
@@ -166,12 +172,13 @@ static inline int gizmo_request_filtered_ghost_import_fresh(const char *caller_n
                                                            const double *active_radii,
                                                            double safety,
                                                            mode_b_radius_policy_t radius_policy,
-                                                           double j_radius_scale)
+                                                           double j_radius_scale,
+                                                           int supply_band_dominated)
 {
     ghost_exchange_cleanup();
     gizmo_request_filtered_ghost_import(caller_name, search_mode, supply_type_mask,
                                         active_indices, num_active, active_radii, safety,
-                                        radius_policy, j_radius_scale);
+                                        radius_policy, j_radius_scale, supply_band_dominated);
     return 1;
 }
 
@@ -187,23 +194,8 @@ static inline void gizmo_hydro_density_prep_ghosts(double safety)
     double t1 = my_second();
     ghost_exchange_hydro_oneway(safety);
     double t_ghost = timediff(t1, my_second());
-    CPU_Step[CPU_DENSMISC] += t_drift;
-    CPU_Step[CPU_DENSCOMM] += t_ghost;
-}
-
-/* Epilogue for density(): if h grew beyond the ghost pool during density
-   iteration, re-exchange with the converged hmax so subsequent neighbour
-   ops have a complete ghost set.  Internally guarded (NTask==1 returns 0).
-   ALL-TYPES — must match the prep. AGS / DM-dispersion / fuzzy-DM density
-   iterations call this and need cross-type ghosts. */
-static inline void gizmo_density_redo_ghosts_if_needed(double safety)
-{
-    if(ghost_exchange_needs_redo()) {
-        double t0 = my_second();
-        ghost_exchange_cleanup();
-        ghost_exchange(safety);
-        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
-    }
+    cpu_charge_child(CPU_DENSMISC, t_drift);
+    cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
 /* Fresh broad downstream-handoff import after the runner-based density()
@@ -213,9 +205,9 @@ static inline void gizmo_density_redo_ghosts_if_needed(double safety)
    unsuitable as the downstream pool consumed by cellcorrections /
    gradients / hydro_force. Legacy density() handled this implicitly
    because its top-of-routine prep_ghosts was already a broad pool that
-   persisted through finalize + redo_ghosts_if_needed (cleanup+import only,
-   no drift). The runner path cleans its exact-query pool at runner-return;
-   this helper then rebuilds the broad downstream pool from converged radii.
+   persisted through finalize. The runner path cleans its exact-query pool at
+   runner-return; this helper then rebuilds the broad downstream pool from
+   converged radii.
    Cleanup-first is safe even if no pool exists (ghost_exchange_cleanup
    early-returns on NumPart_before_ghost < 0).
 
@@ -235,20 +227,7 @@ static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safet
     ghost_exchange_cleanup();
     double t0 = my_second();
     ghost_exchange_hydro_oneway(safety);
-    CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
-}
-
-/* Hydro-typed companion to gizmo_density_redo_ghosts_if_needed: gas-only
-   pool, one-way criterion. Use from hydro density() iteration so the redo
-   matches the gas-only one-way prep (gizmo_hydro_density_prep_ghosts). */
-static inline void gizmo_hydro_density_redo_ghosts_if_needed(double safety)
-{
-    if(ghost_exchange_needs_redo()) {
-        double t0 = my_second();
-        ghost_exchange_cleanup();
-        ghost_exchange_hydro_oneway(safety);
-        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
-    }
+    cpu_charge_child(CPU_GHOSTIMPORT, timediff(t0, my_second()));
 }
 
 /* Corridor/subcycle-INTERNAL shared-topology build (no direct consumer

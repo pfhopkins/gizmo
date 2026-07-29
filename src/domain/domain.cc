@@ -222,6 +222,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     // TO: we don't have to call this before merge_and_split particles()
     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
     //rearrange_particle_sequence();
+    const double child0_drift = CPU_ChildCharged;
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
@@ -258,8 +259,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     t_tmp = my_second();
     MPI_Barrier(MPI_COMM_WORLD);
     t_barrier = timediff(t_tmp, my_second());
-    double t_drift_total = timediff(t_drift_start, my_second());
+    const double t_drift_end = my_second();
+    double t_drift_total = cpu_minus_children(timediff(t_drift_start, t_drift_end), child0_drift);
     CPU_Step[CPU_DRIFT] += t_drift_total;
+    cpu_chain_sync(t_drift_end);
     if(ThisTask == 0) {
         printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
                t_mergesplit, t_rearrange, t_drift_loop, t_treefree, t_boxwrap, t_barrier, t_drift_total);
@@ -458,6 +461,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
     LightRepartitionCount++;
 
+    const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     rearrange_particle_sequence();
     t_light_rearrange = timediff(t_light_start, my_second());
@@ -480,8 +484,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
     t_tmp2 = my_second();
     MPI_Barrier(MPI_COMM_WORLD);
     t_light_barrier = timediff(t_tmp2, my_second());
-    double t_light_total = timediff(t_light_start, my_second());
+    const double t_light_end = my_second();
+    double t_light_total = cpu_minus_children(timediff(t_light_start, t_light_end), child0_light);
     CPU_Step[CPU_DRIFT] += t_light_total;
+    cpu_chain_sync(t_light_end);
     if(ThisTask == 0) {
         printf("  domain_light drift breakdown: rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
                t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);

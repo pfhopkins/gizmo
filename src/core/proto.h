@@ -433,7 +433,6 @@ void ghost_exchange_hydro_oneway(double safety_factor);
 struct ghost_exchange_spec_t;
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec);
 void ghost_exchange_cleanup(void);
-int ghost_exchange_needs_redo(void);
 /* True iff a ghost import is live (pool materialized, between import and cleanup);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
@@ -476,6 +475,10 @@ extern "C" {
 #endif
 void ghost_exchange_local_tree_invalidate_drift(void);
 void ghost_exchange_local_tree_invalidate_full(void);
+/* Announce that the local particle set changed membership or order, so cached
+ * supply pools keyed on it stop matching. Rank-local, O(1), frees nothing.
+ * `reason` documents the call site. */
+void ghost_exchange_supply_identity_changed(const char *reason);
 void ghost_exchange_local_tree_mark_h_dirty_indices(const int *indices, int n);
 void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end);
 #ifdef __cplusplus
@@ -870,6 +873,9 @@ void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
 double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode);
 double measure_time(void);
+void cpu_charge_child(int bucket, double dt);
+double cpu_minus_children(double elapsed, double child0);
+void cpu_chain_sync(double t);
 double report_time(void);
 
 /* on some DEC Alphas, the correct prototype for pow() is missing,

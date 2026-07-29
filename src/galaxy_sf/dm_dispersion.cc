@@ -36,7 +36,7 @@ void disp_density(void)
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
 
     CPU_Step[CPU_MISC] += measure_time();
-    const double t00_truestart = my_second();
+    const double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
 
     const double gsl_safety = gizmo_ghost_safety_factor();
 
@@ -103,8 +103,8 @@ void disp_density(void)
 
     /* Timing (mirrors legacy dm_dispersion.cc:222-224 bins). */
     const double t1 = my_second();
-    WallclockTime = t1;
-    const double timeall = timediff(t00_truestart, t1);
+    cpu_chain_sync(t1);
+    const double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
     CPU_Step[CPU_AGSDENSMISC] += timeall;
     if (ThisTask == 0) {
         PRINT_STATUS("  dm_dispersion done (%.4f s) via runner", timeall);

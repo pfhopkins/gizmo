@@ -1535,7 +1535,7 @@ void hydro_gradient_calc(void)
      * runner import+cleanup tears the corridor pool down) and redundant with
      * the hydro_force-top refresh that must happen anyway. Mode B has no
      * ghosts to refresh. */
-    double t1 = WallclockTime = my_second();
+    double t1 = my_second(); cpu_chain_sync(t1);
     double t_grad_before_refresh = my_second();
     double t_grad_outer_end = my_second();
     gizmo_step_phase_record("gradient_zero_iter_loops", timediff(t_grad_after_symlist, t_grad_before_refresh));

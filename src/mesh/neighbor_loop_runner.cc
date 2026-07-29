@@ -2964,6 +2964,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         int64_t *offsets = gnl.offsets;
         int *neighbors = gnl.neighbors;
+        const double t_pair_kernel_start = my_second();
         gizmo_gpu_kernel_launch(Spec::loop_name, N, KOKKOS_LAMBDA(int aa) {
             Spec::zero_accum(d_accums[aa]);
             const ActiveData& a = d_actives[aa];
@@ -2976,6 +2977,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                 Spec::pair_kernel(a, nb, d_accums[aa], s);
             }
         });
+        cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
     }
     /* Both launches fenced internally by gizmo_gpu_kernel_launch. UVM is
      * coherent → host can read d_accums directly. */
@@ -3464,7 +3466,8 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                                                        radii.data(),
                                                        args.ghost_safety_factor,
                                                        Spec::radius_policy,
-                                                       nlr_spec_symmetric_j_radius_scale<Spec>());
+                                                       nlr_spec_symmetric_j_radius_scale<Spec>(),
+                                                       nlr_spec_supply_band_dominated<Spec>());
             /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
              * the runner's data view; only paths that imported ghosts read this
              * extended view (Mode B paths use the original args via copy). */
@@ -3971,7 +3974,8 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                                                    (union_n > 0) ? union_radii_oversized.data() : nullptr,
                                                    args.ghost_safety_factor,
                                                    Spec::radius_policy,
-                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
+                                                   nlr_spec_symmetric_j_radius_scale<Spec>(),
+                                                   nlr_spec_supply_band_dominated<Spec>());
         ghost_import_done = true;
 
         /* Refresh effective_args from globals (ghost import grew NumPart and
@@ -4114,7 +4118,8 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
                                                    (union_n > 0) ? union_radii_oversized.data() : nullptr,
                                                    args.ghost_safety_factor,
                                                    Spec::radius_policy,
-                                                   nlr_spec_symmetric_j_radius_scale<Spec>());
+                                                   nlr_spec_symmetric_j_radius_scale<Spec>(),
+                                                   nlr_spec_supply_band_dominated<Spec>());
         ghost_import_done = true;
     }
 
@@ -4420,6 +4425,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                 d_actives[k] = Spec::load_active(dctx_local, slot, i, h, cs_ref);
             });
 
+            const double t_pair_kernel_start = my_second();
             gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, KOKKOS_LAMBDA(int k) {
                 int slot = active_set_arr[k];
                 int row  = csr_lookup[slot];
@@ -4434,6 +4440,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                     Spec::pair_kernel(a, nb, d_accums[k], s);
                 }
             });
+            cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
         }
 
         /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */

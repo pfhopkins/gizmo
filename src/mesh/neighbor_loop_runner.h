@@ -623,6 +623,37 @@ double nlr_spec_symmetric_j_radius_scale() {
     }
 }
 
+/* nlr_spec_supply_band_dominated — optional Spec hook.
+ *
+ * A Spec whose supply-side reach is provably bounded by the per-type node band
+ * the sender opener walks against declares:
+ *
+ *   static constexpr bool supply_band_dominated = true;
+ *
+ * Absent ⇒ false, which keeps that Spec's SYMMETRIC ghost import on the
+ * broadcast path — today's behavior, and the safe answer when the bound is not
+ * established. Only a proven Spec sets it, and the proof belongs in a comment
+ * at the declaration. The runner threads this into the ghost_exchange spec, so
+ * routed SYMMETRIC discovery is selected by this structural property alone and
+ * never by which loop is calling. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_supply_band_dominated : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_supply_band_dominated<
+    Spec,
+    std::void_t<decltype(Spec::supply_band_dominated)>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_supply_band_dominated() {
+    if constexpr (nlr_spec_has_supply_band_dominated<Spec>::value) {
+        return Spec::supply_band_dominated;
+    } else {
+        return false;
+    }
+}
+
 /* RAII cleanup guard for the runner's DeviceContext. Construct one right
  * after Spec::populate_device_context returns; destruction at function exit
  * (any path) conditionally invokes Spec::cleanup_device_context if the Spec

@@ -415,11 +415,11 @@ void AgsForceSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 void AGSForce_calc(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    double t00_truestart = my_second();
+    double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..entering AGS-Force calculation [as hydro loop for non-gas elements]\n");
 
     double timecomp = 0, timecomm = 0, timewait = 0;
-    double t0 = my_second();
+    double t0 = my_second(); const double child0_timecomp = CPU_ChildCharged;
 
     /* SIDM preamble (legacy gravity/ags_rkern.cc:209-211): seed
      * P[i].dtime_sidm with 10*dt so the in-loop MIN reduce pulls it down
@@ -502,8 +502,8 @@ void AGSForce_calc(void)
 
     if(subgroups.empty()) {
         /* No globally-active AGS particles anywhere. Skip the runner call. */
-        double t1 = WallclockTime = my_second();
-        CPU_Step[CPU_AGSDENSMISC] += timediff(t00_truestart, t1);
+        double t1 = my_second(); cpu_chain_sync(t1);
+        CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00_truestart, t1), child0_span);
         return;
     }
 
@@ -543,7 +543,7 @@ void AGSForce_calc(void)
     run_neighbor_loop_iterative<AgsForceSpec>(args);
 
     if(NTask > 1) ghost_exchange_cleanup();
-    timecomp += timediff(t0, my_second());
+    timecomp += cpu_minus_children(timediff(t0, my_second()), child0_timecomp);
 
     /* CBE post-tree-walk per-active finalization (legacy gravity/ags_rkern.cc:343-345).
        Active set is exactly ActiveParticleList — no extra gating; matches legacy. */
@@ -551,8 +551,8 @@ void AGSForce_calc(void)
     cbe_postgravity_evaluate_gpu(P, ActiveParticleList.data(), (int)ActiveParticleList.size());
 #endif
 
-    double t1 = WallclockTime = my_second();
-    double timeall = timediff(t00_truestart, t1);
+    double t1 = my_second(); cpu_chain_sync(t1);
+    double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
     CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp;
     CPU_Step[CPU_AGSDENSWAIT]    += timewait;
     CPU_Step[CPU_AGSDENSCOMM]    += timecomm;

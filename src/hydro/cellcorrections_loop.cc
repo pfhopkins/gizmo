@@ -61,7 +61,7 @@ double CellcorrectionsSpec::compare_accum(const AccumData& local, const AccumDat
 void cellcorrections_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time();
-    double t00 = my_second();
+    double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");
 
     /* Corridor consumption: when the corridor has published a Mode-A
@@ -126,8 +126,8 @@ void cellcorrections_calc(void)
      * it into the GPU TU). */
     cellcorrections_final_operations_and_cleanup();
 
-    double t1 = WallclockTime = my_second();
-    CPU_Step[CPU_DENSMISC] += timediff(t00, t1);
+    double t1 = my_second(); cpu_chain_sync(t1);
+    CPU_Step[CPU_DENSMISC] += cpu_minus_children(timediff(t00, t1), child0_span);
 }
 
 #endif /* HYDRO_VOLUME_CORRECTIONS */
