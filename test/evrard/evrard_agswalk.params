@@ -1,11 +1,6 @@
-% Phase 4 Tier 1a GPU walk validation: evrard ICs with FIXED gas softening
-% (no ADAPTIVE_GRAVSOFT_FORGAS), short run for bit-comparison vs CPU walk.
-%
-%        HYDRO_MESHLESS_FINITE_MASS
-%        EOS_GAMMA=(5.0/3.0)
-%
-InitCondFile                       ../evrard/evrard_ics
-OutputDir                          output
+% Short adaptive-softening gravity-walk validation setup (see README).
+InitCondFile                       evrard_ics
+OutputDir                          output_agswalk
 PartAllocFactor                    10
 TimeMax                            0.05
 TimeBetSnapshot                    0.025

@@ -1,6 +1,11 @@
-% AGS GPU walk validation: evrard with ADAPTIVE_GRAVSOFT_FORGAS
-InitCondFile                       evrard_ics
-OutputDir output_cpu_val
+% Gravity-walk validation on the evrard ICs with FIXED gas softening
+% (no ADAPTIVE_GRAVSOFT_FORGAS); short run, for comparing two builds.
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        EOS_GAMMA=(5.0/3.0)
+%
+InitCondFile                       ../evrard/evrard_ics
+OutputDir                          output_evalpotential
 PartAllocFactor                    10
 TimeMax                            0.05
 TimeBetSnapshot                    0.025

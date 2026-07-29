@@ -1,6 +1,6 @@
 % Isolated disk galaxy — mechanical_fb (B8) activation test
 InitCondFile                       isodisk_mechfb_ics
-OutputDir                          output
+OutputDir                          output_cr
 TimeMax                            0.003
 TimeBetSnapshot                    0.001
 MaxSizeTimestep                    0.001

@@ -32,7 +32,7 @@ unless a different Config is named. They exist because shell-based ICs expose
 a specific failure mode in the smoothing-length iteration; keep them.
 
 | Variant | Build with | IC script | Params | What it is for |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | default | `Config.sh` | `make_ics.py` | `hse_earth_smoke.params` | olivine mantle + iron core, glass-relaxed |
 | basalt | `Config.sh` | `make_ics_basalt.py` | `hse_basalt.params` | single-material body — isolates EOS behaviour from the layer interface |
 | fibonacci | `Config.sh` | `make_ics_fibo.py` | `hse_earth_fibo.params` | Fibonacci-shell placement instead of glass relaxation |

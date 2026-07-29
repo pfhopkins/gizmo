@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate a collocated-particle IC to exercise the GPU tree-build's
-random-octant fallback (Phase 6.5c4).
+random-octant fallback.
 
 The IC has two populations:
   - 100 uniformly-random gas particles in a 10 pc box.

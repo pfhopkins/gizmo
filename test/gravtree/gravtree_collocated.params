@@ -1,15 +1,15 @@
 %-------------------------------------------------------------------------
-% gravtree_collocated.params -- Phase 6.5c5 GPU-build collocation IC.
+% gravtree_collocated.params -- collocated-position tree-build IC.
 %
 % Tiny IC (228 gas particles in a 10 pc box) with deliberate clusters of
 % bit-identical positions to exercise the GPU tree-build random-octant
-% fallback (Phase 6.5c4).  Mirrors the gmc_cooling_quick.params recipe
+% fallback.  Mirrors the gmc_cooling_quick.params recipe
 % for everything except IC file, box, and timing.
 %-------------------------------------------------------------------------
 
 %---- Relevant files (filenames and directories)
 InitCondFile  gravtree_collocated_ics
-OutputDir     output
+OutputDir     output_collocated
 
 %---- File formats (input and output)
 ICFormat    3
