@@ -95,7 +95,7 @@ int rt_sourceinjection_active_check(int i)
     if(P[i].NumNgb <= 0) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].Mass <= 0) return 0;
-    if(P[i].KernelSum_Around_RT_Source <= 0) return 0;
+    if(P[i].KernelSum_Around_RT_Source <= 0) {return 0;}
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     if(P[i].Type == 5 && !P[i].do_gas_search_this_timestep) return 0;
 #endif
@@ -229,11 +229,11 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     if(RT_BAND_IS_IONIZING(k)){
                         double stellum=0;
                         if(local.Dt > 0) {
-#if (RT_CHEM_PHOTOION==1)			  
+#if (RT_CHEM_PHOTOION==1)
                             stellum = local.Luminosity[RT_FREQ_BIN_H0];
-#else			    
+#else
                             int k2; for(k2=RT_FREQ_BIN_H0; k2 < RT_FREQ_BIN_H0 + 4; k2++) {stellum += local.Luminosity[k2];} // add up total ionizing photon energy
-#endif			    
+#endif
                             stellum *= 1. / (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) / local.Dt * UNIT_LUM_IN_CGS; // convert energy to luminosity in cgs
                         }
                         double RHII = 4.01e-9*pow(stellum,0.333)*pow(local.Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS,-0.66667) / UNIT_LENGTH_IN_CGS;

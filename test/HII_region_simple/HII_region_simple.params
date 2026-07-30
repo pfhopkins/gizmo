@@ -1,11 +1,5 @@
-%---- Sedov-like single-star supernova test
-%
-%   A 10 Msun star with age 50 Myr (already past its MS lifetime) sits at the
-%   center of a uniform gas box (50000 Msun, n_H = 100 cm^-3 ambient) and goes
-%   supernova on the first timestep.
-
 %---- Relevant files
-InitCondFile  SN_singlestar_ics
+InitCondFile  HII_region_simple_ics
 OutputDir     output
 
 %---- File formats
@@ -22,8 +16,8 @@ NumFilesWrittenInParallel   1
 
 %---- Output frequency
 TimeOfFirstSnapshot     0.0
-TimeBetSnapshot         0.0015
-TimeBetStatistics       0.0005
+TimeBetSnapshot         0.1
+TimeBetStatistics       0.05
 
 %---- CPU run-time and checkpointing time-limits
 TimeLimitCPU            172800
@@ -33,22 +27,22 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0
-TimeMax     0.05
+TimeMax     1.0
 
 %---- Maximum and minimum timesteps allowed
-MaxSizeTimestep         0.1
+MaxSizeTimestep         0.025
 MinSizeTimestep         1.0e-15
 
 %---- System of units: pc, Msun, km/s
-UnitLength_in_cm            3.085678e+18
+UnitLength_in_cm            3.09e+18
 UnitMass_in_g               1.989e+33
 UnitVelocity_in_cm_per_s    1.00e+05
 UnitMagneticField_in_gauss  1.00e+00
-GravityConstantInternal     0
+GravityConstantInternal     1e-100
 
 %---- Cosmological parameters
 ComovingIntegrationOn   0
-BoxSize                 24.181
+BoxSize                 20.0
 Omega0                  0.
 OmegaLambda             0.
 OmegaBaryon             0.
@@ -56,7 +50,7 @@ HubbleParam             1.
 
 %----- Memory allocation
 MaxMemSize          5000
-PartAllocFactor     20.0
+PartAllocFactor     10.0
 BufferSize          500
 
 %---- Rebuild domains when >this fraction of particles active
@@ -64,7 +58,7 @@ TreeDomainUpdateFrequency   0.005
 
 %---- Initial hydro temperature & temperature floor (in Kelvin)
 InitGasTemp     1e2
-MinGasTemp      10
+MinGasTemp      2.73
 
 %---- Hydro reconstruction (kernel) parameters
 DesNumNgb               32
@@ -173,7 +167,7 @@ TabulatedCosmologyFile    CosmoTbl
 ErrTolTheta                  0.5
 ErrTolForceAcc               0.0025
 ErrTolIntAccuracy        0.01
-CourantFac               0.1
+CourantFac               0.2
 MaxRMSDisplacementFac    0.125
 MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10

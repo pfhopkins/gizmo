@@ -177,6 +177,10 @@ void init_turb(void)
     int j; for(j=0;j<100;j++) {double tmp; tmp=st_turbdrive_get_gaussian_random_variable();} // cycle past initial seed
     st_turbdrive_init_ouseq(); // initialize variable for phases
     st_turbdrive_calc_phases(); // initialize phases
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    All.TurbDriving_SmoothedVRMS = All.TurbDriving_Global_AccelerationPowerVariable;
+    All.TurbDriving_DrivingNormFactor = 1.0;
+#endif
     set_turb_ampl(); // set initial amplitudes and calculate initial quantities needed for dissipation measures
     StTPrev = All.Ti_Current; // mark current time as last update of turb driving fields
 }
@@ -192,8 +196,40 @@ void st_turbdrive_init_ouseq(void)
 /* return the rms acceleration we expect, using either the 'dissipation rate' or 'turbulent velocity' conventions for our variables */
 double st_return_rms_acceleration(void)
 {
-    return All.TurbDriving_Global_AccelerationPowerVariable / st_return_mode_correlation_time(); // new convention, hoping this is more clear re: meaning of variable
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    return All.TurbDriving_Global_AccelerationPowerVariable * All.TurbDriving_DrivingNormFactor / st_return_mode_correlation_time();
+#else
+    return All.TurbDriving_Global_AccelerationPowerVariable / st_return_mode_correlation_time();
+#endif
 }
+
+
+#ifdef TURB_DRIVING_TARGET_SIGMA
+/* compute mass-weighted RMS velocity of Type 0 gas cells; if TURB_DRIVING_TARGET_SIGMA > 0, restrict
+   to cells within that radius (code units) of the box center.  Returns the target VRMS if no mass found. */
+static double st_compute_vrms(void)
+{
+    double vsum2 = 0, msum = 0;
+    const double aperture = (double)(TURB_DRIVING_TARGET_SIGMA);
+    const double box_cx = 0.5*boxSize_X, box_cy = 0.5*boxSize_Y, box_cz = 0.5*boxSize_Z;
+    int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) continue;
+        if(aperture > 0) {
+            double dx = P[i].Pos[0] - box_cx, dy = P[i].Pos[1] - box_cy, dz = P[i].Pos[2] - box_cz;
+            if(dx*dx + dy*dy + dz*dz > aperture*aperture) continue;
+        }
+        vsum2 += P[i].Mass * P[i].Vel.norm_sq();
+        msum  += P[i].Mass;
+    }
+    double glob_vsum2, glob_msum;
+    MPI_Allreduce(&vsum2, &glob_vsum2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&msum,  &glob_msum,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(glob_msum <= 0) return All.TurbDriving_Global_AccelerationPowerVariable;
+    return sqrt(glob_vsum2 / glob_msum);
+}
+#endif
 
 
 /* return the driving scale needed for scaling some other quantities below, corresponding to our global variable convention */
@@ -317,6 +353,23 @@ void set_turb_ampl(void)
         st_update_ouseq();
         PRINT_STATUS(" ..calculating coefficients and phases following desired projection");
         st_turbdrive_calc_phases();
+#ifdef TURB_DRIVING_TARGET_SIGMA
+        {
+            double v_measured = st_compute_vrms();
+            double t_corr = st_return_mode_correlation_time();
+            double dt_upd = st_return_dt_between_updates();
+            double alpha = exp(-dt_upd / (2.0 * t_corr));
+            All.TurbDriving_SmoothedVRMS = All.TurbDriving_SmoothedVRMS * alpha + v_measured * (1.0 - alpha);
+            if(All.TurbDriving_SmoothedVRMS > 0)
+                All.TurbDriving_DrivingNormFactor = fmin(100.0, All.TurbDriving_Global_AccelerationPowerVariable / All.TurbDriving_SmoothedVRMS);
+            if(ThisTask == 0) {
+                printf("TURB_DRIVING_TARGET_SIGMA: t=%g v_rms=%g v_rms_smoothed=%g v_target=%g driving_norm=%g\n",
+                    All.Time, v_measured, All.TurbDriving_SmoothedVRMS,
+                    All.TurbDriving_Global_AccelerationPowerVariable, All.TurbDriving_DrivingNormFactor);
+                fflush(stdout);
+            }
+        }
+#endif
         StTPrev = StTPrev + st_return_dt_between_updates() / All.Timebase_interval;
         PRINT_STATUS(" ..updated turbulent stirring field at time %f", StTPrev * All.Timebase_interval);
     }

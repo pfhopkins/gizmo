@@ -162,6 +162,11 @@ def download_test_files(test_name: str):
     exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
 
     for f in icfile, exactfile, exactfile2:
+        # Never clobber a locally-generated IC (e.g. from make_<test>_ics.py): a stale
+        # remote copy would silently override the freshly generated one. Reference "exact"
+        # solutions have no local generator, so those are always fetched.
+        if f == icfile and path.isfile(icfile):
+            continue
         try:
             urlretrieve(website_path + f, f)
         except HTTPError as err:

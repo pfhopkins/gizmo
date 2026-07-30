@@ -88,7 +88,7 @@ void gravity_tree(void)
     }
 
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second();
-#ifndef SELFGRAVITY_OFF
+#if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
     size_t MyBufferSize = All.BufferSize;
@@ -632,7 +632,7 @@ void gravity_tree(void)
     } /* end of loop over active particles*/
 
 
-#endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
+#endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */

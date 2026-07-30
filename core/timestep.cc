@@ -477,8 +477,11 @@ integertime get_timestep(int p,		/*!< particle index */
         if(eligible_for_hermite(p)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
 #endif
     }
-#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF)
-    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * DMIN(P[p].Min_Sink_FeedbackTime, P[p].Min_Sink_Approach_Time));}
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].Min_Sink_FeedbackTime);}
+#ifndef SELFGRAVITY_OFF
+    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].Min_Sink_Approach_Time);}
+#endif
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
 
@@ -1021,7 +1024,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
             double L_particle = P[p].Get_Particle_Size();
             double vsig = P[p].Sink_SurroundingGasVel;
-#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(NOGRAVITY)
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
             vsig += P[p].MaxFeedbackVel;
 #endif                        
             double dt_cour_sink = All.CourantFac * (L_particle*All.cf_atime) / vsig;

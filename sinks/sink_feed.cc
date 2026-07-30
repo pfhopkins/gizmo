@@ -206,6 +206,9 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                             {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                                 int allow_sink_merger = 1; /* flag here b/c we have different options */
+#ifdef DISABLE_SINK_MERGERS
+                                allow_sink_merger = 0;
+#endif
                                 if(r >= 1.0001*P[j].Min_Distance_to_Sink) {allow_sink_merger = 0;} // not the closest sink!
                                 if(r >= heff_j) {allow_sink_merger = 0;} // beyond MAX[search/kernel/softening] radius: heff_j = DMAX( P[j].KernelRadius , ForceSoftening_KernelRadius(j) )
                                 if(P[j].Mass > local.Mass) {allow_sink_merger = 0;} // always merge from more massive eating lower

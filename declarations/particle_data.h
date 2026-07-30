@@ -254,6 +254,7 @@ extern ALIGN(32) struct particle_data
 #ifdef SINGLE_STAR_FB_WINDS
     MyFloat Wind_direction[6]; // direction of wind launches, to reduce anisotropy launches go along a random axis then a random perpendicular one, then one perpendicular to both.
     int wind_mode; // tells what kind of wind model to use, 1 for particle spawning and 2 for using the FIRE wind module
+    float wind_mode_time; // time of last wind mode change, used for hysteresis (float pairs with int wind_mode for 8-byte alignment)
 #endif
 #ifdef  SINGLE_STAR_FB_SNE
     MyFloat Mass_final; //final mass of the star before going SN (Since this is not saved to snapshots, hard restarts in the middle of spawning an SN will do weird things)
