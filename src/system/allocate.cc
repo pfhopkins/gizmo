@@ -104,6 +104,10 @@ int allocate_memory(int do_collective_preflight)
     ActiveParticleList.reserve(All.MaxPart);
     NextInTimeBin.resize(All.MaxPart);
     PrevInTimeBin.resize(All.MaxPart);
+    /* Account reserved capacity (not size): these vectors hold up to MaxPart ints. */
+    gizmo_mem_account_set(GIZMO_MEM_STL_TIMEBIN,
+                          (long long)(ActiveParticleList.capacity() + NextInTimeBin.capacity()
+                                      + PrevInTimeBin.capacity()) * (long long) sizeof(int));
   } catch(const std::bad_alloc&) { alloc_fail_local = 1; printf("allocate_memory: STL timebin vector alloc (MaxPart=%d) threw bad_alloc.\n", All.MaxPart); fflush(stdout); }
 
 
@@ -112,7 +116,7 @@ int allocate_memory(int do_collective_preflight)
       bytes = All.MaxPart * sizeof(struct particle_data);
       P = (struct particle_data *) gpu_particles_uvm_alloc(bytes);
       if(P == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
-      else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
+      else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
       /* Wakeup dirty sidecar: 1 byte/particle acceleration index for
        * process_wake_ups (SharedSpace so device wakeup kernels can mark it).
@@ -123,6 +127,7 @@ int allocate_memory(int do_collective_preflight)
           bytes = All.MaxPart * sizeof(unsigned char);
           WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes);
           if(WakeupDirty == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for WakeupDirty sidecar (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
+          else { gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); }
           WakeupDirtyValid = 0;
         }
     }
@@ -134,7 +139,7 @@ int allocate_memory(int do_collective_preflight)
       bytes = All.MaxPartGas * sizeof(struct gas_cell_data);
       CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes);
       if(CellP == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
-      else { bytes_tot += bytes; if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
+      else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
 #ifdef CHIMES
       /* ChimesGasVars is an arena block (counted in the arena preflight above). Only allocate
