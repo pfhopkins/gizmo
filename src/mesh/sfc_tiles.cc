@@ -21,13 +21,60 @@
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h */
 
 
+/* Supply-pool membership. The single definition — every path that selects
+ * pool members tests through this. */
+static inline int sfc_pool_member(const struct particle_data *p, int type_bitmask)
+{
+    if(!((1 << p->Type) & type_bitmask)) return 0;
+    if(p->Mass <= 0) return 0;
+    return 1;
+}
+
+/* Open a tile covering pool slots from `first`, with nothing folded in yet.
+ *
+ * The box starts INVERTED rather than zeroed. The BVH unions child boxes with
+ * min/max, so a zeroed box would drag every ancestor out to the coordinate
+ * origin and stop the opener pruning that whole subtree; inverted bounds are
+ * neutral under the union and always fail the sphere-overlap gap test, which
+ * is what a tile with nothing live in it needs. Folding the first member then
+ * sets lo=hi=its position, so no separate "seeded" case is required. */
+static inline void sfc_tile_begin(sfc_tile_t *tile, int first)
+{
+    tile->first = first;
+    tile->count = 0;
+    tile->hmax = 0;
+    for(int t = 0; t < TILE_NUM_PTYPES; t++) tile->hmax_by_type[t] = 0;
+    for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; }
+}
+
+/* Fold one live member into a tile's box and reach. The tiling rule lives here
+ * and nowhere else, so the two ways of enumerating members (deriving the pool
+ * in the same pass, or walking an existing one) cannot drift apart.
+ *
+ * hmax aggregates the SSOT per-particle reach under radius_policy, scaled by
+ * scale_factor (default 1.0 -> bare per-policy reach for Mode A; ghost_exchange
+ * passes j_radius_scale * safety_factor to keep BVH bands and leaf compact h on
+ * the same supply-side reach). */
+static inline void sfc_tile_fold(sfc_tile_t *tile, const struct particle_data *p,
+                                 mode_b_radius_policy_t radius_policy, double scale_factor)
+{
+    for(int k = 0; k < 3; k++) {
+        if(p->Pos[k] < tile->lo[k]) tile->lo[k] = p->Pos[k];
+        if(p->Pos[k] > tile->hi[k]) tile->hi[k] = p->Pos[k];
+    }
+    double hj = nlr_particle_symmetric_radius(*p, radius_policy) * scale_factor;
+    if(hj > tile->hmax) tile->hmax = hj;
+    int tj = (int)p->Type;
+    if(tj >= 0 && tj < TILE_NUM_PTYPES && hj > tile->hmax_by_type[tj])
+        tile->hmax_by_type[tj] = hj;
+}
+
 int build_sfc_supply_pool(struct particle_data *P, int num_total,
                           int type_bitmask, int **pool_indices_out)
 {
     int num_pool = 0;
     for(int i = 0; i < num_total; i++) {
-        if(!((1 << P[i].Type) & type_bitmask)) continue;
-        if(P[i].Mass <= 0) continue;
+        if(!sfc_pool_member(&P[i], type_bitmask)) continue;
         num_pool++;
     }
     if(!pool_indices_out) return num_pool;
@@ -35,8 +82,7 @@ int build_sfc_supply_pool(struct particle_data *P, int num_total,
     int *pool = (int *) mymalloc("sfc_pool", (num_pool > 0 ? num_pool : 1) * sizeof(int));
     int p = 0;
     for(int i = 0; i < num_total; i++) {
-        if(!((1 << P[i].Type) & type_bitmask)) continue;
-        if(P[i].Mass <= 0) continue;
+        if(!sfc_pool_member(&P[i], type_bitmask)) continue;
         pool[p++] = i;
     }
     *pool_indices_out = pool;
@@ -50,15 +96,40 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
                     mode_b_radius_policy_t radius_policy,
                     double scale_factor)
 {
-    /* Step 1: pool membership (shared definition — see build_sfc_supply_pool). */
-    int *pool = NULL;
-    int num_pool = build_sfc_supply_pool(P, num_total, type_bitmask, &pool);
+    /* Deriving the pool and tiling it are the same walk over P[], so do them in
+     * ONE pass and avoid several full streams over a large particle struct: this
+     * is a bandwidth-bound loop over every particle, and each extra stream is
+     * another cache line per particle. Membership and the tiling rule are the
+     * shared helpers above, so this states neither of them a second time.
+     *
+     * Both arrays are sized to their upper bounds because the member count is
+     * not known until the pass ends. That costs a transient int[num_total] plus
+     * the tiles for a full pool; the persistent copies callers keep are cut to
+     * the exact counts returned here. Tiles are mymalloc'd above the pool, so
+     * the caller must free tiles first (free_sfc_tiles already does). */
+    int pool_capacity = (num_total > 0) ? num_total : 1;
+    int tile_capacity = (num_total + target_tile_size - 1) / target_tile_size;
+    if(tile_capacity < 1) tile_capacity = 1;
 
-    /* Tiles are mymalloc'd above the pool, so the caller must free tiles first
-     * (free_sfc_tiles already does). Both outputs are handed back unconditionally
-     * — every caller owns the pool. */
-    int ntiles = build_sfc_tiles_from_pool(P, pool, num_pool, target_tile_size,
-                                           tiles_out, radius_policy, scale_factor);
+    int *pool = (int *) mymalloc("sfc_pool", pool_capacity * sizeof(int));
+    sfc_tile_t *tiles = (sfc_tile_t *) mymalloc("sfc_tiles", tile_capacity * sizeof(sfc_tile_t));
+
+    int num_pool = 0, ntiles = 0;
+    for(int i = 0; i < num_total; i++)
+    {
+        if(!sfc_pool_member(&P[i], type_bitmask)) continue;
+        /* A member starting a fresh tile opens it; tiles cover consecutive runs
+         * of target_tile_size pool slots, so `first` is the slot it opens at. */
+        if((num_pool % target_tile_size) == 0) sfc_tile_begin(&tiles[ntiles++], num_pool);
+        pool[num_pool++] = i;
+        tiles[ntiles - 1].count++;
+        sfc_tile_fold(&tiles[ntiles - 1], &P[i], radius_policy, scale_factor);
+    }
+    /* An empty pool still publishes one (empty, inverted-box) tile so the BVH
+     * always has a root to build over. */
+    if(ntiles == 0) { sfc_tile_begin(&tiles[0], 0); ntiles = 1; }
+
+    *tiles_out = tiles;
     *pool_indices_out = pool;
     *num_pool_out = num_pool;
     return ntiles;
@@ -83,55 +154,21 @@ int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_
         int count = target_tile_size;
         if(start + count > num_pool) count = num_pool - start;
 
-        tiles[t].first = start;
+        sfc_tile_begin(&tiles[t], start);
+        /* count is the SLOT count, not the live count: a retained pool can hold
+         * entries marked dead after it was built, and the slots stay addressable.
+         * A tile whose slots are all dead keeps the inverted box sfc_tile_begin
+         * left, which is what an empty tile needs. */
         tiles[t].count = count;
-        tiles[t].hmax = 0;
-        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tiles[t].hmax_by_type[tt] = 0;
 
-        /* A tile with nothing live in it gets an INVERTED box, not a zero one. The
-         * BVH unions child boxes with min/max, so a zeroed box would drag every
-         * ancestor out to the coordinate origin and stop the opener pruning that
-         * whole subtree; inverted bounds are neutral under the union and always
-         * fail the sphere-overlap gap test. */
-        if(count <= 0) {
-            for(int k = 0; k < 3; k++) { tiles[t].lo[k] = MAX_REAL_NUMBER; tiles[t].hi[k] = -MAX_REAL_NUMBER; }
-            continue;
-        }
-
-        /* tile->hmax aggregates the SSOT per-particle reach under radius_policy,
-         * scaled by scale_factor (default 1.0 → bare per-policy reach for Mode A;
-         * ghost_exchange passes j_radius_scale * safety_factor here to keep BVH
-         * bands and leaf compact h on the same supply-side reach).
-         *
-         * Eliminated elements (Mass <= 0) contribute nothing. A freshly built pool
-         * has none, but a caller tiling a RETAINED pool can hold entries that were
-         * marked dead after it was built, and a dead slot's stale reach would widen
-         * the band this rank advertises as supply. Hence the bbox seeds from the
-         * first live member rather than the tile's first member. */
-        int seeded = 0;
+        /* Eliminated elements (Mass <= 0) contribute nothing — a dead slot's
+         * stale reach would widen the band this rank advertises as supply. */
         for(int s = 0; s < count; s++)
         {
             int j = pool[start + s];
             if(P[j].Mass <= 0) continue;
-            int k;
-            if(!seeded) {
-                for(k = 0; k < 3; k++) tiles[t].lo[k] = tiles[t].hi[k] = P[j].Pos[k];
-                seeded = 1;
-            } else {
-                for(k = 0; k < 3; k++) {
-                    if(P[j].Pos[k] < tiles[t].lo[k]) tiles[t].lo[k] = P[j].Pos[k];
-                    if(P[j].Pos[k] > tiles[t].hi[k]) tiles[t].hi[k] = P[j].Pos[k];
-                }
-            }
-            double hj = nlr_particle_symmetric_radius(P[j], radius_policy) * scale_factor;
-            if(hj > tiles[t].hmax) tiles[t].hmax = hj;
-            int tj = (int)P[j].Type;
-            if(tj >= 0 && tj < TILE_NUM_PTYPES &&
-               hj > tiles[t].hmax_by_type[tj])
-                tiles[t].hmax_by_type[tj] = hj;
+            sfc_tile_fold(&tiles[t], &P[j], radius_policy, scale_factor);
         }
-        /* Every member dead: same inverted empty-tile box as count <= 0 above. */
-        if(!seeded) { for(int k = 0; k < 3; k++) { tiles[t].lo[k] = MAX_REAL_NUMBER; tiles[t].hi[k] = -MAX_REAL_NUMBER; } }
     }
 
     *tiles_out = tiles;
