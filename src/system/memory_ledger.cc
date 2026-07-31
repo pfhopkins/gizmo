@@ -136,28 +136,35 @@ static void report_memory_ledger_impl(const char *when, int always)
            on every rank, so the node total is simply the per-rank size times the count. */
         double node_base_reserved_mb = base_reserved_mb * GizmoRanksThisNode;
 
-        printf("MEMORY LEDGER [%s] task=%d: %d ranks/node, node physical %s\n"
-               "  Base arena: reserved %.1f MB/rank (node %.1f MB), high-water %.1f MB/rank (node %.1f MB)\n"
-               "  Particle SoA (P/CellP/WakeupDirty): node %.1f MB\n"
-               "  Tree nodes (local+foreign, UVM): node %.1f MB\n"
-               "  Timebin lists (ActiveParticleList/Next/Prev, STL): node %.1f MB\n"
-               "  LET wire buffers (transient, libc): node high-water %.1f MB (current %.1f MB, failed %.1f MB)\n",
-               when, ThisTask, GizmoRanksThisNode, node_phys,
-               base_reserved_mb, node_base_reserved_mb, base_highwater_mb, node_base_highwater_mb,
-               node_family_bytes[GIZMO_MEM_PARTICLE_SOA] / (1024.0 * 1024.0),
-               node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
-               node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
-               node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
-
+        /* Build the whole block into one buffer and emit it with a single write, so the
+           blocks printed concurrently by each node's lead task do not interleave. */
+        char buf[1600];
+        int n = 0;
+        n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                      "MEMORY LEDGER [%s] task=%d: %d ranks/node, node physical %s\n"
+                      "  Base arena: reserved %.1f MB/rank (node %.1f MB), high-water %.1f MB/rank (node %.1f MB)\n"
+                      "  Particle SoA (P/CellP/WakeupDirty): node %.1f MB\n"
+                      "  Tree nodes (local+foreign, UVM): node %.1f MB\n"
+                      "  Timebin lists (ActiveParticleList/Next/Prev, STL): node %.1f MB\n"
+                      "  LET wire buffers (transient, libc): node high-water %.1f MB (current %.1f MB, failed %.1f MB)\n",
+                      when, ThisTask, GizmoRanksThisNode, node_phys,
+                      base_reserved_mb, node_base_reserved_mb, base_highwater_mb, node_base_highwater_mb,
+                      node_family_bytes[GIZMO_MEM_PARTICLE_SOA] / (1024.0 * 1024.0),
+                      node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
+                      node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
+                      node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
         if(gizmo_kokkos_mem_available())
-        {
-            printf("  Kokkos allocations observed: current node %.1f MB, high-water node %.1f MB\n"
-                   "    (includes Particle SoA and Tree nodes above; NOT summed with family totals;\n"
-                   "     residual vs explicit families is device scratch + Kokkos internal/caching + unclassified)\n",
-                   node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0));
-        }
-        else {printf("  Kokkos allocations observed: unavailable (callback API not compiled on this backend)\n");}
-        printf("  (node high-water values are the SUM of per-rank peaks -- a conservative upper bound, not a time-coincident node peak)\n");
+            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                          "  Kokkos allocations observed: current node %.1f MB, high-water node %.1f MB\n"
+                          "    (includes Particle SoA and Tree nodes above; NOT summed with family totals;\n"
+                          "     residual vs explicit families is neighbour/ghost/scratch + Kokkos internal/caching + unclassified)\n",
+                          node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0));
+        else
+            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                          "  Kokkos allocations observed: unavailable (callback API not compiled on this backend)\n");
+        (void) snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                        "  (node high-water values are the SUM of per-rank peaks -- a conservative upper bound, not a time-coincident node peak)\n");
+        fputs(buf, stdout);
         fflush(stdout);
     }
 }
