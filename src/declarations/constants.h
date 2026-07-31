@@ -47,7 +47,7 @@
 #endif
 
 #ifndef  MULTIPLEDOMAINS
-#define  MULTIPLEDOMAINS     8
+#define  MULTIPLEDOMAINS     8    /* fallback only: precompiler_logic.h is included before this header and already sets the effective default to 32; this 8 takes effect only if that define is removed or the user sets MULTIPLEDOMAINS in Config.sh */
 #endif
 
 #ifndef  TOPNODEFACTOR
