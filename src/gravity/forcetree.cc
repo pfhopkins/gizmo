@@ -383,6 +383,14 @@ let_build_attempt:
         /* Non-retryable. The failing rank records the cause; pseudodata failures
          * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
          * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
+        if(let_status == LET_PACK_OOM)
+        {
+            printf("LET wire OOM on rank %d: ran out of memory reserving ghost-import (LET) transport buffers "
+                   "(the memory ledger's LET-wire 'failed' bytes shows how much). This configuration's ghost import "
+                   "does not fit in node memory; feasible: fewer ranks/node, or lower resolution. Stopping cleanly.\n",
+                   ThisTask);
+            fflush(stdout);
+        }
         if(let_status == LET_PACK_OOM || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
     }
     else if(overflow_any)
