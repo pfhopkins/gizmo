@@ -340,9 +340,12 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold)
  *
  * The unconditional full rebuild post-drift in the prior code cost
  * ~1.3s/step on fire_m11i tiny-N (the dominant tiny-N bucket post-
- * UVM-canonical). Of that, ~1s is build_sfc_tiles' SFC sort over
- * 12.4M particles — work that's only needed when particle layout
- * actually changes (i.e., domain_decomp).
+ * UVM-canonical). Of that, ~1s is build_sfc_tiles streaming 12.4M
+ * particles to re-derive pool membership and re-tile it — work that's
+ * only needed when particle layout actually changes (i.e.,
+ * domain_decomp). There is no sort to skip: P[] arrives Peano-Hilbert
+ * ordered from the domain decomposition and tiles are consecutive runs
+ * of it, so the cost is the passes over P[], not any ordering step.
  *
  * Between domain decomps, particles drift but their pool/tile
  * assignments are still meaningful: each tile still references the
@@ -374,7 +377,7 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold)
  * pool, particles' actual positions are checked).
  *
  * Reset boundary: gpu_step_sidx_invalidate_full() at every domain_decomp
- * frees the SIDX, forcing a fresh rebuild including SFC sort. Domain
+ * frees the SIDX, forcing a fresh rebuild of pool and tiles. Domain
  * decomp is already a heavy step, so the marginal cost is small. This
  * naturally bounds bbox dispersion within a decomp interval and resets
  * tile assignments to current spatial layout.
@@ -549,7 +552,7 @@ static void sidx_stage_to_device(gpu_spatial_index_t *idx)
 /* Forward decl */
 void gpu_step_sidx_invalidate_full(void);
 
-/* Drift-time refresh: skip the SFC sort, recompute bboxes/BVH, refresh compact_xyzh. */
+/* Drift-time refresh: reuse pool/tile membership, recompute bboxes/BVH, refresh compact_xyzh. */
 static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
                                       struct particle_data *P_shared,
                                       double *max_extent_ratio_out,
@@ -738,7 +741,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     /* Keep host-side persistent copies of tiles/pool/BVH alive across drifts
      * so the incremental refresh path (gpu_step_sidx_invalidate ->
      * sidx_refresh_after_drift) can recompute tile bboxes from current
-     * particle positions on host without re-running the SFC sort.
+     * particle positions on host without re-deriving pool membership or
+     * re-tiling it.
      *
      * MUST use Kokkos::HostSpace allocator (heap-based) NOT mymalloc — the
      * latter is LIFO-stack-disciplined and persistent SIDX buffers would
@@ -1458,7 +1462,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
             /* Tile-bbox stats: pull tile bboxes back to host and report extent
              * distribution per axis. If extents are ~box/cube_root(ntiles) the
-             * SFC tiling is healthy; if extents ~ box_size the SFC sort failed
+             * SFC tiling is healthy; if extents ~ box_size the tiling is degenerate
              * and every bbox overlap test will pass regardless of query. */
             {
                 std::vector<sfc_tile_t> h_tiles(ntiles);

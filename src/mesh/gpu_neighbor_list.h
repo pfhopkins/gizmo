@@ -92,10 +92,12 @@ struct gpu_spatial_index_t {
      * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
      * are recomputed in place from current particle positions, the BVH
      * is re-fitted from the updated tile bboxes (build_tile_bvh re-call,
-     * O(ntiles)), then re-staged to device. Skips the expensive SFC
-     * sort (build_sfc_tiles ~1s on 12.4M particles) which is the
-     * dominant cost in a fresh build. Only freed at full invalidate
-     * (post-domain_decomp boundary). */
+     * O(ntiles)), then re-staged to device. What this saves is the
+     * membership work: build_sfc_tiles derives pool membership with two
+     * passes over P[] and then tiles it with a third, and those passes
+     * (not any sort — P[] arrives Peano-ordered from the domain
+     * decomposition, so tiles are consecutive runs) dominate a fresh
+     * build. Only freed at full invalidate (post-domain_decomp boundary). */
     sfc_tile_t *h_tiles;        /* [ntiles] */
     int *h_pool;                /* [num_pool] */
     tile_bvh_node_t *h_bvh;     /* [2*ntiles-1] */
@@ -166,7 +168,8 @@ gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void);
 void gpu_step_sidx_invalidate(void);
 
 /* Full invalidate: free SIDXes so the next gpu_ngb_list_build does a
- * complete rebuild including the SFC sort. Called from run.cc after
+ * complete rebuild, re-deriving pool membership and tiles. Called from
+ * run.cc after
  * any domain_decomp variant, since decomp shuffles particle indices
  * and pool/tile assignments become stale. */
 void gpu_step_sidx_invalidate_full(void);

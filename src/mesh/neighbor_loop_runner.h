@@ -266,7 +266,8 @@ struct IdentitySidecar {
  * Each spec declares which step-persistent SIDX cache its NGL build should
  * reuse. Caches are step-scoped and shared across cooperating callers
  * (e.g. sink_env1, sink_feed, sink_swk all share the all-types cache to
- * amortize the SFC sort + BVH build). The runner resolves the kind to a
+ * amortize the pool/tile construction + BVH build). The runner resolves
+ * the kind to a
  * gpu_spatial_index_t* internally; specs never name the global accessor.
  *
  * AllTypes implemented; GasOnly added for the density port. Specs
