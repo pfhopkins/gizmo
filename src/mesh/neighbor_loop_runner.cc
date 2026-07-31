@@ -405,27 +405,17 @@ static int nlr_init_diag_level(void)
         new_set_level = (int)v;
     }
 
-    bool old_phase0   = nlr_env_is_one("GIZMO_PHASE0_DIAG");
     bool old_dispatch = nlr_env_is_one("GIZMO_NLR_DISPATCH_TRACE");
 
     int level;
     if(new_set_level >= 0) {
         level = new_set_level;
-        if(old_phase0) {
-            nlr_warn_once_rank0("alias_phase0_overridden",
-                "GIZMO_PHASE0_DIAG ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
-        }
         if(old_dispatch) {
             nlr_warn_once_rank0("alias_dispatch_overridden",
                 "GIZMO_NLR_DISPATCH_TRACE ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
         }
     } else {
         level = 0;
-        if(old_phase0) {
-            nlr_warn_once_rank0("alias_phase0_deprecated",
-                "GIZMO_PHASE0_DIAG=1 is deprecated; use GIZMO_NLR_DIAG=1 instead.");
-            if(level < 1) level = 1;
-        }
         if(old_dispatch) {
             nlr_warn_once_rank0("alias_dispatch_deprecated",
                 "GIZMO_NLR_DISPATCH_TRACE=1 is deprecated; use GIZMO_NLR_DIAG=2 instead.");

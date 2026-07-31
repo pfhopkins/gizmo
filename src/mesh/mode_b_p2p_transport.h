@@ -78,7 +78,7 @@ void gizmo_fatal_hard_exit_reviewed(int code, const char *msg,
 
 /* -----------------------------------------------------------------------
  * Diagnostics: total bytes shipped in the last exchange (sum across peers,
- * both directions). For the PHASE0_MODEB_NGL line. Reset by
+ * both directions). Reset by
  * mode_b_p2p_diag_reset(). All thread-unsafe / single-flow.
  * --------------------------------------------------------------------- */
 struct mode_b_p2p_diag_t {
