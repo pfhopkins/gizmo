@@ -125,6 +125,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 {
     gizmo_collect_controlled_stop();
     if(gizmo_controlled_stop_code() == 0) { return; }
+    report_memory_ledger("controlled-stop");  /* all ranks past the code!=0 check; show memory state at the stop */
     if(ThisTask == 0) {
         const char *r = gizmo_controlled_stop_local_reason();
         printf("Graceful bad-stop drained at phase boundary '%s' (code=%d): %s. "
