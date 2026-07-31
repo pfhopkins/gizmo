@@ -69,9 +69,9 @@ struct global_data_all_processes
   double BufferSize;		/*!< size of communication buffer in MB */
   long BunchSize;     	        /*!< number of particles fitting into the buffer in the parallel tree algorithm  */
 
-  double PartAllocFactor;	/*!< in order to maintain work-load balance, the particle load will usually NOT be balanced.  Each processor allocates memory for PartAllocFactor times the average number of particles to allow for that */
+  double PartAllocFactor;	/*!< Master multiplier for per-rank particle storage: MaxPart = PartAllocFactor * (TotNumPart/NTask), and MaxPartGas / MaxNodes / MaxForeignNodes / domain maxLoad all key off it.  It carries TWO duties at once: (a) load-imbalance headroom (the local particle count is usually not balanced) and (b) the reservoir for imported ghost particles (Mode-A ghosts share the P[]/CellP[] arrays), which is why the default is large (~10). Raising it inflates ALL of the above, not just ghost room. */
   double TreeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
-  double TopNodeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
+  double TopNodeAllocFactor;	/*!< Sizes the TOP-level (domain-decomposition) tree, not the full local tree: MaxTopNodes = TopNodeAllocFactor * MaxPart + 1.  Much smaller than TreeAllocFactor (default ~0.008 vs ~0.45) because the top-tree holds one node per top-level domain cell, not one per particle; auto-ratchets on top-node overflow. */
   double LETAllocFactor;        /*!< foreign-node headroom in Nodes_base/Extnodes_base/Nextnode for the Locally Essential Tree.  Foreign-node capacity = ceil(LETAllocFactor * MaxNodes).  Default 1.0; raise for clustered runs that exhaust the foreign buffer (endrun message will name this param).  Only used on GPU builds. */
 
 #ifdef DM_SCALARFIELD_SCREENING

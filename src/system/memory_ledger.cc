@@ -7,6 +7,8 @@
 
 #include <mpi.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -69,6 +71,24 @@ void gizmo_let_wire_grow(long long delta_bytes)
 void gizmo_let_wire_reset(void)            {g_let_wire_current = 0;}
 void gizmo_let_wire_note_failed(long long bytes) {g_let_wire_failed += bytes;}
 
+/* Per-process virtual and resident size from /proc/self/status (Linux; 0 elsewhere).
+   VIRTUAL/committed (VmSize) is what mmap reserved -- the quantity strict-overcommit
+   nodes (Frontera) fail on -- and can far exceed RESIDENT (VmRSS), the pages actually
+   touched. The family counters above are LOGICAL requested bytes; these two are the
+   commit/physical categories the Base-reserved-vs-used divergence lives in. */
+static void read_self_vm_kb(long long *vmsize_kb, long long *vmrss_kb)
+{
+    *vmsize_kb = 0; *vmrss_kb = 0;
+    FILE *fd = fopen("/proc/self/status", "r");
+    if(!fd) {return;}
+    char buf[256];
+    while(fgets(buf, sizeof(buf), fd)) {
+        if(strncmp(buf, "VmSize:", 7) == 0) {*vmsize_kb = atoll(buf + 7);}
+        else if(strncmp(buf, "VmRSS:", 6) == 0) {*vmrss_kb = atoll(buf + 6);}
+    }
+    fclose(fd);
+}
+
 /* Shared body. The node-scoped reduces are collective and ALWAYS run on every rank
    (safe only at symmetric all-rank call points); when `always` is 0 the node lead
    prints only if the node memory footprint has grown since the last print, so a
@@ -100,6 +120,13 @@ static void report_memory_ledger_impl(const char *when, int always)
     /* LET wire transient buffers: report the high-water (and failed bytes). */
     long long let_in[3] = {g_let_wire_highwater, g_let_wire_current, g_let_wire_failed}, node_let[3] = {0, 0, 0};
     MPI_Reduce(let_in, node_let, 3, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
+
+    /* Byte categories: per-process VIRTUAL/committed and RESIDENT, summed over the node,
+       so the commit-vs-physical gap (e.g. Base reserved 56 GB / resident 33 GB) is visible. */
+    long long self_vmsize_kb = 0, self_vmrss_kb = 0;
+    read_self_vm_kb(&self_vmsize_kb, &self_vmrss_kb);
+    long long vm_in[2] = {self_vmsize_kb, self_vmrss_kb}, node_vm[2] = {0, 0};
+    MPI_Reduce(vm_in, node_vm, 2, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
 
     if(GizmoNodeRankOfTask == 0)
     {
@@ -138,7 +165,7 @@ static void report_memory_ledger_impl(const char *when, int always)
 
         /* Build the whole block into one buffer and emit it with a single write, so the
            blocks printed concurrently by each node's lead task do not interleave. */
-        char buf[1600];
+        char buf[2048];
         int n = 0;
         n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                       "MEMORY LEDGER [%s] task=%d: %d ranks/node, node physical %s\n"
@@ -153,6 +180,13 @@ static void report_memory_ledger_impl(const char *when, int always)
                       node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
                       node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
                       node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
+        /* Byte categories: the family lines above are LOGICAL requested bytes; these are
+           the commit vs physical categories (the Base reserved-vs-used gap lives here). */
+        if(node_vm[0] > 0 || node_vm[1] > 0)
+            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                          "  Byte categories (node): GIZMO virtual-commit %.1f MB, resident %.1f MB"
+                          " (node Committed_AS %.1f MB of %.1f MB physical)\n",
+                          node_vm[0] / 1024.0, node_vm[1] / 1024.0, committed_kb / 1024.0, mem_total_kb / 1024.0);
         if(gizmo_kokkos_mem_available())
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                           "  Kokkos allocations observed: current node %.1f MB, high-water node %.1f MB\n"
