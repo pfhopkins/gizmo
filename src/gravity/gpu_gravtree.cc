@@ -114,10 +114,8 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
  * (the Kokkos lambda runs on host threads).  Plain `static long long` here built on Mac but failed the
  * Vista nvcc compile (#20096-D: address of a host variable in device code). */
 #if defined(GIZMO_GPU_COMPILER)
-static __managed__ long long g_inv_fleaf_routed    = 0;   /* predicate-OPEN foreign terminal routed as a real leaf */
 static __managed__ long long g_inv_fterm_aggregate = 0;   /* predicate-OPEN foreign terminal, NOT a leaf -> illegal */
 #else
-static long long g_inv_fleaf_routed    = 0;
 static long long g_inv_fterm_aggregate = 0;
 #endif
 
@@ -766,9 +764,8 @@ gpu_gravtree_walk_one(int target,
                  * untagged forced multipole (foreign_force_multipole && !fl_tag): a non-particle foreign
                  * terminal accepted as a multipole in leaf-sensitive support -- a silent physics
                  * downgrade the host controlled-stops on after the walk. */
-                if(pred == GRAV_OPEN_NODE && must_accept_foreign_terminal) {
-                    if(fl_tag == 1) { Kokkos::atomic_add(&g_inv_fleaf_routed, 1LL); }
-                    else            { Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL); }
+                if(pred == GRAV_OPEN_NODE && must_accept_foreign_terminal && fl_tag != 1) {
+                    Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL);
                 }
             }
 
@@ -1456,8 +1453,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
-    /* Invariant guard: reset the per-walk counters. */
-    g_inv_fleaf_routed = g_inv_fterm_aggregate = 0;
+    /* Invariant guard: reset the per-walk counter. */
+    g_inv_fterm_aggregate = 0;
 
     double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
@@ -1496,13 +1493,16 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
-    /* Permanent invariant guard.  The routed count is informational (env-gated) -- it is the
-     * success signal alongside the np2-np1 force-ledger collapse.  An untagged predicate-OPEN foreign
-     * terminal is an unopenable aggregate that would silently downgrade leaf-sensitive physics to a
-     * multipole; until an owner-continuation path exists this hard-surfaces as a controlled stop. */
-    if(getenv("GIZMO_GRAV_INVARIANT")) {
-        printf("[INV rank=%d] foreign-leaf routed=%lld | aggregate forced-accept (ILLEGAL)=%lld\n",
-               ThisTask, g_inv_fleaf_routed, g_inv_fterm_aggregate);
+    /* Permanent invariant guard.  An untagged predicate-OPEN foreign terminal is an unopenable
+     * aggregate that would silently downgrade leaf-sensitive physics to a multipole; until an
+     * owner-continuation path exists this hard-surfaces as a controlled stop.
+     *
+     * The CLEAN case is reported too, not only the violation: a run that confirms the count is
+     * zero is how the foreign-leaf import path is shown to be behaving, and that confirmation is
+     * unavailable if only the failure prints. */
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
+        printf("[gravtree invariant] unopenable foreign-terminal aggregates accepted = %lld\n",
+               g_inv_fterm_aggregate);
         fflush(stdout);
     }
     if(g_inv_fterm_aggregate > 0) {

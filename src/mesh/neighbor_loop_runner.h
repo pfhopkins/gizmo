@@ -1482,11 +1482,11 @@ struct NeighborLoopPlan {
 
     /* Global active-particle count after MPI_Allreduce. Sentinel: -1 means
      * "not populated" — happens on force-mode paths
-     * (GIZMO_NLR_FORCE_MODE{A,B}=1) when GIZMO_PHASE0_DIAG is OFF, since the
+     * (GIZMO_NLR_FORCE_MODE{A,B}=1) when GIZMO_NLR_DIAG is OFF, since the
      * runner skips the Allreduce in that case to avoid an extra collective.
      * Hooks/consumers MUST check for -1 before assuming this field reflects
-     * a real global count. Threshold-dispatch paths and any path with
-     * PHASE0_DIAG on always populate it. */
+     * a real global count. Threshold-dispatch paths always populate it, as
+     * does any force path when GIZMO_NLR_DIAG>=1. */
     int  num_active_global;
 };
 
@@ -2107,7 +2107,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *
  * Aliases (DEPRECATED; accepted for one cycle with rank-0 warning; explicit
  * removal queued for a future cleanup pass):
- *   GIZMO_PHASE0_DIAG=1            -> GIZMO_NLR_DIAG=1
  *   GIZMO_NLR_DISPATCH_TRACE=1     -> GIZMO_NLR_DIAG=2
  *   GIZMO_NLR_FORCE_MODEA=1        -> GIZMO_NLR_FORCE_MODE=A
  *   GIZMO_NLR_FORCE_MODEB=1        -> GIZMO_NLR_FORCE_MODE=B
@@ -2286,7 +2285,7 @@ bool gizmo_nlr_xval_nb_dump_enabled(void);
 bool gizmo_nlr_phase0_diag_enabled(void);
 
 /* ============================================================================
- * RunnerStageTimer — timing accumulator populated when GIZMO_PHASE0_DIAG=1
+ * RunnerStageTimer — timing accumulator populated when GIZMO_NLR_DIAG>=1
  *
  * Each path function (run_mode_a / run_mode_b_local / run_mode_b_remote)
  * receives a pointer; nullptr means "phase0 off, skip all timing." Path

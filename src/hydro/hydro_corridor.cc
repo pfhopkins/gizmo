@@ -19,8 +19,17 @@
 
 /* Default adaptive thresholds (global summed / per-rank-max active gas) used
  * when the optional NeighborLoopModeBThreshold{Sum,Max} parameters are unset.
- * The corridor decision mirrors the runner's per-loop policy:
+ * The corridor uses the same DECISION FORM as the runner's per-loop policy:
  *   Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
+ * It does NOT use the same NUMBERS. The corridor's default is 1000/1000 on
+ * active GAS; a loop that reaches the runner's own adaptive path without a
+ * dispatch override falls back to the Spec's threshold, defaulting to 64/64
+ * on that loop's own active count (neighbor_loop_runner.cc, nlr_spec_threshold_*).
+ * Consequence, by design and measured: between 65 and 1000 active gas the
+ * corridor selects Mode B for gradients/hydro_force/cellcorrections (which do
+ * take the override) while density -- which does not set dispatch_override --
+ * independently selects Mode A and performs its own one-way ghost import.
+ * That import feeds density's own neighbour search; it is not handed downstream.
  * Centralized here so a future tuning lives in one place. */
 static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM = 1000;
 static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_MAX = 1000;

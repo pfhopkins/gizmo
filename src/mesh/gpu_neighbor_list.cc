@@ -844,6 +844,7 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
 }
 
 
+
 /* ---- L4 Step-1a device neighbour-inclusion precision oracle (DIAGNOSTIC) ----
  * Gate GIZMO_NGB_PRECISION_ORACLE (SPIKE/test only; teardown ledger). Quantifies
  * device neighbour under/over-inclusion caused by the single-precision ABSOLUTE
@@ -992,25 +993,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }
         }
     }
-    /* Phase 0 instrumentation: env-gated, all-ranks, per-call line for
-     * Nactive histogram + tiny-N phase-cost decomposition. Off ⇒ no work. */
-    static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");
-    static const int phase0_on = (g_phase0_env_raw && g_phase0_env_raw[0] == '1') ? 1 : 0;
-    static long long g_phase0_call_id = 0;
-    long long this_phase0_call = phase0_on ? (++g_phase0_call_id) : 0;
-    /* HANG_DBG: dense per-phase tracing for the sink_swk hang. Gated on
-     * GIZMO_HANG_DBG=1 + caller label match (sink_swk by default). Every
-     * phase prints rank+caller+phase to stderr so we can see exactly which
-     * phase doesn't return on the stuck rank. */
-    static const char *g_hang_dbg_env = getenv("GIZMO_HANG_DBG");
-    static const char *g_hang_dbg_caller_env = getenv("GIZMO_HANG_DBG_CALLER");
-    int hang_dbg = (g_hang_dbg_env && g_hang_dbg_env[0] == '1');
-    if(hang_dbg) {
-        const char *want = g_hang_dbg_caller_env ? g_hang_dbg_caller_env : "sink_swk";
-        if(strcmp(caller_label ? caller_label : "?", want) != 0) hang_dbg = 0;
-    }
-    #define HDBG(label) do { if(hang_dbg) { fprintf(stderr, "[HDBG rank=%d caller=%s phase=%s num_active=%d num_total=%d cached=%d]\n", ThisTask, caller_label ? caller_label : "?", label, num_active, num_total, (cached_idx && cached_idx->valid) ? 1 : 0); fflush(stderr); } } while(0)
-    HDBG("entry");
 
     /* Early-out: with no active particles there is nothing to search.
      * Skip the SIDX build/refresh AND all kernel launches.  Allocate 1-element
@@ -1051,17 +1033,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                    idx_for_stubs ? 1 : 0, timediff(t_entry, my_second()));
             fflush(stdout);
         }
-        if(phase0_on) {
-            const char *sidx_id_eo = "none";
-            if(idx_for_stubs == &g_step_sidx_alltypes)      sidx_id_eo = "alltypes";
-            else if(idx_for_stubs == &g_step_sidx)          sidx_id_eo = "step";
-            else if(idx_for_stubs)                          sidx_id_eo = "other";
-            printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d sidx_id=%s "
-                   "N=0 Ntot=%d dt_ghost_import=-1 dt_sidx_dec=0 dt_refresh=0 dt_gpu=0 total_pairs=0\n",
-                   ThisTask, this_phase0_call, caller_label ? caller_label : "?",
-                   type_bitmask, idx_for_stubs ? 1 : 0, sidx_id_eo, num_total);
-            fflush(stdout);
-        }
         cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
     }
@@ -1074,21 +1045,15 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* Invalidate cached SIDX if num_total changed (ghost exchange redo, particle creation, etc.).
      * The compact_xyzh and pool arrays were sized for the old count; accessing beyond them is UB. */
     if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total) {
-        HDBG("sidx_invalidate_size_mismatch");
         gpu_spatial_index_free(cached_idx);
     }
     if(cached_idx && cached_idx->valid) {
-        HDBG("sidx_use_cached");
         idx = cached_idx;
     } else if(cached_idx) {
-        HDBG("sidx_build_into_cache");
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label, radius_policy);
-        HDBG("sidx_built_into_cache");
         idx = cached_idx;
     } else {
-        HDBG("sidx_build_local");
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
-        HDBG("sidx_built_local");
         idx = &local_idx;
     }
     double t_after_sidx = my_second(); /* DIAG: after SIDX (re)use decision */
@@ -1126,7 +1091,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         else if(gpu_dirty_tracker_popcount(handle) > 0) { do_refresh = 1; refresh_all = 0; }
     }
     if(do_refresh) {
-        HDBG(refresh_all ? "compact_h_refresh_all_start" : "compact_h_refresh_idx_start");
         did_refresh = 1;
         double *compact = idx->d_compact_xyzh;
         double h_inflate = 1.0 + SIDX_H_SLACK; /* see SIDX_H_SLACK — lazy-drift over-search slack */
@@ -1173,10 +1137,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
         gizmo_gpu_check_last_error("compact_h_refresh", num_total);
         t_refresh_fence_out = my_second();
-        HDBG("compact_h_refresh_done");
     }
     double t_after_refresh = my_second(); /* DIAG */
-    HDBG("after_refresh");
 
     /* Active indices: always re-uploaded (changes per call) */
     gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
@@ -1212,16 +1174,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
-    HDBG("scratch_alloc_start");
     int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
     int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
     double t_alloc1 = my_second(); /* DIAG: end of scratch alloc */
-    HDBG("scratch_alloc_done");
 
     /* DIAG: drain any prior async GPU work so subsequent fence times only this kernel */
-    HDBG("drain_fence_start");
     Kokkos::fence();
-    HDBG("drain_fence_done");
     double t_drain_done = my_second();
     double t_nl0 = t_drain_done; /* DIAG: start of GPU passes */
     double t_fused_launch_in = 0, t_fused_launch_out = 0; /* DIAG */
@@ -1230,13 +1188,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* Empty-kernel probe: distinguishes Kokkos/CUDA fence floor (platform overhead)
      * from actual GPU work.  If noop_fnc ≈ fused_fnc the 1.4s is the fence floor;
      * if noop_fnc ≈ µs the 1.4s is real kernel work (e.g. UVM page migration). */
-    HDBG("noop_probe_launch");
     t_noop_launch_in = my_second();
     Kokkos::parallel_for("noop_probe", 1, KOKKOS_LAMBDA(int) {});
     t_noop_launch_out = my_second();
-    HDBG("noop_probe_fence_start");
     Kokkos::fence();
-    HDBG("noop_probe_fence_done");
     t_noop_fence_out = my_second();
 
     /* Fused single pass: BVH walk + write neighbors into per-particle scratchpad */
@@ -1259,7 +1214,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const double *compact_xyzh = gnl->d_compact_xyzh;
-        HDBG("fused_launch_start");
         t_fused_launch_in = my_second();
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
@@ -1279,10 +1233,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             counts[aa] = cnt;
         });
         t_fused_launch_out = my_second();
-        HDBG("fused_fence_start");
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_fused", num_active);
-        HDBG("fused_fence_done");
 
         /* L4 Step-1b validation oracle (DIAGNOSTIC; gate GIZMO_NGB_PRECISION_ORACLE;
          * SYMMETRIC + num_active>0). Validates the double-position substrate: the
@@ -1412,171 +1364,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(j_h_dbl);
             }
         }
-
-        /* MICROBENCHMARK PROBE — fires once per process when GIZMO_NGB_MICROBENCH=1
-         * env var is set and we hit a small-N cached call. Re-launches the SAME
-         * ngb_fused kernel 20 times back-to-back with per-iteration fence timing,
-         * plus 20 empty-kernel "noop" launches for comparison. Settles whether
-         * the ~1.45s fused floor is per-call (every iteration ~1.45s) or
-         * first-touch/JIT (only iteration 0 slow). */
-        static bool g_microbench_done = false;
-        if(!g_microbench_done && getenv("GIZMO_NGB_MICROBENCH")
-           && cached_idx && cached_idx->valid && num_active <= 16) {
-            g_microbench_done = true;
-            printf("[NGB_MICROBENCH] caller=%s N=%d sidx_cached=1 search_mode=%d — running 20 repeated fused + 20 noop launches\n",
-                   caller_label, num_active, search_mode);
-            printf("[NGB_MICROBENCH] box_sizes=(%g,%g,%g) ntiles=%d periodic=(%d,%d,%d)\n",
-                   bs0, bs1, bs2, ntiles, pf0, pf1, pf2);
-            fflush(stdout);
-
-            /* Tile-bbox stats: pull tile bboxes back to host and report extent
-             * distribution per axis. If extents are ~box/cube_root(ntiles) the
-             * SFC tiling is healthy; if extents ~ box_size the tiling is degenerate
-             * and every bbox overlap test will pass regardless of query. */
-            {
-                std::vector<sfc_tile_t> h_tiles(ntiles);
-                Kokkos::View<sfc_tile_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                    hv(h_tiles.data(), ntiles);
-                Kokkos::View<sfc_tile_t*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                    dv(tiles, ntiles);
-                Kokkos::deep_copy(hv, dv);
-                double bs_axes[3] = {bs0, bs1, bs2};
-                for(int k = 0; k < 3; k++) {
-                    std::vector<double> ext(ntiles);
-                    for(int t = 0; t < ntiles; t++) ext[t] = h_tiles[t].hi[k] - h_tiles[t].lo[k];
-                    std::sort(ext.begin(), ext.end());
-                    double mn = ext.front(), md = ext[ntiles/2], mx = ext.back();
-                    double sum = 0; for(double v : ext) sum += v;
-                    double mean = sum / ntiles;
-                    printf("[NGB_MICROBENCH] tile_bbox axis=%d  min=%.6g  median=%.6g  mean=%.6g  max=%.6g  box=%.6g  max/box=%.4f\n",
-                           k, mn, md, mean, mx, bs_axes[k], (bs_axes[k]>0 ? mx/bs_axes[k] : 0.0));
-                }
-                /* Per-active query stats: h_i, h_i/box, position. */
-                {
-                    std::vector<int> h_active(num_active);
-                    Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ha(h_active.data(), num_active);
-                    Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> da(active, num_active);
-                    Kokkos::deep_copy(ha, da);
-                    std::vector<double> h_compact(4 * (size_t)num_total);
-                    Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hc(h_compact.data(), 4 * num_total);
-                    Kokkos::View<const double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dc(compact_xyzh, 4 * num_total);
-                    Kokkos::deep_copy(hc, dc);
-                    for(int aa = 0; aa < num_active; aa++) {
-                        int i = h_active[aa];
-                        double x = h_compact[i*4+0], y = h_compact[i*4+1], z = h_compact[i*4+2], h = h_compact[i*4+3];
-                        printf("[NGB_MICROBENCH]   active aa=%2d i=%d  pos=(%.4g,%.4g,%.4g)  h=%.4g  h/box=(%.4f,%.4f,%.4f)\n",
-                               aa, i, x, y, z, h, h/bs0, h/bs1, h/bs2);
-                    }
-                }
-                fflush(stdout);
-            }
-            for(int rep = 0; rep < 20; rep++) {
-                double tA = my_second();
-                Kokkos::parallel_for("ngb_fused_probe", num_active, KOKKOS_LAMBDA(int aa) {
-                    int pf[3] = {pf0, pf1, pf2};
-                    double bs[3] = {bs0, bs1, bs2};
-                    double bh[3] = {bh0, bh1, bh2};
-                    int i = active[aa];
-                    double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
-                    double pos_i[3];
-                    if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
-                    else        { pos_i[0] = (double)compact_xyzh[i*4+0]; pos_i[1] = (double)compact_xyzh[i*4+1]; pos_i[2] = (double)compact_xyzh[i*4+2]; }
-                    int cnt = search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i, j_rad_scale,
-                                                       tiles, ntiles, pool, smode,
-                                                       bvh, bvh_root,
-                                                       &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
-                                                       NGL_SCRATCH_STRIDE,
-                                                       pf, bs, bh);
-                    counts[aa] = cnt;
-                });
-                Kokkos::fence();
-                double tB = my_second();
-                double tC = my_second();
-                Kokkos::parallel_for("noop_probe2", 1, KOKKOS_LAMBDA(int) {});
-                Kokkos::fence();
-                double tD = my_second();
-                printf("[NGB_MICROBENCH] rep=%2d fused=%.4fs noop=%.6fs\n",
-                       rep, tB - tA, tD - tC);
-                fflush(stdout);
-            }
-            /* One additional launch with BVH visit counters wired up. Tells us
-             * whether the 1.48s/call is BVH traversal pathology, candidate-test
-             * floods, or something else (e.g. underutilization-induced latency
-             * with reasonable visit counts). */
-            int *d_nodes  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
-            int *d_tilesV = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
-            int *d_tested = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
-            int *d_accept = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
-            {
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_n(d_nodes,  num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_t(d_tilesV, num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_x(d_tested, num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_a(d_accept, num_active);
-                Kokkos::deep_copy(v_n, 0); Kokkos::deep_copy(v_t, 0); Kokkos::deep_copy(v_x, 0); Kokkos::deep_copy(v_a, 0);
-            }
-            double tA = my_second();
-            Kokkos::parallel_for("ngb_fused_count", num_active, KOKKOS_LAMBDA(int aa) {
-                int pf[3] = {pf0, pf1, pf2};
-                double bs[3] = {bs0, bs1, bs2};
-                double bh[3] = {bh0, bh1, bh2};
-                int i = active[aa];
-                double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
-                double pos_i[3];
-                if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
-                else        { pos_i[0] = (double)compact_xyzh[i*4+0]; pos_i[1] = (double)compact_xyzh[i*4+1]; pos_i[2] = (double)compact_xyzh[i*4+2]; }
-                int n_nodes = 0, n_tiles = 0, n_test = 0, n_acc = 0;
-                (void) search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i, j_rad_scale,
-                                                tiles, ntiles, pool, smode,
-                                                bvh, bvh_root,
-                                                &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
-                                                NGL_SCRATCH_STRIDE,
-                                                pf, bs, bh,
-                                                &n_nodes, &n_tiles, &n_test, &n_acc);
-                d_nodes[aa]  = n_nodes;
-                d_tilesV[aa] = n_tiles;
-                d_tested[aa] = n_test;
-                d_accept[aa] = n_acc;
-            });
-            Kokkos::fence();
-            double tB = my_second();
-            /* Pull counters back to host */
-            std::vector<int> h_nodes(num_active), h_tiles(num_active), h_test(num_active), h_acc(num_active);
-            {
-                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_n(h_nodes.data(), num_active);
-                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_t(h_tiles.data(), num_active);
-                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_x(h_test.data(),  num_active);
-                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_a(h_acc.data(),   num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_n(d_nodes,  num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_t(d_tilesV, num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_x(d_tested, num_active);
-                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_a(d_accept, num_active);
-                Kokkos::deep_copy(hv_n, dv_n); Kokkos::deep_copy(hv_t, dv_t);
-                Kokkos::deep_copy(hv_x, dv_x); Kokkos::deep_copy(hv_a, dv_a);
-            }
-            auto stats = [&](const std::vector<int> &v, const char *name) {
-                long sum = 0; int mn = v[0], mx = v[0];
-                for(int i = 0; i < num_active; i++) { sum += v[i]; if(v[i]<mn) mn=v[i]; if(v[i]>mx) mx=v[i]; }
-                printf("[NGB_MICROBENCH]   %-22s sum=%ld  min=%d  max=%d  mean=%.1f\n",
-                       name, sum, mn, mx, (double)sum/num_active);
-            };
-            printf("[NGB_MICROBENCH] counter-pass fused=%.4fs (ntiles=%d, pool_total ~ scaled to active set)\n",
-                   tB - tA, ntiles);
-            stats(h_nodes, "bvh_nodes_visited");
-            stats(h_tiles, "bvh_tiles_visited");
-            stats(h_test,  "candidates_tested");
-            stats(h_acc,   "candidates_accepted");
-            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_accept);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_tested);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_tilesV);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_nodes);
-            printf("[NGB_MICROBENCH] done\n"); fflush(stdout);
-        }
     }
     double t_nl1 = my_second(); /* DIAG: after fused BVH pass */
 
     /* Count overflow particles (count > stride: they need a re-walk in compact phase) */
     int overflow_count = 0;
-    HDBG("overflow_check_start");
     {
         int *counts = d_counts;
         Kokkos::parallel_reduce("ngb_overflow_check", num_active,
@@ -1585,13 +1377,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }, overflow_count);
         Kokkos::fence();
     }
-    HDBG("overflow_check_done");
 
     /* GPU exclusive prefix scan: counts → offsets, returning total.
        Counts are correct even for overflow particles (search_neighbors_sfc_gpu
        returns the true count regardless of bounded write). */
     int64_t total_ll = 0;
-    HDBG("offsets_scan_start");
     {
         int *counts = d_counts;
         int64_t *offsets = gnl->offsets;
@@ -1603,7 +1393,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }, total_ll);
         Kokkos::fence();
     }
-    HDBG("offsets_scan_done");
     /* Sanity guard: the CSR index (gnl->total_pairs / gnl->offsets) is 64-bit,
      * so INT_MAX is no longer a ceiling. Still abort cleanly on a nonsensical
      * total_pairs (negative => prefix-scan corruption; or a count so large the
@@ -1648,7 +1437,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const double *compact_xyzh = gnl->d_compact_xyzh;
-        HDBG("compact_kernel_start");
         t_compact_launch_in = my_second();
         Kokkos::parallel_for("ngb_compact", num_active, KOKKOS_LAMBDA(int aa) {
             int n = counts[aa];
@@ -1676,7 +1464,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         t_compact_launch_out = my_second();
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_compact", num_active);
-        HDBG("compact_kernel_done");
     }
     double t_nl3 = my_second(); /* DIAG: after compact pass */
 
@@ -1805,7 +1592,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
     /* Free temporaries */
     double t_free0 = my_second(); /* DIAG */
-    HDBG("free_start");
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
     if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
@@ -1845,30 +1631,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                timediff(t_entry, t_free1));
         fflush(stdout);
     }
-    if(phase0_on) {
-        /* All ranks. dt_gpu folds fused launch+fence (the actual neighbor walk).
-         * dt_refresh folds compact_h_refresh launch+fence (=0 if not run).
-         * dt_ghost_import is not in scope here — emitted as -1 and tracked
-         * separately by PHASE0_GHOST in ghost_exchange_impl. */
-        double dt_sidx_dec = timediff(t_entry, t_after_sidx);
-        double dt_refresh  = did_refresh ? (timediff(t_refresh_launch_in, t_refresh_launch_out)
-                                          + timediff(t_refresh_launch_out, t_refresh_fence_out)) : 0;
-        double dt_gpu      = (num_active > 0) ? timediff(t_fused_launch_in, t_nl1) : 0;
-        /* Identify which step-cache (if any) was used so post-processing can
-         * disambiguate the sidx_dec cliff. sidx_id: "alltypes" / "step" /
-         * "other" (caller-owned local struct) / "none" (no cached_idx). */
-        const char *sidx_id = "none";
-        if(cached_idx == &g_step_sidx_alltypes)      sidx_id = "alltypes";
-        else if(cached_idx == &g_step_sidx)          sidx_id = "step";
-        else if(cached_idx)                          sidx_id = "other";
-        printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d sidx_id=%s "
-               "N=%d Ntot=%d dt_ghost_import=-1 dt_sidx_dec=%.6f dt_refresh=%.6f "
-               "dt_gpu=%.6f total_pairs=%lld\n",
-               ThisTask, this_phase0_call, caller_label ? caller_label : "?",
-               type_bitmask, sidx_cached_now, sidx_id, num_active, num_total,
-               dt_sidx_dec, dt_refresh, dt_gpu, (long long)total);
-        fflush(stdout);
-    }
 
     /* Lazy-drift hook (Attack C): drift each neighbor in the freshly-built
      * CSR list to time1 on host. Active particle i is already drifted
@@ -1888,7 +1650,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * compact_xyzh write paths absorbs that staleness in the BVH tile-overlap
      * test. Per-pair r² acceptance reads the actual P[j].KernelRadius (now
      * freshly drifted), so correctness is preserved. */
-    HDBG("lazy_drift_start");
     if(gnl->total_pairs > 0 && gnl->neighbors) {
         double t_lazy0 = my_second();
         std::vector<int> ngb_host((size_t)gnl->total_pairs);
@@ -1923,127 +1684,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gizmo_step_phase_record("lazy_drift_pairs", (double)gnl->total_pairs);
         gizmo_step_phase_record("lazy_drift_time",  timediff(t_lazy0, my_second()));
     }
-    /* Strict A/B dump: env-gated. Writes per-call binary file with sorted
-     * neighbor rows so a diff tool can verify pair-set equivalence across
-     * code revisions. The neighbor rows are the GPU-built set from the walk
-     * above, but this dump happens after lazy drift. Therefore DETAIL mode's
-     * P[] positions/h can reflect lazy-drifted state; use GIZMO_NGL_ORACLE_*
-     * for exact same-state walker-vs-bruteforce forensics.
-     * File path: $GIZMO_NGL_DUMP_DIR/ngl_rank<R>_call<N>.bin
-     *
-     * GIZMO_NGL_DUMP_DETAIL=1 additionally appends per-active and per-pool-
-     * member positions/h actually used by the walker, so a forensic can
-     * compute r²/cutoff/margin for any pair post-hoc.  Cost is large
-     * (~80 bytes per active + 32 bytes per neighbor); only enable for
-     * targeted diagnostic runs. */
-    {
-        const char *dump_dir = getenv("GIZMO_NGL_DUMP_DIR");
-        if(dump_dir && dump_dir[0] && gnl->offsets && (gnl->total_pairs == 0 || gnl->neighbors)) {
-            static int call_seq = 0;
-            int my_seq = call_seq++;
-            const char *dump_detail_env = getenv("GIZMO_NGL_DUMP_DETAIL");
-            int dump_detail = (dump_detail_env && dump_detail_env[0] == '1') ? 1 : 0;
-            char path[512];
-            snprintf(path, sizeof(path), "%s/ngl_rank%d_call%05d.bin",
-                     dump_dir, ThisTask, my_seq);
-            FILE *f = fopen(path, "wb");
-            if(f) {
-                /* Magic v3=basic, v4=basic+detail. v3/v4 (was v1/v2) signals the
-                 * 64-bit CSR offsets array (8 bytes/entry); v1/v2 had 32-bit
-                 * offsets. total_pairs was already int64 in v1/v2. */
-                const char magic[8] = {'N','G','L','D','M','P', 'v',
-                                       dump_detail ? '4' : '3'};
-                fwrite(magic, 8, 1, f);
-                int32_t r32 = (int32_t)ThisTask;
-                int32_t s32 = (int32_t)my_seq;
-                fwrite(&r32, sizeof(int32_t), 1, f);
-                fwrite(&s32, sizeof(int32_t), 1, f);
-                char clabel[32] = {0};
-                strncpy(clabel, caller_label ? caller_label : "?", 31);
-                fwrite(clabel, 32, 1, f);
-                int32_t na32 = (int32_t)num_active;
-                int32_t nt32 = (int32_t)num_total;
-                int64_t tp64 = (int64_t)gnl->total_pairs;
-                fwrite(&na32, sizeof(int32_t), 1, f);
-                fwrite(&nt32, sizeof(int32_t), 1, f);
-                fwrite(&tp64, sizeof(int64_t), 1, f);
-                /* Active indices (caller-provided particle indices). */
-                fwrite(active_indices_host, sizeof(int), num_active, f);
-                /* Offsets [num_active+1] — 64-bit (int64) since dump magic v3. */
-                fwrite(gnl->offsets, sizeof(int64_t), num_active + 1, f);
-                /* Neighbors: copy device→host once, sort each row, write. */
-                std::vector<int> ngb_host;
-                if(gnl->total_pairs > 0) {
-                    ngb_host.resize((size_t)gnl->total_pairs);
-                    gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
-                    for(int a = 0; a < num_active; a++) {
-                        int64_t beg = gnl->offsets[a];
-                        int64_t end = gnl->offsets[a + 1];
-                        if(end > beg) std::sort(ngb_host.begin() + beg, ngb_host.begin() + end);
-                    }
-                    fwrite(ngb_host.data(), sizeof(int), (size_t)gnl->total_pairs, f);
-                }
-                if(dump_detail) {
-                    /* search_mode (int32), search_radius_factor (double),
-                     * h_inflate (double), periodic_flags[3] (int32), box_sizes[3] (double). */
-                    int32_t sm32 = (int32_t)search_mode;
-                    fwrite(&sm32, sizeof(int32_t), 1, f);
-                    double srf = search_radius_factor, hinf = (double)(1.0 + SIDX_H_SLACK);
-                    fwrite(&srf, sizeof(double), 1, f);
-                    fwrite(&hinf, sizeof(double), 1, f);
-                    int32_t pflags[3] = { (int32_t)gnl->periodic_flags[0],
-                                          (int32_t)gnl->periodic_flags[1],
-                                          (int32_t)gnl->periodic_flags[2] };
-                    fwrite(pflags, sizeof(int32_t), 3, f);
-                    fwrite(gnl->box_sizes, sizeof(double), 3, f);
-                    /* Per-active: 3 doubles (pos) + 1 double (h_query) + 1 double (h_p_kernel). */
-                    for(int a = 0; a < num_active; a++) {
-                        int i = active_indices_host[a];
-                        double xyz[3] = { (double)P_shared[i].Pos[0], (double)P_shared[i].Pos[1], (double)P_shared[i].Pos[2] };
-                        fwrite(xyz, sizeof(double), 3, f);
-                        double h_q = (search_radii_host && search_radii_host[a] > 0)
-                                     ? search_radii_host[a]
-                                     : (double)P_shared[i].KernelRadius;
-                        fwrite(&h_q, sizeof(double), 1, f);
-                        double hk = (double)P_shared[i].KernelRadius;
-                        fwrite(&hk, sizeof(double), 1, f);
-                    }
-                    /* Per-neighbor (in CSR order, matching ngb_host): 3 doubles (P[j].Pos)
-                     * + 1 double (P[j].KernelRadius). compact_xyzh[j*4+3] is what the
-                     * walker actually used at acceptance; we capture that too. */
-                    if(gnl->total_pairs > 0) {
-                        /* Stage compact_xyzh from device to host once. */
-                        std::vector<double> compact_host(num_total * 4);
-                        Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                            hv(compact_host.data(), num_total * 4);
-                        Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                            dv(idx->d_compact_xyzh, num_total * 4);
-                        Kokkos::deep_copy(hv, dv);
-                        for(int64_t p = 0; p < gnl->total_pairs; p++) {
-                            int j = ngb_host[p];
-                            double pos[3], hk; double ch;
-                            if(j >= 0 && j < num_total) {
-                                pos[0] = (double)P_shared[j].Pos[0];
-                                pos[1] = (double)P_shared[j].Pos[1];
-                                pos[2] = (double)P_shared[j].Pos[2];
-                                hk = (double)P_shared[j].KernelRadius;
-                                ch = compact_host[j * 4 + 3];
-                            } else {
-                                pos[0] = pos[1] = pos[2] = 0.0; hk = 0.0; ch = 0.0;
-                            }
-                            fwrite(pos, sizeof(double), 3, f);
-                            fwrite(&hk, sizeof(double), 1, f);
-                            fwrite(&ch, sizeof(double), 1, f);   /* compact reach is now double */
-                        }
-                    }
-                }
-                fclose(f);
-            }
-        }
-    }
 
-    HDBG("return");
-    #undef HDBG
     /* Charge list-build wall, less any kernel time already charged inside it,
      * so the two rows never overlap. */
     cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));

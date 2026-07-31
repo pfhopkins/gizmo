@@ -751,20 +751,6 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * declarations/lifecycle_counters.h. */
     g_ghost_import_counter++;
 
-    /* Phase 0 instrumentation: env-gated, all-ranks. Brackets dispatch so
-     * both impls are captured without duplication. Off ⇒ no work beyond
-     * one static int read. */
-    static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");
-    static const int phase0_on = (g_phase0_env_raw && g_phase0_env_raw[0] == '1') ? 1 : 0;
-    static long long g_phase0_ghost_call_id = 0;
-    long long this_phase0_call = 0;
-    double t_phase0_start = 0;
-    int nlocal_pre = 0;
-    if(phase0_on) {
-        this_phase0_call = ++g_phase0_ghost_call_id;
-        t_phase0_start = my_second();
-        nlocal_pre = NumPart;
-    }
     /* Dispatch policy: explicit-query callers (runner-issued specs,
      * n_queries >= 0) use the request-driven path — tile-overlap cannot consume
      * an explicit query list (it scans ActiveParticleList filtered by
@@ -782,13 +768,10 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
                                     || gx_walk_export_eligible(spec);
     if(spec && spec->search_mode == NGB_SEARCH_SYMMETRIC && !gx_walk_export_eligible(spec))
         gx_report_symm_broadcast(spec);
-    const char *selected_impl;
     if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
-        selected_impl = "request_driven";
     } else {
         ghost_exchange_result result = ghost_exchange_tile_overlap_impl(spec);
-        selected_impl = "tile_overlap";
         if(result != GHOST_EXCHANGE_COMPLETED) {
             /* Tile admission failed: it could not fit particle slots (or its counts exceeded
              * the int transport range) COLLECTIVELY — every rank returns the same
@@ -805,19 +788,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
             }
             gizmo_exit_bad_stop_if_requested("ghost_exchange:tile_fallback");
             ghost_exchange_request_driven_impl(spec);
-            selected_impl = "request_driven(fallback)";
         }
-    }
-    if(phase0_on) {
-        double dt_ghost_import = timediff(t_phase0_start, my_second());
-        int ghost_added = NumPart - nlocal_pre;
-        printf("PHASE0_GHOST rank=%d call=%lld caller=%s impl=%s "
-               "nlocal_pre=%d ghost_added=%d ntotal_post=%d dt_ghost_import=%.6f\n",
-               ThisTask, this_phase0_call,
-               spec->caller_name ? spec->caller_name : "?",
-               selected_impl,
-               nlocal_pre, ghost_added, NumPart, dt_ghost_import);
-        fflush(stdout);
     }
 }
 
