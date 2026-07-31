@@ -873,6 +873,21 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
  * caller soft-stops; the Alltoallv still runs (zero counts for failed ranks)
  * before the drain, keeping the MPI choreography intact. */
 static int g_let_pack_oom = 0;
+/* Rate-limit the realloc-failure message: under real OOM this fires thousands of
+   times per step and buries the log. The failed bytes are tallied in the memory
+   ledger; a few messages plus that total are enough. */
+static long g_let_realloc_fail_msgs = 0;
+#define LET_REALLOC_FAIL_MSG_CAP 5
+static int let_realloc_fail_should_print(void)
+{
+    if(g_let_realloc_fail_msgs < LET_REALLOC_FAIL_MSG_CAP) {
+        if(++g_let_realloc_fail_msgs == LET_REALLOC_FAIL_MSG_CAP) {
+            printf("LET pack: further realloc-failure messages suppressed; see the memory ledger LET-wire 'failed' bytes.\n");
+        }
+        return 1;
+    }
+    return 0;
+}
 
 /* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated/freed with the
  * foreign-node arena in force_treeallocate/force_treefree; memset-0 reset in let_run_exchange. */
@@ -889,9 +904,10 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
     struct LETNodeWire *nb = (struct LETNodeWire *) realloc(*buf, (size_t)new_cap * sizeof(struct LETNodeWire));
     if(!nb)
     {
-        printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
-               new_cap, sizeof(struct LETNodeWire),
-               (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
+        if(let_realloc_fail_should_print())
+            printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
+                   new_cap, sizeof(struct LETNodeWire),
+                   (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
         g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
         return;
@@ -909,7 +925,8 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     struct LETSubtreeHeader *nb = (struct LETSubtreeHeader *) realloc(*buf, (size_t)new_cap * sizeof(struct LETSubtreeHeader));
     if(!nb)
     {
-        printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
+        if(let_realloc_fail_should_print())
+            printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
         g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
         return;
