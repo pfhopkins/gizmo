@@ -36,8 +36,14 @@ typedef int gpu_dirty_handle_t; /* opaque; -1 == invalid */
 /* Register a dense particle-index range. Allocates a bitset sized to count
  * bits (rounded up to 64-bit word boundary). Returns a handle, or -1 on
  * out-of-slots. The caller stores the handle and unregisters it on cache
- * free. */
-gpu_dirty_handle_t gpu_dirty_tracker_register(int base, int count);
+ * free.
+ *
+ * start_clean tells the tracker whether the cache's h values are already
+ * current. Pass 1 when the caller has just written every row from the live
+ * P[] (nothing can have changed since), so the first consume does no work.
+ * Pass 0 when the backing store is uninitialised or of unknown age, which
+ * makes the first consume refresh the whole range. */
+gpu_dirty_handle_t gpu_dirty_tracker_register(int base, int count, int start_clean);
 
 /* Free the bitset and free the slot for reuse. Safe to call with -1. */
 void gpu_dirty_tracker_unregister(gpu_dirty_handle_t handle);

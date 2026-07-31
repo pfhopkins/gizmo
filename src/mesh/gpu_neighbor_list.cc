@@ -789,17 +789,13 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->cache_tbm = type_bitmask;
     idx->cache_radius_policy = radius_policy;
     idx->valid = 1;
-    /* Register this cache with the dirty tracker over [0, num_total). compact_xyzh
-     * was just seeded from current P[] — bitset starts clean (all_dirty=0). */
+    /* Register this cache with the dirty tracker over [0, num_total). The
+     * compact_xyzh build above wrote every row's h from the live P[] under this
+     * cache's radius policy, and nothing between there and here can mutate it,
+     * so the range starts clean: the first refresh would recompute values it
+     * already holds, over the whole pool. */
     if(idx->dirty_handle >= 0) gpu_dirty_tracker_unregister(idx->dirty_handle);
-    idx->dirty_handle = gpu_dirty_tracker_register(0, num_total);
-    /* Tracker registers fresh caches with all_dirty=1 by default (the cache
-     * is "newborn"); but the build above already wrote compact_xyzh from
-     * current P[].KernelRadius, so we want a clean slate. Force consume-and-
-     * clear by treating this build as having already serviced an all-dirty
-     * refresh: the tracker's all_dirty=1 will trigger a full refresh on the
-     * very first NGL call after build, which is harmless (compact is fresh,
-     * the kernel just rewrites identical values). Acceptable for v1. */
+    idx->dirty_handle = gpu_dirty_tracker_register(0, num_total, 1);
 
     if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_VERBOSE_DIAG */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
