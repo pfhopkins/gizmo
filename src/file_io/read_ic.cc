@@ -99,8 +99,9 @@ void read_ic(char *fname)
         All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
         if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
             printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
-            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] arrays and need\n");
-            printf("  substantial headroom. Recommend PartAllocFactor >= 10 to avoid ghost overflow.\n");
+            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");
+            printf("  Raising PartAllocFactor adds ghost slots but also inflates P/CellP/tree storage and\n");
+            printf("  may not fix overlarge imports; consider more ranks/nodes or reducing ghost-import demand.\n");
         }
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
         All.MaxPartGas = All.MaxPart;

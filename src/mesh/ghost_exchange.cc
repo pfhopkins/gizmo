@@ -1575,8 +1575,9 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {
         double usage_frac = (double)NumPart / (double)All.MaxPart;
-        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). "
-                      "Consider increasing PartAllocFactor (currently %.2f) to avoid running out of space.",
+        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). PartAllocFactor (currently %.2f) "
+                      "adds ghost slots but also inflates P/CellP/tree storage and may not fix overlarge "
+                      "imports; consider more ranks/nodes or reducing ghost-import demand.",
                       100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
     }
 
@@ -3369,7 +3370,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
-        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor, add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
     }
     /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
      * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
