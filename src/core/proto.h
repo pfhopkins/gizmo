@@ -190,6 +190,32 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
                              MPI_Status *status);
 
 int getNodeCount(void);
+void gizmo_node_comm_init(void);
+extern MPI_Comm GizmoNodeComm;
+extern int GizmoNodeRankOfTask;
+extern int GizmoRanksThisNode;
+extern int GizmoNodeCount;
+/* Allocation families the memory ledger tracks outside the central Base arena.
+   Each family updates its byte counter at its own allocation seam. */
+enum {
+  GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
+  GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
+  GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
+  GIZMO_MEM_LET_WIRE,           /* LET wire buffer (libc) */
+  GIZMO_MEM_NFAMILY
+};
+void gizmo_mem_account_add(int family, long long delta_bytes);
+void gizmo_mem_account_set(int family, long long value_bytes);
+void report_memory_ledger(const char *when);
+
+/* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
+   TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the
+   ledger -- NOT a per-family counter. extern "C" so the host ledger/main TUs link it
+   across the device-compiler boundary. */
+extern "C" void      gizmo_kokkos_mem_register(void);
+extern "C" int       gizmo_kokkos_mem_available(void);
+extern "C" long long gizmo_kokkos_mem_current_bytes(void);
+extern "C" long long gizmo_kokkos_mem_highwater_bytes(void);
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);

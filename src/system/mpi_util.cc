@@ -16,20 +16,37 @@
 #include "../core/proto.h"
 
 
-/** Function to calculate the number of unique -nodes- (shared memory machine structures), not MPI tasks, on which we are running.
-    often this is specified by global variables by the runtime commands or job scheduler but that is machine-dependent, so we want a
-    way to check internally for some memory allocation purposes. */
+/* Persistent node-local (shared-memory) communicator and the counts derived from
+   it. MPI_COMM_WORLD is split once by shared-memory node and the result is kept for
+   the run, so anything that needs node-scoped grouping (node count, per-node memory
+   aggregation) uses the same single communicator rather than re-splitting. */
+MPI_Comm GizmoNodeComm      = MPI_COMM_NULL;
+int      GizmoNodeRankOfTask = 0;   /* this task's rank within its node */
+int      GizmoRanksThisNode  = 1;   /* MPI tasks sharing this node */
+int      GizmoNodeCount      = 1;   /* number of distinct shared-memory nodes */
+
+/** Build the persistent node-local communicator and its derived counts. The first
+    (initializing) call is COLLECTIVE over MPI_COMM_WORLD -- it does an Allreduce to
+    count nodes -- so it must run on all ranks; it is invoked once at startup. Later
+    calls are local no-ops. Not for arbitrary subset-of-ranks use. */
+void gizmo_node_comm_init(void)
+{
+    if(GizmoNodeComm != MPI_COMM_NULL) {return;}
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &GizmoNodeComm);
+    gizmo_mpi_set_failfast_errhandler(GizmoNodeComm);  /* fail-fast, not MPI's default wedge-prone abort */
+    MPI_Comm_rank(GizmoNodeComm, &GizmoNodeRankOfTask);
+    MPI_Comm_size(GizmoNodeComm, &GizmoRanksThisNode);
+    int is_node_lead = (GizmoNodeRankOfTask == 0) ? 1 : 0;
+    MPI_Allreduce(&is_node_lead, &GizmoNodeCount, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+}
+
+/** Number of unique -nodes- (shared memory machine structures), not MPI tasks, on
+    which we are running. Machine-independent internal check for memory allocation
+    purposes; derived from the persistent node-local communicator. */
 int getNodeCount(void)
 {
-    int rank, is_rank0, nodes;
-    MPI_Comm shmcomm;
-    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
-    gizmo_mpi_set_failfast_errhandler(shmcomm);  /* fail-fast, not MPI's default wedge-prone abort */
-    MPI_Comm_rank(shmcomm, &rank);
-    is_rank0 = (rank == 0) ? 1 : 0;
-    MPI_Allreduce(&is_rank0, &nodes, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Comm_free(&shmcomm);
-    return nodes;
+    gizmo_node_comm_init();
+    return GizmoNodeCount;
 }
 
 
