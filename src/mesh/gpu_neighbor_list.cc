@@ -1071,22 +1071,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * enables persistent caching across calls — caller controls invalidation). */
     gpu_spatial_index_t local_idx = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, NULL, 0, 0};
     gpu_spatial_index_t *idx;
-    /* Mechanism-isolation toggle: force a fresh SFC tile/BVH/compact build before
-     * every NGL call. This is intentionally stronger than
-     * GIZMO_SIDX_FORCE_H_ALLDIRTY: it refreshes positions, tile bboxes, BVH,
-     * pool, and compact_xyzh from scratch. */
-    static int g_force_full_rebuild_inited = 0;
-    static int g_force_full_rebuild = 0;
-    if(!g_force_full_rebuild_inited) {
-        const char *e = getenv("GIZMO_SIDX_FORCE_FULL_REBUILD");
-        g_force_full_rebuild = (e && e[0] == '1') ? 1 : 0;
-        g_force_full_rebuild_inited = 1;
-    }
-    if(g_force_full_rebuild && cached_idx && cached_idx->valid) {
-        HDBG("sidx_force_full_rebuild");
-        gpu_spatial_index_free(cached_idx);
-    }
-
     /* Invalidate cached SIDX if num_total changed (ghost exchange redo, particle creation, etc.).
      * The compact_xyzh and pool arrays were sized for the old count; accessing beyond them is UB. */
     if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total) {
@@ -1140,21 +1124,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(cached_idx && cached_idx->valid && handle >= 0) {
         if(gpu_dirty_tracker_is_all_dirty(handle)) { do_refresh = 1; refresh_all = 1; }
         else if(gpu_dirty_tracker_popcount(handle) > 0) { do_refresh = 1; refresh_all = 0; }
-    }
-    /* Mechanism-isolation toggle: force every cached NGL build to do a
-     * full-pool h refresh, regardless of tracker state. If this makes
-     * B-vs-B -np 2 deterministic, the divergence is in h-mark tracking
-     * (missed marks or stale bitset). If divergence persists, the issue is
-     * elsewhere (positions, ghost state, BVH, etc.). */
-    static int g_force_h_alldirty_inited = 0;
-    static int g_force_h_alldirty = 0;
-    if(!g_force_h_alldirty_inited) {
-        const char *e = getenv("GIZMO_SIDX_FORCE_H_ALLDIRTY");
-        g_force_h_alldirty = (e && e[0] == '1') ? 1 : 0;
-        g_force_h_alldirty_inited = 1;
-    }
-    if(g_force_h_alldirty && cached_idx && cached_idx->valid) {
-        do_refresh = 1; refresh_all = 1;
     }
     if(do_refresh) {
         HDBG(refresh_all ? "compact_h_refresh_all_start" : "compact_h_refresh_idx_start");
