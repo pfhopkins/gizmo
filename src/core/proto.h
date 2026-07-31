@@ -201,12 +201,16 @@ enum {
   GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
   GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
   GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
-  GIZMO_MEM_LET_WIRE,           /* LET wire buffer (libc) */
   GIZMO_MEM_NFAMILY
 };
 void gizmo_mem_account_add(int family, long long delta_bytes);
 void gizmo_mem_account_set(int family, long long value_bytes);
+/* LET wire transient buffers -- tracked as a high-water, not a persistent family. */
+void gizmo_let_wire_grow(long long delta_bytes);
+void gizmo_let_wire_reset(void);
+void gizmo_let_wire_note_failed(long long bytes);
 void report_memory_ledger(const char *when);
+void report_memory_ledger_on_growth(const char *when);
 
 /* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
    TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the

@@ -54,7 +54,27 @@ void gizmo_mem_account_set(int family, long long value_bytes)
     mem_ledger_clamp_if_negative(family);
 }
 
-void report_memory_ledger(const char *when)
+/* LET wire transport buffers are transient (allocated during an exchange, freed at
+   its end), so they are tracked as a HIGH-WATER rather than a persistent current-byte
+   family: grow() raises the running total and the peak; reset() zeroes the running
+   total after the whole exchange's buffers are freed; note_failed() records bytes a
+   realloc could not satisfy. LET packing is serial per rank, so plain counters suffice. */
+static long long g_let_wire_current = 0, g_let_wire_highwater = 0, g_let_wire_failed = 0;
+
+void gizmo_let_wire_grow(long long delta_bytes)
+{
+    g_let_wire_current += delta_bytes;
+    if(g_let_wire_current > g_let_wire_highwater) {g_let_wire_highwater = g_let_wire_current;}
+}
+void gizmo_let_wire_reset(void)            {g_let_wire_current = 0;}
+void gizmo_let_wire_note_failed(long long bytes) {g_let_wire_failed += bytes;}
+
+/* Shared body. The node-scoped reduces are collective and ALWAYS run on every rank
+   (safe only at symmetric all-rank call points); when `always` is 0 the node lead
+   prints only if the node memory footprint has grown since the last print, so a
+   per-domain-decomposition call does not spam. Growth is decided AFTER the reduce, by
+   the node lead alone -- never gate the collective itself. */
+static void report_memory_ledger_impl(const char *when, int always)
 {
     gizmo_node_comm_init();
 
@@ -77,8 +97,33 @@ void report_memory_ledger(const char *when)
     MPI_Reduce(&kok_cur, &node_kok_cur, 1, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
     MPI_Reduce(&kok_hw,  &node_kok_hw,  1, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
 
+    /* LET wire transient buffers: report the high-water (and failed bytes). */
+    long long let_in[3] = {g_let_wire_highwater, g_let_wire_current, g_let_wire_failed}, node_let[3] = {0, 0, 0};
+    MPI_Reduce(let_in, node_let, 3, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
+
     if(GizmoNodeRankOfTask == 0)
     {
+        /* Growth gate for non-"always" call points. Track each DISTINCT pool separately
+           and print when ANY grows >10%: a single summed metric would hide growth in a
+           small pool (e.g. the transient LET-wire buffers) behind a large one (Base
+           arena / Kokkos). Pools: Base high-water (libc), Kokkos-observed high-water
+           (all UVM/device; or the persistent-family total where telemetry is off), and
+           the transient LET-wire high-water (libc, neither Base nor Kokkos). */
+        static double last_base = -1.0, last_mid = -1.0, last_let = -1.0;
+        double base_m = node_base_highwater_mb;
+        double mid_m  = (gizmo_kokkos_mem_available()
+                         ? node_kok_hw / (1024.0 * 1024.0)
+                         : (double)(node_family_bytes[GIZMO_MEM_PARTICLE_SOA]
+                                    + node_family_bytes[GIZMO_MEM_TREE_NODES]
+                                    + node_family_bytes[GIZMO_MEM_STL_TIMEBIN]) / (1024.0 * 1024.0));
+        double let_m  = node_let[0] / (1024.0 * 1024.0);
+        int grew = (last_base < 0.0)
+                   || (base_m > 1.1 * last_base)
+                   || (mid_m  > 1.1 * last_mid)
+                   || (let_m  > 1.1 * last_let);
+        if(!always && !grew) {return;}   /* nothing grew: skip the print (the collective reduce already ran on all ranks) */
+        last_base = base_m; last_mid = mid_m; last_let = let_m;
+
         /* Node physical memory from /proc/meminfo. Absent on platforms without it
            (e.g. macOS); report "unavailable" rather than a misleading 0. */
         long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
@@ -96,12 +141,13 @@ void report_memory_ledger(const char *when)
                "  Particle SoA (P/CellP/WakeupDirty): node %.1f MB\n"
                "  Tree nodes (local+foreign, UVM): node %.1f MB\n"
                "  Timebin lists (ActiveParticleList/Next/Prev, STL): node %.1f MB\n"
-               "  LET transport buffers (transient): allocated only during exchanges; not held at startup\n",
+               "  LET wire buffers (transient, libc): node high-water %.1f MB (current %.1f MB, failed %.1f MB)\n",
                when, ThisTask, GizmoRanksThisNode, node_phys,
                base_reserved_mb, node_base_reserved_mb, base_highwater_mb, node_base_highwater_mb,
                node_family_bytes[GIZMO_MEM_PARTICLE_SOA] / (1024.0 * 1024.0),
                node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
-               node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0));
+               node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
+               node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
 
         if(gizmo_kokkos_mem_available())
         {
@@ -111,6 +157,14 @@ void report_memory_ledger(const char *when)
                    node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0));
         }
         else {printf("  Kokkos allocations observed: unavailable (callback API not compiled on this backend)\n");}
+        printf("  (node high-water values are the SUM of per-rank peaks -- a conservative upper bound, not a time-coincident node peak)\n");
         fflush(stdout);
     }
 }
+
+/* Always print (sparse, high-value call points: startup, controlled stop). */
+void report_memory_ledger(const char *when) {report_memory_ledger_impl(when, 1);}
+
+/* Print only on memory growth. For collective points reached every so often (domain
+   decomposition) where an unconditional print would be too chatty. */
+void report_memory_ledger_on_growth(const char *when) {report_memory_ledger_impl(when, 0);}

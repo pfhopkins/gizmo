@@ -478,6 +478,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
   wakeup_sidecar_invalidate();      /* P[] reindexed across ranks → rebuild WakeupDirty from P[] next scan */
   domain_particle_layout_changed("domain_Decomposition");
+  report_memory_ledger_on_growth("post-domain");  /* memory peak (persistent + tree); collective; prints only on growth */
 }
 
 
@@ -714,6 +715,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     reconstruct_timebins();
     wakeup_sidecar_invalidate();   /* light repartition rearranged + exchanged particles → rebuild WakeupDirty next scan */
     domain_particle_layout_changed("domain_Decomposition_light");
+    report_memory_ledger_on_growth("post-domain-light");  /* same memory boundary as full decomposition; collective; growth-gated */
 }
 
 

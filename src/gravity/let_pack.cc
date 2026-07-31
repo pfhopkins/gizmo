@@ -892,10 +892,12 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
         printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
                new_cap, sizeof(struct LETNodeWire),
                (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
+        gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
         g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
+    gizmo_let_wire_grow((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
     *capacity = new_cap;
 }
 
@@ -908,10 +910,12 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     if(!nb)
     {
         printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
+        gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
         g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
+    gizmo_let_wire_grow((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
     *capacity = new_cap;
 }
 
@@ -1813,6 +1817,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         if(send_per_rank[r]) free(send_per_rank[r]);
         if(send_hdr_per_rank[r]) free(send_hdr_per_rank[r]);
     }
+    gizmo_let_wire_reset();   /* all wire+hdr buffers for this exchange are freed; zero the running total (high-water kept) */
 
     /* Cleanup */
     myfree(send_hdr_count);
