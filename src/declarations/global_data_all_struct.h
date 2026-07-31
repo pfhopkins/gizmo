@@ -226,7 +226,7 @@ struct global_data_all_processes
          MaxSizeTimestep;		/*!< maximum allowed timestep */
   double MaxRMSDisplacementFac;	/*!< this determines a global timestep criterion for cosmological simulations in comoving coordinates.  To this end, the code computes the rms velocity
 				   of all particles, and limits the timestep such that the rms displacement is a fraction of the mean particle separation (determined from the particle mass and the cosmological parameters). This parameter specifies this fraction. */
-  int MaxMemSize;
+  int MaxMemSize;		/*!< Per-MPI-task size in MB of the legacy Base/mymalloc arena. NOT a total memory budget: particle SoA, tree UVM, Kokkos scratch, LET wire buffers, and MPI/ghost buffers are accounted separately, outside this arena. */
   int NeighborLoopModeBThresholdSum;	/*!< optional Mode-A/B dispatch threshold on the summed active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_sum) */
   int NeighborLoopModeBThresholdMax;	/*!< optional Mode-A/B dispatch threshold on the max-rank active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_max) */
   double CourantFac;		/*!< Courant factor */
