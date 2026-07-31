@@ -56,6 +56,15 @@ int allocate_memory(int do_collective_preflight)
    *        restart's existing per-turn poll, with the failing rank skipping its payload
    *        reads (goto finish_turn). */
 
+  /* Node-scoped persistent-memory preflight (user-info aid): on the all-rank path,
+   * warn or cleanly stop BEFORE allocating if the projected per-node persistent reserve
+   * cannot fit the node. Collective on the node communicator, so only when do_collective_preflight. */
+  if(do_collective_preflight)
+    {
+      int preflight_stop = gizmo_memory_preflight();
+      if(preflight_stop) {return preflight_stop;}
+    }
+
   /* Arena (mymalloc) preflight -- BEFORE any mymalloc / metadata mutation. MUST mirror
    * the arena allocations below: Exportflag/Exportindex/Exportnodecount (NTaskTimesThreads
    * ints each, x3), Send/Recv count/offset (NTask ints each, x4), ProcessedFlag (MaxPart

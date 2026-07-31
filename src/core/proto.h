@@ -211,6 +211,7 @@ void gizmo_let_wire_reset(void);
 void gizmo_let_wire_note_failed(long long bytes);
 void report_memory_ledger(const char *when);
 void report_memory_ledger_on_growth(const char *when);
+int gizmo_memory_preflight(void);
 
 /* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
    TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the

@@ -209,3 +209,55 @@ void report_memory_ledger(const char *when) {report_memory_ledger_impl(when, 1);
 /* Print only on memory growth. For collective points reached every so often (domain
    decomposition) where an unconditional print would be too chatty. */
 void report_memory_ledger_on_growth(const char *when) {report_memory_ledger_impl(when, 0);}
+
+/* Startup persistent-memory preflight -- a user-info aid, run before the big
+   allocations. Projects the deterministic per-node persistent reserve (Base arena +
+   P/CellP/WakeupDirty + STL timebin + a conservative tree estimate) and compares it to
+   detected node physical memory. If the projection PROVABLY exceeds node memory the run
+   cannot load, so it requests a graceful controlled-stop with actionable advice (a clean
+   stop instead of a part-allocated crash); if it is merely tight it only warns; if node
+   memory is unknown (no /proc/meminfo) or there is headroom it is silent. The tree term
+   is deliberately a conservative under-estimate so the hard-stop fires only when the run
+   is infeasible beyond doubt. Collective on GizmoNodeComm -- call only on the all-rank
+   allocation path. Returns nonzero iff a stop was requested. */
+int gizmo_memory_preflight(void)
+{
+    gizmo_node_comm_init();
+    long long per_rank = (long long) All.MaxMemSize * 1024 * 1024                      /* Base arena reserve */
+                       + (long long) All.MaxPart    * (long long) sizeof(struct particle_data)   /* P */
+                       + (long long) All.MaxPart    * (long long) sizeof(unsigned char)          /* WakeupDirty */
+                       + (long long) All.MaxPartGas * (long long) sizeof(struct gas_cell_data)   /* CellP */
+                       + 3LL * (long long) All.MaxPart * (long long) sizeof(int)                 /* STL timebin lists */
+                       + (long long)(All.TreeAllocFactor * All.MaxPart)
+                             * ((long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE)); /* local tree (est.) */
+    long long node_persistent = 0;
+    MPI_Allreduce(&per_rank, &node_persistent, 1, MPI_LONG_LONG, MPI_SUM, GizmoNodeComm);
+
+    long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
+    (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
+    long long node_phys = mem_total_kb * 1024;
+    if(node_phys <= 0) {return 0;}   /* node memory unknown (e.g. no /proc/meminfo) -- no preflight */
+
+    if(node_persistent > node_phys)
+    {
+        if(GizmoNodeRankOfTask == 0) {
+            printf("MEMORY PREFLIGHT: projected persistent reserve %.1f GB exceeds node physical %.1f GB "
+                   "(%d ranks/node) -- cannot load. Stopping cleanly. Feasible: fewer ranks/node, "
+                   "lower PartAllocFactor, or more nodes.\n",
+                   node_persistent / 1.0e9, node_phys / 1.0e9, GizmoRanksThisNode);
+            fflush(stdout);
+        }
+        gizmo_request_controlled_stop(830, "memory preflight: projected persistent reserve exceeds node physical memory",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return 830;
+    }
+    if((double) node_persistent > 0.85 * (double) node_phys && GizmoNodeRankOfTask == 0)
+    {
+        printf("MEMORY PREFLIGHT WARNING: projected persistent reserve %.1f GB is %.0f%% of node physical %.1f GB "
+               "(%d ranks/node) -- little headroom left for transient/ghost memory.\n",
+               node_persistent / 1.0e9, 100.0 * (double) node_persistent / (double) node_phys,
+               node_phys / 1.0e9, GizmoRanksThisNode);
+        fflush(stdout);
+    }
+    return 0;
+}
