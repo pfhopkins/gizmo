@@ -1275,9 +1275,9 @@ enum class DispatchPath : int {
 /* NlrForceMode — A/B dispatch override values. Defined here (early in the
  * header) rather than near the env-var doc block below because struct
  * neighbor_loop_args' in-class default initializer for `dispatch_override`
- * needs the enum to be visible at that point. The companion env-var
- * resolution functions (gizmo_nlr_force_mode, gizmo_nlr_force_mode_for)
- * are declared below near their documentation. */
+ * needs the enum to be visible at that point. The companion resolution
+ * function (gizmo_nlr_force_mode) is declared below near its
+ * documentation. */
 enum class NlrForceMode { None = 0, A = 1, B = 2 };
 
 /* External symmetric gas-gas CSR injection (hydro corridor support:
@@ -2125,7 +2125,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
 
 int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
 NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */
-NlrForceMode gizmo_nlr_force_mode_for(const char *loop_name); /* per-loop override, else global */
 bool         gizmo_nlr_spike_accum_dump_enabled(void);
 bool         gizmo_nlr_spike_nb_dump_enabled(void);
 
@@ -2136,7 +2135,6 @@ bool gizmo_nlr_force_mode_a_global(void);
 bool gizmo_nlr_dispatch_trace_enabled(void);
 
 bool gizmo_nlr_oracle_enabled_global(void);
-bool gizmo_nlr_oracle_enabled_for(const char *loop_name);
 
 /* ============================================================================
  * NlrQueryEnvelope — runner-owned transport wrapper for cross-rank queries.

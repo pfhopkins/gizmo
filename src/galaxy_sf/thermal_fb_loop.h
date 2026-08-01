@@ -261,8 +261,8 @@ static void thermal_fb_pair_kernel(
  * ThermalFBSpec — non-iterative scatter Spec (sink_feed pattern).
  * ========================================================================== */
 struct ThermalFBSpec {
-    /* Identity. loop_name drives env-var derivation (GIZMO_THERMALFB_* per
-     * nlr_loop_env_name uppercasing) and the new generic _end_bundle print. */
+    /* Identity. loop_name labels this loop in runner diagnostics and the
+     * generic _end_bundle print. */
     static constexpr const char *loop_name = "thermalfb";
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass (divisor of dIE/delta_rho/dMet) then atomic_add(&Pj.Mass); same for Cj.Density, Pj.Metallicity -> multi-source order-dependent physics (read-then-atomic-add) */
 
