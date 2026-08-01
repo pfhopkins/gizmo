@@ -526,16 +526,10 @@ struct SinkEnv1Spec {
 
     /* ====================================================================
      * DIAGNOSTICS — env-gated; safe to ignore for physics edits.
-     *   PERMANENT_DIAGNOSTIC: compare_accum (oracle gate)
-     *   SPIKE_DIAGNOSTIC:     diagnostic_dump_active, diagnostic_dump_neighbor_list
-     *                          (cross-validation probes; scheduled retire
-     *                          after 3d ports)
-     * Definitions live in sink_env1_loop.cc.
+     *   compare_accum: oracle gate. Definition lives in sink_env1_loop.cc.
      * ==================================================================== */
 
     static double compare_accum(const AccumData& local, const AccumData& oracle);
-    static void   diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v);
-    static void   diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v);
 };
 
 #endif /* SINK_PARTICLES */

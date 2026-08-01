@@ -1154,8 +1154,6 @@ enum class DispatchPath : int {
  *
  *     // ============ DIAGNOSTICS (env-gated) ============
  *     static double compare_accum(const AccumData& local, const AccumData& oracle);
- *     static void   diagnostic_dump_active(const ActiveDumpView<MyLoopSpec>& v);
- *     static void   diagnostic_dump_neighbor_list(const NeighborListDumpView<MyLoopSpec>& v);
  *   };
  *
  * ============================================================================
@@ -1186,9 +1184,9 @@ enum class DispatchPath : int {
  *           fine and breaks transport silently in Mode B remote. Runner
  *           static_asserts at the explicit-instantiation site.
  *
- *   TRAP 6: diagnostic_dump_neighbor_list is called once per active, in slot
- *           order 0..num_active-1. State machines that rely on slot ordering
- *           (e.g. first-call-only gates) are safe.
+ *   (TRAP 6 described the diagnostic neighbor-list dump hook and was retired
+ *   with it. The remaining numbers are unchanged because they are cited from
+ *   several other files.)
  *
  *   TRAP 7: after_iter_global is HOST-ONLY, NO-MPI, LOCAL-RANK-ONLY. NEVER
  *           issue MPI inside it (no MPI_Allreduce / Bcast / Send / Recv /
@@ -2087,10 +2085,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *                                     2=+dispatch trace, 3=reserved (today
  *                                     equivalent to level 2; rank-0 note)
  *   GIZMO_NLR_FORCE_MODE=A|B          tester force-mode override
- *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      cross-validation per-active accumulator
- *                                     dump (temporary diagnostic)
- *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call Mode A neighbor-list dump
- *                                     (temporary diagnostic)
  *   GIZMO_NLR_ORACLE=1                correctness gate (separate concern)
  *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
  *
@@ -2098,8 +2092,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  * removal queued for a future cleanup pass):
  *   GIZMO_NLR_FORCE_MODEA=1        -> GIZMO_NLR_FORCE_MODE=A
  *   GIZMO_NLR_FORCE_MODEB=1        -> GIZMO_NLR_FORCE_MODE=B
- *   GIZMO_MODE_B_XVAL_DUMP=1       -> GIZMO_NLR_SPIKE_ACCUM_DUMP=1
- *   GIZMO_MODE_B_XVAL_NB_DUMP=1    -> GIZMO_NLR_SPIKE_NB_DUMP=1
  *
  * Conflict policy (collective; all ranks endrun):
  *   GIZMO_NLR_FORCE_MODE set + any old _FORCE_MODE{A,B} set     -> endrun
@@ -2116,8 +2108,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
 
 int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
 NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */
-bool         gizmo_nlr_spike_accum_dump_enabled(void);
-bool         gizmo_nlr_spike_nb_dump_enabled(void);
 
 /* Convenience adapters — preserved for existing callers, all delegating
  * to the unified API above. */
@@ -2187,84 +2177,8 @@ struct NlrDualReplyEnvelope {
     AccumData accum_oracle;
 };
 
-/* ============================================================================
- * Diagnostic views and SFINAE-detected optional Spec hooks
- *
- * Optional, never part of the physics API. Specs opt in by defining the
- * static method; the runner SFINAE-detects and only calls when present.
- *
- * View structs carry full identity fields (rank, origin_rank, origin_slot,
- * active_slot, path, call_id) even where some are redundant for self/local
- * today. Locking the shape now avoids a future change when peer-side
- * dumps land.
- *
- * `path` strings preserved byte-identical to legacy:
- *   "gpu_ngl" — Mode A GPU NGL path
- *   "mode_b"  — Mode B local OR Mode B remote (active rank's own actives)
- *
- * Accum dump fires for both Mode A and runner-driven Mode B paths. NB dump
- * fires Mode A only; the Mode B local NB + UVM-readback diagnostic and the
- * Mode B remote peer-side NB dump are not implemented.
- *
- * Cached env-gate accessors below are first-use cached; mid-run env
- * changes do NOT take effect, matching this code's cached-env convention.
- * ========================================================================== */
-
-template <typename Spec>
-struct ActiveDumpView {
-    int rank;
-    int origin_rank;
-    int origin_slot;
-    int active_slot;
-    const char *path;
-    int call_id;
-    const struct neighbor_loop_args *args;
-    const typename Spec::ActiveData *active;     /* may be nullptr if spec/path doesn't supply */
-    const typename Spec::AccumData  *accum;
-};
-
-template <typename Spec>
-struct NeighborListDumpView {
-    int rank;
-    int origin_rank;
-    int origin_slot;
-    int active_slot;
-    const char *path;
-    int call_id;
-    const struct neighbor_loop_args *args;
-    const typename Spec::ActiveData *active;
-    const int *candidate_ids;                    /* host-resident; runner-owned, valid only during call */
-    int n_candidates;
-};
-
-/* Detection traits. SFINAE on the static call expression. */
-template <typename Spec, typename = void>
-struct spec_has_dump_active : std::false_type {};
-template <typename Spec>
-struct spec_has_dump_active<Spec, std::void_t<decltype(
-    Spec::diagnostic_dump_active(std::declval<const ActiveDumpView<Spec>&>()))>>
-    : std::true_type {};
-
-template <typename Spec, typename = void>
-struct spec_has_dump_neighbor_list : std::false_type {};
-template <typename Spec>
-struct spec_has_dump_neighbor_list<Spec, std::void_t<decltype(
-    Spec::diagnostic_dump_neighbor_list(std::declval<const NeighborListDumpView<Spec>&>()))>>
-    : std::true_type {};
-
-/* Cached env-gate adapters. Read-once-per-process; mid-run env changes
- * do not take effect. All delegate to the unified gizmo_nlr_diag_level /
- * gizmo_nlr_spike_*_enabled accessors documented at the top of this header.
- *
- * Mapping:
- *   gizmo_nlr_xval_dump_enabled()    -> gizmo_nlr_spike_accum_dump_enabled()
- *   gizmo_nlr_xval_nb_dump_enabled() -> gizmo_nlr_spike_nb_dump_enabled()
- *   gizmo_nlr_phase0_diag_enabled()  -> (gizmo_nlr_diag_level() >= 1)
- *
- * The xval_* names are kept on existing call sites for now and will be
- * renamed alongside the env-name retire in a follow-up cleanup pass. */
-bool gizmo_nlr_xval_dump_enabled(void);
-bool gizmo_nlr_xval_nb_dump_enabled(void);
+/* Cached env-gate adapter. Read-once-per-process; mid-run env changes do
+ * not take effect. Delegates to gizmo_nlr_diag_level() >= 1. */
 bool gizmo_nlr_phase0_diag_enabled(void);
 
 /* ============================================================================
