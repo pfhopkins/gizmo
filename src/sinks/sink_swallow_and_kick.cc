@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdint>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
@@ -165,160 +164,6 @@ static void sink_swk_scatter(const int *active_list, int num_active,
 }
 
 
-#ifdef GIZMO_NLR_JSIDE_HASH_TEST
-/* j-side hash harness: walks owner-local j's, Allreduce's cross-mode
- * invariants. */
-static inline uint64_t sk_splitmix64(uint64_t x)
-{
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-    return x ^ (x >> 31);
-}
-
-static inline uint64_t sk_pair(uint64_t id, double v)
-{
-    uint64_t bits;
-    std::memcpy(&bits, &v, sizeof(bits));
-    return sk_splitmix64(id ^ sk_splitmix64(bits));
-}
-
-static void sink_swk_dump_jside_hashes(const char *label,
-                                        const struct SinkSwallowOut *per_active_accum,
-                                        int num_active)
-{
-    int num_local = ghost_get_num_local();
-    if(num_local <= 0) num_local = NumPart;
-
-    double mass_sum = 0, sm_sum = 0, smdot_sum = 0;
-    long  mass_count = 0;
-    uint64_t vel_h = 0, dp_h = 0, vp_h = 0;
-    double mt_sum = 0, ie_sum = 0, ip_sum = 0;
-#ifdef SINK_ALPHADISK_ACCRETION
-    double smr_sum = 0;
-#endif
-#ifdef MAGNETIC
-    uint64_t bh = 0, bph = 0;
-#endif
-#ifdef GALSF_SUBGRID_WINDS
-    double dt_sum = 0;
-#endif
-#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-    /* CR coverage: ID-keyed pair-hashes for energy, energyPred, flux, fluxPred.
-     * Sums alone hide spatially wrong updates (same total, different per-cell
-     * distribution). */
-    uint64_t cre_h = 0, crep_h = 0, crf_h = 0, crfp_h = 0;
-#endif
-    for(int j = 0; j < num_local; j++) {
-        uint64_t id = (uint64_t)P[j].ID;
-        double m = (double)P[j].Mass;
-        if(m != 0) { mass_sum += m; mass_count++; }
-        for(int k = 0; k < 3; k++) {
-            vel_h ^= sk_pair(id + 11 + k, (double)P[j].Vel[k]);
-            dp_h  ^= sk_pair(id + 21 + k, (double)P[j].dp[k]);
-        }
-        sm_sum    += (double)P[j].Sink_Mass;
-        smdot_sum += (double)P[j].Sink_Mdot;
-#ifdef SINK_ALPHADISK_ACCRETION
-        smr_sum   += (double)P[j].Sink_Mass_Reservoir;
-#endif
-        if(P[j].Type == 0) {
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            mt_sum += (double)CellP[j].MassTrue;
-#endif
-            ie_sum += (double)CellP[j].InternalEnergy;
-            ip_sum += (double)CellP[j].InternalEnergyPred;
-            for(int k = 0; k < 3; k++) {
-                vp_h ^= sk_pair(id + 31 + k, (double)CellP[j].VelPred[k]);
-            }
-#ifdef MAGNETIC
-            for(int k = 0; k < 3; k++) {
-                bh  ^= sk_pair(id + 41 + k, (double)CellP[j].B[k]);
-                bph ^= sk_pair(id + 51 + k, (double)CellP[j].BPred[k]);
-            }
-#endif
-#ifdef GALSF_SUBGRID_WINDS
-            dt_sum += (double)CellP[j].DelayTime;
-#endif
-#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-            for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) {
-                cre_h  ^= sk_pair(id + 1001 + kc, (double)CellP[j].CosmicRayEnergy[kc]);
-                crep_h ^= sk_pair(id + 2001 + kc, (double)CellP[j].CosmicRayEnergyPred[kc]);
-                for(int kk = 0; kk < 3; kk++) {
-                    crf_h  ^= sk_pair(id + 3001 + 4*kc + kk, (double)CellP[j].CosmicRayFlux[kc][kk]);
-                    crfp_h ^= sk_pair(id + 4001 + 4*kc + kk, (double)CellP[j].CosmicRayFluxPred[kc][kk]);
-                }
-            }
-#endif
-        }
-    }
-    double am_sum = 0, asm_sum = 0;
-    long ng_sw = 0, ns_sw = 0, nst_sw = 0, nd_sw = 0;
-    for(int a = 0; a < num_active; a++) {
-        am_sum  += (double)per_active_accum[a].accreted_Mass;
-        asm_sum += (double)per_active_accum[a].accreted_Sink_Mass;
-        ng_sw   += per_active_accum[a].n_gas_swallowed;
-        ns_sw   += per_active_accum[a].n_sink_swallowed;
-        nst_sw  += per_active_accum[a].n_star_swallowed;
-        nd_sw   += per_active_accum[a].n_dm_swallowed;
-    }
-
-    /* Sums (double): 0..7 mass/sm/smdot/mt/ie/iep/am/asm, 8 dt_sum,
-     *                9 smr_sum (Sink_Mass_Reservoir).  */
-    double dvals[10] = {mass_sum, sm_sum, smdot_sum, mt_sum, ie_sum, ip_sum, am_sum, asm_sum, 0, 0};
-    long   lvals[6]  = {mass_count, ng_sw, ns_sw, nst_sw, nd_sw, 0};
-    /* Hashes (uint64): 0 vel, 1 dp, 2 vp, 3 B, 4 BPred,
-     *                   5 cre, 6 crep, 7 crf, 8 crfp. */
-    uint64_t hvals[9] = {vel_h, dp_h, vp_h, 0, 0, 0, 0, 0, 0};
-#ifdef MAGNETIC
-    hvals[3] = bh; hvals[4] = bph;
-#endif
-#ifdef GALSF_SUBGRID_WINDS
-    dvals[8] = dt_sum;
-#endif
-#ifdef SINK_ALPHADISK_ACCRETION
-    dvals[9] = smr_sum;
-#endif
-#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-    hvals[5] = cre_h;  hvals[6] = crep_h;
-    hvals[7] = crf_h;  hvals[8] = crfp_h;
-#endif
-    double dout[10]; long lout[6]; uint64_t hout[9];
-    MPI_Allreduce(dvals, dout, 10, MPI_DOUBLE,    MPI_SUM,  MPI_COMM_WORLD);
-    MPI_Allreduce(lvals, lout, 6,  MPI_LONG,      MPI_SUM,  MPI_COMM_WORLD);
-    MPI_Allreduce(hvals, hout, 9,  MPI_UINT64_T,  MPI_BXOR, MPI_COMM_WORLD);
-
-    if(ThisTask == 0) {
-        printf("[JSIDE_HASH sink_swk %s] mass_sum=%.17g count=%ld vel_h=%016llx dp_h=%016llx\n",
-               label, dout[0], lout[0],
-               (unsigned long long)hout[0], (unsigned long long)hout[1]);
-        printf("[JSIDE_HASH sink_swk %s] sm_sum=%.17g smdot_sum=%.17g mt_sum=%.17g\n",
-               label, dout[1], dout[2], dout[3]);
-        printf("[JSIDE_HASH sink_swk %s] ie_sum=%.17g iep_sum=%.17g vp_h=%016llx\n",
-               label, dout[4], dout[5], (unsigned long long)hout[2]);
-#ifdef SINK_ALPHADISK_ACCRETION
-        printf("[JSIDE_HASH sink_swk %s] smr_sum=%.17g\n", label, dout[9]);
-#endif
-#ifdef MAGNETIC
-        printf("[JSIDE_HASH sink_swk %s] B_h=%016llx BPred_h=%016llx\n",
-               label, (unsigned long long)hout[3], (unsigned long long)hout[4]);
-#endif
-#ifdef GALSF_SUBGRID_WINDS
-        printf("[JSIDE_HASH sink_swk %s] DelayTime_sum=%.17g\n", label, dout[8]);
-#endif
-#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-        printf("[JSIDE_HASH sink_swk %s] CR_E_h=%016llx EPred_h=%016llx Flux_h=%016llx FluxPred_h=%016llx\n",
-               label,
-               (unsigned long long)hout[5], (unsigned long long)hout[6],
-               (unsigned long long)hout[7], (unsigned long long)hout[8]);
-#endif
-        printf("[JSIDE_HASH sink_swk %s] iside accreted_Mass_sum=%.17g accreted_Sink_Mass_sum=%.17g\n",
-               label, dout[6], dout[7]);
-        printf("[JSIDE_HASH sink_swk %s] iside n_gas_sw=%ld n_sink_sw=%ld n_star_sw=%ld n_dm_sw=%ld\n",
-               label, lout[1], lout[2], lout[3], lout[4]);
-        fflush(stdout);
-    }
-}
-#endif /* GIZMO_NLR_JSIDE_HASH_TEST */
 
 
 void sink_swallow_and_kick_loop(void)
@@ -363,14 +208,6 @@ void sink_swallow_and_kick_loop(void)
     int N_gas_sw = 0, N_sink_sw = 0, N_star_sw = 0, N_dm_sw = 0;
     sink_swk_scatter(active_list, num_active, per_active_accum,
                      &N_gas_sw, &N_sink_sw, &N_star_sw, &N_dm_sw);
-
-#ifdef GIZMO_NLR_JSIDE_HASH_TEST
-    {
-        const char *mode_env = getenv("GIZMO_NLR_FORCE_MODE");
-        const char *label = mode_env ? mode_env : "default";
-        sink_swk_dump_jside_hashes(label, per_active_accum, num_active);
-    }
-#endif
 
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
     MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
