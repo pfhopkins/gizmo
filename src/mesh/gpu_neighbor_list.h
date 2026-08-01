@@ -103,9 +103,6 @@ struct gpu_spatial_index_t {
     tile_bvh_node_t *h_bvh;     /* [2*ntiles-1] */
     int h_bvh_nnodes;
     int num_pool;
-    /* Per-tile original extent (max axis range at last full rebuild). Used to
-     * monitor cumulative bbox dispersion across drifts; if it grows pathologically
-     * the next gpu_step_sidx_invalidate_full() resets it. */
     /* Host + device position-staging buffers used by the drift refresh path to
      * bypass the UVM-fault storm of a device-side parallel_for over P_shared.Pos.
      * The bbox-recompute pass on host fills h_pos_buf for every pool member;

@@ -97,8 +97,6 @@ void gizmo_hydro_corridor_decide_mode(void)
                                              && (max_active_gas <= threshold_max);
     GizmoHydroCorridorMode mode = select_mode_b ? GizmoHydroCorridorMode::MODE_B
                                                 : GizmoHydroCorridorMode::MODE_A;
-    const char *source = "adaptive";
-
     g_corridor_mode = mode;
 
 }

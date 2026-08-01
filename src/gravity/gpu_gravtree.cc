@@ -1480,11 +1480,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     /* Permanent invariant guard.  An untagged predicate-OPEN foreign terminal is an unopenable
      * aggregate that would silently downgrade leaf-sensitive physics to a multipole; until an
      * owner-continuation path exists this hard-surfaces as a controlled stop.
-     *
-     * The CLEAN case is reported too, not only the violation: a run that confirms the count is
-     * zero is how the foreign-leaf import path is shown to be behaving, and that confirmation is
-     * unavailable if only the failure prints. The counter is per-rank, so every rank reports its
-     * own value -- a rank-0-only line would leave the other ranks unconfirmed. */
+ */
     if(g_inv_fterm_aggregate > 0) {
         printf("[GRAV-INVARIANT VIOLATION rank=%d] %lld predicate-OPEN foreign-terminal nodes accepted "
                "as multipoles but NOT tagged real leaves (unopenable aggregates in leaf-sensitive "

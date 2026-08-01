@@ -748,11 +748,12 @@ void run_iter_harness_tests(void)
     int                  n_actives_this_rank = 0;
     run_one_harness_iterative_call(rank, &tel, &n_actives_this_rank);
 
-    /* Route the assertions on what the runner ACTUALLY did, reported back in
-     * the telemetry, rather than on a prediction reconstructed from run
-     * configuration. A predictor has to restate the runner's own selection
-     * rule, and drifts silently the moment that rule changes. */
-    const bool forced_mode_a   = (tel.dispatch_mode_b == 0);
+    /* The call above pins Mode B, so the Mode A arms below are unreachable by
+     * construction. Do NOT derive this from tel.dispatch_mode_b: the runner
+     * early-returns without populating telemetry on a globally-zero-active
+     * call, and a zeroed field would then read as "Mode A" and fail an arm
+     * that never ran. The oracle flag is a genuine post-call observation. */
+    const bool forced_mode_a   = false;
     const bool oracle_expected = (tel.oracle_enabled != 0);
 
     /* ========================================================================
