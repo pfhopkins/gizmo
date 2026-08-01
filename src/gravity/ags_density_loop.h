@@ -362,12 +362,11 @@ struct AgsDensitySpec {
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
     static constexpr double accum_tolerance  = 1e-10;
-    /* Runner reads radius_tolerance for iterative Specs (separate semantic
-     * object from accum_tolerance per 4.B.0 v3 Q2). For AGS the load-bearing
-     * convergence is the neighbor-count band check inside after_iter
-     * (rkern.cc:222-223), not a runner-level radius compare; this value
-     * is therefore not physics-load-bearing. Mirrors IterHarnessSpec's
-     * choice. */
+    /* Runner reads radius_tolerance for iterative Specs (a separate semantic
+     * object from accum_tolerance). For AGS the load-bearing convergence is
+     * the neighbor-count band check inside after_iter (rkern.cc:222-223), not
+     * a runner-level radius compare; this value is therefore not
+     * physics-load-bearing. */
     static constexpr double radius_tolerance = 1e-9;
 
     static bool is_active(int particle_index) { return ags_density_isactive(particle_index) != 0; }

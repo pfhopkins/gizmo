@@ -65,10 +65,6 @@
 #include "../sinks/sink_env2_loop.h"
 #endif
 
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-#include "test_iter_harness_loop.h"
-#endif
-
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 #include "../gravity/ags_density_loop.h"
 #include "../gravity/ags_force_loop.h"
@@ -4413,12 +4409,6 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
 template <typename Spec>
 void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 {
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-    if constexpr (std::is_same_v<Spec, IterHarnessSpec> ||
-                  std::is_same_v<Spec, IterHarnessGhostSpec>) {
-        g_iter_harness_telemetry = IterHarnessTelemetry{};
-    }
-#endif
 
     /* ===== Compile-time spec consistency ===== */
     static_assert(std::is_same_v<typename Spec::IterControl, Iterative>,
@@ -5223,65 +5213,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
     }
 
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-    /* Harness telemetry: populate
-     * the harness's compile-gated snapshot struct BEFORE driver destruction
-     * so per-subgroup arrays are still live. Only fires for IterHarnessSpec
-     * via `if constexpr` on Spec::loop_name; the strcmp lifts to a
-     * compile-time string compare via SFINAE-equivalent constexpr.
-     * Production Specs see this block as dead code at zero overhead. */
-    if constexpr (std::is_same_v<Spec, IterHarnessSpec> ||
-                  std::is_same_v<Spec, IterHarnessGhostSpec>) {
-        g_iter_harness_telemetry.last_iter_index          = drv.iter_index;
-        g_iter_harness_telemetry.last_global_active_total = drv.global_active_total;
-        g_iter_harness_telemetry.csr_rebuild_count        = drv.csr_rebuild_count;
-        g_iter_harness_telemetry.arena_acquire_count      = drv.arena_acquire_count;
-        g_iter_harness_telemetry.csr_local_rebuild_count  = drv.csr_local_rebuild_count;
-        g_iter_harness_telemetry.final_dummy_jflag_prod   = drv.ctx.dummy_jflag;
-        g_iter_harness_telemetry.final_dummy_jflag_oracle =
-            drv.oracle_enabled ? drv.ctx_oracle.dummy_jflag : 0;
-        g_iter_harness_telemetry.oracle_mismatch_count    = drv.oracle_mismatch_count;
-        g_iter_harness_telemetry.oracle_enabled           = drv.oracle_enabled ? 1 : 0;
-        g_iter_harness_telemetry.dispatch_mode_b          =
-            (path == DispatchPath::ModeB_HostWalker) ? 1 : 0;
-        /* Sum pair counts across all converged slots in all subgroups.
-         * accum_uvm holds the final-iter accum for each slot (never zeroed
-         * after convergence — invariant). For non-oracle runs,
-         * accum_oracle_uvm pointers are nullptr; skip the sum. */
-        long long pairs_prod = 0, pairs_oracle = 0;
-        for (int sg = 0; sg < args.num_subgroups; sg++) {
-            int n_local = args.subgroups[sg].num_active_local;
-            if (drv.accum_uvm[sg]) {
-                for (int s = 0; s < n_local; s++) {
-                    pairs_prod += drv.accum_uvm[sg][s].n_pairs;
-                }
-            }
-            if (drv.oracle_enabled && drv.accum_oracle_uvm[sg]) {
-                for (int s = 0; s < n_local; s++) {
-                    pairs_oracle += drv.accum_oracle_uvm[sg][s].n_pairs;
-                }
-            }
-        }
-        g_iter_harness_telemetry.total_pairs_prod   = pairs_prod;
-        g_iter_harness_telemetry.total_pairs_oracle = pairs_oracle;
-        /* Per-slot scratch + status — sg=0, up to 4 slots. */
-        for (int s = 0; s < 4; s++) {
-            g_iter_harness_telemetry.scratch_passes[s]    = 0;
-            g_iter_harness_telemetry.final_status_prod[s] = -1;
-        }
-        if (args.num_subgroups > 0 && args.subgroups[0].num_active_local > 0) {
-            const int n_max = std::min(args.subgroups[0].num_active_local, 4);
-            for (int s = 0; s < n_max; s++) {
-                g_iter_harness_telemetry.scratch_passes[s] =
-                    drv.scratch_uvm[0][s].passes_so_far;
-                if (drv.oracle_enabled && drv.status_prod_uvm[0] != nullptr) {
-                    g_iter_harness_telemetry.final_status_prod[s] =
-                        drv.status_prod_uvm[0][s];
-                }
-            }
-        }
-    }
-#endif
 
     }  /* end inner scope: driver destructs HERE */
 
@@ -5335,14 +5266,6 @@ template void run_neighbor_loop<SinkEnv2Spec>(const neighbor_loop_args&);
 #endif
 #endif
 
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-/* Harness header is included near top of file (above run_neighbor_loop_iterative
- * body) so the telemetry struct + IterHarnessSpec name are visible inside
- * the template body's `if constexpr (std::is_same_v<Spec, IterHarnessSpec>)`
- * gates. Only the explicit instantiation lives here. */
-template void run_neighbor_loop_iterative<IterHarnessSpec>(const neighbor_loop_args_iterative&);
-template void run_neighbor_loop_iterative<IterHarnessGhostSpec>(const neighbor_loop_args_iterative&);
-#endif
 
 /* AgsDensitySpec — first production iterative Spec consumer of the
  * runner + partition-by-subgroup + sticky-call-scope wakeup

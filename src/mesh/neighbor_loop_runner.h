@@ -180,10 +180,10 @@
  * that include runner.h before Kokkos (i.e., currently never).
  *
  * Audit invariant: every GPU TU including this header MUST include
- * <Kokkos_Core.hpp> first. Verified true for all 8 current GPU consumers
+ * <Kokkos_Core.hpp> first. Verified true for all 7 current GPU consumers
  * (gravity/ags_density_gpu.cc, gravity/ags_force_gpu.cc, hydro/density_gpu.cc,
  * sinks/sink_feed_loop.cc, sinks/sink_env2_loop.cc, sinks/sink_swk_loop.cc,
- * mesh/neighbor_loop_runner.cc, mesh/test_iter_harness_loop.cc).
+ * mesh/neighbor_loop_runner.cc).
  */
 #ifdef KOKKOS_INLINE_FUNCTION
 #define NLR_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION
