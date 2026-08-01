@@ -291,49 +291,7 @@ static int nlr_init_diag_level(void)
     return level;
 }
 
-/* Largest global active count the oracle brute walk is allowed to attempt.
- * The walk is O(N_active x N_local) per query and cannot be chunked, so it
- * becomes intractable well before this bound; run the oracle at small N. */
-static const int NLR_ORACLE_MODEB_MAX_ACTIVE = 100000;
 
-static void nlr_abort_if_modeb_oracle_too_large(const char *loop_name,
-                                                int local_active,
-                                                int global_active,
-                                                bool oracle_active)
-{
-    /* Narrowed after the bunchSize-streaming + receiver-group-staging change: forced /
-     * threshold / corridor-override Mode-B is now memory-bounded at arbitrary
-     * N_active (the round loop + whole-peer receiver staging wrap the whole
-     * remote helper), so the old "prevent the large-N un-chunked Mode-B hang"
-     * cap is obsolete for PRODUCTION runs and must NOT block a param-driven
-     * corridor Mode-B decision. The one path still genuinely dangerous at large
-     * N is the ORACLE brute walk (O(N_active x N_local) per query, unchunkable),
-     * so the cap fires ONLY when an oracle/brute pass is active. It applies to
-     * EVERY route into Mode B — corridor override and threshold dispatch alike —
-     * because the brute walk's cost depends on how many actives it walks, not on
-     * which decision selected the path. */
-    if(!oracle_active) return;
-    const int cap = NLR_ORACLE_MODEB_MAX_ACTIVE;
-    if(global_active > cap) {
-        if(ThisTask == 0) {
-            fprintf(stderr,
-                    "[NLR ORACLE Mode-B] FATAL: caller=%s ran Mode-B WITH "
-                    "an oracle/brute pass at global_active=%d local_active(rank0)=%d, "
-                    "exceeding cap=%d. The brute walk is O(N_active x N_local) per "
-                    "query — intractable at this N. Run the oracle at small N. "
-                    "(Non-oracle forced Mode-B is memory-safe post-B2 and is NOT "
-                    "capped.)\n",
-                    loop_name ? loop_name : "?", global_active,
-                    local_active, cap);
-            fflush(stderr);
-        }
-        endrun(81105);
-        /* All-rank symmetric (global_active is the MPI-reduced sum; both call
-         * sites poll after the Allreduce): drain immediately rather than enter
-         * the intractable large-N oracle brute walk. */
-        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:forced_modeb_oracle_cap");
-    }
-}
 
 } /* anonymous namespace */
 
@@ -442,14 +400,6 @@ struct StageTimer {
 };
 } /* anonymous namespace */
 
-bool gizmo_nlr_oracle_enabled_global(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_NLR_ORACLE");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
 
 /* ============================================================================
  * SIDX cache kind resolver (private to runner; see neighbor_loop_runner.h
@@ -988,220 +938,10 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     }
 }
 
-/* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
- * sets BEFORE drifting either, then drifts the union (drift_particle is
- * idempotent so two separate lazy_drift calls dedupe naturally).
- *
- * Mode B path is the result; Brute is the comparison. Mismatches print the
- * line shape `[mode_b ORACLE MISMATCH ...]` (parser-stable across the runner
- * extraction).
- *
- * Brute oracle uses ONLY Mode B / Brute machinery — no GPU NGL, no SIDX, no
- * arena. Invariant: the oracle's pair kernel is the SAME pair_kernel
- * Mode B runs; only the search differs. */
-/* Mismatch print cap — shared between local and remote oracle paths so we
- * don't double the cap when both fire (e.g. multi-rank-with-oracle
- * runs the local path under NTask==1 dispatch and the remote path under
- * NTask>1). */
-static const long long kMismatchPrintCap = 1024;
 
-template <typename Spec>
-static void emit_oracle_mismatch_if_any(int rank, int active_slot,
-                                          const typename Spec::AccumData& tree,
-                                          const typename Spec::AccumData& brute,
-                                          const char *origin_tag,
-                                          long long *print_count)
-{
-    double resid = Spec::compare_accum(tree, brute);
-    if(!(resid <= Spec::accum_tolerance)) {  /* NaN-safe */
-        if(*print_count < kMismatchPrintCap) {
-            fprintf(stderr,
-                    "[mode_b ORACLE MISMATCH rank=%d caller=%s origin=%s "
-                    "active_slot=%d resid=%g (tol=%g)]\n",
-                    rank, Spec::loop_name, origin_tag, active_slot, resid,
-                    (double)Spec::accum_tolerance);
-            fflush(stderr);
-            (*print_count)++;
-            if(*print_count == kMismatchPrintCap) {
-                fprintf(stderr,
-                        "[mode_b ORACLE rank=%d caller=%s] mismatch print cap "
-                        "reached (%lld); suppressing further mismatches.\n",
-                        rank, Spec::loop_name, (long long)kMismatchPrintCap);
-                fflush(stderr);
-            }
-        }
-    }
-}
 
-/* ============================================================================
- * Iterative-oracle per-iter mismatch emit helpers.
- *
- * Note: per-iter compare must cover four things, not just
- * AccumData. These four helpers complement emit_oracle_mismatch_if_any
- * (which handles AccumData via Spec::compare_accum) with IterStatus
- * control-flow / radius / active-set-membership compare lines. All share
- * the kMismatchPrintCap counter via the caller-passed long long*.
- * ========================================================================== */
-template <typename Spec>
-static void emit_oracle_status_mismatch(int rank, int sg, int slot, int iter,
-                                          int prod_status, int oracle_status,
-                                          long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE STATUS MISMATCH rank=%d caller=%s sg=%d slot=%d "
-                "iter=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, slot, iter, prod_status, oracle_status);
-        fflush(stderr);
-        (*print_count)++;
-        if (*print_count == kMismatchPrintCap) {
-            fprintf(stderr,
-                    "[mode_b ORACLE rank=%d caller=%s] mismatch print cap "
-                    "reached (%lld); suppressing further mismatches.\n",
-                    rank, Spec::loop_name, (long long)kMismatchPrintCap);
-            fflush(stderr);
-        }
-    }
-}
 
-template <typename Spec>
-static void emit_oracle_radius_mismatch(int rank, int sg, int slot, int iter,
-                                          double h_prod, double h_oracle,
-                                          long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE RADIUS MISMATCH rank=%d caller=%s sg=%d slot=%d "
-                "iter=%d prod=%g oracle=%g (tol=%g)]\n",
-                rank, Spec::loop_name, sg, slot, iter, h_prod, h_oracle,
-                nlr_spec_radius_tolerance_v<Spec>);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
 
-template <typename Spec>
-static void emit_oracle_membership_count_mismatch(int rank, int sg, int iter,
-                                                    int n_prod, int n_oracle,
-                                                    long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE MEMBERSHIP COUNT MISMATCH rank=%d caller=%s sg=%d "
-                "iter=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, iter, n_prod, n_oracle);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
-
-template <typename Spec>
-static void emit_oracle_membership_slot_mismatch(int rank, int sg, int iter,
-                                                   int k,
-                                                   int slot_prod, int slot_oracle,
-                                                   long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE MEMBERSHIP SLOT MISMATCH rank=%d caller=%s sg=%d "
-                "iter=%d k=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, iter, k, slot_prod, slot_oracle);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
-
-template <typename Spec>
-static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const double *radii,
-                                         RunnerStageTimer *tim = nullptr)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-    using DeviceCtx  = typename Spec::DeviceContext;
-
-    const int N = args.num_active;
-    if(N <= 0) { return; }
-
-    /* Radii runner-staged and passed in; pointer is call-lifetime only. */
-    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
-
-    DeviceCtx ctx;
-    ctx.P         = args.P;
-    ctx.CellP     = args.CellP;
-    ctx.num_total = args.num_total;
-    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
-                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
-    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
-                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
-    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-        Spec::populate_device_context(args, ctx);
-    }
-    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
-
-    /* Freeze actives BEFORE drift (same snapshot for tree and brute). */
-    std::vector<ActiveData> actives(N);
-    build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs, actives.data());
-
-    /* Collect BOTH BEFORE any drift — preserves identical pre-drift state for
-     * each search backend. PHASE0 timing covers ONLY the Mode B path stages,
-     * not the Brute oracle (diagnostic-only, not production cost). */
-    std::vector<std::vector<int>> cand_modeB, cand_brute;
-    {
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
-        collect_candidates_pre_drift<Spec>(args, radii,
-                                            nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                            DispatchPath::ModeB_HostWalker, cand_modeB);
-    }
-    collect_candidates_pre_drift<Spec>(args, radii,
-                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                        DispatchPath::Brute_Oracle, cand_brute);
-
-    /* Drift the union. drift_particle's early-return on time1==time0 means
-     * order doesn't matter and duplicates are free. */
-    {
-        StageTimer t(tim ? &tim->dt_drift : nullptr);
-        lazy_drift_candidates<Spec>(cand_modeB);
-    }
-    lazy_drift_candidates<Spec>(cand_brute);
-
-    std::vector<AccumData> accums_modeB(N);
-    std::vector<AccumData> accums_brute(N);
-    /* ORDERING: for j-write Specs, the brute oracle pass must run BEFORE the
-     * tree pass so that brute reads the same pre-mutation j-state the tree
-     * pass starts from. With the previous (tree-first) order, dry-run blocked
-     * the brute's writes but did not restore the post-tree state, so brute
-     * read e.g. zeroed Mass / changed SwallowID and produced a different
-     * accumulator than tree -- a silent false-pass on the oracle whenever no
-     * actual j-writes happened in the test config.
-     * For non-j-write Specs the order is irrelevant; we use brute-first
-     * universally for one consistent oracle shape. */
-    DeviceCtx ctx_oracle = ctx;
-    if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-        Spec::set_oracle_brute_pass(ctx_oracle, true);
-    }
-    evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data(), EvalOMPPolicy::ForceSerialReference);
-    {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data(), EvalOMPPolicy::AllowProduction);
-    }
-
-    int rank = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    static long long s_mismatch_print_count = 0;
-    for(int aa = 0; aa < N; aa++) {
-        emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_modeB[aa],
-                                            accums_brute[aa], "self",
-                                            &s_mismatch_print_count);
-    }
-
-    /* Mode B path is the result. */
-    {
-        StageTimer t(tim ? &tim->dt_writeback : nullptr);
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
-        }
-    }
-}
 
 /* ============================================================================
  * Mode B remote (multi-rank) helpers
@@ -2275,11 +2015,6 @@ static void run_mode_b_remote(const neighbor_loop_args& args, const double *radi
                               RunnerStageTimer *tim = nullptr) {
     run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args, radii, tim);
 }
-template <typename Spec>
-static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const double *radii,
-                                          RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args, radii, tim);
-}
 
 /* ============================================================================
  * External-CSR staging helpers (hydro corridor support).
@@ -2821,7 +2556,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const NlrForceMode force_mode = args.dispatch_override;
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
-    const bool oracle_on = gizmo_nlr_oracle_enabled_global();
 
     /* PHASE0 timing scaffolding. Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the
@@ -2865,10 +2599,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * selected: threshold dispatch reaches Mode B just as the corridor override
      * does, and the brute walk is equally intractable either way.
      * phase0_sum_active is set on every branch that can select Mode B. */
-    if(select_mode_b && oracle_on) {
-        nlr_abort_if_modeb_oracle_too_large(
-            Spec::loop_name, args.num_active, phase0_sum_active, oracle_on);
-    }
 
     /* Globally-zero-active call: do NO neighbor work. phase0_sum_active is the
      * dispatch Allreduce of active particles (set on the threshold + force-B
@@ -2910,9 +2640,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                 force_a       ? "force" :
                 force_b       ? "force" :
                                 "threshold";
-            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d oracle=%d]\n",
+            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d]\n",
                     Spec::loop_name, nlr_path_label(plan.path), src,
-                    NTask, args.num_active, (int)oracle_on);
+                    NTask, args.num_active);
             fflush(stderr);
         }
     }
@@ -3024,17 +2754,13 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     /* ---- Path dispatch ---- */
     switch(plan.path) {
         case NeighborLoopPlan::Path::ModeA_GpuNgl:
-            /* Oracle on Mode A is a no-op (oracle compares Mode B vs Brute;
-             * no Brute-vs-Mode-A oracle in scope). */
             run_mode_a<Spec>(effective_args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Local:
-            if(oracle_on) run_mode_b_local_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
-            else          run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Remote:
-            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
-            else          run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
             break;
     }
 
@@ -3198,49 +2924,6 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
      * path. Vectors stay empty when oracle_enabled=false (UVM frees in
      * dtor are guarded on pointer state, so empty vectors are safe).
      * ====================================================================== */
-    oracle_enabled = gizmo_nlr_oracle_enabled_global();
-    if (oracle_enabled) {
-        scratch_oracle_uvm    .assign(args.num_subgroups, nullptr);
-        accum_oracle_uvm      .assign(args.num_subgroups, nullptr);
-        radii_oracle_uvm      .assign(args.num_subgroups, nullptr);
-        active_set_oracle_uvm .assign(args.num_subgroups, nullptr);
-        active_set_oracle_size.assign(args.num_subgroups, 0);
-        status_prod_uvm       .assign(args.num_subgroups, nullptr);
-        status_oracle_uvm     .assign(args.num_subgroups, nullptr);
-        new_h_prod_uvm        .assign(args.num_subgroups, nullptr);
-        new_h_oracle_uvm      .assign(args.num_subgroups, nullptr);
-
-        for (int sg = 0; sg < args.num_subgroups; sg++) {
-            const NlrSubgroup& sgr = args.subgroups[sg];
-            const int n = sgr.num_active_local;
-            active_set_oracle_size[sg] = n;
-            if (n <= 0) continue;
-
-            scratch_oracle_uvm   [sg] = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(IterScratch));
-            accum_oracle_uvm     [sg] = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(AccumData));
-            radii_oracle_uvm     [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-            active_set_oracle_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            status_prod_uvm      [sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            status_oracle_uvm    [sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            new_h_prod_uvm       [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-            new_h_oracle_uvm     [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-
-            std::memset(scratch_oracle_uvm[sg], 0, n * sizeof(IterScratch));
-
-            neighbor_loop_args sub = args;
-            sub.active_list = sgr.active_indices;
-            sub.num_active  = n;
-
-            for (int slot = 0; slot < n; slot++) {
-                radii_oracle_uvm[sg][slot]      = Spec::search_radius(sub, slot, sgr.active_indices[slot]);
-                active_set_oracle_uvm[sg][slot] = slot;
-                status_prod_uvm[sg][slot]       = static_cast<int>(IterStatus::NeedsMore);
-                status_oracle_uvm[sg][slot]     = static_cast<int>(IterStatus::NeedsMore);
-                new_h_prod_uvm[sg][slot]        = radii_uvm[sg][slot];
-                new_h_oracle_uvm[sg][slot]      = radii_oracle_uvm[sg][slot];
-            }
-        }
-    }
 }
 
 template <typename Spec>
@@ -3263,15 +2946,6 @@ NlrIterDriver<Spec>::~NlrIterDriver()
     if (ctx_initialized) {
         if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
             Spec::cleanup_device_context(args, ctx);
-        }
-    }
-
-    /* Iterative-oracle ctx_oracle cleanup. Independent
-     * lifecycle from production ctx: own populate + own cleanup. Guarded
-     * on ctx_oracle_initialized — only fire if init actually completed. */
-    if (ctx_oracle_initialized) {
-        if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
-            Spec::cleanup_device_context(args, ctx_oracle);
         }
     }
 
@@ -3331,16 +3005,6 @@ NlrIterDriver<Spec>::~NlrIterDriver()
      * num_subgroups only when oracle_enabled was true at construction; if
      * empty, the per-sg loop iterates zero times. Pointers are nullptr by
      * default — kokkos_free guarded on non-null. */
-    for (size_t sg = 0; sg < scratch_oracle_uvm.size(); sg++) {
-        if (scratch_oracle_uvm[sg])    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_oracle_uvm[sg]);
-        if (accum_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(accum_oracle_uvm[sg]);
-        if (radii_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oracle_uvm[sg]);
-        if (active_set_oracle_uvm[sg]) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active_set_oracle_uvm[sg]);
-        if (status_prod_uvm[sg])       Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(status_prod_uvm[sg]);
-        if (status_oracle_uvm[sg])     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(status_oracle_uvm[sg]);
-        if (new_h_prod_uvm[sg])        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(new_h_prod_uvm[sg]);
-        if (new_h_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(new_h_oracle_uvm[sg]);
-    }
 }
 
 /* ============================================================================
@@ -4053,60 +3717,6 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
  * Per-iter brute-FIRST ordering enforced by the OUTER dispatch loop —
  * caller invokes this helper BEFORE production dispatch.
  * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_oracle_b_local(NlrIterDriver<Spec>& drv, int sg)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-    const int n_compacted  = drv.active_set_oracle_size[sg];
-    if (n_compacted <= 0) return;
-
-    std::vector<int> active_particle_indices(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-    }
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = active_particle_indices.data();
-    sub.num_active  = n_compacted;
-
-    std::vector<double> radii_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        radii_compacted[k] = drv.radii_oracle_uvm[sg][drv.active_set_oracle_uvm[sg][k]];
-    }
-
-    /* RAII brute-pass guard: set_oracle_brute_pass(ctx_oracle, true) on
-     * construction, false on scope exit (any path, including endrun).
-     * SFINAE-no-op for Specs without the hook. */
-    NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-
-    std::vector<ActiveData> actives_compacted(n_compacted);
-    build_self_actives_host_pre_drift<Spec>(sub, drv.ctx_oracle, radii_compacted.data(),
-                                              drv.cs, actives_compacted.data());
-
-    std::vector<AccumData> accums_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_compacted[k]);
-    }
-
-    std::vector<std::vector<int>> cand_brute;
-    collect_candidates_pre_drift<Spec>(sub, radii_compacted.data(),
-                                         (unsigned int)sgr.j_type_bitmask,
-                                         DispatchPath::Brute_Oracle, cand_brute);
-    lazy_drift_candidates<Spec>(cand_brute);
-    evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_compacted.data(), n_compacted,
-                                      cand_brute, accums_compacted.data(), EvalOMPPolicy::ForceSerialReference);
-
-    /* Scatter brute results back into driver's per-slot oracle AccumData
-     * (slot keyspace is the same as production — sgr.active_indices). */
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        drv.accum_oracle_uvm[sg][slot] = accums_compacted[k];
-    }
-    /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
-}
 
 /* Local Mode-B iterative oracle combined dispatch.
  *
@@ -4116,114 +3726,6 @@ static void nlr_iter_dispatch_subgroup_oracle_b_local(NlrIterDriver<Spec>& drv, 
  * Mode-B epoch contract explicit here: snapshot both i-side active arrays and
  * collect both candidate lists before either path drifts j-side candidates.
  */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Spec>& drv, int sg)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-
-    const int n_prod = drv.active_set_size[sg];
-    std::vector<int> active_particle_indices_prod(n_prod > 0 ? n_prod : 0);
-    std::vector<double> radii_compacted_prod(n_prod > 0 ? n_prod : 0);
-    for(int k = 0; k < n_prod; k++) {
-        int slot = drv.active_set_uvm[sg][k];
-        active_particle_indices_prod[k] = sgr.active_indices[slot];
-        radii_compacted_prod[k] = drv.radii_uvm[sg][slot];
-    }
-    neighbor_loop_args sub_prod = drv.args;
-    sub_prod.active_list = (n_prod > 0) ? active_particle_indices_prod.data() : nullptr;
-    sub_prod.num_active  = n_prod;
-
-    const int n_oracle = drv.active_set_oracle_size[sg];
-    std::vector<int> active_particle_indices_oracle(n_oracle > 0 ? n_oracle : 0);
-    std::vector<double> radii_compacted_oracle(n_oracle > 0 ? n_oracle : 0);
-    for(int k = 0; k < n_oracle; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices_oracle[k] = sgr.active_indices[slot];
-        radii_compacted_oracle[k] = drv.radii_oracle_uvm[sg][slot];
-    }
-    neighbor_loop_args sub_oracle = drv.args;
-    sub_oracle.active_list = (n_oracle > 0) ? active_particle_indices_oracle.data() : nullptr;
-    sub_oracle.num_active  = n_oracle;
-
-    std::vector<ActiveData> actives_prod(n_prod > 0 ? n_prod : 0);
-    if(n_prod > 0) {
-        build_self_actives_host_pre_drift<Spec>(sub_prod, drv.ctx,
-                                                radii_compacted_prod.data(),
-                                                drv.cs, actives_prod.data());
-    }
-
-    std::vector<ActiveData> actives_oracle(n_oracle > 0 ? n_oracle : 0);
-    if(n_oracle > 0) {
-        build_self_actives_host_pre_drift<Spec>(sub_oracle, drv.ctx_oracle,
-                                                radii_compacted_oracle.data(),
-                                                drv.cs, actives_oracle.data());
-    }
-
-    std::vector<AccumData> accums_prod(n_prod > 0 ? n_prod : 0);
-    for(int k = 0; k < n_prod; k++) Spec::zero_accum(accums_prod[k]);
-    std::vector<AccumData> accums_oracle(n_oracle > 0 ? n_oracle : 0);
-    for(int k = 0; k < n_oracle; k++) Spec::zero_accum(accums_oracle[k]);
-
-    std::vector<std::vector<int>> cand_prod;
-    collect_candidates_pre_drift<Spec>(sub_prod, radii_compacted_prod.data(),
-                                       (unsigned int)sgr.j_type_bitmask,
-                                       DispatchPath::ModeB_HostWalker, cand_prod);
-
-    std::vector<std::vector<int>> cand_oracle;
-    collect_candidates_pre_drift<Spec>(sub_oracle, radii_compacted_oracle.data(),
-                                       (unsigned int)sgr.j_type_bitmask,
-                                       DispatchPath::Brute_Oracle, cand_oracle);
-
-    lazy_drift_candidates<Spec>(cand_prod);
-    lazy_drift_candidates<Spec>(cand_oracle);
-
-    if(n_prod > 0) {
-        evaluate_pairs_post_drift<Spec>(drv.ctx, actives_prod.data(), n_prod,
-                                        cand_prod, accums_prod.data(), EvalOMPPolicy::AllowProduction);
-        for(int k = 0; k < n_prod; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            drv.accum_uvm[sg][slot] = accums_prod[k];
-        }
-    }
-
-    if(n_oracle > 0) {
-        NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-        evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_oracle.data(), n_oracle,
-                                        cand_oracle, accums_oracle.data(), EvalOMPPolicy::ForceSerialReference);
-        for(int k = 0; k < n_oracle; k++) {
-            int slot = drv.active_set_oracle_uvm[sg][k];
-            drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
-        }
-    }
-
-    /* TEMPORARY oracle accum comparison from host vectors — UVM write broken
-     * for Vel fields (same root cause as remote path).  Build slot→accum maps
-     * for both prod and oracle, then compare over the production active set.
-     * Remove with oracle teardown. */
-    if(n_prod > 0) {
-        std::unordered_map<int,int> oracle_k_by_slot;
-        oracle_k_by_slot.reserve(n_oracle);
-        for(int k = 0; k < n_oracle; k++) {
-            int slot = drv.active_set_oracle_uvm[sg][k];
-            oracle_k_by_slot[slot] = k;
-        }
-        char origin_tag[40];
-        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
-        for(int k = 0; k < n_prod; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            auto it = oracle_k_by_slot.find(slot);
-            if(it != oracle_k_by_slot.end()) {
-                emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
-                    accums_prod[k], accums_oracle[it->second],
-                    origin_tag, &drv.oracle_mismatch_count);
-            }
-        }
-        drv.oracle_accum_compared_in_dispatch = true;
-    }
-}
 
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_oracle_b_remote<Spec>(drv, sg).
@@ -4238,56 +3740,6 @@ static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Sp
  * handles self+peer brute walks and replies-merge via the existing
  * Stage 4 / 10 / 11 machinery.
  * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv, int sg)
-{
-    using AccumData = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-    const int n_compacted  = drv.active_set_oracle_size[sg];
-    /* NOTE: helper is COLLECTIVE — must be entered on every rank for the
-     * MPI Allgather/Alltoall stages. Empty-rank participation uses
-     * n_compacted=0 with nullptr buffers. */
-
-    std::vector<int> active_particle_indices(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-    }
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
-    sub.num_active  = n_compacted;
-
-    std::vector<double> radii_compacted(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        radii_compacted[k] = drv.radii_oracle_uvm[sg][drv.active_set_oracle_uvm[sg][k]];
-    }
-
-    /* Caller-owned brute-pass guard scopes the entire helper call. */
-    NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-
-    /* Driver-owned compacted AccumData buffer; scatter back to per-slot
-     * oracle AccumData after helper returns. */
-    std::vector<AccumData> accums_compacted(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_compacted[k]);
-    }
-
-    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::OracleBrutePass>(
-        sub,
-        (n_compacted > 0) ? radii_compacted.data() : nullptr,
-        drv.cs,
-        drv.ctx_oracle,
-        (unsigned int)sgr.j_type_bitmask,
-        (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*tim=*/nullptr);
-
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        drv.accum_oracle_uvm[sg][slot] = accums_compacted[k];
-    }
-    /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
-}
 
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg)
@@ -4307,75 +3759,6 @@ static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv,
  * Oracle radii are synced to production radii after each iter so that the
  * oracle after_iter (b.oracle) runs on the same h_search as production.
  * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle(
-    NlrIterDriver<Spec>& drv, int sg)
-{
-    using AccumData = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr    = drv.args.subgroups[sg];
-    const int n_compacted     = drv.active_set_size[sg];
-
-    std::vector<int>    active_particle_indices(n_compacted);
-    std::vector<double> radii_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot                   = drv.active_set_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-        radii_compacted[k]         = drv.radii_uvm[sg][slot];
-    }
-
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
-    sub.num_active  = n_compacted;
-
-    std::vector<AccumData> accums_prod(n_compacted);
-    std::vector<AccumData> accums_oracle(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_prod[k]);
-        Spec::zero_accum(accums_oracle[k]);
-    }
-
-    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::OracleIterative>(
-        sub,
-        (n_compacted > 0) ? radii_compacted.data() : nullptr,
-        drv.cs,
-        drv.ctx,
-        (unsigned int)sgr.j_type_bitmask,
-        (n_compacted > 0) ? accums_prod.data()   : nullptr,
-        /*tim=*/nullptr,
-        (n_compacted > 0) ? accums_oracle.data() : nullptr,
-        &drv.ctx_oracle);
-
-    /* TEMPORARY oracle accum comparison — host vectors known-correct (oracle UVM
-     * mismatches); oracle UVM write is broken for Vel fields (Probe3 shows Vel=0
-     * despite correct host source).  Compare here from host vectors and set flag
-     * so b.compare skips the UVM-based emit_oracle_mismatch_if_any.
-     * Remove with oracle teardown. */
-    {
-        char origin_tag[40];
-        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
-        for (int k = 0; k < n_compacted; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
-                accums_prod[k], accums_oracle[k], origin_tag, &drv.oracle_mismatch_count);
-        }
-        drv.oracle_accum_compared_in_dispatch = true;
-    }
-    /* Scatter both into driver-owned per-slot buffers.  Sync oracle radii to
-     * production radii so oracle after_iter uses the same h_search. */
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_uvm[sg][k];
-        drv.accum_uvm[sg][slot]        = accums_prod[k];
-        drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
-        drv.radii_oracle_uvm[sg][slot] = drv.radii_uvm[sg][slot];
-    }
-    /* Sync oracle active set to production active set for this iteration so
-     * (b.oracle) after_iter iterates the same slots. */
-    drv.active_set_oracle_size[sg] = n_compacted;
-    for (int k = 0; k < n_compacted; k++) {
-        drv.active_set_oracle_uvm[sg][k] = drv.active_set_uvm[sg][k];
-    }
-}
 
 /* ============================================================================
  * Default on_max_iter_exceeded — runner-supplied bad-stop on max iteration.
@@ -4482,7 +3865,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * and cannot validate ghost-import completeness (walks the
      * same imported pool as production). Its complexity is not justified
      * for temporary scaffolding code). */
-    const bool oracle_enabled = gizmo_nlr_oracle_enabled_global();
 
     /* ===== Path selection at iter 0 (FIXED for whole call) =====
      * Integrates with the canonical override / threshold dispatch
@@ -4532,10 +3914,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * selected: threshold dispatch reaches Mode B just as the corridor override
      * does, and the brute walk is equally intractable either way.
      * global_active_sum is set on every branch that can select Mode B. */
-    if (path == DispatchPath::ModeB_HostWalker && oracle_enabled) {
-        nlr_abort_if_modeb_oracle_too_large(
-            Spec::loop_name, args.num_active, global_active_sum, oracle_enabled);
-    }
 
     /* Globally-zero-active call: do NO neighbor work. global_active_sum comes
      * from the dispatch Allreduce, so it is identical on every rank -> this
@@ -4565,27 +3943,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * completeness (walks the same imported pool as production). For
      * oracle validation select Mode B with the parameterfile
      * NeighborLoopModeBThreshold pair, and set GIZMO_NLR_ORACLE=1. */
-    if (oracle_enabled && path == DispatchPath::ModeA_GPU_NGL) {
-        if (ThisTask == 0) {
-            fprintf(stderr,
-                "[run_neighbor_loop_iterative<%s>] FATAL: Mode A iterative "
-                "oracle intentionally not implemented. The Mode A *production* "
-                "path is fully ported and validated separately. Mode A oracle "
-                "would only catch cached-CSR/lookup/rebuild bugs (covered by "
-                "the synthetic harness in step 3) and cannot validate ghost-"
-                "import completeness (walks the same imported pool as "
-                "production). For oracle validation select Mode B with the "
-                "parameterfile NeighborLoopModeBThreshold pair and set "
-                "GIZMO_NLR_ORACLE=1.\n",
-                Spec::loop_name);
-            fflush(stderr);
-        }
-        endrun(81203);
-        /* All-rank symmetric (oracle_enabled from env + path from reduced
-         * thresholds): drain immediately rather than run the unimplemented
-         * Mode-A-oracle path over uninitialized oracle state. */
-        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:modea_iter_oracle_unsupported");
-    }
 
     if(gizmo_nlr_dispatch_trace_enabled()) {
         int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -4595,11 +3952,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 ? "force" : "threshold";
             fprintf(stderr,
                     "[NLR ITER DISPATCH caller=%s path=%s (%s) NTask=%d "
-                    "local_active=%d forced_modeb_global_active=%d oracle=%d]\n",
+                    "local_active=%d forced_modeb_global_active=%d]\n",
                     Spec::loop_name,
                     path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl" : "mode_b",
                     src, NTask, args.num_active,
-                    forced_modeb_global_active, (int)oracle_enabled);
+                    forced_modeb_global_active);
             fflush(stderr);
         }
     }
@@ -4660,15 +4017,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * local args.P[j] directly, oracle reads the same args.* with the
      * brute backend). Only reached on Mode B (Mode A + oracle hard-stubbed
      * above). */
-    if (drv.oracle_enabled) {
-        drv.ctx_oracle.P         = drv.args.P;
-        drv.ctx_oracle.CellP     = drv.args.CellP;
-        drv.ctx_oracle.num_total = drv.args.num_total;
-        if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-            Spec::populate_device_context(drv.args, drv.ctx_oracle);
-        }
-        drv.ctx_oracle_initialized = true;
-    }
 
     /* ===== Outer iter loop =====
      *
@@ -4828,9 +4176,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
              * counter fields. Fires BEFORE oracle dispatch (a.oracle)
              * which is itself brute-first per iter (G1). Mode A is hard-
              * stubbed so no rebuild complication. */
-            if (drv.oracle_enabled) {
-                Spec::reset_per_iter_device_context(args, drv.ctx_oracle, drv.iter_index);
-            }
         }
 
         /* (a) Per-subgroup dispatch — fixed path for the call. This
@@ -4864,15 +4209,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
              * before nlr_iter_dispatch_subgroup_mode_b_remote even collected
              * its set, causing spurious iter-sg0-it0 mismatches at the first
              * dm_dispersion call. */
-            if (drv.oracle_enabled) {
-                if (NTask == 1) {
-                    nlr_iter_dispatch_subgroup_mode_b_local_with_oracle<Spec>(drv, sg);
-                } else {
-                    nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg);
-                }
-                continue;
-            }
-
             switch (path) {
                 case DispatchPath::ModeB_HostWalker:
                     if (NTask == 1) {
@@ -4901,20 +4237,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             }
         }
 
-        /* Snapshot production active sets BEFORE after_iter compaction so
-         * (b.compare) can compare only slots evaluated this iteration, not
-         * stale slots from prior iterations whose accum_uvm entries were
-         * never updated this iter. */
-        std::vector<std::vector<int>> prod_active_snapshot;
-        if (drv.oracle_enabled) {
-            prod_active_snapshot.resize(args.num_subgroups);
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                int n = drv.active_set_size[sg];
-                prod_active_snapshot[sg].assign(
-                    drv.active_set_uvm[sg], drv.active_set_uvm[sg] + n);
-            }
-        }
-
         /* (b) Per-active Spec::after_iter — collect IterStatus, compact
          * active_set per subgroup, mutate radii on AdjustRadius. */
         drv.local_active_total = 0;
@@ -4931,15 +4253,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot]
                 };
                 IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
-                /* Audit instrumentation: stash status + new_h for
-                 * per-iter 4-thing compare against oracle trajectory. */
-                if (drv.oracle_enabled) {
-                    drv.status_prod_uvm[sg][slot] = static_cast<int>(r.status);
-                    drv.new_h_prod_uvm[sg][slot]  =
-                        (r.status == IterStatus::AdjustRadius)
-                            ? r.new_h_search
-                            : drv.radii_uvm[sg][slot];
-                }
                 switch (r.status) {
                     case IterStatus::Converged:
                         /* Drop slot from compacted active_set; its accum_uvm
@@ -4977,147 +4290,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             drv.local_active_total     += write_idx;
         }
 
-        /* (b.oracle) oracle after_iter — symmetric pattern over
-         * the brute trajectory's state. Mutates oracle's radii / scratch /
-         * active_set and stashes status + new_h into status_oracle_uvm /
-         * new_h_oracle_uvm for the 4-thing compare below. */
-        if (drv.oracle_enabled) {
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                const NlrSubgroup& sgr_o = args.subgroups[sg];
-                int n_compacted = drv.active_set_oracle_size[sg];
-                int write_idx_o = 0;
-                for (int k = 0; k < n_compacted; k++) {
-                    int slot = drv.active_set_oracle_uvm[sg][k];
-                    int i    = sgr_o.active_indices[slot];
-                    AfterIterContext<Spec> ctx_o{
-                        args, sg, slot, i, drv.iter_index,
-                        /* h_search_current */ drv.radii_oracle_uvm[sg][slot],
-                        /* scalars */         drv.cs,
-                        /* scratch */         drv.scratch_oracle_uvm[sg][slot]
-                    };
-                    IterResult r_o = Spec::after_iter(ctx_o, drv.accum_oracle_uvm[sg][slot]);
-                    drv.status_oracle_uvm[sg][slot] = static_cast<int>(r_o.status);
-                    drv.new_h_oracle_uvm[sg][slot]  =
-                        (r_o.status == IterStatus::AdjustRadius)
-                            ? r_o.new_h_search
-                            : drv.radii_oracle_uvm[sg][slot];
-                    switch (r_o.status) {
-                        case IterStatus::Converged: break;
-                        case IterStatus::NeedsMore:
-                            drv.active_set_oracle_uvm[sg][write_idx_o++] = slot;
-                            break;
-                        case IterStatus::AdjustRadius:
-                            drv.radii_oracle_uvm[sg][slot] = r_o.new_h_search;
-                            drv.active_set_oracle_uvm[sg][write_idx_o++] = slot;
-                            break;
-                        default:
-                            if (ThisTask == 0) {
-                                fprintf(stderr,
-                                    "[run_neighbor_loop_iterative<%s>] FATAL: oracle "
-                                    "Spec::after_iter returned unknown IterStatus=%d "
-                                    "at iter=%d sg=%d slot=%d (i=%d).\n",
-                                    Spec::loop_name, (int)r_o.status,
-                                    drv.iter_index, sg, slot, i);
-                                fflush(stderr);
-                            }
-                            /* Unknown enum = Spec bug. Soft bad-stop + drop the
-                             * oracle slot as converged; stays lockstep, drains
-                             * at the next poll. stderr above surfaces it. */
-                            endrun(81206);
-                            break;
-                    }
-                }
-                drv.active_set_oracle_size[sg] = write_idx_o;
-            }
-
-            /* (b.compare) per-iter 4-thing compare.
-             *   (1) AccumData via Spec::compare_accum (existing helper).
-             *   (2) IterStatus (control-flow divergence).
-             *   (3) new_h_search on AdjustRadius (radius-update divergence).
-             *   (4) Active-set membership count + per-slot ordering. */
-            int rank_now = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank_now);
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                /* Encode sg + iter
-                 * into the origin tag so multi-subgroup iterative mismatch
-                 * lines are diagnosable. Format keeps the existing "iter_"
-                 * prefix the helper's [mode_b ORACLE MISMATCH ... origin=X] line
-                 * uses, extended with sg+iter context. */
-                char origin_tag[40];
-                std::snprintf(origin_tag, sizeof(origin_tag),
-                              "iter_sg%d_it%d", sg, drv.iter_index);
-                /* Compare only slots that were active (evaluated) in this
-                 * iteration.  The old loop over 0..n_max re-emitted stale
-                 * accum_uvm entries for slots that converged in prior iters,
-                 * producing identical residuals repeating across iterations. */
-                for (int slot : prod_active_snapshot[sg]) {
-                    /* Workaround for a Vista UVM-scatter regression observed in
-                     * the dm_dispersion port (2026-05-16): the oracle
-                     * UVM write of multi-field AccumData silently zeroed the
-                     * non-leading fields (e.g. DMDispOut::Vx/Vy/Vz/VelDisp
-                     * after Ngb) after scatter; pre-scatter values were
-                     * correct. The dispatch helpers below now compare oracle
-                     * vs production accums from host vectors before scatter
-                     * and set this flag; here we skip the broken UVM-based
-                     * compare to avoid false mismatches.
-                     * REMOVAL CONDITION: oracle is itself temporary scaffolding;
-                     * when the oracle path is removed entirely, this flag +
-                     * guard go with it. Until then, do NOT remove without
-                     * first proving the UVM-scatter regression is fixed for
-                     * multi-field AccumData. */
-                    if (!drv.oracle_accum_compared_in_dispatch) {
-                        emit_oracle_mismatch_if_any<Spec>(rank_now, slot,
-                            drv.accum_uvm[sg][slot],
-                            drv.accum_oracle_uvm[sg][slot],
-                            origin_tag,
-                            &drv.oracle_mismatch_count);
-                    }
-
-                    if (drv.status_prod_uvm[sg][slot] != drv.status_oracle_uvm[sg][slot]) {
-                        emit_oracle_status_mismatch<Spec>(rank_now, sg, slot,
-                            drv.iter_index,
-                            drv.status_prod_uvm[sg][slot],
-                            drv.status_oracle_uvm[sg][slot],
-                            &drv.oracle_mismatch_count);
-                    }
-
-                    if (drv.status_prod_uvm[sg][slot] ==
-                            static_cast<int>(IterStatus::AdjustRadius) &&
-                        drv.status_oracle_uvm[sg][slot] ==
-                            static_cast<int>(IterStatus::AdjustRadius)) {
-                        double hp = drv.new_h_prod_uvm[sg][slot];
-                        double ho = drv.new_h_oracle_uvm[sg][slot];
-                        double dh = std::fabs(hp - ho);
-                        double tol = nlr_spec_radius_tolerance_v<Spec> * std::fabs(hp);
-                        if (!(dh <= tol)) {
-                            emit_oracle_radius_mismatch<Spec>(rank_now, sg, slot,
-                                drv.iter_index, hp, ho,
-                                &drv.oracle_mismatch_count);
-                        }
-                    }
-                }
-
-                int n_prod   = drv.active_set_size[sg];
-                int n_oracle = drv.active_set_oracle_size[sg];
-                if (n_prod != n_oracle) {
-                    emit_oracle_membership_count_mismatch<Spec>(rank_now, sg,
-                        drv.iter_index, n_prod, n_oracle,
-                        &drv.oracle_mismatch_count);
-                } else {
-                    for (int k = 0; k < n_prod; k++) {
-                        if (drv.active_set_uvm[sg][k] !=
-                            drv.active_set_oracle_uvm[sg][k]) {
-                            emit_oracle_membership_slot_mismatch<Spec>(rank_now, sg,
-                                drv.iter_index, k,
-                                drv.active_set_uvm[sg][k],
-                                drv.active_set_oracle_uvm[sg][k],
-                                &drv.oracle_mismatch_count);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
 
         /* (b.5) Mode A buffer-exceedance rebuild trigger.
          * After radii mutation on AdjustRadius, check if any still-active

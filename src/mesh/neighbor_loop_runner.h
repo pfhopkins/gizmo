@@ -482,28 +482,6 @@ template <typename Spec>
 constexpr bool nlr_spec_has_cleanup_device_context_v =
     nlr_spec_has_cleanup_device_context<Spec>::value;
 
-/* SFINAE detection of optional Spec::set_oracle_brute_pass. j-side-write
- * Specs use this to suppress side-effects on the oracle's BRUTE pass —
- * without it, the runner's oracle path (run_mode_b_local_with_oracle,
- * run_mode_b_remote_impl<true>) would call the pair body twice (tree + brute)
- * and apply j-side writes (atomic_exchange / atomic_add into P[j] / CellP[j])
- * twice, corrupting additive fields like Injected_Sink_Energy. Oracle is a
- * VALIDATION-ONLY path so this is debug-relevant only; production paths
- * (default, force-A, force-B-without-oracle) never call this hook. */
-template <typename Spec, typename = void>
-struct nlr_spec_has_set_oracle_brute_pass : std::false_type {};
-
-template <typename Spec>
-struct nlr_spec_has_set_oracle_brute_pass<
-    Spec,
-    std::void_t<decltype(Spec::set_oracle_brute_pass(
-        std::declval<typename Spec::DeviceContext&>(), bool{}))>>
-    : std::true_type {};
-
-template <typename Spec>
-constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
-    nlr_spec_has_set_oracle_brute_pass<Spec>::value;
-
 /* SFINAE detection + resolution of the optional per-Spec eval-threading tier
  * Spec::modeb_eval_omp (ModeBEvalOMP). A Spec that omits it resolves to
  * SerialOnly; the *_is_explicit_v trait lets diagnostics report a missing trait
@@ -675,31 +653,22 @@ struct NlrDeviceContextCleanupGuard {
     }
 };
 
-/* RAII brute-pass guard. Construct at entry of an oracle
- * dispatch helper; destructor flips set_oracle_brute_pass(false) at scope
- * exit even on mid-walk abort. SFINAE-no-op for Specs without
- * Spec::set_oracle_brute_pass. Bound to the OWNING ctx_oracle reference
- * — production ctx is NEVER touched. */
-template <typename Spec>
-struct NlrOracleBrutePassGuard {
-    typename Spec::DeviceContext& ctx_oracle;
-    bool toggled = false;
+/* SFINAE detection of optional Spec::set_oracle_brute_pass — still consumed by
+ * the Mode-B remote helper's brute-pass branches, which are removed with the
+ * rest of that helper's oracle surface. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_set_oracle_brute_pass : std::false_type {};
 
-    explicit NlrOracleBrutePassGuard(typename Spec::DeviceContext& c)
-        : ctx_oracle(c) {
-        if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-            Spec::set_oracle_brute_pass(ctx_oracle, true);
-            toggled = true;
-        }
-    }
-    ~NlrOracleBrutePassGuard() {
-        if (toggled) {
-            Spec::set_oracle_brute_pass(ctx_oracle, false);
-        }
-    }
-    NlrOracleBrutePassGuard(const NlrOracleBrutePassGuard&) = delete;
-    NlrOracleBrutePassGuard& operator=(const NlrOracleBrutePassGuard&) = delete;
-};
+template <typename Spec>
+struct nlr_spec_has_set_oracle_brute_pass<
+    Spec,
+    std::void_t<decltype(Spec::set_oracle_brute_pass(
+        std::declval<typename Spec::DeviceContext&>(), bool{}))>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
+    nlr_spec_has_set_oracle_brute_pass<Spec>::value;
 
 /* SFINAE detection of optional Spec::radius_tolerance (radius convergence tolerance is not the same
  * semantic object as the accumulator comparison tolerance). Defaults to
@@ -1740,52 +1709,6 @@ struct NlrIterDriver {
     std::vector<double *>             mode_a_csr_buffered_h;         /* [num_subgroups][num_active_local]; UVM */
     std::vector<bool>                 mode_a_csr_valid;              /* [num_subgroups] */
 
-    /* ========================================================================
-     * Iterative-oracle state.
-     *
-     * Allocated iff `oracle_enabled` is true at iter-0 entry AND the production
-     * path is ModeB_HostWalker. Mode A iterative oracle is hard-stubbed at the
-     * outer body (run_neighbor_loop_iterative) with an explicit
-     * endrun + scaffolding-rationale message — oracles are temporary port-
-     * validation scaffolding, the Mode A *production* path is validated by
-     * the synthetic harness + Mode B oracle on the same Spec.
-     *
-     * Independent brute trajectory: own IterScratch + radii + accum +
-     * active_set per subgroup. Same slot identity as production (driver
-     * always references args.subgroups[sg].active_indices) so per-slot
-     * compare is unambiguous. Per-iter compare emits four classes of
-     * mismatch line on divergence between production and oracle:
-     * AccumData / IterStatus / new_h_search / active-set membership.
-     * All four share kMismatchPrintCap (=1024) per-call.
-     * ====================================================================== */
-    bool                                      oracle_enabled = false;
-    std::vector<typename Spec::IterScratch *> scratch_oracle_uvm;       /* [num_subgroups][num_active_local] */
-    std::vector<typename Spec::AccumData   *> accum_oracle_uvm;         /* same shape */
-    std::vector<double *>                     radii_oracle_uvm;         /* same shape */
-    std::vector<int    *>                     active_set_oracle_uvm;    /* same shape, compacted */
-    std::vector<int>                          active_set_oracle_size;   /* [num_subgroups] */
-
-    /* Per-iter audit instrumentation (4-thing compare).
-     * Stored as int (IterStatus) UVM arrays via static_cast for trivially-
-     * copyable transit. new_h_*_uvm holds AdjustRadius candidate; for
-     * Converged/NeedsMore it holds the current radius (for symmetric init). */
-    std::vector<int    *>                     status_prod_uvm;          /* [num_subgroups][num_active_local] */
-    std::vector<int    *>                     status_oracle_uvm;        /* same shape */
-    std::vector<double *>                     new_h_prod_uvm;           /* same shape */
-    std::vector<double *>                     new_h_oracle_uvm;         /* same shape */
-
-    long long                                 oracle_mismatch_count = 0;  /* per-call, shared across origin tags */
-    /* TEMPORARY: set true by with_oracle dispatch helpers after comparing from
-     * host vectors; b.compare uses this to skip the broken UVM-based accum
-     * comparison. Remove once the oracle validation path is removed. */
-    bool                                      oracle_accum_compared_in_dispatch = false;
-
-    /* Independent ctx_oracle lifecycle. Own
-     * populate_device_context + cleanup_device_context calls; NEVER aliased
-     * to production ctx after init. Brute-pass toggle gated by RAII
-     * NlrOracleBrutePassGuard<Spec> at every dispatch helper entry. */
-    typename Spec::DeviceContext              ctx_oracle;
-    bool                                      ctx_oracle_initialized = false;
 
     /* effective_args: writable copy of the base
      * neighbor_loop_args slice. Mode A iter mutates num_total/P/CellP after
@@ -2081,7 +2004,6 @@ int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
  * to the unified API above. */
 bool gizmo_nlr_dispatch_trace_enabled(void);
 
-bool gizmo_nlr_oracle_enabled_global(void);
 
 /* ============================================================================
  * NlrQueryEnvelope — runner-owned transport wrapper for cross-rank queries.
