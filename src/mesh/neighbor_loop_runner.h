@@ -2096,7 +2096,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *
  * Aliases (DEPRECATED; accepted for one cycle with rank-0 warning; explicit
  * removal queued for a future cleanup pass):
- *   GIZMO_NLR_DISPATCH_TRACE=1     -> GIZMO_NLR_DIAG=2
  *   GIZMO_NLR_FORCE_MODEA=1        -> GIZMO_NLR_FORCE_MODE=A
  *   GIZMO_NLR_FORCE_MODEB=1        -> GIZMO_NLR_FORCE_MODE=B
  *   GIZMO_MODE_B_XVAL_DUMP=1       -> GIZMO_NLR_SPIKE_ACCUM_DUMP=1
@@ -2107,9 +2106,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *   _FORCE_MODEA=1 AND _FORCE_MODEB=1                           -> endrun
  *   GIZMO_NLR_FORCE_MODE invalid value (not A or B)             -> endrun
  *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun
- *
- * Diagnostic alias precedence (NEW WINS, old-set produces ignore note):
- *   GIZMO_NLR_DIAG set + diagnostic alias set -> new wins, alias ignored
  *
  * Warnings: rank-0 only, cached one-shot per env-var key.
  * ========================================================================== */
