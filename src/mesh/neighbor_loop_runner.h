@@ -5,7 +5,7 @@
  * (write modes, iterative loops, identity sidecars) are DECLARED in the
  * interface so callers don't reshape when their needs are added; runtime
  * policy on unsupported features is documented below (TL;DR: Mode A fallback
- * in production; abort if force-Mode-B; static_assert only for internally
+ * in production; abort when Mode B is required; static_assert only for internally
  * inconsistent specs).
  *
  * The user-facing copy-pasteable Spec skeleton is below ("NeighborLoopSpec —
@@ -141,8 +141,8 @@
  *     - hooks (device):   load_neighbor, pair_kernel
  *
  * Generic runner does:
- *     - dispatch:  Mode A vs Mode B vs Brute — runtime choice from
- *                  Allreduce'd Nactive vs threshold + force-mode env
+ *     - dispatch:  Mode A vs Mode B vs Brute — the caller's per-call
+ *                  override, else Allreduce'd Nactive vs threshold
  *     - search:    coarse predicate, type mask + per-type hmax pruning
  *     - transport: ghost (Mode A) or peer-to-peer (Mode B)
  *     - drift:     lazy drift_particle on j candidates pre-kernel
@@ -1512,9 +1512,9 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  *                                     Hard-corridor invariant enforcement
  *
  * Execution path is chosen by the runner from a small enum (Mode A GPU NGL,
- * Mode B local, Mode B remote, future paths). Selection precedence: env
- * force-mode > threshold dispatch on
- * num_active_global vs Spec::modeb_threshold_{sum,max} > Spec defaults.
+ * Mode B local, Mode B remote, future paths). Selection precedence:
+ * args.dispatch_override > threshold dispatch on num_active_global vs the
+ * parameterfile NeighborLoopModeBThreshold pair > Spec::modeb_threshold_*.
  * Future paths add a case to the dispatch + the path-predicate helpers
  * (nlr_path_uses_imported_ghosts, nlr_path_uses_gpu_arena, etc.) and never
  * add fields to the plan struct itself — path is the single-source-of-truth.
@@ -2083,9 +2083,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *                                     equivalent to level 2; rank-0 note)
  *   GIZMO_NLR_ORACLE=1                correctness gate (separate concern)
  *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
- *
- * Aliases (DEPRECATED; accepted for one cycle with rank-0 warning; explicit
- * removal queued for a future cleanup pass):
  *
  * Conflict policy (collective; all ranks endrun):
  *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun

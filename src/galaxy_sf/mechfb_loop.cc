@@ -819,7 +819,8 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
  *   ⚠️  Mode A + GIZMO_NLR_ORACLE=1                    — RUNNER-LEVEL STUB.
  *      The iterative runner hard-stubs Mode A oracle paths globally (see the
  *      `run_neighbor_loop_iterative` step 5.b note in mesh/neighbor_loop_runner.cc);
- *      NOT a mechfb-specific restriction. For oracle validation: force Mode B.
+ *      NOT a mechfb-specific restriction. For oracle validation, select Mode B
+ *      with the parameterfile NeighborLoopModeBThreshold pair.
  *   ❌ MULTI-RANK Mode A                               — pair_kernel aborts
  *      loudly the first time a ghost-side write would happen
  *      (`j >= num_local_gas`). Custom MechFBGasDelta ghost-writeback callback

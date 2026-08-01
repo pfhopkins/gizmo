@@ -89,8 +89,7 @@ void gizmo_hydro_corridor_decide_mode(void)
        Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
        Thresholds from the optional NeighborLoopModeBThreshold{Sum,Max} params
        (-1 = unset -> corridor default; any set value overrides, <= 0 disables
-       Mode B). TRANSPORT_SUBCYCLE has already forced Mode A above; there is no
-       env force-mode override. */
+       Mode B). TRANSPORT_SUBCYCLE has already forced Mode A above. */
     int sum_active_gas = 0, max_active_gas = 0;
     global_active_gas_counts(&sum_active_gas, &max_active_gas);
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
