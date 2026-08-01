@@ -107,7 +107,7 @@
  *      Caller must fix the spec.
  *
  *   2. Force-Mode-B + unimplemented Mode B feature (runtime abort): when
- *      GIZMO_NLR_FORCE_MODEB=1 OR Spec::force_modeb_required = true, and
+ *      args.dispatch_override = B OR Spec::force_modeb_required = true, and
  *      the dispatch chooses Mode B but the runner doesn't yet implement
  *      that combination, the runner aborts loudly. This is the gate for
  *      unit-test suites forcing the tiny-N path.
@@ -118,8 +118,8 @@
  *      callers adopt the runner immediately and pick up Mode B as the
  *      runner gains coverage.
  *
- *   GIZMO_NLR_FORCE_MODEA=1 forces Mode A globally regardless of spec or
- *   threshold (regression baseline / sanity).
+ *   args.dispatch_override = A forces Mode A for that call regardless of
+ *   spec or threshold (regression baseline / sanity).
  *
  * ============================================================================
  * Per-loop spec carries:
@@ -1273,9 +1273,7 @@ enum class DispatchPath : int {
 /* NlrForceMode — A/B dispatch override values. Defined here (early in the
  * header) rather than near the env-var doc block below because struct
  * neighbor_loop_args' in-class default initializer for `dispatch_override`
- * needs the enum to be visible at that point. The companion resolution
- * function (gizmo_nlr_force_mode) is declared below near its
- * documentation. */
+ * needs the enum to be visible at that point. */
 enum class NlrForceMode { None = 0, A = 1, B = 2 };
 
 /* External symmetric gas-gas CSR injection (hydro corridor support:
@@ -1357,10 +1355,9 @@ struct neighbor_loop_args {
                                   * GHOST-POOL OWNERSHIP contract on struct
                                   * nlr_external_csr above). */
     NlrForceMode dispatch_override = NlrForceMode::None;
-                                 /* None (default) => normal priority:
-                                  * GIZMO_NLR_FORCE_MODE > adaptive threshold.
-                                  * Non-None => per-call
-                                  * override winning ABOVE force mode (corridor mode
+                                 /* None (default) => adaptive threshold
+                                  * dispatch. Non-None => per-call
+                                  * override winning ABOVE the threshold (corridor mode
                                   * decision in hydro/hydro_corridor.cc uses this
                                   * to enforce coherent Mode A/B across all
                                   * corridor consumers — cellcorrections/gradients/
@@ -1479,8 +1476,8 @@ struct NeighborLoopPlan {
     Path path;
 
     /* Global active-particle count after MPI_Allreduce. Sentinel: -1 means
-     * "not populated" — happens on force-mode paths
-     * (GIZMO_NLR_FORCE_MODE{A,B}=1) when GIZMO_NLR_DIAG is OFF, since the
+     * "not populated" — happens on dispatch-override paths
+     * (args.dispatch_override != None) when GIZMO_NLR_DIAG is OFF, since the
      * runner skips the Allreduce in that case to avoid an extra collective.
      * Hooks/consumers MUST check for -1 before assuming this field reflects
      * a real global count. Threshold-dispatch paths always populate it, as
@@ -2084,19 +2081,13 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *   GIZMO_NLR_DIAG=<0|1|2|3>          0=off, 1=PHASE0 timing line per call,
  *                                     2=+dispatch trace, 3=reserved (today
  *                                     equivalent to level 2; rank-0 note)
- *   GIZMO_NLR_FORCE_MODE=A|B          tester force-mode override
  *   GIZMO_NLR_ORACLE=1                correctness gate (separate concern)
  *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
  *
  * Aliases (DEPRECATED; accepted for one cycle with rank-0 warning; explicit
  * removal queued for a future cleanup pass):
- *   GIZMO_NLR_FORCE_MODEA=1        -> GIZMO_NLR_FORCE_MODE=A
- *   GIZMO_NLR_FORCE_MODEB=1        -> GIZMO_NLR_FORCE_MODE=B
  *
  * Conflict policy (collective; all ranks endrun):
- *   GIZMO_NLR_FORCE_MODE set + any old _FORCE_MODE{A,B} set     -> endrun
- *   _FORCE_MODEA=1 AND _FORCE_MODEB=1                           -> endrun
- *   GIZMO_NLR_FORCE_MODE invalid value (not A or B)             -> endrun
  *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun
  *
  * Warnings: rank-0 only, cached one-shot per env-var key.
@@ -2107,12 +2098,9 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  * the enum to be fully visible. See declaration above near line 1030. */
 
 int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
-NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */
 
 /* Convenience adapters — preserved for existing callers, all delegating
  * to the unified API above. */
-bool gizmo_nlr_force_mode_b_global(void);
-bool gizmo_nlr_force_mode_a_global(void);
 bool gizmo_nlr_dispatch_trace_enabled(void);
 
 bool gizmo_nlr_oracle_enabled_global(void);
