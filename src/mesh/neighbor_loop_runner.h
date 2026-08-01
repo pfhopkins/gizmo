@@ -1988,7 +1988,13 @@ struct NlrQueryEnvelope {
      * the sender's targeted routing did NOT select this peer for this query and
      * expects ZERO matches here; the receiver full-walks it and raises a loud
      * SENDER-UNDER-ROUTE alarm if it finds any. 0 on all production envelopes. */
-    int        oracle_untargeted_probe;
+    /* Reserved, always zero. Holds the wire slot of a removed Mode-B probe
+     * flag. Kept so sizeof(NlrQueryEnvelope) is unchanged: the envelope size
+     * divides All.BufferSize to set the streaming round boundary, and round
+     * boundaries fix the order in which replies merge into accums_out. Dropping
+     * the field would therefore shift floating-point summation order at large
+     * active counts. Reuse this slot before growing the envelope. */
+    int        reserved_wire_padding;
     int        NodeList[NODELISTLENGTH];
     ActiveData active;
 };

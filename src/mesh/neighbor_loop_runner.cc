@@ -447,8 +447,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  *                                            Spec::load_neighbor used by
  *                                            run_mode_a (host invocation here)
  *
- * Brute oracle uses the SAME drift epoch as Mode B (we collect both candidate
- * sets before drifting either — see run_mode_b_local_with_oracle). Annotation
+ * Candidate sets are collected before any drift. Annotation
  * on each helper makes the ordering enforcement structural.
  *
  * Self-rank only here: candidates are local real P[] indices in
@@ -629,7 +628,6 @@ static void collect_candidates_for_remote_queries(
     const std::vector<typename Spec::ActiveData>& peer_actives,
     const std::vector<int>& peer_nodelist_flat,   /* K*NODELISTLENGTH; exported start-nodes per query */
     const std::vector<int>& peer_nnodes,          /* K; valid entries per query's NodeList */
-    const std::vector<int>& peer_group_first,     /* K; 0 = continuation chunk of the previous (peer,slot) */
     unsigned int neighbor_type_mask,
     DispatchPath backend,
     std::vector<std::vector<int>>& per_query_cands,
@@ -834,8 +832,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
  *
  * No Kokkos kernels in this path → no fence (project rule from contract).
  * No GPU NGL build, no SIDX, no arena_acquire — Mode B's whole point is
- * escaping that overhead for tiny-N. `compare_accum`-gated brute oracle is
- * orchestrated by run_mode_b_local_with_oracle below.
+ * escaping that overhead for tiny-N.
  * ========================================================================== */
 
 /* Helper: build the host-frozen ActiveData[] for self-rank actives. Called
@@ -932,32 +929,25 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
 /* ============================================================================
  * Mode B remote (multi-rank) helpers
  *
- * STRONG INVARIANT (both oracle and non-oracle paths):
+ * STRONG INVARIANT:
  *   collect-all → drift-union → evaluate-all on each rank.
  *
  * On each rank, the local pool is walked TWICE per call: once for this
  * rank's own self-pair queries (its own actives), and once for queries
  * received from peers. Both candidate sets must be collected pre-drift,
  * then the drift covers their UNION (idempotent so duplicates are free),
- * then evaluation runs post-drift. The non-oracle path does NOT simplify
- * back to per-query drift — single shared structure, oracle off only
- * skips the brute candidate sets and the compare step.
+ * then evaluation runs post-drift.
  *
  * Sequence:
  *   stage 1 (active rank) build self radii, cs, frozen actives[]
  *   stage 2 (active rank) build envelopes, ALL peers in broadcast pattern
- *   stage 3 (this rank)   collect self_tree[, self_brute] pre-drift
+ *   stage 3 (this rank)   collect self candidates pre-drift
  *   stage 4 (collective)  exchange queries (peer-to-peer) -> recv envelopes
  *   stage 5 (this rank)   flatten envelopes to peer_actives[] + provenance[]
- *   stage 6 (this rank)   collect peer_tree[, peer_brute] pre-drift
- *   stage 7 (this rank)   drift UNION of (self_tree, self_brute, peer_tree,
- *                                          peer_brute)
- *   stage 8 (this rank)   evaluate self_tree[, self_brute]; oracle compare
- *                                  self before any remote merge so prints
- *                                  isolate local-pool walker bugs
- *   stage 9 (this rank)   evaluate peer_tree[, peer_brute]; oracle compare
- *                                  peer-side BEFORE reply transport (peer-
- *                                  rank prints isolate peer-pool bugs)
+ *   stage 6 (this rank)   collect peer candidates pre-drift
+ *   stage 7 (this rank)   drift the UNION of the self and peer candidate sets
+ *   stage 8 (this rank)   evaluate self candidates
+ *   stage 9 (this rank)   evaluate peer candidates
  *   stage 10 (collective) exchange replies (tree result is what ships)
  *   stage 11 (active rank) merge replies via Spec::merge_accum, ascending
  *                                  rank for FP-reproducible order
@@ -1357,9 +1347,7 @@ static void mode_b_remote_evaluate_into_buffer(
                             "oversized round — cap ineffective for this call (raise BufferSize).",
                             Spec::loop_name, add, add * kEnvPairBytes, bunch);
                     }
-                    /* commit: chunked envelopes per exported peer (CSR records are
-                     * peer-ascending); an under-route probe for each zero-export
-                     * peer (oracle modes only). */
+                    /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
                     int rr = r0;
                     for(int p = 0; p < nt; p++) {
                         if(p == rank) continue;
@@ -1373,8 +1361,7 @@ static void mode_b_remote_evaluate_into_buffer(
                              * disjoint subtrees → the slot-keyed reply merge sums their
                              * partial results without double counting. All chunks of a
                              * (query,peer) group land in THIS round (all-or-nothing
-                             * above), so the group stays contiguous for peer_group_first
-                             * / the oracle group-sum compare. */
+                             * above), so each group stays contiguous. */
                             for(int c = 0; c < nn; c += NODELISTLENGTH) {
                                 Envelope env;
                                 env.origin_slot = aa;
@@ -1384,7 +1371,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                     env.NodeList[cnt] = nd[c + cnt];
                                 }
                                 env.n_nodes = cnt;
-                                env.oracle_untargeted_probe = 0;
+                                env.reserved_wire_padding = 0;
                                 for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                                 env.active = actives[aa];
                                 queries_per_peer[p].push_back(env);
@@ -1414,7 +1401,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         env.origin_slot = aa;
                         env.origin_rank = rank;
                         env.n_nodes = 0;
-                        env.oracle_untargeted_probe = 0;   /* legit broadcast, matches expected */
+                        env.reserved_wire_padding = 0;   /* legit broadcast, matches expected */
                         for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                         env.active = actives[aa];
                         queries_per_peer[p].push_back(env);
@@ -1481,11 +1468,9 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<Provenance> peer_provenance;
     /* Parallel to peer_actives[k]: the exported start-node list carried in the
      * received envelope, flattened K*NODELISTLENGTH, so the receiver walk
-     * (collect_candidates_for_remote_queries) resumes from those nodes; plus
-     * the oracle under-route probe flag (alarmed after Stage 6). */
+     * (collect_candidates_for_remote_queries) resumes from those nodes. */
     std::vector<int> peer_nodelist_flat;
     std::vector<int> peer_nnodes;
-    std::vector<int> peer_probe;
     size_t total_recv = 0, total_recv_bytes = 0;
     for(size_t gi = 0; gi < group_peers.size(); gi++) {
         total_recv += group_queries[gi].size();
@@ -1497,7 +1482,6 @@ static void mode_b_remote_evaluate_into_buffer(
     peer_provenance.reserve(total_recv);
     peer_nodelist_flat.reserve(total_recv * NODELISTLENGTH);
     peer_nnodes.reserve(total_recv);
-    peer_probe.reserve(total_recv);
     for(size_t gi = 0; gi < group_peers.size(); gi++) {
         const int p = group_peers[gi];
         for(int qi = 0; qi < (int)group_queries[gi].size(); qi++) {
@@ -1519,32 +1503,15 @@ static void mode_b_remote_evaluate_into_buffer(
             peer_actives.push_back(env.active);
             peer_provenance.push_back({(int)gi, p, qi, env.origin_slot, p});
             peer_nnodes.push_back(env.n_nodes);
-            peer_probe.push_back(env.oracle_untargeted_probe);
             for(int t = 0; t < NODELISTLENGTH; t++) peer_nodelist_flat.push_back(env.NodeList[t]);
         }
     }
-    /* Chunk groups: a (query,peer) needing >NODELISTLENGTH start-nodes arrives
-     * as CONSECUTIVE envelopes (Stage 2 pushes them contiguously; the flatten
-     * above preserves order). Production sums their disjoint partial accums —
-     * correct. The ORACLE brute walk, however, answers the FULL query per
-     * envelope; evaluating it per chunk double-counts on the merge (and makes
-     * per-envelope compare partial-vs-full). So brute runs only on each
-     * group's FIRST chunk; continuations reply zero (exact under summation). */
-    std::vector<int> peer_group_first(peer_actives.size(), 1);
-    for(size_t k = 1; k < peer_provenance.size(); k++) {
-        if(peer_provenance[k].source_peer == peer_provenance[k-1].source_peer &&
-           peer_provenance[k].origin_slot == peer_provenance[k-1].origin_slot) {
-            peer_group_first[k] = 0;
-        }
-    }
-
     /* Note: receiver-side binding of peer_actives (and per-eval-pass rebinding
      * of both self actives and peer actives) is performed inside
      * evaluate_pairs_post_drift, gated on
      * nlr_spec_has_bind_active_to_eval_context_v<Spec>. The bind runs once
-     * per active per eval pass with the EXACT eval ctx, so oracle brute-pass
-     * vs tree-pass and Production vs Oracle ctx copies are all bound
-     * correctly. No standalone post-flatten rebind needed here. */
+     * per active per eval pass with the EXACT eval ctx. No standalone
+     * post-flatten rebind needed here. */
 
     /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
     std::vector<std::vector<int>> cand_peer_tree;
@@ -1553,7 +1520,6 @@ static void mode_b_remote_evaluate_into_buffer(
         int tu_recv = 0;
         collect_candidates_for_remote_queries<Spec>(peer_actives,
                                                      peer_nodelist_flat, peer_nnodes,
-                                                     peer_group_first,
                                                      neighbor_type_mask,
                                                      DispatchPath::ModeB_HostWalker,
                                                      cand_peer_tree, drift_sink, &tu_recv);
