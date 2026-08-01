@@ -40,10 +40,6 @@ bool gizmo_nlr_iter_harness_empty_rank_enabled(void);
 bool gizmo_nlr_iter_harness_audit_mangle_enabled(void);
 bool gizmo_nlr_iter_harness_multi_subgroup_enabled(void);
 bool gizmo_nlr_iter_harness_ghost_enabled(void);
-/* Selects Mode A for the main 4-slot call. Without it the 4 actives fall
- * under the dispatch threshold and the call runs Mode B, leaving the Mode A
- * arms of VP 3 and VP 8 unexercised. */
-bool gizmo_nlr_iter_harness_modea_enabled(void);
 
 /* Harness diagnostic counters (file-scope; reset per invocation). Defined
  * in test_iter_harness_loop.cc. apply_active_writeback fires per particle
