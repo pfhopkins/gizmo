@@ -2428,7 +2428,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
          * set external_csr. Compile-time enforcement is impossible since
          * external_csr is a runtime args field, not a Spec constexpr.
          *
-         * All checks are UNCONDITIONAL (not GIZMO_VERBOSE_DIAG-gated):
+         * All checks are UNCONDITIONAL (never diagnostic-gated):
          * external CSR injection is a sharp tool, contract violations
          * cause silent wrong-particle writeback (kernel stages for
          * external_csr->active_indices[aa] but writeback applies

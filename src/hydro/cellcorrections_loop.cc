@@ -20,7 +20,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../mesh/kernel.h"                   /* MUST precede cellcorrections_loop.h
                                                 * — kernel.h has no include guards */
 #include "../mesh/neighbor_loop_runner.h"
@@ -87,11 +86,6 @@ void cellcorrections_calc(void)
         args.num_active  = corridor_csr->num_active;
         args.external_csr     = corridor_csr;
         args.dispatch_override = NlrForceMode::A;
-        if(ThisTask == 0 && gizmo_verbose_diag()) {
-            printf("[CELLCORRECTIONS] consuming corridor external_csr: num_active=%d total_pairs=%lld\n",
-                   corridor_csr->num_active, (long long)corridor_csr->total_pairs);
-            fflush(stdout);
-        }
     } else {
         /* Mode B (request-driven, no corridor CSR): narrow active list built
          * here. */

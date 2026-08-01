@@ -405,7 +405,6 @@ void cellcorrections_final_operations_and_cleanup(void);
  * for the enum + accessor. */
 void gizmo_hydro_corridor_decide_mode(void);
 void gizmo_hydro_corridor_begin(void);
-void gizmo_hydro_corridor_mass_guardrail_check(void);
 void gizmo_hydro_corridor_end(void);
 
 size_t sizemax(size_t a, size_t b);

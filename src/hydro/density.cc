@@ -10,7 +10,6 @@
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 
 /*! \file density.c

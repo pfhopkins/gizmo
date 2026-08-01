@@ -131,24 +131,4 @@ const nlr_external_csr * gizmo_hydro_corridor_external_csr(void);
  * free gizmo_sym_*; that stays with gizmo_hydro_cleanup_symlist_and_ghosts). */
 void gizmo_hydro_corridor_end(void);
 
-/* Mass<=0 topology guardrail. Defensive runtime check called immediately
- * AFTER compute_stellar_feedback(): scans ActiveParticleList for any gas
- * member with Mass<=0. If any rank flags a violation (MPI_Allreduce'd for
- * coherent abort), endrun(7311) with the offending cell index + ID + Mass
- * on the flagging rank.
- *
- * Rationale: the corridor's shared CSR row list is frozen before feedback.
- * Positions / KernelRadius / active membership / ghost set are invariant
- * across the span; the one event that can semantically invalidate a frozen
- * row is a gas cell driven to Mass<=0 mid-step (sink swallow, full SF
- * conversion). If that ever happens, the row list contains a
- * semantically-dead entry and this check catches it loudly rather than
- * letting a consumer silently process it.
- *
- * Gated by gizmo_verbose_diag() — observability check, zero cost in
- * production runs. Must be promoted to always-on (or replaced by audited
- * Mass>0 gates in every consumer kernel) when the shared CSR is consumed
- * at NTask>1, where a dead cross-rank ghost is harder to detect per-row. */
-void gizmo_hydro_corridor_mass_guardrail_check(void);
-
 #endif /* HYDRO_CORRIDOR_H */

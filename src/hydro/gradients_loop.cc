@@ -34,7 +34,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"                   /* MUST precede gradients_loop.h
                                                 * — kernel.h has no include guards */
@@ -720,7 +719,6 @@ void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time();
     double t0 = my_second();
-    double t_grad_outer_start = my_second();
 
     /* (1) Corridor topology. The shared active list (and, in Mode A, the
      * ghost pool + CSR) was built ONCE at gizmo_hydro_corridor_begin(); this
@@ -734,7 +732,6 @@ void hydro_gradient_calc(void)
      * is a corridor sequencing bug — fail loudly, never quietly rebuild. */
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
     const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
-    double t_diag_symlist_start = my_second();
     if(corridor_built_csr) {
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
@@ -742,16 +739,6 @@ void hydro_gradient_calc(void)
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
         fflush(stdout);
         endrun(7315);
-    }
-    double t_grad_after_symlist = my_second();
-    gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[DIAG_SYMNL step=%d N=%d pairs=%lld] symlist_build=%.3f%s\n",
-               (int)All.NumCurrentTiStep, gizmo_sym_num_active,
-               (long long)(gizmo_sym_neighbor_list.total_pairs),
-               timediff(t_diag_symlist_start, my_second()),
-               corridor_built_csr ? " (skipped: corridor built CSR)" : "");
-        fflush(stdout);
     }
 
     /* (2) Per-active gradient scratch — persistent capacity-managed buffer
@@ -1536,11 +1523,6 @@ void hydro_gradient_calc(void)
      * the hydro_force-top refresh that must happen anyway. Mode B has no
      * ghosts to refresh. */
     double t1 = my_second(); cpu_chain_sync(t1);
-    double t_grad_before_refresh = my_second();
-    double t_grad_outer_end = my_second();
-    gizmo_step_phase_record("gradient_zero_iter_loops", timediff(t_grad_after_symlist, t_grad_before_refresh));
-    gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));
-    gizmo_step_phase_record("gradient_outer_total",     timediff(t_grad_outer_start,    t_grad_outer_end));
 
     (void)t0; (void)t1;
 }

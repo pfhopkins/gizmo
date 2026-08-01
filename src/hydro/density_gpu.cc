@@ -33,7 +33,6 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
@@ -111,7 +110,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
-    double t_hyd_start = my_second(); /* sub-bucket timing */
 
     /* Persistent decomp-scoped arena. Replaces per-call
      * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
@@ -119,7 +117,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
-    double t_hyd_arena = my_second();
 
     /* Copy CSR neighbor list to SharedSpace (offsets 64-bit; neighbor values int) */
     int64_t *d_offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)(num_active + 1) * sizeof(int64_t));
@@ -128,7 +125,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     memcpy(d_offsets, csr_offsets_host, (size_t)(num_active + 1) * sizeof(int64_t));
     memcpy(d_neighbors, csr_neighbors_host, (size_t)csr_total_pairs * sizeof(int));
     memcpy(d_active, active_indices_host, num_active * sizeof(int));
-    double t_hyd_csr_copy = my_second();
 
     /* Copy TimeBinActive to SharedSpace */
     int *d_TimeBinActive = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
@@ -375,14 +371,12 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
         gizmo_gpu_check_last_error("hydro kernel", num_active);
     }
-    double t_hyd_kernel = my_second();
 
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct hydro_data_out));
 
     /* Copy wakeup flag back */
     if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
-    double t_hyd_out_copy = my_second();
 
     /* SPARSE scatter (replaces former full-num_total loop). The kernel writes
      * only P_gpu[j].wakeup (atomic_max) and, MFV-only, CellP_gpu[j].dMass
@@ -397,7 +391,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         CellP_host[j].dMass = CellP_gpu[j].dMass;
 #endif
     }
-    double t_hyd_scatter = my_second();
 
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
      * The scatter above syncs wakeup+dMass; any other arena-side writes by
@@ -414,15 +407,5 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 
-    /* sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
-    {
-        double t_postloop_end = my_second();
-        gizmo_step_phase_record("hydro_arena",       timediff(t_hyd_start,    t_hyd_arena));
-        gizmo_step_phase_record("hydro_csr_copy",    timediff(t_hyd_arena,    t_hyd_csr_copy));
-        gizmo_step_phase_record("hydro_kernel",      timediff(t_hyd_csr_copy, t_hyd_kernel));
-        gizmo_step_phase_record("hydro_out_copy",    timediff(t_hyd_kernel,   t_hyd_out_copy));
-        gizmo_step_phase_record("hydro_scatter",     timediff(t_hyd_out_copy, t_hyd_scatter));
-        gizmo_step_phase_record("hydro_postloop",    timediff(t_hyd_scatter,  t_postloop_end));
-    }
 }
 

@@ -35,7 +35,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"                   /* MUST precede hydro_force_loop.h
                                                 * — kernel.h has no include guards */

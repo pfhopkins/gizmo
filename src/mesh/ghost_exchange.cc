@@ -34,7 +34,6 @@
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
 #include "../system/mpi_alltoallv_typed.h"
-#include "../core/step_phases.h"   /* gizmo_verbose_diag() */
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
@@ -678,7 +677,6 @@ enum ghost_exchange_result {
 
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
 static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
-static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
 static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
 /* Is this spec eligible for the walk-export routed producer (sender fine-tree
@@ -1026,52 +1024,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     }
     free(is_active);
 
-    /* Diagnostic: identify top-N tile-hmax outliers and what's setting them.
-     * Gated on GIZMO_VERBOSE_DIAG=1 + first 3 calls to keep output manageable.
-     * For each top tile we walk its particles to find the one(s) with the
-     * largest effective_ghost_radius and dump Type/Mass/h/Pos/ID/TimeBin.
-     * Goal: settle whether 582-scale tile hmax comes from DM init values,
-     * sink kernel inflation, stale gas, or a real outlier. */
-    {
-        static int gx_topn_calls = 0;
-        if(gizmo_verbose_diag() && gx_topn_calls < 3 && local_ntiles > 0) {
-            const int TOPN = 8;
-            int top_idx[TOPN]; double top_h[TOPN];
-            for(int q = 0; q < TOPN; q++) { top_idx[q] = -1; top_h[q] = -1.0; }
-            for(int t = 0; t < local_ntiles; t++) {
-                double h = local_meta[t].hmax;
-                int slot = -1;
-                for(int q = 0; q < TOPN; q++) { if(h > top_h[q]) { slot = q; break; } }
-                if(slot >= 0) {
-                    for(int q = TOPN - 1; q > slot; q--) { top_h[q] = top_h[q-1]; top_idx[q] = top_idx[q-1]; }
-                    top_h[slot] = h; top_idx[slot] = t;
-                }
-            }
-            for(int q = 0; q < TOPN && top_idx[q] >= 0; q++) {
-                int t = top_idx[q];
-                int start = tile_first[t];
-                int n = local_meta[t].count;
-                int worst_j = -1; double worst_h = -1.0;
-                for(int s = 0; s < n; s++) {
-                    int j = pool[start + s];
-                    double hj = ghost_tile_effective_radius(j, supply_mask);
-                    if(hj > worst_h) { worst_h = hj; worst_j = j; }
-                }
-                if(worst_j >= 0) {
-                    printf("[GX_TOPHMAX rank=%d call=%d t=%d tile_hmax=%.6g particle: idx=%d ID=%llu Type=%d Mass=%.4g KernelRadius=%.6g Pos=(%.4g,%.4g,%.4g) TimeBin=%d active_count=%d tile_count=%d]\n",
-                           ThisTask, gx_topn_calls, t, top_h[q],
-                           worst_j, (unsigned long long)P[worst_j].ID, (int)P[worst_j].Type,
-                           (double)P[worst_j].Mass, (double)P[worst_j].KernelRadius,
-                           (double)P[worst_j].Pos[0], (double)P[worst_j].Pos[1], (double)P[worst_j].Pos[2],
-                           (int)P[worst_j].TimeBin, local_meta[t].active_count, local_meta[t].count);
-                }
-            }
-            fflush(stdout);
-            gx_topn_calls++;
-        }
-    }
-
-    double t_ghost_tiles = timediff(t_ghost_start, my_second());
 
     /* ================================================================
        Step 2: Gather tile metadata from all ranks.
@@ -1111,18 +1063,11 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                      local_ntiles, total_tiles, NTask, hmax_min, hmax_max, hmax_sum / local_ntiles);
     }
 
-    double t_ghost_meta = timediff(t_ghost_phase, my_second());
-    double t_phase_overlap_start = my_second();
 
     /* Diagnostic: number this ghost_exchange call to track progress in multi-call steps */
     static int ghost_call_seq = 0;
     ghost_call_seq++;
     int this_call = ghost_call_seq;
-    if(gizmo_verbose_diag()) {
-        printf("[GX rank=%d call=%d] after_allgatherv: local_ntiles=%d total_tiles=%d NumPart=%d\n",
-               ThisTask, this_call, local_ntiles, total_tiles, NumPart);
-        fflush(stdout);
-    }
 
     /* ================================================================
        Step 3: Per-task tile overlap check.
@@ -1244,17 +1189,8 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * slices if NTask grows past ~100). The pass-1 cost is unchanged: outer
      * loop active-gated, ~handful of tiles on tiny-N. */
     int *all_need_from = (int *) malloc((size_t)NTask * total_tiles * sizeof(int));
-    if(gizmo_verbose_diag()) {
-        printf("[GX rank=%d call=%d] BEFORE Allgather(need_from): total_tiles=%d NTask=%d\n",
-               ThisTask, this_call, total_tiles, NTask);
-        fflush(stdout);
-    }
     MPI_Allgather(need_from, total_tiles, MPI_INT,
                   all_need_from, total_tiles, MPI_INT, MPI_COMM_WORLD);
-    if(gizmo_verbose_diag()) {
-        printf("[GX rank=%d call=%d] AFTER  Allgather(need_from) OK\n", ThisTask, this_call);
-        fflush(stdout);
-    }
     for(task = 0; task < NTask; task++)
     {
         if(task == ThisTask) continue;
@@ -1315,8 +1251,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
         for(task = 0; task < NTask; task++) { if(send_to[lt * NTask + task]) { tiles_sent++; break; } }
     }
 
-    double t_ghost_overlap = timediff(t_phase_overlap_start, my_second()); /* steps 3+4 (overlap + schedule) */
-    double t_phase_mpi_start = my_second();
 
     /* Frees the pre-materialisation tile scratch ONLY (mymalloc LIFO, then
      * malloc). ONE free list, shared by the Stage-0A fallback bail and the
@@ -1394,20 +1328,9 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * already in element units. gizmo_mpi_alltoallv_typed builds a contiguous
      * MPI_Datatype per call so element-count int*'s drive the wire — dodging
      * the 2.1 GB per-peer int-overflow that bites fire_m11i at >~6M parts/rank. */
-    if(gizmo_verbose_diag()) {
-        int ts=0, tr=0;
-        for(int tt=0; tt<NTask; tt++) { ts += send_count[tt]; tr += recv_count[tt]; }
-        printf("[GX rank=%d call=%d] BEFORE Alltoallv(P): total_send=%d total_recv=%d send[0]=%d recv[0]=%d\n",
-               ThisTask, this_call, ts, tr, send_count[0], recv_count[0]);
-        fflush(stdout);
-    }
     gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
                               &P[NumPart], recv_count, recv_disp,
                               sizeof(struct particle_data), MPI_COMM_WORLD);
-    if(gizmo_verbose_diag()) {
-        printf("[GX rank=%d call=%d] AFTER  Alltoallv(P) OK\n", ThisTask, this_call);
-        fflush(stdout);
-    }
 
     /* CellP exchange: only meaningful when the simulation has any gas
        particles globally. With TotN_gas==0 (N-body / DM-only runs), CellP
@@ -1415,42 +1338,14 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
        an out-of-bounds pointer. Skip the CellP alltoallv in that case —
        no gas ghosts can exist if no gas exists anywhere. */
     if(All.TotN_gas > 0) {
-        if(gizmo_verbose_diag()) {
-            printf("[GX rank=%d call=%d] BEFORE Alltoallv(CellP)\n", ThisTask, this_call);
-            fflush(stdout);
-        }
         gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
                                   &CellP[NumPart], recv_count, recv_disp,
                                   sizeof(struct gas_cell_data), MPI_COMM_WORLD);
-        if(gizmo_verbose_diag()) {
-            printf("[GX rank=%d call=%d] AFTER  Alltoallv(CellP) OK\n", ThisTask, this_call);
-            fflush(stdout);
-        }
     }
 
     /* Update counts */
     NumGhostParticles = total_recv;
     NumPart += total_recv;
-
-    /* Diagnostic: ghost composition by Type. If a hydro-context exchange is
-     * pulling non-supply Type ghosts back, the type-mask refactor needs to
-     * gate them out. Gated on GIZMO_VERBOSE_DIAG=1. */
-    if(gizmo_verbose_diag() && total_recv > 0) {
-        int by_type[6] = {0,0,0,0,0,0};
-        for(int g = 0; g < total_recv; g++) {
-            int gi = NumPart_before_ghost + g;
-            int tt = (int)P[gi].Type;
-            if(tt >= 0 && tt < 6) by_type[tt]++;
-        }
-        printf("[GX_GHOSTTYPE rank=%d call=%d caller=%s total_recv=%d  T0(cells)=%d T1=%d T2=%d T3=%d T4=%d T5=%d]\n",
-               ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
-               total_recv,
-               by_type[0], by_type[1], by_type[2], by_type[3], by_type[4], by_type[5]);
-        fflush(stdout);
-    }
-
-    /* Phase-0 import-waste diagnostic — see gx_print_waste(). */
-    gx_print_waste(spec, this_call, total_recv);
 
     /* Multi-rank correctness: ghost slots [NumPart_before_ghost, NumPart) just
      * received fresh particle_data from remote ranks via MPI_Alltoallv. Their
@@ -1476,17 +1371,9 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     {
         /* Exchange home indices: send_home_idx[total_send] → recv_home_idx[total_recv] */
         int *recv_home_idx = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
-        if(gizmo_verbose_diag()) {
-            printf("[GX rank=%d call=%d] BEFORE Alltoallv(home_idx)\n", ThisTask, this_call);
-            fflush(stdout);
-        }
         gizmo_mpi_alltoallv_typed(send_home_idx, send_count, send_disp,
                                   recv_home_idx, recv_count, recv_disp,
                                   sizeof(int), MPI_COMM_WORLD);
-        if(gizmo_verbose_diag()) {
-            printf("[GX rank=%d call=%d] AFTER  Alltoallv(home_idx) OK\n", ThisTask, this_call);
-            fflush(stdout);
-        }
 
         /* Build per-ghost provenance: home_rank and home_index */
         ghost_home_rank_map = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
@@ -1516,32 +1403,13 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
         g_ghost_provenance_epoch++;
     }
 
-    double t_ghost_mpi = timediff(t_phase_mpi_start, my_second()); /* steps 5+6 (pack + MPI + unpack) */
     double t_ghost_end = my_second();
     double t_ghost_total = timediff(t_ghost_start, t_ghost_end);
 
-    /* Active-count diagnostic (gated on GIZMO_VERBOSE_DIAG; collective so all
-     * ranks must call). Lets us correlate ghost-exchange wall with how many
-     * particles are actually active on this step. */
-    int n_active_global = 0;
-    if(gizmo_verbose_diag()) {
-        int n_active = (int)ActiveParticleList.size();
-        printf("[GX rank=%d call=%d] BEFORE MPI_Reduce(n_active=%d)\n", ThisTask, this_call, n_active);
-        fflush(stdout);
-        MPI_Reduce(&n_active, &n_active_global, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-        printf("[GX rank=%d call=%d] AFTER  MPI_Reduce OK active_global=%d\n", ThisTask, this_call, n_active_global);
-        fflush(stdout);
-    }
     if(ThisTask == 0) {
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
-        if(gizmo_verbose_diag()) {
-            printf("  ghost_exchange phases: tiles_build=%.4f meta_allgather=%.4f overlap+sched=%.4f pack+mpi=%.4f total=%.4f  active_global=%d\n",
-                   t_ghost_tiles, t_ghost_meta, t_ghost_overlap, t_ghost_mpi, t_ghost_total,
-                   n_active_global);
-            fflush(stdout);
-        }
     }
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {
@@ -1625,85 +1493,6 @@ static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec)
     if(!ghost_type_passes((int)P[j].Type, spec->supply_type_mask)) return 0.0;
     return gx_policy_scaled_h(j, spec->radius_policy,
                               spec->j_radius_scale, spec->safety_factor);
-}
-
-/* Print [GX_WASTE] for any ghost_exchange path. Walks (sampled) local actives
- * × imported ghosts, applies ONEWAY and SYMMETRIC predicates, prints the
- * per-ghost OR-aggregate waste ratio. PAIRS_BUDGET caps cost on global steps. */
-static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv)
-{
-    if(!gizmo_verbose_diag()) return;
-    if(total_recv <= 0 || NumPart_before_ghost <= 0) return;
-    const unsigned int request_mask = spec->request_type_mask;
-    const int  search_mode = spec->search_mode;
-    const long long PAIRS_BUDGET = 10000000LL;
-    int sample_cap = (int)(PAIRS_BUDGET / (long long)total_recv);
-    if(sample_cap < 4) sample_cap = 4;
-    if(sample_cap > 1024) sample_cap = 1024;
-    int n_active_sample = 0;
-    int *active_indices = (int *) malloc((size_t)sample_cap * sizeof(int));
-    for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < sample_cap; kk++) {
-        int i_act = ActiveParticleList[kk];
-        if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-        if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
-        active_indices[n_active_sample++] = i_act;
-    }
-    int total_active_full = 0;
-    for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-        int i_act = ActiveParticleList[kk];
-        if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-        if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
-        total_active_full++;
-    }
-    long long pairs_tested = 0;
-    long long g_oneway_used = 0, g_symm_used = 0;
-    char *used_oneway = (char *) calloc(total_recv, sizeof(char));
-    char *used_symm   = (char *) calloc(total_recv, sizeof(char));
-    for(int aa = 0; aa < n_active_sample; aa++) {
-        int i = active_indices[aa];
-        /* Request-side h_i: under SSOT contract the QUERY radius comes from
-         * Spec::search_radius (= active_radii[a] * safety) on the runner path.
-         * For the diagnostic we don't have direct per-active access to that
-         * vector, so we approximate with the same supply-side gx_eff_h reach
-         * — accurate when search_radius matches the policy reach (the typical
-         * case for the Specs that use this diagnostic). Bounded error for the
-         * waste percentage; not used for any correctness gate. */
-        double h_i = gx_eff_h(i, spec);
-        double h2_i = h_i * h_i;
-        double px = P[i].Pos[0], py = P[i].Pos[1], pz = P[i].Pos[2];
-        for(int g = 0; g < total_recv; g++) {
-            int gi = NumPart_before_ghost + g;
-            double dx_raw = px - P[gi].Pos[0];
-            double dy_raw = py - P[gi].Pos[1];
-            double dz_raw = pz - P[gi].Pos[2];
-            MyDouble xtmp = 0; (void)xtmp;
-            double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
-            double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
-            double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
-            double r2 = adx*adx + ady*ady + adz*adz;
-            pairs_tested++;
-            if(!used_oneway[g] && r2 < h2_i) used_oneway[g] = 1;
-            if(!used_symm[g]) {
-                double h_j = gx_eff_h(gi, spec);
-                double h2_max = (h2_i > h_j*h_j) ? h2_i : h_j*h_j;
-                if(r2 < h2_max) used_symm[g] = 1;
-            }
-        }
-    }
-    for(int g = 0; g < total_recv; g++) {
-        g_oneway_used += used_oneway[g];
-        g_symm_used   += used_symm[g];
-    }
-    free(used_oneway); free(used_symm); free(active_indices);
-    double waste_o = 100.0 * (1.0 - (double)g_oneway_used / (double)total_recv);
-    double waste_s = 100.0 * (1.0 - (double)g_symm_used   / (double)total_recv);
-    printf("[GX_WASTE rank=%d call=%d caller=%s mode=%s imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
-           ThisTask, this_call,
-           (spec->caller_name ? spec->caller_name : "?"),
-           (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
-           total_recv, total_active_full, n_active_sample,
-           g_oneway_used, g_symm_used, waste_o, waste_s, pairs_tested);
-    fflush(stdout);
 }
 
 /* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
@@ -2626,7 +2415,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      *       filter by spec->request_type_mask, build queries from
      *       P[i].Pos/KernelRadius. Used by ghost_exchange / ghost_exchange_hydro
      *       / ghost_exchange_hydro_oneway wrappers. */
-    double t_step1_start = my_second();
     int n_local_queries = 0;
     struct gx_query_t *local_queries = NULL;
     if(spec->n_queries >= 0) {
@@ -2668,7 +2456,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         }
     }
 
-    double t_step1 = timediff(t_step1_start, my_second());
     /* === Step 2: LAZY query distribution === The broadcast Allgather/
      * Allgatherv now runs on demand via ensure_broadcast_queries(): SKIPPED in
      * routed-production mode, run up-front for the oracle / when routed is
@@ -2689,7 +2476,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * O(N) brute-force scan that had been a tiny-N proof-of-concept). Per-particle
      * acceptance at leaves uses the EXACT predicate (ONEWAY: r²<h_q²; SYMMETRIC:
      * r²<max(h_q,h_j)²) — same predicate the kernel applies later. */
-    double t_step3_start = my_second();
 
     /* SHARED-TREE build: build over GHOST_TYPE_ALL (all types with mass>0), not
      * just the caller's supply_mask. The walker's per-type hmax filter +
@@ -2991,23 +2777,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int periodic_flags[3] = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
     double box_sizes[3]   = { boxSize_X, boxSize_Y, boxSize_Z };
 
-    double t_step3_build = timediff(t_step3_start, my_second());
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[GX_RD_CACHE rank=0 call=%d caller=%s %s build=%.4f num_pool=%d ntiles=%d pool_mask=0x%x hits=%ld misses=%ld refits=%ld narrow=%ld ghost_epoch=%llu pool_epoch=%llu ghost_start=%d ghost_count=%d]\n",
-               this_call, (spec->caller_name ? spec->caller_name : "?"),
-               /* A geometry-only rebuild reused the pool but paid the full tile+BVH+
-                * compact build, so it is neither a hit nor a miss and is labelled
-                * for what it is; `build` on this line is that build's cost. */
-               (geometry_rebuilt ? "GEOM_REBUILD" : (from_cache ? "HIT" : "MISS")),
-               t_step3_build, num_pool, ntiles,
-               g_glt_cache.eligible_type_mask_when_built,
-               g_glt_cache_hits, g_glt_cache_misses, g_glt_cache_refits, g_glt_cache_narrow_refits,
-               (unsigned long long)gpu_sidx_ghost_epoch(),
-               (unsigned long long)gpu_sidx_pool_epoch(),
-               gpu_sidx_last_ghost_start(), gpu_sidx_last_ghost_count());
-        fflush(stdout);
-    }
-    double t_step3_walk_start = my_second();
 
     /* Matched producer selection: for ONEWAY callers the routed top-leaf
      * discovery installs when top-leaf geometry is collectively available;
@@ -3227,18 +2996,11 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
 
-    double t_step3_walk = timediff(t_step3_walk_start, my_second());
     /* An eligible SYMM spec installs the routed set BELOW this print, so used_routed is
      * not yet set for it; report the path that will actually be used or the parity grep
      * reads "bcast" on a routed call. A producer failure after this point prints
      * GX_R1_FALLBACK, which already invalidates the run as a routed timing arm. */
     const char *qdist = (used_routed || gx_walk_export_eligible(spec)) ? "routed" : "bcast";
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[GX_RD rank=0 step3 build_tiles+bvh+compact=%.4f s discovery=%.4f s ntiles=%d num_pool=%d total_queries=%d qdist=%s]\n",
-               t_step3_build, t_step3_walk, ntiles, num_pool,
-               (qdist[0] == 'r' ? -1 : total_queries), qdist);
-        fflush(stdout);
-    }
 
     /* Walk-export discovery: produce the routed set (sender export + bounded receiver
      * walk, collective-safe) and INSTALL it for an eligible spec via the shared
@@ -3295,7 +3057,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
     /* === Step 4: per-peer counts + index list === */
-    double t_step4_start = my_second();
     int *send_count = (int *) mymalloc("gx_rd_sc", NTask * sizeof(int));
     int *recv_count = (int *) mymalloc("gx_rd_rc", NTask * sizeof(int));
     int *send_disp  = (int *) mymalloc("gx_rd_sd", NTask * sizeof(int));
@@ -3347,9 +3108,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * collective pack/exchange. Every rank reaches this unconditionally. */
     gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity_rd");
 
-    double t_step4 = timediff(t_step4_start, my_second());
     /* === Step 5: pack particle data + cell data + home_idx === */
-    double t_step5_start = my_second();
     struct particle_data *send_P = (struct particle_data *) mymalloc("gx_rd_sP",
         (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
     struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_rd_sC",
@@ -3372,9 +3131,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         myfree(task_offset);
     }
 
-    double t_step5 = timediff(t_step5_start, my_second());
     /* === Step 6: Alltoallv particles + cells + home_idx === */
-    double t_step6_start = my_second();
     gx_forward_particle_exchange(send_P, send_CellP, send_count, send_disp,
                                  &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
 
@@ -3436,26 +3193,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                    ghost_home_rank_map, ghost_home_index_map, total_recv);
     }
 
-    double t_step6 = timediff(t_step6_start, my_second());
     double t_ghost_total = timediff(t_ghost_start, my_second());
 
-
-    /* Per-rank, per-call Step1-Step6 wall breakdown. Pure diagnostic; gated on
-     * GIZMO_VERBOSE_DIAG=1 since both ranks emit (so the user can correlate). */
-    if(gizmo_verbose_diag()) {
-        printf("[GX_RD_TIME rank=%d call=%d caller=%s mode=%s qdist=%s route=%s installed=%s bcast_gather=%s s1_qbuild=%.4f s2_allgather=%.4f s3_build=%.4f s3_walk=%.4f rcon=%.4f ralltoallv=%.4f rwalk=%.4f s4_count=%.4f s5_pack=%.4f s6_alltoallv=%.4f total=%.4f n_local_queries=%d total_queries=%d num_pool=%d ntiles=%d total_send=%d total_recv=%d]\n",
-               ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
-               (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
-               (used_routed ? "routed" : "bcast"),
-               (installed_producer == GX_INSTALLED_ONEWAY_ROUTED_BVH ? (use_hier ? "hier" : "flat") : "-"),
-               gx_installed_producer_name(installed_producer),
-               (bcast_queries_available ? "gathered" : "skipped"),
-               t_step1, t_step2, t_step3_build, t_step3_walk,
-               t_route_construct, t_route_alltoallv, t_route_walk,
-               t_step4, t_step5, t_step6, t_ghost_total,
-               n_local_queries, (used_routed ? -1 : total_queries), num_pool, ntiles, total_send, total_recv);
-        fflush(stdout);
-    }
 
     if(ThisTask == 0) {
         PRINT_STATUS("Ghost exchange (request-driven, %s, %s, qdist=%s): %d local + %d ghost  queries=%d total_queries=%d num_pool=%d  [%.4f s]",
@@ -3469,19 +3208,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Diagnostic: ghost composition + import-waste ratio (should be ~0% for
      * the request-driven path by construction since per-particle accept ran
      * before pack — provides direct A/B vs the legacy tile-overlap waste). */
-    if(gizmo_verbose_diag() && total_recv > 0) {
-        int by_type[6] = {0,0,0,0,0,0};
-        for(int g = 0; g < total_recv; g++) {
-            int gi = NumPart_before_ghost + g;
-            int tt = (int)P[gi].Type;
-            if(tt >= 0 && tt < 6) by_type[tt]++;
-        }
-        printf("[GX_GHOSTTYPE rank=%d call=%d caller=%s total_recv=%d  T0(cells)=%d T1=%d T2=%d T3=%d T4=%d T5=%d]\n",
-               ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
-               total_recv, by_type[0], by_type[1], by_type[2], by_type[3], by_type[4], by_type[5]);
-        fflush(stdout);
-    }
-    gx_print_waste(spec, this_call, total_recv);
 
     /* Cleanup local. mymalloc requires LIFO free order. Tile/BVH/pool/
      * compact_xyzh/pool_types are now owned by g_glt_cache (malloc-backed)

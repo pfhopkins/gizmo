@@ -21,7 +21,6 @@
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
@@ -62,12 +61,6 @@ static constexpr double SIDX_H_SLACK = 0.5;
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_alltypes; }
 
-/* gizmo_ngb_diag_quiet() is now a backwards-compat shim that delegates to
- * the unified gizmo_verbose_diag() gate (env GIZMO_VERBOSE_DIAG=1, default
- * off). Polarity preserved — "quiet" means "not verbose". All DIAG_NGL /
- * DIAG_SIDX / DIAG_DENS / DIAG_GRAD / DIAG_SYMNL / GPU_WALK_* prints share
- * the same env var so production runs are silent by default. */
-extern "C" int gizmo_ngb_diag_quiet(void) { return !gizmo_verbose_diag(); }
 
 static int env_int_or_default(const char *name, int def)
 {
@@ -538,7 +531,6 @@ static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
 
 void gpu_step_sidx_invalidate(void)
 {
-    double t_total_start = my_second();
     int refreshed = 0;
     double max_extent_ratio = 0.0;
     double t_bbox = 0, t_bvh = 0, t_stage = 0, t_compact = 0;
@@ -580,14 +572,6 @@ void gpu_step_sidx_invalidate(void)
         }
     }
 
-    double t_total = timediff(t_total_start, my_second());
-    gizmo_step_phase_record("sidx_drift_refresh_calls",     (double)refreshed);
-    gizmo_step_phase_record("sidx_drift_refresh_total",     t_total);
-    gizmo_step_phase_record("sidx_drift_bbox_recompute",    t_bbox);
-    gizmo_step_phase_record("sidx_drift_bvh_refit",         t_bvh);
-    gizmo_step_phase_record("sidx_drift_stage_to_device",   t_stage);
-    gizmo_step_phase_record("sidx_drift_compact_refresh",   t_compact);
-    gizmo_step_phase_record("sidx_drift_max_extent_ratio",  max_extent_ratio);
 }
 
 void gpu_step_sidx_invalidate_full(void)
@@ -626,7 +610,6 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
         }
     }
 
-    double t_si0 = my_second(); /* DIAG */
     /* Build SFC tiles + BVH on CPU */
     sfc_tile_t *h_tiles;
     int *h_pool;
@@ -634,12 +617,10 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     int ntiles = build_sfc_tiles(P_shared, num_total, type_bitmask, TILE_TARGET_SIZE,
                                  &h_tiles, &h_pool, &num_pool, radius_policy);
     idx->ntiles = ntiles;
-    double t_si1 = my_second(); /* DIAG: after build_sfc_tiles */
 
     tile_bvh_node_t *h_bvh;
     int bvh_nnodes = build_tile_bvh(h_tiles, ntiles, &h_bvh);
     idx->bvh_root = bvh_nnodes - 1;
-    double t_si2 = my_second(); /* DIAG: after build_tile_bvh */
 
     /* Allocate kernel-read-path arrays in DEVICE_SPACE (CudaSpace HBM on GPU
      * builds, falls back to SharedSpace elsewhere).  This eliminates HMM/TLB-
@@ -672,7 +653,6 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
         Kokkos::deep_copy(d_bvh_v,   h_bvh_v);
         Kokkos::deep_copy(d_pool_v,  h_pool_v);
     }
-    double t_si3 = my_second(); /* DIAG: after staging tiles/BVH/pool to DEVICE_SPACE */
 
     /* Build compact double4 position+h array for cache-efficient GPU BVH traversal.
        DOUBLE positions: float ABSOLUTE positions are invalid for GIZMO's ~1e11
@@ -697,7 +677,6 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
         gizmo_gpu_check_last_error("compact_xyzh_build", num_total);
     }
-    double t_si4 = my_second(); /* DIAG: after compact array build */
 
     /* Keep host-side persistent copies of tiles/pool/BVH alive across drifts
      * so the incremental refresh path (gpu_step_sidx_invalidate ->
@@ -762,13 +741,6 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     if(idx->dirty_handle >= 0) gpu_dirty_tracker_unregister(idx->dirty_handle);
     idx->dirty_handle = gpu_dirty_tracker_register(0, num_total, 1);
 
-    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_VERBOSE_DIAG */
-        printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
-               caller_label ? caller_label : "?", type_bitmask, ntiles, num_pool,
-               timediff(t_si0, t_si1), timediff(t_si1, t_si2), timediff(t_si2, t_si3),
-               timediff(t_si3, t_si4), timediff(t_si0, t_si4));
-        fflush(stdout);
-    }
 }
 
 void gpu_spatial_index_free(gpu_spatial_index_t *idx)
@@ -987,13 +959,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gnl->offsets[0] = 0;
         gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(sizeof(int));
         gnl->total_pairs = 0;
-        if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) {
-            printf("[DIAG_NGL caller=%s tbm=0x%x N=0 Ntot=%d pairs=0 ovflw=0 sidx_cached=%d earlyout=1] "
-                   "total=%.3f\n",
-                   caller_label ? caller_label : "?", type_bitmask, num_total,
-                   idx_for_stubs ? 1 : 0, timediff(t_entry, my_second()));
-            fflush(stdout);
-        }
         cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
     }
@@ -1017,7 +982,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
         idx = &local_idx;
     }
-    double t_after_sidx = my_second(); /* DIAG: after SIDX (re)use decision */
 
     /* Copy spatial index pointers to gnl for use by free */
     gnl->d_tiles = idx->d_tiles;
@@ -1099,7 +1063,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gizmo_gpu_check_last_error("compact_h_refresh", num_total);
         t_refresh_fence_out = my_second();
     }
-    double t_after_refresh = my_second(); /* DIAG */
 
     /* Active indices: always re-uploaded (changes per call) */
     gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
@@ -1131,13 +1094,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * After scan + compact we transcribe into the dense CSR neighbors[] array.
      * Memory: stride * num_active * 4 bytes (e.g. 256 * 2M * 4 = 2GB). */
     constexpr int NGL_SCRATCH_STRIDE = 512;
-    double t_alloc0 = my_second(); /* DIAG */
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
     int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
     int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
-    double t_alloc1 = my_second(); /* DIAG: end of scratch alloc */
 
     /* DIAG: drain any prior async GPU work so subsequent fence times only this kernel */
     Kokkos::fence();
@@ -1326,7 +1287,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }
         }
     }
-    double t_nl1 = my_second(); /* DIAG: after fused BVH pass */
 
     /* Count overflow particles (count > stride: they need a re-walk in compact phase) */
     int overflow_count = 0;
@@ -1371,7 +1331,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     int64_t total = total_ll;
     gnl->offsets[num_active] = total;
     gnl->total_pairs = total;
-    double t_nl2 = my_second(); /* DIAG: after GPU prefix scan */
 
     /* Allocate CSR neighbors array (length is 64-bit; element type stays int) */
     gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)((total > 0) ? total : 1) * sizeof(int));
@@ -1426,7 +1385,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_compact", num_active);
     }
-    double t_nl3 = my_second(); /* DIAG: after compact pass */
 
     /* Same-run oracle: compare the GPU BVH walker's row against a brute-force
      * pass over idx->h_pool using the exact compact_xyzh/search state that the
@@ -1552,46 +1510,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
 
     /* Free temporaries */
-    double t_free0 = my_second(); /* DIAG */
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
     if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     if(d_source_pos) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);
-    double t_free1 = my_second(); /* DIAG: end of scratch free */
 
     int sidx_cached_now = (cached_idx && cached_idx->valid) ? 1 : 0;
-    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: NGP build fine-grained breakdown */
-        /* Sub-times for compact_h_refresh (when run): launch return vs trailing fence */
-        double refresh_launch = did_refresh ? timediff(t_refresh_launch_in, t_refresh_launch_out) : 0;
-        double refresh_fence  = did_refresh ? timediff(t_refresh_launch_out, t_refresh_fence_out) : 0;
-        /* Drain fence cost (prior async GPU work) */
-        double drain_fence    = timediff(t_alloc1, t_drain_done);
-        /* Fused launch return vs trailing fence */
-        double fused_launch   = (num_active > 0) ? timediff(t_fused_launch_in, t_fused_launch_out) : 0;
-        double fused_fence    = (num_active > 0) ? timediff(t_fused_launch_out, t_nl1) : 0;
-        /* Compact launch return vs trailing fence */
-        double compact_launch = (num_active > 0) ? timediff(t_compact_launch_in, t_compact_launch_out) : 0;
-        double compact_fence  = (num_active > 0) ? timediff(t_compact_launch_out, t_nl3) : 0;
-        double noop_launch = timediff(t_noop_launch_in, t_noop_launch_out);
-        double noop_fence  = timediff(t_noop_launch_out, t_noop_fence_out);
-        printf("[DIAG_NGL caller=%s tbm=0x%x N=%d Ntot=%d pairs=%lld ovflw=%d sidx_cached=%d] "
-               "sidx_dec=%.3f refresh_lnch=%.3f refresh_fnc=%.3f drain=%.3f "
-               "noop_lnch=%.4f noop_fnc=%.4f "
-               "fused_lnch=%.3f fused_fnc=%.3f scan=%.3f "
-               "compact_lnch=%.3f compact_fnc=%.3f free=%.3f total=%.3f\n",
-               caller_label ? caller_label : "?", type_bitmask, num_active, num_total,
-               (long long)total, overflow_count, sidx_cached_now,
-               timediff(t_entry, t_after_sidx),
-               refresh_launch, refresh_fence,
-               drain_fence,
-               noop_launch, noop_fence,
-               fused_launch, fused_fence,
-               timediff(t_nl1, t_nl2),
-               compact_launch, compact_fence,
-               timediff(t_free0, t_free1),
-               timediff(t_entry, t_free1));
-        fflush(stdout);
-    }
 
     /* Lazy-drift hook (Attack C): drift each neighbor in the freshly-built
      * CSR list to time1 on host. Active particle i is already drifted
@@ -1612,7 +1536,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * test. Per-pair r² acceptance reads the actual P[j].KernelRadius (now
      * freshly drifted), so correctness is preserved. */
     if(gnl->total_pairs > 0 && gnl->neighbors) {
-        double t_lazy0 = my_second();
         std::vector<int> ngb_host((size_t)gnl->total_pairs);
         gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
         /* Out-of-line host accessor. Lazy-drift target for CSR
@@ -1642,8 +1565,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
          * still be flagged by ghost_write_detector_end(). No-op when
          * GIZMO_GPU_ARENA_DEBUG is undefined or detector is inactive. */
         ghost_write_detector_resnapshot_after_lazy_drift();
-        gizmo_step_phase_record("lazy_drift_pairs", (double)gnl->total_pairs);
-        gizmo_step_phase_record("lazy_drift_time",  timediff(t_lazy0, my_second()));
     }
 
     /* Charge list-build wall, less any kernel time already charged inside it,
@@ -1695,10 +1616,6 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                                        neighbor_list_t *out,
                                        double search_radius_factor)
 {
-    /* Sub-bucket the 1.6s gradient_prep_symlist cost.
-     * env-gated via GIZMO_VERBOSE_DIAG; no-op when off. */
-    double t_sym_start = my_second();
-
     /* Use the per-step particle arena instead of a dedicated full-NumPart memcpy.
      * The arena's fast path is a no-op when valid (e.g. when gradient/hydro
      * already populated it earlier in the step), avoiding ~2.3s of redundant
@@ -1707,7 +1624,6 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
     gpu_particles_arena_set_site("gpu_build_symmetric_neighbor_list");
     gpu_particles_arena_acquire(num_total, P_host, CellP);
     struct particle_data *P_shared = gpu_particles_arena_P();
-    double t_sym_arena = my_second();
 
     /* Build GPU CSR — share gas-only SIDX with density via the step-persistent cache.
      *
@@ -1732,7 +1648,6 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, gpu_step_sidx_ptr(),
                        search_radius_factor, symlist_raw_radii.data(), NULL, "symlist",
                        search_radius_factor /* j_kernel_radius_scale */);
-    double t_sym_ngb = my_second();
 
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
@@ -1749,18 +1664,12 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
             d_neighbors(gpu_nl.neighbors, (size_t)gpu_nl.total_pairs);
         Kokkos::deep_copy(h_neighbors, d_neighbors);
     }
-    double t_sym_csr = my_second();
 
     /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx).
      * Arena is intentionally not released — subsequent gradient/hydro callers
      * benefit from the fast-path skip. */
     gpu_ngb_list_free(&gpu_nl, gpu_step_sidx_ptr());
-    double t_sym_free = my_second();
 
-    gizmo_step_phase_record("symlist_arena_acquire", timediff(t_sym_start, t_sym_arena));
-    gizmo_step_phase_record("symlist_ngb_build",     timediff(t_sym_arena, t_sym_ngb));
-    gizmo_step_phase_record("symlist_csr_copy",      timediff(t_sym_ngb,   t_sym_csr));
-    gizmo_step_phase_record("symlist_free",          timediff(t_sym_csr,   t_sym_free));
 }
 
 
