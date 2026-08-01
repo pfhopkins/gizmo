@@ -1359,10 +1359,10 @@ struct neighbor_loop_args {
                                   * GHOST-POOL OWNERSHIP contract on struct
                                   * nlr_external_csr above). */
     NlrForceMode dispatch_override = NlrForceMode::None;
-                                 /* None (default) => normal priority: env vars
-                                  * GIZMO_<LOOPNAME>_FORCE_MODE > GIZMO_NLR_FORCE_MODE
-                                  * > adaptive threshold. Non-None => per-call
-                                  * override winning ABOVE env vars (corridor mode
+                                 /* None (default) => normal priority:
+                                  * GIZMO_NLR_FORCE_MODE > adaptive threshold.
+                                  * Non-None => per-call
+                                  * override winning ABOVE force mode (corridor mode
                                   * decision in hydro/hydro_corridor.cc uses this
                                   * to enforce coherent Mode A/B across all
                                   * corridor consumers — cellcorrections/gradients/
@@ -2087,11 +2087,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *                                     2=+dispatch trace, 3=reserved (today
  *                                     equivalent to level 2; rank-0 note)
  *   GIZMO_NLR_FORCE_MODE=A|B          tester force-mode override
- *   GIZMO_<LOOP>_FORCE_MODE=A|B       per-loop override; wins over global
- *   GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE=N
- *                                     forced Mode B guardrail cap (default
- *                                     100000); prevents accidental full-N
- *                                     host-walker/oracle runs
  *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      cross-validation per-active accumulator
  *                                     dump (temporary diagnostic)
  *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call Mode A neighbor-list dump
