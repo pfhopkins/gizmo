@@ -59,12 +59,15 @@ bool RtSrcInjectionSpec::is_active(int i)
 /* ============================================================================
  * SEARCH RADIUS
  *
- * SSOT is RtSrcLocalIn::KernelRadius (un-scaled). Under
- * RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION the legacy host code at
- * rt_source_injection.cc:91 scaled the BVH search radius by ×3 (because the
- * pair kernel rejects only when r >= h_i AND r >= h_j; we need to discover h_j
- * neighbors out to ~3*h_i). The ×3 lives HERE only — the LocalIn carries the
- * truthful un-scaled radius the pair kernel logic uses.
+ * The source's own un-scaled KernelRadius. The pair kernel accepts a gas
+ * neighbor when r < h_i OR (under angle-weighting) r < h_j, so discovery must
+ * cover both the i-side reach (h_i) and the j-side reach (gas whose own kernel
+ * reaches the source). The SYMMETRIC search discovers the j-side (r < h_j)
+ * reach independently, so the source radius does NOT need to be inflated to
+ * find large-h_j gas. A one-sided search that lacks j-side discovery must
+ * over-search to ~3*h_i to approximate it; for sparse sources with large
+ * h_i that inflation imports a 27x shell of candidates the pair kernel then
+ * rejects, and can engulf a whole distant mass concentration.
  * ========================================================================== */
 double RtSrcInjectionSpec::search_radius(const neighbor_loop_args& args,
                                          int active_slot, int i)
@@ -76,9 +79,6 @@ double RtSrcInjectionSpec::search_radius(const neighbor_loop_args& args,
     } else {
         h = (double)args.P[i].KernelRadius;   /* fallback; shouldn't fire in production */
     }
-#ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-    h *= 3.0;
-#endif
     return h;
 }
 
