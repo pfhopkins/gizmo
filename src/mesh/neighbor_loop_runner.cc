@@ -357,7 +357,7 @@ static NlrForceMode nlr_init_force_mode(void)
  * becomes intractable well before this bound; run the oracle at small N. */
 static const int NLR_ORACLE_MODEB_MAX_ACTIVE = 100000;
 
-static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
+static void nlr_abort_if_modeb_oracle_too_large(const char *loop_name,
                                                 int local_active,
                                                 int global_active,
                                                 bool oracle_active)
@@ -369,13 +369,16 @@ static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
      * cap is obsolete for PRODUCTION runs and must NOT block a param-driven
      * corridor Mode-B decision. The one path still genuinely dangerous at large
      * N is the ORACLE brute walk (O(N_active x N_local) per query, unchunkable),
-     * so the cap fires ONLY when an oracle/brute pass is active. */
+     * so the cap fires ONLY when an oracle/brute pass is active. It applies to
+     * EVERY route into Mode B — corridor override and threshold dispatch alike —
+     * because the brute walk's cost depends on how many actives it walks, not on
+     * which decision selected the path. */
     if(!oracle_active) return;
     const int cap = NLR_ORACLE_MODEB_MAX_ACTIVE;
     if(global_active > cap) {
         if(ThisTask == 0) {
             fprintf(stderr,
-                    "[NLR ORACLE Mode-B] FATAL: caller=%s ran forced Mode-B WITH "
+                    "[NLR ORACLE Mode-B] FATAL: caller=%s ran Mode-B WITH "
                     "an oracle/brute pass at global_active=%d local_active(rank0)=%d, "
                     "exceeding cap=%d. The brute walk is O(N_active x N_local) per "
                     "query — intractable at this N. Run the oracle at small N. "
@@ -2933,8 +2936,12 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         phase0_sum_active = sum_act;
     }
-    if(force_b) {
-        nlr_abort_if_forced_modeb_too_large(
+    /* Oracle brute-walk guard. Gated on the SELECTED path, not on how it was
+     * selected: threshold dispatch reaches Mode B just as the corridor override
+     * does, and the brute walk is equally intractable either way.
+     * phase0_sum_active is set on every branch that can select Mode B. */
+    if(select_mode_b && oracle_on) {
+        nlr_abort_if_modeb_oracle_too_large(
             Spec::loop_name, args.num_active, phase0_sum_active, oracle_on);
     }
 
@@ -4591,9 +4598,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
                       MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         global_active_sum = forced_modeb_global_active;
-        nlr_abort_if_forced_modeb_too_large(
-            Spec::loop_name, args.num_active, forced_modeb_global_active,
-            oracle_enabled);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
@@ -4609,6 +4613,15 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         bool select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
         path = select_mode_b ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
+    }
+
+    /* Oracle brute-walk guard. Gated on the SELECTED path, not on how it was
+     * selected: threshold dispatch reaches Mode B just as the corridor override
+     * does, and the brute walk is equally intractable either way.
+     * global_active_sum is set on every branch that can select Mode B. */
+    if (path == DispatchPath::ModeB_HostWalker && oracle_enabled) {
+        nlr_abort_if_modeb_oracle_too_large(
+            Spec::loop_name, args.num_active, global_active_sum, oracle_enabled);
     }
 
     /* Globally-zero-active call: do NO neighbor work. global_active_sum comes
