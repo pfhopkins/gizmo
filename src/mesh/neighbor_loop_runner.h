@@ -1787,25 +1787,6 @@ struct NlrIterDriver {
     typename Spec::DeviceContext              ctx_oracle;
     bool                                      ctx_oracle_initialized = false;
 
-    /* ========================================================================
-     * Mode A diagnostic counters (step 3 harness instrumentation).
-     *
-     * Public observability for harness validation; production code should
-     * never read these (zero overhead under default builds). Counts are
-     * per-driver-instance (per iterative call), reset to 0 at construction.
-     *
-     *   csr_rebuild_count       — # times rebuild_mode_a_arena_and_ctx_for_current_active_union
-     *                              completed (Mode A union rebuild fires).
-     *   arena_acquire_count     — # times gpu_particles_arena_acquire fired
-     *                              (iter-0 init + each union rebuild).
-     *   csr_local_rebuild_count — # times a subgroup's CSR was locally
-     *                              freed+rebuilt inside
-     *                              nlr_iter_dispatch_subgroup_mode_a (per sg, summed).
-     * ====================================================================== */
-    int                                       csr_rebuild_count       = 0;
-    int                                       arena_acquire_count     = 0;
-    int                                       csr_local_rebuild_count = 0;
-
     /* effective_args: writable copy of the base
      * neighbor_loop_args slice. Mode A iter mutates num_total/P/CellP after
      * ghost import to reflect the imported-ghost pool (mirrors non-iter

@@ -3515,7 +3515,6 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
     arena_acquired = true;
-    arena_acquire_count++;       /* step 3 harness counter */
 
     /* === (3) Bind ctx to arena-resident pointers + populate extended DeviceContext === */
     initialize_device_context_mode_a_after_arena();
@@ -3658,8 +3657,6 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
     arena_acquired = true;
-    arena_acquire_count++;       /* step 3 harness counter */
-    csr_rebuild_count++;         /* step 3 harness counter — union rebuild fired */
 
     /* === (7) Rebind ctx + (8) populate extended ctx for NEW pool === */
     initialize_device_context_mode_a_after_arena();
@@ -3904,7 +3901,6 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             drv.mode_a_csr_buffered_h[sg][slot]    = radii_buffered_host_build[k];
         }
         drv.mode_a_csr_valid[sg] = true;
-        drv.csr_local_rebuild_count++;       /* step 3 harness counter */
     }
 
     /* ===== (2) Ghost write detector + writeback begin =====
