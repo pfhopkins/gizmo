@@ -53,7 +53,6 @@
 #include <algorithm>   /* nth_element / max_element (coverage dry-run percentiles) */
 #include <unordered_map>
 #include <cmath>
-#include <cctype>
 
 #include "mode_b_p2p_transport.h"  /* ModeBBoundedExchange (query/reply transport) */
 
@@ -222,11 +221,6 @@ void nlr_free_active_list(int *active_list)
 /* ============================================================================
  * Mode-A/B dispatch thresholds
  *
- * The four env vars below are dispatch-threshold overrides that exist purely
- * for testing the runner's Mode A / Mode B selection. They are NOT part of
- * GIZMO's production interface, NOT promoted to params.txt or Config.sh,
- * and not intended for end-user tuning.
- *
  * Production dispatch policy is the constexpr Spec::modeb_threshold_sum and
  * Spec::modeb_threshold_max in each NeighborLoopSpec — those are code-level
  * dispatch policy constants for the loop, decided alongside the physics.
@@ -237,24 +231,8 @@ void nlr_free_active_list(int *active_list)
  *   2. Spec::modeb_threshold_{sum,max} constexpr (code default)
  *
  * The threshold is settable ONLY from the parameterfile, so the value a run
- * used is recorded in its parameter log. There is no environment override.
- *
- * Force-mode env vars take precedence over threshold dispatch:
- * GIZMO_NLR_FORCE_MODE=A|B selects unconditionally; thresholds are not
- * consulted on force paths (except when GIZMO_NLR_DIAG>=1, where the
- * runner does an extra Allreduce to populate PHASE0_NLR num_active_global).
+ * used is recorded in its parameter log.
  * ========================================================================== */
-
-static int parse_int_env(const char *name)
-{
-    const char *e = getenv(name);
-    if(!e || !e[0]) return -1;
-    char *endp = nullptr;
-    long v = strtol(e, &endp, 10);
-    if(!endp || *endp != '\0' || v < 0 || v > 1000000000) return -1;
-    return (int)v;
-}
-
 
 int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
 {
@@ -392,49 +370,10 @@ static NlrForceMode nlr_init_force_mode(void)
     return NlrForceMode::None;
 }
 
-static NlrForceMode nlr_parse_force_mode_value(const char *env_name,
-                                               const char *raw_value)
-{
-    if(!raw_value || !raw_value[0]) return NlrForceMode::None;
-    if(raw_value[0] == 'A' && raw_value[1] == '\0') return NlrForceMode::A;
-    if(raw_value[0] == 'B' && raw_value[1] == '\0') return NlrForceMode::B;
-    if(ThisTask == 0) {
-        fprintf(stderr, "[NLR env] FATAL: %s=\"%s\" must be 'A' or 'B'.\n",
-                env_name ? env_name : "GIZMO_<LOOP>_FORCE_MODE", raw_value);
-        fflush(stderr);
-    }
-    endrun(81104);
-    return NlrForceMode::None;
-}
-
-static void nlr_loop_env_name(const char *loop_name, const char *suffix,
-                              char *out, int out_size)
-{
-    if(out_size <= 0) return;
-    int j = 0;
-    const char *prefix = "GIZMO_";
-    for(int p = 0; prefix[p] && j < out_size - 1; p++) out[j++] = prefix[p];
-    if(loop_name) {
-        for(int p = 0; loop_name[p] && j < out_size - 1; p++) {
-            out[j++] = (char)toupper((unsigned char)loop_name[p]);
-        }
-    }
-    if(suffix) {
-        for(int p = 0; suffix[p] && j < out_size - 1; p++) out[j++] = suffix[p];
-    }
-    out[j] = '\0';
-}
-
-static int nlr_force_modeb_active_cap_for(const char *loop_name)
-{
-    char env_name[160];
-    nlr_loop_env_name(loop_name, "_FORCE_MODEB_MAX_ACTIVE",
-                      env_name, (int)sizeof(env_name));
-    int cap = parse_int_env(env_name);
-    if(cap >= 0) return cap;
-    cap = parse_int_env("GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE");
-    return (cap >= 0) ? cap : 100000;
-}
+/* Largest global active count the oracle brute walk is allowed to attempt.
+ * The walk is O(N_active x N_local) per query and cannot be chunked, so it
+ * becomes intractable well before this bound; run the oracle at small N. */
+static const int NLR_ORACLE_MODEB_MAX_ACTIVE = 100000;
 
 static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
                                                 int local_active,
@@ -450,16 +389,16 @@ static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
      * N is the ORACLE brute walk (O(N_active x N_local) per query, unchunkable),
      * so the cap fires ONLY when an oracle/brute pass is active. */
     if(!oracle_active) return;
-    const int cap = nlr_force_modeb_active_cap_for(loop_name);
-    if(cap >= 0 && global_active > cap) {
+    const int cap = NLR_ORACLE_MODEB_MAX_ACTIVE;
+    if(global_active > cap) {
         if(ThisTask == 0) {
             fprintf(stderr,
                     "[NLR ORACLE Mode-B] FATAL: caller=%s ran forced Mode-B WITH "
                     "an oracle/brute pass at global_active=%d local_active(rank0)=%d, "
                     "exceeding cap=%d. The brute walk is O(N_active x N_local) per "
-                    "query — intractable at this N. Run the oracle at small N, or "
-                    "raise GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE intentionally. (Non-oracle "
-                    "forced Mode-B is memory-safe post-B2 and is NOT capped.)\n",
+                    "query — intractable at this N. Run the oracle at small N. "
+                    "(Non-oracle forced Mode-B is memory-safe post-B2 and is NOT "
+                    "capped.)\n",
                     loop_name ? loop_name : "?", global_active,
                     local_active, cap);
             fflush(stderr);
@@ -524,36 +463,6 @@ NlrForceMode gizmo_nlr_force_mode(void)
     static int  cached_int   = -1;          /* -1 = uninit; 0/1/2 = enum */
     if(cached_int < 0) cached_int = (int)nlr_init_force_mode();
     return (NlrForceMode)cached_int;
-}
-
-NlrForceMode gizmo_nlr_force_mode_for(const char *loop_name)
-{
-    if(!loop_name || !loop_name[0]) return gizmo_nlr_force_mode();
-    struct entry_t { const char *name; int cached; };
-    static entry_t cache[16] = {
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1}};
-    for(int k = 0; k < 16; k++) {
-        if(cache[k].name == loop_name) return (NlrForceMode)cache[k].cached;
-        if(cache[k].name == nullptr) {
-            char env_name[160];
-            nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
-            const char *raw = getenv(env_name);
-            NlrForceMode mode = raw && raw[0]
-                ? nlr_parse_force_mode_value(env_name, raw)
-                : gizmo_nlr_force_mode();
-            cache[k].name = loop_name;
-            cache[k].cached = (int)mode;
-            return mode;
-        }
-    }
-    char env_name[160];
-    nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
-    const char *raw = getenv(env_name);
-    return raw && raw[0] ? nlr_parse_force_mode_value(env_name, raw)
-                         : gizmo_nlr_force_mode();
 }
 
 bool gizmo_nlr_spike_accum_dump_enabled(void)
@@ -686,39 +595,6 @@ bool gizmo_nlr_oracle_enabled_global(void) {
         cached = (e && e[0] == '1') ? 1 : 0;
     }
     return cached != 0;
-}
-bool gizmo_nlr_oracle_enabled_for(const char *loop_name) {
-    /* Per-loop env: GIZMO_<UPPERCASE_LOOP_NAME>_ORACLE. Lookup is per-call
-     * but loop_name is a Spec::loop_name constexpr literal, so the env-name
-     * derivation is deterministic; we cache via a small intrusive map of up
-     * to 8 entries (cheap linear scan). 8 covers every Spec we expect through
-     * 3c-3g; bump if a future stage exceeds. */
-    if(!loop_name || !loop_name[0]) return false;
-    struct entry_t { const char *name; int cached; };
-    static entry_t cache[8] = {
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0},
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0}};
-    for(int k = 0; k < 8; k++) {
-        if(cache[k].name == loop_name) return cache[k].cached != 0;
-        if(cache[k].name == nullptr) {
-            char env_name[128];
-            int j = 0;
-            const char *prefix = "GIZMO_";
-            for(int p = 0; prefix[p] && j < 120; p++) env_name[j++] = prefix[p];
-            for(int p = 0; loop_name[p] && j < 120; p++) {
-                env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
-            }
-            const char *suffix = "_ORACLE";
-            for(int p = 0; suffix[p] && j < 127; p++) env_name[j++] = suffix[p];
-            env_name[j] = '\0';
-            const char *e = getenv(env_name);
-            cache[k].name   = loop_name;
-            cache[k].cached = (e && e[0] == '1') ? 1 : 0;
-            return cache[k].cached != 0;
-        }
-    }
-    /* Cache full — fall through with a one-shot lookup, no caching. */
-    return false;
 }
 
 /* ============================================================================
@@ -3175,8 +3051,8 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      *   2. GIZMO_NLR_FORCE_MODE=B → Mode B (local if NTask==1, remote else).
      *   3. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
      *      max_active<=TM) → Mode B; else Mode A. Hierarchy of TS/TM:
-     *      per-loop env > global env > Spec::modeb_threshold_{sum,max}
-     *      constexpr defaults (64/64 today).
+     *      parameterfile NeighborLoopModeBThreshold{Sum,Max} >
+     *      Spec::modeb_threshold_{sum,max} constexpr defaults (64/64 today).
      *
      * Force-mode conflict cases (both old and new vars set, both old vars
      * set together, invalid value) are caught and endrun'd centrally inside
@@ -3188,18 +3064,17 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * same frozen query — it does NOT cross-validate Mode A. Mode A vs
      * Mode B active-epoch consistency is a separate concern, deferred.
      */
-    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive.
+    /* Dispatch priority: args.dispatch_override > force mode > adaptive threshold.
      * The args field is the corridor mode-decision hook (hydro_corridor.cc): when
      * a corridor consumer sets this to force coherent Mode A or Mode B across the
      * whole hydro corridor (cellcorrections/gradients/hydro_force), the per-call
-     * override wins over env vars so corridor coherence is enforced, not advisory. */
+     * override wins so corridor coherence is enforced, not advisory. */
     const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
                                       ? args.dispatch_override
-                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
+                                      : gizmo_nlr_force_mode();
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
-    const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
-                            gizmo_nlr_oracle_enabled_for(Spec::loop_name);
+    const bool oracle_on = gizmo_nlr_oracle_enabled_global();
 
     /* PHASE0 timing scaffolding. Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the
@@ -3572,8 +3447,7 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
      * path. Vectors stay empty when oracle_enabled=false (UVM frees in
      * dtor are guarded on pointer state, so empty vectors are safe).
      * ====================================================================== */
-    oracle_enabled = gizmo_nlr_oracle_enabled_global() ||
-                     gizmo_nlr_oracle_enabled_for(Spec::loop_name);
+    oracle_enabled = gizmo_nlr_oracle_enabled_global();
     if (oracle_enabled) {
         scratch_oracle_uvm    .assign(args.num_subgroups, nullptr);
         accum_oracle_uvm      .assign(args.num_subgroups, nullptr);
@@ -4870,8 +4744,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * and cannot validate ghost-import completeness (walks the
      * same imported pool as production). Its complexity is not justified
      * for temporary scaffolding code). */
-    const bool oracle_enabled = gizmo_nlr_oracle_enabled_global() ||
-                                gizmo_nlr_oracle_enabled_for(Spec::loop_name);
+    const bool oracle_enabled = gizmo_nlr_oracle_enabled_global();
 
     /* ===== Path selection at iter 0 (FIXED for whole call) =====
      * Integrates with the canonical force-mode / threshold dispatch
@@ -4888,7 +4761,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * here for completeness and future use. */
     const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
                                       ? args.dispatch_override
-                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
+                                      : gizmo_nlr_force_mode();
     DispatchPath path;
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
