@@ -53,11 +53,7 @@ bool ThermalFBSpec::is_active(int i)
      * Pre-port thermal_fb.cc gated strictly on Type==4 regardless of cosmo
      * mode, which is a long-standing latent inconsistency with the mechfb
      * convention: in non-cosmological sims, Types 2/3/4 are all valid stars. */
-    if (All.ComovingIntegrationOn) {
-        if (P[i].Type != 4) return false;
-    } else {
-        if (P[i].Type < 2 || P[i].Type > 4) return false;
-    }
+    if (!is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn)) return false; // stellar-candidate type (see proto.h)
     if (P[i].KernelRadius <= 0)     return false;
     if (P[i].NumNgb <= 0)           return false;
     if (P[i].SNe_ThisTimeStep <= 0) return false;

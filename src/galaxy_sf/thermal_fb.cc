@@ -42,11 +42,7 @@ void determine_where_addthermalFB_events_occur(void)
          * Legacy code strict-gated on Type==4 only; that missed valid
          * stars (Types 2/3) in non-cosmological sims. SSOT'd with
          * ThermalFBSpec::is_active. */
-        if(All.ComovingIntegrationOn) {
-            if(P[i].Type != 4) {continue;}
-        } else {
-            if((P[i].Type < 2) || (P[i].Type > 4)) {continue;}
-        }
+        if(!is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn)) {continue;} // stellar-candidate type (see proto.h)
         if(P[i].Mass <= 0) {continue;}
         check += mechanical_fb_calculate_eventrates(i,1); // this should do the calculation and add to number of SNe as needed //
     } // for (int i : ActiveParticleList) //

@@ -214,8 +214,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
             accum.hubber_mdot_disk_estimator  += wt * wk_h * sqrt(rj) / (neighbor_cell->Density * csj * csj);
         }
 #endif
-    } else if(neighbor_particle.Type == 4 ||
-              ((neighbor_particle.Type == 2 || neighbor_particle.Type == 3) && !active.scalars.common.comoving_integration_on)) {
+    } else if(is_galsf_stellar_candidate_type(neighbor_particle.Type, active.scalars.common.comoving_integration_on)) {
         accum.Mstar_in_Kernel += wt;
         Vec3<double> J_star = cross(dP, dv);
         for(int kv = 0; kv < 3; kv++) accum.Jstar_in_Kernel[kv] += wt * J_star[kv];

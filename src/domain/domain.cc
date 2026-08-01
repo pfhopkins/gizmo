@@ -801,7 +801,7 @@ double domain_particle_cost_multiplier(int i)
 
 #if defined(GALSF) /* with star formation active, we will up-weight star particles which are active feedback sources */
 #ifndef CHIMES /* With CHIMES, the chemistry dominates the cost, so we boost (dense) gas but not stars. */
-    if(((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3))))&&(P[i].Mass>0))
+    if(is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn) && (P[i].Mass>0))
     {
         double star_age = evaluate_stellar_age_Gyr(i);
         if(star_age>0.1) {multiplier = 3.125;} else {if(star_age>0.035) {multiplier = 5.;} else {multiplier = 10.;}}

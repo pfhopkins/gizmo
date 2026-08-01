@@ -424,9 +424,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
      * (dt, stellum, R_for_NL) for the provider + helper. */
     for(int ip : ActiveParticleList) {
 #ifdef SINK_HII_HEATING
-        if(!((P[ip].Type == 5)||(((P[ip].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[ip].Type == 2)||(P[ip].Type==3))))))) continue;
+        if(!((P[ip].Type == 5) || is_galsf_stellar_candidate_type(P[ip].Type, All.ComovingIntegrationOn))) continue;
 #else
-        if(!((P[ip].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[ip].Type == 2)||(P[ip].Type==3))))) continue;
+        if(!is_galsf_stellar_candidate_type(P[ip].Type, All.ComovingIntegrationOn)) continue;
 #endif
         if(P[ip].Mass <= 0 || !isfinite(P[ip].Mass)) continue;
         double dt_i = get_particle_feedback_timestep_in_physical(ip);
