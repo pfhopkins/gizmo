@@ -92,7 +92,7 @@ void find_timesteps(void)
     for (int i : ActiveParticleList)
     {
 #if defined(FORCE_EQUAL_TIMESTEPS)
-        ti_step = get_timestep(i, &aphys, 0) / timestep_dilation_factor(i,0); // get the timestep for this particle, and apply any dilation factor -- we're trying to find the minimum active BIN, not the minimum active timestep in float
+        ti_step = (integertime)(((double)get_timestep(i, &aphys, 0)) / timestep_dilation_factor(i,0)); // get the timestep for this particle, and apply any dilation factor -- we're trying to find the minimum active BIN, not the minimum active timestep in float
 #elif defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
         if(is_particle_a_special_zoom_target(i)==0) {ti_step = P[i].dt_step;} else {ti_step = TIMEBASE;} // set the source particle to have a timestep no more than 4 bins larger than the previous smallest active particle/cell bin timestep
 #endif
@@ -123,8 +123,7 @@ void find_timesteps(void)
     for (int i : ActiveParticleList)
     {
 #ifdef FORCE_EQUAL_TIMESTEPS
-        ti_step = ti_min_glob; 
-        ti_step = (integertime)(((double)ti_step)); /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
+        ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else
         ti_step = get_timestep(i, &aphys, 0);
         ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i,0));
