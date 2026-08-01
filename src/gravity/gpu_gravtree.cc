@@ -1499,10 +1499,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
      *
      * The CLEAN case is reported too, not only the violation: a run that confirms the count is
      * zero is how the foreign-leaf import path is shown to be behaving, and that confirmation is
-     * unavailable if only the failure prints. */
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[gravtree invariant] unopenable foreign-terminal aggregates accepted = %lld\n",
-               g_inv_fterm_aggregate);
+     * unavailable if only the failure prints. The counter is per-rank, so every rank reports its
+     * own value -- a rank-0-only line would leave the other ranks unconfirmed. */
+    if(gizmo_verbose_diag()) {
+        printf("[gravtree invariant rank=%d] unopenable foreign-terminal aggregates accepted = %lld\n",
+               ThisTask, g_inv_fterm_aggregate);
         fflush(stdout);
     }
     if(g_inv_fterm_aggregate > 0) {
