@@ -116,9 +116,7 @@ static void sink_env2_pair_kernel(const SinkEnv2ActiveState& active,
             accum.MgasBulge_in_Kernel += (MyFloat)(2 * neighbor_particle.Mass);
         }
     }
-    if(neighbor_particle.Type == 4 ||
-       ((neighbor_particle.Type == 2 || neighbor_particle.Type == 3) &&
-        !active.scalars.comoving_integration_on)) {
+    if(is_galsf_stellar_candidate_type(neighbor_particle.Type, active.scalars.comoving_integration_on)) {
         if(dot(J_tmp, active.Jstar) < 0) {
             accum.MstarBulge_in_Kernel += (MyFloat)(2 * neighbor_particle.Mass);
         }

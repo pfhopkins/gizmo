@@ -425,7 +425,7 @@ integertime get_timestep(int p,		/*!< particle index */
     dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * h_for_accel_dt / ac);}
 
 #if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
-    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
+    if(is_galsf_stellar_candidate_type(P[p].Type, All.ComovingIntegrationOn) && (P[p].Mass>0))
     {
         if((All.ComovingIntegrationOn)) // sort of a hack here, but acceptable in applications
         {
@@ -1029,7 +1029,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
     // add a 'stellar evolution timescale' criterion to the timestep, to prevent too-large jumps in feedback //
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || (defined(GALSF) && defined(RADTRANSFER))
-    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
+    if(is_galsf_stellar_candidate_type(P[p].Type, All.ComovingIntegrationOn) && (P[p].Mass>0))
     {
         double star_age = evaluate_stellar_age_Gyr(p);
         double dt_stellar_evol;

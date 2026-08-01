@@ -128,6 +128,20 @@ double ForceSoftening_KernelRadius(int p);
 double compute_force_softening_kernel_radius(int p); /* internal: source-of-truth softening computation */
 void   compute_all_force_softening(int mode);        /* mode=0 active-only; mode=1 all NumPart (init/restart) */
 GIZMO_GPU_FUNCTION inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /* inline for GPU single-TU; definition also in global.cc for non-GPU TUs */
+
+/* SSOT for "is this particle TYPE a stellar feedback/source candidate": type 4 is
+   always a 'star'; in non-cosmological runs types 2/3 too, EXCEPT in nuclear-zoom /
+   Jeans-refinement / grain-fluid builds where those types are reserved for
+   non-stellar roles (analytic-BH anchor; grains, GRAIN_PTYPES defaults to type 3).
+   Callers apply their own Mass>0 / KernelRadius>0 / age guards on top. */
+GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, int comoving_on)
+{
+    if(type == 4) {return 1;}
+#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(GRAIN_FLUID)
+    if(comoving_on == 0 && (type == 2 || type == 3)) {return 1;}
+#endif
+    return 0;
+}
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
 #ifdef BOX_SHEARING

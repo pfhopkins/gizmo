@@ -55,7 +55,7 @@ int density_isactive(int n)
     if((1 << P[n].Type) & (RT_SOURCES))
     {
 #if defined(GALSF)
-       if(((P[n].Type == 4)||((host_all->ComovingIntegrationOn==0)&&((P[n].Type == 2)||(P[n].Type==3))))&&(P[n].Mass>0))
+       if(is_galsf_stellar_candidate_type(P[n].Type, host_all->ComovingIntegrationOn) && (P[n].Mass>0))
         {
             double star_age = evaluate_stellar_age_Gyr(n);
             if((star_age < 0.1)&&(star_age > 0)&&(!isnan(star_age))) return 1;
@@ -67,7 +67,7 @@ int density_isactive(int n)
 #endif
 
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    if(((P[n].Type == 4)||((host_all->ComovingIntegrationOn==0)&&((P[n].Type == 2)||(P[n].Type==3))))&&(P[n].Mass>0))
+    if(is_galsf_stellar_candidate_type(P[n].Type, host_all->ComovingIntegrationOn) && (P[n].Mass>0))
     {
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
         if(P[n].SNe_ThisTimeStep>0) return 1;
