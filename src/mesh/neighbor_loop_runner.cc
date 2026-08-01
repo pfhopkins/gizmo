@@ -273,11 +273,11 @@ namespace {
 /* nlr_warn_once_rank0 and nlr_env_is_one are defined at file scope above
  * (near the includes) so the threshold block can use them too. */
 
-/* Initialize diag level. Reads new var first, then aliases. */
+/* Initialize diag level. */
 static int nlr_init_diag_level(void)
 {
     const char *raw = getenv("GIZMO_NLR_DIAG");
-    int new_set_level = -1;
+    int level = 0;
     if(raw && raw[0]) {
         char *endp = nullptr;
         long v = strtol(raw, &endp, 10);
@@ -289,25 +289,7 @@ static int nlr_init_diag_level(void)
             }
             endrun(81100);
         }
-        new_set_level = (int)v;
-    }
-
-    bool old_dispatch = nlr_env_is_one("GIZMO_NLR_DISPATCH_TRACE");
-
-    int level;
-    if(new_set_level >= 0) {
-        level = new_set_level;
-        if(old_dispatch) {
-            nlr_warn_once_rank0("alias_dispatch_overridden",
-                "GIZMO_NLR_DISPATCH_TRACE ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
-        }
-    } else {
-        level = 0;
-        if(old_dispatch) {
-            nlr_warn_once_rank0("alias_dispatch_deprecated",
-                "GIZMO_NLR_DISPATCH_TRACE=1 is deprecated; use GIZMO_NLR_DIAG=2 instead.");
-            if(level < 2) level = 2;
-        }
+        level = (int)v;
     }
 
     if(level == 3) {
