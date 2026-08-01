@@ -1616,8 +1616,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
     Costtotal += costtotal_added;
 
-    /* Diagnostic: print GPU walk summary + first 10 particles for LET vs no-LET comparison */
-
     /* mark_clean (not invalidate): the per-active-i
      * P_dev[i]=P[i] mirror in the scatter loop above keeps arena coherent
      * for the touched indices; untouched i's were unchanged from acquire-time

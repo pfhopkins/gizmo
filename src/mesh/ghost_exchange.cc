@@ -3301,10 +3301,9 @@ void ghost_exchange_cleanup(void)
     if(NumGhostParticles > 0) {
         gpu_compact_xyzh_dirty_drop_above(NumPart_before_ghost);
     }
-    /* SIDX lifecycle notify BEFORE NumPart shrinks. Frees any cached ghost
-     * segment in the segmented SIDX (later commit). Called whether or not
+    /* SIDX lifecycle notify BEFORE NumPart shrinks. Called whether or not
      * NumGhostParticles>0 — a cleanup from the no-ghost-imported state is
-     * a valid signal that bumps epoch with empty range. */
+     * a valid signal that bumps the epoch. */
     gpu_sidx_notify_ghost_cleanup();
     PreviousGhostCount = NumGhostParticles; /* save for domain decomposition headroom */
     NumPart = NumPart_before_ghost;

@@ -212,8 +212,8 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold);
 
 /* SIDX lifecycle notification hooks. ghost_exchange owns the import/cleanup
  * lifecycle; SIDX owns the spatial-index representation. These are the
- * lifecycle signals SIDX consumes (currently just bumps epochs + diagnostic
- * counters; consumed by the segmented SIDX in a later commit).
+ * lifecycle signals SIDX consumes. They currently bump the epoch counters
+ * and nothing more; no consumer reads those counters yet.
  *
  * Contract:
  *  - ghost_imported(start, count): MUST be called on every rank at the end of
@@ -233,8 +233,6 @@ void gpu_sidx_notify_pool_changed(void);
 #ifdef __cplusplus
 extern "C" {
 #endif
-int      gpu_sidx_last_ghost_start(void);
-int      gpu_sidx_last_ghost_count(void);
 #ifdef __cplusplus
 }
 #endif

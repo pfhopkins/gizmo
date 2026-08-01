@@ -236,31 +236,23 @@ void gizmo_mark_kernel_radius_dirty_range(int start, int end)
     ghost_exchange_local_tree_mark_h_dirty_range(start, end);
 }
 
-/* SIDX lifecycle epoch counters. Bumped by notify hooks; consumed by the
- * segmented SIDX (later commit). Defined here so the diagnostic prints can
- * pick them up immediately. */
+/* SIDX lifecycle epoch counters, bumped by the notify hooks below on every
+ * ghost import, ghost cleanup and pool membership change. Nothing reads them
+ * today: they are the available signal for keying spatial-index reuse on
+ * ghost identity rather than on count alone. */
 static uint64_t g_sidx_ghost_epoch = 0;
 static uint64_t g_sidx_pool_epoch  = 0;
-static int      g_sidx_last_ghost_start = 0;
-static int      g_sidx_last_ghost_count = 0;
 
 void gpu_sidx_notify_ghost_imported(int start, int count)
 {
     /* Contract requires unconditional call on every rank, including count==0. */
-    g_sidx_last_ghost_start = start;
-    g_sidx_last_ghost_count = count;
+    (void)start; (void)count;
     g_sidx_ghost_epoch++;
-    /* Future commit C: count==0 also frees any cached ghost segment.
-     * Today no segment exists, so this is purely a counter bump. */
 }
 
 void gpu_sidx_notify_ghost_cleanup(void)
 {
-    /* Called BEFORE NumPart shrinks, so any cached ghost segment containing
-     * indices >= NumPart_local can be freed in the segment owner's response.
-     * Today: just bump epoch. */
-    g_sidx_last_ghost_start = 0;
-    g_sidx_last_ghost_count = 0;
+    /* Called BEFORE NumPart shrinks. */
     g_sidx_ghost_epoch++;
 }
 
@@ -271,8 +263,6 @@ void gpu_sidx_notify_pool_changed(void)
     g_sidx_pool_epoch++;
 }
 
-extern "C" int      gpu_sidx_last_ghost_start(void) { return g_sidx_last_ghost_start; }
-extern "C" int      gpu_sidx_last_ghost_count(void) { return g_sidx_last_ghost_count; }
 
 /* Deprecated: was a workaround for the global g_dirty_list pre-tracker era,
  * filtering ghost-slot indices when ghost slots leave scope at cleanup. The
@@ -1042,10 +1032,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
     int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
 
-    /* DIAG: drain any prior async GPU work so subsequent fence times only this kernel */
+    /* Drain any prior async GPU work before the passes below. */
     Kokkos::fence();
-    double t_drain_done = my_second();
-    double t_nl0 = t_drain_done; /* DIAG: start of GPU passes */
     /* Fused single pass: BVH walk + write neighbors into per-particle scratchpad */
     {
         sfc_tile_t *tiles = gnl->d_tiles;
