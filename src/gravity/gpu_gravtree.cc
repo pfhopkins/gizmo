@@ -339,13 +339,12 @@ gpu_gravtree_walk_one(int target,
                       const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
                       Vec3<double> &acc_out,
                       int &ninter_out,
-                      double &pot_out,
-                      int &n_foreign_out)   /* diagnostic: #foreign node visits */
+                      double &pot_out)
 {
     Vec3<double> pos = P_dev[target].Pos;
     int ptype = P_dev[target].Type;
     double pmass = P_dev[target].Mass;
-    if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; n_foreign_out = 0; return 1;}
+    if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
     double soft = gpu_force_softening_kernel_radius(P_dev, target);
@@ -508,7 +507,6 @@ gpu_gravtree_walk_one(int target,
     Vec3<double> acc = {0,0,0};
     int ninter = 0;
     double pot = 0.0;
-    int n_foreign = 0;  /* diagnostic */
 
     int no = maxPart;   /* root */
 
@@ -665,7 +663,6 @@ gpu_gravtree_walk_one(int target,
         }
         else /* tree node */
         {
-            if(no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes) n_foreign++;  /* diagnostic */
             int idx = no - maxPart;
             Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)tree_soa->s[idx][0], (MyFloat)tree_soa->s[idx][1], (MyFloat)tree_soa->s[idx][2]};
             MyFloat len_node = tree_soa->len[idx];
@@ -1160,7 +1157,6 @@ gpu_gravtree_walk_one(int target,
     acc_out = acc;
     ninter_out = ninter;
     pot_out = pot;
-    n_foreign_out = n_foreign;
     return 1;
 }
 
@@ -1369,8 +1365,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
     int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
-    int *d_foreign = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));  /* diagnostic */
-    if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot || !d_foreign) {
+    if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
         myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
@@ -1453,7 +1448,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
         Vec3<double> acc;
         int ninter;
         double pot;
-        int nforeign;
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
@@ -1471,12 +1465,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
                                         use_lazy_source,
                                         &ewald_pot_dev,
-                                        acc, ninter, pot, nforeign);
+                                        acc, ninter, pot);
         if(ok) {
             d_acc[a] = acc;
             d_ninter[a] = ninter;
             d_pot[a] = pot;
-            d_foreign[a] = nforeign;
             d_failed[a] = 0;
         } else {
             d_failed[a] = 1;
@@ -1636,7 +1629,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * stale-Ti_current nodes via gpu_force_drift_nodes (UVM AoS + SoA in one
      * kernel).  No host-side reseed scaffolding remains. */
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_foreign);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ninter);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
