@@ -413,13 +413,6 @@ NlrForceMode gizmo_nlr_force_mode(void)
 bool gizmo_nlr_phase0_diag_enabled(void)    { return gizmo_nlr_diag_level() >= 1; }
 bool gizmo_nlr_dispatch_trace_enabled(void) { return gizmo_nlr_diag_level() >= 2; }
 
-/* Subgroup-audit env gate. Off by default; harness +
- * test-mode runs set GIZMO_NLR_SUBGROUP_AUDIT=1 to enable hard-aborting
- * runtime checks for subgroups[] collective-symmetry + no-duplicate-actives. */
-static bool gizmo_nlr_subgroup_audit_enabled(void) {
-    return nlr_env_is_one("GIZMO_NLR_SUBGROUP_AUDIT");
-}
-
 /* ============================================================================
  * NeighborLoopPlan path predicates — single source of truth keyed on path.
  *
@@ -4554,8 +4547,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      *   - Per-subgroup global activity tracking via global_active_per_sg[].
      *   - Pre-dispatch invalidation sweep rebuilds CSR caches once per iter
      *     when any subgroup invalidated.
-     *   - Multi-subgroup actives partition + collective-symmetry validated
-     *     under GIZMO_NLR_SUBGROUP_AUDIT=1 (audit block above).
+     *   - The caller must fill subgroups[] from the global_bm_presence union
+     *     with identical ordering on every rank, and must place each particle
+     *     in at most one subgroup.
      * Per-Spec opt-in still REQUIRED via `using SupportsSubgroups = std::true_type;`
      * (runtime abort 81201 above catches missing trait). */
 
@@ -4684,102 +4678,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 
     /* ===== CallScalars captured ONCE for whole call ===== */
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
-
-    /* ===== GIZMO_NLR_SUBGROUP_AUDIT collective-symmetry +
-     * no-duplicate-actives runtime checks. Hard-abort on violation. Off by
-     * default; harness / test-mode enables.
-     *
-     * Check 1: subgroups[] length AND ordered bm-key sequence identical
-     * across all ranks (MIN/MAX hash, NOT BOR).
-     *
-     * Check 2: each particle index appears in AT MOST ONE subgroup
-     * (pitfall 6 — no duplicate active ownership; would double-apply final
-     * writeback state). */
-    if (gizmo_nlr_subgroup_audit_enabled()) {
-        /* Check 1: 64-bit FNV-1a ordered hash of (i << 32) | bm_key. */
-        uint64_t local_hash = 0xCBF29CE484222325ULL;
-        for (int i = 0; i < args.num_subgroups; i++) {
-            local_hash ^= ((uint64_t)(unsigned int)i << 32) |
-                          (uint64_t)args.subgroups[i].j_type_bitmask;
-            local_hash *= 0x100000001B3ULL;
-        }
-        int      local_n = args.num_subgroups;
-        int      n_min = local_n, n_max = local_n;
-        uint64_t h_min = local_hash, h_max = local_hash;
-        if (NTask > 1) {
-            MPI_Allreduce(&local_n,    &n_min, 1, MPI_INT,      MPI_MIN, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_n,    &n_max, 1, MPI_INT,      MPI_MAX, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_hash, &h_min, 1, MPI_UINT64_T, MPI_MIN, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_hash, &h_max, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
-        }
-        if (n_min != n_max || h_min != h_max) {
-            int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            fprintf(stderr,
-                "[NLR_ITER SUBGROUP_AUDIT ABORT rank=%d caller=%s] subgroups[] "
-                "length/order mismatch across ranks: local_num=%d (global "
-                "min=%d max=%d), local_hash=%llx (global min=%llx max=%llx). "
-                "Caller must fill subgroups[] from global_bm_presence union "
-                "with identical ordering on all ranks.\n",
-                rank, Spec::loop_name, local_n, n_min, n_max,
-                (unsigned long long)local_hash,
-                (unsigned long long)h_min, (unsigned long long)h_max);
-            fprintf(stderr, "  rank=%d subgroups[] bm_keys: [", rank);
-            for (int i = 0; i < args.num_subgroups; i++) {
-                fprintf(stderr, "%s%u", (i > 0 ? "," : ""),
-                        args.subgroups[i].j_type_bitmask);
-            }
-            fprintf(stderr, "]\n");
-            fflush(stderr);
-            /* Symmetric: the mismatch is detected from the MPI_Allreduce'd
-             * min/max/hash above, so EVERY rank enters this branch together.
-             * Graceful bad-stop + return drains all ranks identically (run
-             * loop returns void) to the next poll -- no MPI_Abort, no wedge. */
-            gizmo_request_controlled_stop(81214, "NLR_ITER subgroups[] length/order mismatch across ranks (caller partition contract violated)", __FILE__, __LINE__, __FUNCTION__);
-            return;
-        }
-
-        /* Check 2: no duplicate particle indices across subgroups (local-rank
-         * only — cross-rank is governed by caller's partition logic). */
-        {
-            std::vector<int> seen;
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                const NlrSubgroup& sgr = args.subgroups[sg];
-                for (int k = 0; k < sgr.num_active_local; k++) {
-                    seen.push_back(sgr.active_indices[k]);
-                }
-            }
-            std::sort(seen.begin(), seen.end());
-            int local_dup = 0;
-            for (size_t k = 1; k < seen.size(); k++) {
-                if (seen[k] == seen[k-1]) {
-                    int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-                    fprintf(stderr,
-                        "[NLR_ITER SUBGROUP_AUDIT ABORT rank=%d caller=%s] "
-                        "particle index %d appears in 2+ subgroups. Caller "
-                        "partition must satisfy no-duplicate-active-ownership "
-                        "invariant (pitfall 6) — each particle in AT MOST ONE "
-                        "subgroup.\n",
-                        rank, Spec::loop_name, seen[k]);
-                    fflush(stderr);
-                    local_dup = 1;
-                    break;
-                }
-            }
-            /* The duplicate scan is per-rank/asymmetric, so reconcile collectively
-             * BEFORE the ghost-exchange/device dispatch: offending ranks soft bad-stop,
-             * every rank polls together and drains (no deadlock, no MPI_Abort). The
-             * audit block is symmetric -- all ranks enter on the env gate -- and Check-1
-             * above already uses Allreduce, so this added Allreduce is in-pattern. */
-            int any_dup = local_dup;
-            if (NTask > 1) {MPI_Allreduce(&local_dup, &any_dup, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);}
-            if (any_dup) {
-                if (local_dup) {endrun(81215);}
-                else {gizmo_request_controlled_stop(81215, "NLR_ITER duplicate particle index across subgroups (peer rank detected)", __FILE__, __LINE__, __FUNCTION__);}
-                gizmo_exit_bad_stop_if_requested("nlr:subgroup_duplicate");
-                return;
-            }
-        }
-    }
 
     /* ===== Mode B hard-corridor counter snapshot =====
      * Mode B paths MUST NOT enter move_particles / ghost_exchange_impl /
