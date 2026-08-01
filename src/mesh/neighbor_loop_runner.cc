@@ -393,44 +393,6 @@ static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
     }
 }
 
-static bool nlr_init_spike_accum_dump(void)
-{
-    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_ACCUM_DUMP");
-    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_DUMP");
-    if(new_set) {
-        if(old_set) {
-            nlr_warn_once_rank0("alias_xval_dump_overridden",
-                "GIZMO_MODE_B_XVAL_DUMP ignored; GIZMO_NLR_SPIKE_ACCUM_DUMP takes precedence.");
-        }
-        return true;
-    }
-    if(old_set) {
-        nlr_warn_once_rank0("alias_xval_dump_deprecated",
-            "GIZMO_MODE_B_XVAL_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_ACCUM_DUMP=1 instead.");
-        return true;
-    }
-    return false;
-}
-
-static bool nlr_init_spike_nb_dump(void)
-{
-    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_NB_DUMP");
-    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_NB_DUMP");
-    if(new_set) {
-        if(old_set) {
-            nlr_warn_once_rank0("alias_xval_nb_dump_overridden",
-                "GIZMO_MODE_B_XVAL_NB_DUMP ignored; GIZMO_NLR_SPIKE_NB_DUMP takes precedence.");
-        }
-        return true;
-    }
-    if(old_set) {
-        nlr_warn_once_rank0("alias_xval_nb_dump_deprecated",
-            "GIZMO_MODE_B_XVAL_NB_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_NB_DUMP=1 instead.");
-        return true;
-    }
-    return false;
-}
-
 } /* anonymous namespace */
 
 int gizmo_nlr_diag_level(void)
@@ -447,25 +409,9 @@ NlrForceMode gizmo_nlr_force_mode(void)
     return (NlrForceMode)cached_int;
 }
 
-bool gizmo_nlr_spike_accum_dump_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) cached = nlr_init_spike_accum_dump() ? 1 : 0;
-    return cached != 0;
-}
-
-bool gizmo_nlr_spike_nb_dump_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) cached = nlr_init_spike_nb_dump() ? 1 : 0;
-    return cached != 0;
-}
-
 /* Adapters — preserve existing call-site names. */
 bool gizmo_nlr_phase0_diag_enabled(void)    { return gizmo_nlr_diag_level() >= 1; }
 bool gizmo_nlr_dispatch_trace_enabled(void) { return gizmo_nlr_diag_level() >= 2; }
-bool gizmo_nlr_xval_dump_enabled(void)      { return gizmo_nlr_spike_accum_dump_enabled(); }
-bool gizmo_nlr_xval_nb_dump_enabled(void)   { return gizmo_nlr_spike_nb_dump_enabled(); }
 
 /* Subgroup-audit env gate. Off by default; harness +
  * test-mode runs set GIZMO_NLR_SUBGROUP_AUDIT=1 to enable hard-aborting
@@ -1050,52 +996,6 @@ static void build_self_actives_host_pre_drift(
     }
 }
 
-/* ============================================================================
- * Diagnostic active-dump emit helper
- *
- * Iterates per-active and calls Spec::diagnostic_dump_active when the env
- * gate is on AND the spec opts in via the SFINAE-detected hook.
- *
- * Timing invariant: post-Spec::apply_active_writeback, pre-caller-side
- * SinkTempInfo scatter. Fires inside the runner before returning to the
- * caller, so the caller's ghost_write_detector_end / scatter loop have
- * not yet run. (Legacy emit fired post-ghost-detector but pre-scatter; the
- * runner-driven emit fires pre-ghost-detector but still pre-scatter.
- * Accumulator values are byte-identical between the two timing points —
- * writeback is the last write into the per-active accumulator buffer
- * before scatter — so the cross-validation dump line content is unchanged.)
- *
- * Mode A path supplies actives_or_null = d_actives (UVM-resident; host-
- * coherent post-fence). Mode B local/remote supply host-frozen actives.
- * Spec hooks read view.active->{pos,h_search,...} fields when needed.
- * ========================================================================== */
-template <typename Spec>
-static void runner_emit_active_dumps(const neighbor_loop_args& args,
-                                      const typename Spec::AccumData *accums,
-                                      const typename Spec::ActiveData *actives_or_null,
-                                      const char *path)
-{
-    if(!gizmo_nlr_xval_dump_enabled()) return;
-    if constexpr (spec_has_dump_active<Spec>::value) {
-        int rank = 0;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        for(int aa = 0; aa < args.num_active; aa++) {
-            ActiveDumpView<Spec> v;
-            v.rank        = rank;
-            v.origin_rank = rank;
-            v.origin_slot = aa;
-            v.active_slot = aa;
-            v.path        = path;
-            v.call_id     = 0;
-            v.args        = &args;
-            v.active      = actives_or_null ? &actives_or_null[aa] : nullptr;
-            v.accum       = &accums[aa];
-            Spec::diagnostic_dump_active(v);
-        }
-        std::fflush(stdout);
-    }
-}
-
 template <typename Spec>
 static void run_mode_b_local(const neighbor_loop_args& args, const double *radii,
                              RunnerStageTimer *tim = nullptr)
@@ -1160,7 +1060,6 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
             Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
         }
     }
-    runner_emit_active_dumps<Spec>(args, accums.data(), actives.data(), "mode_b");
 }
 
 /* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
@@ -1376,7 +1275,6 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
             Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
         }
     }
-    runner_emit_active_dumps<Spec>(args, accums_modeB.data(), actives.data(), "mode_b");
 }
 
 /* ============================================================================
@@ -1454,7 +1352,6 @@ static void mode_b_remote_evaluate_into_buffer(
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    typename Spec::ActiveData *actives_out = nullptr, /* size = args.num_active OR nullptr */
     RunnerStageTimer *tim = nullptr,
     typename Spec::AccumData *accums_oracle_out = nullptr, /* OracleIterative only: brute accum output */
     const typename Spec::DeviceContext *ctx_oracle = nullptr) /* OracleIterative brute context */
@@ -2349,15 +2246,6 @@ static void mode_b_remote_evaluate_into_buffer(
         fflush(stdout);
     }
 
-    /* Optionally export the actives[] snapshot to caller for post-writeback
-     * diagnostic emit (non-iter dump ordering must be
-     * apply_active_writeback FIRST, then runner_emit_active_dumps — the
-     * original timing preserved by exporting actives + letting wrapper emit AFTER its
-     * writeback loop). Iter dispatch caller passes nullptr — diagnostic
-     * plumbing for the iterative path is not yet implemented. */
-    if (actives_out != nullptr && N > 0) {
-        for (int aa = 0; aa < N; aa++) actives_out[aa] = actives[aa];
-    }
 
     /* Oracle under-route HARD-STOP (collective: every rank reaches here). Any
      * rank that saw an untargeted probe match means targeted export is
@@ -2435,14 +2323,8 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         Spec::zero_accum(accums_self[aa]);
     }
 
-    /* Caller-owned actives buffer for post-writeback diagnostic emit.
-     * Helper fills this when actives_out != nullptr; earlier emit ordering
-     * (apply_active_writeback FIRST, runner_emit_active_dumps SECOND) is
-     * preserved by emitting from this buffer AFTER the writeback loop below. */
-    std::vector<ActiveData> actives_for_dumps(N);
-
-    /* Helper runs Stages 1-12; writeback + dumps are the wrapper's
-     * responsibility (preserves the earlier timing). */
+    /* Helper runs Stages 1-12; writeback is the wrapper's responsibility
+     * (preserves the earlier timing). */
     /* SSOT extension: helper takes a RemoteEvalMode enum
      * (Production / OracleCompare / OracleBrutePass). Non-iter wrapper
      * keeps the legacy bool ORACLE template parameter and translates. */
@@ -2451,7 +2333,6 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     mode_b_remote_evaluate_into_buffer<Spec, MODE>(args, radii, cs, ctx,
                                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                                        (N > 0) ? accums_self.data() : nullptr,
-                                                       (N > 0) ? actives_for_dumps.data() : nullptr,
                                                        tim);
 
     /* Stage 12 final: writeback per active. */
@@ -2462,11 +2343,6 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         }
     }
 
-    /* Post-writeback diagnostic emit (env-gated; original ordering restored). */
-    if (N > 0) {
-        runner_emit_active_dumps<Spec>(args, accums_self.data(),
-                                         actives_for_dumps.data(), "mode_b");
-    }
 }
 
 template <typename Spec>
@@ -2747,38 +2623,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         }
     }
 
-    /* (5) Optional diagnostic dumps. Order matches legacy whole-log
-     * shape: NB lines first (legacy emitted from sink_environment_gpu.cc
-     * BEFORE returning to sink_environment.cc, where the accumulator dump
-     * fired), then accumulator lines. NB dump is Mode A only; the GPU CSR
-     * host-copy is allocated only when its env gate is on (zero overhead
-     * off). Accumulator dump preserves legacy line shape. */
-    if constexpr (spec_has_dump_neighbor_list<Spec>::value) {
-        if(gizmo_nlr_xval_nb_dump_enabled() && gnl.total_pairs > 0) {
-            std::vector<int> nbrs_host((size_t)gnl.total_pairs);
-            gpu_ngb_copy_neighbors_to_host(&gnl, nbrs_host.data());
-            int64_t *offsets = gnl.offsets;
-            int rank = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            for(int aa = 0; aa < N; aa++) {
-                NeighborListDumpView<Spec> v;
-                v.rank          = rank;
-                v.origin_rank   = rank;
-                v.origin_slot   = aa;
-                v.active_slot   = aa;
-                v.path          = "gpu_ngl";
-                v.call_id       = 1;
-                v.args          = &args;
-                v.active        = &d_actives[aa];
-                v.candidate_ids = nbrs_host.data() + offsets[aa];
-                /* per-active neighbor count is bounded by num_total < 2^31 */
-                v.n_candidates  = (int)(offsets[aa + 1] - offsets[aa]);
-                Spec::diagnostic_dump_neighbor_list(v);
-            }
-            std::fflush(stdout);
-        }
-    }
-    runner_emit_active_dumps<Spec>(args, d_accums, d_actives, "gpu_ngl");
 
     /* Cleanup. SIDX cache pointer passed so the free leaves cached storage
      * intact for sink_feed/sink_swk reuse (matches existing
@@ -3982,8 +3826,6 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
         drv.ctx,                         /* driver-owned DeviceContext */
         (unsigned int)sgr.j_type_bitmask, /* per-subgroup mask */
         (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*actives_out=*/nullptr,         /* iter path: skip dumps (proper
-                                             diagnostic plumbing lands later) */
         /*tim=*/nullptr);
 
     /* Scatter compacted accums back into driver-owned per-slot accum_uvm.
@@ -4517,7 +4359,6 @@ static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv,
         drv.ctx_oracle,
         (unsigned int)sgr.j_type_bitmask,
         (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*actives_out=*/nullptr,
         /*tim=*/nullptr);
 
     for (int k = 0; k < n_compacted; k++) {
@@ -4580,7 +4421,6 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle(
         drv.ctx,
         (unsigned int)sgr.j_type_bitmask,
         (n_compacted > 0) ? accums_prod.data()   : nullptr,
-        /*actives_out=*/nullptr,
         /*tim=*/nullptr,
         (n_compacted > 0) ? accums_oracle.data() : nullptr,
         &drv.ctx_oracle);

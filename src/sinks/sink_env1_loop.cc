@@ -12,9 +12,7 @@
  *   PHYSICS HOOKS                — search_radius, populate_call_scalars,
  *                                   apply_active_writeback, merge_accum
  *   IMPORTED-GHOST LIFECYCLE     — write detector + writeback wrappers
- *   DIAGNOSTICS (env-gated)      — compare_accum (PERMANENT), and
- *                                   diagnostic_dump_* (SPIKE / cross-validation
- *                                   probes, to be removed once no longer needed)
+ *   DIAGNOSTICS (env-gated)      — compare_accum (oracle gate)
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -212,21 +210,9 @@ void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 /* ============================================================================
  * DIAGNOSTICS — env-gated, safe to ignore for physics edits.
  *
- * PERMANENT_DIAGNOSTIC : compare_accum (oracle gate, called only when
- *                       GIZMO_NLR_ORACLE=1)
- *
- * SPIKE_DIAGNOSTIC     : diagnostic_dump_active, diagnostic_dump_neighbor_list
- *                       (cross-validation probes from the Mode B bring-up,
- *                       to be removed once no longer needed)
- *
- * Canonical env vars:
- *   GIZMO_NLR_ORACLE=1                gates compare_accum invocation
- *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
- *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      per-active accumulator dump (SPIKE)
- *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call neighbor-list dump (SPIKE)
- * Old names (GIZMO_MODE_B_XVAL_DUMP, GIZMO_MODE_B_XVAL_NB_DUMP) accepted as
- * aliases with rank-0 deprecation warning. See mesh/neighbor_loop_runner.h
- * env-config block for the full alias / conflict policy.
+ * compare_accum is the oracle gate, called only when GIZMO_NLR_ORACLE=1;
+ * GIZMO_NLR_ORACLE_DUMP=1 adds a field-by-field mismatch dump. See the
+ * mesh/neighbor_loop_runner.h env-config block.
  * ========================================================================== */
 
 /* PERMANENT_DIAGNOSTIC — oracle compare.
@@ -285,69 +271,6 @@ double SinkEnv1Spec::compare_accum(const AccumData& local, const AccumData& orac
     return max_rel;
 }
 
-/* SPIKE_DIAGNOSTIC — per-active accumulator dump (cross-validation).
- *
- * Stable line shape across the runner's Mode A and Mode B paths. Active
- * line label "MODEB_XVAL" is preserved for parser compatibility; rename to
- * a single GIZMO_NLR_DIAG=<level>-driven label is queued for the
- * runner-template-hardening pass. */
-void SinkEnv1Spec::diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v)
-{
-    const AccumData& a = *v.accum;
-    std::printf("MODEB_XVAL rank=%d caller=sink_env1 active_local=%d "
-                "Mgas=%g Mstar=%g Malt=%g IE=%g "
-                "Jgas=%g,%g,%g Jstar=%g,%g,%g Jalt=%g,%g,%g\n",
-                v.rank, v.active_slot,
-                (double)a.Mgas_in_Kernel,
-                (double)a.Mstar_in_Kernel,
-                (double)a.Malt_in_Kernel,
-                (double)a.Sink_SurroudingGasInternalEnergy,
-                (double)a.Jgas_in_Kernel[0], (double)a.Jgas_in_Kernel[1], (double)a.Jgas_in_Kernel[2],
-                (double)a.Jstar_in_Kernel[0], (double)a.Jstar_in_Kernel[1], (double)a.Jstar_in_Kernel[2],
-                (double)a.Jalt_in_Kernel[0], (double)a.Jalt_in_Kernel[1], (double)a.Jalt_in_Kernel[2]);
-}
-
-/* SPIKE_DIAGNOSTIC — neighbor-list dump (Mode A only; first call per
- * process). Runner only invokes this when GIZMO_NLR_SPIKE_NB_DUMP=1
- * (or its old alias GIZMO_MODE_B_XVAL_NB_DUMP=1) and the call is on the
- * Mode A path with a live GPU neighbor-list CSR.
- *
- * The runner calls this hook once per active in slot order
- * (0..num_active-1). The first-call gate sets s_fired only after the
- * LAST active of the first call has printed, matching legacy semantics. */
-void SinkEnv1Spec::diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v)
-{
-    static int s_fired = 0;
-    if(s_fired) return;
-    const struct neighbor_loop_args& args = *v.args;
-    const struct particle_data *P_host = args.P;
-    const int ii = args.active_list[v.active_slot];
-    const double h_i = (double)v.active->h_search;
-    std::printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=%s "
-                "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
-                "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
-                v.rank, v.active_slot, v.path, h_i,
-                (double)P_host[ii].Pos[0], (double)P_host[ii].Pos[1], (double)P_host[ii].Pos[2],
-                (double)P_host[ii].Vel[0], (double)P_host[ii].Vel[1], (double)P_host[ii].Vel[2],
-                (unsigned long long)P_host[ii].ID, v.n_candidates);
-    for(int idx = 0; idx < v.n_candidates; idx++) {
-        const int j = v.candidate_ids[idx];
-        double dx = (double)P_host[j].Pos[0] - (double)P_host[ii].Pos[0];
-        double dy = (double)P_host[j].Pos[1] - (double)P_host[ii].Pos[1];
-        double dz = (double)P_host[j].Pos[2] - (double)P_host[ii].Pos[2];
-        NEAREST_XYZ(dx, dy, dz, 1);
-        const double r2 = dx*dx + dy*dy + dz*dz;
-        std::printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=%s "
-                    "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g "
-                    "Pos=%.17g,%.17g,%.17g Vel=%.17g,%.17g,%.17g ID=%llu\n",
-                    v.rank, v.active_slot, v.path, j, (int)P_host[j].Type,
-                    (double)P_host[j].Mass, (double)P_host[j].KernelRadius, r2,
-                    (double)P_host[j].Pos[0], (double)P_host[j].Pos[1], (double)P_host[j].Pos[2],
-                    (double)P_host[j].Vel[0], (double)P_host[j].Vel[1], (double)P_host[j].Vel[2],
-                    (unsigned long long)P_host[j].ID);
-    }
-    if(v.active_slot == args.num_active - 1) s_fired = 1;
-}
 
 #else  /* !SINK_PARTICLES */
 
