@@ -1147,8 +1147,8 @@ enum class DispatchPath : int {
  *     // Optional: per-loop dispatch-threshold constants. These are
  *     // code-level dispatch policy for the loop (chosen alongside the
  *     // physics), NOT user-tunable runtime parameters. Default 64/64
- *     // when omitted. Tester env overrides exist but are not production
- *     // interface; see runner.cc TESTERS' KNOBS block.
+ *     // when omitted. The only runtime override is the parameterfile pair
+ *     // NeighborLoopModeBThreshold{Sum,Max}; see runner.cc.
  *     // static constexpr int modeb_threshold_sum = 64;
  *     // static constexpr int modeb_threshold_max = 64;
  *
@@ -2067,21 +2067,15 @@ constexpr bool nlr_spec_has_reset_per_iter_device_context_v =
  * code-level dispatch policy constants for the loop, decided alongside the
  * physics. They are NOT user-tunable runtime parameters.
  *
- * Threshold env vars (GIZMO_NLR_MODEB_THRESHOLD_*, GIZMO_<LOOP>_MODEB_THRESHOLD_*)
- * are TESTERS' KNOBS only — temporary overrides for runner-internal testing.
- * They are NOT part of the production interface, NOT promoted to params.txt
- * or Config.sh, and emit a rank-0 one-shot "tester only" warning when
- * actually consumed. See the TESTERS' KNOBS block in
- * mesh/neighbor_loop_runner.cc for the full env-var listing, resolution
- * precedence, and warning semantics.
+ * The only runtime override is the parameterfile pair
+ * NeighborLoopModeBThreshold{Sum,Max}, so the value a run used is recorded in
+ * its parameter log. See the dispatch-policy block in
+ * mesh/neighbor_loop_runner.cc.
  *
- * Resolution precedence (per-loop env > global env > Spec constexpr) is
- * preserved by the _for() lookups; invalid env values silently fall through
- * to the next level (no policy change).
+ * Resolution precedence (parameterfile > Spec constexpr) is applied by the
+ * _for() lookups.
  * ========================================================================== */
 
-int  gizmo_nlr_default_modeb_threshold_sum(void);
-int  gizmo_nlr_default_modeb_threshold_max(void);
 int  gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default);
 int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
 
