@@ -146,7 +146,7 @@
  *     - search:    coarse predicate, type mask + per-type hmax pruning
  *     - transport: ghost (Mode A) or peer-to-peer (Mode B)
  *     - drift:     lazy drift_particle on j candidates pre-kernel
- *     - oracle:    GIZMO_<LOOP>_ORACLE=1 → run Mode B + Brute, compare via
+ *     - oracle:    GIZMO_NLR_ORACLE=1 → run Mode B + Brute, compare via
  *                  Spec::compare_accum within Spec::accum_tolerance
  *     - timing:    PHASE0 instrumentation per loop_name
  *
