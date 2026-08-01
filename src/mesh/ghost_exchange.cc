@@ -677,7 +677,6 @@ enum ghost_exchange_result {
 
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
 static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
-static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec);
 
 /* Is this spec eligible for the walk-export routed producer (sender fine-tree
  * export + bounded receiver walk)?  Keyed on the SEARCH MODE and structural spec
@@ -890,7 +889,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     const unsigned int supply_mask  = spec->supply_type_mask;
     const int  search_mode = spec->search_mode;
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
-    double t_ghost_start = my_second(), t_ghost_phase;
+    double t_ghost_start = my_second();
 
     /* save current state for cleanup */
     NumPart_before_ghost = NumPart;
@@ -1029,7 +1028,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
        Step 2: Gather tile metadata from all ranks.
        Each rank sends its tile count and metadata to all ranks.
        ================================================================ */
-    t_ghost_phase = my_second();
     int *all_ntiles = (int *) malloc(NTask * sizeof(int));
     MPI_Allgather(&local_ntiles, 1, MPI_INT, all_ntiles, 1, MPI_INT, MPI_COMM_WORLD);
 
@@ -1483,18 +1481,6 @@ struct gx_export_envelope_t {
     int    nodes[NODELISTLENGTH];
     int    _pad;
 };
-
-/* Per-particle supply-side reach for the [GX_WASTE] diagnostic.  Policy-aware:
- * under the SSOT supply contract, the diagnostic must report the SAME reach
- * the request-driven impl actually used — otherwise it silently lies about
- * whether ghost imports are oversized.  Returns 0 when
- * j's type is outside the spec's supply_type_mask. */
-static double gx_eff_h(int j, const struct ghost_exchange_spec_t *spec)
-{
-    if(!ghost_type_passes((int)P[j].Type, spec->supply_type_mask)) return 0.0;
-    return gx_policy_scaled_h(j, spec->radius_policy,
-                              spec->j_radius_scale, spec->safety_factor);
-}
 
 /* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
  * (mesh/sfc_tiles_functions.h). For each axis, take the periodic-shortened
@@ -2495,7 +2481,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     struct gx_query_t *all_queries = NULL;
     int    total_queries = 0;
     int    bcast_queries_available = 0;
-    double t_step2 = 0.0;
 
     /* === Step 3: per-rank, walk local BVH against each remote rank's queries ===
      *
@@ -2830,7 +2815,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int   used_routed = 0;
     enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry only */
     int   use_hier = 1;   /* H2: hierarchical route constructor (production) */
-    double t_route_construct = 0.0, t_route_alltoallv = 0.0, t_route_walk = 0.0;
 
 
     /* walk_export_only (defined with the cache capabilities above) means: no consumer of the
@@ -2846,7 +2830,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         double tb = my_second();
         ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
                                  &all_q_counts, &q_disps, &all_queries, &total_queries);
-        t_step2 += timediff(tb, my_second());
     }
 
     if(route_pre_available) {
@@ -2854,7 +2837,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                                          h_compact_xyzh, h_tiles, ntiles,
                                          h_pool, num_pool, h_pool_types, supply_mask,
                                          h_bvh, bvh_root, search_mode, periodic_flags, box_sizes,
-                                         use_hier, &t_route_construct, &t_route_alltoallv, &t_route_walk,
+                                         use_hier, nullptr, nullptr, nullptr,
                                          NULL, NULL, NULL, NULL, NULL, NULL, NULL);
         if(matched) { used_routed = 1; installed_producer = GX_INSTALLED_ONEWAY_ROUTED_BVH; }   /* NULL => routed failed collectively => fall back */
     }
@@ -2867,7 +2850,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         double tb = my_second();
         ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
                                  &all_q_counts, &q_disps, &all_queries, &total_queries);
-        t_step2 += timediff(tb, my_second());
         matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                             h_compact_xyzh, h_tiles, ntiles,
                                             h_pool, num_pool, h_pool_types, supply_mask,
