@@ -131,9 +131,8 @@
 /* One-shot rank-0 warning helper.
  *
  * Cached set keyed by string CONTENT (strcmp), not pointer identity, so
- * dynamically-constructed keys (e.g. per-loop env var names like
- * "GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM" assembled at runtime) dedupe
- * correctly per distinct env var rather than per category. Costs a 64x192
+ * dynamically-constructed keys dedupe correctly per distinct key rather than
+ * per category. Costs a 64x192
  * BSS array (~12 KB) and an O(N) lookup per call; both fine for a warning
  * surface.
  *
@@ -221,7 +220,7 @@ void nlr_free_active_list(int *active_list)
 }
 
 /* ============================================================================
- * TESTERS' KNOBS — not production policy
+ * Mode-A/B dispatch thresholds
  *
  * The four env vars below are dispatch-threshold overrides that exist purely
  * for testing the runner's Mode A / Mode B selection. They are NOT part of
@@ -232,25 +231,13 @@ void nlr_free_active_list(int *active_list)
  * Spec::modeb_threshold_max in each NeighborLoopSpec — those are code-level
  * dispatch policy constants for the loop, decided alongside the physics.
  *
- * Recognized env vars (all integer-valued):
- *   GIZMO_NLR_MODEB_THRESHOLD_SUM            global override; sum-of-active
- *   GIZMO_NLR_MODEB_THRESHOLD_MAX            global override; max-rank-active
- *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_SUM   per-loop override (e.g.
- *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_MAX   GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM)
+ * Resolution precedence (first wins):
+ *   1. parameterfile NeighborLoopModeBThreshold{Sum,Max} (-1 = unset;
+ *      any other value overrides, <= 0 disables Mode B)
+ *   2. Spec::modeb_threshold_{sum,max} constexpr (code default)
  *
- * Resolution precedence (first wins; per-loop override beats global):
- *   1. per-loop env GIZMO_<LOOP>_MODEB_THRESHOLD_<SUM|MAX>
- *   2. global env  GIZMO_NLR_MODEB_THRESHOLD_<SUM|MAX>
- *   3. Spec::modeb_threshold_<sum|max> constexpr (code default)
- *
- * Invalid env values (non-integer / negative / > 1e9) are silently ignored
- * and the next precedence level is consulted. This preserves the existing
- * behavior; promoting invalid values to a hard endrun is an explicit policy
- * change deferred until threshold semantics stabilize.
- *
- * When an env override is actually consumed (level 1 or 2), a single rank-0
- * one-shot warning is emitted naming the env var, the resolved value, and
- * the spec_default it overrode, with a "tester only" tag.
+ * The threshold is settable ONLY from the parameterfile, so the value a run
+ * used is recorded in its parameter log. There is no environment override.
  *
  * Force-mode env vars take precedence over threshold dispatch:
  * GIZMO_NLR_FORCE_MODE=A|B selects unconditionally; thresholds are not
@@ -258,8 +245,6 @@ void nlr_free_active_list(int *active_list)
  * runner does an extra Allreduce to populate PHASE0_NLR num_active_global).
  * ========================================================================== */
 
-static int s_global_threshold_sum_cached = -2;
-static int s_global_threshold_max_cached = -2;
 static int parse_int_env(const char *name)
 {
     const char *e = getenv(name);
@@ -269,97 +254,21 @@ static int parse_int_env(const char *name)
     if(!endp || *endp != '\0' || v < 0 || v > 1000000000) return -1;
     return (int)v;
 }
-int gizmo_nlr_default_modeb_threshold_sum(void) {
-    if(s_global_threshold_sum_cached == -2) {
-        s_global_threshold_sum_cached = parse_int_env("GIZMO_NLR_MODEB_THRESHOLD_SUM");
-    }
-    return s_global_threshold_sum_cached;
-}
-int gizmo_nlr_default_modeb_threshold_max(void) {
-    if(s_global_threshold_max_cached == -2) {
-        s_global_threshold_max_cached = parse_int_env("GIZMO_NLR_MODEB_THRESHOLD_MAX");
-    }
-    return s_global_threshold_max_cached;
-}
 
-/* Per-loop env lookup: GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_<SUM|MAX>.
- * Returns the parsed int (or -1 on unset / invalid) AND, on success, writes
- * the constructed env-var name into out_name (size out_cap) so the caller
- * can include it in the tester-knob warning text. */
-static int per_loop_threshold_lookup(const char *loop_name, const char *suffix,
-                                      char *out_name, size_t out_cap)
-{
-    if(out_cap > 0) out_name[0] = '\0';
-    if(!loop_name || !loop_name[0]) return -1;
-    char env_name[160];
-    int j = 0;
-    const char *prefix = "GIZMO_";
-    for(int p = 0; prefix[p] && j < 150; p++) env_name[j++] = prefix[p];
-    for(int p = 0; loop_name[p] && j < 150; p++) {
-        env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
-    }
-    const char *mid = "_MODEB_THRESHOLD_";
-    for(int p = 0; mid[p] && j < 158; p++) env_name[j++] = mid[p];
-    for(int p = 0; suffix[p] && j < 159; p++) env_name[j++] = suffix[p];
-    env_name[j] = '\0';
-    int v = parse_int_env(env_name);
-    if(v >= 0 && out_cap > 0) {
-        size_t copy_n = (size_t)j;
-        if(copy_n >= out_cap) copy_n = out_cap - 1;
-        memcpy(out_name, env_name, copy_n);
-        out_name[copy_n] = '\0';
-    }
-    return v;
-}
 
 int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
 {
-    char per_loop_env[160];
-    int v = per_loop_threshold_lookup(loop_name, "SUM", per_loop_env, sizeof(per_loop_env));
-    if(v >= 0) {
-        /* Dedup key = the per-loop env-var name itself, so distinct loops
-         * each fire their own warning when their per-loop overrides are used. */
-        nlr_warn_once_rank0(per_loop_env,
-            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_sum=%d for loop '%s' "
-            "(not a production interface).",
-            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    v = gizmo_nlr_default_modeb_threshold_sum();
-    if(v >= 0) {
-        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_SUM",
-            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_SUM=%d overrides "
-            "Spec::modeb_threshold_sum=%d (loop '%s'; not a production interface).",
-            v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    /* Production parameterfile override (supported interface, no warning): -1 = unset
-       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    (void)loop_name;
+    /* Parameterfile override (the supported interface): -1 = unset -> use the
+       Spec default; any other value overrides it (<= 0 disables Mode B). */
     { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdSum; if(p != -1) return p; }
     return spec_default;
 }
 int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 {
-    char per_loop_env[160];
-    int v = per_loop_threshold_lookup(loop_name, "MAX", per_loop_env, sizeof(per_loop_env));
-    if(v >= 0) {
-        /* Dedup key = the per-loop env-var name itself (see _sum_for). */
-        nlr_warn_once_rank0(per_loop_env,
-            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_max=%d for loop '%s' "
-            "(not a production interface).",
-            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    v = gizmo_nlr_default_modeb_threshold_max();
-    if(v >= 0) {
-        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_MAX",
-            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_MAX=%d overrides "
-            "Spec::modeb_threshold_max=%d (loop '%s'; not a production interface).",
-            v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    /* Production parameterfile override (supported interface, no warning): -1 = unset
-       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    (void)loop_name;
+    /* Parameterfile override (the supported interface): -1 = unset -> use the
+       Spec default; any other value overrides it (<= 0 disables Mode B). */
     { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdMax; if(p != -1) return p; }
     return spec_default;
 }
