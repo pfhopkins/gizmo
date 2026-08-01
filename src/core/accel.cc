@@ -73,11 +73,7 @@ void compute_hydro_densities_and_forces(void)
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
         ags_density();
 #endif
-        double t_hmax_start = my_second(); double child0_hmax = CPU_ChildCharged;
         force_update_hmax();	/* update kernel lengths in tree */
-        /* hmax wall is charged by force_update_hmax's own chain call; this bracket
-         * only feeds the per-phase record, so it must not charge the bucket again. */
-        double t_bench_hmax = cpu_minus_children(timediff(t_hmax_start, my_second()), child0_hmax);
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
 
         PRINT_STATUS(" ..density & tree-update computation done...");
@@ -105,12 +101,6 @@ void compute_hydro_densities_and_forces(void)
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
         compute_stellar_feedback();
 #endif
-
-        /* Corridor Mass-guardrail: defensive observability check
-         * (diag-gated) — scans ActiveParticleList for any gas with
-         * Mass<=0 post-feedback, the one event that can semantically
-         * invalidate the corridor's frozen row list mid-span. See
-         * hydro_corridor.h for when this must become always-on. */
 
         double t_bench_grad_start = my_second(); double child0_grad = CPU_ChildCharged;
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */

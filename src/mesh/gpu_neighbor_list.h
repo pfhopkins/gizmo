@@ -106,7 +106,6 @@ struct gpu_spatial_index_t {
     /* Per-tile original extent (max axis range at last full rebuild). Used to
      * monitor cumulative bbox dispersion across drifts; if it grows pathologically
      * the next gpu_step_sidx_invalidate_full() resets it. */
-    double *h_tile_orig_max_extent; /* [ntiles] */
     /* Host + device position-staging buffers used by the drift refresh path to
      * bypass the UVM-fault storm of a device-side parallel_for over P_shared.Pos.
      * The bbox-recompute pass on host fills h_pos_buf for every pool member;
@@ -121,7 +120,7 @@ struct gpu_spatial_index_t {
 
 /* Build spatial index (tiles + BVH) on CPU, copy to SharedSpace.
    P_shared must be in SharedSpace (managed memory).
-   caller_label: short tag printed in DIAG_SIDX so we can attribute rebuilds.
+   caller_label: short tag identifying which caller triggered a rebuild.
    radius_policy: per-particle reach used to seed tile->hmax[_by_type] and the
    per-particle compact_xyzh[j*4+3] field — runner Mode A passes
    Spec::radius_policy; non-runner callers (merge_split / radfb_local / twopoint /
@@ -231,13 +230,9 @@ void gpu_sidx_notify_ghost_imported(int start, int count);
 void gpu_sidx_notify_ghost_cleanup(void);
 void gpu_sidx_notify_pool_changed(void);
 
-/* Diagnostic accessors for the SIDX lifecycle counters. Used by GX_RD_CACHE /
- * DIAG_NGL prints under the verbose-diag gate. */
 #ifdef __cplusplus
 extern "C" {
 #endif
-uint64_t gpu_sidx_ghost_epoch(void);
-uint64_t gpu_sidx_pool_epoch(void);
 int      gpu_sidx_last_ghost_start(void);
 int      gpu_sidx_last_ghost_count(void);
 #ifdef __cplusplus

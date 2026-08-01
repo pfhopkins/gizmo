@@ -8,8 +8,8 @@
  * KernelRadius is frozen by force_update_hmax() before the first consumer,
  * ActiveParticleList is frozen at step entry, and the ghost set is a
  * function of the former. The one exception is gas cells driven to
- * Mass<=0 mid-span (sink swallow, full SF conversion) — caught by the
- * Mass guardrail below. What DOES change mid-span is ghost FIELD VALUES
+ * Mass<=0 mid-span (sink swallow, full SF conversion); consumers guard on
+ * Mass>0 and merge_split removes eliminated elements. What DOES change mid-span is ghost FIELD VALUES
  * (stellar feedback dirties hydro fields before gradients; gradients
  * produce CellP.Gradients that hydro_force needs on ghost copies).
  * Sequence in core/accel.cc::compute_hydro_densities_and_forces:
