@@ -89,7 +89,6 @@ bool gizmo_nlr_iter_harness_empty_rank_enabled(void)     { return env_truthy("GI
 bool gizmo_nlr_iter_harness_audit_mangle_enabled(void)   { return env_truthy("GIZMO_NLR_ITER_HARNESS_AUDIT_MANGLE");  }
 bool gizmo_nlr_iter_harness_multi_subgroup_enabled(void) { return env_truthy("GIZMO_NLR_ITER_HARNESS_MULTI_SUBGROUP"); }
 bool gizmo_nlr_iter_harness_ghost_enabled(void)          { return env_truthy("GIZMO_NLR_ITER_HARNESS_GHOST");          }
-bool gizmo_nlr_iter_harness_modea_enabled(void)          { return env_truthy("GIZMO_NLR_ITER_HARNESS_MODEA");          }
 
 /* ============================================================================
  * PASS / FAIL / SKIP emitter — one line per validation point.
@@ -187,11 +186,10 @@ static void run_one_harness_iterative_call(int rank,
     args.num_subgroups  = 1;
     args.subgroups      = &subgroup;
     args.ghost_safety_factor = 1.0;
-    /* The 4-slot pattern sits far below the dispatch threshold, so without an
-     * explicit override this call always runs Mode B and the Mode A arms of
-     * VP 3 and VP 8 never execute. Pin the path the operator asked for. */
-    args.dispatch_override = gizmo_nlr_iter_harness_modea_enabled()
-                                 ? NlrForceMode::A : NlrForceMode::B;
+    /* The 4-slot pattern sits far below the dispatch threshold, so this call
+     * runs Mode B. The Mode A arms of VP 3 and VP 8 are therefore not reached;
+     * this whole harness is scheduled for removal rather than repair. */
+    args.dispatch_override = NlrForceMode::B;
 
     /* Run the iterative loop. The driver instance is constructed inside
      * run_neighbor_loop_iterative; we capture diagnostic counters via a
