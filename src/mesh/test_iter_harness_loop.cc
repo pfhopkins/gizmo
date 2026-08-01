@@ -260,7 +260,6 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
     } else {
         gm = GhostMode::Skip;
     }
-    const bool force_mode_a = (gm == GhostMode::ModeA_ReverseComm);
 
     if (gm == GhostMode::Skip) {
         if (rank == 0) {

@@ -101,8 +101,9 @@ void SinkFeedSpec::apply_active_writeback(const neighbor_loop_args& args,
 /* Per-field merge of a peer's contribution (Mode B remote). Per-field op
  * MUST match the pair_kernel writes. mass_markedswallow_scratch is
  * intentionally NOT in the manifest — per-i scratch, not aggregable
- * across peers. The oracle (FORCE_MODE=B + ORACLE=1) catches drift between
- * this manifest and pair_kernel writes.
+ * across peers. The oracle (Mode B via the parameterfile
+ * NeighborLoopModeBThreshold pair, plus GIZMO_NLR_ORACLE=1) catches drift
+ * between this manifest and pair_kernel writes.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */

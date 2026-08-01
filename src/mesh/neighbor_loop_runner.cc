@@ -2824,7 +2824,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * same frozen query — it does NOT cross-validate Mode A. Mode A vs
      * Mode B active-epoch consistency is a separate concern, deferred.
      */
-    /* Dispatch priority: args.dispatch_override > force mode > adaptive threshold.
+    /* Dispatch priority: args.dispatch_override > adaptive threshold.
      * The args field is the corridor mode-decision hook (hydro_corridor.cc): when
      * a corridor consumer sets this to force coherent Mode A or Mode B across the
      * whole hydro corridor (cellcorrections/gradients/hydro_force), the per-call
@@ -2846,7 +2846,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const double t_runner_start = phase0_on ? MPI_Wtime() : 0.0;
 
     /* Threshold dispatch. Allreduce sum + max of args.num_active.
-     * Skipped when force-mode envs are set (cheap path).
+     * Skipped when the caller supplied a dispatch override (cheap path).
      * PHASE0 num_active_global is captured here when the threshold path
      * already did the Allreduce; on force paths an extra Allreduce is done
      * ONLY when phase0_on. */
@@ -4506,8 +4506,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     const bool oracle_enabled = gizmo_nlr_oracle_enabled_global();
 
     /* ===== Path selection at iter 0 (FIXED for whole call) =====
-     * Integrates with the canonical force-mode / threshold dispatch
-     * (mirrors run_neighbor_loop logic at line 1936+). Path is held fixed
+     * Integrates with the canonical override / threshold dispatch
+     * (mirrors the selection in run_neighbor_loop). Path is held fixed
      * across all iterations of one iterative call.
      *
      * num_active for threshold uses the UNION across all subgroups (base
