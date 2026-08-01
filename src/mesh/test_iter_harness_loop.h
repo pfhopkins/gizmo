@@ -71,6 +71,10 @@ struct IterHarnessTelemetry {
     int       final_dummy_jflag_oracle;   /* drv.ctx_oracle.dummy_jflag — last-iter value */
     long long oracle_mismatch_count;
     int       oracle_enabled;             /* 1 if drv.oracle_enabled at end of call */
+    /* Dispatch path the runner actually took, so assertions key on what
+     * happened rather than on a prediction that can drift from the runner's
+     * own selection logic. 1 = Mode B host walker, 0 = Mode A GPU NGL. */
+    int       dispatch_mode_b;
     /* Total pair count across all slots' final (convergence-iter) accums.
      * Used to guard against vacuous oracle-parity passes when the
      * synthetic search radius is too small to find neighbors. */

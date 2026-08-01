@@ -240,34 +240,35 @@ static void run_one_harness_iterative_call(int rank,
  * ========================================================================== */
 static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
 {
-    const char *force_mode_env = std::getenv("GIZMO_NLR_FORCE_MODE");
-    const bool  force_mode_a   = (force_mode_env && (*force_mode_env == 'A' || *force_mode_env == 'a'));
-    const char *oracle_env     = std::getenv("GIZMO_NLR_ORACLE");
-    const bool  oracle_expected =
-        (oracle_env && (oracle_env[0] == '1' || oracle_env[0] == 't' ||
-                        oracle_env[0] == 'T' || oracle_env[0] == 'y' || oracle_env[0] == 'Y'));
-    const bool  empty_rank      = gizmo_nlr_iter_harness_empty_rank_enabled();
+    /* Scenario selection is the harness's own choice, and the harness then
+     * PINS the runner to the matching path via args.dispatch_override below.
+     * It no longer infers the mode from run configuration: doing so required
+     * the operator to set the mode and the scenario consistently, and a
+     * mismatch produced a silent Skip rather than a failure. */
+    const bool oracle_expected = gizmo_nlr_oracle_enabled_global();
+    const bool empty_rank      = gizmo_nlr_iter_harness_empty_rank_enabled();
 
     enum class GhostMode { Skip, ModeB_Suppression, ModeA_ReverseComm };
     GhostMode gm;
     const char *mode_label = "?";
-    if (!force_mode_a && oracle_expected) {
+    if (oracle_expected) {
         gm = GhostMode::ModeB_Suppression;
         mode_label = "Mode B + oracle (suppression+parity)";
-    } else if (force_mode_a && !oracle_expected && empty_rank) {
+    } else if (empty_rank) {
         gm = GhostMode::ModeA_ReverseComm;
         mode_label = "Mode A + empty_rank (reverse-comm)";
     } else {
         gm = GhostMode::Skip;
     }
+    const bool force_mode_a = (gm == GhostMode::ModeA_ReverseComm);
 
     if (gm == GhostMode::Skip) {
         if (rank == 0) {
             emit_vp(11, VpStatus::Skip,
-                "ghost: need (FORCE_MODE=B + ORACLE=1) for Mode B suppression OR "
-                "(FORCE_MODE=A + EMPTY_RANK=1 + no oracle) for Mode A reverse-comm; "
-                "got force_a=%d oracle=%d empty_rank=%d",
-                (int)force_mode_a, (int)oracle_expected, (int)empty_rank);
+                "ghost: need GIZMO_NLR_ORACLE=1 for Mode B suppression OR "
+                "GIZMO_NLR_ITER_HARNESS_EMPTY_RANK=1 (no oracle) for Mode A "
+                "reverse-comm; got oracle=%d empty_rank=%d",
+                (int)oracle_expected, (int)empty_rank);
         }
         return;
     }
@@ -453,6 +454,10 @@ static void run_iter_harness_ghost_subtest(int rank, int /*nproc*/)
     args.num_subgroups  = 1;
     args.subgroups      = &subgroup;
     args.ghost_safety_factor = 1.0;
+    /* Pin the path this scenario is written to exercise, so the subtest
+     * cannot silently run against the other one. */
+    args.dispatch_override = (gm == GhostMode::ModeA_ReverseComm)
+                                 ? NlrForceMode::A : NlrForceMode::B;
 
     run_neighbor_loop_iterative<IterHarnessGhostSpec>(args);
 
@@ -735,20 +740,17 @@ void run_iter_harness_tests(void)
         endrun(0);
     }
 
-    /* Detect run mode for assertion routing. Re-read the same envs the
-     * runner reads (SSOT). */
-    const char *force_mode = std::getenv("GIZMO_NLR_FORCE_MODE");
-    const bool  forced_mode_a = (force_mode && (*force_mode == 'A' || *force_mode == 'a'));
-    const char *oracle_env   = std::getenv("GIZMO_NLR_ORACLE");
-    const bool  oracle_expected =
-        (oracle_env && (oracle_env[0] == '1' || oracle_env[0] == 't' ||
-                        oracle_env[0] == 'T' || oracle_env[0] == 'y' ||
-                        oracle_env[0] == 'Y'));
-
     /* Run one iterative call — single subgroup, 4 slots. */
     IterHarnessTelemetry tel{};
     int                  n_actives_this_rank = 0;
     run_one_harness_iterative_call(rank, &tel, &n_actives_this_rank);
+
+    /* Route the assertions on what the runner ACTUALLY did, reported back in
+     * the telemetry, rather than on a prediction reconstructed from run
+     * configuration. A predictor has to restate the runner's own selection
+     * rule, and drifts silently the moment that rule changes. */
+    const bool forced_mode_a   = (tel.dispatch_mode_b == 0);
+    const bool oracle_expected = (tel.oracle_enabled != 0);
 
     /* ========================================================================
      * VP 7: apply_active_writeback exactly-once-per-slot, ACROSS ALL RANKS.

@@ -301,57 +301,6 @@ static int nlr_init_diag_level(void)
     return level;
 }
 
-/* Initialize force mode. Conflict cases endrun (collective). */
-static NlrForceMode nlr_init_force_mode(void)
-{
-    const char *raw_new = getenv("GIZMO_NLR_FORCE_MODE");
-    bool new_set = (raw_new && raw_new[0]);
-    bool old_a   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEA");
-    bool old_b   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEB");
-
-    if(new_set && (old_a || old_b)) {
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE='%s' is set AND "
-                    "old GIZMO_NLR_FORCE_MODEA=%d / GIZMO_NLR_FORCE_MODEB=%d are set. "
-                    "Use only one. Old names are deprecated.\n",
-                    raw_new, (int)old_a, (int)old_b);
-            fflush(stderr);
-        }
-        endrun(81101);
-    }
-    if(old_a && old_b) {
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODEA and GIZMO_NLR_FORCE_MODEB "
-                    "are both set; mutually exclusive.\n");
-            fflush(stderr);
-        }
-        endrun(81102);
-    }
-
-    if(new_set) {
-        if(raw_new[0] == 'A' && raw_new[1] == '\0') return NlrForceMode::A;
-        if(raw_new[0] == 'B' && raw_new[1] == '\0') return NlrForceMode::B;
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE=\"%s\" must be 'A' or 'B'.\n",
-                    raw_new);
-            fflush(stderr);
-        }
-        endrun(81103);
-    }
-
-    if(old_a) {
-        nlr_warn_once_rank0("alias_force_modea_deprecated",
-            "GIZMO_NLR_FORCE_MODEA=1 is deprecated; use GIZMO_NLR_FORCE_MODE=A instead.");
-        return NlrForceMode::A;
-    }
-    if(old_b) {
-        nlr_warn_once_rank0("alias_force_modeb_deprecated",
-            "GIZMO_NLR_FORCE_MODEB=1 is deprecated; use GIZMO_NLR_FORCE_MODE=B instead.");
-        return NlrForceMode::B;
-    }
-    return NlrForceMode::None;
-}
-
 /* Largest global active count the oracle brute walk is allowed to attempt.
  * The walk is O(N_active x N_local) per query and cannot be chunked, so it
  * becomes intractable well before this bound; run the oracle at small N. */
@@ -403,13 +352,6 @@ int gizmo_nlr_diag_level(void)
     static int cached = -1;
     if(cached < 0) cached = nlr_init_diag_level();
     return cached;
-}
-
-NlrForceMode gizmo_nlr_force_mode(void)
-{
-    static int  cached_int   = -1;          /* -1 = uninit; 0/1/2 = enum */
-    if(cached_int < 0) cached_int = (int)nlr_init_force_mode();
-    return (NlrForceMode)cached_int;
 }
 
 /* Adapters — preserve existing call-site names. */
@@ -510,8 +452,6 @@ struct StageTimer {
 };
 } /* anonymous namespace */
 
-bool gizmo_nlr_force_mode_b_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::B; }
-bool gizmo_nlr_force_mode_a_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::A; }
 bool gizmo_nlr_oracle_enabled_global(void) {
     static int cached = -1;
     if(cached < 0) {
@@ -2869,16 +2809,14 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     /* ---- Dispatch ----
      *
      * Selection precedence (highest first):
-     *   1. GIZMO_NLR_FORCE_MODE=A → Mode A unconditionally.
-     *   2. GIZMO_NLR_FORCE_MODE=B → Mode B (local if NTask==1, remote else).
+     *   1. args.dispatch_override = A -> Mode A unconditionally.
+     *   2. args.dispatch_override = B -> Mode B (local if NTask==1, remote else).
      *   3. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
      *      max_active<=TM) → Mode B; else Mode A. Hierarchy of TS/TM:
      *      parameterfile NeighborLoopModeBThreshold{Sum,Max} >
      *      Spec::modeb_threshold_{sum,max} constexpr defaults (64/64 today).
-     *
-     * Force-mode conflict cases (both old and new vars set, both old vars
-     * set together, invalid value) are caught and endrun'd centrally inside
-     * gizmo_nlr_force_mode(); see the env-config block earlier in this TU.
+     *      Setting the parameterfile pair above every active count selects
+     *      Mode B for the whole run; setting it to 0 selects Mode A.
      *
      * Note (active-epoch caveat): Mode B host-frozen actives[] are
      * NOT bit-equivalent to Mode A's device-staged post-neighbor-list-build
@@ -2891,9 +2829,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * a corridor consumer sets this to force coherent Mode A or Mode B across the
      * whole hydro corridor (cellcorrections/gradients/hydro_force), the per-call
      * override wins so corridor coherence is enforced, not advisory. */
-    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
-                                      ? args.dispatch_override
-                                      : gizmo_nlr_force_mode();
+    const NlrForceMode force_mode = args.dispatch_override;
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
     const bool oracle_on = gizmo_nlr_oracle_enabled_global();
@@ -4582,9 +4518,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * mechfb, etc.) generally won't set dispatch_override since the
      * corridor mode flows through cellcorrections/gradients/hydro_force; preserved
      * here for completeness and future use. */
-    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
-                                      ? args.dispatch_override
-                                      : gizmo_nlr_force_mode();
+    const NlrForceMode force_mode = args.dispatch_override;
     DispatchPath path;
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
@@ -4650,7 +4584,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * imported pool catches only CSR/cached-lookup/rebuild bugs (covered
      * by the synthetic harness) and cannot validate ghost-import
      * completeness (walks the same imported pool as production). For
-     * oracle validation force Mode B: GIZMO_NLR_FORCE_MODE=B GIZMO_NLR_ORACLE=1. */
+     * oracle validation select Mode B with the parameterfile
+     * NeighborLoopModeBThreshold pair, and set GIZMO_NLR_ORACLE=1. */
     if (oracle_enabled && path == DispatchPath::ModeA_GPU_NGL) {
         if (ThisTask == 0) {
             fprintf(stderr,
@@ -4660,8 +4595,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 "would only catch cached-CSR/lookup/rebuild bugs (covered by "
                 "the synthetic harness in step 3) and cannot validate ghost-"
                 "import completeness (walks the same imported pool as "
-                "production). For oracle validation, force Mode B: "
-                "GIZMO_NLR_FORCE_MODE=B GIZMO_NLR_ORACLE=1.\n",
+                "production). For oracle validation select Mode B with the "
+                "parameterfile NeighborLoopModeBThreshold pair and set "
+                "GIZMO_NLR_ORACLE=1.\n",
                 Spec::loop_name);
             fflush(stderr);
         }
@@ -5313,6 +5249,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             drv.oracle_enabled ? drv.ctx_oracle.dummy_jflag : 0;
         g_iter_harness_telemetry.oracle_mismatch_count    = drv.oracle_mismatch_count;
         g_iter_harness_telemetry.oracle_enabled           = drv.oracle_enabled ? 1 : 0;
+        g_iter_harness_telemetry.dispatch_mode_b          =
+            (path == DispatchPath::ModeB_HostWalker) ? 1 : 0;
         /* Sum pair counts across all converged slots in all subgroups.
          * accum_uvm holds the final-iter accum for each slot (never zeroed
          * after convergence — invariant). For non-oracle runs,

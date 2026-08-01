@@ -98,7 +98,8 @@ void SinkEnv1Spec::apply_active_writeback(const neighbor_loop_args& args,
  * accumulation is via repeated pair_kernel calls (which already encode
  * the right per-field op).
  *
- * The oracle (GIZMO_NLR_FORCE_MODE=B + GIZMO_NLR_ORACLE=1) catches drift
+ * The oracle (Mode B via the parameterfile NeighborLoopModeBThreshold pair,
+ * plus GIZMO_NLR_ORACLE=1) catches drift
  * between this manifest and pair_kernel writes — any mismatch surfaces
  * as ORACLE MISMATCH on the next run.
  *
