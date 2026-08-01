@@ -539,14 +539,9 @@ inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit)
  *   - PEER-eval correctness on a remote rank: ActiveData arrived via MPI
  *     envelope carrying the SENDER's rank-local snapshots; receiver must
  *     overwrite with its own values.
- *   - Oracle correctness on ANY rank: the runner's oracle paths (inline
- *     compare / iterative dual) build a LOCAL ctx_oracle_* by copying ctx
- *     and flipping oracle_dry_run via set_oracle_brute_pass — but the
- *     ActiveData snapshot taken at load_active still carries the OLD
- *     oracle_dry_run. Without per-eval-pass binding, pair_kernel sees
- *     oracle_dry_run=false on the brute pass too, j-side writes fire
- *     twice, and the oracle silently reports no mismatch (atomic-min is
- *     idempotent; atomic-add doubles → 2× coupling).
+ *   - Any eval pass that runs against a ctx other than the one load_active
+ *     snapshotted: the snapshot carries the OLD context's rank-local fields,
+ *     so without per-eval-pass binding the pair kernel reads stale values.
  *
  * Specs whose ActiveData is purely physical (pos/vel/mass/scalars only) do
  * NOT need this hook; the trait returns false and the runner skips the call.
@@ -652,23 +647,6 @@ struct NlrDeviceContextCleanupGuard {
         }
     }
 };
-
-/* SFINAE detection of optional Spec::set_oracle_brute_pass — still consumed by
- * the Mode-B remote helper's brute-pass branches, which are removed with the
- * rest of that helper's oracle surface. */
-template <typename Spec, typename = void>
-struct nlr_spec_has_set_oracle_brute_pass : std::false_type {};
-
-template <typename Spec>
-struct nlr_spec_has_set_oracle_brute_pass<
-    Spec,
-    std::void_t<decltype(Spec::set_oracle_brute_pass(
-        std::declval<typename Spec::DeviceContext&>(), bool{}))>>
-    : std::true_type {};
-
-template <typename Spec>
-constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
-    nlr_spec_has_set_oracle_brute_pass<Spec>::value;
 
 /* SFINAE detection of optional Spec::radius_tolerance (radius convergence tolerance is not the same
  * semantic object as the accumulator comparison tolerance). Defaults to
@@ -840,31 +818,6 @@ static inline const double* nlr_stage_explicit_source_positions(
     return nullptr;
 }
 
-/* Remote-helper evaluation mode (SSOT guardrail). Replaces the
- * boolean ORACLE template parameter on mode_b_remote_evaluate_into_buffer.
- * (Distinct from RemoteEvalMode above, which is the Mode B comm strategy
- * enum for callers; this one is the *helper*-internal mode selector.)
- *
- *   Production       — tree walk only; writes tree result into accums_out.
- *                      Production iter dispatch + non-iter non-oracle.
- *   OracleCompare    — tree + brute + internal compare (emit per-slot
- *                      mismatches inline). Writes tree result into
- *                      accums_out. Non-iter oracle wrapper only.
- *   OracleBrutePass  — brute walk only against caller-owned brute-pass-
- *                      guarded ctx; writes brute result into accums_out.
- *                      Iterative oracle dispatch — caller-side per-iter
- *                      4-thing compare handles divergence detection. */
-enum class RemoteHelperMode : int {
-    Production       = 0,
-    OracleCompare    = 1,
-    OracleBrutePass  = 2,
-    /* OracleIterative: collect tree + brute candidate sets in ONE shared
-     * epoch (pre-drift both, drift union, evaluate brute-first then tree).
-     * Outputs tree -> accums_out, brute -> accums_oracle_out.  Used by the
-     * iterative remote oracle combined dispatch to guarantee epoch
-     * equivalence between production and oracle trajectories. */
-    OracleIterative  = 3,
-};
 
 /* ============================================================================
  * Iteration driver contract
@@ -956,7 +909,6 @@ struct NoAccum   {};
 enum class DispatchPath : int {
     ModeA_GPU_NGL    = 0,
     ModeB_HostWalker = 1,
-    Brute_Oracle     = 2,
 };
 
 /* ============================================================================
@@ -2053,17 +2005,6 @@ struct NlrReplyEnvelope {
     AccumData accum;
 };
 
-/* Temporary iterative-oracle transport payload.
- * This exists only to keep the port-validation oracle from doing two reply
- * exchanges with identical tags. The oracle path is validation scaffolding,
- * not permanent runner architecture; remove this once the oracle path is removed. */
-template <typename AccumData>
-struct NlrDualReplyEnvelope {
-    int       origin_slot;
-    int       origin_rank;
-    AccumData accum_prod;
-    AccumData accum_oracle;
-};
 
 /* Cached env-gate adapter. Read-once-per-process; mid-run env changes do
  * not take effect. Delegates to gizmo_nlr_diag_level() >= 1. */
