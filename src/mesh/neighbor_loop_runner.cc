@@ -160,11 +160,6 @@ static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
     fflush(stderr);
 }
 
-static bool nlr_env_is_one(const char *name) {
-    const char *e = getenv(name);
-    return (e && e[0] == '1' && e[1] == '\0');
-}
-
 /* ============================================================================
  * Caller-side helpers (declared in runner.h).
  *
@@ -209,7 +204,7 @@ neighbor_loop_args nlr_default_args(void)
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
     args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
     args.external_csr        = nullptr;        /* nullptr => runner builds its own CSR */
-    args.dispatch_override   = NlrForceMode::None; /* None => env/adaptive */
+    args.dispatch_override   = NlrForceMode::None; /* None => adaptive threshold */
     return args;
 }
 
@@ -270,8 +265,7 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 
 namespace {
 
-/* nlr_warn_once_rank0 and nlr_env_is_one are defined at file scope above
- * (near the includes) so the threshold block can use them too. */
+/* nlr_warn_once_rank0 is defined at file scope above (near the includes). */
 
 /* Initialize diag level. */
 static int nlr_init_diag_level(void)
@@ -2220,7 +2214,6 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
                                    RunnerStageTimer *tim = nullptr)
 {
     using AccumData    = typename Spec::AccumData;
-    using ActiveData   = typename Spec::ActiveData;
     using DeviceCtx    = typename Spec::DeviceContext;
 
     const int N = args.num_active;
@@ -4513,8 +4506,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * num_active for threshold uses the UNION across all subgroups (base
      * args.num_active per the doc convention). This selection is single-subgroup-only;
      * multi-subgroup walker mask-threading is handled separately. */
-    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive
-     * (mirrors non-iter site near line 2442). Iterative Specs (density, ags_density,
+    /* Dispatch priority: args.dispatch_override > adaptive threshold
+     * (mirrors the non-iterative site). Iterative Specs (density, ags_density,
      * mechfb, etc.) generally won't set dispatch_override since the
      * corridor mode flows through cellcorrections/gradients/hydro_force; preserved
      * here for completeness and future use. */
