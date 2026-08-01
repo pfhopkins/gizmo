@@ -4,7 +4,7 @@
  *   c++ -std=c++17 -O0 -g dev/test_dirty_tracker.cc \
  *       src/mesh/gpu_dirty_tracker.cc -o /tmp/test_dirty_tracker
  *
- * Tests cover the cases codex enumerated:
+ * Tests cover the following cases:
  *   1. overlapping cache ranges both receive marks
  *   2. consuming one cache does not clear the other
  *   3. duplicate indices dedup

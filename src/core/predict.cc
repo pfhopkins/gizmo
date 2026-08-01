@@ -7,7 +7,6 @@
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 #include "../mesh/kernel.h"
@@ -294,7 +293,6 @@ extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
 void gizmo_full_drift_to(integertime time1)
 {
     if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
-    double t_start = my_second();
     int i;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -307,7 +305,6 @@ void gizmo_full_drift_to(integertime time1)
      * Conservative: covers all types at once. (A future refinement could narrow
      * to only Type 0 + AGS-active types if profiling shows this is too eager.) */
     gizmo_mark_kernel_radius_dirty_range(0, NumPart);
-    gizmo_step_phase_record("mp_full_drift_time", timediff(t_start, my_second()));
     /* One post-drift arena coherence point. Under UVM-canonical builds the
      * arena IS the host P/CellP (alias), so refresh is a diagnostic-counter
      * no-op; kept for forward compat with non-aliased arena builds. */
@@ -322,9 +319,7 @@ void move_particles(integertime time1)
      * declarations/lifecycle_counters.h. */
     g_global_drift_counter++;
 
-    gizmo_step_phase_record("mp_calls", 1.0);
     if(time1 <= g_last_full_drift_Ti) {
-        gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — already drifted */
         return;
     }
     /* Drift only the active-particle set. Non-active particles stay at their
@@ -334,8 +329,6 @@ void move_particles(integertime time1)
      * IMPORTANT: do NOT advance g_last_full_drift_Ti here — full drift
      * has not happened, so a subsequent gizmo_full_drift_to(time1) call
      * (e.g. before domain_decomp) must still execute the full loop. */
-    gizmo_step_phase_record("mp_misses", 1.0);
-    double t_mp_start = my_second();
     int n_active = 0;
     /* Materialize the active list into a vector once so we can both drive the
      * drift loop AND batch-mark h-dirty after. Vector construction is O(N_active)
@@ -356,8 +349,6 @@ void move_particles(integertime time1)
      * (predict.cc:160,229). Mark h-dirty for both GPU SIDX tracker and host
      * glt cache via the SSOT helper. */
     if(n_active > 0) gizmo_mark_kernel_radius_dirty_indices(active_idx.data(), n_active);
-    gizmo_step_phase_record("mp_drift_time",   timediff(t_mp_start, my_second()));
-    gizmo_step_phase_record("mp_active_drift", (double)n_active);
 }
 
 

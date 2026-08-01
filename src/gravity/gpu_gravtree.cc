@@ -33,7 +33,6 @@
 #ifdef GRAVTREE_SOURCE_LAZY_SUPPORTED
 #define GRAVTREE_SOURCE_DEVICE_TU
 #endif
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
@@ -1186,22 +1185,18 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * SoA mirror in one pass — no host loop, no AoS->SoA reseed afterwards.
      * Cost is O(active drifted nodes) with GPU parallelism over
      * Numnodestree (early-out when Ti_current matches). */
-    /* Sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
-    double t_grv_start = my_second();
     /* Host-side wrapper in the GPU TU must use the out-of-line host accessor
      * `gizmo_host_ti_current()` (defined in core/predict.cc) rather than a
      * bare All.Ti_Current read, so the host-snapshot intent at this call
      * site stays correct even when the device-pass redirect is active. */
     integertime ti_curr_host = gizmo_host_ti_current();
     move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
-    double t_grv_mp = my_second();
     /* SoA must exist before the drift kernel — it writes mirror fields. */
     gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
     if(gpu_force_drift_nodes(ti_curr_host) != 0) {
         endrun(929702);
         return 1;   /* soft bad-stop: skip walk on un-drifted nodes (idx_host not yet alloc'd); drains at next poll */
     }
-    double t_grv_drift_nodes = my_second();
 
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
@@ -1217,14 +1212,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
         idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
-    double t_grv_active_list = my_second();
 
     /* Acquire the arena (P_dev + CellP_dev in SharedSpace) */
     gpu_particles_arena_set_site("gpu_gravtree_walk_primary");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data    *P_dev    = gpu_particles_arena_P();
     struct gas_cell_data    *CellP_dev = gpu_particles_arena_CellP();
-    double t_grv_arena = my_second();
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
@@ -1370,7 +1363,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
     cr_data_snap.t_max_cr  = t_max_cr;
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 
-    double t_grv_precompute = my_second();
     /* Scratch arrays for per-target results */
     int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
@@ -1456,7 +1448,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
     /* Invariant guard: reset the per-walk counter. */
     g_inv_fterm_aggregate = 0;
 
-    double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
@@ -1501,11 +1492,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * zero is how the foreign-leaf import path is shown to be behaving, and that confirmation is
      * unavailable if only the failure prints. The counter is per-rank, so every rank reports its
      * own value -- a rank-0-only line would leave the other ranks unconfirmed. */
-    if(gizmo_verbose_diag()) {
-        printf("[gravtree invariant rank=%d] unopenable foreign-terminal aggregates accepted = %lld\n",
-               ThisTask, g_inv_fterm_aggregate);
-        fflush(stdout);
-    }
     if(g_inv_fterm_aggregate > 0) {
         printf("[GRAV-INVARIANT VIOLATION rank=%d] %lld predicate-OPEN foreign-terminal nodes accepted "
                "as multipoles but NOT tagged real leaves (unopenable aggregates in leaf-sensitive "
@@ -1514,7 +1500,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
         fflush(stdout);
         endrun(90000087);
     }
-    double t_grv_post_kernel = my_second();
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
@@ -1639,26 +1624,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Costtotal += costtotal_added;
 
     /* Diagnostic: print GPU walk summary + first 10 particles for LET vs no-LET comparison */
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        long long tot_foreign = 0;
-        for(int a = 0; a < num_active; a++) { if(!d_failed[a]) tot_foreign += d_foreign[a]; }
-        printf("GPU_WALK_SUMMARY[t=0 LET=%d]: nsucceeded=%d/%d total_ninter=%.0f total_foreign=%lld avg_ninter=%.1f maxForeignNodes=%d Numforeignnodes=%d\n",
-               (maxForeignNodes_snap > 0) ? 1 : 0, nsucceeded, num_active, costtotal_added,
-               tot_foreign, (nsucceeded > 0) ? costtotal_added / nsucceeded : 0.0,
-               maxForeignNodes_snap, Numforeignnodes);
-        int nprinted = 0;
-        for(int a = 0; a < num_active && nprinted < 10; a++) {
-            int i = d_idx[a];
-            if(!d_failed[a]) {
-                Vec3<double> av = d_acc[a];
-                double amag = sqrt(av[0]*av[0] + av[1]*av[1] + av[2]*av[2]);
-                printf("GPU_WALK_PART[t=0 a=%d ID=%llu]: |acc|=%.8g acc=(%.6g,%.6g,%.6g) ninter=%d foreign=%d\n",
-                       i, (unsigned long long)P[i].ID, amag, av[0], av[1], av[2], d_ninter[a], d_foreign[a]);
-                nprinted++;
-            }
-        }
-        fflush(stdout);
-    }
 
     /* mark_clean (not invalidate): the per-active-i
      * P_dev[i]=P[i] mirror in the scatter loop above keeps arena coherent
@@ -1701,23 +1666,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 
     myfree(idx_host);
-
-    /* Sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off.
-     * grav_tree_walk cost can look suspiciously similar to other
-     * full-NumPart taxes; this breakdown isolates which is to blame. */
-    {
-        double t_grv_done = my_second();
-        gizmo_step_phase_record("grav_move_particles",  timediff(t_grv_start,        t_grv_mp));
-        gizmo_step_phase_record("grav_drift_nodes",     timediff(t_grv_mp,           t_grv_drift_nodes));
-        gizmo_step_phase_record("grav_active_list",     timediff(t_grv_drift_nodes,  t_grv_active_list));
-        gizmo_step_phase_record("grav_arena_acquire",   timediff(t_grv_active_list,  t_grv_arena));
-        gizmo_step_phase_record("grav_full_precompute", timediff(t_grv_arena,        t_grv_precompute));
-        gizmo_step_phase_record("grav_scratch_alloc",   timediff(t_grv_precompute,   t_grv_pre_kernel));
-        gizmo_step_phase_record("grav_kernel",          timediff(t_grv_pre_kernel,   t_grv_post_kernel));
-        gizmo_step_phase_record("grav_postwalk",        timediff(t_grv_post_kernel,  t_grv_done));
-        /* Interaction counter from inside the function */
-        gizmo_step_phase_record("grav_num_active_dbl",  (double)num_active);
-    }
 
     return nsucceeded;
 }

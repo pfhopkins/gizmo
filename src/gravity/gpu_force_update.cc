@@ -43,7 +43,6 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
@@ -74,9 +73,6 @@ extern "C" void gpu_force_update_tree(void)
 {
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree (GPU)");
 
-    /* Sub-bucket timing for the force_update_tree top-level cost. */
-    double t_fut_start = my_second();
-
     GlobFlag++;
     DomainNumChanged = 0;
 
@@ -93,7 +89,6 @@ extern "C" void gpu_force_update_tree(void)
      * On UVM systems this is a same-pointer re-registration (cheap). */
     gpu_particles_arena_set_site("gpu_force_update_domainlist");
     gpu_particles_arena_acquire(NumPart, P, CellP);
-    double t_fut_arena = my_second();
 
     /* Stage 1: drift all stale nodes to Ti_Current (reuse the existing drift kernel).
      * Uses an out-of-line host accessor for the host-side Ti_Current read. */
@@ -206,8 +201,6 @@ extern "C" void gpu_force_update_tree(void)
             });
         Kokkos::fence();
         gizmo_gpu_check_last_error("gpu_force_kick", num_active);
-        double t_fut_kernel_done = my_second();
-        gizmo_step_phase_record("fut_kernel", timediff(t_fut_drift_nodes, t_fut_kernel_done));
 
         /* Zero P[i].dp on the host.  On UVM systems Pp==P so the kernel zero above
          * already did this; on non-UVM (Mac CPU Kokkos) the arena is a separate
@@ -228,9 +221,7 @@ finish_mpi:
     /* Stage 3: host-side MPI Allgatherv + ancestor apply.
      * force_finish_kick_nodes reads DomainList (now UVM), DomainNumChanged, and
      * writes to Extnodes/Nodes (UVM) — all coherent after Kokkos::fence() above. */
-    double t_fut_pre_mpi = my_second();
     force_finish_kick_nodes();
-    double t_fut_post_mpi = my_second();
 
     /* Restore global DomainList to NULL and free UVM buffers. */
     DomainList = NULL;
@@ -239,14 +230,6 @@ finish_mpi:
 
     PRINT_STATUS(" ..Tree has been updated dynamically (GPU)");
 
-    /* Sub-bucket timing records — env-gated; no-op when off. */
-    {
-        double t_fut_done = my_second();
-        gizmo_step_phase_record("fut_arena_acquire", timediff(t_fut_start,    t_fut_arena));
-        gizmo_step_phase_record("fut_drift_nodes",   timediff(t_fut_arena,    t_fut_drift_nodes));
-        gizmo_step_phase_record("fut_mpi",           timediff(t_fut_pre_mpi,  t_fut_post_mpi));
-        gizmo_step_phase_record("fut_total",         timediff(t_fut_start,    t_fut_done));
-    }
 }
 
 
