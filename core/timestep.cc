@@ -576,9 +576,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef CONDUCTION
             {
-                double L_cond_inv = sqrt(CellP[p].Gradients.InternalEnergy[0]*CellP[p].Gradients.InternalEnergy[0] +
-                                         CellP[p].Gradients.InternalEnergy[1]*CellP[p].Gradients.InternalEnergy[1] +
-                                         CellP[p].Gradients.InternalEnergy[2]*CellP[p].Gradients.InternalEnergy[2]) / CellP[p].InternalEnergy;
+                double L_cond_inv = CellP[p].Gradients.InternalEnergy.norm() / CellP[p].InternalEnergy;
                 double L_cond = DMAX(L_particle , 1./(L_cond_inv + 1./L_particle)) * All.cf_atime;
                 double dt_conduction = dt_prefac_diffusion * L_cond*L_cond / (MIN_REAL_NUMBER + CellP[p].Kappa_Conduction);
                 // since we use CONDUCTIVITIES, not DIFFUSIVITIES, we need to add a power of density to get the right units //
@@ -596,12 +594,8 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef MHD_NON_IDEAL
             {
-                double b_grad = 0, b_mag = 0;
-                for(int k=0;k<3;k++)
-                {
-                    b_grad += CellP[p].Gradients.B[k].norm_sq();
-                    b_mag += CellP[p].Bfield_component(k) * CellP[p].Bfield_component(k);
-                }
+                double b_grad = CellP[p].Gradients.B.frobenius_norm_sq();
+                double b_mag = CellP[p].Bfield().norm_sq();
                 double L_cond_inv = MIN_REAL_NUMBER + sqrt(b_grad / (MIN_REAL_NUMBER + b_mag));
                 double L_cond = DMAX(0.5*L_particle , DMIN(L_particle , 1./(L_cond_inv + 1./L_particle))) * All.cf_atime;
                 L_cond = DMIN( L_particle , DMAX(1./L_cond_inv, 0.5*L_particle) ) * All.cf_atime; // more conservative estimator - may be needed sometimes to deal accurately with steep local gradients //

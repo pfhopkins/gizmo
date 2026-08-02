@@ -609,8 +609,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
     cell[i].Kappa_Conduction *= ion_frac * pow(u_int, 2.5);
     /* account for saturation (when the mean free path of electrons is large): estimate whether we're in that limit with the gradients */
     double electron_free_path = All.ElectronFreePathFactor * u_int * u_int / rho;
-    double du_conduction=0; for(k=0;k<3;k++) {du_conduction += cell[i].Gradients.InternalEnergy[k] * cell[i].Gradients.InternalEnergy[k];}
-    double temp_scale_length = u_int / sqrt(du_conduction) * All.cf_atime;
+    double temp_scale_length = u_int / cell[i].Gradients.InternalEnergy.norm() * All.cf_atime;
     /* also the Whistler instability limits the heat flux at high-beta; Komarov et al., arXiv:1711.11462 (2017) */
     cell[i].Kappa_Conduction /= (1 + (4.2 + 1./(3.*beta_i)) * electron_free_path / temp_scale_length); /* should be in physical units */
 #ifdef DIFFUSION_OPTIMIZERS
