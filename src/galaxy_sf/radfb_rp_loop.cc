@@ -2,7 +2,7 @@
  *
  * Inline pair body (radfb_rp_pair_kick), structs, and KOKKOS_INLINE_FUNCTION
  * hooks live in radfb_rp_loop.h so they inline from device kernels (Mode A)
- * and host walkers (Mode B / Brute oracle). This translation unit holds
+ * and host walkers (Mode B). This translation unit holds
  * host-only hooks: is_active (defensive cosmo-aware Type filter), per-active
  * radius, per-call scalars capture (NlrCommonScalars + host-precomputed unit
  * factors via nlr_host_all_ptr), populate/cleanup_device_context (UVM staging
@@ -11,11 +11,10 @@
  * writeback), apply_active_writeback (source-side jet_momentum_used decrement
  * under STELLAREVOLUTION>2), merge_accum (sum wt_sum + sum jet_momentum_used),
  * after_iter (iter-0 writes ctx.scratch.wt_sum = accum.wt_sum, returns
- * Converged/NeedsMore; iter-1 always Converged — no P/CellP writes, oracle-
- * safe), and after_iter_global (post-iter staging hook, NO physics-side
- * writes; bridges drv.scratch_uvm[sg][slot].wt_sum into
- * drv.ctx.per_active_local[slot].wt_sum and drv.scratch_oracle_uvm[sg][slot].wt_sum
- * into drv.ctx_oracle.per_active_local[slot].wt_sum, then Kokkos::fence(),
+ * Converged/NeedsMore; iter-1 always Converged — no P/CellP writes), and
+ * after_iter_global (post-iter staging hook, NO physics-side writes;
+ * bridges drv.scratch_uvm[sg][slot].wt_sum into
+ * drv.ctx.per_active_local[slot].wt_sum, then Kokkos::fence(),
  * so iter-1's device kernels read the staged denominator).
  *
  * Also holds: ghost-writeback bundle (PARTICLE_ADD_VEC3 on Vel/dp +
@@ -137,7 +136,6 @@ RadFBRPSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
  * populate allocates a UVM array of RadFBRPLocalIn[N] and copies in from
  * args.aux->host_locals. cleanup frees it. The runner separately calls
  * populate for drv.ctx AND drv.ctx_oracle — each gets its own UVM buffer
- * (oracle-safe).
  * ========================================================================== */
 
 void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
@@ -174,16 +172,11 @@ void RadFBRPSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  * PER-ITER RESET — THE single source of truth for iter-gated writeback.
  *
  * Set BEFORE any rank can enter a detector/writeback hook (runner ordering
- * guarantee at mesh/neighbor_loop_runner.cc:4038-4058). Called separately
- * for drv.ctx and drv.ctx_oracle; each ctx gets its own iter_index_snapshot
- * mirror. Aux::iter_index is shared (one Aux per call); since reset for
- * production fires before oracle reset in the runner, the Aux value reflects
- * whichever ctx was reset most recently — but since iter_index is identical
- * for both ctxs at any given outer iter, this is consistent.
+ * guarantee in the runner's iterative driver). Aux::iter_index is shared
+ * (one Aux per call) and mirrors ctx.iter_index_snapshot.
  *
  * NO data staging here — that happens in after_iter_global of the PREVIOUS
- * iter (which bridges from drv.scratch_uvm / drv.scratch_oracle_uvm into
- * the corresponding ctx's per_active_local).
+ * iter (which bridges from drv.scratch_uvm into ctx.per_active_local).
  * ========================================================================== */
 
 void RadFBRPSpec::reset_per_iter_device_context(
@@ -202,12 +195,11 @@ void RadFBRPSpec::reset_per_iter_device_context(
 /* ============================================================================
  * AFTER_ITER — writes ctx.scratch.wt_sum on iter 0 (the only allowed write —
  * scratch IS the runner's per-active iterative state; no P/CellP/source-side
- * writes; oracle-safe per mechfb r5+r6+r7).
+ * writes).
  *
- * iter 0: stash accum.wt_sum into ctx.scratch.wt_sum (runner pass-specific:
- *         production after_iter writes drv.scratch_uvm[sg][slot]; oracle
- *         after_iter writes drv.scratch_oracle_uvm[sg][slot]; both bridged
- *         into their respective ctx.per_active_local in after_iter_global).
+ * iter 0: stash accum.wt_sum into ctx.scratch.wt_sum (after_iter writes
+ *         drv.scratch_uvm[sg][slot], bridged into ctx.per_active_local in
+ *         after_iter_global).
  *         Return NeedsMore if wt_sum > 0; Converged otherwise (source had
  *         no valid neighbors → skip iter 1).
  * iter 1: Converged (always; no third iter).
@@ -236,12 +228,10 @@ IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
  * iter-to-iter scalar bridging through the runner's intended per-active
  * iterative state (IterScratch → per_active_local).
  *
- * Fires once per iter on production (post both after_iter loops + compare;
- * mesh/neighbor_loop_runner.cc:4314-4316). For iter 0 only, copies
- * IterScratch.wt_sum (set by after_iter — production: drv.scratch_uvm[sg];
- * oracle: drv.scratch_oracle_uvm[sg]) into the corresponding ctx's
- * per_active_local[slot].wt_sum so iter-1's device kernel reads the staged
- * denominator.
+ * Fires once per iter, after the after_iter loop. For iter 0 only, copies
+ * IterScratch.wt_sum (set by after_iter into drv.scratch_uvm[sg]) into
+ * ctx.per_active_local[slot].wt_sum so iter-1's device kernel reads the
+ * staged denominator.
  *
  * Reading from scratch_uvm (the runner's intended per-active iter-state)
  * rather than directly from accum_uvm is the more stable contract — if the

@@ -21,8 +21,8 @@
  * RNG stream is intentionally NOT byte-identical to legacy. Legacy keyed
  * on pair-ordinal `nn` (gone with the runner API). New stream keys on
  * (loc.ID ^ Pj.ID) plus a per-loop XOR shift RADFBRP_RNG_SHIFT (collision-
- * audited against feedback_rng_loop_uniqueness.md). Order-independent +
- * oracle-safe; population statistics identical.
+ * audited for cross-loop collisions). Order-independent; population
+ * statistics identical.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifndef RADFB_RP_LOOP_H
@@ -54,11 +54,11 @@
  * Legacy radfb_local_functions.h keyed RNG on pair-ordinal `nn`:
  *     gizmo_gpu_rand_double(loc.ID ^ kp[j].ID, All.Ti_Current + 3 + nn).
  * The runner pair_kernel API does NOT pass `nn`, and Mode-A tree vs
- * Mode-B brute candidate orderings differ — so a `nn`-keyed RNG would
- * (a) require new runner plumbing AND (b) break the oracle (Mode A vs
- * Mode B would draw different per-pair randoms).
+ * Mode-B candidate orderings differ — so a `nn`-keyed RNG would require
+ * new runner plumbing, and Mode A and Mode B would then draw different
+ * per-pair randoms for the same pair.
  *
- * New stream is order-independent + oracle-safe:
+ * New stream is order-independent:
  *     gizmo_gpu_rand_double(loc.ID ^ Pj.ID,
  *                            scalars.rng_ti_counter ^ RADFBRP_RNG_SHIFT).
  * Population statistics identical to legacy (per-pair stochastic
@@ -184,7 +184,7 @@ struct RadFBRPIterScratch {
 
 /* DeviceContext extension. Holds the UVM pointer to per-active RadFBRPLocalIn
  * (toplevel-owned host buffer; runner copies into UVM in populate). Carries
- * the oracle-suppression flag and a per-iter snapshot of iter_index (mirrored
+ * a per-iter snapshot of iter_index (mirrored
  * from Aux::iter_index by reset_per_iter_device_context so device lambdas
  * have access — Aux is host-only). Trivially copyable; runner captures by
  * value into Kokkos device lambdas. */
@@ -216,8 +216,6 @@ struct RadFBRPActiveState {
  * documented above.
  *
  * Called by RadFBRPSpec::pair_kernel ONLY on iter 1 (iter 0 path accumulates
- * wt_sum without invoking this function). `oracle_dry_run` short-circuits
- * j-side atomic writes (oracle brute pass mustn't double-deposit).
  * ========================================================================== */
 KOKKOS_INLINE_FUNCTION
 static void radfb_rp_pair_kick(
@@ -270,8 +268,7 @@ static void radfb_rp_pair_kick(
     double jet_kick = 0.0;
     if ((double)loc.jet_momentum_tocouple > 0) {
         jet_kick = wk * (double)loc.jet_momentum_tocouple / Mass_j;
-        /* i-side accumulation always runs (oracle compares this for parity). */
-        Kokkos::atomic_add(&out.jet_momentum_used,
+            Kokkos::atomic_add(&out.jet_momentum_used,
                             (MyDouble)(wk * (double)loc.jet_momentum_tocouple));
     }
     dv_ss += jet_kick;
@@ -373,7 +370,7 @@ static void radfb_rp_pair_kick(
  * ========================================================================== */
 struct RadFBRPSpec {
     static constexpr const char *loop_name = "radfbrp";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: iter-1 kicks atomic_add Pj.Vel/Cj.VelPred/Pj.dp, gated !oracle_dry_run, ID^ID RNG + staged wt_sum order-indep, never read back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: iter-1 kicks atomic_add Pj.Vel/Cj.VelPred/Pj.dp, ID^ID RNG + staged wt_sum order-indep, never read back -> ulp */
 
     /* Search policy. Legacy radfb_local_gpu.cc:259 used NGB_SEARCH_ONEWAY +
      * j_type_bitmask=1 (gas only). */
@@ -406,7 +403,7 @@ struct RadFBRPSpec {
      * runner contract happy (mirrors AgsDensitySpec's choice). */
     static constexpr double radius_tolerance              = 1e-9;
 
-    /* Oracle compare tolerance for AccumData. Default 1e-10 — the iter-0
+    /* Default 1e-10 — the iter-0
      * wt_sum aggregation reads only Pj.Get_Particle_Size() which is not
      * mutated by any radfb_rp pair; iter-1 kicks atomic_add into independent
      * Vel/VelPred/dp fields. No thermal_fb-style order-dependence expected. */
@@ -420,7 +417,7 @@ struct RadFBRPSpec {
     using IdentityFields = NoIdentity;
 
     /* NeighborData carries non-const pointers (kernel writes to j-side
-     * fields on iter 1). Oracle flag propagated per-call from ctx. */
+     * fields on iter 1). */
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
@@ -482,7 +479,6 @@ struct RadFBRPSpec {
      *   jet_momentum_used : additive (iter 1 reduce). */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
-    /* Oracle suppression flag. */
 
     /* Ghost-writeback + write-detector bookkeeping. All four gated by
      * Aux::iter_index — iter 0 returns immediately on EVERY rank (no
@@ -493,9 +489,10 @@ struct RadFBRPSpec {
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 
     /* Iterative hooks.
-     * after_iter is STATUS-ONLY (no writes, oracle-safe per mechfb r5+r6+r7).
-     * after_iter_global stages iter-0 wt_sum into both per_active_locals
-     * (production + oracle) so iter-1's device kernel reads the staged value. */
+     * after_iter is STATUS-ONLY: it writes no P/CellP state, only the
+     * runner's per-active IterScratch.
+     * after_iter_global stages iter-0 wt_sum into per_active_local so
+     * iter-1's device kernel reads the staged value. */
     static IterResult after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                   const AccumData& accum);
     static void       after_iter_global(const neighbor_loop_args& args,
