@@ -141,12 +141,12 @@ void RtSrcInjectionSpec::apply_active_writeback(const neighbor_loop_args& /*args
 }
 
 /* ============================================================================
- * MERGE — additive on both telemetry fields.
+ * MERGE — nothing to merge; AccumData is empty for this Spec (see its
+ * definition in rt_source_injection_loop.h). Declared because the Spec
+ * contract requires it.
  * ========================================================================== */
-void RtSrcInjectionSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+void RtSrcInjectionSpec::merge_accum(AccumData& /*local_accum*/, const AccumData& /*peer_accum*/)
 {
-    local_accum.sum_dE     += peer_accum.sum_dE;
-    local_accum.pair_count += peer_accum.pair_count;
 }
 
 /* ============================================================================
@@ -260,8 +260,7 @@ void RtSrcInjectionSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
     ghost_writeback_end_bundle(rtsrcinjection_ghost_writeback_bundle_ptr());
 }
 
-/* AccumData for this Spec is TELEMETRY (sum_dE = Σ_pair wk*Σ_k Lum[k];
- * pair_count), not a physics surrogate — the real j-side writes are
+/* This Spec accumulates nothing per active: the real j-side writes are
  * atomic_add direct in the pair kernel, and are carried cross-rank by the
  * per-field ghost-writeback bundle above. */
 
