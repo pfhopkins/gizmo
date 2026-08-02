@@ -45,7 +45,7 @@
  *       and combines with the host-staged h_search and CallScalars.
  *       Runner launches a tiny Kokkos parallel_for that fills
  *       ActiveData[num_active] in UVM. Mode A's pair-kernel launch reads
- *       this array; Mode B/Brute walker calls the SAME function host-side
+ *       this array; the Mode B walker calls the SAME function host-side
  *       per query. Same KOKKOS_INLINE_FUNCTION on both paths.
  *
  *   NeighborData is DEVICE-CALLABLE (and host-callable in Mode B):
@@ -571,7 +571,7 @@ constexpr bool nlr_spec_has_bind_active_to_eval_context_v =
  *
  * Absent ⇒ 1.0 (plain symmetric search — every pre-existing Spec). The runner
  * threads the returned value into the Mode A NGL build (j_kernel_radius_scale)
- * AND the Mode B local/brute walks (j_radius_scale), so Mode A and Mode B
+ * AND the Mode B local walk (j_radius_scale), so Mode A and Mode B
  * agree on neighbor inclusion. Used by the TURB_DIFF_DYNAMIC wide-filter
  * Specs, which return All.TurbDynamicDiffFac. */
 template <typename Spec, typename = void>
@@ -663,7 +663,7 @@ struct NlrDeviceContextCleanupGuard {
  *
  * Value-trait `mode_a_rebuild_csr_every_iter` (default false): correctness
  * fallback for Specs whose CSR-buffer-reuse semantics can't be validated
- * against legacy/oracle. When true, the runner unconditionally invalidates
+ * against legacy. When true, the runner unconditionally invalidates
  * the cached Mode A CSR at the start of every iter > 0 (bypassing the
  * buffer-exceedance trigger entirely). `Spec::mode_a_csr_buffer_factor`
  * remains required (>1.0 static_assert) but is not consulted on this path.
@@ -869,7 +869,7 @@ struct NlrSubgroup {
     int          num_active_local;     /* may be 0 on this rank */
     /* Runner-derived per call (filled by NlrIterDriver, NOT by the caller):
      *   per-sub_active radii UVM, active_set UVM, per-subgroup CSR cache
-     *   on Mode A, oracle scratch arrays. Out-of-band from this struct. */
+     *   on Mode A. Out-of-band from this struct. */
 };
 
 /* ============================================================================
@@ -956,7 +956,7 @@ enum class DispatchPath : int {
  *
  *     // (7) Per-pair physics body. Forward to a header-inline single-source-of-truth helper if
  *     //     you want the same body callable from device (Mode A) and host
- *     //     (Mode B walker, oracle). See TRAP 3.
+ *     //     (Mode B walker). See TRAP 3.
  *     KOKKOS_INLINE_FUNCTION
  *     static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
  *                             AccumData& accum, ScatterData& scatter);
@@ -1070,8 +1070,8 @@ enum class DispatchPath : int {
  *
  *   TRAP 4: merge_accum per-field op MUST match the per-field op pair_kernel
  *           writes. Sum for additive fields, MAX for max-reduced fields.
- *           Mismatch = silent multi-rank corruption (no compile error; only
- *           the oracle catches it).
+ *           Mismatch = silent multi-rank corruption, with no compile error:
+ *           it surfaces only as a physics difference between rank counts.
  *
  *   TRAP 5: CallScalars, ActiveData, NeighborData, AccumData must all be
  *           std::is_trivially_copyable_v. Adding a std::vector member compiles
@@ -1261,7 +1261,7 @@ struct neighbor_loop_args {
 /* Effective neighbor-type mask for a non-iterative run_neighbor_loop call:
  * args.neighbor_type_mask_override when set, else the Spec constexpr. MUST be
  * used at EVERY non-iterative mask site (ghost import, Mode A CSR build, Mode B
- * candidate collection, remote eval, oracle/brute) so production and oracle
+ * candidate collection, remote eval) so every path
  * agree on the neighbor set. */
 static inline unsigned int
 nlr_effective_neighbor_type_mask(const neighbor_loop_args& args,
@@ -1595,15 +1595,14 @@ struct NlrIterDriver {
      *
      * Each std::vector<...> is host-side, sized at construction to
      * args.num_subgroups. The pointers it holds reference per-subgroup
-     * UVM-allocated arrays; pair_kernel / Mode B walker / oracle paths see
+     * UVM-allocated arrays; pair_kernel / Mode B walker paths see
      * the right addresses through these pointers.
      *
      * Lifetime: allocated by NlrIterDriver constructor, freed by destructor.
      * No fixed cap — global_bm_presence can span up to 64 bitmask values.
      *
-     * Mode A iterative-specific fields (cached CSR + arena/session) and
-     * Oracle-specific fields (separate scratch + radii arrays for brute
-     * trajectory) are declared further below. */
+     * Mode A iterative-specific fields (cached CSR + arena/session) are
+     * declared further below. */
     std::vector<typename Spec::IterScratch *> scratch_uvm;     /* [num_subgroups][num_active_local] */
     std::vector<typename Spec::AccumData   *> accum_uvm;       /* [num_subgroups][num_active_local] */
     std::vector<double *>                     radii_uvm;       /* [num_subgroups][num_active_local] */
@@ -1695,7 +1694,7 @@ struct NlrIterDriver {
  * post-AccumData reduction, pre-apply_active_writeback).
  *
  * Slot identity: subgroup-local slots ARE the runner execution
- * slots. IterScratch / radii / AccumData / oracle arrays / final writeback
+ * slots. IterScratch / radii / AccumData / final writeback
  * all keyed by (subgroup_index, subgroup_slot). Particle index `i` always
  * available. Every active belongs to exactly ONE subgroup (legacy invariant
  * — actives partitioned by `j_type_bitmask`). If a future port needs a
@@ -1773,10 +1772,9 @@ template <typename Spec>
 constexpr bool nlr_spec_has_after_iter_global_v = nlr_spec_has_after_iter_global<Spec>::value;
 
 /* `nlr_spec_has_apply_active_writeback_iterative_v<Spec>`:
- *   OPTIONAL hook (oracle-contract fix). When
- *   declared, the runner calls this hook INSTEAD OF apply_active_writeback
- *   in the iterative production-only post-iter-loop writeback (around
- *   line 4121 of neighbor_loop_runner.cc), passing the converged radius
+ *   OPTIONAL hook. When declared, the runner calls this hook INSTEAD OF
+ *   apply_active_writeback in the iterative post-iter-loop writeback,
+ *   passing the converged radius
  *   and per-active IterScratch alongside the converged AccumData.
  *
  *   Rationale: density needs the converged radius for its post-runner
