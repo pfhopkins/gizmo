@@ -25,9 +25,9 @@ NumFilesPerSnapshot         1
 NumFilesWrittenInParallel   1  % must be < N_processors & power of 2
 
 %---- Output frequency 
-TimeOfFirstSnapshot     0.  % time (code units) of first snapshot
-TimeBetSnapshot         1.259345692498476e-07  % time between (if OutputListOn=0), code units
-TimeBetStatistics       3.259345692498476e-07 % time between additional statistics (e.g. energy)
+TimeOfFirstSnapshot     0  % time (code units) of first snapshot
+TimeBetSnapshot         0.0001259345692  % time between (if OutputListOn=0), code units
+TimeBetStatistics       0.0003259345692 % time between additional statistics (e.g. energy)
 
 %---- CPU run-time and checkpointing time-limits
 TimeLimitCPU            172800  % in seconds
@@ -36,19 +36,19 @@ ResubmitOn              0
 ResubmitCommand         my-scriptfile 
 
 %---- Desired simulation beginning and end times (in code units) for run
-TimeBegin   0.0    % Beginning of the simulation
-TimeMax     6.3e-7 %24445092693738574    % End of the simulation
+TimeBegin   0    % Beginning of the simulation
+TimeMax     0.00063 %24445092693738574    % End of the simulation
 
 %---- Maximum and minimum timesteps allowed
-MaxSizeTimestep         1.629672846249238e-06  % in code units, set for your problem
-MinSizeTimestep         1.0e-100 % set this very low, or get the wrong answer
+MaxSizeTimestep         0.001629672846  % in code units, set for your problem
+MinSizeTimestep         1e-97 % set this very low, or get the wrong answer
 
 
 %---- System of units
 UnitLength_in_cm            3.085678e+18      % should be 1 pc
 UnitMass_in_g               1.989e+33      % should be 1 solar mass
-UnitVelocity_in_cm_per_s    100.0      % should be 1 m/sec
-UnitMagneticField_in_gauss  10000.0      % should be 1 Tesla
+UnitVelocity_in_cm_per_s    1.0e5           % 1 km/sec
+UnitMagneticField_in_gauss  1.0             % 1 Gauss
 GravityConstantInternal     0           % calculated by code if =0
 
 %---- Cosmological parameters
@@ -118,9 +118,9 @@ AGS_DesNumNgb           32  % neighbor number for calculating adaptive gravsoft
 
 %---- Magneto-Hydrodynamics Parameters (MAGNETIC on)
 %----- Initial B-Field Strengths (if MHD_B_SET_IN_PARAMS on, otherwise read from IC file)
-BiniX   1.0e-8    % initial B_x, in code units
-BiniY   1.0e-8    % initial B_y, in code units
-BiniZ   1.0e-8    % initial B_z, in code units
+BiniX   0.0001    % initial B_x, in code units
+BiniY   0.0001    % initial B_y, in code units
+BiniZ   0.0001    % initial B_z, in code units
 
 %---- Thermal Conduction (CONDUCTION on)
 %----- set coefficient kappa [code units] or, if CONDUCTION_SPITZER on, multiplies value
@@ -156,7 +156,7 @@ SfEffPerFreeFall    1.0     %  SFR/(Mgas/tfreefall) for gas which meets SF crite
 
 %---- sub-grid (Springel+Hernquist/GADGET/AREPO) "effective equation of state" 
 %------- star formation+feedback model (GALSF_EFFECTIVE_EQS on)
-MaxSfrTimescale     4.0         % code units (SF timescale at 2-phase threshold)
+MaxSfrTimescale     4000         % code units (SF timescale at 2-phase threshold)
 TempSupernova       3.0e8       % in Kelvin (temp of hot gas in 2-phase model)
 TempClouds          1000.0      % in Kelvin (temp of cold gas in 2-phase model)
 FactorSN            0.1         % SNe coupling frac (frac of egy retained in hot)
@@ -195,28 +195,28 @@ GasReturnEnergy             1.0     % fraction of returned gas energy+momentum (
 CosmicRay_SNeFraction       0.1     % fraction of SNe ejecta kinetic energy into cosmic rays (~10%)
 
 
-%-------------- Black Hole accretion & formation (BLACK_HOLES on)
+%-------------- Sink particle accretion, formation & feedback (SINGLE_STAR_SINK_DYNAMICS on)
 %--- formation/seeding  
-SeedBlackHoleMass            0.0005    % initial mass (on-the-fly or single galaxy)
-SeedAlphaDiskMass            0.0        % initial mass in the alpha disk (BH_ALPHADISK_ACCRETION)
-SeedBlackHoleMinRedshift     2.0        % minimum redshift where new BH particles are seeded (lower-z ceases seeding)
-SeedBlackHoleMassSigma       0.5        % lognormal standard deviation (in dex) in initial BH seed masses
+SeedSinkMass                 0.0005    % initial mass (on-the-fly or single galaxy)
+SeedReservoirMass            0.0        % initial mass in the alpha disk (BH_ALPHADISK_ACCRETION)
+SeedSinkMinRedshift          2.0        % minimum redshift where new BH particles are seeded (lower-z ceases seeding)
+SeedSinkMassSigma            0.5        % lognormal standard deviation (in dex) in initial BH seed masses
 %----- (specific options for on-the-fly friends-of-friends based BH seeding: FOF on)
 MinFoFMassForNewSeed         10.	    % minimum mass of FOF group (stars or DM) to get seed, in code units
-TimeBetOnTheFlyFoF           1.01       % time (in code units, e.g. scale-factor) between on-the-fly FOF searches
+TimeBetOnTheFlyFoF           1010       % time (in code units, e.g. scale-factor) between on-the-fly FOF searches
 %--- accretion
-BlackHoleAccretionFactor     1.0	    % multiplier for mdot (relative to model)
-BlackHoleEddingtonFactor     1e100	    % fraction of eddington to cap (can be >1) 
-BlackHoleNgbFactor           1.0	    % multiplier for kernel neighbors for BH 
-BlackHoleMaxAccretionRadius  1.0	    % max radius for BH neighbor search/accretion (code units)
-BlackHoleRadiativeEfficiency 5e-7        % radiative efficiency (for accretion and feedback)
+SinkAccretionFactor          1.0	    % multiplier for mdot (relative to model)
+SinkEddingtonFactor          1e100	    % fraction of eddington to cap (can be >1) 
+SinkNgbFactor                1.0	    % multiplier for kernel neighbors for BH 
+SinkMaxAccretionRadius       1.0	    % max radius for BH neighbor search/accretion (code units)
+SinkRadiativeEfficiency      5e-7        % radiative efficiency (for accretion and feedback)
 %--- feedback 
-BlackHoleFeedbackFactor      1.0	    % generic feedback strength multiplier 
-BH_FluxMomentumFactor        0.0	    % multiply radiation pressure (BH_PHOTONMOMENTUM), set it to zero to avoid launching gas from rad. pressure 
-BAL_f_accretion              0.7        % fraction of gas swallowed by BH (BH_WIND options)
-BAL_v_outflow                100.	    % velocity (km/s) of BAL outflow (BH_WIND options)
-BAL_internal_temperature     1.0e3      % internal temperature (K) of BAL outflow (BH_WIND_SPAWN)
-BAL_wind_particle_mass       0.0001     % mass of 'virtual wind particles' in code units (BH_WIND_SPAWN)
+SinkFeedbackFactor           1.0	    % generic feedback strength multiplier 
+Sink_FluxMomentumFactor      0.0	    % multiply radiation pressure (BH_PHOTONMOMENTUM), set it to zero to avoid launching gas from rad. pressure 
+Sink_accreted_fraction       0.7        % fraction of gas swallowed by BH (BH_WIND options)
+Sink_outflow_velocity        0.1	    % velocity (km/s) of BAL outflow (BH_WIND options)
+Sink_outflow_temperature     1.0e3      % internal temperature (K) of BAL outflow (BH_WIND_SPAWN)
+Sink_outflow_particlemass    0.0001     % mass of 'virtual wind particles' in code units (BH_WIND_SPAWN)
 
 
 %-------------------------------------------------------------------------
@@ -246,15 +246,15 @@ GrackleDataFile		     CloudyData_UVB=HM2012.h5
 %TimeBetTurbSpectrum 3.259345692498476e-07 % time (code units) between evaluations of turb pwrspec
 
 %-------------- Turbulent stirring parameters (TURB_DRIVING on)
-TurbDrive_ApproxRMSVturb            0.0
+TurbDrive_ApproxRMSVturb            0
 TurbDrive_MinWavelength             0.05 
 TurbDrive_MaxWavelength             0.2 
 TurbDrive_SolenoidalFraction        1  
-TurbDrive_CoherenceTime             2.4445092693738573e-05
+TurbDrive_CoherenceTime             0.02444509269
 TurbDrive_DrivingSpectrum           1
 TurbDrive_RandomNumberSeed          42
-TurbDrive_TimeBetweenTurbUpdates    3.259345692498476e-07
-TurbDrive_TimeBetTurbSpectrum       3.259345692498476e-07
+TurbDrive_TimeBetweenTurbUpdates    0.0003259345692
+TurbDrive_TimeBetTurbSpectrum       0.0003259345692
 
 
 %-------------------------------------------------------------------------------------------------

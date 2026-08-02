@@ -12,3 +12,11 @@
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"
 #SYSTYPE="RUSTY"
+# Rusty, per-architecture (explicit -march, so you can build off-target).
+# See the RUSTY_* blocks in the Makefile for run recipes; the short version:
+#   pure MPI one rank per core; hybrid costs throughput; if you build with
+#   OPENMP you MUST add --cpu-bind=cores to srun or ranks silently stack onto
+#   the same cores; scale MaxMemSize with ranks-per-node.
+#SYSTYPE="RUSTY_GENOA"     # 96 cores/node, 1.5 TB, --constraint=genoa        <- fastest
+#SYSTYPE="RUSTY_ROME"      # 128 cores/node, 1.0 TB, --constraint=rome
+#SYSTYPE="RUSTY_ICELAKE"   # 64 cores/node, 1.0 TB, --constraint='icelake&cpu'

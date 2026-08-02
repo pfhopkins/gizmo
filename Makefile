@@ -316,6 +316,148 @@ HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
 
+#================================================================================
+# Rusty (Flatiron) -- per-architecture systypes.
+#
+# The generic "RUSTY" systype above uses -march=native, which requires building on
+# the same node type you run on. The three blocks below name the target explicitly
+# so you can build anywhere (e.g. a workstation or a login node) and still get a
+# correctly-tuned binary. Pick the one matching your --constraint.
+#
+#   systype         --constraint     cores/node   RAM/node   ISA target
+#   RUSTY_ROME      rome                128        1.0 TB    znver2  (Zen 2)
+#   RUSTY_GENOA     genoa                96        1.5 TB    znver4  (Zen 4)
+#   RUSTY_ICELAKE   icelake&cpu          64        1.0 TB    icelake-server
+#
+# ---- HOW TO RUN (measured 2026-08-02, 2.5e6-cell STARFORGE full-physics box) ----
+#
+# 1. USE PURE MPI. One rank per core, OPENMP off. Throughput in a fixed wall-clock
+#    budget, best config per node type:
+#        Genoa  96x1 -> 24 steps      (best absolute AND best per core)
+#        Rome  128x1 -> 16 steps
+#        Ice    64x1 -> 13 steps
+#    Per-core cost (core-seconds/step, lower better): Genoa ~500, Ice ~700, Rome ~1150.
+#    Genoa wins outright despite having fewer cores than Rome -- prefer it when free.
+#
+# 2. HYBRID MPI+OpenMP COSTS YOU THROUGHPUT. Relative to pure MPI on the same node:
+#    2 threads/rank is roughly free (Rome ties), then it degrades -- ~1.5-2x slower
+#    by 8 threads/rank, ~2.5x by 16. Only go hybrid if you need fewer ranks for
+#    memory reasons; 2 threads/rank is the sweet spot if you must.
+#
+# 3. IF YOU BUILD WITH OPENMP, YOU MUST PASS --cpu-bind=cores TO srun:
+#        srun --cpus-per-task=$SLURM_CPUS_PER_TASK --cpu-bind=cores ./GIZMO ...
+#    OMP_PROC_BIND/OMP_PLACES are honored only by OpenMP-enabled binaries. Without
+#    a per-task cpuset each rank's libgomp independently sees the whole node and
+#    pins its threads to the same first N cores, so only N cores of the node do any
+#    work while they are R-way oversubscribed. This cost us a factor of 10-49x and
+#    is completely silent -- pure-MPI builds are immune, so it masquerades as
+#    "OpenMP is slow". Always dump the placement and check it:
+#        srun --cpu-bind=cores --label grep Cpus_allowed_list /proc/self/status
+#    Every rank must report a DISTINCT cpu list.
+#
+# 4. SCALE MaxMemSize WITH RANK COUNT. It is per-MPI-process, so a value tuned for
+#    128 ranks starves an 8-rank run of the same problem. Budget ~75% of node RAM
+#    divided by ranks-per-node.
+#
+# 5. COMPILERS. Spread is small (~8% end to end): intel-oneapi 2025 was fastest on
+#    all three architectures, aocc/5.0 a close second, gcc/13-14 ~5-8% behind.
+#    Load a compiler and point the MPI wrappers at it:
+#        module load modules gcc/14.2.0 openmpi gsl hdf5/mpi-1.12.3
+#        export OMPI_CC=gcc   OMPI_CXX=g++         # gcc
+#        export OMPI_CC=clang OMPI_CXX=clang++     # aocc/5.0.0
+#        export OMPI_CC=icx   OMPI_CXX=icpx        # intel-oneapi-compilers/2025.0.4
+#    NOTE gcc/13.2.0 only resolves under modules/2.3-20240529; load that explicitly
+#    or the build and the run will link against different GSL and fail at startup.
+#    NOTE icpx at -O2 and above miscompiled the H2 rotational partition sum into an
+#    infinite loop (fixed in eos/hydrogen_molecule.cc). If you use the Intel
+#    compiler, sanity-check that a run actually advances past the first few steps.
+#
+# 6. EXTRA FLAGS. Append with OPT_EXTRA, e.g.
+#        make SYSTYPE='"RUSTY_GENOA"' OPT_EXTRA="-flto"
+#    Later flags win over earlier ones, so this also un-sets defaults:
+#        OPT_EXTRA="-O2"                  # drop to -O2
+#        OPT_EXTRA="-fno-fast-math"       # disable fast-math entirely
+#        OPT_EXTRA="-fno-finite-math-only" # keep fast-math but restore NaN/Inf semantics
+#        OPT_EXTRA="-mprefer-vector-width=256"  # avoid AVX-512 downclocking
+#================================================================================
+
+#----------------------------
+# Rusty AMD Rome (EPYC, Zen 2) -- 128 cores/node, 1 TB. Run: --constraint=rome, 128x1.
+ifeq ($(SYSTYPE),"RUSTY_ROME")
+CC       =   mpicc
+CXX      =   mpicxx
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=znver2 -mtune=znver2 -g -Wall $(OPT_EXTRA)
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp   # remember --cpu-bind=cores on srun (see note 3 above)
+endif
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
+
+#----------------------------
+# Rusty AMD Genoa (EPYC, Zen 4) -- 96 cores/node, 1.5 TB. Run: --constraint=genoa, 96x1.
+# FASTEST OF THE THREE, both in absolute throughput and per core. Prefer this.
+# Genoa has AVX-512; if a kernel turns out to be downclock-limited, compare
+# OPT_EXTRA="-mprefer-vector-width=256".
+ifeq ($(SYSTYPE),"RUSTY_GENOA")
+CC       =   mpicc
+CXX      =   mpicxx
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=znver4 -mtune=znver4 -g -Wall $(OPT_EXTRA)
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp   # remember --cpu-bind=cores on srun (see note 3 above)
+endif
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
+
+#----------------------------
+# Rusty Intel Ice Lake -- 64 cores/node, 1 TB. Run: --constraint='icelake&cpu', 64x1.
+# NB use 'icelake&cpu': the bare 'icelake' feature also matches the A100/H100 GPU
+# nodes, and a CPU-only job should not tie those up.
+ifeq ($(SYSTYPE),"RUSTY_ICELAKE")
+CC       =   mpicc
+CXX      =   mpicxx
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=icelake-server -mtune=icelake-server -g -Wall $(OPT_EXTRA)
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp   # remember --cpu-bind=cores on srun (see note 3 above)
+endif
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
+
 #----------------------------
 # PSMN (ENS Lyon) - Debian 13, e5-2667v4 nodes
 # Compiler: system OpenMPI 5.0.7 (Debian); libs: EasyBuild gompi-2025a toolchain

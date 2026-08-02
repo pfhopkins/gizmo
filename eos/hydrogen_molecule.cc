@@ -36,48 +36,45 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
     const double expmx = exp(-x);
     const double expmx4 = pow(expmx, 4);
 
+    /* NOTE: para (even j) and ortho (odd j) are kept in separate named scalars rather than
+       zterm[s]/z[s] indexed by the loop-variant s=j%2. The indexed form is miscompiled by
+       Intel oneAPI icpx at -O2 and above (the ortho update is dropped, so zterm_ortho stays
+       at its initial 9.0, err_ortho stays pinned at 1, and the loop never terminates -- an
+       infinite hang, not a wrong answer). MAX_ITER is a second, compiler-independent guard:
+       an unbounded convergence loop is a latent hang for any input. The series needs <=~15
+       terms below 3000 K (H2 is dissociated above that), so 200 is very generous. */
+    const int MAX_ITER = 200;
     double error = 1e100;
-    double z[2] = {0}; // index 0 for para, 1 for ortho
-    double dz_dtemp[2] = {0};
-    double d2z_dtemp2[2] = {0};
-    double zterm[2] = {0};
-
-    z[0] = zterm[0] = 1.0;
-    z[1] = zterm[1] = 9.0;
+    double z_para = 1.0, z_ortho = 9.0;          // partition function sums
+    double zterm_para = 1.0, zterm_ortho = 9.0;  // current term
+    double dz_para = 0, dz_ortho = 0, d2z_para = 0, d2z_ortho = 0;
     double expterm = expmx4 * expmx * expmx;
 
     // Summing over rotational levels
-    int j = 2;
-    double dzterm, d2zterm;
-    while (error > EPSILON) {
-        int s = j % 2;
-        zterm[s] *= (2 * j + 1) * expterm / (2 * j - 3);
+    int j = 2, iter = 0;
+    while (error > EPSILON && iter < MAX_ITER) {
+        iter++;
         int jjplusone = j * (j + 1);
-        if (s == 1) { // ortho
-            dzterm = (jjplusone - 2) * x * zterm[1];
-            d2zterm = ((jjplusone - 2) * x - 2) * dzterm;
-        } else { // para
-            dzterm = jjplusone * x * zterm[0];
-            d2zterm = (jjplusone * x - 2) * dzterm;
+        if (j & 1) { // ortho (odd j)
+            zterm_ortho *= (2 * j + 1) * expterm / (2 * j - 3);
+            double dzterm = (jjplusone - 2) * x * zterm_ortho;
+            z_ortho += zterm_ortho; dz_ortho += dzterm; d2z_ortho += ((jjplusone - 2) * x - 2) * dzterm;
+        } else { // para (even j)
+            zterm_para *= (2 * j + 1) * expterm / (2 * j - 3);
+            double dzterm = jjplusone * x * zterm_para;
+            z_para += zterm_para; dz_para += dzterm; d2z_para += (jjplusone * x - 2) * dzterm;
         }
-        z[s] += zterm[s];
-        dz_dtemp[s] += dzterm;
-        d2z_dtemp2[s] += d2zterm;
-        double err0 = zterm[0] / z[0];
-        double err1 = zterm[1] / z[1];
-        if (err1 > err0) {
-            error = err1;
-        } else {
-            error = err0;
-        }
+        double err_para = zterm_para / z_para;
+        double err_ortho = zterm_ortho / z_ortho;
+        error = (err_ortho > err_para) ? err_ortho : err_para;
         expterm *= expmx4;
         j++;
     }
 
-    result[0] = exp(para_frac * log(z[0]) + ortho_frac * log(z[1]));                                       // partition function
-    result[1] = BOLTZMANN_CGS * temp * (para_frac * dz_dtemp[0] / z[0] + ortho_frac * dz_dtemp[1] / z[1]); // mean energy per molecule
-    result[2] = BOLTZMANN_CGS * (ortho_frac * (2 * dz_dtemp[1] + d2z_dtemp2[1] - dz_dtemp[1] * dz_dtemp[1] / z[1]) / z[1] +
-                                 para_frac * (2 * dz_dtemp[0] + d2z_dtemp2[0] - dz_dtemp[0] * dz_dtemp[0] / z[0]) / z[0]); // heat capacity
+    result[0] = exp(para_frac * log(z_para) + ortho_frac * log(z_ortho));                    // partition function
+    result[1] = BOLTZMANN_CGS * temp * (para_frac * dz_para / z_para + ortho_frac * dz_ortho / z_ortho); // mean energy per molecule
+    result[2] = BOLTZMANN_CGS * (ortho_frac * (2 * dz_ortho + d2z_ortho - dz_ortho * dz_ortho / z_ortho) / z_ortho +
+                                 para_frac * (2 * dz_para + d2z_para - dz_para * dz_para / z_para) / z_para); // heat capacity
 }
 
 void hydrogen_molecule_zvib(double temp, double result[3]) {

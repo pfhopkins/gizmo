@@ -5,6 +5,6 @@ This is the Shu 1977 singular isothermal sphere setup with initial density 2x th
 Compile-time flags used for this setup:
 ```
 SINGLE_STAR_STARFORGE_DEFAULTS
-EOS_ENFORCE_ADIABAT=4e4
+EOS_ENFORCE_ADIABAT=0.04
 EOS_GAMMA=1.001
 ```
