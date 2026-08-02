@@ -32,22 +32,6 @@
 
 #ifdef DM_FUZZY
 
-/* ============================================================================
- * Finite-aware per-field relative-difference accumulator for compare_accum.
- * A non-finite value on either side forces a huge residual so the oracle flags
- * it loudly. The finite test is inline — (x==x) rejects NaN, (x-x==0) rejects
- * Inf — to avoid the isfinite-macro-vs-std::isfinite ambiguity in GPU TUs
- * (runner checklist §2). Same helper as difffilter_loop.cc.
- * ========================================================================== */
-namespace {
-inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
-
-inline double nlr_rel_update(double max_rel, double a, double b) {
-    if (!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-    const double rel   = std::fabs(a - b) / denom;
-    return (rel > max_rel) ? rel : max_rel;
-}
 
 /* construct_dmgrad_gradient — apply P[i].NV_T to a gradient vector in place.
  *
@@ -55,12 +39,13 @@ inline double nlr_rel_update(double max_rel, double a, double b) {
  * the NV_T matrix-based gradient estimator, applied UNCONDITIONALLY. It must
  * NOT be replaced by the hydro construct_gradient (hydro/gradients.cc) — that
  * reads CellP[i].ConditionNumber/Density/NV_T (gas-cell state), which is the
- * documented garbage trap for non-gas particles (reference_legacy_definition_
- * cellp_mass.md). DMGrad runs on Type-1 DM; P[i].NV_T is the correct tensor.
+ * documented garbage trap for non-gas particles. DMGrad runs on Type-1 DM;
+ * P[i].NV_T is the correct tensor.
  *
  * Templated on the row type so it accepts both Vec3<MyFloat>& (AGS_Gradients_*)
  * and a Mat3 row proxy (AGS_Gradients2_*[k]).
  * ========================================================================== */
+namespace {
 template <typename RowT>
 inline void construct_dmgrad_gradient(RowT&& grad, int i) {
     const double v0 = (double)grad[0], v1 = (double)grad[1], v2 = (double)grad[2];
@@ -152,7 +137,6 @@ void DMGradSpec::merge_accum(AccumData& local, const AccumData& peer)
     }
 }
 
-/* No j-side writes → oracle brute pass needs no suppression. */
 
 /* ============================================================================
  * DMGrad_gradient_calc — toplevel. Two external gradient passes; within each,

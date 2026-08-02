@@ -111,7 +111,7 @@ struct DMGradSpec {
     static constexpr bool          uses_ghost_write_detector = false;
 
     /* Pure-read pair kernel (no j-writes) → order-independent up to FP
-     * summation → tight oracle. */
+     * summation. */
 
     using CallScalars    = DMGradCallScalars;
     using ActiveData     = DMGradActiveState;

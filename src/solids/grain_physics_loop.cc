@@ -34,21 +34,6 @@
 
 #ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
 
-/* ============================================================================
- * Finite-aware relative-error helper for compare_accum.
- * Same pattern as difffilter_loop.cc / dm_fuzzy_loop.cc.
- * ========================================================================== */
-namespace {
-inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
-
-inline double nlr_rel_update(double max_rel, double a, double b) {
-    if(!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-    const double rel   = std::fabs(a - b) / denom;
-    return (rel > max_rel) ? rel : max_rel;
-}
-} /* anonymous namespace */
-
 
 /* ============================================================================
  * GrainBackrxSpec host hooks.
@@ -85,10 +70,7 @@ void GrainBackrxSpec::merge_accum(AccumData& /*local_accum*/,
                                   const AccumData& /*peer_accum*/)
 {}
 
-/* AccumData is empty; oracle compare trivially passes. */
 
-/* Propagate oracle flag to DeviceContext so load_neighbor can carry it into
- * NeighborData and pair_kernel can suppress j-writes during the brute pass. */
 
 /* Ghost-writeback bundle for GrainBackrxSpec.
  *
