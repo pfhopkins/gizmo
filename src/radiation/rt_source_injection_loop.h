@@ -182,8 +182,6 @@ static void rt_source_injection_pair_body(
     accum.sum_dE     += dE_pair_sum;
     accum.pair_count += 1;
 
-    /* j-side atomic writes — suppressed under oracle dry-run. */
-
     for (int k = 0; k < N_RT_FREQ_BINS; k++) {
         double dE = wk * local.Luminosity[k];
         Vec3<double> dfluxes = {};

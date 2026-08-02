@@ -65,7 +65,7 @@ struct MechFBCallScalars {
 #endif
 };
 
-/* Ownership-split j-side write target + oracle gate.
+/* Ownership-split j-side write target.
  *
  * Picks the per-gas delta buffer for j-side atomic writes from inside the
  * pair kernel. P[] layout convention used here:
@@ -83,10 +83,7 @@ struct MechFBCallScalars {
  * is local non-gas — gas-only neighbor mask in load_neighbor should filter
  * these out before we ever reach the kernel; defensive abort if we don't.
  *
- * Returns the per-pair MechFBGasDelta target for atomic accumulation; the
- * j-side oracle gate (`if (oracle_dry_run) return;`) is applied SEPARATELY
- * by the kernel BEFORE calling this helper or any atomic_add. The helper
- * does not branch on oracle, and is safe to call after the gate.
+ * Returns the per-pair MechFBGasDelta target for atomic accumulation.
  *
  * Historical note: the retired legacy evaluator passed
  * num_local_gas = num_local_particles = num_all and ghost_gas_delta=nullptr,

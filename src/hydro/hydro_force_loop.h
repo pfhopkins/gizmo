@@ -105,8 +105,8 @@ struct HydroForceNeighborData
     struct particle_data *P;
     struct gas_cell_data *CellP;
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
-    int                  *need_wakeup_ptr;      /* evaluating ctx UVM; nullptr under oracle dry-run */
-    unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base; nullptr under oracle dry-run */
+    int                  *need_wakeup_ptr;      /* evaluating ctx UVM */
+    unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base */
 };
 
 /* DeviceContext extension. UVM pointers backing the per-call scratch the

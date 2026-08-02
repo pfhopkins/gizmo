@@ -132,8 +132,6 @@
  *     - writeback spec:   write_pattern + reduction ops via apply_*_writeback
  *     - identity opt-in:  IdentityFields (defaults NoIdentity)
  *     - iter driver:      IterControl after_iter() (defaults NotIterative)
- *     - oracle compare:   compare_accum, accum_tolerance (compare_scatter +
- *                         scatter_tolerance for scatter specs)
  *     - hooks (host):     search_radius, populate_call_scalars,
  *                         apply_active_writeback,
  *                         apply_neighbor_writeback (scatter only),
@@ -146,8 +144,6 @@
  *     - search:    coarse predicate, type mask + per-type hmax pruning
  *     - transport: ghost (Mode A) or peer-to-peer (Mode B)
  *     - drift:     lazy drift_particle on j candidates pre-kernel
- *     - oracle:    GIZMO_NLR_ORACLE=1 → run Mode B + Brute, compare via
- *                  Spec::compare_accum within Spec::accum_tolerance
  *     - timing:    PHASE0 instrumentation per loop_name
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -303,8 +299,7 @@ enum class SidxCacheKind : int {
  *   EpsilonAtomic   — pair_kernel scatters to j via atomic ops. Threaded eval
  *                     reorders the same atomic updates -> ulp-class
  *                     nondeterminism (the class Mode-A Kokkos kernels already
- *                     exhibit). Validated by ID-sort epsilon + oracle
- *                     membership + accum_tolerance, not bitwise.
+ *                     exhibit). Validated by ID-sort epsilon, not bitwise.
  *   SerialOnly      — evaluated on one thread. A justified final SerialOnly
  *                     carries a stated STRUCTURAL reason (order-sensitive
  *                     j-writes, RNG-order dependence, non-atomic scatter). A
@@ -525,8 +520,8 @@ inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit)
  *
  * A Spec whose ActiveData carries rank-local context fields (rank-local
  * pointers like P_base / CellP_base, rank-local index bounds, gas-delta
- * write targets, the oracle_dry_run flag — anything that depends on which
- * eval pass / which rank is doing the walk) MUST define this hook. The
+ * write targets — anything that depends on which eval pass / which rank is
+ * doing the walk) MUST define this hook. The
  * runner invokes it for every active right before pair_kernel inside
  * evaluate_pairs_post_drift, so the active's rank-local + eval-pass-local
  * snapshots are refreshed to the eval ctx in use.
@@ -548,7 +543,7 @@ inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit)
  *
  * Incident: MechFBActiveState (galaxy_sf/mechfb_loop.h:54) embeds P_base,
  * CellP_base, LocalGasMechFBInfoTemp, d_gas_iter, num_local_gas,
- * num_local_particles, oracle_dry_run — all rank-local or eval-pass-local.
+ * num_local_particles — all rank-local or eval-pass-local.
  * Ship-then-deref on the peer caused np=2 wind_singlestar SIGSEGV in
  * mechanical_fb_pair_kernel during PEER eval. */
 template <typename Spec, typename = void>
@@ -909,7 +904,7 @@ enum class DispatchPath : int {
  *   struct MyLoopSpec {
  *     // ============ PHYSICS BLOCK ============
  *
- *     // (1) Loop identity (drives env-var prefixes + diagnostic labels)
+ *     // (1) Loop identity (diagnostic labels)
  *     static constexpr const char *loop_name = "my_loop";
  *
  *     // (2) Search policy
@@ -925,13 +920,10 @@ enum class DispatchPath : int {
  *     // explicit P[].Pos (non-pool actives, e.g. a sink in a GasOnly loop).
  *     static constexpr bool mode_a_active_sources_in_sidx_pool = true;
  *
- *     // (4) Tolerances
- *     static constexpr double accum_tolerance = 1e-9;
- *
- *     // (5) Active-particle predicate. Caller passes this to nlr_build_active_list.
+ *     // (4) Active-particle predicate. Caller passes this to nlr_build_active_list.
  *     static bool is_active(int particle_index);
  *
- *     // (6) Per-pair physics types (all trivially copyable; see TRAP 5)
+ *     // (5) Per-pair physics types (all trivially copyable; see TRAP 5)
  *     struct CallScalars   { NlrCommonScalars common; ... };
  *     struct ActiveData    { ...; CallScalars scalars; };
  *     struct NeighborData  { const struct particle_data* neighbor_particle; ... };
@@ -959,17 +951,17 @@ enum class DispatchPath : int {
  *     //   - DeviceContext publicly derives from (or IS) NeighborLoopDeviceContextBase
  *     //   - DeviceContext is trivially copyable (captured by value into Kokkos lambdas)
  *
- *     // (7) Per-active aux passed by caller through neighbor_loop_args::aux
+ *     // (6) Per-active aux passed by caller through neighbor_loop_args::aux
  *     struct Aux { my_loop_accum_t *out_buffer; };
  *
- *     // (8) Per-pair physics body. Forward to a header-inline single-source-of-truth helper if
+ *     // (7) Per-pair physics body. Forward to a header-inline single-source-of-truth helper if
  *     //     you want the same body callable from device (Mode A) and host
  *     //     (Mode B walker, oracle). See TRAP 3.
  *     KOKKOS_INLINE_FUNCTION
  *     static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
  *                             AccumData& accum, ScatterData& scatter);
  *
- *     // (9) Per-active and per-call hooks
+ *     // (8) Per-active and per-call hooks
  *     static double      search_radius(const neighbor_loop_args& args,
  *                                      int active_slot, int i);
  *     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
@@ -988,7 +980,7 @@ enum class DispatchPath : int {
  *     static void merge_accum(AccumData& local_accum,
  *                             const AccumData& peer_accum);
  *
- *     // (10) Ghost-side writeback hooks (often empty). Trait-gated.
+ *     // (9) Ghost-side writeback hooks (often empty). Trait-gated.
  *     static constexpr bool uses_ghost_write_detector = true;
  *     static constexpr bool uses_ghost_writeback      = false;
  *     static void ghost_write_detector_begin(const neighbor_loop_args&,
@@ -1056,8 +1048,6 @@ enum class DispatchPath : int {
  *     // static constexpr int modeb_threshold_sum = 64;
  *     // static constexpr int modeb_threshold_max = 64;
  *
- *     // ============ DIAGNOSTICS (env-gated) ============
- *     static double compare_accum(const AccumData& local, const AccumData& oracle);
  *   };
  *
  * ============================================================================
@@ -1556,11 +1546,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args);
  *                     buffered_h. Built at iter 0; rebuilt on h-exceeds-buffer
  *                     trigger (mirrors hydro/density_gpu.cc:152-188 legacy).
  *
- *   ============ Oracle-only fields (only when GIZMO_NLR_ORACLE=1) ============
- *
- *   Separate radii_oracle / scratch_oracle / accum_oracle arrays so brute-
- *   force trajectory is independent of production. Brute dry-run runs FIRST
- *   per iter, production SECOND.
  * ========================================================================== */
 template <typename Spec>
 struct NlrIterDriver {
@@ -1795,15 +1780,13 @@ constexpr bool nlr_spec_has_after_iter_global_v = nlr_spec_has_after_iter_global
  *   and per-active IterScratch alongside the converged AccumData.
  *
  *   Rationale: density needs the converged radius for its post-runner
- *   finalize, but cannot have after_iter write it to Aux (oracle runs
- *   after_iter twice — production + oracle — sharing args.aux, so the
- *   oracle pass would overwrite the production radius). The runner's
- *   final writeback loop IS production-only (oracle has separate
- *   accum_oracle_uvm + radii_oracle_uvm + no writeback call); routing
- *   the radius through here is the only clean channel.
+ *   finalize. after_iter cannot supply it — the runner may call after_iter
+ *   more than once per active, so a write to args.aux there is not
+ *   single-valued. The final writeback loop runs exactly once per active,
+ *   which makes this the well-defined channel for a converged quantity.
  *
  *   Specs that don't declare this hook continue to use the original
- *   apply_active_writeback path (AGS, harness, all sink Specs). */
+ *   apply_active_writeback path (AGS, all sink Specs). */
 template <typename Spec, typename = void>
 struct nlr_spec_has_apply_active_writeback_iterative : std::false_type {};
 template <typename Spec>
@@ -1920,8 +1903,6 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *   GIZMO_NLR_DIAG=<0|1|2|3>          0=off, 1=PHASE0 timing line per call,
  *                                     2=+dispatch trace, 3=reserved (today
  *                                     equivalent to level 2; rank-0 note)
- *   GIZMO_NLR_ORACLE=1                correctness gate (separate concern)
- *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
  *
  * Conflict policy (collective; all ranks endrun):
  *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun
@@ -1965,12 +1946,8 @@ struct NlrQueryEnvelope {
      * full-walking from root. A (query,peer) needing more than NODELISTLENGTH
      * nodes is split across multiple envelopes (disjoint subtrees; the slot-keyed
      * reply merge sums them). n_nodes==0 = broadcast query (full local walk on
-     * the receiver: uncovered-policy loops, or an oracle probe). */
+     * the receiver: uncovered-policy loops). */
     int        n_nodes;
-    /* Oracle under-route probe (validation scaffolding, oracle mode only): 1 =
-     * the sender's targeted routing did NOT select this peer for this query and
-     * expects ZERO matches here; the receiver full-walks it and raises a loud
-     * SENDER-UNDER-ROUTE alarm if it finds any. 0 on all production envelopes. */
     /* Reserved, always zero. Holds the wire slot of a removed Mode-B probe
      * flag. Kept so sizeof(NlrQueryEnvelope) is unchanged: the envelope size
      * divides All.BufferSize to set the streaming round boundary, and round

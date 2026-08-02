@@ -69,21 +69,6 @@ static inline int particle_passes(int j,
     return r2 < cutoff * cutoff;
 }
 
-void mode_b_local_brute_walk(const double pos[3],
-                             double h_q,
-                             unsigned int type_mask,
-                             int search_mode,
-                             mode_b_radius_policy_t radius_policy,
-                             std::vector<int>& out,
-                             double j_radius_scale)
-{
-    const int num_local = ghost_get_num_local();
-    for(int j = 0; j < num_local; j++) {
-        if(!particle_passes(j, pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale)) continue;
-        out.push_back(j);
-    }
-}
-
 /* Sphere-vs-AABB pruning test. Returns 1 if the sphere of radius R
  * centered at pos overlaps the AABB defined by node center + half-len.
  * Uses NEAREST_XYZ for periodic minimum image. */
@@ -435,9 +420,3 @@ void mode_b_lazy_drift_candidates(const int *indices, int n)
      * drifted KernelRadius values. */
     gizmo_mark_kernel_radius_dirty_indices(indices, n);
 }
-
-/* Per-call same-rank tree-vs-brute oracle is owned by the runner via
- * GIZMO_NLR_ORACLE in mesh/neighbor_loop_runner.cc::run_mode_b_*_with_oracle.
- * The legacy public wrapper mode_b_local_walk_with_oracle() and its
- * GIZMO_MODE_B_ORACLE env helper were retired in this commit; both had
- * zero callers post-3c.3. */

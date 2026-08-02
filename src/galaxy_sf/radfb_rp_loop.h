@@ -166,15 +166,13 @@ struct RadFBRPAccum {
 /* IterScratch — host-only per-active state, carries iter-0's accumulated
  * wt_sum into the iter-0→iter-1 staging bridge. Flow:
  *   iter 0 device kernel:   accum.wt_sum += h_j² (per pair).
- *   iter 0 after_iter (per active, runs for BOTH production AND oracle):
+ *   iter 0 after_iter (per active):
  *                            ctx.scratch.wt_sum = accum.wt_sum  (status-only
- *                            otherwise — no P/CellP writes; oracle-safe).
- *   iter 0 after_iter_global (post-iter staging hook; mutates per_active_local
- *                              for both ctx and ctx_oracle; NO physics writes):
+ *                            otherwise — no P/CellP writes).
+ *   iter 0 after_iter_global (post-iter staging hook; mutates per_active_local;
+ *                              NO physics writes):
  *                            drv.scratch_uvm[sg][slot].wt_sum →
  *                              drv.ctx.per_active_local[slot].wt_sum
- *                            drv.scratch_oracle_uvm[sg][slot].wt_sum →
- *                              drv.ctx_oracle.per_active_local[slot].wt_sum
  *                            (+ Kokkos::fence() before iter-1 device dispatch).
  *   iter 1 device kernel:    reads loc.wt_sum (staged); applies kicks.
  * Carries through IterScratch (the runner's intended per-active iter-state)
@@ -362,8 +360,6 @@ static void radfb_rp_pair_kick(
         dv_kick[2] = sir * dir_ir[2] + suv * dir_uv[2];
     }
 #endif
-
-    /* j-side atomic writes — suppressed under oracle dry-run. */
 
     for (int k = 0; k < 3; k++) {
         Kokkos::atomic_add(&Pj.Vel[k],     (MyDouble)dv_kick[k]);
