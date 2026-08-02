@@ -393,7 +393,7 @@ struct AgsDensitySpec {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
         int                  *need_wakeup;       /* shared scratch in ctx */
-        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j] */
     };
 
     /* Empty Aux — the Spec contract requires the typedef but ags_density

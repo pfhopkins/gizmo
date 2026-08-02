@@ -202,10 +202,9 @@ static void thermal_fb_pair_kernel(
     /* Energy: IE += wk * Esne / Mass_j. */
     double dIE = wk * (double)local.Esne / Mass_j;
 
-    /* i-side accum always runs (oracle compares this for parity). */
     out.M_coupled += dM;
 
-    /* j-side atomic writes — suppressed under oracle dry-run. */
+    /* j-side atomic writes. */
 
     Kokkos::atomic_add(&Pj.Mass, (MyDouble)dM);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -300,7 +299,7 @@ struct ThermalFBSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;   /* nullptr for non-gas; gas-only mask should prevent */
-        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j] */
     };
 
     /* Aux — empty; thermalfb needs no host-only per-call state beyond what

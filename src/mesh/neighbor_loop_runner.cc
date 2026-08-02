@@ -552,9 +552,7 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
         return;
     }
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
-    /* Thread the real tree walk above the work threshold; the brute oracle
-     * stays serial (reference stays independent of the machinery under test)
-     * and below-threshold stays serial (byte-identical to today). */
+    /* Thread the tree walk above the work threshold; below it stays serial. */
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(N, nthreads);
@@ -601,15 +599,9 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
         double pos_arr[3] = {(double)args.P[i].Pos[0],
                               (double)args.P[i].Pos[1],
                               (double)args.P[i].Pos[2]};
-        if(backend == DispatchPath::ModeB_HostWalker) {
-            mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
-                                        Spec::search_mode, Spec::radius_policy,
-                                        cands, jscale);
-        } else {
-            mode_b_local_brute_walk(pos_arr, h_q, neighbor_type_mask,
-                                     Spec::search_mode, Spec::radius_policy,
-                                     cands, jscale);
-        }
+        mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                    Spec::search_mode, Spec::radius_policy,
+                                    cands, jscale);
     }
 }
 
@@ -760,8 +752,8 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
         const auto& cands = per_active_cands[aa];
         if constexpr (nlr_spec_has_bind_active_to_eval_context_v<Spec>) {
             /* Spec needs per-eval-pass rebinding of rank-local + eval-pass-local
-             * fields embedded in ActiveData (P_base / CellP_base / oracle_dry_run
-             * / per-rank gas-delta ptrs / per-rank index bounds). Take a local
+             * fields embedded in ActiveData (P_base / CellP_base / per-rank
+             * gas-delta ptrs / per-rank index bounds). Take a local
              * mutable copy, refresh from the eval ctx, then walk. See
              * nlr_spec_has_bind_active_to_eval_context_v in
              * mesh/neighbor_loop_runner.h for the contract. */
@@ -1045,11 +1037,11 @@ static void mode_b_remote_evaluate_into_buffer(
      *     PRESERVING specs (density, gradients, MFM hydro_force) the reorder is
      *     EXACTLY neutral. For mass-MUTATING specs a j crossing the Mass>0 gate
      *     during self eval could shift its peer-candidate membership — but those
-     *     specs are ALREADY order-dependent (see thermal_fb accum_tolerance) and
-     *     this stays within that tolerance regime, not a new exactness contract.
+     *     specs are ALREADY order-dependent, and this stays within that regime,
+     *     not a new exactness contract.
      * NO generic j-write-exactness claim is made. Any mass-mutating spec routed
-     * through streamed Mode-B at multi-round MUST be re-audited + oracle-checked
-     * (evrard, the validated case, is mass-preserving MFM). */
+     * through streamed Mode-B at multi-round MUST be re-audited (evrard, the
+     * validated case, is mass-preserving MFM). */
 
     /* The eligibility gate is RETIRED — EVERY Mode-B loop routes via
      * targeted export (per-type node band is cross-rank-fresh + dominates every
@@ -3584,16 +3576,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         return;
     }
 
-    /* ===== Mode A + oracle hard-stub =====
-     * Mode A iterative production path is fully ported; only the *oracle*
-     * backend on Mode A is intentionally not implemented. Oracle is
-     * temporary port-validation scaffolding; Mode A oracle over the
-     * imported pool catches only CSR/cached-lookup/rebuild bugs (covered
-     * by the synthetic harness) and cannot validate ghost-import
-     * completeness (walks the same imported pool as production). For
-     * oracle validation select Mode B with the parameterfile
-     * NeighborLoopModeBThreshold pair, and set GIZMO_NLR_ORACLE=1. */
-
     if(gizmo_nlr_dispatch_trace_enabled()) {
         int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         if(rank == 0) {
@@ -3980,12 +3962,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
             int i = sgr.active_indices[slot];
-            /* If Spec opts into the
-             * iterative-variant hook, route the converged radius +
-             * IterScratch through it. Production-only path (oracle has
-             * its own accum_oracle_uvm / radii_oracle_uvm; oracle does
-             * NOT call apply_active_writeback). Specs that don't declare
-             * the iterative hook fall through to the original. */
+            /* If Spec opts into the iterative-variant hook, route the
+             * converged radius + IterScratch through it. Specs that don't
+             * declare the iterative hook fall through to the original. */
             if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
                 Spec::apply_active_writeback_iterative(
                     sub, slot, i,
