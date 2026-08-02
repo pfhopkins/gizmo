@@ -16,10 +16,6 @@
  *     P[i].AGS_KernelRadius every iter)
  *   - after_iter_global (iter > 10 print only)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
- *   - set_oracle_brute_pass HARD-STUB (controlled stop on true; AGS validation
- *     used two-binary parity, not in-runner oracle)
- *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
- *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
  * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
  * cleanup after two-binary parity passed).
@@ -159,13 +155,6 @@ void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
     }
 }
 
-/* Oracle hard-stub: required by runner contract but AgsDensitySpec should
- * never be invoked with GIZMO_NLR_ORACLE=1 — after_iter mutates P[i] and
- * the pair body reads P[j].AGS_vsig (the threshold field), so an oracle
- * brute pass would see contaminated state. Caller (ags_rkern.cc::ags_density)
- * endruns on entry if oracle env is set. If we reach this hook anyway,
- * fail loudly. */
-
 /* ============================================================================
  * APPLY_ACTIVE_WRITEBACK — NO-OP for AgsDensitySpec.
  *
@@ -192,7 +181,7 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  *
  * Manifest pattern matching sink_feed_loop.cc::merge_accum. Per-field op
  * MUST match what pair_kernel writes (field parity was validated by the
- * retired two-binary route; the in-runner oracle is hard-stubbed for AGS).
+ * retired two-binary route).
  *
  * AGS_vsig_max is MAX-merged (legacy ASSIGN_MAX in scatter); everything
  * else is ADD-merged. AGS_FACE NV_T fields are ADD-merged (each peer
@@ -674,21 +663,8 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
     ghost_writeback_end_bundle(ags_density_ghost_writeback_bundle_ptr());
 }
 
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- *
- * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1. For
- * AgsDensitySpec the oracle path is HARD-STUBBED (set_oracle_brute_pass
- * controlled-stops on true; caller endruns on GIZMO_NLR_ORACLE=1). This
- * compare_accum implementation therefore exists to satisfy the runner's
- * Spec contract but is unreachable under correct caller-gating. The body
- * is kept identical to the sink_feed pattern in case the caller-side
- * endrun guard is ever bypassed (defense-in-depth — emit a sane
- * comparison rather than UB).
- *
- * AGS validation was done via two-binary parity (runner build vs post-fix
- * legacy build), not in-runner oracle. See design v0.4.3 §3a / §7.
- * ========================================================================== */
+/* AGS field parity was validated by the retired two-binary route: the runner
+ * build against a post-fix legacy build. */
 
 /* ============================================================================
  * ags_density() — runner-driven caller surface.

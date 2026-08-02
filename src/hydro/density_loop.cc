@@ -214,13 +214,14 @@ void DensitySpec::apply_active_writeback(const neighbor_loop_args& args,
  * Production-only writeback channel. The runner's iterative post-loop
  * writeback (mesh/neighbor_loop_runner.cc:~4121) calls this INSTEAD of
  * apply_active_writeback when the Spec opts in (SFINAE-detected via
- * nlr_spec_has_apply_active_writeback_iterative_v). Oracle does NOT
- * invoke writeback at all — its accum lives in a separate
- * accum_oracle_uvm buffer with its own radii_oracle_uvm.
+ * nlr_spec_has_apply_active_writeback_iterative_v). That loop runs
+ * exactly once per active, which is what makes writing args.aux from
+ * HERE single-valued.
  *
- * Therefore writing args.aux from HERE is oracle-safe: no oracle pass
- * ever touches it. (The earlier draft wrote per_active_final_h from
- * after_iter, which the oracle DOES run twice — caught and reverted.)
+ * ⚠ Do NOT move this into after_iter. An earlier draft wrote
+ * per_active_final_h there and it was reverted: after_iter can be
+ * invoked more than once for the same active, so a converged quantity
+ * written from it is not well defined.
  *
  * IterScratch passed for forward-compat: future Specs might persist
  * (e.g.) ConditionNumber from the final iter through scratch into
@@ -238,30 +239,11 @@ void DensitySpec::apply_active_writeback_iterative(const neighbor_loop_args& arg
 }
 
 /* ====================================================================
- * set_oracle_brute_pass — no-op for density. The runner toggles this
- * around its brute-oracle pass for Specs that need to suppress j-side
- * writes (e.g., AGS suppresses wakeup writes). Density has no j-side
- * writes (uses_ghost_writeback=false; verified §E inventory), so no
- * suppression is needed. Declared because runner.h:505 calls without
- * SFINAE guard.
- * ==================================================================== */
-
-/* ====================================================================
- * compare_accum — per-field max-relative-difference for oracle compare.
- *
- * Used by the runner's oracle path to emit ORACLE MISMATCH lines when
- * production vs brute trajectory diverge at a slot. Returns the max
- * relative diff across all AccumData fields, gated by the same #ifdefs
- * as AccumData declaration. Sink_TimeBinGasNeighbor is an int; cast to
- * double for the relative-diff arithmetic.
- * ==================================================================== */
-
-/* ====================================================================
  * merge_accum — per-field combine for Mode B remote.
  *
  * Per-field op MUST match what pair_kernel writes. Sum for additive
  * fields; MIN for the two sink fields. Mismatch = silent multi-rank
- * corruption; only oracle catches it.
+ * corruption, surfacing only as a difference between rank counts.
  *
  * Gating mirrors AccumData declaration verbatim:
  * Sink_TimeBinGasNeighbor under SINK_PARTICLES; Sink_dr_to_NearestGasNeighbor
@@ -727,7 +709,7 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
             if ((double)(scratch.right - scratch.left) < 1.0e-3 * (double)scratch.left) {
                 scratch.converged = true;
                 scratch.condition_number_current = ConditionNumber;
-                /* Final radius travels to finalize through the oracle-safe
+                /* Final radius travels to finalize through the single-valued
                  * apply_active_writeback_iterative channel. */
                 return IterResult{IterStatus::Converged, (double)new_h};
             }
@@ -840,7 +822,7 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
     if (args.P[i].Type == 0) {
         scratch.condition_number_current = ConditionNumber;
     }
-    /* Final radius travels to finalize through the oracle-safe
+    /* Final radius travels to finalize through the single-valued
      * apply_active_writeback_iterative channel. */
     return IterResult{IterStatus::Converged, (double)new_h};
 }
@@ -1290,7 +1272,6 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  * Mirrors the AGS pattern at gravity/ags_density_loop.cc::ags_density()
  * with density-specific changes:
  *   - Single gas-only subgroup (no bm partitioning).
- *   - Oracle enabled.
  *   - hydro-typed ghost prep + redo (vs ags-typed).
  *   - Aux carries both per_active_final_accum AND per_active_final_h
  *     (the latter populated via apply_active_writeback_iterative).
@@ -1326,7 +1307,7 @@ void density(void)
      *     before the runner. A pre-runner global ghost import would mutate
      *     state outside the Mode B corridor snapshot — violating the
      *     "Mode B must not touch globals on tiny-N path" rule and
-     *     contaminating oracle validation. Instead:
+     *     Instead:
      *       - Mode A iterative runner owns Mode A's ghost import,
      *         using args.ghost_safety_factor + Spec::search_mode +
      *         Spec::neighbor_type_mask + the per-active radii_uvm.
