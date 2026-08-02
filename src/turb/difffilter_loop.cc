@@ -102,17 +102,6 @@ void DiffFilterSpec::merge_accum(AccumData& local, const AccumData& peer)
     if (peer.max_dist_for_grad > local.max_dist_for_grad) local.max_dist_for_grad = peer.max_dist_for_grad;
 }
 
-double DiffFilterSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    m = nlr_rel_update(m, local.norm_hat,          oracle.norm_hat);
-    for (int k = 0; k < 3; k++)
-        m = nlr_rel_update(m, local.velocity_bar_delta[k], oracle.velocity_bar_delta[k]);
-    m = nlr_rel_update(m, local.filter_width_bar,  oracle.filter_width_bar);
-    m = nlr_rel_update(m, local.max_dist_for_grad, oracle.max_dist_for_grad);
-    return m;
-}
-
 /* No j-side writes → oracle brute pass needs no suppression. */
 
 double DiffFilterSpec::symmetric_neighbor_radius_scale()
@@ -206,27 +195,6 @@ void DynDiffSpec::merge_accum(AccumData& local, const AccumData& peer)
         local.filter_width_hat = peer.filter_width_hat;
     local.dynamic_numerator_hat   += peer.dynamic_numerator_hat;
     local.dynamic_denominator_hat += peer.dynamic_denominator_hat;
-}
-
-double DynDiffSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    for (int k = 0; k < 3; k++) {
-        for (int v = 0; v < 3; v++) {
-            m = nlr_rel_update(m, local.dynamic_fac[k][v],          oracle.dynamic_fac[k][v]);
-#ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
-            m = nlr_rel_update(m, local.dynamic_fac_const[k][v],    oracle.dynamic_fac_const[k][v]);
-#endif
-            m = nlr_rel_update(m, local.grad_velocity_hat[k][v],    oracle.grad_velocity_hat[k][v]);
-            m = nlr_rel_update(m, local.product_velocity_hat[k][v], oracle.product_velocity_hat[k][v]);
-        }
-        m = nlr_rel_update(m, local.maxima_velocity_hat[k], oracle.maxima_velocity_hat[k]);
-        m = nlr_rel_update(m, local.minima_velocity_hat[k], oracle.minima_velocity_hat[k]);
-    }
-    m = nlr_rel_update(m, local.filter_width_hat,        oracle.filter_width_hat);
-    m = nlr_rel_update(m, local.dynamic_numerator_hat,   oracle.dynamic_numerator_hat);
-    m = nlr_rel_update(m, local.dynamic_denominator_hat, oracle.dynamic_denominator_hat);
-    return m;
 }
 
 double DynDiffSpec::symmetric_neighbor_radius_scale()

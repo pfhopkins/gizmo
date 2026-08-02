@@ -605,7 +605,6 @@ struct AgsDensitySpec {
     /* ====================================================================
      * DIAGNOSTICS — env-gated.
      * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

@@ -510,7 +510,6 @@ struct RadFBRPSpec {
                                          const struct NlrIterDriver<RadFBRPSpec>& drv);
 
     /* Diagnostics — env-gated. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* ====================================================================
      * Device hooks (header-inline).

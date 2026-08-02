@@ -268,15 +268,6 @@ void RtSrcInjectionSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * a physics surrogate — the real j-side writes are atomic_add direct in the
  * pair kernel, and audited by the per-field ghost-writeback bundle.
  * ========================================================================== */
-double RtSrcInjectionSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    const double va = local.sum_dE;
-    const double vb = oracle.sum_dE;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
-    const double rel_dE = std::fabs(va - vb) / denom;
-    const double pair_diff = (local.pair_count == oracle.pair_count) ? 0.0 : 1.0;
-    return std::fmax(rel_dE, pair_diff);
-}
 
 /* ============================================================================
  * RUNNER WRAPPER (non-template)

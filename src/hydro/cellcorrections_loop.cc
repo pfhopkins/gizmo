@@ -45,13 +45,6 @@ void CellcorrectionsSpec::apply_active_writeback(const neighbor_loop_args& /*arg
 }
 
 /* Oracle comparison: single-field L2 relative residual with floor. */
-double CellcorrectionsSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double a = local.volume_1;
-    double b = oracle.volume_1;
-    double denom = fmax(fmax(fabs(a), fabs(b)), 1e-30);
-    return fabs(a - b) / denom;
-}
 
 /* Toplevel — replaces the legacy walker in hydro/density.cc:62-162. The
  * runner handles ghost import + arena + CSR build + kernel launch

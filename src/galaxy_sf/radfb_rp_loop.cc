@@ -540,18 +540,6 @@ void RadFBRPSpec::ghost_writeback_end(const neighbor_loop_args& args,
  * with a denom-floor of 1.0 (mirrors thermal_fb pattern).
  * ========================================================================== */
 
-double RadFBRPSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    const double wa = local.wt_sum,            wb = oracle.wt_sum;
-    const double ja = (double)local.jet_momentum_used,
-                 jb = (double)oracle.jet_momentum_used;
-    const double dw    = std::fabs(wa - wb);
-    const double dj    = std::fabs(ja - jb);
-    const double denom_w = std::fmax(1.0, std::fmax(std::fabs(wa), std::fabs(wb)));
-    const double denom_j = std::fmax(1.0, std::fmax(std::fabs(ja), std::fabs(jb)));
-    return std::fmax(dw / denom_w, dj / denom_j);
-}
-
 /* ============================================================================
  * TOPLEVEL CALLER — radiation_pressure_winds_consolidated
  *

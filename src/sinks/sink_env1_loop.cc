@@ -12,7 +12,6 @@
  *   PHYSICS HOOKS                — search_radius, populate_call_scalars,
  *                                   apply_active_writeback, merge_accum
  *   IMPORTED-GHOST LIFECYCLE     — write detector + writeback wrappers
- *   DIAGNOSTICS (env-gated)      — compare_accum (oracle gate)
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -207,71 +206,6 @@ void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 {
     ghost_writeback_end_bundle(sink_env1_ghost_writeback_bundle_ptr());
 }
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated, safe to ignore for physics edits.
- *
- * compare_accum is the oracle gate, called only when GIZMO_NLR_ORACLE=1;
- * GIZMO_NLR_ORACLE_DUMP=1 adds a field-by-field mismatch dump. See the
- * mesh/neighbor_loop_runner.h env-config block.
- * ========================================================================== */
-
-/* PERMANENT_DIAGNOSTIC — oracle compare.
- *
- * Returns the maximum relative residual across all AccumData fields. The
- * runner gates calls behind GIZMO_NLR_ORACLE=1 + Spec::accum_tolerance.
- *
- * Implementation: walk the byte representation as MyFloat scalars and
- * compute max relative diff per-field. AccumData layout is exclusively
- * MyFloat scalars and MyFloat[3] arrays (see sinks/sinks_gpu_decls.h);
- * for a future MyFloat=float build this still produces a meaningful
- * relative residual. */
-double SinkEnv1Spec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    size_t max_rel_field = 0;
-    const MyFloat *pa = reinterpret_cast<const MyFloat*>(&local);
-    const MyFloat *pb = reinterpret_cast<const MyFloat*>(&oracle);
-    const size_t n = sizeof(AccumData) / sizeof(MyFloat);
-    static_assert(sizeof(AccumData) % sizeof(MyFloat) == 0,
-        "SinkEnv1Spec::AccumData must be MyFloat-aligned for byte-walk compare");
-    for(size_t k = 0; k < n; k++) {
-        double va = (double)pa[k], vb = (double)pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) { max_rel = rel; max_rel_field = k; }
-    }
-    /* When GIZMO_NLR_ORACLE_DUMP=1 and max_rel exceeds tolerance, dump every
-     * nonzero-diff field. Distinguishes summation-reorder roundoff from
-     * physics drift. Print cap = 16 calls. */
-    static int s_dump_cached = -1;
-    if(s_dump_cached < 0) {
-        const char *e = std::getenv("GIZMO_NLR_ORACLE_DUMP");
-        s_dump_cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    static int s_dump_count = 0;
-    if(s_dump_cached && max_rel > 1e-10 && s_dump_count < 16) {
-        std::fprintf(stderr, "[compare_accum DUMP call=%d max_rel=%g (field=%zu) abs=%g local=%g oracle=%g]\n",
-                     s_dump_count, max_rel, max_rel_field,
-                     std::fabs((double)pa[max_rel_field] - (double)pb[max_rel_field]),
-                     (double)pa[max_rel_field], (double)pb[max_rel_field]);
-        for(size_t k = 0; k < n; k++) {
-            double va = (double)pa[k], vb = (double)pb[k];
-            double denom = std::fmax(std::fabs(va), std::fabs(vb));
-            double diff  = std::fabs(va - vb);
-            double rel   = (denom > 0.0) ? (diff / denom) : diff;
-            if(diff > 0.0) {
-                std::fprintf(stderr, "  field[%zu] local=%.17g oracle=%.17g abs=%.6g rel=%.6g\n",
-                             k, va, vb, diff, rel);
-            }
-        }
-        std::fflush(stderr);
-        s_dump_count++;
-    }
-    return max_rel;
-}
-
 
 #else  /* !SINK_PARTICLES */
 

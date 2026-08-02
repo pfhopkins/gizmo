@@ -690,24 +690,6 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * AGS validation was done via two-binary parity (runner build vs post-fix
  * legacy build), not in-runner oracle. See design v0.4.3 §3a / §7.
  * ========================================================================== */
-double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    /* Byte-walk as doubles, same pattern as sink_feed_loop.cc::compare_accum. */
-    double max_rel = 0.0;
-    const double *pa = reinterpret_cast<const double*>(&local);
-    const double *pb = reinterpret_cast<const double*>(&oracle);
-    static_assert(sizeof(AccumData) % sizeof(double) == 0,
-        "AgsDensitySpec::AccumData must be double-aligned for byte-walk compare");
-    const size_t n = sizeof(AccumData) / sizeof(double);
-    for(size_t k = 0; k < n; k++) {
-        double va = pa[k], vb = pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) max_rel = rel;
-    }
-    return max_rel;
-}
 
 /* ============================================================================
  * ags_density() — runner-driven caller surface.

@@ -783,7 +783,6 @@ struct SinkSwkSpec {
     /* ====================================================================
      * DIAGNOSTICS — env-gated.
      * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* SINK_PARTICLES */

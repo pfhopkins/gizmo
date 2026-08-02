@@ -250,8 +250,6 @@ struct MechFBSpec {
     /* Oracle suppression: flips ctx.oracle_dry_run; pair_kernel gates j-side
      * atomic writes on the flag (i-side accum still completed). */
 
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
-
     /* Per-active post-iter hook — STATUS-ONLY.
      * Returns NeedsMore until iter_index >= num_modes-1, then Converged.
      * Must NOT mutate host P[i] / CellP[i] / Aux: the iterative runner calls

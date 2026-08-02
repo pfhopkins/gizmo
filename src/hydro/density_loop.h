@@ -358,7 +358,6 @@ struct DensitySpec {
      * ORACLE MISMATCH lines). Returns max relative diff across all
      * AccumData fields. Per-field compare (not a byte-walk) because
      * AccumData mixes MyDouble/MyFloat/int. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     static IterResult after_iter(const AfterIterContext<DensitySpec>& ctx,
                                  const AccumData& accum);

@@ -523,7 +523,6 @@ struct SinkEnv1Spec {
      *   compare_accum: oracle gate. Definition lives in sink_env1_loop.cc.
      * ==================================================================== */
 
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* SINK_PARTICLES */

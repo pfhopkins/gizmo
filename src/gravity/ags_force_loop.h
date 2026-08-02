@@ -354,6 +354,17 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
                 Kokkos::atomic_store(need_wakeup, 1);
                 if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
             }
+            /* The kick lands on Pj.Vel immediately, mid-loop, so a later pair
+             * involving j scatters off the UPDATED velocity. That is required,
+             * not incidental: SIDM scatter is a discrete Monte-Carlo collision
+             * operator, and evaluating successive collisions against a snapshot
+             * of the initial velocities would violate energy and momentum
+             * conservation nonlinearly. It is also why this loop is
+             * ModeBEvalOMP::SerialOnly (see modeb_eval_omp below) — the
+             * read-then-write of Pj.Vel is order-dependent by construction.
+             * SIDM is validated by conservation and statistical checks (scatter
+             * event count, wakeup activations, momentum/energy, snapshot vs IC),
+             * never by per-field agreement against a suppressed-write pass. */
             for(int kv = 0; kv < 3; kv++) {
                 Kokkos::atomic_add(&Pj.Vel[kv], (MyDouble)sidm_r.dv_sidm[kv]);
                 Kokkos::atomic_add(&Pj.dp[kv],  (MyDouble)(sidm_r.dv_sidm[kv] * Pj.Mass));
@@ -671,7 +682,6 @@ struct AgsForceSpec {
     /* ====================================================================
      * DIAGNOSTICS — env-gated.
      * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 /* `extern template` declaration so call sites bind to the explicit instantiation

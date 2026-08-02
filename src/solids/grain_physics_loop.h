@@ -119,7 +119,6 @@ struct GrainBackrxSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
     static void        ghost_writeback_begin(const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
     static void        ghost_writeback_end  (const neighbor_loop_args& args,
@@ -281,7 +280,6 @@ struct GrainRTGasSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* Device hooks — header-inline. */
 
@@ -407,7 +405,6 @@ struct GrainRTGrainSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* Device hooks — header-inline. */
 
