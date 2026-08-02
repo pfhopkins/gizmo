@@ -2,9 +2,8 @@
  *
  * Mechanical-after-pattern port mirroring sinks/sink_env1_loop.cc. sink_env2
  * is pure i-side (no j-writes); merge_accum is two ACCUM_ADD lines; no
- * ghost-writeback bundle, no oracle dry-run hook needed (oracle's brute
- * pass is safe without side-effect suppression). populate_device_context
- * stages per-active Jgas/Jstar from host into UVM.
+ * ghost-writeback bundle. populate_device_context stages per-active
+ * Jgas/Jstar from host into UVM.
  *
  * Replaces the SINK_GRAVACCRETION==0 branch of
  * sinks/sink_environment_gpu.cc::sink_environment_second_evaluate_gpu.
@@ -103,10 +102,6 @@ void SinkEnv2Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  * ::ghost_write_detector_end() via the ghost_write_detector_name override
  * in sink_env2_loop.h. sink_env2 has no ghost_writeback bundle
  * (uses_ghost_writeback = false). */
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated. Two MyFloat fields → byte-walk as MyFloat.
- * ========================================================================== */
 
 #endif /* SINK_GRAVACCRETION == 0 */
 #endif /* SINK_PARTICLES */

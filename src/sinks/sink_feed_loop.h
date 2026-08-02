@@ -219,9 +219,8 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  *
  * Validation note: the JSIDE_HASH harness will show small ie_sum / sw_max
  * divergence between Mode A and Mode B remote on this branch — these are
- * stochastic-allowed and do NOT constitute a regression as long as
- * the AccumData oracle (which doesn't include the scratch field — see
- * merge_accum manifest) shows zero mismatch.
+ * stochastic-allowed and do NOT constitute a regression. The scratch field is
+ * deliberately absent from the merge_accum manifest — see that manifest.
  *
  * RNG keys: per feedback_rng_loop_uniqueness.md, all per-pair draws key
  * on (local.ID ^ neighbor_particle.ID) and use scalars.rng_step which
@@ -629,11 +628,6 @@ struct SinkFeedSpec {
         return neighbor;
     }
 
-    /* Oracle brute-pass hook: runner copies ctx and
-     * calls this before the brute evaluate pass to suppress j-side writes.
-     * Without it, oracle would atomic_exchange / atomic_add into P[j] /
-     * CellP[j] twice (tree + brute) and corrupt additive fields. */
-
     /* The physics — forwards to the inline pair body above. The pair body
      * does direct j-side atomic writes through neighbor.neighbor_particle
      * and neighbor.neighbor_cell (non-const). Ghost writeback bundle
@@ -667,9 +661,6 @@ struct SinkFeedSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
 };
 
 #endif /* SINK_PARTICLES */

@@ -3,12 +3,11 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (sink_feed_pair_kernel) live in
  * sink_feed_loop.h so they inline from device kernels (Mode A) and host
- * walkers (Mode B / Brute oracle). This translation unit holds host-only
- * hooks: per-active radius, per-call scalars capture (with sink_feed-
- * unique RNG shift), populate/cleanup_device_context (UVM staging for
- * per-active SinkFeedLocalIn), apply_active_writeback,
- * merge_accum, ghost-writeback manifest + lifecycle hooks, and the
- * env-gated diagnostics block.
+ * walkers (Mode B). This translation unit holds host-only hooks: per-active
+ * radius, per-call scalars capture (with sink_feed-unique RNG shift),
+ * populate/cleanup_device_context (UVM staging for per-active
+ * SinkFeedLocalIn), apply_active_writeback, merge_accum, and the
+ * ghost-writeback manifest + lifecycle hooks.
  *
  * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h.
  *
@@ -101,9 +100,8 @@ void SinkFeedSpec::apply_active_writeback(const neighbor_loop_args& args,
 /* Per-field merge of a peer's contribution (Mode B remote). Per-field op
  * MUST match the pair_kernel writes. mass_markedswallow_scratch is
  * intentionally NOT in the manifest — per-i scratch, not aggregable
- * across peers. The oracle (Mode B via the parameterfile
- * NeighborLoopModeBThreshold pair, plus GIZMO_NLR_ORACLE=1) catches drift
- * between this manifest and pair_kernel writes.
+ * across peers. Nothing checks this manifest against pair_kernel at runtime,
+ * so drift between them is silent.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */
@@ -142,15 +140,14 @@ void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
  *
  * cleanup_device_context frees the UVM. Runs unconditionally via
  * NlrDeviceContextCleanupGuard at runner exit (any path — Mode A,
- * Mode B local, Mode B remote, oracle).
+ * Mode B local, Mode B remote).
  * ========================================================================== */
 
 void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
     /* Null all UVM pointers BEFORE any early-return so cleanup is safe on
-     * every path. Oracle dry-run flag defaults off; runner flips on for
-     * the brute pass via Spec::set_oracle_brute_pass on a copied ctx. */
+     * every path. */
     ctx.per_active_local  = nullptr;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
     ctx.binary_merge_eligible = nullptr;
@@ -256,11 +253,6 @@ void SinkFeedSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 {
     ghost_writeback_end_bundle(sink_feed_ghost_writeback_bundle_ptr());
 }
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1.
- * ========================================================================== */
 
 #else  /* !SINK_PARTICLES */
 
