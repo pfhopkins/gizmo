@@ -1608,6 +1608,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
         gpu_scatter_foreign_to_soa(slot_base, rcount);
 
         Numforeignnodes += rcount;
+        if((long long) Numforeignnodes > Numforeignnodes_highwater) {Numforeignnodes_highwater = Numforeignnodes;}
         node_off += rcount;
         hdr_off  += hcount;
     }

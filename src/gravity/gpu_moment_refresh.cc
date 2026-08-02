@@ -169,21 +169,21 @@ static int precompute_ensure_(int N)
 #if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
     precomputed_t& pre = pre_persist_;
 #ifdef RT_USE_GRAVTREE
-    pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
+    pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum", (long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
     if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #ifdef CHIMES_STELLAR_FLUXES
-    pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
-    pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_g0", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_ion", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
     if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(MyFloat));
-    pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(Vec3<MyFloat>));
+    pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhlum", (long)N * sizeof(MyFloat));
+    pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhangle", (long)N * sizeof(Vec3<MyFloat>));
     if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(MyFloat));
+    pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_crinject", (long)N * sizeof(MyFloat));
     if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #endif
@@ -279,7 +279,7 @@ static int *father_mirror_ensure_(int N)
 {
     if(fmirror_cap_ < N) {
         if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
-        fmirror_persist_ = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)N * sizeof(int));
+        fmirror_persist_ = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_fmirror", (long)N * sizeof(int));
         if(!fmirror_persist_) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); fmirror_cap_ = 0; return NULL;}
         fmirror_cap_ = N;
     }
@@ -479,7 +479,7 @@ static int mr_rawpool_ensure_(int n)
     mr_rawpool_free_();                  /* drop the smaller pool before growing */
     int fail = 0;
 #define MRALLOC(p, count) do { \
-        raw_.p = (decltype(raw_.p)) Kokkos::kokkos_malloc<MrMemSpace>((long)(count) * sizeof(*raw_.p)); \
+        raw_.p = (decltype(raw_.p)) Kokkos::kokkos_malloc<MrMemSpace>("treescratch_moment_raw_" #p, (long)(count) * sizeof(*raw_.p)); \
         if(!raw_.p) { fail = 1; } } while(0)
     MRALLOC(pending, n); MRALLOC(mass, n);    MRALLOC(s, n);       MRALLOC(vs, n);     MRALLOC(Npart, n);
     MRALLOC(hmax, n);    MRALLOC(vmax, n);    MRALLOC(divVmax, n); MRALLOC(maxsoft, n); MRALLOC(bitflags, n);

@@ -311,6 +311,13 @@ typedef enum {
  *  the runtime adaptive floor.  Not restart-persisted (recomputed each run). */
 extern long long RuntimeMinLETForeignNodes;
 
+/*! Since-start high-water of Numforeignnodes (the peak foreign nodes actually
+ *  installed by any LET exchange). Diagnostic only: the memory ledger reports
+ *  foreign "used" from this, because Numforeignnodes itself is reset to 0 by
+ *  force_treeallocate before a controlled-stop ledger fires -- current-at-print
+ *  would read a misleading 0. Updated at the let_pack install site. */
+extern long long Numforeignnodes_highwater;
+
 /*! Two-phase MPI exchange + local install in one scope.  Phase 1 Alltoalls
  *  per-rank node-counts and header-counts; Phase 2 Alltoallvs the
  *  LETNodeWire and LETSubtreeHeader bytes; then directly calls

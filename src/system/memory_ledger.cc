@@ -121,6 +121,25 @@ static void report_memory_ledger_impl(const char *when, int always)
     long long let_in[3] = {g_let_wire_highwater, g_let_wire_current, g_let_wire_failed}, node_let[3] = {0, 0, 0};
     MPI_Reduce(let_in, node_let, 3, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
 
+    /* Label-classified Kokkos buckets (current, bucket x space) -> node sums, so the
+       "Kokkos observed" superset is decomposed into SoA / tree / tree-build scratch /
+       moment scratch / NGL / unclassified, split by memory-space class. */
+    const int NCELL = GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT;
+    long long bkt_cur[NCELL], bkt_hw[NCELL], node_bkt[NCELL];
+    gizmo_kokkos_mem_buckets(bkt_cur, bkt_hw);
+    MPI_Reduce(bkt_cur, node_bkt, NCELL, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
+
+    /* Tree byte breakdown (local vs foreign-LET vs aux) + foreign capacity/used-HW/floor.
+       MB totals sum over the node; the node-count fields take the per-rank MAX (the
+       biggest single rank -- the one that trips force_treeallocate first). */
+    double tb_local = 0, tb_foreign = 0, tb_aux = 0;
+    long long tb_fcap = 0, tb_fused = 0, tb_ffloor = 0;
+    gizmo_tree_mem_breakdown(&tb_local, &tb_foreign, &tb_aux, &tb_fcap, &tb_fused, &tb_ffloor);
+    double tb_mb_in[3] = {tb_local, tb_foreign, tb_aux}, node_tb_mb[3] = {0, 0, 0};
+    long long tb_n_in[3] = {tb_fcap, tb_fused, tb_ffloor}, node_tb_n[3] = {0, 0, 0};
+    MPI_Reduce(tb_mb_in, node_tb_mb, 3, MPI_DOUBLE,   MPI_SUM, 0, GizmoNodeComm);
+    MPI_Reduce(tb_n_in,  node_tb_n,  3, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
+
     /* Byte categories: per-process VIRTUAL/committed and RESIDENT, summed over the node,
        so the commit-vs-physical gap (e.g. Base reserved 56 GB / resident 33 GB) is visible. */
     long long self_vmsize_kb = 0, self_vmrss_kb = 0;
@@ -165,7 +184,7 @@ static void report_memory_ledger_impl(const char *when, int always)
 
         /* Build the whole block into one buffer and emit it with a single write, so the
            blocks printed concurrently by each node's lead task do not interleave. */
-        char buf[2048];
+        char buf[4096];
         int n = 0;
         n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                       "MEMORY LEDGER [%s] task=%d: %d ranks/node, node physical %s\n"
@@ -180,6 +199,14 @@ static void report_memory_ledger_impl(const char *when, int always)
                       node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
                       node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
                       node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
+        /* Tree-node breakdown: split the "Tree nodes" total into local vs foreign-LET vs
+           Father/Nextnode aux, and report foreign capacity vs since-start used high-water
+           (rank-max). "used" is NOT current-at-print: force_treeallocate resets
+           Numforeignnodes=0 before a controlled-stop ledger, so current would read 0. */
+        n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                      "    tree split: local node arrays node %.1f MB | foreign-LET arrays node %.1f MB | aux (Father+Nextnode) node %.1f MB\n"
+                      "    foreign-LET nodes (rank-max): capacity %lld | used high-water %lld (since start) | adaptive floor %lld\n",
+                      node_tb_mb[0], node_tb_mb[1], node_tb_mb[2], node_tb_n[0], node_tb_n[1], node_tb_n[2]);
         /* Byte categories: the family lines above are LOGICAL requested bytes; these are
            the commit vs physical categories (the Base reserved-vs-used gap lives here). */
         if(node_vm[0] > 0 || node_vm[1] > 0)
@@ -196,6 +223,34 @@ static void report_memory_ledger_impl(const char *when, int always)
         else
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                           "  Kokkos allocations observed: unavailable (callback API not compiled on this backend)\n");
+        if(gizmo_kokkos_mem_available()) {
+            /* Per-bucket totals (sum over space class) and per-space totals (sum over
+               buckets) from the classified node array. */
+            double bkt_mb[GIZMO_KOKBUCKET_COUNT] = {0}, spc_mb[GIZMO_KOKSPACE_COUNT] = {0};
+            for(int b = 0; b < GIZMO_KOKBUCKET_COUNT; b++)
+                for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++) {
+                    double mb = node_bkt[b * GIZMO_KOKSPACE_COUNT + s] / (1024.0 * 1024.0);
+                    bkt_mb[b] += mb; spc_mb[s] += mb;
+                }
+            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                          "  Kokkos buckets (node current MB): SoA %.1f | tree %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl %.1f | unclassified %.1f\n",
+                          bkt_mb[GIZMO_KOKBUCKET_PARTICLE_SOA], bkt_mb[GIZMO_KOKBUCKET_TREE_ARRAYS],
+                          bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_BUILD], bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_MOMENT],
+                          bkt_mb[GIZMO_KOKBUCKET_NGL], bkt_mb[GIZMO_KOKBUCKET_UNCLASSIFIED]);
+            /* Space split only when more than one space class is nonzero (on a CPU/OpenMP
+               backend everything is host/shared, so this line is suppressed). */
+            int nspace_nz = 0;
+            for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++) if(spc_mb[s] > 0.0) nspace_nz++;
+            if(nspace_nz > 1)
+                n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                              "    by space (node MB): host %.1f | shared/UVM %.1f | device %.1f | unknown %.1f\n",
+                              spc_mb[GIZMO_KOKSPACE_HOST], spc_mb[GIZMO_KOKSPACE_SHARED],
+                              spc_mb[GIZMO_KOKSPACE_DEVICE], spc_mb[GIZMO_KOKSPACE_UNKNOWN]);
+            const char *unk = gizmo_kokkos_mem_unknown_space_name();
+            if(unk)
+                n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                              "    (unrecognized Kokkos space name seen: '%s' -> bucketed as unknown)\n", unk);
+        }
         (void) snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                         "  (node high-water values are the SUM of per-rank peaks -- a conservative upper bound, not a time-coincident node peak)\n");
         fputs(buf, stdout);

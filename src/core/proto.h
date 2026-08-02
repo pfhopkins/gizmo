@@ -235,6 +235,32 @@ extern "C" void      gizmo_kokkos_mem_register(void);
 extern "C" int       gizmo_kokkos_mem_available(void);
 extern "C" long long gizmo_kokkos_mem_current_bytes(void);
 extern "C" long long gizmo_kokkos_mem_highwater_bytes(void);
+/* Label-classified buckets of the same telemetry stream (classification by allocation
+   label prefix x memory-space class, done inside the callback). Buckets decompose the
+   superset; anything unlabeled or unrecognized lands in UNCLASSIFIED -- the split is
+   honest, never assumed exhaustive. */
+enum {
+  GIZMO_KOKBUCKET_PARTICLE_SOA = 0,     /* label prefix particle_soa_  */
+  GIZMO_KOKBUCKET_TREE_ARRAYS,          /* label prefix tree_          */
+  GIZMO_KOKBUCKET_TREESCRATCH_BUILD,    /* label prefix treescratch_build_  (topology/Peano/Morton) */
+  GIZMO_KOKBUCKET_TREESCRATCH_MOMENT,   /* label prefix treescratch_moment_ (moment-refresh pools)  */
+  GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_           */
+  GIZMO_KOKBUCKET_UNCLASSIFIED,
+  GIZMO_KOKBUCKET_COUNT
+};
+enum {
+  GIZMO_KOKSPACE_HOST = 0, GIZMO_KOKSPACE_SHARED, GIZMO_KOKSPACE_DEVICE, GIZMO_KOKSPACE_UNKNOWN,
+  GIZMO_KOKSPACE_COUNT
+};
+/* Fill caller arrays [GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT], row-major bucket x space. */
+extern "C" void        gizmo_kokkos_mem_buckets(long long *cur, long long *hw);
+extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unrecognized space seen, or NULL */
+/* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
+   no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
+   (current-at-print is misleading: force_treeallocate resets it before a stop ledger). */
+void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
+                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes);
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);

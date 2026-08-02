@@ -2708,6 +2708,36 @@ void force_treeallocate(int maxnodes, int maxpart)
 }
 
 
+/*! Memory-ledger provider (diagnostic): the CAPACITY / REQUESTED byte breakdown of
+ *  the tree Kokkos allocations -- local node arrays vs foreign-LET node arrays (incl.
+ *  foreign-leaf sidecars) vs Father/Nextnode aux -- plus foreign capacity, since-start
+ *  used high-water, and the adaptive floor. This reports DEMAND from MaxNodes/
+ *  MaxForeignNodes, not the live allocation: `tree_allocated_flag` is set at the TOP of
+ *  force_treeallocate, so on a partial-allocation controlled-stop this reports the
+ *  requested capacity that could not be met (which is exactly what we want at a stop).
+ *  Returns zeros when no tree is allocated. Called at ledger print time (host). Byte
+ *  model mirrors force_treeallocate: Nodes_base/Extnodes_base span
+ *  total_node_slots = MaxNodes + MaxForeignNodes + 1 (the +1 sentinel folded into local);
+ *  DomainNodeIndex/TopNodeNodeIndex are mymalloc (Base family) and excluded here. */
+void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
+                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes)
+{
+    *local_mb = *foreign_cap_mb = *aux_mb = 0.0;
+    *foreign_cap_nodes = *foreign_used_hw_nodes = *foreign_floor_nodes = 0;
+    if(!tree_allocated_flag) {return;}
+    const double MB = 1024.0 * 1024.0;
+    long long node_pair = (long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE);
+    *local_mb = (double)(((long long) MaxNodes + 1LL) * node_pair) / MB;  /* +1 sentinel slot */
+    long long sidecar = 2LL * (long long) sizeof(int) + 2LL * (long long) sizeof(MyFloat);  /* Tag+Type+Zeta+Soft */
+    *foreign_cap_mb = (double)((long long) MaxForeignNodes * (node_pair + sidecar)) / MB;
+    long long nextnode_slots = (long long) All.MaxPart + (long long) NTopnodes + (long long) MaxForeignNodes;
+    *aux_mb = (double)(((long long) All.MaxPart + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
+    *foreign_cap_nodes     = MaxForeignNodes;
+    *foreign_used_hw_nodes = Numforeignnodes_highwater;
+    *foreign_floor_nodes   = RuntimeMinLETForeignNodes;
+}
+
 /*! This function frees the memory allocated for the tree, i.e. it frees
  *  the space allocated by the function force_treeallocate().
  */
