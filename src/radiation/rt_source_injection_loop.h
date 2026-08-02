@@ -94,9 +94,8 @@ struct RtSrcInjCallScalars {
  *
  * Order-independence: every j-side write this loop performs is a fresh
  * atomic_add into fields this loop neither reads nor accumulates from within
- * the pair body. Contrast with thermal_fb (Pj.Mass read then atomic_add'd in
- * the same loop → algorithmic order-dependence → accum_tolerance=1e-3).
- * Hence accum_tolerance = 1e-10 here (real precision bound, not parity bound).
+ * the pair body, so the result does not depend on source order. Contrast with
+ * thermal_fb, which reads Pj.Mass and atomic_adds to it in the same loop.
  * ========================================================================== */
 struct RtSrcInjAccum {
     double    sum_dE;
@@ -307,7 +306,6 @@ struct RtSrcInjectionSpec {
     /* Real precision bound (not algorithmic-parity floor): the pair kernel
      * writes only into Pj/Cj fields that this loop never reads back during
      * the loop. No thermal_fb-style read-then-write self-coupling. */
-    static constexpr double accum_tolerance = 1e-10;
 
     /* Type aliases. */
     using CallScalars    = RtSrcInjCallScalars;

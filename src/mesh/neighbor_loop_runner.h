@@ -648,23 +648,6 @@ struct NlrDeviceContextCleanupGuard {
     }
 };
 
-/* SFINAE detection of optional Spec::radius_tolerance (radius convergence tolerance is not the same
- * semantic object as the accumulator comparison tolerance). Defaults to
- * Spec::accum_tolerance when not declared — iterative Specs SHOULD declare
- * their own value. */
-template <typename Spec, typename = void>
-struct nlr_spec_has_radius_tolerance : std::false_type {};
-template <typename Spec>
-struct nlr_spec_has_radius_tolerance<
-    Spec,
-    std::void_t<decltype(Spec::radius_tolerance)>> : std::true_type {};
-
-template <typename Spec>
-constexpr double nlr_spec_radius_tolerance_v =
-    nlr_spec_has_radius_tolerance<Spec>::value
-        ? static_cast<double>(Spec::radius_tolerance)
-        : static_cast<double>(Spec::accum_tolerance);
-
 /* ============================================================================
  * Partition-by-subgroup contract
  *

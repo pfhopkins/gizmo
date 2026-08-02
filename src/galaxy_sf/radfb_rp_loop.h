@@ -417,7 +417,6 @@ struct RadFBRPSpec {
      * wt_sum aggregation reads only Pj.Get_Particle_Size() which is not
      * mutated by any radfb_rp pair; iter-1 kicks atomic_add into independent
      * Vel/VelPred/dp fields. No thermal_fb-style order-dependence expected. */
-    static constexpr double accum_tolerance = 1e-10;
 
     /* Type aliases. */
     using CallScalars    = RadFBRPCallScalars;

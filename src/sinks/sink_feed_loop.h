@@ -531,8 +531,6 @@ struct SinkFeedSpec {
      * site — do NOT broaden the policy to fit a cache. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    static constexpr double accum_tolerance = 1e-10;
-
     static bool is_active(int particle_index) { return sink_feed_is_active(particle_index) != 0; }
 
     using CallScalars   = SinkFeedCallScalars;
