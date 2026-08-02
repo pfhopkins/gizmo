@@ -6,8 +6,7 @@
  * `hydro_accumulate_neighbor` is reused verbatim from
  * hydro/hydro_functions.h — physics unchanged. The j-side write block
  * (P[j].wakeup atomic-max, MFV CellP[j].dMass atomic-add, NeedToWakeup_flag
- * store) is gated by `allow_j_writes` in that helper; both call sites pass
- * true.
+ * store) all happen at the end of that helper.
  *
  * Ghost writeback (Mode A imported-ghost path): runner's snapshot-diff
  * bundle handles wakeup + MFV dMass reverse-comm via PARTICLE_MAX(wakeup)
@@ -470,8 +469,7 @@ struct HydroForceSpec
             neighbor.P, neighbor.CellP,
             neighbor.TimeBinActive_ptr,
             neighbor.need_wakeup_ptr,
-            neighbor.wakeup_dirty_ptr,
-            /*allow_j_writes=*/true);
+            neighbor.wakeup_dirty_ptr);
     }
 
     /* Host writebacks (post-dispatch). Body in hydro_force_loop.cc.

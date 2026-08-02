@@ -62,8 +62,7 @@ void hydro_accumulate_neighbor(
     int j, double dt_hydrostep_i,
     struct particle_data *P, struct gas_cell_data *CellP,
     int *TimeBinActive_arr, int *NeedToWakeup_flag,
-    unsigned char *WakeupDirty_arr,
-    bool allow_j_writes)
+    unsigned char *WakeupDirty_arr)
 {
     int k;
     if(P[j].Mass <= 0) return;
@@ -425,17 +424,13 @@ void hydro_accumulate_neighbor(
 #endif
 #endif
 
-    /* ---- J-particle writes (Kokkos atomics for thread safety) ----
-     *
-     * allow_j_writes gates the entire j-side block. Both call sites --
-     * hydro/hydro_force_loop.h and hydro/density_gpu.cc -- pass true. */
-    /* Signal velocity for timestepping. This is an i-side accumulation, so it
-     * MUST be updated on every pair, OUTSIDE the allow_j_writes gate. It was
-     * once swallowed into that gate by mistake, which left out.MaxSignalVel
-     * stuck at the kernel.sound_i seed whenever the gate was closed. */
+    /* Signal velocity for timestepping. This is an i-side accumulation and
+     * MUST stay here, updated on every pair, ABOVE the j-side writes below.
+     * It was once placed among them behind a gate that could skip them, which
+     * left out.MaxSignalVel stuck at the kernel.sound_i seed. */
     if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
 
-    if(allow_j_writes) {
+    /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* MFV mass conservation: machine-accurate two-sided mass exchange, using
@@ -470,7 +465,6 @@ void hydro_accumulate_neighbor(
         }
     }
 
-    } /* end allow_j_writes */
 }
 
 

@@ -1288,7 +1288,8 @@ static void mode_b_remote_evaluate_into_buffer(
      * peers. The `else` broadcast arm (n_nodes==0 to all peers) is compile-time-DEAD
      * cleanup debt, pending removal. Self-pair handled above; self entry stays
      * empty. */
-    /* (targeted_export_ok, jscale, exporter hoisted above Stage 3 for the fused walk.)
+    /* targeted_export_ok, jscale and exporter are hoisted above Stage 3 for
+     * the fused walk. */
     /* Cap = legacy All.BunchSize analog: BufferSize / (query env + reply env).
      * Our NlrQueryEnvelope IS data_index+data_nodelist+ActiveData fused, so
      * counting envelopes == legacy counting DataIndexTable entries. (No env var;
@@ -4079,8 +4080,7 @@ template void run_neighbor_loop<GradientsIterSpec>(const neighbor_loop_args&);
  * GradientsSpec). uses_ghost_writeback=true with a snapshot-diff bundle
  * (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass)) for Mode A imported-ghost
  * lifecycle; Mode B direct-owner-rank j-writes via request-driven P2P.
- * Helper hydro_accumulate_neighbor carries an allow_j_writes gate. See
- * hydro/hydro_force_loop.{h,cc}. */
+ * See hydro/hydro_force_loop.{h,cc}. */
 template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
 /* RadFBRPSpec — local radiation-pressure winds.
