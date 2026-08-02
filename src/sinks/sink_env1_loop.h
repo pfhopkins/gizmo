@@ -99,7 +99,6 @@ struct SinkEnv1ActiveState {
  * SinkSwkDeviceContext. Trivially copyable: runner captures by value
  * into device lambda. */
 struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
-    bool oracle_dry_run;
 };
 
 /* ============================================================================
@@ -125,8 +124,7 @@ KOKKOS_INLINE_FUNCTION
 static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   const struct gas_cell_data* neighbor_cell,
-                                  struct sink_env_gpu_out& accum,
-                                  bool oracle_dry_run)
+                                  struct sink_env_gpu_out& accum)
 {
     /* Self-skip / mass / type-5 filter. */
     if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5 || neighbor_particle.ID == active.id) return;
@@ -343,7 +341,6 @@ struct SinkEnv1Spec {
     struct NeighborData {
         struct particle_data       *neighbor_particle;  /* non-const: pair body atomic-min's SwallowTime */
         const struct gas_cell_data *neighbor_cell;      /* nullptr for non-gas / when no CellP */
-        bool                        oracle_dry_run;     /* propagated from ctx by load_neighbor */
     };
 
     /* (7) Per-active aux passed by caller through neighbor_loop_args::aux.
@@ -462,7 +459,6 @@ struct SinkEnv1Spec {
         NeighborData neighbor;
         neighbor.neighbor_particle = &ctx.P[j];
         neighbor.neighbor_cell     = (ctx.CellP && ctx.P[j].Type == 0) ? &ctx.CellP[j] : nullptr;
-        neighbor.oracle_dry_run    = ctx.oracle_dry_run;
         return neighbor;
     }
 
@@ -478,8 +474,7 @@ struct SinkEnv1Spec {
                              NoScatter& /*scatter*/)
     {
         sink_env1_pair_kernel(active, *neighbor.neighbor_particle,
-                              neighbor.neighbor_cell, accum,
-                              neighbor.oracle_dry_run);
+                              neighbor.neighbor_cell, accum);
     }
 
     /* (11) Host writebacks (post-dispatch). */

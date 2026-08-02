@@ -80,7 +80,6 @@ AgsForceSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     /* Sticky single-int wakeup flag, lives across all subgroups of one
      * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm. */

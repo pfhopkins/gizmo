@@ -68,7 +68,6 @@ struct GrainBackrxAccum {
  * the oracle pass would fire grain_backrx_pair_kernel atomics before production,
  * applying backreaction twice). Same pattern as ThermalFBDeviceContext. */
 struct GrainBackrxDeviceContext : NeighborLoopDeviceContextBase {
-    bool oracle_dry_run = false;
 };
 
 /* NeighborData: carries the array-level P/CellP pointers + neighbor index j
@@ -79,7 +78,6 @@ struct GrainBackrxNeighborData {
     struct particle_data *P_arr;
     struct gas_cell_data *CellP_arr;
     int  j;
-    bool oracle_dry_run;
 };
 
 struct GrainBackrxSpec {
@@ -165,7 +163,6 @@ struct GrainBackrxSpec {
         n.P_arr         = ctx.P;
         n.CellP_arr     = ctx.CellP;
         n.j             = j;
-        n.oracle_dry_run = ctx.oracle_dry_run;
         return n;
     }
 

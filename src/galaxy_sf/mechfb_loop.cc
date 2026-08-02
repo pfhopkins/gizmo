@@ -266,7 +266,6 @@ void MechFBSpec::populate_device_context(const neighbor_loop_args& args,
 
     ctx.mode_idx        = aux ? aux->mode_idx : 0;
     ctx.loop_iteration  = (aux && aux->num_modes > 0) ? aux->modes[ctx.mode_idx] : -2;
-    ctx.oracle_dry_run  = false;
     ctx.num_modes       = aux ? aux->num_modes : 3;
     ctx.num_local_gas        = aux ? aux->num_local_gas        : 0;
     ctx.num_local_particles  = aux ? aux->num_local_particles  : 0;

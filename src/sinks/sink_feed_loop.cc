@@ -151,7 +151,6 @@ void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
     /* Null all UVM pointers BEFORE any early-return so cleanup is safe on
      * every path. Oracle dry-run flag defaults off; runner flips on for
      * the brute pass via Spec::set_oracle_brute_pass on a copied ctx. */
-    ctx.oracle_dry_run    = false;
     ctx.per_active_local  = nullptr;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
     ctx.binary_merge_eligible = nullptr;

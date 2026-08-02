@@ -139,7 +139,6 @@ RadFBRPSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
                                            DeviceContext& ctx)
 {
-    ctx.oracle_dry_run       = false;
     ctx.iter_index_snapshot  = 0;     /* will be refreshed by reset_per_iter on every iter */
 
     Aux *aux = nlr_aux<RadFBRPSpec>(args);

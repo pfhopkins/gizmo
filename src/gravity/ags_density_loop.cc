@@ -133,7 +133,6 @@ AgsDensitySpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void AgsDensitySpec::populate_device_context(const neighbor_loop_args& /*args*/,
                                               DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = 0;
 
     /* Single-int UVM scratch — pair_kernel atomic_or-s a 1 here on any
      * wakeup write. Accumulates across all iters; cleanup_device_context

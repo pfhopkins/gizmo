@@ -128,7 +128,6 @@ struct ThermalFBActiveState {
 struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
     const ThermalFBLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
     unsigned char          *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    bool                    oracle_dry_run;     /* flipped by set_oracle_brute_pass for brute pass */
 };
 
 /* ============================================================================
@@ -150,7 +149,6 @@ static void thermal_fb_pair_kernel(
     struct particle_data& Pj,
     struct gas_cell_data& Cj,
     double r2,
-    bool oracle_dry_run,
     unsigned char* wakeup_dirty_slot,
     ThermalFBOut& out)
 {
@@ -303,7 +301,6 @@ struct ThermalFBSpec {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;   /* nullptr for non-gas; gas-only mask should prevent */
         unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
-        bool                  oracle_dry_run;
     };
 
     /* Aux — empty; thermalfb needs no host-only per-call state beyond what
@@ -387,7 +384,6 @@ struct ThermalFBSpec {
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
         n.wakeup_dirty_slot = dctx.wakeup_dirty_base ? &dctx.wakeup_dirty_base[j] : nullptr;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }
 
@@ -429,7 +425,7 @@ struct ThermalFBSpec {
         if (r2 >= h2) return;
 
         thermal_fb_pair_kernel(active.local, active.scalars, Pj, Cj,
-                                r2, neighbor.oracle_dry_run, neighbor.wakeup_dirty_slot, accum);
+                                r2, neighbor.wakeup_dirty_slot, accum);
     }
 };
 

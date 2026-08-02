@@ -166,11 +166,6 @@ struct SinkFeedActiveState {
  * the Kokkos device lambda. Static_assert in runner.cc enforces this. */
 struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
     const SinkFeedLocalIn *per_active_local;   /* UVM, [num_active] */
-    bool oracle_dry_run;                       /* set by SinkFeedSpec::set_oracle_brute_pass
-                                                  on the brute oracle pass; pair body
-                                                  suppresses j-side atomic writes when true.
-                                                  Default-initialised to false in
-                                                  populate_device_context. */
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
     /* UVM, length ctx.num_total. Same index space as ctx.P[j] — covers
      * local + imported-ghost slots after the Mode-A ghost-import step
@@ -239,7 +234,6 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
                                   SinkFeedOut& out,
-                                  bool oracle_dry_run
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                                   , unsigned char neighbor_binary_merge_eligible
 #endif
@@ -543,9 +537,6 @@ struct SinkFeedSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
-        bool oracle_dry_run;                     /* propagated from ctx by load_neighbor;
-                                                    pair body suppresses j-side atomic
-                                                    writes when true (oracle brute pass). */
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
         unsigned char binary_merge_eligible;    /* propagated from ctx.binary_merge_eligible[j]
                                                    by load_neighbor; passed through to the
@@ -632,7 +623,6 @@ struct SinkFeedSpec {
         NeighborData neighbor;
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
-        neighbor.oracle_dry_run    = dctx.oracle_dry_run;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
         neighbor.binary_merge_eligible = dctx.binary_merge_eligible[j];
 #endif
@@ -656,7 +646,6 @@ struct SinkFeedSpec {
     {
         sink_feed_pair_kernel(active, *neighbor.neighbor_particle,
                               neighbor.neighbor_cell, accum,
-                              neighbor.oracle_dry_run
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                               , neighbor.binary_merge_eligible
 #endif
