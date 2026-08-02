@@ -155,7 +155,7 @@ struct DMDispersionSpec {
                                        int active_slot, int i,
                                        const AccumData& accum);
 
-    /* apply_active_writeback_iterative: oracle-safe production writeback.
+    /* apply_active_writeback_iterative: production writeback.
      * Runner calls this INSTEAD of apply_active_writeback. Copies converged
      * accum + final_h into Aux for dm_dispersion_finalize_post_runner. */
     static void apply_active_writeback_iterative(const neighbor_loop_args& args,

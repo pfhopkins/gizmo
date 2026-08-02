@@ -4,7 +4,6 @@
  *   - populate_device_context (grad_iter ferry to device)
  *   - apply_active_writeback  (replays out2particle_GasGrad{,_iter})
  *   - merge_accum             (peer-rank reduction for Mode B remote)
- *   - compare_accum           (oracle gate)
  *   - GasGrad_isactive        (host-side narrow predicate, migrated from
  *                              the retired hydro/gradients.cc)
  *   - construct_gradient, local_slopelimiter
@@ -468,35 +467,6 @@ void GradientsSpec::merge_accum(AccumData& dst, const AccumData& src)
 #undef MERGE_MIN
 }
 
-/* ============================================================================
- * compare_accum — oracle gate. Field-wise relative residual, taking the MAX
- * across every scalar pair_kernel can write. Per-field
- *   rel(a, b) = |a - b| / max(max(|a|, |b|), floor)
- * with floor = 1e-30, same form as cellcorrections::compare_accum. The MAX
- * (rather than L2 sum) gives a sharper per-field signal and a single
- * scalar return for the runner's accum_tolerance gate.
- *
- * Coverage mirrors merge_accum (same field set, same #ifdef structure) so
- * the oracle and the Mode B remote merge see the same surface. Reading the
- * struct as a flat double[] would mix MyFloat / MyDouble, read padding as
- * payload, and miss tail bytes — explicitly per-field instead.
- * ========================================================================== */
-/* Shared oracle residual for both gradient Specs: an absolute-difference floor
- * then a relative residual. Many MHD-CG fields (Face_Area, FaceCrossX, FaceDotB)
- * are subtractive sums that cancel to ~machine-eps for symmetric configs; a pure
- * relative residual would divide O(1e-22) by O(1e-22) and report spurious O(1)
- * "mismatches". abs_tol sits ~10 orders below realistic field magnitudes
- * (Face_Area ~ h^(NUMDIMS-1) ~ 1e-1..1e-2), so genuine O(1e-6) physics bugs still
- * trip the gate. Single source used by GradientsSpec + GradientsIterSpec. */
-static inline double grad_compare_rel(double x, double y)
-{
-    constexpr double abs_tol = 1e-12;
-    double d = fabs(x - y);
-    if(d < abs_tol) return 0.0;
-    double m = fmax(fmax(fabs(x), fabs(y)), 1e-30);
-    return d / m;
-}
-
 #ifdef MHD_CONSTRAINED_GRADIENT
 /* ============================================================================
  * GradientsIterSpec host hooks (grad_iter>0, slim GasGraddata_out_iter_).
@@ -541,8 +511,6 @@ void GradientsIterSpec::merge_accum(AccumData& dst, const AccumData& src)
 #endif
 }
 
-/* Oracle comparison — same rel()/abs_tol form as GradientsSpec::compare_accum,
- * over the slim field set. */
 #endif /* MHD_CONSTRAINED_GRADIENT */
 
 /* ============================================================================

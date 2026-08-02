@@ -251,7 +251,6 @@ struct CellcorrectionsSpec {
         local.volume_1 += peer.volume_1;
     }
 
-    /* Oracle comparison (env-gated by runner). Body in .cc. */
 };
 
 #endif /* HYDRO_VOLUME_CORRECTIONS */

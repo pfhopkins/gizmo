@@ -27,25 +27,6 @@
 
 #ifdef TURB_DIFF_DYNAMIC
 
-/* ============================================================================
- * Shared finite-aware per-field relative-difference accumulator for
- * compare_accum. A non-finite value on EITHER side (NaN/Inf — e.g. the
- * deliberate no-guard Norm_hat division in DynDiff::pair_kernel) forces a
- * huge residual so the oracle flags it loudly rather than silently dropping
- * it (a plain `rel > max_rel` compare is false for NaN). The finite test is
- * written inline — (x==x) rejects NaN, (x-x==0) rejects Inf — to avoid the
- * isfinite-macro-vs-std::isfinite ambiguity in GPU TUs (runner checklist §2).
- * ========================================================================== */
-namespace {
-inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
-
-inline double nlr_rel_update(double max_rel, double a, double b) {
-    if (!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-    const double rel   = std::fabs(a - b) / denom;
-    return (rel > max_rel) ? rel : max_rel;
-}
-} /* anonymous namespace */
 
 /* ============================================================================
  * DiffFilterSpec host hooks.
@@ -102,7 +83,6 @@ void DiffFilterSpec::merge_accum(AccumData& local, const AccumData& peer)
     if (peer.max_dist_for_grad > local.max_dist_for_grad) local.max_dist_for_grad = peer.max_dist_for_grad;
 }
 
-/* No j-side writes → oracle brute pass needs no suppression. */
 
 double DiffFilterSpec::symmetric_neighbor_radius_scale()
 {

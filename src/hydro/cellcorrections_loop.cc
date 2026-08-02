@@ -1,7 +1,7 @@
 /* hydro/cellcorrections_loop.cc — host hooks + toplevel for CellcorrectionsSpec.
  *
  * See hydro/cellcorrections_loop.h for the Spec contract. This file owns the
- * host writeback (apply_active_writeback), the oracle compare, and the
+ * host writeback (apply_active_writeback) and the
  * toplevel cellcorrections_calc() that replaces the legacy walker that lived
  * in hydro/density.cc:62-162. The final per-active closure (Density,
  * Pressure update) remains in hydro/density.cc as
@@ -43,8 +43,6 @@ void CellcorrectionsSpec::apply_active_writeback(const neighbor_loop_args& /*arg
 {
     CellP[i].Volume_1 += (MyDouble)accum.volume_1;
 }
-
-/* Oracle comparison: single-field L2 relative residual with floor. */
 
 /* Toplevel — replaces the legacy walker in hydro/density.cc:62-162. The
  * runner handles ghost import + arena + CSR build + kernel launch

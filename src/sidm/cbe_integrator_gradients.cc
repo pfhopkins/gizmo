@@ -221,12 +221,6 @@ void CBEGradSpec::merge_accum(AccumData& local, const AccumData& peer)
     }
 }
 
-/* compare_accum — NaN-aware float-relative across M, B, phi. Any non-finite
- * mismatch returns MAX_REAL_NUMBER so the oracle never silently passes with
- * NaN/inf in any field. */
-
-/* Pure i-side accumulation — no j-side writes to suppress. */
-
 /* ============================================================================
  * CBEGrad_gradient_calc — toplevel. Two passes through the runner, separated
  * so pass 1's standard P[] ghost import sees the persistent

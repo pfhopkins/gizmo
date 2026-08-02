@@ -45,8 +45,8 @@
  * Neighbors: gas particles (Type==0).
  * Writes: atomic j-side updates to P[j].Vel, P[j].dp, P[j].Grain_AccelTimeMin,
  *         CellP[j].VelPred (+ GRAIN_EVOLUTION fields). Ghost writeback required.
- * AccumData: empty (no i-side reduction). Oracle compare is vacuous — validation
- * relies on cross-rank ghost-writeback records count and field comparison.
+ * AccumData: empty (no i-side reduction) — validation relies on cross-rank
+ * ghost-writeback record count and field comparison.
  * ========================================================================== */
 #if defined(GRAIN_BACKREACTION)
 
@@ -63,17 +63,14 @@ struct GrainBackrxAccum {
     char _unused;
 };
 
-/* DeviceContext: extends base with oracle_dry_run so set_oracle_brute_pass can
- * suppress j-writes during the brute oracle pass (blocker fix: without this,
- * the oracle pass would fire grain_backrx_pair_kernel atomics before production,
+/* DeviceContext: extends base.
  * applying backreaction twice). Same pattern as ThermalFBDeviceContext. */
 struct GrainBackrxDeviceContext : NeighborLoopDeviceContextBase {
 };
 
 /* NeighborData: carries the array-level P/CellP pointers + neighbor index j
  * so pair_kernel can forward to grain_backrx_pair_kernel(local, j, P, CellP,
- * dp, r2) without physics duplication. oracle_dry_run is propagated from ctx
- * to suppress j-writes during the brute oracle pass. */
+ * dp, r2) without physics duplication. */
 struct GrainBackrxNeighborData {
     struct particle_data *P_arr;
     struct gas_cell_data *CellP_arr;
@@ -82,7 +79,7 @@ struct GrainBackrxNeighborData {
 
 struct GrainBackrxSpec {
     static constexpr const char *loop_name = "grain_backrx";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: drag back-reaction atomic_add(Pj.Vel/dp)+atomic_min(AccelTimeMin), gated !oracle_dry_run, stable Pj snapshot, no read-back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: drag back-reaction atomic_add(Pj.Vel/dp)+atomic_min(AccelTimeMin), stable Pj snapshot, no read-back -> ulp */
 
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;
     static constexpr unsigned int           neighbor_type_mask = 1u << 0;  /* gas */
@@ -122,7 +119,7 @@ struct GrainBackrxSpec {
     static void        ghost_writeback_end  (const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
     /* populate_device_context: required because DeviceContext extends the base.
-     * oracle_dry_run is default-initialized to false; no UVM allocation needed. */
+     * No UVM allocation needed. */
     static void populate_device_context(const neighbor_loop_args& /*args*/,
                                         DeviceContext& /*ctx*/) {}
 
@@ -171,10 +168,6 @@ struct GrainBackrxSpec {
                             const NeighborData& nb,
                             AccumData& /*accum*/,
                             NoScatter& /*scatter*/) {
-        /* Suppress j-writes during the oracle brute pass so the pass does not
-         * apply backreaction before production (double-application bug). The
-         * oracle pass validates search parity only; AccumData is empty so the
-         * compare is vacuous regardless. */
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr || nb.CellP_arr == nullptr) return;
 #ifdef HYDRO_MULTIFLUID

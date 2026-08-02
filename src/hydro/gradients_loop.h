@@ -411,7 +411,6 @@ struct GradientsSpec
      * MaxDistance, additive for everything else. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
-    /* Oracle comparison. Body in gradients_loop.cc. */
 };
 
 
@@ -504,7 +503,7 @@ struct GradientsIterSpec
             neighbor.P, neighbor.CellP);
     }
 
-    /* Slim writeback / merge / oracle (own bodies, gradients_loop.cc). */
+    /* Slim writeback / merge (own bodies, gradients_loop.cc). */
     static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i,
                                         const AccumData& accum);
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);

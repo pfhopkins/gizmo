@@ -108,8 +108,7 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
  * that happen to draw on the same (Ti, ID_pair, tag) — i.e., correlated
  * outcomes that the original time-advancing GSL RNG could never produce by
  * construction. Adding a loop-domain salt restores stream independence
- * across loops without changing parity within a loop (oracle and production
- * both see the same salted stream → oracle compare unaffected).
+ * across loops without changing parity within a loop.
  *
  * Use as:
  *   static constexpr uint64_t MY_LOOP_RNG_SALT = gizmo_loop_rng_salt("my_loop");
