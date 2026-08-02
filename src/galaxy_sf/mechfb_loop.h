@@ -45,7 +45,7 @@
  *     mechanical_fb_per_source_setup. Avoids re-running per_source_setup
  *     for every pair.
  *   - DeviceContext field snapshots (LocalGasMechFBInfoTemp / d_gas_iter /
- *     num_local_gas / oracle_dry_run / P_base / CellP_base) — pair_kernel
+ *     num_local_gas / P_base / CellP_base) — pair_kernel
  *     does NOT receive DeviceContext, so any ctx-derived value the j-side
  *     writes need must ride here.
  *
@@ -147,9 +147,9 @@ struct MechFBSpec {
     static constexpr const char *loop_name = "mechfb";
     /* Eval-thread tier: every j-side write is a Kokkos::atomic_* into the
      * MechFBGasDelta buffer (gd) — atomic_add for the reductions (m/TE/KE/Z/p/
-     * CR/N/dust injected), atomic_max for max_source_wakeup (order-invariant);
-     * all gated by !oracle_dry_run. No direct P[j]/CellP[j] write, no gd read-
-     * back. Deltas are per-pair-independent (stable P[j] snapshot + local copies,
+     * CR/N/dust injected), atomic_max for max_source_wakeup (order-invariant).
+     * No direct P[j]/CellP[j] write, no gd read-back.
+     * Deltas are per-pair-independent (stable P[j] snapshot + local copies,
      * NO running cross-source state → not the thermal_fb read-then-write class),
      * so the i-side myout is order-independent and only the FP atomic-add
      * reduction on gd re-orders → ulp class. The ghost-writeback apply
@@ -245,16 +245,12 @@ struct MechFBSpec {
 
     static void merge_accum(AccumData& local, const AccumData& peer);
 
-    /* Oracle suppression: flips ctx.oracle_dry_run; pair_kernel gates j-side
-     * atomic writes on the flag (i-side accum still completed). */
-
     /* Per-active post-iter hook — STATUS-ONLY.
      * Returns NeedsMore until iter_index >= num_modes-1, then Converged.
-     * Must NOT mutate host P[i] / CellP[i] / Aux: the iterative runner calls
-     * after_iter twice with oracle enabled (production accum at runner.cc:4128
-     * + oracle accum at runner.cc:4189), so any mutation here would double-
-     * apply under GIZMO_NLR_ORACLE=1. Source-side host writes live in
-     * after_iter_global (production-only; runner.cc:4310-4313). */
+     * Must NOT mutate host P[i] / CellP[i] / Aux. It is called from inside the
+     * runner's per-iter convergence pass, which visits only the slots still in
+     * the compacted active set; the source-side host writes have to see every
+     * slot of the subgroup, so they live in after_iter_global instead. */
     static IterResult after_iter(const AfterIterContext<MechFBSpec>& ctx,
                                  const AccumData& accum);
 
@@ -264,9 +260,7 @@ struct MechFBSpec {
      *   mode -2: mech_fb_apply_aws_out for k in [0, 7)
      *   mode -1: mech_fb_apply_aws_out for k in [7, AREA_WEIGHTED_SUM_ELEMENTS)
      *   mode >= 0 (and accum.M_coupled > 0): mech_fb_apply_source_mass_out
-     * Runs ONCE per outer iter (production-only — runner.cc:4310-4313 calls
-     * it AFTER both production+oracle after_iter passes and after oracle
-     * compare), so oracle dual-walk does not double-apply. */
+     * Runs ONCE per outer iter, after the per-active after_iter pass. */
     static void after_iter_global(const neighbor_loop_args& args,
                                   const NlrIterDriver<MechFBSpec>& drv);
 
@@ -352,18 +346,14 @@ struct MechFBSpec {
         /* Snapshot DeviceContext fields the pair kernel needs but cannot read
          * directly (pair_kernel has no ctx parameter).
          *
-         * MPI- AND ORACLE-SAFETY: every field set below is rank-local AND
-         * eval-pass-local. They get OVERWRITTEN by
-         * MechFBSpec::bind_active_to_eval_context (below) inside the runner's
-         * evaluate_pairs_post_drift, once per active per eval pass, using the
-         * exact eval ctx in play. So:
-         *   - Mode-B-remote PEER eval on a receiver rank uses receiver's ctx
-         *     (not sender's stale pointers shipped via MPI envelope).
-         *   - Oracle brute-pass uses ctx_oracle_*.oracle_dry_run = true (not
-         *     the false captured here at original load_active time), so j-side
-         *     atomic writes are suppressed during brute as designed.
+         * MPI SAFETY: every field set below is rank-local AND eval-pass-local.
+         * They get OVERWRITTEN by MechFBSpec::bind_active_to_eval_context
+         * (below) inside the runner's evaluate_pairs_post_drift, once per
+         * active per eval pass, using the exact eval ctx in play — so a
+         * Mode-B-remote PEER eval on a receiver rank uses the receiver's ctx,
+         * not the sender's stale pointers shipped via the MPI envelope.
          * The values set here matter only for the FIRST eval pass on the
-         * active rank in Production mode (the bind hook is idempotent there). */
+         * active rank (the bind hook is idempotent there). */
         a.LocalGasMechFBInfoTemp = dctx.LocalGasMechFBInfoTemp;
         a.d_gas_iter             = dctx.d_gas_iter;
         a.num_local_gas          = dctx.num_local_gas;
@@ -377,17 +367,10 @@ struct MechFBSpec {
     /* Per-eval-pass binding hook (see nlr_spec_has_bind_active_to_eval_context
      * docstring in mesh/neighbor_loop_runner.h). The runner calls this for
      * every active right before its pair_kernel inside evaluate_pairs_post_drift,
-     * with the EXACT ctx of that eval pass — so:
-     *   1. Mode-B-remote PEER eval: receiver's ctx values overwrite the
-     *      sender's rank-local snapshots that arrived via MPI envelope
-     *      (fixes the np=2 wind_singlestar SIGSEGV in mechanical_fb_pair_kernel
-     *      where rank 0 was using rank 1's P_base etc).
-     *   2. Oracle paths (OracleCompare / OracleIterative): the runner copies
-     *      ctx into ctx_oracle_* and flips oracle_dry_run via
-     *      set_oracle_brute_pass on the COPY. Without per-eval-pass binding,
-     *      active.oracle_dry_run would stay at the original ctx's value
-     *      (false) on the brute pass, j-side atomic_adds would fire twice,
-     *      and the oracle would silently miss the double-coupling.
+     * with the EXACT ctx of that eval pass — so on a Mode-B-remote PEER eval
+     * the receiver's ctx values overwrite the sender's rank-local snapshots
+     * that arrived via MPI envelope (fixes the np=2 wind_singlestar SIGSEGV in
+     * mechanical_fb_pair_kernel where rank 0 was using rank 1's P_base etc).
      *
      * Source-owned physics fields (pos, h_search, local, source_mode,
      * loop_iteration, is_active_this_mode, scalars) are preserved here — they
@@ -418,13 +401,13 @@ struct MechFBSpec {
      *
      * Delegates the actual physics to mechanical_fb_pair_kernel (signature
      * refactored to accept home/ghost gas-delta pointers +
-     * num_local_gas + oracle_dry_run). The runner-port responsibilities here:
+     * num_local_gas). The runner-port responsibilities here:
      *   1. Pre-filter (Pj.Type==0 / Mass>0, dp/r2, h_i/h_j gate, r2max gate)
      *      mirroring mechanical_fb_evaluate_gpu's inner neighbor loop.
      *   2. Route j-side writes: home gas → LocalGasMechFBInfoTemp[j];
      *      imported ghost → d_gas_iter[j-num_local_particles] (ghost-writeback
      *      path; shipped to home ranks via custom bundle callback).
-     *   3. Forward to mechanical_fb_pair_kernel with ownership-split + oracle
+     *   3. Forward to mechanical_fb_pair_kernel with the ownership-split
      *      params from ActiveData. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,

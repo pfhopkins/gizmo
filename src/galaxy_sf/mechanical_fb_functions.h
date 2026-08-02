@@ -365,9 +365,7 @@ static void mechanical_fb_pair_kernel(
      *                          (legacy passes num_local_gas = num_local_particles
      *                          = num_all, so j < num_local_gas always holds).
      *   middle gap            : local non-gas range, gas-only mask should filter
-     *                          out, defensive abort if not.
-     * oracle_dry_run : if true, i-side accum (myout.*) still completes but
-     *                  every j-side atomic_add is suppressed (oracle brute-pass). */
+     *                          out, defensive abort if not. */
     struct MechFBGasDelta *home_gas_delta,
     struct MechFBGasDelta *ghost_gas_delta,
     int  num_local_gas,
@@ -547,9 +545,8 @@ static void mechanical_fb_pair_kernel(
     if(couple_anything_but_scalar_mass_and_metals)
     {
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-        /* Phase 2: CR injection via delta struct (host scatter applies in
-         * verify_and_assign_local_mechfb_integrals). j-side oracle gate
-         * applied externally below; suppress CR atomics when oracle is on. */
+        /* CR injection via delta struct (host scatter applies in
+         * verify_and_assign_local_mechfb_integrals). */
         double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         double cr_to_inject = pnorm * m.CR_energy_to_inject;
@@ -578,12 +575,6 @@ static void mechanical_fb_pair_kernel(
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
     }
 
-    /* J-side oracle gate (Phase 4 / Wave 3 / 3e.1): i-side accum (myout.*)
-     * above always completes for both production + oracle passes; j-side
-     * atomic writes below are suppressed during the oracle brute pass so
-     * the oracle's separate per-active AccumData buffer isn't contaminated
-     * by writes to the production gas_delta. The CR injection branch above
-     * has its own `if (!oracle_dry_run)` gate (CR helper takes home/ghost). */
     /* atomic accumulation into the per-gas delta struct */
     struct MechFBGasDelta *gd =
         mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
