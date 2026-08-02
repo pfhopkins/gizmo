@@ -245,9 +245,6 @@ void DensitySpec::apply_active_writeback_iterative(const neighbor_loop_args& arg
  * suppression is needed. Declared because runner.h:505 calls without
  * SFINAE guard.
  * ==================================================================== */
-void DensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {
-    /* no-op; density's pair kernel performs no j-side writes */
-}
 
 /* ====================================================================
  * compare_accum — per-field max-relative-difference for oracle compare.

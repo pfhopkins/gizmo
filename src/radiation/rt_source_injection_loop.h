@@ -366,9 +366,6 @@ struct RtSrcInjectionSpec {
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
     /* Oracle suppression flag. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
-    }
 
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "rtsrcinjection"). */

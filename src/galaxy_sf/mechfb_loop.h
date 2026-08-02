@@ -249,7 +249,6 @@ struct MechFBSpec {
 
     /* Oracle suppression: flips ctx.oracle_dry_run; pair_kernel gates j-side
      * atomic writes on the flag (i-side accum still completed). */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     static double compare_accum(const AccumData& local, const AccumData& oracle);
 

@@ -444,7 +444,6 @@ struct AgsDensitySpec {
      * endruns if GIZMO_NLR_ORACLE=1 is set. Two-binary parity (runner-build
      * vs legacy-build) was the validation route before the legacy path was
      * retired; the in-runner oracle remains hard-stubbed for AGS. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Partition-key hook. Returns the bm key for the
      * subgroup this active belongs to.

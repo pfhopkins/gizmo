@@ -491,9 +491,6 @@ struct RadFBRPSpec {
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
     /* Oracle suppression flag. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
-    }
 
     /* Ghost-writeback + write-detector bookkeeping. All four gated by
      * Aux::iter_index — iter 0 returns immediately on EVERY rank (no

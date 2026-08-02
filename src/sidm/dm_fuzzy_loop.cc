@@ -172,7 +172,6 @@ double DMGradSpec::compare_accum(const AccumData& local, const AccumData& oracle
 }
 
 /* No j-side writes → oracle brute pass needs no suppression. */
-void DMGradSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 /* ============================================================================
  * DMGrad_gradient_calc — toplevel. Two external gradient passes; within each,

@@ -165,7 +165,6 @@ struct DMDispersionSpec {
                                                   const IterScratch& scratch);
 
     static void   merge_accum(AccumData& local, const AccumData& peer);
-    static void   set_oracle_brute_pass(DeviceContext& ctx, bool on);
     static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     static IterResult after_iter(const AfterIterContext<DMDispersionSpec>& ctx,

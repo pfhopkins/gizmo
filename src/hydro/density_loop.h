@@ -353,7 +353,6 @@ struct DensitySpec {
      * Density's contract allows oracle (clean after_iter + clean
      * apply_active_writeback_iterative); the body is a no-op since
      * density has no j-side writes to suppress during oracle. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Per-active oracle comparison (runner uses this to emit
      * ORACLE MISMATCH lines). Returns max relative diff across all

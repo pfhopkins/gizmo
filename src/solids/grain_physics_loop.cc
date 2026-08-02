@@ -94,10 +94,6 @@ double GrainBackrxSpec::compare_accum(const AccumData& /*local*/,
 
 /* Propagate oracle flag to DeviceContext so load_neighbor can carry it into
  * NeighborData and pair_kernel can suppress j-writes during the brute pass. */
-void GrainBackrxSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on)
-{
-    ctx.oracle_dry_run = on;
-}
 
 /* Ghost-writeback bundle for GrainBackrxSpec.
  *
@@ -252,8 +248,6 @@ double GrainRTGasSpec::compare_accum(const AccumData& local, const AccumData& or
     return max_rel;
 }
 
-void GrainRTGasSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
-
 
 /* ============================================================================
  * GrainRTGrainSpec host hooks.
@@ -306,8 +300,6 @@ double GrainRTGrainSpec::compare_accum(const AccumData& local, const AccumData& 
     }
     return max_rel;
 }
-
-void GrainRTGrainSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 
 /* ============================================================================
