@@ -429,8 +429,8 @@ struct HydroForceSpec
         nb.CellP              = ctx.CellP;
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
         nb.oracle_dry_run     = ctx.oracle_dry_run;
-        nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
-        nb.wakeup_dirty_ptr   = ctx.oracle_dry_run ? nullptr : ctx.wakeup_dirty_base;
+        nb.need_wakeup_ptr    = ctx.need_wakeup_uvm;
+        nb.wakeup_dirty_ptr   = ctx.wakeup_dirty_base;
         return nb;
     }
 
@@ -477,7 +477,7 @@ struct HydroForceSpec
             neighbor.TimeBinActive_ptr,
             neighbor.need_wakeup_ptr,
             neighbor.wakeup_dirty_ptr,
-            /*allow_j_writes=*/!neighbor.oracle_dry_run);
+            /*allow_j_writes=*/true);
     }
 
     /* Host writebacks (post-dispatch). Body in hydro_force_loop.cc.

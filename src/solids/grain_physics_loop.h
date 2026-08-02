@@ -178,7 +178,6 @@ struct GrainBackrxSpec {
          * apply backreaction before production (double-application bug). The
          * oracle pass validates search parity only; AccumData is empty so the
          * compare is vacuous regardless. */
-        if(nb.oracle_dry_run) return;
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr || nb.CellP_arr == nullptr) return;
 #ifdef HYDRO_MULTIFLUID

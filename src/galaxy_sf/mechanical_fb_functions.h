@@ -554,18 +554,16 @@ static void mechanical_fb_pair_kernel(
         /* Phase 2: CR injection via delta struct (host scatter applies in
          * verify_and_assign_local_mechfb_integrals). j-side oracle gate
          * applied externally below; suppress CR atomics when oracle is on. */
-        if (!oracle_dry_run) {
-            double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
+        double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
-            double cr_to_inject = pnorm * m.CR_energy_to_inject;
+        double cr_to_inject = pnorm * m.CR_energy_to_inject;
 #else
-            double cr_to_inject = 0;
+        double cr_to_inject = 0;
 #endif
-            inject_cosmic_rays_into_delta(cr_to_inject, (double)local.SNe_v_ejecta, loop_iteration,
-                                           j, crdir, P, CellP, scalars,
-                                           num_local_gas, num_local_particles,
-                                           home_gas_delta, ghost_gas_delta);
-        }
+        inject_cosmic_rays_into_delta(cr_to_inject, (double)local.SNe_v_ejecta, loop_iteration,
+                                       j, crdir, P, CellP, scalars,
+                                       num_local_gas, num_local_particles,
+                                       home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
         if(mom_prefactor > 0) {
@@ -590,32 +588,30 @@ static void mechanical_fb_pair_kernel(
      * the oracle's separate per-active AccumData buffer isn't contaminated
      * by writes to the production gas_delta. The CR injection branch above
      * has its own `if (!oracle_dry_run)` gate (CR helper takes home/ghost). */
-    if (!oracle_dry_run) {
-        /* atomic accumulation into the per-gas delta struct */
-        struct MechFBGasDelta *gd =
-            mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
-                                    home_gas_delta, ghost_gas_delta);
-        Kokkos::atomic_add(&gd->N_injected, 1);
-        /* Track max wakeup_val across all source events into this receiver,
-         * for the host-side direct-dU branch in mechanical_fb.cc to apply as
-         * P[j].wakeup = max(P[j].wakeup, max_source_wakeup). Standard hydro-
-         * convention encoding: wakeup_val = source.TimeBin + 1. */
-        Kokkos::atomic_max(&gd->max_source_wakeup, (int)local.TimeBin + 1);
-        Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
-        Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
-        Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
+    /* atomic accumulation into the per-gas delta struct */
+    struct MechFBGasDelta *gd =
+        mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
+                                home_gas_delta, ghost_gas_delta);
+    Kokkos::atomic_add(&gd->N_injected, 1);
+    /* Track max wakeup_val across all source events into this receiver,
+     * for the host-side direct-dU branch in mechanical_fb.cc to apply as
+     * P[j].wakeup = max(P[j].wakeup, max_source_wakeup). Standard hydro-
+     * convention encoding: wakeup_val = source.TimeBin + 1. */
+    Kokkos::atomic_max(&gd->max_source_wakeup, (int)local.TimeBin + 1);
+    Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
+    Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
+    Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
 #ifdef METALS
-        for(int k = 0; k < NUM_METAL_SPECIES; k++) {
-            Kokkos::atomic_add(&gd->Z_injected[k], Mass_j * Metallicity_j[k] - Mass_j_0 * Metallicity_j_0[k]);
-        }
-#endif
-        for(int k = 0; k < 3; k++) {
-            Kokkos::atomic_add(&gd->p_injected[k], (Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k]) / scalars.common.cf_atime);
-        }
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-        Kokkos::atomic_add(&gd->Mass_Where_Dust_Shocked, Mass_Where_Dust_Shocked_pair);
-#endif
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+        Kokkos::atomic_add(&gd->Z_injected[k], Mass_j * Metallicity_j[k] - Mass_j_0 * Metallicity_j_0[k]);
     }
+#endif
+    for(int k = 0; k < 3; k++) {
+        Kokkos::atomic_add(&gd->p_injected[k], (Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k]) / scalars.common.cf_atime);
+    }
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    Kokkos::atomic_add(&gd->Mass_Where_Dust_Shocked, Mass_Where_Dust_Shocked_pair);
+#endif
 }
 
 #endif /* GALSF_FB_MECHANICAL */

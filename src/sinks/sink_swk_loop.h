@@ -305,10 +305,8 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                         * wk / (double)local.kernel_norm_topass_in_swallowloop;
         for(int k = 0; k < 3; k++) {
             double dB = b_frac * (double)local.B[k];
-            if(!oracle_dry_run) {
-                Kokkos::atomic_add(&neighbor_cell->B[k],     (MyFloat)dB);
-                Kokkos::atomic_add(&neighbor_cell->BPred[k], (MyFloat)dB);
-            }
+            Kokkos::atomic_add(&neighbor_cell->B[k],     (MyFloat)dB);
+            Kokkos::atomic_add(&neighbor_cell->BPred[k], (MyFloat)dB);
             out.accreted_B[k] -= dB;
         }
     }
@@ -423,13 +421,11 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                                    -(double)neighbor_particle.Sink_Mdot / (double)neighbor_particle.Sink_Mass);
             }
             Mass_j = 0;
-            if(!oracle_dry_run) {
 #ifdef SINK_ALPHADISK_ACCRETION
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mass_Reservoir, (MyFloat)0);
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mass_Reservoir, (MyFloat)0);
 #endif
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mdot, (MyFloat)0);
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mass, (MyFloat)0);
-            }
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mdot, (MyFloat)0);
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mass, (MyFloat)0);
 #ifdef GALSF
             /* MIN-merge with sentinel (zero_accum sets Accreted_Age = MAX_REAL_NUMBER). */
             if((MyFloat)neighbor_particle.StellarAge < out.Accreted_Age) {
@@ -528,17 +524,13 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                             double dEcr_k = evaluate_cr_transport_reductionfactor(0, kc, 0, neighbor_cell)
                                             * dEcr * f_inj[kc];
                             if(dEcr_k <= 0) continue;
-                            if(!oracle_dry_run) {
-                                Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergy[kc],     dEcr_k);
-                                Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergyPred[kc], dEcr_k);
-                            }
+                            Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergy[kc],     dEcr_k);
+                            Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergyPred[kc], dEcr_k);
                             double flux_mag = dEcr_k * CRFLUID_REDUCED_C_CODE(kc);
                             for(int kk = 0; kk < 3; kk++) {
                                 double dflux = flux_mag * cr_dir[kk] / cr_dir_norm;
-                                if(!oracle_dry_run) {
-                                    Kokkos::atomic_add(&neighbor_cell->CosmicRayFlux[kc][kk],     dflux);
-                                    Kokkos::atomic_add(&neighbor_cell->CosmicRayFluxPred[kc][kk], dflux);
-                                }
+                                Kokkos::atomic_add(&neighbor_cell->CosmicRayFlux[kc][kk],     dflux);
+                                Kokkos::atomic_add(&neighbor_cell->CosmicRayFluxPred[kc][kk], dflux);
                             }
                         }
                     }
@@ -549,7 +541,7 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                 else         { nrm = sqrt(nrm); dir /= nrm; }
                 for(int k = 0; k < 3; k++) { Vel_j[k] += v_kick * scalars.common.cf_atime * dir[k]; }
 #ifdef GALSF_SUBGRID_WINDS
-                if(!oracle_dry_run && neighbor_cell) {
+                if(neighbor_cell) {
                     Kokkos::atomic_store(&neighbor_cell->DelayTime,
                         (MyFloat)(scalars.wind_free_travel_max_time_factor / scalars.common.cf_hubble_a));
                 }
@@ -586,37 +578,35 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
     if(Mass_j != Mass_j_0 ||
        Vel_j[0] != Vel_j_0[0] || Vel_j[1] != Vel_j_0[1] || Vel_j[2] != Vel_j_0[2] ||
        InternalEnergy_j != InternalEnergy_j_0) {
-        if(!oracle_dry_run) {
-            if(Mass_j > 0) {
-                double dmass = Mass_j - Mass_j_0;
-                double current_mass = (double)Kokkos::atomic_load(&neighbor_particle.Mass);
-                if(current_mass > 0) {
-                    Kokkos::atomic_add(&neighbor_particle.Mass, (MyDouble)dmass);
-                }
-            } else {
-                Kokkos::atomic_store(&neighbor_particle.Mass, (MyDouble)0);
+        if(Mass_j > 0) {
+            double dmass = Mass_j - Mass_j_0;
+            double current_mass = (double)Kokkos::atomic_load(&neighbor_particle.Mass);
+            if(current_mass > 0) {
+                Kokkos::atomic_add(&neighbor_particle.Mass, (MyDouble)dmass);
             }
-            for(int k = 0; k < 3; k++) {
-                double dVel = Vel_j[k] - Vel_j_0[k];
-                double dpk  = Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k];
-                Kokkos::atomic_add(&neighbor_particle.Vel[k], (MyDouble)dVel);
-                Kokkos::atomic_add(&neighbor_particle.dp[k],  (MyFloat)dpk);
-            }
-            if(neighbor_particle.Type == 0 && neighbor_cell) {
+        } else {
+            Kokkos::atomic_store(&neighbor_particle.Mass, (MyDouble)0);
+        }
+        for(int k = 0; k < 3; k++) {
+            double dVel = Vel_j[k] - Vel_j_0[k];
+            double dpk  = Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k];
+            Kokkos::atomic_add(&neighbor_particle.Vel[k], (MyDouble)dVel);
+            Kokkos::atomic_add(&neighbor_particle.dp[k],  (MyFloat)dpk);
+        }
+        if(neighbor_particle.Type == 0 && neighbor_cell) {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                if(Mass_j > 0) {
-                    Kokkos::atomic_add(&neighbor_cell->MassTrue, (MyDouble)(Mass_j - Mass_j_0));
-                } else {
-                    Kokkos::atomic_store(&neighbor_cell->MassTrue, (MyDouble)0);
-                }
-#endif
-                for(int k = 0; k < 3; k++) {
-                    Kokkos::atomic_add(&neighbor_cell->VelPred[k], (MyDouble)(Vel_j[k] - Vel_j_0[k]));
-                }
-                double dIE = InternalEnergy_j - InternalEnergy_j_0;
-                Kokkos::atomic_add(&neighbor_cell->InternalEnergy,     (MyDouble)dIE);
-                Kokkos::atomic_add(&neighbor_cell->InternalEnergyPred, (MyDouble)dIE);
+            if(Mass_j > 0) {
+                Kokkos::atomic_add(&neighbor_cell->MassTrue, (MyDouble)(Mass_j - Mass_j_0));
+            } else {
+                Kokkos::atomic_store(&neighbor_cell->MassTrue, (MyDouble)0);
             }
+#endif
+            for(int k = 0; k < 3; k++) {
+                Kokkos::atomic_add(&neighbor_cell->VelPred[k], (MyDouble)(Vel_j[k] - Vel_j_0[k]));
+            }
+            double dIE = InternalEnergy_j - InternalEnergy_j_0;
+            Kokkos::atomic_add(&neighbor_cell->InternalEnergy,     (MyDouble)dIE);
+            Kokkos::atomic_add(&neighbor_cell->InternalEnergyPred, (MyDouble)dIE);
         }
     }
 }

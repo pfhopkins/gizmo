@@ -265,14 +265,12 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
 #endif
             if(sink_check_boundedness_gpu(neighbor_particle, neighbor_cell_local, vrel, vbound, dr_code, local_sink_radius) == 1) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-                if(!oracle_dry_run) {
-                    const double eps = DMAX(dr_code,
-                                            DMAX((double)neighbor_particle.KernelRadius, ags_h_i)
-                                            * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER);
-                    const double tff_pair = eps * eps * eps
-                                            / ((double)active.mass + (double)neighbor_particle.Mass);
-                    Kokkos::atomic_min(&neighbor_particle.SwallowTime, (MyFloat)tff_pair);
-                }
+                const double eps = DMAX(dr_code,
+                                        DMAX((double)neighbor_particle.KernelRadius, ags_h_i)
+                                        * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER);
+                const double tff_pair = eps * eps * eps
+                                        / ((double)active.mass + (double)neighbor_particle.Mass);
+                Kokkos::atomic_min(&neighbor_particle.SwallowTime, (MyFloat)tff_pair);
 #endif
                 if(neighbor_particle.SwallowID < active.id) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
             }
