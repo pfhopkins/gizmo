@@ -403,7 +403,6 @@ struct AgsForceSpec {
      * Grain_DeltaErosionFrac may show tiny order-dependent residuals; if
      * validation flags those, address via field-specific tolerance, NOT
      * a broad loosening (per reference_wave3_thermalfb_lessons.md). */
-    static constexpr double accum_tolerance  = 1e-10;
     static constexpr double radius_tolerance = 1e-9;     /* unused; no radius adjust */
 
     static bool is_active(int particle_index) {

@@ -112,7 +112,6 @@ struct DMGradSpec {
 
     /* Pure-read pair kernel (no j-writes) → order-independent up to FP
      * summation → tight oracle. */
-    static constexpr double accum_tolerance = 1e-10;
 
     using CallScalars    = DMGradCallScalars;
     using ActiveData     = DMGradActiveState;

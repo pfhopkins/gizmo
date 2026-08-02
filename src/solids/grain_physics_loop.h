@@ -97,9 +97,6 @@ struct GrainBackrxSpec {
     static constexpr bool          uses_ghost_writeback      = true;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    /* AccumData is empty; oracle compare is vacuous. */
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GrainBackrxActiveState;
     using AccumData      = GrainBackrxAccum;
@@ -266,8 +263,6 @@ struct GrainRTGasSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GasGrainRTActiveState;
     using AccumData      = GrainRTGasAccum;
@@ -394,8 +389,6 @@ struct GrainRTGrainSpec {
     static constexpr bool mode_a_active_sources_in_sidx_pool = false; /* non-pool active sources (sink/star/grain) -> runner stages explicit P[].Pos */
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
-
-    static constexpr double accum_tolerance = 1e-10;
 
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GasGrainRTActiveState;

@@ -177,7 +177,6 @@ struct MechFBSpec {
      * widest FIRE config (-2..3); accum/radius tolerances are non-radius-
      * iterative and never trigger Converged-by-tolerance (after_iter uses
      * mode_idx to drive the state machine). */
-    static constexpr double accum_tolerance  = 1e-8;
     static constexpr double radius_tolerance = 1e-9;
     using                    IterControl = Iterative;
     using                    IterScratch = NoIterScratch;

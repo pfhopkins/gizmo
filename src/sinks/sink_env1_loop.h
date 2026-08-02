@@ -331,7 +331,6 @@ struct SinkEnv1Spec {
      * ~N*eps_machine relative residual, plus possible cancellation
      * amplification on small-magnitude fields. 1e-10 is sharp enough to catch
      * real bugs, loose enough to not trip on summation-reorder noise. */
-    static constexpr double accum_tolerance = 1e-10;
 
     /* (5) Active-particle predicate, passed by the caller to
      *     nlr_build_active_list. */

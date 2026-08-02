@@ -89,9 +89,6 @@ struct DiffFilterSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    /* Pure-read pair kernel (no j-writes) → no order dependence → tight oracle. */
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = DiffFilterCallScalars;
     using ActiveData     = DiffFilterActiveState;
     using AccumData      = DiffFilterAccum;
@@ -312,8 +309,6 @@ struct DynDiffSpec {
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* gas-only active (Type 0) == pool member */
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
-
-    static constexpr double accum_tolerance = 1e-10;
 
     using CallScalars    = DynDiffCallScalars;
     using ActiveData     = DynDiffActiveState;

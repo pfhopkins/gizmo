@@ -287,7 +287,6 @@ struct ThermalFBSpec {
      * only suppresses the j-side writes, not the i-side M_coupled accumulation)
      * computes the identical value. A tight bound applies; the only residual is
      * floating-point summation order across CSR / Mode-B partial sums. */
-    static constexpr double accum_tolerance = 1e-10;
 
     /* Type aliases. */
     using CallScalars    = ThermalFBCallScalars;

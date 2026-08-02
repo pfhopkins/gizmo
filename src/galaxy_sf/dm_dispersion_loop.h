@@ -107,7 +107,6 @@ struct DMDispersionSpec {
     static constexpr bool           uses_ghost_write_detector = false;
 
     /* Convergence + iter policy */
-    static constexpr double accum_tolerance  = 1e-10;
     static constexpr double radius_tolerance = 1e-9;
     using                    IterControl = Iterative;
     using                    IterScratch = DMDispIterScratch;

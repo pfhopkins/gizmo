@@ -646,8 +646,6 @@ struct SinkSwkSpec {
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
 
-    static constexpr double accum_tolerance = 1e-10;
-
     /* Active predicate matches the legacy host caller block:
      * sink_isactive(i) && P[i].SwallowID == 0. */
     static bool is_active(int particle_index) {
