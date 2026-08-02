@@ -18,11 +18,10 @@
  *
  *  Everything cached against local slot identity or ordering is therefore
  *  invalid: the supply pools keyed on membership/order, the ghost-exchange
- *  local tree, the GPU spatial index (its tiles and pool reference slots by
- *  number), and the top-leaf router's node geometry. None of them can detect
- *  this on their own -- a redistribution can leave a rank's particle count
- *  unchanged, and it changes no particle's own properties, so counts and
- *  per-particle state both look untouched.
+ *  local tree, and the GPU spatial index (its tiles and pool reference slots
+ *  by number). None of them can detect this on their own -- a redistribution
+ *  can leave a rank's particle count unchanged, and it changes no particle's
+ *  own properties, so counts and per-particle state both look untouched.
  *
  *  This lives here, at the point where the re-indexing happens, because
  *  callers cannot be relied on to follow every decomposition with the same
