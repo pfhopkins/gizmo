@@ -208,7 +208,6 @@ static void thermal_fb_pair_kernel(
     out.M_coupled += dM;
 
     /* j-side atomic writes — suppressed under oracle dry-run. */
-    if (oracle_dry_run) return;
 
     Kokkos::atomic_add(&Pj.Mass, (MyDouble)dM);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -387,7 +386,7 @@ struct ThermalFBSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
-        n.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
+        n.wakeup_dirty_slot = dctx.wakeup_dirty_base ? &dctx.wakeup_dirty_base[j] : nullptr;
         n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }

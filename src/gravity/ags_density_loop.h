@@ -295,7 +295,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
             wakeup_condition = 0;
         }
 #endif
-        if(wakeup_condition && !oracle_dry_run) {
+        if(wakeup_condition) {
             /* Hydro-convention wakeup write — `active.TimeBin + 1` (positive).
              * Cross-rank propagation works through ghost_writeback's MAX
              * reverse-comm. Legacy wrote (short int)-1, which the MAX path
@@ -550,7 +550,7 @@ struct AgsDensitySpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
         neighbor.need_wakeup       = dctx.need_wakeup_uvm;
-        neighbor.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
+        neighbor.wakeup_dirty_slot = dctx.wakeup_dirty_base ? &dctx.wakeup_dirty_base[j] : nullptr;
         neighbor.oracle_dry_run    = dctx.oracle_dry_run;
         return neighbor;
     }

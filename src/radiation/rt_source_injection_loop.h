@@ -185,7 +185,6 @@ static void rt_source_injection_pair_body(
     accum.pair_count += 1;
 
     /* j-side atomic writes — suppressed under oracle dry-run. */
-    if (oracle_dry_run) return;
 
     for (int k = 0; k < N_RT_FREQ_BINS; k++) {
         double dE = wk * local.Luminosity[k];

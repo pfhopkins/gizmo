@@ -479,15 +479,13 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             double dE = (wk / (double)local.Density)
                         * (double)local.thermal_energy
                         * (double)neighbor_particle.Mass;
-            if(!oracle_dry_run) {
-                Kokkos::atomic_add(&neighbor_cell->Injected_Sink_Energy, dE);
-            }
+            Kokkos::atomic_add(&neighbor_cell->Injected_Sink_Energy, dE);
         }
 #endif
     }
 
     /* ---- commit SwallowID if set ---- */
-    if(SwallowID_j > 0 && !oracle_dry_run) {
+    if(SwallowID_j > 0) {
         Kokkos::atomic_exchange(&neighbor_particle.SwallowID, SwallowID_j);
     }
 }

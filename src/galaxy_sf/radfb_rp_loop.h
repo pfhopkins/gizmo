@@ -366,7 +366,6 @@ static void radfb_rp_pair_kick(
 #endif
 
     /* j-side atomic writes — suppressed under oracle dry-run. */
-    if (oracle_dry_run) return;
 
     for (int k = 0; k < 3; k++) {
         Kokkos::atomic_add(&Pj.Vel[k],     (MyDouble)dv_kick[k]);

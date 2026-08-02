@@ -277,7 +277,6 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     struct particle_data &Pj           = *neighbor.neighbor_particle;
     int                  *need_wakeup  = neighbor.need_wakeup;
     unsigned char        *wakeup_dirty_base = neighbor.wakeup_dirty_base;
-    const bool            oracle       = neighbor.oracle_dry_run;
     const AgsForceLocalIn& local       = active.local;
 
     if(!(Pj.Mass > 0) || !(Pj.AGS_KernelRadius > 0)) return;
@@ -326,7 +325,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     {
         CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(
             local, j, P_base, kernel, accum, active.scalars.TimeBinActive);
-        if(cbe_r.set_wakeup_j && !oracle) {
+        if(cbe_r.set_wakeup_j) {
             /* Hydro-convention wakeup: active.TimeBin+1 (positive), MAX
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
             short int wakeup_val = (short int)(active.TimeBin + 1);
@@ -347,7 +346,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             local, j, P_base, kernel, accum,
             neighbor.geofactor, active.scalars.TimeBinActive,
             active.scalars.rng_salt);
-        if(sidm_r.scattered && !oracle) {
+        if(sidm_r.scattered) {
             if(sidm_r.set_wakeup_j) {
                 short int wakeup_val = (short int)(active.TimeBin + 1);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
@@ -406,15 +405,9 @@ struct AgsForceSpec {
      * different masks. Build a local SIDX per CSR each call. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    /* Default 1e-10 oracle bound. The pair body's read-then-atomic-add
-     * sites (Pj.Vel via atomic_load + atomic_add under DM_SIDM) are
-     * race-tolerant by construction — out.sidm_kick depends only on the
-     * pre-scatter Vel snapshot, and oracle dry-run suppresses j-writes
-     * exactly so the brute pass sees the unmutated state. Multiplicative
-     * Grain_DeltaErosionFrac may show tiny order-dependent residuals; if
-     * validation flags those, address via field-specific tolerance, NOT
-     * a broad loosening (per reference_wave3_thermalfb_lessons.md). */
-    static constexpr double radius_tolerance = 1e-9;     /* unused; no radius adjust */
+    /* Read by nothing: this loop is single-pass (max_iters=1, after_iter
+     * always Converged) and never adjusts a radius. */
+    static constexpr double radius_tolerance = 1e-9;
 
     static bool is_active(int particle_index) {
         return AGSForce_isactive(particle_index) != 0;
@@ -442,7 +435,7 @@ struct AgsForceSpec {
         int                   j;            /* for flux helpers' (j, P) signature */
         struct particle_data *P_base;       /* = dctx.P */
         int                  *need_wakeup;
-        unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base; nullptr under oracle */
+        unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base */
         bool                  oracle_dry_run;
 #if defined(DM_SIDM)
         const MyDouble       *geofactor;
@@ -644,7 +637,7 @@ struct AgsForceSpec {
         n.j                 = j;
         n.P_base            = dctx.P;
         n.need_wakeup       = dctx.need_wakeup_uvm;
-        n.wakeup_dirty_base = dctx.oracle_dry_run ? nullptr : dctx.wakeup_dirty_base;
+        n.wakeup_dirty_base = dctx.wakeup_dirty_base;
         n.oracle_dry_run    = dctx.oracle_dry_run;
 #if defined(DM_SIDM)
         n.geofactor         = dctx.geofactor_uvm;
