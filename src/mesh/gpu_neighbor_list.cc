@@ -65,10 +65,10 @@ gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_allt
 /* Dirty-index tracking for compact_xyzh.h field.
  *
  * Pre-tracker: a single global g_dirty_list/g_dirty_all pair was shared by
- * both g_step_sidx (gas-only) and g_step_sidx_alltypes. Once both caches
- * persist across ghost-import-only changes (commit C), one cache consuming
- * and clearing the global state would silently leave the other stale -- a
- * physics-correctness hole. Now: per-cache state via gpu_dirty_tracker.
+ * both g_step_sidx (gas-only) and g_step_sidx_alltypes. Both caches persist
+ * across ghost-import-only changes, so one cache consuming and clearing the
+ * shared global state would silently leave the other stale -- a physics-
+ * correctness hole. Now: per-cache state via gpu_dirty_tracker.
  *
  * Caches register their dense particle-index range [base, base+count) on
  * build, unregister on free. Marks route to ALL caches whose range covers
@@ -107,9 +107,9 @@ void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n)
 void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); }
 
 /* SSOT mark helpers — see header for design.  Route to BOTH the GPU SIDX
- * dirty tracker AND the host glt cache dirty tracker. Adding a new cache
- * later (e.g. host/ghost split in commit C) requires only register/unregister
- * inside the new cache's lifetime — these helpers automatically include it. */
+ * dirty tracker AND the host glt cache dirty tracker. Adding a further cache
+ * later requires only register/unregister inside that cache's lifetime —
+ * these helpers automatically include it. */
 void gizmo_mark_kernel_radius_dirty_indices(const int *indices, int n)
 {
     if(!indices || n <= 0) return;
@@ -150,17 +150,6 @@ void gpu_sidx_notify_pool_changed(void)
     g_sidx_pool_epoch++;
 }
 
-
-/* Deprecated: was a workaround for the global g_dirty_list pre-tracker era,
- * filtering ghost-slot indices when ghost slots leave scope at cleanup. The
- * per-cache tracker handles this cleanly: each cache's bitset is sized to
- * its own range; ghost-slot indices outside a cache's range are silently
- * skipped at mark time. Kept as a no-op so existing callsites compile;
- * remove in commit E. */
-void gpu_compact_xyzh_dirty_drop_above(int threshold)
-{
-    (void)threshold; /* see deprecation comment */
-}
 
 /* Drift-time SIDX refresh (incremental rebuild).
  *
@@ -401,7 +390,7 @@ void gpu_step_sidx_invalidate(void)
              * change KernelRadius (predict.cc:160,229) — those h updates are
              * marked into the per-cache dirty tracker (gpu_dirty_tracker) by
              * the lazy-drift loop in the previous step's gpu_ngb_list_build,
-             * by move_particles/gizmo_full_drift_to (commit B), and by other
+             * by move_particles/gizmo_full_drift_to (predict.cc:307,351), and by other
              * h-writers like density iter. The next gpu_ngb_list_build
              * consume()s this cache's bits and refreshes compact_xyzh[*4+3]
              * from current P_shared.KernelRadius before walking. */

@@ -2614,22 +2614,13 @@ void ghost_exchange_cleanup(void)
 {
     if(NumPart_before_ghost < 0) return;
     /* Ghost slots are about to leave scope (NumPart shrinks back to local).
-     * Any dirty-list entries for indices in [NumPart_before_ghost, NumPart)
-     * would index out of bounds in compact_h_refresh on the next cached call
-     * if a smaller-num_total build happens before SIDX invalidation. The old
-     * fail-safe escalated to mark_h_dirty_all, which forced a 1.5s full-pool
-     * refresh on every active-sink step (3 cleanups -> 3 full refreshes,
-     * measured as the dominant tiny-N cost).
-     *
-     * Surgical fix: filter the dirty list, dropping ghost-slot indices but
-     * keeping the valid local-index entries from density iter / lazy drift.
-     * Next gpu_ngb_list_build narrow-refreshes those local entries (~ms);
-     * the next ghost_exchange will mark new ghost slots dirty at import
-     * time (mark_h_dirty_range above) so symmetric h-reads on ghosts stay
-     * fresh. */
-    if(NumGhostParticles > 0) {
-        gpu_compact_xyzh_dirty_drop_above(NumPart_before_ghost);
-    }
+     * No dirty-state scrubbing is done here. Marks are per-cache: one landing
+     * outside a cache's registered index range is dropped at mark time, and a
+     * cache that WAS registered over these ghost slots is freed -- handle
+     * unregistered with it -- by the particle-count change on its next build.
+     * Either way no stale ghost-slot bit reaches compact_h_refresh. New ghost
+     * slots are marked dirty at import time (mark_h_dirty_range above), so
+     * symmetric h-reads on ghosts stay fresh. */
     /* SIDX lifecycle notify BEFORE NumPart shrinks. Called whether or not
      * NumGhostParticles>0 — a cleanup from the no-ghost-imported state is
      * a valid signal that bumps the epoch. */

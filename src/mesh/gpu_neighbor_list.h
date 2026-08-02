@@ -200,13 +200,6 @@ void gpu_compact_xyzh_mark_h_dirty_idx(int i);
 void gpu_compact_xyzh_mark_h_dirty_range(int start, int end);
 void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n);
 void gpu_compact_xyzh_mark_h_dirty_all(void);
-/* Filter the dirty list, dropping any indices >= threshold. Used by
- * ghost_exchange_cleanup to scrub ghost-slot indices when ghost slots leave
- * scope, instead of escalating to mark_h_dirty_all (which forces a 1.5s
- * full-pool refresh on every cached build until next clear). No-op when
- * dirty_all is already set or when the list is empty. */
-void gpu_compact_xyzh_dirty_drop_above(int threshold);
-
 /* SIDX lifecycle notification hooks. ghost_exchange owns the import/cleanup
  * lifecycle; SIDX owns the spatial-index representation. These are the
  * lifecycle signals SIDX consumes. They currently bump the epoch counters
