@@ -399,10 +399,6 @@ struct AgsForceSpec {
      * different masks. Build a local SIDX per CSR each call. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    /* Read by nothing: this loop is single-pass (max_iters=1, after_iter
-     * always Converged) and never adjusts a radius. */
-    static constexpr double radius_tolerance = 1e-9;
-
     static bool is_active(int particle_index) {
         return AGSForce_isactive(particle_index) != 0;
     }
