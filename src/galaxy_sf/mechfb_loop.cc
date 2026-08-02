@@ -1,7 +1,7 @@
 /* mechfb_loop.cc — MechFBSpec method bodies + toplevel-facing helpers
  * for the runner-template port of mechanical_fb_evaluate_gpu.
  *
- * Full Spec contract: real host methods, oracle/state-machine plumbing,
+ * Full Spec contract: real host methods, state-machine plumbing,
  * ghost_writeback bundle; real mech_fb_local_fill / mech_fb_apply_aws_out
  * / mech_fb_apply_source_mass_out (promoted from `static` when the
  * legacy mechanical_fb_gpu.cc evaluator still existed; now the sole SSOT
@@ -155,8 +155,7 @@ void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
  * Mirrors the per-mode `for(aa) mech_fb_local_fill` inside the retired legacy
  * evaluator's mode loop. Reads HOST P[i] — which carries any
  * Area_weighted_sum / Mass updates the previous mode's after_iter_global
- * applied (per-mode source-side host writes were moved out of after_iter
- * to keep the oracle's dual-walk from double-applying).
+ * applied.
  * ========================================================================== */
 void mechfb_repack_per_active_local(const neighbor_loop_args& args,
                                     MechFBSpec::Aux& aux,
@@ -318,10 +317,9 @@ void MechFBSpec::cleanup_device_context(const neighbor_loop_args& args,
 /* apply_active_writeback — NO-OP for MechFBSpec.
  * All source-side P[i] writes (mode -2/-1 Area_weighted_sum writeback;
  * modes >=0 source mass loss) happen in MechFBSpec::after_iter_global
- * (host-side, production-only, per-iter — moved out of after_iter for
- * oracle safety so the runner's dual production+oracle walk doesn't
- * double-apply). This hook stays declared because the Spec contract requires
- * it but the runner's final end-of-call writeback loop has nothing left to do. */
+ * (host-side, per-iter). This hook stays declared because the Spec contract
+ * requires it, but the runner's final end-of-call writeback loop has nothing
+ * left to do. */
 void MechFBSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                          int /*active_slot*/, int /*i*/,
                                          const AccumData& /*accum*/) {
@@ -338,26 +336,12 @@ void MechFBSpec::merge_accum(AccumData& local, const AccumData& peer) {
     }
 }
 
-/* set_oracle_brute_pass — gate j-side atomic writes during oracle pass.
- * Mirrors sink_feed pattern: pair_kernel checks ctx.oracle_dry_run before
- * any atomic_add into LocalGasMechFBInfoTemp / d_gas_iter (i-side accum
- * still completes; oracle's separate accum_oracle_uvm receives it). */
-
-/* compare_accum — per-pair-active oracle comparison. Byte-walk-as-doubles
- * pattern (matches sink_feed_loop.cc and ags_density_loop.cc). The
- * AccumData layout (MyFloat M_coupled + MyFloat Area_weighted_sum[12])
- * happens to fall on float boundaries; we walk as float for parity with
- * the original storage. */
-
 /* after_iter — STATUS-ONLY.
  *
- * Earlier draft applied per-mode source-side host writes here, but the
- * iterative runner calls after_iter for BOTH the production accum
- * (runner.cc:4128) AND the oracle accum (runner.cc:4189) when oracle is on.
- * Any host mutation would double-apply under GIZMO_NLR_ORACLE=1 — exactly
- * the kind of "passes one path, corrupts another" trap the oracle is
- * supposed to catch. Source-side writes now live in after_iter_global
- * (production-only, runner.cc:4310-4313 — runs once per iter post-oracle).
+ * An earlier draft applied per-mode source-side host writes here. They live
+ * in after_iter_global instead: this hook runs inside the runner's convergence
+ * pass, which visits only the slots still in the compacted active set, whereas
+ * the source-side writes have to see every slot of the subgroup.
  *
  * Mechfb is not radius-iterative; each iter corresponds to one fixed mode.
  * Convergence is purely a function of iter_index. h_search is unchanged
@@ -374,14 +358,12 @@ IterResult MechFBSpec::after_iter(const AfterIterContext<MechFBSpec>& ctx,
 
 /* after_iter_global — production-only per-iter host hook.
  *
- * Runs ONCE per outer iter AT runner.cc:4310-4313, AFTER both the production
- * and oracle (if enabled) Spec::after_iter passes have completed AND after
- * the oracle 4-thing compare has run. Mutations here apply exactly once per
- * iter regardless of oracle state.
+ * Runs ONCE per outer iter, after the per-active Spec::after_iter pass has
+ * completed for every slot. Mutations here therefore apply exactly once per
+ * iter.
  *
  * Per-iter responsibilities:
- *   - For each subgroup-0 slot, read drv.accum_uvm[0][slot] (production
- *     accum; oracle accum is in a separate buffer and not consulted here).
+ *   - For each subgroup-0 slot, read drv.accum_uvm[0][slot].
  *   - mode -2: mech_fb_apply_aws_out  (writes P[i].Area_weighted_sum[0..6])
  *   - mode -1: mech_fb_apply_aws_out  (writes P[i].Area_weighted_sum[7..])
  *   - mode >=0 (gated on accum.M_coupled > 0): mech_fb_apply_source_mass_out
@@ -470,9 +452,9 @@ namespace mechfb_writeback_detail {
 KOKKOS_INLINE_FUNCTION
 static int mechfb_gas_delta_nonzero(const struct MechFBGasDelta *d) {
     /* Invariant (verified in mechanical_fb_pair_kernel and inject_cosmic_rays_into_delta):
-     * every j-side write inside the !oracle_dry_run block increments N_injected
-     * together with any other delta field write. N_injected > 0 is therefore a
-     * sufficient predicate for "this gas cell received any deltas this iter". */
+     * every j-side write increments N_injected together with any other delta
+     * field write. N_injected > 0 is therefore a sufficient predicate for
+     * "this gas cell received any deltas this iter". */
     return (d->N_injected > 0) ? 1 : 0;
 }
 
@@ -580,9 +562,8 @@ static void apply_fn(void * /*vctx*/, const void *in) {
 static void cleanup_fn(void * /*vctx*/) {
     /* Zero d_gas_iter for the next iter (or next pass — defensive against any
      * future flow that wraps multiple kernel passes inside one ghost_writeback
-     * pair; current iterative oracle is hard-stubbed on Mode A so only one
-     * pass per iter today). Storage stays allocated; cleanup_device_context
-     * is the sole free path. */
+     * pair; today there is exactly one pass per iter). Storage stays
+     * allocated; cleanup_device_context is the sole free path. */
     if (s_ctx.d_gas_iter && s_ctx.num_ghosts > 0) {
         MechFBGasDelta *d = s_ctx.d_gas_iter;
         const int n = s_ctx.num_ghosts;
@@ -783,25 +764,15 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
 
 /* mechfb_run_iterative — runner-template dispatch entry for MechFBSpec.
  *
- * Validation matrix:
- *   ✅ SINGLE-RANK Mode A                              — supported.
- *   ✅ SINGLE-RANK Mode B                              — supported.
- *   ✅ SINGLE-RANK Mode B + GIZMO_NLR_ORACLE=1         — supported (oracle-safe
- *      via after_iter status-only + after_iter_global production-only after
- *      oracle compare; threaded MechFBCallScalars; oracle-gated j-side atomics).
- *   ⚠️  Mode A + GIZMO_NLR_ORACLE=1                    — RUNNER-LEVEL STUB.
- *      The iterative runner hard-stubs Mode A oracle paths globally (see the
- *      `run_neighbor_loop_iterative` step 5.b note in mesh/neighbor_loop_runner.cc);
- *      NOT a mechfb-specific restriction. For oracle validation, select Mode B
- *      with the parameterfile NeighborLoopModeBThreshold pair.
- *   ❌ MULTI-RANK Mode A                               — pair_kernel aborts
- *      loudly the first time a ghost-side write would happen
- *      (`j >= num_local_gas`). Custom MechFBGasDelta ghost-writeback callback
- *      + lazy d_gas_iter alloc is the needed follow-up; do NOT
- *      multi-rank Mode A validate until that lands.
- *   ✅ MULTI-RANK Mode B                               — supported by the
- *      collective-symmetry invariant (every rank enters with num_subgroups=1
- *      even if local num_active=0).
+ * Dispatch coverage:
+ *   SINGLE-RANK Mode A and Mode B.
+ *   MULTI-RANK Mode A — ghost-side writes land in d_gas_iter (allocated per
+ *      iter from ghost_get_num_ghosts()) and are shipped to their home ranks
+ *      by the MechFBGasDelta ghost-writeback bundle in this file.
+ *      Aux::total_ghost_packs counts the records sent and is the evidence
+ *      that cross-rank coupling actually happened.
+ *   MULTI-RANK Mode B — held by the collective-symmetry invariant (every rank
+ *      enters with num_subgroups=1 even if local num_active=0).
  */
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
