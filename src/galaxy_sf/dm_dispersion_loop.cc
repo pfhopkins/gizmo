@@ -5,8 +5,8 @@
  * live in dm_dispersion_loop.h so the runner instantiates them from GPU TUs.
  * This file owns: is_active, search_radius, populate_call_scalars,
  * apply_active_writeback (endrun sentinel), apply_active_writeback_iterative,
- * after_iter (bisection convergence check), merge_accum, compare_accum,
- * set_oracle_brute_pass, and dm_dispersion_finalize_post_runner.
+ * after_iter (bisection convergence check), merge_accum, and
+ * dm_dispersion_finalize_post_runner.
  *
  * Replaces disp_density_evaluate_gpu();
  * dm_dispersion_gpu.cc retired by DMDispersionSpec.

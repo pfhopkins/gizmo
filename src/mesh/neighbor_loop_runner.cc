@@ -3796,16 +3796,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 
             /* (a) Mode B only (Mode A hard-stubbed at outer entry).
              * Helpers are collective on remote — must be
-             * entered on every rank regardless of local n_compacted.
-             *
-             * Both single-rank and multi-rank paths use a COMBINED helper
-             * that collects tree + brute candidate sets in one shared epoch
-             * (pre-drift both → drift union → evaluate brute-first, then
-             * tree).  The old two-call remote sequence was epoch-skewed:
-             * nlr_iter_dispatch_subgroup_oracle_b_remote drifted candidates
-             * before nlr_iter_dispatch_subgroup_mode_b_remote even collected
-             * its set, causing spurious iter-sg0-it0 mismatches at the first
-             * dm_dispersion call. */
+             * entered on every rank regardless of local n_compacted. */
             switch (path) {
                 case DispatchPath::ModeB_HostWalker:
                     if (NTask == 1) {

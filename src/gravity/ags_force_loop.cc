@@ -4,7 +4,7 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (ags_force_pair_kernel_body) live
  * in ags_force_loop.h so they inline from device kernels (Mode A) and
- * host walkers (Mode B / Brute oracle). This TU carries the host-only
+ * host walkers (Mode B). This TU carries the host-only
  * hooks, the generic ghost-writeback bundle (PARTICLE_ADD_VEC3 on
  * Vel/dp, PARTICLE_ADD on NInteractions, PARTICLE_MAX on wakeup), the
  * host-side wakeup pre-zero + arena invalidate that gives the generic
@@ -185,9 +185,9 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     (void)accum; (void)i;
 }
 
-/* merge_accum — per-field op MUST match pair_kernel writes (the oracle
- * catches drift between this manifest and the kernel). Adding a new
- * accumulator field = ONE LINE under its physics flag's #ifdef. */
+/* merge_accum — per-field op MUST match pair_kernel writes. Nothing checks
+ * the two against each other at runtime, so drift between them is silent.
+ * Adding a new accumulator field = ONE LINE under its physics flag's #ifdef. */
 void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
 {
 #define ACCUM_ADD(field)         local_accum.field += peer_accum.field;
@@ -244,11 +244,6 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 #undef ACCUM_MUL
     (void)local_accum; (void)peer_accum;
 }
-
-/* compare_accum — env-gated oracle compare. Mirrors merge_accum field-for-
- * field with the same #ifdef gating (partial compare gives false-passes
- * when omitted fields disagree). */
-
 
 /* ============================================================================
  * GHOST-WRITEBACK BUNDLE (generic ops; replaces the 164-line bespoke

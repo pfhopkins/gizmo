@@ -3,11 +3,11 @@
  *
  * Inline pair body (rt_source_injection_pair_body), structs, and
  * KOKKOS_INLINE_FUNCTION Spec hooks live in rt_source_injection_loop.h so they
- * inline from device kernels (Mode A) and host walkers (Mode B / brute oracle).
+ * inline from device kernels (Mode A) and host walkers (Mode B).
  * This translation unit holds host-only hooks: search_radius,
  * populate_call_scalars (NlrCommonScalars common), populate/cleanup_device_context
  * (UVM staging), apply_active_writeback (no-op), merge_accum, ghost-writeback
- * manifest + lifecycle hooks, compare_accum, rt_source_injection_fill_local
+ * manifest + lifecycle hooks, rt_source_injection_fill_local
  * (the per-source host pack — SSOT), and the non-template wrapper
  * `rt_source_injection_run_loop` (the only entry point from the host
  * orchestration TU in radiation/rt_source_injection.cc).
@@ -260,13 +260,10 @@ void RtSrcInjectionSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
     ghost_writeback_end_bundle(rtsrcinjection_ghost_writeback_bundle_ptr());
 }
 
-/* ============================================================================
- * DIAGNOSTICS — env-gated oracle compare.
- *
- * AccumData here is TELEMETRY (sum_dE = Σ_pair wk*Σ_k Lum[k]; pair_count). Not
- * a physics surrogate — the real j-side writes are atomic_add direct in the
- * pair kernel, and audited by the per-field ghost-writeback bundle.
- * ========================================================================== */
+/* AccumData for this Spec is TELEMETRY (sum_dE = Σ_pair wk*Σ_k Lum[k];
+ * pair_count), not a physics surrogate — the real j-side writes are
+ * atomic_add direct in the pair kernel, and are carried cross-rank by the
+ * per-field ghost-writeback bundle above. */
 
 /* ============================================================================
  * RUNNER WRAPPER (non-template)

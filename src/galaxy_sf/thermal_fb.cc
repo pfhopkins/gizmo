@@ -60,7 +60,7 @@ void determine_where_addthermalFB_events_occur(void)
  * ThermalFBSpec::is_active is the SSOT active predicate (former
  * addthermalFB_evaluate_active_check is retired; all paths route through
  * Spec::is_active). The runner handles ghost-import collective, Mode-A/B
- * dispatch, oracle gating, j-side ghost-writeback (via the manifest bundle
+ * dispatch, j-side ghost-writeback (via the manifest bundle
  * in thermal_fb_loop.cc), and per-active apply_active_writeback (source-side
  * Mass / dp loss). */
 void thermal_fb_calc(void)
@@ -100,8 +100,7 @@ void thermal_fb_calc(void)
      *              per-active apply_active_writeback (source-side host writes
      *              to P[i].Mass / dp via aux->host_locals[slot].Vel).
      *      Mode B: per-active local + remote walkers; no ghost bundle (j-side
-     *              writes are local). Oracle dual-walk routes through
-     *              set_oracle_brute_pass(ctx, true) for the brute pass.
+     *              writes are local).
      *      populate_device_context stages host_locals → UVM
      *      ctx.per_active_local before kernel launch; cleanup frees UVM. */
     neighbor_loop_args args = nlr_default_args();

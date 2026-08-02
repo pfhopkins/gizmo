@@ -83,14 +83,14 @@ struct RtSrcInjCallScalars {
 };
 
 /* ============================================================================
- * AccumData — ORACLE / DEBUG TELEMETRY ONLY.
+ * AccumData — DEBUG TELEMETRY ONLY.
  *
  * Production physics is the atomic_adds into Pj / Cj inside the pair kernel
  * (gas-side fields: Rad_Je / Rad_E_gamma / Rad_E_gamma_Pred /
  * Rad_Intensity[/Pred] / Rad_Flux[/Pred] / VelPred, particle-side fields:
  * P[j].Vel / P[j].dp). AccumData here is NOT a physics surrogate — it carries
  * a single scalar (sum of pair-wise dE = wk * Σ_k local.Luminosity[k]) and a
- * pair counter, used by compare_accum for the env-gated oracle pass.
+ * pair counter.
  *
  * Order-independence: every j-side write this loop performs is a fresh
  * atomic_add into fields this loop neither reads nor accumulates from within
@@ -111,8 +111,8 @@ struct RtSrcInjActiveState {
     RtSrcInjCallScalars    scalars;
 };
 
-/* DeviceContext extension: UVM-resident per-active host-fill array + oracle
- * flag. Trivially copyable; runner captures by value into device lambdas. */
+/* DeviceContext extension: UVM-resident per-active host-fill array.
+ * Trivially copyable; runner captures by value into device lambdas. */
 struct RtSrcInjDeviceContext : NeighborLoopDeviceContextBase {
     const RtSrcLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
 };
@@ -173,7 +173,7 @@ static void rt_source_injection_pair_body(
     }
 #endif
 
-    /* Oracle/debug accumulator — order-independent (atomic across pairs by
+    /* Telemetry accumulator — order-independent (atomic across pairs by
      * runner-provided AccumData reduce). NOT a physics surrogate. */
     double dE_pair_sum = 0;
     for (int k_acc = 0; k_acc < N_RT_FREQ_BINS; k_acc++) {
@@ -282,7 +282,7 @@ static void rt_source_injection_pair_body(
  * ========================================================================== */
 struct RtSrcInjectionSpec {
     static constexpr const char *loop_name = "rtsrcinjection";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: radiation scatter atomic_add to Cj.Rad fields, Pj.Vel, Pj.dp; gated !oracle_dry_run; source-snapshot deltas never read back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: radiation scatter atomic_add to Cj.Rad fields, Pj.Vel, Pj.dp; source-snapshot deltas never read back -> ulp */
 
     /* Search policy. SYMMETRIC matches legacy rt_source_injection_gpu.cc:178
      * (NGB_SEARCH_SYMMETRIC unconditional). Correctness-required under
@@ -311,8 +311,7 @@ struct RtSrcInjectionSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* NeighborData: non-const pointers (kernel writes to *neighbor_*).
-     * Oracle flag propagated per-call from ctx via load_neighbor. */
+    /* NeighborData: non-const pointers (kernel writes to *neighbor_*). */
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
@@ -358,8 +357,6 @@ struct RtSrcInjectionSpec {
 
     /* Additive merge — manifest in rt_source_injection_loop.cc. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-
-    /* Oracle suppression flag. */
 
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "rtsrcinjection"). */

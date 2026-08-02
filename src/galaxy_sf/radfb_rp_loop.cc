@@ -134,8 +134,7 @@ RadFBRPSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
  * DEVICE-CONTEXT LIFECYCLE
  *
  * populate allocates a UVM array of RadFBRPLocalIn[N] and copies in from
- * args.aux->host_locals. cleanup frees it. The runner separately calls
- * populate for drv.ctx AND drv.ctx_oracle — each gets its own UVM buffer
+ * args.aux->host_locals. cleanup frees it.
  * ========================================================================== */
 
 void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
@@ -222,8 +221,7 @@ IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
 /* ============================================================================
  * AFTER_ITER_GLOBAL — post-iter staging hook. NO physics-side writes.
  *
- * Mutates per_active_local UVM buffers on both drv.ctx and drv.ctx_oracle
- * (the runner allocates them independently). Does NOT touch
+ * Mutates the per_active_local UVM buffer on drv.ctx. Does NOT touch
  * P[i], CellP[i], or any source/neighbor physics state — this is pure
  * iter-to-iter scalar bridging through the runner's intended per-active
  * iterative state (IterScratch → per_active_local).
@@ -514,13 +512,6 @@ void RadFBRPSpec::ghost_writeback_end(const neighbor_loop_args& args,
     if (aux == nullptr || aux->iter_index != 1) return;
     ghost_writeback_end_bundle(radfbrp_ghost_writeback_bundle_ptr());
 }
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * compare_accum: per-iter byte-walk. Iter 0 cares about wt_sum; iter 1
- * cares about jet_momentum_used. Both summed into the relative residual
- * with a denom-floor of 1.0 (mirrors thermal_fb pattern).
- * ========================================================================== */
 
 /* ============================================================================
  * TOPLEVEL CALLER — radiation_pressure_winds_consolidated

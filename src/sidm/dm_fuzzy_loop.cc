@@ -6,8 +6,8 @@
  * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
  * live in dm_fuzzy_loop.h so the runner instantiates them from GPU TUs. This
  * file owns: is_active, search_radius, populate_call_scalars,
- * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
- * the construct_dmgrad_gradient post-process helper, and DMGrad_gradient_calc.
+ * apply_active_writeback, merge_accum, the construct_dmgrad_gradient
+ * post-process helper, and DMGrad_gradient_calc.
  *
  * Replaces sidm/dm_fuzzy_gpu.cc (retired in this commit). The unrelated
  * host-only routines (do_dm_fuzzy_drift_kick, do_dm_fuzzy_initialization)

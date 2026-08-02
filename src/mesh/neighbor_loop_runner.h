@@ -899,7 +899,6 @@ enum class DispatchPath : int {
  * Per-spec layout convention (mirrors sink_env1_loop.h):
  *   PHYSICS BLOCK   — edit when changing the loop's physics
  *   ENGINE APPARATUS — touch only when changing the runner contract itself
- *   DIAGNOSTICS     — env-gated (see GIZMO_*_DIAG / _ORACLE / _SPIKE_*)
  *
  *   struct MyLoopSpec {
  *     // ============ PHYSICS BLOCK ============

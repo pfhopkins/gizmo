@@ -10,19 +10,14 @@
  * subgroup per j_type_bitmask returned by ags_gravity_kernel_shared_BITFLAG).
  * Same iterative-shaped pattern used by mechfb / radfb_rp / dm_dispersion.
  *
- * Three deliberate corrections vs the retired GPU file:
+ * Two deliberate corrections vs the retired GPU file:
  *   1. SIDM RNG gets a per-loop salt (AGS_FORCE_RNG_SALT = FNV-1a("ags_force"))
  *      mixed into the counter. Was unsalted in legacy — could correlate with
- *      any other loop sharing (Ti_Current, ID_i^ID_j, tag). Oracle parity is
- *      preserved (both pass through the same salted stream).
+ *      any other loop sharing (Ti_Current, ID_i^ID_j, tag).
  *   2. Ghost wakeup zeroed BEFORE the bundle snapshot (matches legacy
  *      ghost_writeback_zero_agsforce event semantics that generic PARTICLE_MAX
  *      alone wouldn't preserve when the imported ghost wakeup is already
  *      nonzero).
- *   3. j-side atomic writes (Vel / dp / NInteractions / wakeup) gated on
- *      !oracle_dry_run, enabling the Wave 3 PB-O oracle compare. i-side
- *      accumulator writes remain unconditional (oracle compares them
- *      field-for-field after the brute pass).
  *
  * Pair-body physics: verbatim port of gravity/ags_force_gpu.cc:222-360 with
  * the runner's NeighborData adapter. The per-pair flux templates in
@@ -261,9 +256,9 @@ struct AgsForceIterScratch { };
 
 /* ============================================================================
  * Inline pair body — verbatim translation of the kernel at
- * gravity/ags_force_gpu.cc:222-357, with three corrections noted in the
- * file docblock: (a) j-writes gated on oracle_dry_run; (b) SIDM RNG salt
- * threaded; (c) wakeup pre-zero handled host-side in ghost_writeback_begin.
+ * gravity/ags_force_gpu.cc:222-357, with two corrections noted in the
+ * file docblock: (a) SIDM RNG salt threaded; (b) wakeup pre-zero handled
+ * host-side in ghost_writeback_begin.
  * ========================================================================== */
 template <typename NeighborT>
 KOKKOS_INLINE_FUNCTION
@@ -669,9 +664,6 @@ struct AgsForceSpec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
 };
 
 /* `extern template` declaration so call sites bind to the explicit instantiation
