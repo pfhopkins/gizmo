@@ -482,7 +482,6 @@ struct MechFBSpec {
             /*ghost_gas_delta     */ i_active.d_gas_iter,
             /*num_local_gas       */ i_active.num_local_gas,
             /*num_local_particles */ i_active.num_local_particles,
-            /*oracle_dry_run      */ i_active.oracle_dry_run,
             dp, r2, accum);
     }
 };
