@@ -395,14 +395,6 @@ enum gx_producer_mode {
     GX_PRODUCER_DEVICE_ONLY_AUTHORITY
 };
 
-/* Which producer actually INSTALLED the ghost set this call (telemetry only; the
- * installer downstream is producer-agnostic).  broadcast = Allgatherv+global walk;
- * walk_export = the host walk-export producer, used by both search modes. */
-enum gx_installed_producer {
-    GX_INSTALLED_BROADCAST = 0,
-    GX_INSTALLED_WALK_EXPORT        /* routed set from the host walk-export producer (either mode) */
-};
-
 /* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
  * pool members.  Also rewrites compact_xyzh + pool_types for those members.
  * Used by both full and narrow refit paths. */
@@ -2317,7 +2309,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
     char *matched = NULL;
     int   used_routed = 0;
-    enum gx_installed_producer installed_producer = GX_INSTALLED_BROADCAST;  /* telemetry only */
 
 
     /* walk_export_only (defined with the cache capabilities above) means: no consumer of the
@@ -2374,14 +2365,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         if(matched_walk_export && walk_export_res.status == GX_WALK_EXPORT_OK) {
             if(matched) free(matched);
             matched = matched_walk_export; matched_walk_export = NULL;
-            installed_producer = GX_INSTALLED_WALK_EXPORT;
             used_routed = 1;
         } else if(ThisTask == 0) {
             /* Report what ACTUALLY happens next, which depends on whether a reference
              * set exists.  In production (walk_export_only) none does, so the stop below
-             * fires.  Under diag/oracle the broadcast walk ran, so the call continues on
-             * that set -- correct physics, but NOT the routed substrate, so the run is
-             * not a valid routed arm either way.
+             * fires.  Under diag the broadcast walk ran, so the call continues on that
+             * set -- correct physics, but NOT the routed substrate, so the run is not a
+             * valid routed arm either way.
              * The GX_R1_FALLBACK token is kept only because the current run-validity
              * checks grep for it; it does not describe the mechanism.  Rename it to match
              * the surrounding names, or fold it into the general import-failure
