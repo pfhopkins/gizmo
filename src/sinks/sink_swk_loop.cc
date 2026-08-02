@@ -165,7 +165,6 @@ void SinkSwkSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accu
 void SinkSwkSpec::populate_device_context(const neighbor_loop_args& args,
                                            DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     Aux *aux = nlr_aux<SinkSwkSpec>(args);
     const int N = args.num_active;

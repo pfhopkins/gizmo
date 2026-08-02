@@ -103,7 +103,6 @@ RtSrcInjectionSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void RtSrcInjectionSpec::populate_device_context(const neighbor_loop_args& args,
                                                   DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     Aux *aux = nlr_aux<RtSrcInjectionSpec>(args);
     const int N = args.num_active;

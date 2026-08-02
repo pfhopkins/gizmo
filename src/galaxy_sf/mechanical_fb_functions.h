@@ -375,7 +375,6 @@ static void mechanical_fb_pair_kernel(
     struct MechFBGasDelta *ghost_gas_delta,
     int  num_local_gas,
     int  num_local_particles,
-    bool oracle_dry_run,
     const Vec3<double>& dp,  /* = local.Pos - P[j].Pos, nearest_xyz-corrected */
     double r2,
     struct MechFBOut& myout)

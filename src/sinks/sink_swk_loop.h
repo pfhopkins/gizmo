@@ -206,7 +206,6 @@ struct SinkSwkActiveState {
  * Trivially copyable. Mirrors SinkFeedDeviceContext exactly. */
 struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
     const SinkSwallowLocalIn *per_active_local;   /* UVM, [num_active] */
-    bool                      oracle_dry_run;
 };
 
 /* ============================================================================
@@ -235,8 +234,7 @@ KOKKOS_INLINE_FUNCTION
 static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
-                                  SinkSwallowOut& out,
-                                  bool oracle_dry_run)
+                                  SinkSwallowOut& out)
 {
     const SinkSwallowLocalIn& local      = active.local;
     const SinkSwkCallScalars& scalars    = active.scalars;
@@ -654,7 +652,6 @@ struct SinkSwkSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
-        bool                  oracle_dry_run;
     };
 
     struct Aux {
@@ -744,7 +741,6 @@ struct SinkSwkSpec {
         NeighborData neighbor;
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
-        neighbor.oracle_dry_run    = dctx.oracle_dry_run;
         return neighbor;
     }
 
@@ -755,8 +751,7 @@ struct SinkSwkSpec {
                              NoScatter& /*scatter*/)
     {
         sink_swk_pair_kernel(active, *neighbor.neighbor_particle,
-                              neighbor.neighbor_cell, accum,
-                              neighbor.oracle_dry_run);
+                              neighbor.neighbor_cell, accum);
     }
 
     static void apply_active_writeback(const neighbor_loop_args& args,

@@ -87,7 +87,6 @@ struct MechFBActiveState {
     struct MechFBGasDelta *d_gas_iter;               /* ghost-side scratch (Mode A multi-rank only; nullptr when num_ghosts==0) */
     int                    num_local_gas;            /* = N_gas      ; home/non-gas boundary */
     int                    num_local_particles;      /* = NumPart    ; non-gas/imported-ghost boundary */
-    bool                   oracle_dry_run;
     struct particle_data  *P_base;                   /* dctx.P; pair_kernel needs full P array for the refactored legacy kernel */
     struct gas_cell_data  *CellP_base;               /* dctx.CellP; nullable when CellP unavailable */
 };
@@ -116,7 +115,6 @@ struct MechFBDeviceContext : NeighborLoopDeviceContextBase {
     /* Mutable across iters (set by after_iter_global; runner re-captures). */
     int   loop_iteration;                         /* = modes[mode_idx] */
     int   mode_idx;                               /* 0..num_modes-1 */
-    bool  oracle_dry_run;                         /* set via Spec::set_oracle_brute_pass */
 
     /* Immutable across iters but device-visible (set in populate_device_context). */
     int   num_modes;                              /* 3 / 4 / 5 / 6 per FIRE flags */
@@ -370,7 +368,6 @@ struct MechFBSpec {
         a.d_gas_iter             = dctx.d_gas_iter;
         a.num_local_gas          = dctx.num_local_gas;
         a.num_local_particles    = dctx.num_local_particles;
-        a.oracle_dry_run         = dctx.oracle_dry_run;
         a.P_base                 = dctx.P;
         a.CellP_base             = dctx.CellP;
 
@@ -402,7 +399,6 @@ struct MechFBSpec {
         active.d_gas_iter             = eval_ctx.d_gas_iter;
         active.num_local_gas          = eval_ctx.num_local_gas;
         active.num_local_particles    = eval_ctx.num_local_particles;
-        active.oracle_dry_run         = eval_ctx.oracle_dry_run;
         active.P_base                 = eval_ctx.P;
         active.CellP_base             = eval_ctx.CellP;
     }

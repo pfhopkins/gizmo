@@ -249,7 +249,6 @@ struct AgsForceActiveState {
 struct AgsForceDeviceContext : NeighborLoopDeviceContextBase {
     int               *need_wakeup_uvm;    /* UVM, single int; sticky across iters/subgroups */
     unsigned char     *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    bool               oracle_dry_run;
 #if defined(DM_SIDM)
     MyDouble          *geofactor_uvm;      /* UVM, GEOFACTOR_TABLE_LENGTH entries */
 #endif
@@ -436,7 +435,6 @@ struct AgsForceSpec {
         struct particle_data *P_base;       /* = dctx.P */
         int                  *need_wakeup;
         unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base */
-        bool                  oracle_dry_run;
 #if defined(DM_SIDM)
         const MyDouble       *geofactor;
 #endif
@@ -638,7 +636,6 @@ struct AgsForceSpec {
         n.P_base            = dctx.P;
         n.need_wakeup       = dctx.need_wakeup_uvm;
         n.wakeup_dirty_base = dctx.wakeup_dirty_base;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
 #if defined(DM_SIDM)
         n.geofactor         = dctx.geofactor_uvm;
 #endif

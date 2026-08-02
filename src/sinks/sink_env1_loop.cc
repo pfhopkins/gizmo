@@ -69,7 +69,6 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void SinkEnv1Spec::populate_device_context(const neighbor_loop_args& /*args*/,
                                             DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 }
 
 void SinkEnv1Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,

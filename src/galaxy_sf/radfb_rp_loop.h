@@ -195,7 +195,6 @@ struct RadFBRPDeviceContext : NeighborLoopDeviceContextBase {
                                            * rewritten between iters by
                                            * after_iter_global (post-iter
                                            * staging hook) from IterScratch */
-    bool            oracle_dry_run;
     int             iter_index_snapshot;  /* mirror of Aux::iter_index, refreshed
                                            * per iter; read by load_active on device */
 };
@@ -230,7 +229,6 @@ static void radfb_rp_pair_kick(
     struct gas_cell_data& Cj,
     double r2,
     const Vec3<double>& dp_ij,
-    bool oracle_dry_run,
     RadFBRPAccum& out)
 {
     if (Pj.Type != 0) return;
@@ -430,7 +428,6 @@ struct RadFBRPSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
-        bool                  oracle_dry_run;
     };
 
     /* Aux — host-only per-call state. Two responsibilities:
@@ -553,7 +550,6 @@ struct RadFBRPSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }
 
@@ -595,7 +591,7 @@ struct RadFBRPSpec {
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */
             radfb_rp_pair_kick(active.local, active.scalars, Pj, Cj,
-                                r2, dp, neighbor.oracle_dry_run, accum);
+                                r2, dp, accum);
         }
     }
 };

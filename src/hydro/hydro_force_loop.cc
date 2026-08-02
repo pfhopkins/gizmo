@@ -106,7 +106,6 @@ void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
     ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
     *ctx.need_wakeup_uvm = 0;
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
-    ctx.oracle_dry_run = false;
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* Host-precompute per-active ISMDustChem passive-scalar diffusion values.

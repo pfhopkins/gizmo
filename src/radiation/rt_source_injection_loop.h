@@ -115,7 +115,6 @@ struct RtSrcInjActiveState {
  * flag. Trivially copyable; runner captures by value into device lambdas. */
 struct RtSrcInjDeviceContext : NeighborLoopDeviceContextBase {
     const RtSrcLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
-    bool                oracle_dry_run;
 };
 
 /* ============================================================================
@@ -140,7 +139,6 @@ static void rt_source_injection_pair_body(
     struct gas_cell_data& Cj,
     double r2,
     const Vec3<double>& dp,
-    bool oracle_dry_run,
     RtSrcInjAccum& accum)
 {
     double r = sqrt(r2);
@@ -320,7 +318,6 @@ struct RtSrcInjectionSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
-        bool                  oracle_dry_run;
     };
 
     /* Aux — toplevel-owned active source pack. host_locals[active_slot] is
@@ -414,7 +411,6 @@ struct RtSrcInjectionSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }
 
@@ -469,7 +465,7 @@ struct RtSrcInjectionSpec {
 #endif
 
         rt_source_injection_pair_body(active.local, Pj, Cj,
-                                       r2, dp, neighbor.oracle_dry_run, accum);
+                                       r2, dp, accum);
     }
 };
 
