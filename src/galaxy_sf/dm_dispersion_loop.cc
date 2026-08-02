@@ -126,22 +126,6 @@ void DMDispersionSpec::apply_active_writeback_iterative(
  * All five AccumData fields are double; relative diff uses fmax(1, |a|, |b|)
  * as denominator to avoid divide-by-zero on zero fields.
  * ========================================================================== */
-double DMDispersionSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    auto upd = [&](double a, double b) {
-        const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-        const double rel   = std::fabs(a - b) / denom;
-        if (rel > max_rel) max_rel = rel;
-    };
-    upd(local.Ngb,        oracle.Ngb);
-    upd(local.DM_Vx,      oracle.DM_Vx);
-    upd(local.DM_Vy,      oracle.DM_Vy);
-    upd(local.DM_Vz,      oracle.DM_Vz);
-    upd(local.DM_VelDisp, oracle.DM_VelDisp);
-    upd(local.DM_Rho,     oracle.DM_Rho);
-    return max_rel;
-}
 
 /* ============================================================================
  * merge_accum — Mode B remote peer merge (all fields additive).

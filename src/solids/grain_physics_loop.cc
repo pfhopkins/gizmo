@@ -86,11 +86,6 @@ void GrainBackrxSpec::merge_accum(AccumData& /*local_accum*/,
 {}
 
 /* AccumData is empty; oracle compare trivially passes. */
-double GrainBackrxSpec::compare_accum(const AccumData& /*local*/,
-                                      const AccumData& /*oracle*/)
-{
-    return 0.0;
-}
 
 /* Propagate oracle flag to DeviceContext so load_neighbor can carry it into
  * NeighborData and pair_kernel can suppress j-writes during the brute pass. */
@@ -227,27 +222,6 @@ void GrainRTGasSpec::merge_accum(AccumData& local_accum, const AccumData& peer_a
 #endif
 }
 
-double GrainRTGasSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    max_rel = nlr_rel_update(max_rel,
-                             (double)local.InterpolatedGeometricDustCrossSection,
-                             (double)oracle.InterpolatedGeometricDustCrossSection);
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
-        max_rel = nlr_rel_update(max_rel,
-                                 (double)local.Interpolated_Opacity[k],
-                                 (double)oracle.Interpolated_Opacity[k]);
-    }
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
-    for(int k = 0; k < 3; k++) {
-        max_rel = nlr_rel_update(max_rel,
-                                 (double)local.J_dust_contribution[k],
-                                 (double)oracle.J_dust_contribution[k]);
-    }
-#endif
-    return max_rel;
-}
-
 
 /* ============================================================================
  * GrainRTGrainSpec host hooks.
@@ -288,17 +262,6 @@ void GrainRTGrainSpec::merge_accum(AccumData& local_accum, const AccumData& peer
         local_accum.Interpolated_Radiation_Acceleration[k] +=
             peer_accum.Interpolated_Radiation_Acceleration[k];
     }
-}
-
-double GrainRTGrainSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    for(int k = 0; k < 3; k++) {
-        max_rel = nlr_rel_update(max_rel,
-                                 (double)local.Interpolated_Radiation_Acceleration[k],
-                                 (double)oracle.Interpolated_Radiation_Acceleration[k]);
-    }
-    return max_rel;
 }
 
 

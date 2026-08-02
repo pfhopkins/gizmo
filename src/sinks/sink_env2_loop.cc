@@ -108,23 +108,5 @@ void SinkEnv2Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  * DIAGNOSTICS — env-gated. Two MyFloat fields → byte-walk as MyFloat.
  * ========================================================================== */
 
-double SinkEnv2Spec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    const MyFloat *pa = reinterpret_cast<const MyFloat*>(&local);
-    const MyFloat *pb = reinterpret_cast<const MyFloat*>(&oracle);
-    static_assert(sizeof(AccumData) % sizeof(MyFloat) == 0,
-        "SinkEnv2Spec::AccumData must be MyFloat-aligned for byte-walk compare");
-    const size_t n = sizeof(AccumData) / sizeof(MyFloat);
-    for(size_t k = 0; k < n; k++) {
-        double va = (double)pa[k], vb = (double)pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) max_rel = rel;
-    }
-    return max_rel;
-}
-
 #endif /* SINK_GRAVACCRETION == 0 */
 #endif /* SINK_PARTICLES */

@@ -412,7 +412,6 @@ struct GradientsSpec
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
     /* Oracle comparison. Body in gradients_loop.cc. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 
@@ -509,7 +508,6 @@ struct GradientsIterSpec
     static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i,
                                         const AccumData& accum);
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 #endif /* MHD_CONSTRAINED_GRADIENT */
 

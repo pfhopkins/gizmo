@@ -349,29 +349,6 @@ void MechFBSpec::merge_accum(AccumData& local, const AccumData& peer) {
  * AccumData layout (MyFloat M_coupled + MyFloat Area_weighted_sum[12])
  * happens to fall on float boundaries; we walk as float for parity with
  * the original storage. */
-double MechFBSpec::compare_accum(const AccumData& local, const AccumData& oracle) {
-    /* Pure-relative denom amplifies noise near zero
-     * (density port hit the same trap). Use an absolute floor so near-zero
-     * fields don't produce spurious ORACLE MISMATCH lines:
-     *   denom = max(1, |a|, |b|)
-     * Combined with absolute-floor-1 the rel diff degenerates to absolute
-     * diff when both values are < 1 in magnitude — appropriate since
-     * AccumData fields (Area_weighted_sum components, M_coupled) are
-     * dimensionless / kernel-normalized and below-O(1) values are noise. */
-    double max_rel = 0.0;
-    const MyFloat *pa = reinterpret_cast<const MyFloat*>(&local);
-    const MyFloat *pb = reinterpret_cast<const MyFloat*>(&oracle);
-    static_assert(sizeof(AccumData) % sizeof(MyFloat) == 0,
-        "MechFBSpec::AccumData size must be MyFloat-aligned for byte-walk compare");
-    const size_t n = sizeof(AccumData) / sizeof(MyFloat);
-    for (size_t k = 0; k < n; ++k) {
-        double va = (double)pa[k], vb = (double)pb[k];
-        double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
-        double rel   = std::fabs(va - vb) / denom;
-        if (rel > max_rel) max_rel = rel;
-    }
-    return max_rel;
-}
 
 /* after_iter — STATUS-ONLY.
  *

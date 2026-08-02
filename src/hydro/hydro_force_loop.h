@@ -497,7 +497,6 @@ struct HydroForceSpec
     /* Oracle gate. Body in hydro_force_loop.cc, same shape as gradients
      * commit 7 — field-wise per-#ifdef coverage + 1e-12 abs-tol floor for
      * sum-to-zero cancellation noise. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* HYDRO_FORCE_LOOP_H */

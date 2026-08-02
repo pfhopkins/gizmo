@@ -335,17 +335,6 @@ void ThermalFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * compare_accum: byte-walk of M_coupled (oracle gate; GIZMO_NLR_ORACLE=1).
  * ========================================================================== */
 
-double ThermalFBSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    const double va = (double)local.M_coupled;
-    const double vb = (double)oracle.M_coupled;
-    /* Denom floor = max(1, |a|, |b|) keeps relative comparisons stable when
-     * M_coupled is tiny (e.g. early-step transient): avoids amplifying
-     * floating-point noise on small denominators. */
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
-    return std::fabs(va - vb) / denom;
-}
-
 #else  /* !GALSF_FB_THERMAL */
 
 

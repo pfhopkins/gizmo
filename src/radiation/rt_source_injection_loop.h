@@ -373,7 +373,6 @@ struct RtSrcInjectionSpec {
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 
     /* Diagnostics — env-gated. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* ====================================================================
      * Device hooks (header-inline).

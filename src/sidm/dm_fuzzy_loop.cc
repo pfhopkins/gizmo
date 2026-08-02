@@ -152,25 +152,6 @@ void DMGradSpec::merge_accum(AccumData& local, const AccumData& peer)
     }
 }
 
-double DMGradSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    for (int k = 0; k < 3; k++) {
-        m = nlr_rel_update(m, local.grad_rho[k], oracle.grad_rho[k]);
-        for (int k2 = 0; k2 < 3; k2++)
-            m = nlr_rel_update(m, local.grad2_rho[k2][k], oracle.grad2_rho[k2][k]);
-#if (DM_FUZZY > 0)
-        m = nlr_rel_update(m, local.grad_psi_re[k], oracle.grad_psi_re[k]);
-        m = nlr_rel_update(m, local.grad_psi_im[k], oracle.grad_psi_im[k]);
-        for (int k2 = 0; k2 < 3; k2++) {
-            m = nlr_rel_update(m, local.grad2_psi_re[k2][k], oracle.grad2_psi_re[k2][k]);
-            m = nlr_rel_update(m, local.grad2_psi_im[k2][k], oracle.grad2_psi_im[k2][k]);
-        }
-#endif
-    }
-    return m;
-}
-
 /* No j-side writes → oracle brute pass needs no suppression. */
 
 /* ============================================================================

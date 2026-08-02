@@ -252,7 +252,6 @@ struct CellcorrectionsSpec {
     }
 
     /* Oracle comparison (env-gated by runner). Body in .cc. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* HYDRO_VOLUME_CORRECTIONS */

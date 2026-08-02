@@ -739,7 +739,6 @@ struct CBEGradSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* ---- Device hooks (header-inline; runner instantiates from GPU TUs). ---- */
 

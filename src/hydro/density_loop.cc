@@ -255,68 +255,6 @@ void DensitySpec::apply_active_writeback_iterative(const neighbor_loop_args& arg
  * as AccumData declaration. Sink_TimeBinGasNeighbor is an int; cast to
  * double for the relative-diff arithmetic.
  * ==================================================================== */
-double DensitySpec::compare_accum(const AccumData& local, const AccumData& oracle) {
-    double max_rel = 0.0;
-    auto upd = [&](double a, double b) {
-        const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-        const double diff  = std::fabs(a - b);
-        const double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if (rel > max_rel) max_rel = rel;
-    };
-    upd((double)local.Ngb,             (double)oracle.Ngb);
-    upd((double)local.Rho,             (double)oracle.Rho);
-    upd((double)local.DrkernNgb,       (double)oracle.DrkernNgb);
-    upd((double)local.Particle_DivVel, (double)oracle.Particle_DivVel);
-    for (int k = 0; k < 6; ++k) upd((double)local.NV_T.data[k], (double)oracle.NV_T.data[k]);
-    for (int k = 0; k < 3; ++k) upd((double)local.NV_T_face_weights[k], (double)oracle.NV_T_face_weights[k]);
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-    for (int k = 0; k < 3; ++k) upd((double)local.ParticleVel[k], (double)oracle.ParticleVel[k]);
-#endif
-#ifdef HYDRO_SPH
-    upd((double)local.DrkernHydroSumFactor, (double)oracle.DrkernHydroSumFactor);
-#endif
-#ifdef RT_SOURCE_INJECTION
-    upd((double)local.KernelSum_Around_RT_Source, (double)oracle.KernelSum_Around_RT_Source);
-#endif
-#ifdef HYDRO_PRESSURE_SPH
-    upd((double)local.EgyRho, (double)oracle.EgyRho);
-#endif
-#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-    for (int k1 = 0; k1 < 3; ++k1) for (int k2 = 0; k2 < 3; ++k2) {
-        upd((double)local.NV_D[k1][k2], (double)oracle.NV_D[k1][k2]);
-        upd((double)local.NV_A[k1][k2], (double)oracle.NV_A[k1][k2]);
-    }
-#endif
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    for (int k = 0; k < 3; ++k) upd((double)local.GradRho[k], (double)oracle.GradRho[k]);
-#endif
-#if defined(SINK_PARTICLES)
-    upd((double)local.Sink_TimeBinGasNeighbor, (double)oracle.Sink_TimeBinGasNeighbor);
-  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
-    upd((double)local.Sink_dr_to_NearestGasNeighbor, (double)oracle.Sink_dr_to_NearestGasNeighbor);
-  #endif
-#endif
-#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
-    for (int k = 0; k < 3; ++k) upd((double)local.GasVel[k], (double)oracle.GasVel[k]);
-#endif
-#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
-    upd((double)local.AmbientGasRho, (double)oracle.AmbientGasRho);
-    upd((double)local.Gas_InternalEnergy, (double)oracle.Gas_InternalEnergy);
-  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
-    for (int k = 0; k < 3; ++k) upd((double)local.Gas_B[k], (double)oracle.Gas_B[k]);
-  #endif
-  #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-    for (int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; ++kv) {
-        upd((double)local.Gas_VolatileSpecies[kv], (double)oracle.Gas_VolatileSpecies[kv]);
-    }
-  #endif
-#endif
-#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
-    for (int k = 0; k < 3; ++k) upd((double)local.GradH_numer[k], (double)oracle.GradH_numer[k]);
-    upd((double)local.GradH_denom, (double)oracle.GradH_denom);
-#endif
-    return max_rel;
-}
 
 /* ====================================================================
  * merge_accum — per-field combine for Mode B remote.
