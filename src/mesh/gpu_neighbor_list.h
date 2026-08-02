@@ -112,6 +112,14 @@ struct gpu_spatial_index_t {
      * BVH walk so their stale h_pos_buf values are harmless. */
     double *h_pos_buf;          /* [3*num_total] in Kokkos::HostSpace (DOUBLE positions) */
     double *d_pos_buf;          /* [3*num_total] in DEVICE_SPACE (DOUBLE positions) */
+    /* Ghost and pool lifecycle epochs this index was built under. The particle
+     * COUNT alone cannot detect a cleanup-and-reimport that lands the same
+     * number of ghosts with different contents: positions, tiles and the BVH
+     * would then be stale, because a ghost import marks h-dirty only and the
+     * refresh kernels rewrite compact_xyzh[i*4+3] alone. Reuse therefore
+     * requires both epochs to match as well as num_total. */
+    uint64_t ghost_epoch_when_built = 0;
+    uint64_t pool_epoch_when_built  = 0;
 };
 
 
@@ -202,8 +210,9 @@ void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n);
 void gpu_compact_xyzh_mark_h_dirty_all(void);
 /* SIDX lifecycle notification hooks. ghost_exchange owns the import/cleanup
  * lifecycle; SIDX owns the spatial-index representation. These are the
- * lifecycle signals SIDX consumes. They currently bump the epoch counters
- * and nothing more; no consumer reads those counters yet.
+ * lifecycle signals SIDX consumes. They bump the epoch counters that
+ * gpu_ngb_list_build tests against a cached index's build-time stamp before
+ * reusing it (ghost_epoch_when_built / pool_epoch_when_built above).
  *
  * Contract:
  *  - ghost_imported(start, count): MUST be called on every rank at the end of

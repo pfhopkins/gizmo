@@ -124,9 +124,10 @@ void gizmo_mark_kernel_radius_dirty_range(int start, int end)
 }
 
 /* SIDX lifecycle epoch counters, bumped by the notify hooks below on every
- * ghost import, ghost cleanup and pool membership change. Nothing reads them
- * today: they are the available signal for keying spatial-index reuse on
- * ghost identity rather than on count alone. */
+ * ghost import, ghost cleanup and pool membership change. gpu_ngb_list_build
+ * stamps them into each index at build and requires them to still match before
+ * reusing it, so a cached index cannot survive a change of ghost or pool
+ * identity that happens to preserve the particle count. */
 static uint64_t g_sidx_ghost_epoch = 0;
 static uint64_t g_sidx_pool_epoch  = 0;
 
@@ -547,6 +548,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->num_total = num_total;
     idx->cache_tbm = type_bitmask;
     idx->cache_radius_policy = radius_policy;
+    idx->ghost_epoch_when_built = g_sidx_ghost_epoch;
+    idx->pool_epoch_when_built  = g_sidx_pool_epoch;
     idx->valid = 1;
     /* Register this cache with the dirty tracker over [0, num_total). The
      * compact_xyzh build above wrote every row's h from the live P[] under this
@@ -782,9 +785,20 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * enables persistent caching across calls — caller controls invalidation). */
     gpu_spatial_index_t local_idx = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, NULL, 0, 0};
     gpu_spatial_index_t *idx;
-    /* Invalidate cached SIDX if num_total changed (ghost exchange redo, particle creation, etc.).
-     * The compact_xyzh and pool arrays were sized for the old count; accessing beyond them is UB. */
-    if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total) {
+    /* Invalidate the cached SIDX unless it still describes the same particles.
+     * num_total: the compact_xyzh and pool arrays were sized for the old count,
+     * so accessing beyond them is UB (ghost exchange redo, particle creation).
+     * Epochs: a cleanup-and-reimport can land the SAME ghost count with
+     * different ghost contents, which no count test can see. The index would
+     * then hold stale positions, tile bounds and BVH, because a ghost import
+     * marks h-dirty only and the refresh kernels rewrite compact_xyzh[i*4+3]
+     * alone. Drift does not bump either epoch -- membership is unchanged there,
+     * and the drift refresh path handles moved positions -- so this costs no
+     * rebuild on the common path. */
+    if(cached_idx && cached_idx->valid &&
+       (cached_idx->num_total          != num_total          ||
+        cached_idx->ghost_epoch_when_built != g_sidx_ghost_epoch ||
+        cached_idx->pool_epoch_when_built  != g_sidx_pool_epoch)) {
         gpu_spatial_index_free(cached_idx);
     }
     if(cached_idx && cached_idx->valid) {
