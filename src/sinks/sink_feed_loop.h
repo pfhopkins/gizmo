@@ -233,7 +233,7 @@ KOKKOS_INLINE_FUNCTION
 static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
-                                  SinkFeedOut& out,
+                                  SinkFeedOut& out
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                                   , unsigned char neighbor_binary_merge_eligible
 #endif
@@ -645,7 +645,7 @@ struct SinkFeedSpec {
                              NoScatter& /*scatter*/)
     {
         sink_feed_pair_kernel(active, *neighbor.neighbor_particle,
-                              neighbor.neighbor_cell, accum,
+                              neighbor.neighbor_cell, accum
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                               , neighbor.binary_merge_eligible
 #endif

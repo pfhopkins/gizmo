@@ -284,20 +284,6 @@ void RadFBRPSpec::after_iter_global(const neighbor_loop_args& args,
         wrote_any = true;
     }
 
-    /* Bridge oracle: drv.scratch_oracle_uvm[sg][slot].wt_sum
-     *             → drv.ctx_oracle.per_active_local[slot].wt_sum.
-     * Oracle context has its own scratch trajectory (drv.scratch_oracle_uvm)
-     * and its own per_active_local — bridging must be done independently. */
-    if (drv.ctx_oracle_initialized
-        && drv.ctx_oracle.per_active_local != nullptr
-        && (int)drv.scratch_oracle_uvm.size() > sg
-        && drv.scratch_oracle_uvm[sg] != nullptr) {
-        for (int slot = 0; slot < N; slot++) {
-            drv.ctx_oracle.per_active_local[slot].wt_sum =
-                drv.scratch_oracle_uvm[sg][slot].wt_sum;
-        }
-        wrote_any = true;
-    }
 
     /* Fence host writes to UVM before iter-1's device dispatch reads them. */
     if (wrote_any) Kokkos::fence();
