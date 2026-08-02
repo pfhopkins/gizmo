@@ -1,11 +1,11 @@
-/* Mode B local neighbor walker — host-side range-walk + brute-force oracle.
+/* Mode B local neighbor walker — host-side range-walk.
  *
- * See header for design constraints. Both paths return LOCAL real P[]
+ * See header for design constraints. Returns LOCAL real P[]
  * indices in [0, ghost_get_num_local()) intersecting (pos, h_q).
  *
  * SYMMETRIC tree walk prunes internal nodes by the per-type hmax bands
  * (Extnodes[no].hmax_per_type via mode_b_node_symmetric_radius); ONEWAY
- * prunes by h_q alone. The brute walk is the oracle for both.
+ * prunes by h_q alone.
  *
  * The three public tree walks (mode_b_local_neighbor_walk / _walk_and_export /
  * _walk_from_start_nodes) are thin wrappers over the one shared traversal body
@@ -114,11 +114,11 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * force_update_hmax refreshed every step, the within-step gas growth is covered
  * by the enclosing-sphere 0.866*len node term, so no inflation is needed. Set
  * to 0 to match legacy. Over-search is safe (extra candidates filter at the
- * leaf); under-search is a correctness bug — full-oracle membership on the
- * downsampled m11i confirmed 0 lost neighbors under real FIRE (gas) drift at
- * slack 0. AGS-active builds (larger per-step growth) rely on the same
- * per-step refresh cadence and are not independently oracle-checked here;
- * re-verify with the oracle if a SYMMETRIC Mode-B loop runs in an AGS config. */
+ * leaf); under-search is a correctness bug — an exhaustive membership check on
+ * the downsampled m11i confirmed 0 lost neighbors under real FIRE (gas) drift
+ * at slack 0. AGS-active builds (larger per-step growth) rely on the same
+ * per-step refresh cadence and were not separately checked; re-verify by
+ * exhaustive comparison if a SYMMETRIC Mode-B loop runs in an AGS config. */
 static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 
 static inline double mode_b_node_symmetric_radius(int no,

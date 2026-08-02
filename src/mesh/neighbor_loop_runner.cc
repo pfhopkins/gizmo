@@ -10,9 +10,9 @@
  * check_last_error).
  *
  * Mode B (request-driven walker, local + cross-rank peer-to-peer) and the
- * Brute oracle share the same Spec hooks — host-side invocation with the
+ * host-side invocation with the
  * lazy-drift boundary structurally encoded as collect_candidates_pre_drift
- * -> lazy_drift_candidates -> evaluate_pairs_post_drift; the oracle uses
+ * -> lazy_drift_candidates -> evaluate_pairs_post_drift; it uses
  * the SAME drift epoch as Mode B.
  *
  * The Spec contract (hard-required members, hooks, invariants) is
@@ -50,7 +50,7 @@
 #endif
 
 #include <vector>
-#include <algorithm>   /* nth_element / max_element (coverage dry-run percentiles) */
+#include <algorithm>   /* nth_element / max_element (coverage percentiles) */
 #include <unordered_map>
 #include <cmath>
 
@@ -438,7 +438,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  *     lazy_drift_candidates<Spec>          — drift_particle on every j to
  *                                            All.Ti_Current (idempotent;
  *                                            duplicate j's between Mode B and
- *                                            Brute oracle are dedupe-free
+ *                                            are dedupe-free
  *                                            via drift_particle's
  *                                            time1==time0 early-return)
  *     evaluate_pairs_post_drift<Spec>      — calls Spec::pair_kernel via the
@@ -487,9 +487,8 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
 }
 
 /* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
- * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier); the brute/oracle REFERENCE eval
- * always runs serial so the reference stays independent of the threaded path it
- * validates. Passed explicitly at every call site (no default) so production vs
+ * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier).
+ * Passed explicitly at every call site (no default) so production vs
  * reference eval is greppable and can never be silently mis-gated. */
 enum class EvalOMPPolicy { AllowProduction, ForceSerialReference };
 
@@ -646,7 +645,7 @@ static void collect_candidates_for_remote_queries(
     }
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
     /* Thread the received-query tree walk above the work threshold; brute
-     * oracle stays serial; below-threshold stays serial (byte-identical). */
+     * below-threshold stays serial (byte-identical). */
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(K, nthreads);
@@ -786,7 +785,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
      *     threading only re-orders those atomic updates -> ulp-class
      *     nondeterminism, NOT a new race. The per-active AccumData stays
      *     order-independent (no j-write is read back into the kernel).
-     * Only the production path threads; the brute/oracle reference eval
+     * Only the production path threads; the reference eval
      * (ForceSerialReference) and SerialOnly specs run the serial loop verbatim.
      * Below the work threshold no OpenMP region is entered — the serial path is
      * byte-identical to the unthreaded code. */
@@ -973,7 +972,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
  *
  * Epoch order is preserved EXACTLY: build self/peer
  * queries -> collect all candidate sets pre-drift -> exchange -> drift union
- * -> brute-FIRST if oracle -> evaluate -> exchange replies -> merge replies
+ * -> evaluate -> exchange replies -> merge replies
  * in deterministic peer order. No re-derivation; line-for-line move from
  * the old impl.
  * ========================================================================== */
@@ -989,7 +988,7 @@ static void mode_b_remote_evaluate_into_buffer(
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
-    using DeviceCtx     = typename Spec::DeviceContext;     /* needed for oracle ctx copies (Stages 8/9) */
+    using DeviceCtx     = typename Spec::DeviceContext;
     using Envelope      = NlrQueryEnvelope<ActiveData>;
     using ReplyEnvelope = NlrReplyEnvelope<AccumData>;
 
@@ -1003,9 +1002,6 @@ static void mode_b_remote_evaluate_into_buffer(
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
     const int rank = ThisTask;
-    /* Oracle under-route accumulator: reduced + hard-stopped at the collective
-     * end of this helper (every rank enters here → the Allreduce is symmetric). */
-
     /* CallScalars and DeviceContext passed in by caller:
      *   - Iterative: driver-owned via NlrIterDriver, populated once at iter-0 entry.
      *   - Non-iterative wrapper: locally-owned, populated + RAII-cleaned by wrapper.
@@ -1540,7 +1536,7 @@ static void mode_b_remote_evaluate_into_buffer(
      * each received query envelope), unflatten into per-peer arrays via the
      * provenance map, then send THIS group's replies — after which the group's
      * buffers are released (the whole point of the group staging). Production
-     * and dual-oracle replies share one payload type (XReply), so there is one
+     * replies share one payload type (XReply), so there is one
      * reply exchange per group, never two with identical MPI tags. */
     {
         std::vector<std::vector<XReply>> replies_for_group(group_peers.size());
@@ -3051,8 +3047,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
  * existing run_mode_b_local — same helper chain, just driver-owned output
  * buffer instead of stack vector.
  *
- * Iterative oracle iter is still hard-stubbed; Mode A iter lands
- * via the sibling nlr_iter_dispatch_subgroup_mode_a helper.
+ * Mode A iter lands via the sibling nlr_iter_dispatch_subgroup_mode_a helper.
  *
  * DEVICE CONTEXT LIFETIME:
  * The dispatch helper uses driver-owned drv.ctx (populated once via
@@ -3070,10 +3065,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
  * non-iterative wrapper uses — SSOT preserved. The driver-owned compacted
  * AccumData buffer is the only difference. apply_active_writeback NOT
  * called here — that's final-only after the outer iter loop.
- *
- * Scope: non-oracle only. ORACLE template parameter is hard-
- * coded false at the helper invocation; iterative oracle (brute-dry-run-
- * FIRST production-SECOND per iter) lands separately. */
+ */
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, int sg)
 {
@@ -3505,13 +3497,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * Per-Spec opt-in still REQUIRED via `using SupportsSubgroups = std::true_type;`
      * (runtime abort 81201 above catches missing trait). */
 
-    /* ===== Oracle env detection =====
-     * Mode B oracle paths are implemented; Mode A + oracle still
-     * hard-stubbed (Mode A oracle would catch only
-     * cached-CSR/lookup/rebuild bugs (covered by the synthetic harness)
-     * and cannot validate ghost-import completeness (walks the
-     * same imported pool as production). Its complexity is not justified
-     * for temporary scaffolding code). */
 
     /* ===== Path selection at iter 0 (FIXED for whole call) =====
      * Integrates with the canonical override / threshold dispatch
@@ -3794,8 +3779,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         /* (a) Per-subgroup dispatch — fixed path for the call. This
          * implements Mode B local (np=1) and Mode B remote (np>1) via the
          * same DispatchPath::ModeB_HostWalker label; the per-subgroup helper
-         * picks local vs remote based on NTask. Mode A iter and iterative
-         * oracle still hard-stubbed at the env / path-selection block. */
+         * picks local vs remote based on NTask. Mode A iter is still
+         * hard-stubbed at the path-selection block. */
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             /* Skip globally-converged subgroups. Saves
              * per-iter no-op collectives. On iter 0 global_active_per_sg
@@ -3809,9 +3794,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 : (drv.global_active_per_sg[sg] > 0);
             if (!sg_globally_active) continue;
 
-            /* (a.oracle) brute-FIRST per iter. Independent
-             * oracle trajectory; Mode B only (Mode A + oracle hard-stubbed
-             * at outer entry). Helpers are collective on remote — must be
+            /* (a) Mode B only (Mode A hard-stubbed at outer entry).
+             * Helpers are collective on remote — must be
              * entered on every rank regardless of local n_compacted.
              *
              * Both single-rank and multi-rank paths use a COMBINED helper
@@ -4044,8 +4028,8 @@ template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args
 #endif
 
 /* DensitySpec — hydro density runner port.
- * Single gas-only subgroup, oracle-safe (no after_iter P/CellP writes),
- * uses apply_active_writeback_iterative for oracle-safe radius
+ * Single gas-only subgroup, no after_iter P/CellP writes,
+ * uses apply_active_writeback_iterative for single-valued radius
  * channeling. See hydro/density_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_iterative&);
 
@@ -4104,8 +4088,7 @@ template void run_neighbor_loop<GradientsIterSpec>(const neighbor_loop_args&);
  * GradientsSpec). uses_ghost_writeback=true with a snapshot-diff bundle
  * (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass)) for Mode A imported-ghost
  * lifecycle; Mode B direct-owner-rank j-writes via request-driven P2P.
- * Helper hydro_accumulate_neighbor carries an allow_j_writes gate so the
- * oracle brute pass doesn't double-apply j-writes. See
+ * Helper hydro_accumulate_neighbor carries an allow_j_writes gate. See
  * hydro/hydro_force_loop.{h,cc}. */
 template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
