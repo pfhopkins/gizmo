@@ -15,7 +15,6 @@
  * Layout convention inside SinkEnv1Spec:
  *   PHYSICS BLOCK    — edit when changing the loop's physics
  *   ENGINE APPARATUS — touch only when changing the runner contract
- *   DIAGNOSTICS      — env-gated, declared here, defined in the .cc
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -91,13 +90,11 @@ struct SinkEnv1ActiveState {
     SinkEnv1CallScalars scalars;        /* per-call cosmology + gravity */
 };
 
-/* DeviceContext extension. Carries `oracle_dry_run`, flipped on by
- * SinkEnv1Spec::set_oracle_brute_pass for the brute oracle pass so the
- * j-side SwallowTime atomic-min below is suppressed (would otherwise
- * write twice: once on the tree pass, once on the brute pass). Defaults
- * false in populate_device_context. Mirrors SinkFeedDeviceContext +
- * SinkSwkDeviceContext. Trivially copyable: runner captures by value
- * into device lambda. */
+/* DeviceContext extension. It adds no fields of its own today, but it stays a
+ * type distinct from NeighborLoopDeviceContextBase: the runner keys off that
+ * difference to decide whether the Spec must supply populate_device_context,
+ * so collapsing it would change the hooks this Spec is required to define.
+ * Trivially copyable: runner captures by value into device lambda. */
 struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
 };
 
@@ -112,10 +109,9 @@ struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
  * J-side writes:
  *   - SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS: a per-pair atomic min
  *     on neighbor_particle.SwallowTime fires inside the boundedness-passed
- *     branch of the SINK_GRAVCAPTURE_GAS body. Suppressed under
- *     oracle_dry_run. Reverse-comm to the home rank goes through the
- *     existing GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime) bundle in
- *     sinks/sink_env1_loop.cc.
+ *     branch of the SINK_GRAVCAPTURE_GAS body. Reverse-comm to the home rank
+ *     goes through the existing GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime)
+ *     bundle in sinks/sink_env1_loop.cc.
  *   - SINK_GRAVCAPTURE_GAS (without SINGLE_STAR_SINK_DYNAMICS):
  *     accum.mass_to_swallow_edd accumulates i-side; no j-write.
  * ========================================================================== */
@@ -226,9 +222,8 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
     /* SINK_GRAVCAPTURE_GAS path — boundedness check + SwallowID-based
      * mass-marked-swallow accumulation. Under SINGLE_STAR_SINK_DYNAMICS,
      * the boundedness-passed branch also atomic-min's a per-pair tff into
-     * neighbor_particle.SwallowTime (suppressed under oracle_dry_run;
-     * reverse-comm via GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime) bundle
-     * in sink_env1_loop.cc). */
+     * neighbor_particle.SwallowTime (reverse-comm via
+     * GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime) bundle in sink_env1_loop.cc). */
 #ifdef SINK_GRAVCAPTURE_GAS
 #ifdef GRAIN_FLUID
     if(neighbor_particle.Mass > 0 && (neighbor_particle.Type == 0 || ((1<<neighbor_particle.Type) & GRAIN_PTYPES)))
@@ -295,8 +290,7 @@ struct SinkEnv1Spec {
      * PHYSICS BLOCK — edit when changing the loop's physics
      * ==================================================================== */
 
-    /* (1) Loop identity. Drives env-var prefixes (GIZMO_SINK_ENV1_*) and
-     *     PHASE0_NLR `loop=` field. */
+    /* (1) Loop identity. Supplies the PHASE0_NLR `loop=` field. */
     static constexpr const char *loop_name = "sink_env1";
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: sole j-write gated atomic_min(SwallowTime) (order-invariant), no read-back; tiny-N usually below threshold */
     /* Legacy detector label preserved; differs from loop_name. Predates the
@@ -319,21 +313,11 @@ struct SinkEnv1Spec {
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
 
-    /* (4) Tolerances.
-     *
-     * Mode B vs Brute oracle: same pair_kernel, same candidate SET, but
-     * DIFFERENT iteration order (tree-walk returns walk-order; brute returns
-     * ascending P[] index order). Per-active accumulators sum the same MyFloat
-     * contributions in different orders -> double-precision floor of
-     * ~N*eps_machine relative residual, plus possible cancellation
-     * amplification on small-magnitude fields. 1e-10 is sharp enough to catch
-     * real bugs, loose enough to not trip on summation-reorder noise. */
-
-    /* (5) Active-particle predicate, passed by the caller to
+    /* (4) Active-particle predicate, passed by the caller to
      *     nlr_build_active_list. */
     static bool is_active(int particle_index) { return sink_isactive(particle_index) != 0; }
 
-    /* (6) Per-pair physics types — file-scope structs above. */
+    /* (5) Per-pair physics types — file-scope structs above. */
     using CallScalars   = SinkEnv1CallScalars;
     using ActiveData    = SinkEnv1ActiveState;
     using AccumData     = struct sink_env_gpu_out;
@@ -344,13 +328,13 @@ struct SinkEnv1Spec {
         const struct gas_cell_data *neighbor_cell;      /* nullptr for non-gas / when no CellP */
     };
 
-    /* (7) Per-active aux passed by caller through neighbor_loop_args::aux.
+    /* (6) Per-active aux passed by caller through neighbor_loop_args::aux.
      *     Recover with nlr_aux<SinkEnv1Spec>(args) inside hooks. */
     struct Aux {
         struct sink_env_gpu_out *per_active_accum;   /* [num_active] — host buffer */
     };
 
-    /* (8) Imported-ghost lifecycle traits.
+    /* (7) Imported-ghost lifecycle traits.
      *
      * Two independent traits, each gating a hook-method pair below. The
      * runner calls each pair only when (a) the trait is true AND (b) the
@@ -396,7 +380,7 @@ struct SinkEnv1Spec {
     static void ghost_writeback_end        (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
 
-    /* (9) Per-active host hooks (pre-arena epoch). */
+    /* (8) Per-active host hooks (pre-arena epoch). */
 
     /* Per-active search radius from P[i].KernelRadius. Pre-arena, pre-drift. */
     static double      search_radius(const neighbor_loop_args& args,
@@ -405,7 +389,7 @@ struct SinkEnv1Spec {
     /* Per-call scalars captured into a POD. */
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
 
-    /* (10) Per-active and per-pair device hooks. KOKKOS_INLINE_FUNCTION =
+    /* (9) Per-active and per-pair device hooks. KOKKOS_INLINE_FUNCTION =
      *      callable from Mode A device kernel and Mode B/Brute host walker. */
 
     /* Build ActiveData[slot] from device-visible state (post-neighbor-list
@@ -463,10 +447,6 @@ struct SinkEnv1Spec {
         return neighbor;
     }
 
-    /* Oracle brute-pass hook (Phase 4.A.0 contract): runner copies ctx and
-     * calls this before the brute evaluate pass to suppress j-side writes.
-     * Mirror of SinkFeedSpec::set_oracle_brute_pass. */
-
     /* The physics — forwards to the inline pair body above. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& active,
@@ -478,7 +458,7 @@ struct SinkEnv1Spec {
                               neighbor.neighbor_cell, accum);
     }
 
-    /* (11) Host writebacks (post-dispatch). */
+    /* (10) Host writebacks (post-dispatch). */
 
     /* Copy AccumData into args.aux->per_active_accum[active_slot]. The
      * caller's scatter loop reads per_active_accum and applies its own
@@ -506,17 +486,12 @@ struct SinkEnv1Spec {
      * DeviceContext-typed method declarations below can see it. The
      * derived struct itself is file-scope above SinkEnv1Spec. */
 
-    /* Device-context lifecycle. populate sets
-     * oracle_dry_run=false; cleanup is a no-op body (declared anyway
-     * for symmetric runner-contract pairing — no UVM allocs to free). */
+    /* Device-context lifecycle. Both bodies are empty: this Spec stages no
+     * per-active device state and has no UVM allocs to free. They are declared
+     * because the extended DeviceContext above makes the runner call
+     * populate_device_context, and for symmetric contract pairing. */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
-
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated; safe to ignore for physics edits.
-     *   compare_accum: oracle gate. Definition lives in sink_env1_loop.cc.
-     * ==================================================================== */
-
 };
 
 #endif /* SINK_PARTICLES */

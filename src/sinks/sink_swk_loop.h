@@ -9,7 +9,7 @@
  * sink_swallow_pair_kernel in sinks/sink_swallow_and_kick_functions.h is
  * mirrored below as sink_swk_pair_kernel with the runner's pair contract:
  *   (const SinkSwkActiveState&, particle_data&, gas_cell_data*,
- *    SinkSwallowOut&, bool oracle_dry_run).
+ *    SinkSwallowOut&).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -199,9 +199,6 @@ struct SinkSwkActiveState {
 /* DeviceContext extension. Carries:
  *   per_active_local — UVM array of SinkSwallowLocalIn[num_active], host-staged
  *                      by populate_device_context, read on device by load_active.
- *   oracle_dry_run   — set by SinkSwkSpec::set_oracle_brute_pass on the brute
- *                      oracle pass; the pair body suppresses j-side atomic
- *                      writes when true.
  *
  * Trivially copyable. Mirrors SinkFeedDeviceContext exactly. */
 struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
@@ -213,13 +210,12 @@ struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
  * Mirrors legacy sink_swallow_pair_kernel
  * (sinks/sink_swallow_and_kick_functions.h:108-440) with the new signature:
  *   (const SinkSwkActiveState& active, particle_data& neighbor_particle,
- *    gas_cell_data* neighbor_cell, SinkSwallowOut& out, bool oracle_dry_run)
+ *    gas_cell_data* neighbor_cell, SinkSwallowOut& out)
  *
- * j-side atomic writes (P[j].Mass / Vel / dp / Sink_Mass / Sink_Mdot /
- * Sink_Mass_Reservoir; CellP[j].MassTrue / VelPred / InternalEnergy /
- * InternalEnergyPred / B / BPred / DelayTime / CR fields) are gated on
- * !oracle_dry_run. i-side accumulator writes (out.*) are NOT gated —
- * the oracle compares accum field-by-field after the brute pass.
+ * The pair body writes j-side atomics (P[j].Mass / Vel / dp / Sink_Mass /
+ * Sink_Mdot / Sink_Mass_Reservoir; CellP[j].MassTrue / VelPred /
+ * InternalEnergy / InternalEnergyPred / B / BPred / DelayTime / CR fields)
+ * alongside the i-side accumulator writes (out.*).
  *
  * CR fix vs legacy: the runner port unifies CR-field handling across both
  * modes. Legacy Mode A imported-ghost path silently dropped CR fields
@@ -767,9 +763,6 @@ struct SinkSwkSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
 };
 
 #endif /* SINK_PARTICLES */

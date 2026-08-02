@@ -274,9 +274,6 @@ struct SinkEnv2Spec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
 };
 
 #endif /* SINK_GRAVACCRETION == 0 */

@@ -52,10 +52,9 @@ static void sink_normalize_temp_info_struct_after_environment_loop(int i)
 
 /* Scatter the per-active accumulator buffer back into SinkTempInfo.
  * Per-loop physics; the runner doesn't see this. Operations match the
- * pair_kernel per-field write ops (the oracle protects merge_accum
- * specifically, but this scatter manifest must agree on op semantics
- * field-for-field — drift is silent because it lives downstream of the
- * runner's oracle gate).
+ * pair_kernel per-field write ops. This scatter manifest must agree with them
+ * op-for-op field-for-field; nothing checks that at runtime, so drift is
+ * silent.
  *
  * Adding a new scattered field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */

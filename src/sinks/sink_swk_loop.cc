@@ -4,13 +4,13 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (sink_swk_pair_kernel) live in
  * sink_swk_loop.h so they inline from device kernels (Mode A) and host
- * walkers (Mode B / Brute oracle). This translation unit holds host-only
+ * walkers (Mode B). This translation unit holds host-only
  * hooks: per-active radius, per-call scalars capture, populate/cleanup
  * device-context (UVM staging), apply_active_writeback,
  * merge_accum (ACCUM_ADD / ACCUM_ADD_VEC3 / ACCUM_MIN / ACCUM_ADD_ARRAY
  * Spec-local manifest), the ghost-writeback compound callback (snapshot
  * + CR-aware delta predicate + pack + clamped apply + cleanup),
- * lifecycle hooks, and env-gated diagnostics.
+ * and lifecycle hooks.
  *
  * Compound callback (vs sink_feed's per-field manifest): the legacy
  * sinkswallow writeback predicate gates the FULL delta record on
@@ -100,8 +100,8 @@ void SinkSwkSpec::apply_active_writeback(const neighbor_loop_args& args,
 
 /* Per-field merge of a peer rank's contribution. Per-field op MUST match
  * the pair_kernel writes; Accreted_Age uses MIN-merge with the
- * MAX_REAL_NUMBER sentinel from zero_accum. The oracle catches drift
- * between this manifest and pair_kernel writes.
+ * MAX_REAL_NUMBER sentinel from zero_accum. Nothing checks the two against
+ * each other at runtime, so drift between them is silent.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */
@@ -489,9 +489,5 @@ void SinkSwkSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 {
     ghost_writeback_end_bundle(sink_swk_ghost_writeback_bundle_ptr());
 }
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * ========================================================================== */
 
 #endif /* SINK_PARTICLES */

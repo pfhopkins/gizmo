@@ -3,10 +3,10 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the single source of truth for the pair body live in
  * sink_env1_loop.h so they inline from both device kernels (Mode A) and
- * host walkers (Mode B / Brute oracle). This translation unit holds the
- * host-only hooks: per-active radius, per-call scalars capture, host
- * writebacks (apply_active_writeback, merge_accum), imported-ghost
- * lifecycle hooks, and the env-gated diagnostics block at the bottom.
+ * host walkers (Mode B). This translation unit holds the host-only hooks:
+ * per-active radius, per-call scalars capture, host writebacks
+ * (apply_active_writeback, merge_accum) and the imported-ghost lifecycle
+ * hooks.
  *
  * File layout (matches sink_env1_loop.h conventions):
  *   PHYSICS HOOKS                — search_radius, populate_call_scalars,
@@ -62,9 +62,9 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     return scalars;
 }
 
-/* Device-context lifecycle. sink_env1 has no UVM-allocated
- * per-active state (unlike sink_feed/sink_swk), so populate only seeds
- * the oracle dry-run flag and cleanup is a no-op. The pair is declared
+/* Device-context lifecycle. sink_env1 has no UVM-allocated per-active state
+ * (unlike sink_feed/sink_swk), so both bodies are empty. populate stays
+ * because the extended DeviceContext makes the runner call it; cleanup stays
  * for symmetric runner-contract pairing. */
 void SinkEnv1Spec::populate_device_context(const neighbor_loop_args& /*args*/,
                                             DeviceContext& ctx)
@@ -96,10 +96,9 @@ void SinkEnv1Spec::apply_active_writeback(const neighbor_loop_args& args,
  * accumulation is via repeated pair_kernel calls (which already encode
  * the right per-field op).
  *
- * The oracle (Mode B via the parameterfile NeighborLoopModeBThreshold pair,
- * plus GIZMO_NLR_ORACLE=1) catches drift
- * between this manifest and pair_kernel writes — any mismatch surfaces
- * as ORACLE MISMATCH on the next run.
+ * Nothing checks this manifest against pair_kernel at runtime: drift between
+ * the two is silent, and shows up only as a cross-rank difference in the
+ * affected field.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. Operations available below; extend
