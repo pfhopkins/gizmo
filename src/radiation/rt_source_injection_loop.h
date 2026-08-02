@@ -83,14 +83,14 @@ struct RtSrcInjCallScalars {
 };
 
 /* ============================================================================
- * AccumData — DEBUG TELEMETRY ONLY.
+ * AccumData — EMPTY for this Spec, and that is correct.
  *
- * Production physics is the atomic_adds into Pj / Cj inside the pair kernel
- * (gas-side fields: Rad_Je / Rad_E_gamma / Rad_E_gamma_Pred /
- * Rad_Intensity[/Pred] / Rad_Flux[/Pred] / VelPred, particle-side fields:
- * P[j].Vel / P[j].dp). AccumData here is NOT a physics surrogate — it carries
- * a single scalar (sum of pair-wise dE = wk * Σ_k local.Luminosity[k]) and a
- * pair counter.
+ * This loop accumulates nothing per active. All of its output is the
+ * atomic_adds into Pj / Cj inside the pair kernel (gas-side: Rad_Je /
+ * Rad_E_gamma / Rad_E_gamma_Pred / Rad_Intensity[/Pred] / Rad_Flux[/Pred] /
+ * VelPred; particle-side: P[j].Vel / P[j].dp), carried across ranks by the
+ * ghost-writeback bundle. The type remains because the Spec contract requires
+ * the alias and the runner's per-active reduce is written in terms of it.
  *
  * Order-independence: every j-side write this loop performs is a fresh
  * atomic_add into fields this loop neither reads nor accumulates from within
@@ -98,8 +98,6 @@ struct RtSrcInjCallScalars {
  * thermal_fb, which reads Pj.Mass and atomic_adds to it in the same loop.
  * ========================================================================== */
 struct RtSrcInjAccum {
-    double    sum_dE;
-    long long pair_count;
 };
 
 /* Runner ActiveData. `pos` and `h_search` are top-level (runner's Mode B
@@ -138,8 +136,7 @@ static void rt_source_injection_pair_body(
     struct particle_data& Pj,
     struct gas_cell_data& Cj,
     double r2,
-    const Vec3<double>& dp,
-    RtSrcInjAccum& accum)
+    const Vec3<double>& dp)
 {
     double r = sqrt(r2);
     double hinv, hinv3, hinv4;
@@ -172,15 +169,6 @@ static void rt_source_injection_pair_body(
         angle_wt_Inu_sum += wt;
     }
 #endif
-
-    /* Telemetry accumulator — order-independent (atomic across pairs by
-     * runner-provided AccumData reduce). NOT a physics surrogate. */
-    double dE_pair_sum = 0;
-    for (int k_acc = 0; k_acc < N_RT_FREQ_BINS; k_acc++) {
-        dE_pair_sum += wk * local.Luminosity[k_acc];
-    }
-    accum.sum_dE     += dE_pair_sum;
-    accum.pair_count += 1;
 
     for (int k = 0; k < N_RT_FREQ_BINS; k++) {
         double dE = wk * local.Luminosity[k];
@@ -369,9 +357,7 @@ struct RtSrcInjectionSpec {
      * Device hooks (header-inline).
      * ==================================================================== */
     KOKKOS_INLINE_FUNCTION
-    static void zero_accum(AccumData& accum) {
-        accum.sum_dE     = 0;
-        accum.pair_count = 0;
+    static void zero_accum(AccumData& /*accum*/) {
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -412,7 +398,7 @@ struct RtSrcInjectionSpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
-                             AccumData& accum,
+                             AccumData& /*accum*/,
                              NoScatter& /*scatter*/) {
         /* Source-level early-outs — mirror the legacy lambda guard at
          * rt_source_injection_gpu.cc:193. wk = (1 - r2/h2) / KernelSum_Around_RT_Source
@@ -459,8 +445,7 @@ struct RtSrcInjectionSpec {
         if (Pj.StellarAge == All.Time) return;
 #endif
 
-        rt_source_injection_pair_body(active.local, Pj, Cj,
-                                       r2, dp, accum);
+        rt_source_injection_pair_body(active.local, Pj, Cj, r2, dp);
     }
 };
 
