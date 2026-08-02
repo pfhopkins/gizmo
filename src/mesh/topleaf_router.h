@@ -123,20 +123,6 @@ int topleaf_router_route_queries_hier(const double *q_pos, const double *q_h, in
                                       const int periodic_flags[3], const double box_sizes[3],
                                       int *off, int *owners, long owners_cap, int self_rank);
 
-/* flat-vs-hierarchical owner-set oracle.  symmetric==0 => ONEWAY (band-free, H1);
- * symmetric!=0 => SYMMETRIC (H4b): flat uses the GLOBAL per-leaf band, hier uses
- * the per-topnode band, both reduced over supply_mask (requires the collective
- * global band -- else returns -1).  Returns #queries whose remote-owner sets
- * differ (0 = all equal), or a NEGATIVE code if UNAVAILABLE:
- *   -1 = geometry/global-band invalid, -2 = scratch alloc fail, -3 = hier overflow.
- * *first_bad = first mismatching query index.  Caller separates mismatch from
- * unavailable and does the collective Allreduce + controlled-stop (both fatal for
- * a validation gate). */
-int topleaf_router_hier_vs_flat_check(const double *q_pos, const double *q_h, int nq,
-                                      unsigned int supply_mask, int symmetric,
-                                      const int periodic_flags[3], const double box_sizes[3],
-                                      int self_rank, int *first_bad);
-
 /* --- per-top-leaf supply band (SYMMETRIC callers) --- */
 int  topleaf_router_band_build(void);           /* LEGACY local-only (superseded; uncalled) */
 int  topleaf_router_band_valid(void);
