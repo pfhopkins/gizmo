@@ -6,8 +6,8 @@
  * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
  * live in grain_physics_loop.h so the runner instantiates them from GPU TUs.
  * This file owns: is_active, search_radius, populate_call_scalars,
- * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
- * ghost_writeback_begin/end (GrainBackrxSpec), and the two toplevels.
+ * apply_active_writeback, merge_accum, ghost_writeback_begin/end
+ * (GrainBackrxSpec), and the two toplevels.
  *
  * Replaces grain_backrx_evaluate_gpu + ghost_writeback_{zero_,}grainbackrx
  * and interpolate_fluxes_opacities_gasgrains_evaluate_gpu from

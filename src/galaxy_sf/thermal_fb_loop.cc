@@ -2,13 +2,13 @@
  *
  * Inline pair body (thermal_fb_pair_kernel), structs, and KOKKOS_INLINE_FUNCTION
  * hooks live in thermal_fb_loop.h so they inline from device kernels (Mode A)
- * and host walkers (Mode B / Brute oracle). This translation unit holds
+ * and host walkers (Mode B). This translation unit holds
  * host-only hooks: is_active, per-active radius, per-call scalars capture
  * (NlrCommonScalars + host-precomputed unit factors via nlr_host_all_ptr),
  * populate/cleanup_device_context (Phase 4.A.0 UVM staging),
  * apply_active_writeback (source-side mass + momentum loss), merge_accum,
- * ghost-writeback manifest + lifecycle hooks, compare_accum, and
- * thermal_fb_local_fill (the per-source host pack — SSOT).
+ * ghost-writeback manifest + lifecycle hooks, and thermal_fb_local_fill
+ * (the per-source host pack — SSOT).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu)
  * for GIZMO.
@@ -324,11 +324,6 @@ void ThermalFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 {
     ghost_writeback_end_bundle(thermalfb_ghost_writeback_bundle_ptr());
 }
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * compare_accum: byte-walk of M_coupled (oracle gate; GIZMO_NLR_ORACLE=1).
- * ========================================================================== */
 
 #else  /* !GALSF_FB_THERMAL */
 

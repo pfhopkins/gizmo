@@ -123,8 +123,8 @@ struct ThermalFBActiveState {
     ThermalFBCallScalars scalars;
 };
 
-/* DeviceContext extension: UVM-resident per-active host-fill array + oracle
- * flag. Trivially copyable; runner captures by value into device lambdas. */
+/* DeviceContext extension: UVM-resident per-active host-fill array.
+ * Trivially copyable; runner captures by value into device lambdas. */
 struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
     const ThermalFBLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
     unsigned char          *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
@@ -136,8 +136,7 @@ struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
  * Caller pre-filters Pj.Type==0 / Pj.Mass>0 via the gas-only neighbor mask in
  * load_neighbor (defensive checks still inside as safety). dp = source.Pos -
  * Pj.Pos with nearest_xyz applied. r2 > 0 and r2 < KernelRadius^2 pre-checked
- * by the lambda. `oracle_dry_run` short-circuits j-side atomic writes (oracle
- * brute pass mustn't double-deposit); i-side accum always runs.
+ * by the lambda.
  *
  * All `All.*` and `UNIT_*` macro reads go through `scalars` — Mode B no-
  * globals rule (project directive 3).
@@ -275,14 +274,13 @@ struct ThermalFBSpec {
     static constexpr bool           uses_ghost_writeback      = true;
     static constexpr bool           uses_ghost_write_detector = true;
 
-    /* Oracle compare tolerance for AccumData (M_coupled). The ejecta are split
-     * by the number-weighted kernel fraction W_j / Sum_k W_k, which depends only
-     * on neighbor geometry and the source kernel radius — NOT on the gas mass
-     * the deposits mutate during the loop. So each source couples exactly
-     * M_coupled = Msne regardless of source order, and the oracle dry-run (which
-     * only suppresses the j-side writes, not the i-side M_coupled accumulation)
-     * computes the identical value. A tight bound applies; the only residual is
-     * floating-point summation order across CSR / Mode-B partial sums. */
+    /* Source-order independence of M_coupled. The ejecta are split by the
+     * number-weighted kernel fraction W_j / Sum_k W_k, which depends only on
+     * neighbor geometry and the source kernel radius — NOT on the gas mass the
+     * deposits mutate during the loop. So each source couples exactly
+     * M_coupled = Msne no matter what order the sources are processed in; the
+     * only residual is floating-point summation order across CSR / Mode-B
+     * partial sums. */
 
     /* Type aliases. */
     using CallScalars    = ThermalFBCallScalars;
@@ -293,9 +291,8 @@ struct ThermalFBSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* NeighborData carries non-const pointers (kernel writes to *neighbor_*).
-     * Oracle flag propagated per-call from ctx via load_neighbor (mirrors
-     * SinkFeedSpec::NeighborData). */
+    /* NeighborData carries non-const pointers (kernel writes to *neighbor_*);
+     * mirrors SinkFeedSpec::NeighborData. */
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;   /* nullptr for non-gas; gas-only mask should prevent */
@@ -331,8 +328,6 @@ struct ThermalFBSpec {
 
     /* Per-field merge — manifest in thermal_fb_loop.cc. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-
-    /* Oracle suppression flag. */
 
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "thermalfb"). */

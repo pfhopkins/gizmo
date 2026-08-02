@@ -11,7 +11,7 @@
  *   - GHOST_WRITEBACK_BUNDLE(hydro_force) manifest (PARTICLE_MAX(wakeup) +
  *     MFV GAS_ADD(dMass))
  *   - DeviceContext extension lifecycle (UVM int[TIMEBINS] for
- *     TimeBinActive, UVM int for need_wakeup, oracle_dry_run)
+ *     TimeBinActive, UVM int for need_wakeup)
  *   - Ghost lifecycle (ghost_writeback_begin pre-zeros ghost-region
  *     wakeup + MFV dMass before bundle snapshot; ghost_writeback_end
  *     calls bundle's reverse-comm; ghost_write_detector_begin/end forward
@@ -84,18 +84,12 @@ GHOST_WRITEBACK_BUNDLE_END(hydro_force)
  *
  * populate_device_context: allocate UVM TimeBinActive_uvm[TIMEBINS] + the
  *   single-int need_wakeup_uvm; copy host TimeBinActive[] into the UVM
- *   array; init need_wakeup to 0; oracle_dry_run = false.
+ *   array; init need_wakeup to 0.
  *
  * cleanup_device_context: OR the device-set wakeup flag into the global
  *   NeedToWakeupParticles_local (the AGS pattern — call-level event
  *   propagation lives here, not in apply_active_writeback or the
  *   toplevel caller). Free both UVM allocations.
- *
- * set_oracle_brute_pass: flip oracle_dry_run for the brute oracle pass; the
- *   pair_kernel reads this through ActiveData and gates `allow_j_writes`
- *   in hydro_accumulate_neighbor. Brute pass also sees
- *   need_wakeup_ptr = nullptr via the ternary in load_active so no spurious
- *   wakeup events accumulate from the diagnostic pass.
  * ========================================================================== */
 
 void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
@@ -138,10 +132,7 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
                                              DeviceContext& ctx)
 {
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
-    /* Only the owning ctx frees ismdc_uvm. Oracle shallow-copy contexts
-     * (run_mode_b_local_with_oracle) share this pointer read-only and MUST
-     * NOT free it; the runner constructs them without invoking
-     * cleanup_device_context, so this branch is safe. */
+    /* Allocated by populate_device_context on this same ctx; freed here. */
     if(ctx.ismdc_uvm) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.ismdc_uvm);
         ctx.ismdc_uvm = nullptr;
@@ -442,14 +433,6 @@ void HydroForceSpec::merge_accum(AccumData& dst, const AccumData& src)
 #undef MERGE_ADD
 #undef MERGE_MAX
 }
-
-/* ============================================================================
- * compare_accum — oracle gate. Field-wise max-of-relative-residuals with
- * an absolute-difference floor of 1e-12: sum-to-zero cancellation fields
- * legitimately end at ~1e-22 in some configs, and a pure relative residual
- * mis-flags those as O(1) "mismatches". Coverage mirrors merge_accum
- * exactly.
- * ========================================================================== */
 
 /* ============================================================================
  * Toplevel: hydro_force

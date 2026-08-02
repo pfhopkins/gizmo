@@ -578,9 +578,6 @@ struct AgsDensitySpec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
 };
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
