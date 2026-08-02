@@ -1,7 +1,7 @@
 /* hydro/cellcorrections_loop.cc — host hooks + toplevel for CellcorrectionsSpec.
  *
  * See hydro/cellcorrections_loop.h for the Spec contract. This file owns the
- * host writeback (apply_active_writeback), the oracle compare, and the
+ * host writeback (apply_active_writeback) and the
  * toplevel cellcorrections_calc() that replaces the legacy walker that lived
  * in hydro/density.cc:62-162. The final per-active closure (Density,
  * Pressure update) remains in hydro/density.cc as
@@ -20,7 +20,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../mesh/kernel.h"                   /* MUST precede cellcorrections_loop.h
                                                 * — kernel.h has no include guards */
 #include "../mesh/neighbor_loop_runner.h"
@@ -43,15 +42,6 @@ void CellcorrectionsSpec::apply_active_writeback(const neighbor_loop_args& /*arg
                                                   const AccumData& accum)
 {
     CellP[i].Volume_1 += (MyDouble)accum.volume_1;
-}
-
-/* Oracle comparison: single-field L2 relative residual with floor. */
-double CellcorrectionsSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double a = local.volume_1;
-    double b = oracle.volume_1;
-    double denom = fmax(fmax(fabs(a), fabs(b)), 1e-30);
-    return fabs(a - b) / denom;
 }
 
 /* Toplevel — replaces the legacy walker in hydro/density.cc:62-162. The
@@ -87,11 +77,6 @@ void cellcorrections_calc(void)
         args.num_active  = corridor_csr->num_active;
         args.external_csr     = corridor_csr;
         args.dispatch_override = NlrForceMode::A;
-        if(ThisTask == 0 && gizmo_verbose_diag()) {
-            printf("[CELLCORRECTIONS] consuming corridor external_csr: num_active=%d total_pairs=%lld\n",
-                   corridor_csr->num_active, (long long)corridor_csr->total_pairs);
-            fflush(stdout);
-        }
     } else {
         /* Mode B (request-driven, no corridor CSR): narrow active list built
          * here. */

@@ -11,7 +11,6 @@
 #include <string.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../mesh/neighbor_list.h"            /* gizmo_sym_* globals */
 #include "../mesh/neighbor_loop_runner.h"     /* nlr_external_csr */
 #include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_gradients_prep_symlist / refresh_symlist */
@@ -19,8 +18,17 @@
 
 /* Default adaptive thresholds (global summed / per-rank-max active gas) used
  * when the optional NeighborLoopModeBThreshold{Sum,Max} parameters are unset.
- * The corridor decision mirrors the runner's per-loop policy:
+ * The corridor uses the same DECISION FORM as the runner's per-loop policy:
  *   Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
+ * It does NOT use the same NUMBERS. The corridor's default is 1000/1000 on
+ * active GAS; a loop that reaches the runner's own adaptive path without a
+ * dispatch override falls back to the Spec's threshold, defaulting to 64/64
+ * on that loop's own active count (neighbor_loop_runner.cc, nlr_spec_threshold_*).
+ * Consequence, by design and measured: between 65 and 1000 active gas the
+ * corridor selects Mode B for gradients/hydro_force/cellcorrections (which do
+ * take the override) while density -- which does not set dispatch_override --
+ * independently selects Mode A and performs its own one-way ghost import.
+ * That import feeds density's own neighbour search; it is not handed downstream.
  * Centralized here so a future tuning lives in one place. */
 static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_SUM = 1000;
 static constexpr int CORRIDOR_DEFAULT_MODEB_THRESHOLD_MAX = 1000;
@@ -69,19 +77,13 @@ void gizmo_hydro_corridor_decide_mode(void)
      * refresh_symlist skip their Mode-B dead-work path without a subcycle
      * special-case. */
     g_corridor_mode = GizmoHydroCorridorMode::MODE_A;
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[CORRIDOR step=%d] mode=MODE_A source=TRANSPORT_SUBCYCLE\n",
-               (int)All.NumCurrentTiStep);
-        fflush(stdout);
-    }
     return;
 #endif
     /* Adaptive dispatch, mirroring the runner's per-loop policy:
        Mode B iff sum > 0 && sum <= threshold_sum && max <= threshold_max.
        Thresholds from the optional NeighborLoopModeBThreshold{Sum,Max} params
        (-1 = unset -> corridor default; any set value overrides, <= 0 disables
-       Mode B). TRANSPORT_SUBCYCLE has already forced Mode A above; there is no
-       env force-mode override. */
+       Mode B). TRANSPORT_SUBCYCLE has already forced Mode A above. */
     int sum_active_gas = 0, max_active_gas = 0;
     global_active_gas_counts(&sum_active_gas, &max_active_gas);
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
@@ -95,18 +97,8 @@ void gizmo_hydro_corridor_decide_mode(void)
                                              && (max_active_gas <= threshold_max);
     GizmoHydroCorridorMode mode = select_mode_b ? GizmoHydroCorridorMode::MODE_B
                                                 : GizmoHydroCorridorMode::MODE_A;
-    const char *source = "adaptive";
-
     g_corridor_mode = mode;
 
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        const char *mode_str = (mode == GizmoHydroCorridorMode::MODE_A) ? "MODE_A"
-                             : (mode == GizmoHydroCorridorMode::MODE_B) ? "MODE_B"
-                             : "UNSET";
-        printf("[CORRIDOR step=%d] mode=%s source=%s\n",
-               (int)All.NumCurrentTiStep, mode_str, source);
-        fflush(stdout);
-    }
 }
 
 GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void)
@@ -168,13 +160,6 @@ void gizmo_hydro_corridor_begin(void)
     g_corridor_csr_valid          = true;
     g_corridor_pool_epoch         = ghost_provenance_epoch();
 
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[CORRIDOR_CSR step=%d] built (MODE_A, NTask=%d): num_active=%d total_pairs=%lld\n",
-               (int)All.NumCurrentTiStep, NTask,
-               g_corridor_csr.num_active,
-               (long long)g_corridor_csr.total_pairs);
-        fflush(stdout);
-    }
 }
 
 const nlr_external_csr * gizmo_hydro_corridor_external_csr(void)
@@ -203,11 +188,6 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
     if(ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) {
         int refresh_rc = ghost_refresh_values();
         if(refresh_rc == GHOST_REFRESH_OK) {
-            if(ThisTask == 0 && gizmo_verbose_diag()) {
-                printf("[CORRIDOR_REFRESH step=%d stage=%s] value-only in-place refresh (CSR reused)\n",
-                       (int)All.NumCurrentTiStep, stage ? stage : "?");
-                fflush(stdout);
-            }
             return;
         }
         /* fall through: fail-closed */
@@ -230,12 +210,6 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
     g_corridor_csr.total_pairs = gizmo_sym_neighbor_list.total_pairs;
     g_corridor_pool_epoch      = ghost_provenance_epoch();
 
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[CORRIDOR_REFRESH step=%d stage=%s] full reimport+rebuild: total_pairs=%lld\n",
-               (int)All.NumCurrentTiStep, stage ? stage : "?",
-               (long long)g_corridor_csr.total_pairs);
-        fflush(stdout);
-    }
 }
 
 void gizmo_hydro_corridor_end(void)
@@ -247,63 +221,3 @@ void gizmo_hydro_corridor_end(void)
      * hydro_force) still owns the free. Double-free would crash. */
 }
 
-void gizmo_hydro_corridor_mass_guardrail_check(void)
-{
-    /* Diag-gated. Zero cost in production. */
-    if(!gizmo_verbose_diag()) return;
-
-    /* Scan ActiveParticleList for gas members with Mass<=0. Track first
-     * offender locally for the diagnostic; collective Allreduce'd before
-     * any rank aborts so the endrun is rank-coherent. */
-    int    local_violation_count    = 0;
-    int    first_offender_local_idx = -1;
-    long long first_offender_id     = -1;
-    double first_offender_mass      = 0.0;
-    int    local_active_gas         = 0;
-
-    for(int ii : ActiveParticleList) {
-        if(P[ii].Type != 0) continue;
-        local_active_gas++;
-        if(P[ii].Mass <= 0) {
-            if(first_offender_local_idx < 0) {
-                first_offender_local_idx = ii;
-                first_offender_id        = (long long)P[ii].ID;
-                first_offender_mass      = (double)P[ii].Mass;
-            }
-            local_violation_count++;
-        }
-    }
-
-    int global_violation_count = local_violation_count;
-    int global_active_gas      = local_active_gas;
-    if(NTask > 1) {
-        MPI_Allreduce(&local_violation_count, &global_violation_count, 1,
-                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&local_active_gas, &global_active_gas, 1,
-                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    }
-
-    if(global_violation_count > 0) {
-        /* Violation: print on flagging ranks, then collective endrun. */
-        if(local_violation_count > 0) {
-            printf("FATAL: corridor Mass-guardrail violation on rank=%d: "
-                   "local_count=%d (global=%d), first offender: P[%d].ID=%lld "
-                   "P[%d].Mass=%.6e (gas went Mass<=0 after feedback; the "
-                   "corridor's frozen row list now contains a semantically-"
-                   "dead row)\n",
-                   ThisTask, local_violation_count, global_violation_count,
-                   first_offender_local_idx, first_offender_id,
-                   first_offender_local_idx, first_offender_mass);
-            fflush(stdout);
-        }
-        endrun(7311);
-    }
-
-    /* Clean pass: one-line confirmation per step (verbose-diag only)
-     * so devs can see the safety mechanism is alive. */
-    if(ThisTask == 0) {
-        printf("[CORRIDOR_GUARD step=%d] scanned %d active gas, 0 Mass<=0 violations\n",
-               (int)All.NumCurrentTiStep, global_active_gas);
-        fflush(stdout);
-    }
-}

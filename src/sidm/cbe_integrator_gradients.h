@@ -699,9 +699,6 @@ struct CBEGradSpec {
     static constexpr bool           uses_ghost_writeback      = false;
     static constexpr bool           uses_ghost_write_detector = false;
 
-    /* Pure-read pair kernel (no j-side writes) → tight oracle. */
-    static constexpr double accum_tolerance = 1e-10;
-
     /* AGSForce_isactive is the SAME predicate the force consumer uses —
      * gradients refresh for exactly the particles whose force will read
      * them this step. Inactive particles retain their previous-step
@@ -742,8 +739,6 @@ struct CBEGradSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* ---- Device hooks (header-inline; runner instantiates from GPU TUs). ---- */
 

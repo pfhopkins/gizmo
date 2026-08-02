@@ -179,7 +179,7 @@ struct DensityAccumData {
  *
  * Legacy bisection brackets (Left[i], Right[i] at density.cc:149-150) +
  * a converged latch (replaces the legacy P[i].TimeBin negation pattern
- * at density.cc:479/591/617, for oracle compatibility) + iter-count
+ * at density.cc:479/591/617, keeping convergence state out of P[i]) + iter-count
  * tracking for the iter>10 underflow warning at density.cc:441-452.
  *
  * Mutated host-side inside after_iter only. Not visible inside pair_kernel. */
@@ -270,8 +270,6 @@ struct DensitySpec {
     static constexpr bool           uses_ghost_write_detector = false;
 
     /* Convergence + iter policy */
-    static constexpr double accum_tolerance  = 1e-8;
-    static constexpr double radius_tolerance = 1e-9;
     using                    IterControl = Iterative;
     using                    IterScratch = DensityIterScratch;
     static constexpr int     max_iters   = MAXITER;  /* legacy density.cc bisection bound */
@@ -295,8 +293,8 @@ struct DensitySpec {
     using AccumData     = DensityAccumData;
     using NeighborData  = DensityNeighborData;
     /* DeviceContext: density needs no extension beyond the base.
-     * AGS extends with need_wakeup_uvm + oracle_dry_run flag; density's
-     * pure i-side accumulation + oracle-clean after_iter contract means
+     * AGS extends with need_wakeup_uvm; density's pure i-side accumulation
+     * means
      * no per-call device-side scratch is needed. */
     using DeviceContext = NeighborLoopDeviceContextBase;
     /* ScatterData: required by runner contract. Density has no j-side
@@ -316,8 +314,9 @@ struct DensitySpec {
         /* Converged radius per active, copied in after_iter at the
          * Converged return paths. Needed by density_finalize_post_runner
          * to write P[i].KernelRadius; the runner does not surface
-         * radii_uvm to the caller and after_iter cannot write P[i] under
-         * the oracle contract. */
+         * radii_uvm to the caller, and after_iter can be invoked more than
+         * once per active so a converged value written there would not be
+         * single-valued. */
         std::vector<double>    per_active_final_h;
     };
 
@@ -338,8 +337,8 @@ struct DensitySpec {
                                        const AccumData& accum);
     /* Iterative variant of apply_active_writeback. Runner calls this instead of apply_active_writeback in
      * the iterative production-only post-iter-loop writeback, passing
-     * the converged radius and IterScratch. Oracle-safe: runner does NOT
-     * invoke this on its oracle accum buffer, so args.aux can be written
+     * the converged radius and IterScratch. That loop runs exactly once per
+     * active, so args.aux can be written
      * from here without contamination. Density implementation copies
      * both `accum` and `final_h` into Aux for density_finalize_post_runner. */
     static void apply_active_writeback_iterative(const neighbor_loop_args& args,
@@ -349,18 +348,7 @@ struct DensitySpec {
                                                   const IterScratch& scratch);
     static void merge_accum(AccumData& local, const AccumData& peer);
 
-    /* Oracle brute-pass toggle (NlrOracleBrutePassGuard requires the
-     * symbol unconditionally — runner.h:505 calls without SFINAE guard).
-     * Density's contract allows oracle (clean after_iter + clean
-     * apply_active_writeback_iterative); the body is a no-op since
-     * density has no j-side writes to suppress during oracle. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
-    /* Per-active oracle comparison (runner uses this to emit
-     * ORACLE MISMATCH lines). Returns max relative diff across all
-     * AccumData fields. Per-field compare (not a byte-walk) because
-     * AccumData mixes MyDouble/MyFloat/int. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     static IterResult after_iter(const AfterIterContext<DensitySpec>& ctx,
                                  const AccumData& accum);

@@ -19,7 +19,6 @@
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h"
 
@@ -48,7 +47,6 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
     g_gpu_arena_acquire_counter++;
 
     if(min_capacity <= 0) {min_capacity = 1;}
-    gizmo_step_phase_record("arena_acquire_calls", 1.0);
     arena_P         = P_host;
     arena_CellP     = CellP_host;
     arena_capacity_ = min_capacity;

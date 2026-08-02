@@ -9,7 +9,6 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "../cooling/disk_betacool.h"
@@ -172,10 +171,9 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
-        gizmo_step_phase_step_start(); /* DIAG: capture wallclock start of this iteration */
-        STEP_PHASE_TIME("compute_statistics", compute_statistics());	/* regular statistics outputs (like total energy) */
+        compute_statistics();	/* regular statistics outputs (like total energy) */
 
-        STEP_PHASE_TIME("write_cpu_log", write_cpu_log());		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
+        write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
         {
@@ -186,7 +184,7 @@ void run(void)
             break;
         }
 
-        STEP_PHASE_TIME("find_timesteps", find_timesteps());		/* find-timesteps */
+        find_timesteps();		/* find-timesteps */
 
         /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
          * just ran gizmo_collect_controlled_stop() on every rank; if any
@@ -241,12 +239,12 @@ void run(void)
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
 #endif
-        STEP_PHASE_TIME("kick1", do_first_halfstep_kick());	/* half-step kick at beginning of timestep for synchronous particles */
+        do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
 #endif
 
-        STEP_PHASE_TIME("drift_findsync", find_next_sync_point_and_drift());	/* find next synchronization point and drift particles to this time.
+        find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
@@ -263,9 +261,9 @@ void run(void)
                                      * step pays the rebuild once and amortizes across N
                                      * physics calls within the step. */
 
-        STEP_PHASE_TIME("output_log_messages", output_log_messages());	/* write some info to log-files */
+        output_log_messages();	/* write some info to log-files */
 
-        STEP_PHASE_TIME("set_nonstandard_phys_t", set_non_standard_physics_for_current_time());	/* update auxiliary physics for current time */
+        set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
@@ -285,17 +283,17 @@ void run(void)
              * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
             gizmo_full_drift_to(All.Ti_Current);
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
-            if(!NeedFullDomainDecomp) {STEP_PHASE_TIME("domain_decomp_light", domain_Decomposition_light(0));}  /* lightweight repartition: reuse top tree, just rebalance */
+            if(!NeedFullDomainDecomp) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
-            {STEP_PHASE_TIME("domain_decomp", domain_Decomposition(0, 0, 1));}  /* full decomposition needed */
+            {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); STEP_PHASE_TIME("domain_decomp_treerebuild", domain_Decomposition(0, 0, 1)); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
         else
         {
-            STEP_PHASE_TIME("force_update_tree", force_update_tree());	/* update tree dynamically with kicks of last step so that it can be reused */
-            STEP_PHASE_TIME("make_active_list", make_list_of_active_particles());	/* now we can set the new chain list of active particles */
+            force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
+            make_list_of_active_particles();	/* now we can set the new chain list of active particles */
         }
 
         if(reconstructed_tree) {
@@ -308,7 +306,7 @@ void run(void)
             gizmo_cpu_log_request_force_print();
         }
 
-        STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
+        compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
@@ -325,26 +323,26 @@ void run(void)
 
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
-        STEP_PHASE_TIME("determine_SNe_occur", determine_where_SNe_occur()); // for mechanical FB models
+        determine_where_SNe_occur(); // for mechanical FB models
 #endif
 #ifdef GALSF_FB_THERMAL
-        STEP_PHASE_TIME("determine_thermalFB_occur", determine_where_addthermalFB_events_occur()); // (same, but for simple thermal feedback models)
+        determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
-        STEP_PHASE_TIME("compute_hydro", compute_hydro_densities_and_forces());	/* densities, gradients, & hydro-accels for synchronous particles */
+        compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #ifdef DM_HEATING
-        STEP_PHASE_TIME("dm_heating", apply_dm_heating());  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
+        apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
 
-        STEP_PHASE_TIME("kick2", do_second_halfstep_kick());	/* this does the half-step kick at the end of the timestep */
+        do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
 #endif
 
-        STEP_PHASE_TIME("calc_nonstandard_phys", calculate_non_standard_physics());	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
+        calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
@@ -418,10 +416,6 @@ void run(void)
 
         report_memory_usage(&HighMark_run, "RUN");
 
-        /* DIAG: per-step phase wallclock breakdown (env-gated GIZMO_VERBOSE_DIAG=1).
-         * NumCurrentTiStep was bumped inside find_next_sync_point_and_drift, so the
-         * just-completed step is at index (NumCurrentTiStep - 1). */
-        gizmo_step_phase_dump((int)(All.NumCurrentTiStep - 1));
     }
 
 }
@@ -465,7 +459,7 @@ void calculate_non_standard_physics(void)
     if(All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr)
 #endif
     {
-        STEP_PHASE_TIME("sink_accretion", sink_accretion());
+        sink_accretion();
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);

@@ -3,18 +3,15 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the single source of truth for the pair body live in
  * sink_env1_loop.h so they inline from both device kernels (Mode A) and
- * host walkers (Mode B / Brute oracle). This translation unit holds the
- * host-only hooks: per-active radius, per-call scalars capture, host
- * writebacks (apply_active_writeback, merge_accum), imported-ghost
- * lifecycle hooks, and the env-gated diagnostics block at the bottom.
+ * host walkers (Mode B). This translation unit holds the host-only hooks:
+ * per-active radius, per-call scalars capture, host writebacks
+ * (apply_active_writeback, merge_accum) and the imported-ghost lifecycle
+ * hooks.
  *
  * File layout (matches sink_env1_loop.h conventions):
  *   PHYSICS HOOKS                — search_radius, populate_call_scalars,
  *                                   apply_active_writeback, merge_accum
  *   IMPORTED-GHOST LIFECYCLE     — write detector + writeback wrappers
- *   DIAGNOSTICS (env-gated)      — compare_accum (PERMANENT), and
- *                                   diagnostic_dump_* (SPIKE / cross-validation
- *                                   probes, to be removed once no longer needed)
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -65,14 +62,13 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     return scalars;
 }
 
-/* Device-context lifecycle. sink_env1 has no UVM-allocated
- * per-active state (unlike sink_feed/sink_swk), so populate only seeds
- * the oracle dry-run flag and cleanup is a no-op. The pair is declared
+/* Device-context lifecycle. sink_env1 has no UVM-allocated per-active state
+ * (unlike sink_feed/sink_swk), so both bodies are empty. populate stays
+ * because the extended DeviceContext makes the runner call it; cleanup stays
  * for symmetric runner-contract pairing. */
 void SinkEnv1Spec::populate_device_context(const neighbor_loop_args& /*args*/,
                                             DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 }
 
 void SinkEnv1Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,
@@ -100,9 +96,9 @@ void SinkEnv1Spec::apply_active_writeback(const neighbor_loop_args& args,
  * accumulation is via repeated pair_kernel calls (which already encode
  * the right per-field op).
  *
- * The oracle (GIZMO_NLR_FORCE_MODE=B + GIZMO_NLR_ORACLE=1) catches drift
- * between this manifest and pair_kernel writes — any mismatch surfaces
- * as ORACLE MISMATCH on the next run.
+ * Nothing checks this manifest against pair_kernel at runtime: drift between
+ * the two is silent, and shows up only as a cross-rank difference in the
+ * affected field.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. Operations available below; extend
@@ -207,146 +203,6 @@ void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                         const NeighborLoopPlan& /*plan*/)
 {
     ghost_writeback_end_bundle(sink_env1_ghost_writeback_bundle_ptr());
-}
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated, safe to ignore for physics edits.
- *
- * PERMANENT_DIAGNOSTIC : compare_accum (oracle gate, called only when
- *                       GIZMO_NLR_ORACLE=1)
- *
- * SPIKE_DIAGNOSTIC     : diagnostic_dump_active, diagnostic_dump_neighbor_list
- *                       (cross-validation probes from the Mode B bring-up,
- *                       to be removed once no longer needed)
- *
- * Canonical env vars:
- *   GIZMO_NLR_ORACLE=1                gates compare_accum invocation
- *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
- *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      per-active accumulator dump (SPIKE)
- *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call neighbor-list dump (SPIKE)
- * Old names (GIZMO_MODE_B_XVAL_DUMP, GIZMO_MODE_B_XVAL_NB_DUMP) accepted as
- * aliases with rank-0 deprecation warning. See mesh/neighbor_loop_runner.h
- * env-config block for the full alias / conflict policy.
- * ========================================================================== */
-
-/* PERMANENT_DIAGNOSTIC — oracle compare.
- *
- * Returns the maximum relative residual across all AccumData fields. The
- * runner gates calls behind GIZMO_NLR_ORACLE=1 + Spec::accum_tolerance.
- *
- * Implementation: walk the byte representation as MyFloat scalars and
- * compute max relative diff per-field. AccumData layout is exclusively
- * MyFloat scalars and MyFloat[3] arrays (see sinks/sinks_gpu_decls.h);
- * for a future MyFloat=float build this still produces a meaningful
- * relative residual. */
-double SinkEnv1Spec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    size_t max_rel_field = 0;
-    const MyFloat *pa = reinterpret_cast<const MyFloat*>(&local);
-    const MyFloat *pb = reinterpret_cast<const MyFloat*>(&oracle);
-    const size_t n = sizeof(AccumData) / sizeof(MyFloat);
-    static_assert(sizeof(AccumData) % sizeof(MyFloat) == 0,
-        "SinkEnv1Spec::AccumData must be MyFloat-aligned for byte-walk compare");
-    for(size_t k = 0; k < n; k++) {
-        double va = (double)pa[k], vb = (double)pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) { max_rel = rel; max_rel_field = k; }
-    }
-    /* When GIZMO_NLR_ORACLE_DUMP=1 and max_rel exceeds tolerance, dump every
-     * nonzero-diff field. Distinguishes summation-reorder roundoff from
-     * physics drift. Print cap = 16 calls. */
-    static int s_dump_cached = -1;
-    if(s_dump_cached < 0) {
-        const char *e = std::getenv("GIZMO_NLR_ORACLE_DUMP");
-        s_dump_cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    static int s_dump_count = 0;
-    if(s_dump_cached && max_rel > 1e-10 && s_dump_count < 16) {
-        std::fprintf(stderr, "[compare_accum DUMP call=%d max_rel=%g (field=%zu) abs=%g local=%g oracle=%g]\n",
-                     s_dump_count, max_rel, max_rel_field,
-                     std::fabs((double)pa[max_rel_field] - (double)pb[max_rel_field]),
-                     (double)pa[max_rel_field], (double)pb[max_rel_field]);
-        for(size_t k = 0; k < n; k++) {
-            double va = (double)pa[k], vb = (double)pb[k];
-            double denom = std::fmax(std::fabs(va), std::fabs(vb));
-            double diff  = std::fabs(va - vb);
-            double rel   = (denom > 0.0) ? (diff / denom) : diff;
-            if(diff > 0.0) {
-                std::fprintf(stderr, "  field[%zu] local=%.17g oracle=%.17g abs=%.6g rel=%.6g\n",
-                             k, va, vb, diff, rel);
-            }
-        }
-        std::fflush(stderr);
-        s_dump_count++;
-    }
-    return max_rel;
-}
-
-/* SPIKE_DIAGNOSTIC — per-active accumulator dump (cross-validation).
- *
- * Stable line shape across the runner's Mode A and Mode B paths. Active
- * line label "MODEB_XVAL" is preserved for parser compatibility; rename to
- * a single GIZMO_NLR_DIAG=<level>-driven label is queued for the
- * runner-template-hardening pass. */
-void SinkEnv1Spec::diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v)
-{
-    const AccumData& a = *v.accum;
-    std::printf("MODEB_XVAL rank=%d caller=sink_env1 active_local=%d "
-                "Mgas=%g Mstar=%g Malt=%g IE=%g "
-                "Jgas=%g,%g,%g Jstar=%g,%g,%g Jalt=%g,%g,%g\n",
-                v.rank, v.active_slot,
-                (double)a.Mgas_in_Kernel,
-                (double)a.Mstar_in_Kernel,
-                (double)a.Malt_in_Kernel,
-                (double)a.Sink_SurroudingGasInternalEnergy,
-                (double)a.Jgas_in_Kernel[0], (double)a.Jgas_in_Kernel[1], (double)a.Jgas_in_Kernel[2],
-                (double)a.Jstar_in_Kernel[0], (double)a.Jstar_in_Kernel[1], (double)a.Jstar_in_Kernel[2],
-                (double)a.Jalt_in_Kernel[0], (double)a.Jalt_in_Kernel[1], (double)a.Jalt_in_Kernel[2]);
-}
-
-/* SPIKE_DIAGNOSTIC — neighbor-list dump (Mode A only; first call per
- * process). Runner only invokes this when GIZMO_NLR_SPIKE_NB_DUMP=1
- * (or its old alias GIZMO_MODE_B_XVAL_NB_DUMP=1) and the call is on the
- * Mode A path with a live GPU neighbor-list CSR.
- *
- * The runner calls this hook once per active in slot order
- * (0..num_active-1). The first-call gate sets s_fired only after the
- * LAST active of the first call has printed, matching legacy semantics. */
-void SinkEnv1Spec::diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v)
-{
-    static int s_fired = 0;
-    if(s_fired) return;
-    const struct neighbor_loop_args& args = *v.args;
-    const struct particle_data *P_host = args.P;
-    const int ii = args.active_list[v.active_slot];
-    const double h_i = (double)v.active->h_search;
-    std::printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=%s "
-                "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
-                "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
-                v.rank, v.active_slot, v.path, h_i,
-                (double)P_host[ii].Pos[0], (double)P_host[ii].Pos[1], (double)P_host[ii].Pos[2],
-                (double)P_host[ii].Vel[0], (double)P_host[ii].Vel[1], (double)P_host[ii].Vel[2],
-                (unsigned long long)P_host[ii].ID, v.n_candidates);
-    for(int idx = 0; idx < v.n_candidates; idx++) {
-        const int j = v.candidate_ids[idx];
-        double dx = (double)P_host[j].Pos[0] - (double)P_host[ii].Pos[0];
-        double dy = (double)P_host[j].Pos[1] - (double)P_host[ii].Pos[1];
-        double dz = (double)P_host[j].Pos[2] - (double)P_host[ii].Pos[2];
-        NEAREST_XYZ(dx, dy, dz, 1);
-        const double r2 = dx*dx + dy*dy + dz*dz;
-        std::printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=%s "
-                    "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g "
-                    "Pos=%.17g,%.17g,%.17g Vel=%.17g,%.17g,%.17g ID=%llu\n",
-                    v.rank, v.active_slot, v.path, j, (int)P_host[j].Type,
-                    (double)P_host[j].Mass, (double)P_host[j].KernelRadius, r2,
-                    (double)P_host[j].Pos[0], (double)P_host[j].Pos[1], (double)P_host[j].Pos[2],
-                    (double)P_host[j].Vel[0], (double)P_host[j].Vel[1], (double)P_host[j].Vel[2],
-                    (unsigned long long)P_host[j].ID);
-    }
-    if(v.active_slot == args.num_active - 1) s_fired = 1;
 }
 
 #else  /* !SINK_PARTICLES */

@@ -5,8 +5,8 @@
  * live in dm_dispersion_loop.h so the runner instantiates them from GPU TUs.
  * This file owns: is_active, search_radius, populate_call_scalars,
  * apply_active_writeback (endrun sentinel), apply_active_writeback_iterative,
- * after_iter (bisection convergence check), merge_accum, compare_accum,
- * set_oracle_brute_pass, and dm_dispersion_finalize_post_runner.
+ * after_iter (bisection convergence check), merge_accum, and
+ * dm_dispersion_finalize_post_runner.
  *
  * Replaces disp_density_evaluate_gpu();
  * dm_dispersion_gpu.cc retired by DMDispersionSpec.
@@ -93,12 +93,12 @@ void DMDispersionSpec::apply_active_writeback(const neighbor_loop_args& /*args*/
 }
 
 /* ============================================================================
- * apply_active_writeback_iterative — oracle-safe production writeback.
+ * apply_active_writeback_iterative — production writeback.
  *
  * Runner calls this INSTEAD of apply_active_writeback in the post-iter-loop
- * writeback, passing the converged radius and IterScratch. Oracle does NOT
- * invoke writeback at all — its accum lives in a separate accum_oracle_uvm
- * buffer. Therefore writing args.aux here is oracle-safe.
+ * writeback, passing the converged radius and IterScratch. That loop runs
+ * exactly once per active, which is what makes writing args.aux here
+ * single-valued.
  * ========================================================================== */
 void DMDispersionSpec::apply_active_writeback_iterative(
         const neighbor_loop_args& args,
@@ -113,46 +113,11 @@ void DMDispersionSpec::apply_active_writeback_iterative(
 }
 
 /* ============================================================================
- * set_oracle_brute_pass — no-op.
- *
- * No j-side writes in this Spec (uses_ghost_writeback=false), so no
- * suppression is needed during the oracle brute pass. Runner calls without
- * SFINAE guard; body is a no-op.
- * ========================================================================== */
-void DMDispersionSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/)
-{
-    /* no-op; dm_dispersion pair_kernel has no j-side writes */
-}
-
-/* ============================================================================
- * compare_accum — per-field max relative diff for oracle comparison.
- *
- * All five AccumData fields are double; relative diff uses fmax(1, |a|, |b|)
- * as denominator to avoid divide-by-zero on zero fields.
- * ========================================================================== */
-double DMDispersionSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    auto upd = [&](double a, double b) {
-        const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-        const double rel   = std::fabs(a - b) / denom;
-        if (rel > max_rel) max_rel = rel;
-    };
-    upd(local.Ngb,        oracle.Ngb);
-    upd(local.DM_Vx,      oracle.DM_Vx);
-    upd(local.DM_Vy,      oracle.DM_Vy);
-    upd(local.DM_Vz,      oracle.DM_Vz);
-    upd(local.DM_VelDisp, oracle.DM_VelDisp);
-    upd(local.DM_Rho,     oracle.DM_Rho);
-    return max_rel;
-}
-
-/* ============================================================================
  * merge_accum — Mode B remote peer merge (all fields additive).
  *
  * All five fields are simple sums; no MIN reductions (unlike density's
  * Sink_TimeBinGasNeighbor). Mismatch vs pair_kernel semantics = silent
- * multi-rank corruption; only oracle validation catches it.
+ * multi-rank corruption, surfacing only as a difference between rank counts.
  * ========================================================================== */
 void DMDispersionSpec::merge_accum(AccumData& local, const AccumData& peer)
 {

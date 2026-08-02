@@ -11,7 +11,7 @@
  *   - GHOST_WRITEBACK_BUNDLE(hydro_force) manifest (PARTICLE_MAX(wakeup) +
  *     MFV GAS_ADD(dMass))
  *   - DeviceContext extension lifecycle (UVM int[TIMEBINS] for
- *     TimeBinActive, UVM int for need_wakeup, oracle_dry_run)
+ *     TimeBinActive, UVM int for need_wakeup)
  *   - Ghost lifecycle (ghost_writeback_begin pre-zeros ghost-region
  *     wakeup + MFV dMass before bundle snapshot; ghost_writeback_end
  *     calls bundle's reverse-comm; ghost_write_detector_begin/end forward
@@ -19,8 +19,7 @@
  *   - apply_active_writeback (the body from the retired out2particle_hydra
  *     in hydro/hydro_toplevel.cc:115-295, with the MaxSignalVel floor
  *     restored via fmax(out->MaxSignalVel, effective_soundspeed()))
- *   - merge_accum + compare_accum (field-wise per #ifdef, mirroring
- *     the GradientsSpec pattern)
+ *   - merge_accum (field-wise per #ifdef, mirroring the GradientsSpec pattern)
  *   - hydro_force() toplevel
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
@@ -35,7 +34,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"                   /* MUST precede hydro_force_loop.h
                                                 * — kernel.h has no include guards */
@@ -85,18 +83,12 @@ GHOST_WRITEBACK_BUNDLE_END(hydro_force)
  *
  * populate_device_context: allocate UVM TimeBinActive_uvm[TIMEBINS] + the
  *   single-int need_wakeup_uvm; copy host TimeBinActive[] into the UVM
- *   array; init need_wakeup to 0; oracle_dry_run = false.
+ *   array; init need_wakeup to 0.
  *
  * cleanup_device_context: OR the device-set wakeup flag into the global
  *   NeedToWakeupParticles_local (the AGS pattern — call-level event
  *   propagation lives here, not in apply_active_writeback or the
  *   toplevel caller). Free both UVM allocations.
- *
- * set_oracle_brute_pass: flip oracle_dry_run for the brute oracle pass; the
- *   pair_kernel reads this through ActiveData and gates `allow_j_writes`
- *   in hydro_accumulate_neighbor. Brute pass also sees
- *   need_wakeup_ptr = nullptr via the ternary in load_active so no spurious
- *   wakeup events accumulate from the diagnostic pass.
  * ========================================================================== */
 
 void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
@@ -107,7 +99,6 @@ void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
     ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
     *ctx.need_wakeup_uvm = 0;
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
-    ctx.oracle_dry_run = false;
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* Host-precompute per-active ISMDustChem passive-scalar diffusion values.
@@ -140,10 +131,7 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
                                              DeviceContext& ctx)
 {
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
-    /* Only the owning ctx frees ismdc_uvm. Oracle shallow-copy contexts
-     * (run_mode_b_local_with_oracle) share this pointer read-only and MUST
-     * NOT free it; the runner constructs them without invoking
-     * cleanup_device_context, so this branch is safe. */
+    /* Allocated by populate_device_context on this same ctx; freed here. */
     if(ctx.ismdc_uvm) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.ismdc_uvm);
         ctx.ismdc_uvm = nullptr;
@@ -158,11 +146,6 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.TimeBinActive_uvm);
         ctx.TimeBinActive_uvm = nullptr;
     }
-}
-
-void HydroForceSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on)
-{
-    ctx.oracle_dry_run = on;
 }
 
 /* ============================================================================
@@ -448,97 +431,6 @@ void HydroForceSpec::merge_accum(AccumData& dst, const AccumData& src)
 #undef MERGE_ADD_VEC3
 #undef MERGE_ADD
 #undef MERGE_MAX
-}
-
-/* ============================================================================
- * compare_accum — oracle gate. Field-wise max-of-relative-residuals with
- * an absolute-difference floor of 1e-12: sum-to-zero cancellation fields
- * legitimately end at ~1e-22 in some configs, and a pure relative residual
- * mis-flags those as O(1) "mismatches". Coverage mirrors merge_accum
- * exactly.
- * ========================================================================== */
-
-double HydroForceSpec::compare_accum(const AccumData& a, const AccumData& b)
-{
-    double worst = 0.0;
-    auto rel = [](double x, double y) {
-        constexpr double abs_tol = 1e-12;
-        double d = fabs(x - y);
-        if(d < abs_tol) return 0.0;
-        double m = fmax(fmax(fabs(x), fabs(y)), 1e-30);
-        return d / m;
-    };
-#define CHECK(field) do { double r = rel((double)a.field, (double)b.field); \
-                          if(r > worst) worst = r; } while(0)
-
-    for(int kv = 0; kv < 3; kv++) { CHECK(Acc[kv]); }
-    CHECK(DtInternalEnergy);
-#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
-    CHECK(DtInternalEnergy_FromConduction);
-#endif
-    CHECK(MaxSignalVel);
-#ifdef OUTPUT_SHOCK_MACH_NUMBER
-    CHECK(MaxShockMachNumber);
-#endif
-#ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
-    CHECK(MaxKineticEnergyNgb);
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    CHECK(DtMass);
-    CHECK(dMass);
-    for(int kv = 0; kv < 3; kv++) { CHECK(GravWorkTerm[kv]); }
-#endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) { CHECK(Dyield[k]); }
-#endif
-#ifdef CHIMES_TURB_DIFF_IONS
-    for(int k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) { CHECK(ChimesIonsYield[k]); }
-#endif
-#if defined(RT_SOLVER_EXPLICIT)
-#if defined(RT_EVOLVE_ENERGY)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) { CHECK(Dt_Rad_E_gamma[k]); }
-#endif
-#if defined(RT_EVOLVE_FLUX)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) { for(int kv = 0; kv < 3; kv++) { CHECK(Dt_Rad_Flux[k][kv]); } }
-#endif
-#if defined(RT_INFRARED)
-    CHECK(Dt_Rad_E_gamma_T_weighted_IR);
-#endif
-#if defined(RT_EVOLVE_INTENSITIES)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
-        for(int k_dir = 0; k_dir < N_RT_INTENSITY_BINS; k_dir++) { CHECK(Dt_Rad_Intensity[k][k_dir]); }
-    }
-#endif
-#endif
-#if defined(MAGNETIC)
-    for(int kv = 0; kv < 3; kv++) { CHECK(Face_Area[kv]); }
-    for(int kv = 0; kv < 3; kv++) { CHECK(DtB[kv]); }
-    CHECK(divB);
-#if defined(DIVBCLEANING_DEDNER)
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    CHECK(DtPhi);
-#endif
-    for(int kv = 0; kv < 3; kv++) { CHECK(DtB_PhiCorr[kv]); }
-#endif
-#endif
-#ifdef COSMIC_RAY_FLUID
-    CHECK(Face_DivVel_ForAdOps);
-#if defined(CRFLUID_INJECTION_AT_SHOCKS)
-    CHECK(DtCREgyNewInjectionFromShocks);
-#endif
-    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
-        CHECK(DtCosmicRayEnergy[k]);
-#if defined(CRFLUID_EVOLVE_SPECTRUM)
-        CHECK(DtCosmicRay_Number_in_Bin[k]);
-#endif
-#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-        for(int kAlf = 0; kAlf < 2; kAlf++) { CHECK(DtCosmicRayAlfvenEnergy[k][kAlf]); }
-#endif
-    }
-#endif
-
-#undef CHECK
-    return worst;
 }
 
 /* ============================================================================

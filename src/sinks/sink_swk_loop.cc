@@ -4,13 +4,13 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (sink_swk_pair_kernel) live in
  * sink_swk_loop.h so they inline from device kernels (Mode A) and host
- * walkers (Mode B / Brute oracle). This translation unit holds host-only
+ * walkers (Mode B). This translation unit holds host-only
  * hooks: per-active radius, per-call scalars capture, populate/cleanup
  * device-context (UVM staging), apply_active_writeback,
  * merge_accum (ACCUM_ADD / ACCUM_ADD_VEC3 / ACCUM_MIN / ACCUM_ADD_ARRAY
  * Spec-local manifest), the ghost-writeback compound callback (snapshot
  * + CR-aware delta predicate + pack + clamped apply + cleanup),
- * lifecycle hooks, and env-gated diagnostics.
+ * and lifecycle hooks.
  *
  * Compound callback (vs sink_feed's per-field manifest): the legacy
  * sinkswallow writeback predicate gates the FULL delta record on
@@ -100,8 +100,8 @@ void SinkSwkSpec::apply_active_writeback(const neighbor_loop_args& args,
 
 /* Per-field merge of a peer rank's contribution. Per-field op MUST match
  * the pair_kernel writes; Accreted_Age uses MIN-merge with the
- * MAX_REAL_NUMBER sentinel from zero_accum. The oracle catches drift
- * between this manifest and pair_kernel writes.
+ * MAX_REAL_NUMBER sentinel from zero_accum. Nothing checks the two against
+ * each other at runtime, so drift between them is silent.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */
@@ -165,7 +165,6 @@ void SinkSwkSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accu
 void SinkSwkSpec::populate_device_context(const neighbor_loop_args& args,
                                            DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     Aux *aux = nlr_aux<SinkSwkSpec>(args);
     const int N = args.num_active;
@@ -489,82 +488,6 @@ void SinkSwkSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                        const NeighborLoopPlan& /*plan*/)
 {
     ghost_writeback_end_bundle(sink_swk_ghost_writeback_bundle_ptr());
-}
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * ========================================================================== */
-
-double SinkSwkSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    /* Mirrors merge_accum field-for-field with the same #ifdef gating —
-     * a partial compare gives false-passes whenever the omitted fields
-     * disagree. Counters disagree -> hard mismatch (1.0). Scalars / vectors
-     * / arrays use relative comparison. */
-    auto rel = [](double a, double b) {
-        double denom = std::fmax(std::fabs(a), std::fabs(b));
-        double diff  = std::fabs(a - b);
-        return (denom > 0.0) ? (diff / denom) : diff;
-    };
-    double max_rel = 0.0;
-
-#define CMP_ADD(field)        max_rel = std::fmax(max_rel, rel((double)local.field, (double)oracle.field));
-#define CMP_ADD_VEC3(field)   for(int k = 0; k < 3; k++) max_rel = std::fmax(max_rel, rel((double)local.field[k], (double)oracle.field[k]));
-#define CMP_INT(field)        if(local.field != oracle.field) max_rel = std::fmax(max_rel, 1.0);
-#define CMP_ADD_ARRAY(field, len)                                              \
-    for(int k = 0; k < (len); k++)                                              \
-        max_rel = std::fmax(max_rel, rel((double)local.field[k], (double)oracle.field[k]));
-
-    CMP_ADD(accreted_Mass)
-    CMP_ADD(accreted_Sink_Mass)
-    CMP_ADD(accreted_Sink_Mass_reservoir)
-#if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
-    CMP_ADD(Sink_AccretionDeficit)
-#endif
-#ifdef GRAIN_FLUID
-    CMP_ADD(accreted_dust_Mass)
-#endif
-#ifdef RT_REINJECT_ACCRETED_PHOTONS
-    CMP_ADD(accreted_photon_energy)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-    CMP_ADD_VEC3(accreted_momentum)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_COM)
-    CMP_ADD_VEC3(accreted_centerofmass)
-#endif
-#if defined(SINK_RETURN_BFLUX)
-    CMP_ADD_VEC3(accreted_B)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    CMP_ADD_VEC3(accreted_J)
-#endif
-#ifdef SINK_COUNTPROGS
-    CMP_INT(Sink_CountProgs)
-#endif
-#ifdef GALSF
-    /* Accreted_Age uses MIN-merge with MAX_REAL_NUMBER sentinel; both
-     * accumulators retain the sentinel when no sink-sink merger occurred.
-     * Compare only when at least one has been written. */
-    if(local.Accreted_Age != (MyFloat)MAX_REAL_NUMBER ||
-       oracle.Accreted_Age != (MyFloat)MAX_REAL_NUMBER) {
-        CMP_ADD(Accreted_Age)
-    }
-#endif
-    CMP_INT(n_gas_swallowed)
-    CMP_INT(n_sink_swallowed)
-    CMP_INT(n_star_swallowed)
-    CMP_INT(n_dm_swallowed)
-    CMP_ADD_ARRAY(delta_TimeBin_Sink_mass,          TIMEBINS)
-    CMP_ADD_ARRAY(delta_TimeBin_Sink_dynamicalmass, TIMEBINS)
-    CMP_ADD_ARRAY(delta_TimeBin_Sink_Mdot,          TIMEBINS)
-    CMP_ADD_ARRAY(delta_TimeBin_Sink_Medd,          TIMEBINS)
-
-#undef CMP_ADD
-#undef CMP_ADD_VEC3
-#undef CMP_INT
-#undef CMP_ADD_ARRAY
-    return max_rel;
 }
 
 #endif /* SINK_PARTICLES */

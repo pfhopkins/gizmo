@@ -211,7 +211,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  *  Without this pass every full force_treebuild and every
  *  force_refresh_node_moments would leave the bands at zero, and Mode B's
  *  SYMMETRIC walker reading zero bands would over-prune (collapse to ONEWAY)
- *  -- exactly the oracle mismatch observed on fire_m11i.
+ *  -- the neighbour-set loss observed on fire_m11i.
  *
  *  Behavior: zero all internal-node bands, leaf-seed each particle's
  *  conservative radius into Father[i]'s band, then bottom-up max-over-children
@@ -3011,7 +3011,7 @@ void force_refresh_node_moments(void)
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker
-         * over-prunes (oracle mismatches). */
+         * over-prunes (observed as lost neighbours). */
         force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         int pseudo_status = force_exchange_pseudodata();

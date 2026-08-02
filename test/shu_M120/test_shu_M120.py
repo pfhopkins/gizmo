@@ -92,7 +92,7 @@ def compute_test_statistic(f):
     d = _load_shu_data(f)
     r_bins = np.logspace(-4, 0, 21)
     stat_names = ["T", "Tdust", "Trad"]
-    return {name: binned_statistic(d["r"], d[name], "median", r_bins)[0] for name in stat_names}
+    return {name: binned_statistic(d["r"], np.log10(d[name]), "median", r_bins)[0] for name in stat_names}
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))

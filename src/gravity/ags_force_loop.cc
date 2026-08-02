@@ -4,7 +4,7 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (ags_force_pair_kernel_body) live
  * in ags_force_loop.h so they inline from device kernels (Mode A) and
- * host walkers (Mode B / Brute oracle). This TU carries the host-only
+ * host walkers (Mode B). This TU carries the host-only
  * hooks, the generic ghost-writeback bundle (PARTICLE_ADD_VEC3 on
  * Vel/dp, PARTICLE_ADD on NInteractions, PARTICLE_MAX on wakeup), the
  * host-side wakeup pre-zero + arena invalidate that gives the generic
@@ -80,7 +80,6 @@ AgsForceSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     /* Sticky single-int wakeup flag, lives across all subgroups of one
      * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm. */
@@ -186,9 +185,9 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     (void)accum; (void)i;
 }
 
-/* merge_accum — per-field op MUST match pair_kernel writes (the oracle
- * catches drift between this manifest and the kernel). Adding a new
- * accumulator field = ONE LINE under its physics flag's #ifdef. */
+/* merge_accum — per-field op MUST match pair_kernel writes. Nothing checks
+ * the two against each other at runtime, so drift between them is silent.
+ * Adding a new accumulator field = ONE LINE under its physics flag's #ifdef. */
 void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
 {
 #define ACCUM_ADD(field)         local_accum.field += peer_accum.field;
@@ -245,87 +244,6 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 #undef ACCUM_MUL
     (void)local_accum; (void)peer_accum;
 }
-
-/* compare_accum — env-gated oracle compare. Mirrors merge_accum field-for-
- * field with the same #ifdef gating (partial compare gives false-passes
- * when omitted fields disagree). */
-double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    auto rel = [](double a, double b) {
-        double denom = std::fmax(std::fabs(a), std::fabs(b));
-        double diff  = std::fabs(a - b);
-        return (denom > 0.0) ? (diff / denom) : diff;
-    };
-    double max_rel = 0.0;
-
-#define CMP_ADD(field)         max_rel = std::fmax(max_rel, rel((double)local.field, (double)oracle.field));
-#define CMP_ADD_ARRAY(field, N) for(int k = 0; k < (N); k++) max_rel = std::fmax(max_rel, rel((double)local.field[k], (double)oracle.field[k]));
-#define CMP_INT(field)         if(local.field != oracle.field) max_rel = std::fmax(max_rel, 1.0);
-
-#if defined(DM_SIDM)
-    /* SIDM scatter fields (sidm_kick, dtime_sidm, si_count) are intentionally
-     * excluded from oracle comparison. SIDM scatter is a discrete Monte Carlo
-     * collision operator that directly transforms particle velocities. Production
-     * Mode B applies j-side kicks (atomic_add to P[j].Vel) mid-loop so that
-     * subsequent pairs involving j act on the updated velocity — this is correct
-     * physics for a non-linear collision operator (snapshotting initial velocities
-     * would cause two successive collisions to violate energy/momentum conservation
-     * nonlinearly). The oracle brute pass suppresses j-writes, evaluating a
-     * different physical process; exact AccumData agreement is therefore not
-     * meaningful. SIDM physics is validated through conservation/statistical checks
-     * (scatter event count, wakeup activations, momentum/energy, snapshot vs IC). */
-    (void)local; (void)oracle;
-#endif
-#ifdef DM_FUZZY
-    CMP_ADD_ARRAY(acc, 3)
-    CMP_ADD(AGS_Dt_Numerical_QuantumPotential)
-#if (DM_FUZZY > 0)
-    CMP_ADD(AGS_Dt_Psi_Re)
-    CMP_ADD(AGS_Dt_Psi_Im)
-    CMP_ADD(AGS_Dt_Psi_Mass)
-#endif
-#endif
-#if defined(CBE_INTEGRATOR)
-    CMP_ADD(AGS_vsig)
-    for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
-        for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-            max_rel = std::fmax(max_rel,
-                                 rel((double)local.CBE_basis_moments_dt[k1][k2],
-                                     (double)oracle.CBE_basis_moments_dt[k1][k2]));
-            max_rel = std::fmax(max_rel,
-                                 rel((double)local.CBE_basis_out_rate_dt[k1][k2],
-                                     (double)oracle.CBE_basis_out_rate_dt[k1][k2]));
-        }
-    }
-#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    /* Wave-CBE Commit 3/4 diagnostic counters. Mirrors merge_accum
-     * field-for-field per the local pattern (the oracle would otherwise
-     * silently false-pass when a counter disagrees between local and
-     * oracle paths). */
-    CMP_ADD(cbe_face_residual_max)
-    CMP_ADD(cbe_face_residual_sum)
-    CMP_INT(cbe_bracket_fail_count)
-    CMP_INT(cbe_recon_rho_clamp_count)
-    CMP_INT(cbe_recon_S_clamp_count)
-    CMP_INT(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
-#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-    CMP_INT(cbe_grad_nonfinite_count)
-#endif
-#endif
-#endif
-#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
-    CMP_ADD(Grain_DeltaCoagMass)
-    CMP_ADD_ARRAY(Grain_DeltaCoag_CompositionMass, GRAIN_NUM_SPECIES)
-    CMP_ADD(Grain_DeltaErosionFrac)
-#endif
-
-#undef CMP_ADD
-#undef CMP_ADD_ARRAY
-#undef CMP_INT
-    (void)local; (void)oracle;
-    return max_rel;
-}
-
 
 /* ============================================================================
  * GHOST-WRITEBACK BUNDLE (generic ops; replaces the 164-line bespoke

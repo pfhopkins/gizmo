@@ -4,7 +4,6 @@
  *   - populate_device_context (grad_iter ferry to device)
  *   - apply_active_writeback  (replays out2particle_GasGrad{,_iter})
  *   - merge_accum             (peer-rank reduction for Mode B remote)
- *   - compare_accum           (oracle gate)
  *   - GasGrad_isactive        (host-side narrow predicate, migrated from
  *                              the retired hydro/gradients.cc)
  *   - construct_gradient, local_slopelimiter
@@ -34,7 +33,6 @@
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"                   /* MUST precede gradients_loop.h
                                                 * — kernel.h has no include guards */
@@ -469,171 +467,6 @@ void GradientsSpec::merge_accum(AccumData& dst, const AccumData& src)
 #undef MERGE_MIN
 }
 
-/* ============================================================================
- * compare_accum — oracle gate. Field-wise relative residual, taking the MAX
- * across every scalar pair_kernel can write. Per-field
- *   rel(a, b) = |a - b| / max(max(|a|, |b|), floor)
- * with floor = 1e-30, same form as cellcorrections::compare_accum. The MAX
- * (rather than L2 sum) gives a sharper per-field signal and a single
- * scalar return for the runner's accum_tolerance gate.
- *
- * Coverage mirrors merge_accum (same field set, same #ifdef structure) so
- * the oracle and the Mode B remote merge see the same surface. Reading the
- * struct as a flat double[] would mix MyFloat / MyDouble, read padding as
- * payload, and miss tail bytes — explicitly per-field instead.
- * ========================================================================== */
-/* Shared oracle residual for both gradient Specs: an absolute-difference floor
- * then a relative residual. Many MHD-CG fields (Face_Area, FaceCrossX, FaceDotB)
- * are subtractive sums that cancel to ~machine-eps for symmetric configs; a pure
- * relative residual would divide O(1e-22) by O(1e-22) and report spurious O(1)
- * "mismatches". abs_tol sits ~10 orders below realistic field magnitudes
- * (Face_Area ~ h^(NUMDIMS-1) ~ 1e-1..1e-2), so genuine O(1e-6) physics bugs still
- * trip the gate. Single source used by GradientsSpec + GradientsIterSpec. */
-static inline double grad_compare_rel(double x, double y)
-{
-    constexpr double abs_tol = 1e-12;
-    double d = fabs(x - y);
-    if(d < abs_tol) return 0.0;
-    double m = fmax(fmax(fabs(x), fabs(y)), 1e-30);
-    return d / m;
-}
-
-double GradientsSpec::compare_accum(const AccumData& a, const AccumData& b)
-{
-    double worst = 0.0;
-#define CHECK(field) do { double r = grad_compare_rel((double)a.field, (double)b.field); \
-                          if(r > worst) worst = r; } while(0)
-
-    for(int k = 0; k < 3; k++) {
-        CHECK(Gradients[k].Density);
-        CHECK(Gradients[k].Pressure);
-        for(int j = 0; j < 3; j++) { CHECK(Gradients[k].Velocity[j]); }
-#ifdef MAGNETIC
-        for(int j = 0; j < 3; j++) { CHECK(Gradients[k].B[j]); }
-#ifdef DIVBCLEANING_DEDNER
-        CHECK(Gradients[k].Phi);
-#endif
-#endif
-#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        for(int j = 0; j < NUM_METAL_SPECIES; j++) { CHECK(Gradients[k].Metallicity[j]); }
-#endif
-#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
-        for(int j = 0; j < N_RT_FREQ_BINS; j++) {
-            CHECK(Gradients[k].Rad_E_gamma[j]);
-            /* SymmetricTensor2 stores 6 unique elements — iterate raw .data
-             * to avoid double-counting off-diagonals via [i][j]/[j][i] alias. */
-            for(int kd = 0; kd < 6; kd++) { CHECK(Gradients[k].Rad_E_gamma_ET[j].data[kd]); }
-#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-            for(int kd = 0; kd < 3; kd++) { CHECK(Gradients[k].Rad_Flux[j][kd]); }
-#endif
-        }
-#endif
-#ifdef DOGRAD_INTERNAL_ENERGY
-        CHECK(Gradients[k].InternalEnergy);
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-        CHECK(Gradients[k].ElectronNumberDensity);
-        CHECK(Gradients[k].ElectronTemperature);
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
-        for(int j = 0; j < 3; j++) { CHECK(Gradients[k].E_battery_T2[j]); }
-#endif
-#ifdef COSMIC_RAY_FLUID
-        for(int j = 0; j < N_CR_PARTICLE_BINS; j++) { CHECK(Gradients[k].CosmicRayPressure[j]); }
-#endif
-#ifdef DOGRAD_SOUNDSPEED
-        CHECK(Gradients[k].SoundSpeed);
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-        for(int j = 0; j < 3; j++) { CHECK(Gradients[k].Velocity_bar[j]); }
-#endif
-    }
-
-    /* Maxima/Minima — relative residual on each scalar (MAX/MIN merge
-     * semantics; tolerance gate is on rel diff, not on commutativity). */
-    CHECK(Maxima.Density);  CHECK(Minima.Density);
-    CHECK(Maxima.Pressure); CHECK(Minima.Pressure);
-    for(int j = 0; j < 3; j++) { CHECK(Maxima.Velocity[j]); CHECK(Minima.Velocity[j]); }
-#ifdef MAGNETIC
-    for(int j = 0; j < 3; j++) { CHECK(Maxima.B[j]); CHECK(Minima.B[j]); }
-#ifdef DIVBCLEANING_DEDNER
-    CHECK(Maxima.Phi); CHECK(Minima.Phi);
-#endif
-#endif
-#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-    for(int j = 0; j < NUM_METAL_SPECIES; j++) { CHECK(Maxima.Metallicity[j]); CHECK(Minima.Metallicity[j]); }
-#endif
-#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
-    for(int j = 0; j < N_RT_FREQ_BINS; j++) {
-        CHECK(Maxima.Rad_E_gamma[j]); CHECK(Minima.Rad_E_gamma[j]);
-#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-        for(int kd = 0; kd < 3; kd++) { CHECK(Maxima.Rad_Flux[j][kd]); CHECK(Minima.Rad_Flux[j][kd]); }
-#endif
-    }
-#endif
-#ifdef DOGRAD_INTERNAL_ENERGY
-    CHECK(Maxima.InternalEnergy); CHECK(Minima.InternalEnergy);
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-    CHECK(Maxima.ElectronNumberDensity); CHECK(Minima.ElectronNumberDensity);
-    CHECK(Maxima.ElectronTemperature);   CHECK(Minima.ElectronTemperature);
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
-    for(int j = 0; j < 3; j++) { CHECK(Maxima.E_battery_T2[j]); CHECK(Minima.E_battery_T2[j]); }
-#endif
-#ifdef COSMIC_RAY_FLUID
-    for(int j = 0; j < N_CR_PARTICLE_BINS; j++) { CHECK(Maxima.CosmicRayPressure[j]); CHECK(Minima.CosmicRayPressure[j]); }
-#endif
-#ifdef DOGRAD_SOUNDSPEED
-    CHECK(Maxima.SoundSpeed); CHECK(Minima.SoundSpeed);
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-    for(int j = 0; j < 3; j++) { CHECK(Maxima.Velocity_bar[j]); CHECK(Minima.Velocity_bar[j]); }
-#endif
-
-    CHECK(MaxDistance);
-
-#if defined(KERNEL_CRK_FACES)
-    CHECK(m0);
-    for(int k = 0; k < 3; k++) {
-        CHECK(m1[k]); CHECK(dm0[k]);
-        for(int kx = 0; kx < 3; kx++) { CHECK(dm1[k][kx]); }
-    }
-    for(int k = 0; k < 6; k++) {
-        CHECK(m2[k]);
-        for(int kx = 0; kx < 3; kx++) { CHECK(dm2[k][kx]); }
-    }
-#endif
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION==6)
-    for(int j = 0; j < 3; j++) { CHECK(GlassAcc[j]); }
-#endif
-#ifdef HYDRO_SPH
-#ifdef MAGNETIC
-    for(int j = 0; j < 3; j++) { CHECK(DtB[j]); }
-#ifdef DIVBCLEANING_DEDNER
-    CHECK(divB);
-#endif
-#endif
-    CHECK(alpha_limiter);
-#endif
-#ifdef MHD_CONSTRAINED_GRADIENT
-    for(int j = 0; j < 3; j++) {
-        CHECK(Face_Area[j]);
-        for(int k = 0; k < 3; k++) { CHECK(FaceCrossX[j][k]); }
-    }
-    CHECK(FaceDotB);
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-    for(int j = 0; j < 3; j++) { CHECK(Velocity_hat[j]); }
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
-    CHECK(AGS_zeta);
-#endif
-
-#undef CHECK
-    return worst;
-}
-
 #ifdef MHD_CONSTRAINED_GRADIENT
 /* ============================================================================
  * GradientsIterSpec host hooks (grad_iter>0, slim GasGraddata_out_iter_).
@@ -678,19 +511,6 @@ void GradientsIterSpec::merge_accum(AccumData& dst, const AccumData& src)
 #endif
 }
 
-/* Oracle comparison — same rel()/abs_tol form as GradientsSpec::compare_accum,
- * over the slim field set. */
-double GradientsIterSpec::compare_accum(const AccumData& a, const AccumData& b)
-{
-    double worst = 0.0;
-    { double r = grad_compare_rel((double)a.FaceDotB, (double)b.FaceDotB); if(r > worst) worst = r; }
-#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
-    for(int k = 0; k < 3; k++) {
-        double r = grad_compare_rel((double)a.PhiGrad[k], (double)b.PhiGrad[k]); if(r > worst) worst = r;
-    }
-#endif
-    return worst;
-}
 #endif /* MHD_CONSTRAINED_GRADIENT */
 
 /* ============================================================================
@@ -720,7 +540,6 @@ void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time();
     double t0 = my_second();
-    double t_grad_outer_start = my_second();
 
     /* (1) Corridor topology. The shared active list (and, in Mode A, the
      * ghost pool + CSR) was built ONCE at gizmo_hydro_corridor_begin(); this
@@ -734,7 +553,6 @@ void hydro_gradient_calc(void)
      * is a corridor sequencing bug — fail loudly, never quietly rebuild. */
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
     const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
-    double t_diag_symlist_start = my_second();
     if(corridor_built_csr) {
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
@@ -742,16 +560,6 @@ void hydro_gradient_calc(void)
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
         fflush(stdout);
         endrun(7315);
-    }
-    double t_grad_after_symlist = my_second();
-    gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
-    if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[DIAG_SYMNL step=%d N=%d pairs=%lld] symlist_build=%.3f%s\n",
-               (int)All.NumCurrentTiStep, gizmo_sym_num_active,
-               (long long)(gizmo_sym_neighbor_list.total_pairs),
-               timediff(t_diag_symlist_start, my_second()),
-               corridor_built_csr ? " (skipped: corridor built CSR)" : "");
-        fflush(stdout);
     }
 
     /* (2) Per-active gradient scratch — persistent capacity-managed buffer
@@ -1536,11 +1344,6 @@ void hydro_gradient_calc(void)
      * the hydro_force-top refresh that must happen anyway. Mode B has no
      * ghosts to refresh. */
     double t1 = my_second(); cpu_chain_sync(t1);
-    double t_grad_before_refresh = my_second();
-    double t_grad_outer_end = my_second();
-    gizmo_step_phase_record("gradient_zero_iter_loops", timediff(t_grad_after_symlist, t_grad_before_refresh));
-    gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));
-    gizmo_step_phase_record("gradient_outer_total",     timediff(t_grad_outer_start,    t_grad_outer_end));
 
     (void)t0; (void)t1;
 }

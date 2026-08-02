@@ -9,7 +9,7 @@
  * sink_swallow_pair_kernel in sinks/sink_swallow_and_kick_functions.h is
  * mirrored below as sink_swk_pair_kernel with the runner's pair contract:
  *   (const SinkSwkActiveState&, particle_data&, gas_cell_data*,
- *    SinkSwallowOut&, bool oracle_dry_run).
+ *    SinkSwallowOut&).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -199,14 +199,10 @@ struct SinkSwkActiveState {
 /* DeviceContext extension. Carries:
  *   per_active_local — UVM array of SinkSwallowLocalIn[num_active], host-staged
  *                      by populate_device_context, read on device by load_active.
- *   oracle_dry_run   — set by SinkSwkSpec::set_oracle_brute_pass on the brute
- *                      oracle pass; the pair body suppresses j-side atomic
- *                      writes when true.
  *
  * Trivially copyable. Mirrors SinkFeedDeviceContext exactly. */
 struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
     const SinkSwallowLocalIn *per_active_local;   /* UVM, [num_active] */
-    bool                      oracle_dry_run;
 };
 
 /* ============================================================================
@@ -214,13 +210,12 @@ struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
  * Mirrors legacy sink_swallow_pair_kernel
  * (sinks/sink_swallow_and_kick_functions.h:108-440) with the new signature:
  *   (const SinkSwkActiveState& active, particle_data& neighbor_particle,
- *    gas_cell_data* neighbor_cell, SinkSwallowOut& out, bool oracle_dry_run)
+ *    gas_cell_data* neighbor_cell, SinkSwallowOut& out)
  *
- * j-side atomic writes (P[j].Mass / Vel / dp / Sink_Mass / Sink_Mdot /
- * Sink_Mass_Reservoir; CellP[j].MassTrue / VelPred / InternalEnergy /
- * InternalEnergyPred / B / BPred / DelayTime / CR fields) are gated on
- * !oracle_dry_run. i-side accumulator writes (out.*) are NOT gated —
- * the oracle compares accum field-by-field after the brute pass.
+ * The pair body writes j-side atomics (P[j].Mass / Vel / dp / Sink_Mass /
+ * Sink_Mdot / Sink_Mass_Reservoir; CellP[j].MassTrue / VelPred /
+ * InternalEnergy / InternalEnergyPred / B / BPred / DelayTime / CR fields)
+ * alongside the i-side accumulator writes (out.*).
  *
  * CR fix vs legacy: the runner port unifies CR-field handling across both
  * modes. Legacy Mode A imported-ghost path silently dropped CR fields
@@ -235,8 +230,7 @@ KOKKOS_INLINE_FUNCTION
 static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
-                                  SinkSwallowOut& out,
-                                  bool oracle_dry_run)
+                                  SinkSwallowOut& out)
 {
     const SinkSwallowLocalIn& local      = active.local;
     const SinkSwkCallScalars& scalars    = active.scalars;
@@ -305,10 +299,8 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                         * wk / (double)local.kernel_norm_topass_in_swallowloop;
         for(int k = 0; k < 3; k++) {
             double dB = b_frac * (double)local.B[k];
-            if(!oracle_dry_run) {
-                Kokkos::atomic_add(&neighbor_cell->B[k],     (MyFloat)dB);
-                Kokkos::atomic_add(&neighbor_cell->BPred[k], (MyFloat)dB);
-            }
+            Kokkos::atomic_add(&neighbor_cell->B[k],     (MyFloat)dB);
+            Kokkos::atomic_add(&neighbor_cell->BPred[k], (MyFloat)dB);
             out.accreted_B[k] -= dB;
         }
     }
@@ -423,13 +415,11 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                                    -(double)neighbor_particle.Sink_Mdot / (double)neighbor_particle.Sink_Mass);
             }
             Mass_j = 0;
-            if(!oracle_dry_run) {
 #ifdef SINK_ALPHADISK_ACCRETION
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mass_Reservoir, (MyFloat)0);
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mass_Reservoir, (MyFloat)0);
 #endif
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mdot, (MyFloat)0);
-                Kokkos::atomic_store(&neighbor_particle.Sink_Mass, (MyFloat)0);
-            }
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mdot, (MyFloat)0);
+            Kokkos::atomic_store(&neighbor_particle.Sink_Mass, (MyFloat)0);
 #ifdef GALSF
             /* MIN-merge with sentinel (zero_accum sets Accreted_Age = MAX_REAL_NUMBER). */
             if((MyFloat)neighbor_particle.StellarAge < out.Accreted_Age) {
@@ -528,17 +518,13 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                             double dEcr_k = evaluate_cr_transport_reductionfactor(0, kc, 0, neighbor_cell)
                                             * dEcr * f_inj[kc];
                             if(dEcr_k <= 0) continue;
-                            if(!oracle_dry_run) {
-                                Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergy[kc],     dEcr_k);
-                                Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergyPred[kc], dEcr_k);
-                            }
+                            Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergy[kc],     dEcr_k);
+                            Kokkos::atomic_add(&neighbor_cell->CosmicRayEnergyPred[kc], dEcr_k);
                             double flux_mag = dEcr_k * CRFLUID_REDUCED_C_CODE(kc);
                             for(int kk = 0; kk < 3; kk++) {
                                 double dflux = flux_mag * cr_dir[kk] / cr_dir_norm;
-                                if(!oracle_dry_run) {
-                                    Kokkos::atomic_add(&neighbor_cell->CosmicRayFlux[kc][kk],     dflux);
-                                    Kokkos::atomic_add(&neighbor_cell->CosmicRayFluxPred[kc][kk], dflux);
-                                }
+                                Kokkos::atomic_add(&neighbor_cell->CosmicRayFlux[kc][kk],     dflux);
+                                Kokkos::atomic_add(&neighbor_cell->CosmicRayFluxPred[kc][kk], dflux);
                             }
                         }
                     }
@@ -549,7 +535,7 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                 else         { nrm = sqrt(nrm); dir /= nrm; }
                 for(int k = 0; k < 3; k++) { Vel_j[k] += v_kick * scalars.common.cf_atime * dir[k]; }
 #ifdef GALSF_SUBGRID_WINDS
-                if(!oracle_dry_run && neighbor_cell) {
+                if(neighbor_cell) {
                     Kokkos::atomic_store(&neighbor_cell->DelayTime,
                         (MyFloat)(scalars.wind_free_travel_max_time_factor / scalars.common.cf_hubble_a));
                 }
@@ -586,37 +572,35 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
     if(Mass_j != Mass_j_0 ||
        Vel_j[0] != Vel_j_0[0] || Vel_j[1] != Vel_j_0[1] || Vel_j[2] != Vel_j_0[2] ||
        InternalEnergy_j != InternalEnergy_j_0) {
-        if(!oracle_dry_run) {
-            if(Mass_j > 0) {
-                double dmass = Mass_j - Mass_j_0;
-                double current_mass = (double)Kokkos::atomic_load(&neighbor_particle.Mass);
-                if(current_mass > 0) {
-                    Kokkos::atomic_add(&neighbor_particle.Mass, (MyDouble)dmass);
-                }
-            } else {
-                Kokkos::atomic_store(&neighbor_particle.Mass, (MyDouble)0);
+        if(Mass_j > 0) {
+            double dmass = Mass_j - Mass_j_0;
+            double current_mass = (double)Kokkos::atomic_load(&neighbor_particle.Mass);
+            if(current_mass > 0) {
+                Kokkos::atomic_add(&neighbor_particle.Mass, (MyDouble)dmass);
             }
-            for(int k = 0; k < 3; k++) {
-                double dVel = Vel_j[k] - Vel_j_0[k];
-                double dpk  = Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k];
-                Kokkos::atomic_add(&neighbor_particle.Vel[k], (MyDouble)dVel);
-                Kokkos::atomic_add(&neighbor_particle.dp[k],  (MyFloat)dpk);
-            }
-            if(neighbor_particle.Type == 0 && neighbor_cell) {
+        } else {
+            Kokkos::atomic_store(&neighbor_particle.Mass, (MyDouble)0);
+        }
+        for(int k = 0; k < 3; k++) {
+            double dVel = Vel_j[k] - Vel_j_0[k];
+            double dpk  = Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k];
+            Kokkos::atomic_add(&neighbor_particle.Vel[k], (MyDouble)dVel);
+            Kokkos::atomic_add(&neighbor_particle.dp[k],  (MyFloat)dpk);
+        }
+        if(neighbor_particle.Type == 0 && neighbor_cell) {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                if(Mass_j > 0) {
-                    Kokkos::atomic_add(&neighbor_cell->MassTrue, (MyDouble)(Mass_j - Mass_j_0));
-                } else {
-                    Kokkos::atomic_store(&neighbor_cell->MassTrue, (MyDouble)0);
-                }
-#endif
-                for(int k = 0; k < 3; k++) {
-                    Kokkos::atomic_add(&neighbor_cell->VelPred[k], (MyDouble)(Vel_j[k] - Vel_j_0[k]));
-                }
-                double dIE = InternalEnergy_j - InternalEnergy_j_0;
-                Kokkos::atomic_add(&neighbor_cell->InternalEnergy,     (MyDouble)dIE);
-                Kokkos::atomic_add(&neighbor_cell->InternalEnergyPred, (MyDouble)dIE);
+            if(Mass_j > 0) {
+                Kokkos::atomic_add(&neighbor_cell->MassTrue, (MyDouble)(Mass_j - Mass_j_0));
+            } else {
+                Kokkos::atomic_store(&neighbor_cell->MassTrue, (MyDouble)0);
             }
+#endif
+            for(int k = 0; k < 3; k++) {
+                Kokkos::atomic_add(&neighbor_cell->VelPred[k], (MyDouble)(Vel_j[k] - Vel_j_0[k]));
+            }
+            double dIE = InternalEnergy_j - InternalEnergy_j_0;
+            Kokkos::atomic_add(&neighbor_cell->InternalEnergy,     (MyDouble)dIE);
+            Kokkos::atomic_add(&neighbor_cell->InternalEnergyPred, (MyDouble)dIE);
         }
     }
 }
@@ -646,8 +630,6 @@ struct SinkSwkSpec {
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* active sources (incl. non-gas) are in the AllTypes SIDX pool */
 
-    static constexpr double accum_tolerance = 1e-10;
-
     /* Active predicate matches the legacy host caller block:
      * sink_isactive(i) && P[i].SwallowID == 0. */
     static bool is_active(int particle_index) {
@@ -664,7 +646,6 @@ struct SinkSwkSpec {
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
-        bool                  oracle_dry_run;
     };
 
     struct Aux {
@@ -754,12 +735,7 @@ struct SinkSwkSpec {
         NeighborData neighbor;
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
-        neighbor.oracle_dry_run    = dctx.oracle_dry_run;
         return neighbor;
-    }
-
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -769,8 +745,7 @@ struct SinkSwkSpec {
                              NoScatter& /*scatter*/)
     {
         sink_swk_pair_kernel(active, *neighbor.neighbor_particle,
-                              neighbor.neighbor_cell, accum,
-                              neighbor.oracle_dry_run);
+                              neighbor.neighbor_cell, accum);
     }
 
     static void apply_active_writeback(const neighbor_loop_args& args,
@@ -786,10 +761,6 @@ struct SinkSwkSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* SINK_PARTICLES */

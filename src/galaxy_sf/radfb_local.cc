@@ -91,7 +91,8 @@
  *     Nodes[]) per source: zero arena acquire, zero ghost import.
  *   - hii_gpu_path is the existing GPU-NL machinery, unchanged in this commit.
  *     Threshold dispatch picks per-step based on gizmo_nlr_modeb_threshold_sum_for
- *     ("hii", default 256). Env knob: GIZMO_HII_MODEB_THRESHOLD_SUM.
+ *     ("hii", default 256), overridable from the parameterfile via
+ *     NeighborLoopModeBThresholdSum.
  *
  * Tree-validity invariant for hii_local_path (verified 2026-05-17): every step
  * driver branch in core/run.cc:185-192 produces a valid Nodes[] for this step

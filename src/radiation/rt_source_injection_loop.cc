@@ -3,11 +3,11 @@
  *
  * Inline pair body (rt_source_injection_pair_body), structs, and
  * KOKKOS_INLINE_FUNCTION Spec hooks live in rt_source_injection_loop.h so they
- * inline from device kernels (Mode A) and host walkers (Mode B / brute oracle).
+ * inline from device kernels (Mode A) and host walkers (Mode B).
  * This translation unit holds host-only hooks: search_radius,
  * populate_call_scalars (NlrCommonScalars common), populate/cleanup_device_context
  * (UVM staging), apply_active_writeback (no-op), merge_accum, ghost-writeback
- * manifest + lifecycle hooks, compare_accum, rt_source_injection_fill_local
+ * manifest + lifecycle hooks, rt_source_injection_fill_local
  * (the per-source host pack — SSOT), and the non-template wrapper
  * `rt_source_injection_run_loop` (the only entry point from the host
  * orchestration TU in radiation/rt_source_injection.cc).
@@ -103,7 +103,6 @@ RtSrcInjectionSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void RtSrcInjectionSpec::populate_device_context(const neighbor_loop_args& args,
                                                   DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
 
     Aux *aux = nlr_aux<RtSrcInjectionSpec>(args);
     const int N = args.num_active;
@@ -142,12 +141,12 @@ void RtSrcInjectionSpec::apply_active_writeback(const neighbor_loop_args& /*args
 }
 
 /* ============================================================================
- * MERGE — additive on both telemetry fields.
+ * MERGE — nothing to merge; AccumData is empty for this Spec (see its
+ * definition in rt_source_injection_loop.h). Declared because the Spec
+ * contract requires it.
  * ========================================================================== */
-void RtSrcInjectionSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+void RtSrcInjectionSpec::merge_accum(AccumData& /*local_accum*/, const AccumData& /*peer_accum*/)
 {
-    local_accum.sum_dE     += peer_accum.sum_dE;
-    local_accum.pair_count += peer_accum.pair_count;
 }
 
 /* ============================================================================
@@ -261,22 +260,9 @@ void RtSrcInjectionSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
     ghost_writeback_end_bundle(rtsrcinjection_ghost_writeback_bundle_ptr());
 }
 
-/* ============================================================================
- * DIAGNOSTICS — env-gated oracle compare.
- *
- * AccumData here is TELEMETRY (sum_dE = Σ_pair wk*Σ_k Lum[k]; pair_count). Not
- * a physics surrogate — the real j-side writes are atomic_add direct in the
- * pair kernel, and audited by the per-field ghost-writeback bundle.
- * ========================================================================== */
-double RtSrcInjectionSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    const double va = local.sum_dE;
-    const double vb = oracle.sum_dE;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
-    const double rel_dE = std::fabs(va - vb) / denom;
-    const double pair_diff = (local.pair_count == oracle.pair_count) ? 0.0 : 1.0;
-    return std::fmax(rel_dE, pair_diff);
-}
+/* This Spec accumulates nothing per active: the real j-side writes are
+ * atomic_add direct in the pair kernel, and are carried cross-rank by the
+ * per-field ghost-writeback bundle above. */
 
 /* ============================================================================
  * RUNNER WRAPPER (non-template)

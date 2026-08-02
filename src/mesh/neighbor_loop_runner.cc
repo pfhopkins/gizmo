@@ -10,9 +10,9 @@
  * check_last_error).
  *
  * Mode B (request-driven walker, local + cross-rank peer-to-peer) and the
- * Brute oracle share the same Spec hooks — host-side invocation with the
+ * host-side invocation with the
  * lazy-drift boundary structurally encoded as collect_candidates_pre_drift
- * -> lazy_drift_candidates -> evaluate_pairs_post_drift; the oracle uses
+ * -> lazy_drift_candidates -> evaluate_pairs_post_drift; it uses
  * the SAME drift epoch as Mode B.
  *
  * The Spec contract (hard-required members, hooks, invariants) is
@@ -50,10 +50,9 @@
 #endif
 
 #include <vector>
-#include <algorithm>   /* nth_element / max_element (coverage dry-run percentiles) */
+#include <algorithm>   /* nth_element / max_element (coverage percentiles) */
 #include <unordered_map>
 #include <cmath>
-#include <cctype>
 
 #include "mode_b_p2p_transport.h"  /* ModeBBoundedExchange (query/reply transport) */
 
@@ -64,10 +63,6 @@
 #include "../sinks/sink_swk_loop.h"
 #if defined(SINK_PARTICLES) && defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
 #include "../sinks/sink_env2_loop.h"
-#endif
-
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-#include "test_iter_harness_loop.h"
 #endif
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
@@ -131,9 +126,8 @@
 /* One-shot rank-0 warning helper.
  *
  * Cached set keyed by string CONTENT (strcmp), not pointer identity, so
- * dynamically-constructed keys (e.g. per-loop env var names like
- * "GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM" assembled at runtime) dedupe
- * correctly per distinct env var rather than per category. Costs a 64x192
+ * dynamically-constructed keys dedupe correctly per distinct key rather than
+ * per category. Costs a 64x192
  * BSS array (~12 KB) and an O(N) lookup per call; both fine for a warning
  * surface.
  *
@@ -160,11 +154,6 @@ static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
     va_end(ap);
     fputc('\n', stderr);
     fflush(stderr);
-}
-
-static bool nlr_env_is_one(const char *name) {
-    const char *e = getenv(name);
-    return (e && e[0] == '1' && e[1] == '\0');
 }
 
 /* ============================================================================
@@ -211,7 +200,7 @@ neighbor_loop_args nlr_default_args(void)
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
     args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
     args.external_csr        = nullptr;        /* nullptr => runner builds its own CSR */
-    args.dispatch_override   = NlrForceMode::None; /* None => env/adaptive */
+    args.dispatch_override   = NlrForceMode::None; /* None => adaptive threshold */
     return args;
 }
 
@@ -221,145 +210,34 @@ void nlr_free_active_list(int *active_list)
 }
 
 /* ============================================================================
- * TESTERS' KNOBS — not production policy
- *
- * The four env vars below are dispatch-threshold overrides that exist purely
- * for testing the runner's Mode A / Mode B selection. They are NOT part of
- * GIZMO's production interface, NOT promoted to params.txt or Config.sh,
- * and not intended for end-user tuning.
+ * Mode-A/B dispatch thresholds
  *
  * Production dispatch policy is the constexpr Spec::modeb_threshold_sum and
  * Spec::modeb_threshold_max in each NeighborLoopSpec — those are code-level
  * dispatch policy constants for the loop, decided alongside the physics.
  *
- * Recognized env vars (all integer-valued):
- *   GIZMO_NLR_MODEB_THRESHOLD_SUM            global override; sum-of-active
- *   GIZMO_NLR_MODEB_THRESHOLD_MAX            global override; max-rank-active
- *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_SUM   per-loop override (e.g.
- *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_MAX   GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM)
+ * Resolution precedence (first wins):
+ *   1. parameterfile NeighborLoopModeBThreshold{Sum,Max} (-1 = unset;
+ *      any other value overrides, <= 0 disables Mode B)
+ *   2. Spec::modeb_threshold_{sum,max} constexpr (code default)
  *
- * Resolution precedence (first wins; per-loop override beats global):
- *   1. per-loop env GIZMO_<LOOP>_MODEB_THRESHOLD_<SUM|MAX>
- *   2. global env  GIZMO_NLR_MODEB_THRESHOLD_<SUM|MAX>
- *   3. Spec::modeb_threshold_<sum|max> constexpr (code default)
- *
- * Invalid env values (non-integer / negative / > 1e9) are silently ignored
- * and the next precedence level is consulted. This preserves the existing
- * behavior; promoting invalid values to a hard endrun is an explicit policy
- * change deferred until threshold semantics stabilize.
- *
- * When an env override is actually consumed (level 1 or 2), a single rank-0
- * one-shot warning is emitted naming the env var, the resolved value, and
- * the spec_default it overrode, with a "tester only" tag.
- *
- * Force-mode env vars take precedence over threshold dispatch:
- * GIZMO_NLR_FORCE_MODE=A|B selects unconditionally; thresholds are not
- * consulted on force paths (except when GIZMO_NLR_DIAG>=1, where the
- * runner does an extra Allreduce to populate PHASE0_NLR num_active_global).
+ * The threshold is settable ONLY from the parameterfile, so the value a run
+ * used is recorded in its parameter log.
  * ========================================================================== */
-
-static int s_global_threshold_sum_cached = -2;
-static int s_global_threshold_max_cached = -2;
-static int parse_int_env(const char *name)
-{
-    const char *e = getenv(name);
-    if(!e || !e[0]) return -1;
-    char *endp = nullptr;
-    long v = strtol(e, &endp, 10);
-    if(!endp || *endp != '\0' || v < 0 || v > 1000000000) return -1;
-    return (int)v;
-}
-int gizmo_nlr_default_modeb_threshold_sum(void) {
-    if(s_global_threshold_sum_cached == -2) {
-        s_global_threshold_sum_cached = parse_int_env("GIZMO_NLR_MODEB_THRESHOLD_SUM");
-    }
-    return s_global_threshold_sum_cached;
-}
-int gizmo_nlr_default_modeb_threshold_max(void) {
-    if(s_global_threshold_max_cached == -2) {
-        s_global_threshold_max_cached = parse_int_env("GIZMO_NLR_MODEB_THRESHOLD_MAX");
-    }
-    return s_global_threshold_max_cached;
-}
-
-/* Per-loop env lookup: GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_<SUM|MAX>.
- * Returns the parsed int (or -1 on unset / invalid) AND, on success, writes
- * the constructed env-var name into out_name (size out_cap) so the caller
- * can include it in the tester-knob warning text. */
-static int per_loop_threshold_lookup(const char *loop_name, const char *suffix,
-                                      char *out_name, size_t out_cap)
-{
-    if(out_cap > 0) out_name[0] = '\0';
-    if(!loop_name || !loop_name[0]) return -1;
-    char env_name[160];
-    int j = 0;
-    const char *prefix = "GIZMO_";
-    for(int p = 0; prefix[p] && j < 150; p++) env_name[j++] = prefix[p];
-    for(int p = 0; loop_name[p] && j < 150; p++) {
-        env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
-    }
-    const char *mid = "_MODEB_THRESHOLD_";
-    for(int p = 0; mid[p] && j < 158; p++) env_name[j++] = mid[p];
-    for(int p = 0; suffix[p] && j < 159; p++) env_name[j++] = suffix[p];
-    env_name[j] = '\0';
-    int v = parse_int_env(env_name);
-    if(v >= 0 && out_cap > 0) {
-        size_t copy_n = (size_t)j;
-        if(copy_n >= out_cap) copy_n = out_cap - 1;
-        memcpy(out_name, env_name, copy_n);
-        out_name[copy_n] = '\0';
-    }
-    return v;
-}
 
 int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
 {
-    char per_loop_env[160];
-    int v = per_loop_threshold_lookup(loop_name, "SUM", per_loop_env, sizeof(per_loop_env));
-    if(v >= 0) {
-        /* Dedup key = the per-loop env-var name itself, so distinct loops
-         * each fire their own warning when their per-loop overrides are used. */
-        nlr_warn_once_rank0(per_loop_env,
-            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_sum=%d for loop '%s' "
-            "(not a production interface).",
-            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    v = gizmo_nlr_default_modeb_threshold_sum();
-    if(v >= 0) {
-        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_SUM",
-            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_SUM=%d overrides "
-            "Spec::modeb_threshold_sum=%d (loop '%s'; not a production interface).",
-            v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    /* Production parameterfile override (supported interface, no warning): -1 = unset
-       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    (void)loop_name;
+    /* Parameterfile override (the supported interface): -1 = unset -> use the
+       Spec default; any other value overrides it (<= 0 disables Mode B). */
     { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdSum; if(p != -1) return p; }
     return spec_default;
 }
 int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 {
-    char per_loop_env[160];
-    int v = per_loop_threshold_lookup(loop_name, "MAX", per_loop_env, sizeof(per_loop_env));
-    if(v >= 0) {
-        /* Dedup key = the per-loop env-var name itself (see _sum_for). */
-        nlr_warn_once_rank0(per_loop_env,
-            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_max=%d for loop '%s' "
-            "(not a production interface).",
-            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    v = gizmo_nlr_default_modeb_threshold_max();
-    if(v >= 0) {
-        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_MAX",
-            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_MAX=%d overrides "
-            "Spec::modeb_threshold_max=%d (loop '%s'; not a production interface).",
-            v, spec_default, loop_name ? loop_name : "?");
-        return v;
-    }
-    /* Production parameterfile override (supported interface, no warning): -1 = unset
-       -> use the Spec default; any other value overrides it (<= 0 disables Mode B). */
+    (void)loop_name;
+    /* Parameterfile override (the supported interface): -1 = unset -> use the
+       Spec default; any other value overrides it (<= 0 disables Mode B). */
     { int p = nlr_host_all_ptr()->NeighborLoopModeBThresholdMax; if(p != -1) return p; }
     return spec_default;
 }
@@ -383,14 +261,13 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 
 namespace {
 
-/* nlr_warn_once_rank0 and nlr_env_is_one are defined at file scope above
- * (near the includes) so the threshold block can use them too. */
+/* nlr_warn_once_rank0 is defined at file scope above (near the includes). */
 
-/* Initialize diag level. Reads new var first, then aliases. */
+/* Initialize diag level. */
 static int nlr_init_diag_level(void)
 {
     const char *raw = getenv("GIZMO_NLR_DIAG");
-    int new_set_level = -1;
+    int level = 0;
     if(raw && raw[0]) {
         char *endp = nullptr;
         long v = strtol(raw, &endp, 10);
@@ -402,35 +279,7 @@ static int nlr_init_diag_level(void)
             }
             endrun(81100);
         }
-        new_set_level = (int)v;
-    }
-
-    bool old_phase0   = nlr_env_is_one("GIZMO_PHASE0_DIAG");
-    bool old_dispatch = nlr_env_is_one("GIZMO_NLR_DISPATCH_TRACE");
-
-    int level;
-    if(new_set_level >= 0) {
-        level = new_set_level;
-        if(old_phase0) {
-            nlr_warn_once_rank0("alias_phase0_overridden",
-                "GIZMO_PHASE0_DIAG ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
-        }
-        if(old_dispatch) {
-            nlr_warn_once_rank0("alias_dispatch_overridden",
-                "GIZMO_NLR_DISPATCH_TRACE ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
-        }
-    } else {
-        level = 0;
-        if(old_phase0) {
-            nlr_warn_once_rank0("alias_phase0_deprecated",
-                "GIZMO_PHASE0_DIAG=1 is deprecated; use GIZMO_NLR_DIAG=1 instead.");
-            if(level < 1) level = 1;
-        }
-        if(old_dispatch) {
-            nlr_warn_once_rank0("alias_dispatch_deprecated",
-                "GIZMO_NLR_DISPATCH_TRACE=1 is deprecated; use GIZMO_NLR_DIAG=2 instead.");
-            if(level < 2) level = 2;
-        }
+        level = (int)v;
     }
 
     if(level == 3) {
@@ -442,174 +291,7 @@ static int nlr_init_diag_level(void)
     return level;
 }
 
-/* Initialize force mode. Conflict cases endrun (collective). */
-static NlrForceMode nlr_init_force_mode(void)
-{
-    const char *raw_new = getenv("GIZMO_NLR_FORCE_MODE");
-    bool new_set = (raw_new && raw_new[0]);
-    bool old_a   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEA");
-    bool old_b   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEB");
 
-    if(new_set && (old_a || old_b)) {
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE='%s' is set AND "
-                    "old GIZMO_NLR_FORCE_MODEA=%d / GIZMO_NLR_FORCE_MODEB=%d are set. "
-                    "Use only one. Old names are deprecated.\n",
-                    raw_new, (int)old_a, (int)old_b);
-            fflush(stderr);
-        }
-        endrun(81101);
-    }
-    if(old_a && old_b) {
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODEA and GIZMO_NLR_FORCE_MODEB "
-                    "are both set; mutually exclusive.\n");
-            fflush(stderr);
-        }
-        endrun(81102);
-    }
-
-    if(new_set) {
-        if(raw_new[0] == 'A' && raw_new[1] == '\0') return NlrForceMode::A;
-        if(raw_new[0] == 'B' && raw_new[1] == '\0') return NlrForceMode::B;
-        if(ThisTask == 0) {
-            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE=\"%s\" must be 'A' or 'B'.\n",
-                    raw_new);
-            fflush(stderr);
-        }
-        endrun(81103);
-    }
-
-    if(old_a) {
-        nlr_warn_once_rank0("alias_force_modea_deprecated",
-            "GIZMO_NLR_FORCE_MODEA=1 is deprecated; use GIZMO_NLR_FORCE_MODE=A instead.");
-        return NlrForceMode::A;
-    }
-    if(old_b) {
-        nlr_warn_once_rank0("alias_force_modeb_deprecated",
-            "GIZMO_NLR_FORCE_MODEB=1 is deprecated; use GIZMO_NLR_FORCE_MODE=B instead.");
-        return NlrForceMode::B;
-    }
-    return NlrForceMode::None;
-}
-
-static NlrForceMode nlr_parse_force_mode_value(const char *env_name,
-                                               const char *raw_value)
-{
-    if(!raw_value || !raw_value[0]) return NlrForceMode::None;
-    if(raw_value[0] == 'A' && raw_value[1] == '\0') return NlrForceMode::A;
-    if(raw_value[0] == 'B' && raw_value[1] == '\0') return NlrForceMode::B;
-    if(ThisTask == 0) {
-        fprintf(stderr, "[NLR env] FATAL: %s=\"%s\" must be 'A' or 'B'.\n",
-                env_name ? env_name : "GIZMO_<LOOP>_FORCE_MODE", raw_value);
-        fflush(stderr);
-    }
-    endrun(81104);
-    return NlrForceMode::None;
-}
-
-static void nlr_loop_env_name(const char *loop_name, const char *suffix,
-                              char *out, int out_size)
-{
-    if(out_size <= 0) return;
-    int j = 0;
-    const char *prefix = "GIZMO_";
-    for(int p = 0; prefix[p] && j < out_size - 1; p++) out[j++] = prefix[p];
-    if(loop_name) {
-        for(int p = 0; loop_name[p] && j < out_size - 1; p++) {
-            out[j++] = (char)toupper((unsigned char)loop_name[p]);
-        }
-    }
-    if(suffix) {
-        for(int p = 0; suffix[p] && j < out_size - 1; p++) out[j++] = suffix[p];
-    }
-    out[j] = '\0';
-}
-
-static int nlr_force_modeb_active_cap_for(const char *loop_name)
-{
-    char env_name[160];
-    nlr_loop_env_name(loop_name, "_FORCE_MODEB_MAX_ACTIVE",
-                      env_name, (int)sizeof(env_name));
-    int cap = parse_int_env(env_name);
-    if(cap >= 0) return cap;
-    cap = parse_int_env("GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE");
-    return (cap >= 0) ? cap : 100000;
-}
-
-static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
-                                                int local_active,
-                                                int global_active,
-                                                bool oracle_active)
-{
-    /* Narrowed after the bunchSize-streaming + receiver-group-staging change: forced /
-     * threshold / corridor-override Mode-B is now memory-bounded at arbitrary
-     * N_active (the round loop + whole-peer receiver staging wrap the whole
-     * remote helper), so the old "prevent the large-N un-chunked Mode-B hang"
-     * cap is obsolete for PRODUCTION runs and must NOT block a param-driven
-     * corridor Mode-B decision. The one path still genuinely dangerous at large
-     * N is the ORACLE brute walk (O(N_active x N_local) per query, unchunkable),
-     * so the cap fires ONLY when an oracle/brute pass is active. */
-    if(!oracle_active) return;
-    const int cap = nlr_force_modeb_active_cap_for(loop_name);
-    if(cap >= 0 && global_active > cap) {
-        if(ThisTask == 0) {
-            fprintf(stderr,
-                    "[NLR ORACLE Mode-B] FATAL: caller=%s ran forced Mode-B WITH "
-                    "an oracle/brute pass at global_active=%d local_active(rank0)=%d, "
-                    "exceeding cap=%d. The brute walk is O(N_active x N_local) per "
-                    "query — intractable at this N. Run the oracle at small N, or "
-                    "raise GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE intentionally. (Non-oracle "
-                    "forced Mode-B is memory-safe post-B2 and is NOT capped.)\n",
-                    loop_name ? loop_name : "?", global_active,
-                    local_active, cap);
-            fflush(stderr);
-        }
-        endrun(81105);
-        /* All-rank symmetric (global_active is the MPI-reduced sum; both call
-         * sites poll after the Allreduce): drain immediately rather than enter
-         * the intractable large-N oracle brute walk. */
-        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:forced_modeb_oracle_cap");
-    }
-}
-
-static bool nlr_init_spike_accum_dump(void)
-{
-    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_ACCUM_DUMP");
-    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_DUMP");
-    if(new_set) {
-        if(old_set) {
-            nlr_warn_once_rank0("alias_xval_dump_overridden",
-                "GIZMO_MODE_B_XVAL_DUMP ignored; GIZMO_NLR_SPIKE_ACCUM_DUMP takes precedence.");
-        }
-        return true;
-    }
-    if(old_set) {
-        nlr_warn_once_rank0("alias_xval_dump_deprecated",
-            "GIZMO_MODE_B_XVAL_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_ACCUM_DUMP=1 instead.");
-        return true;
-    }
-    return false;
-}
-
-static bool nlr_init_spike_nb_dump(void)
-{
-    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_NB_DUMP");
-    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_NB_DUMP");
-    if(new_set) {
-        if(old_set) {
-            nlr_warn_once_rank0("alias_xval_nb_dump_overridden",
-                "GIZMO_MODE_B_XVAL_NB_DUMP ignored; GIZMO_NLR_SPIKE_NB_DUMP takes precedence.");
-        }
-        return true;
-    }
-    if(old_set) {
-        nlr_warn_once_rank0("alias_xval_nb_dump_deprecated",
-            "GIZMO_MODE_B_XVAL_NB_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_NB_DUMP=1 instead.");
-        return true;
-    }
-    return false;
-}
 
 } /* anonymous namespace */
 
@@ -620,69 +302,9 @@ int gizmo_nlr_diag_level(void)
     return cached;
 }
 
-NlrForceMode gizmo_nlr_force_mode(void)
-{
-    static int  cached_int   = -1;          /* -1 = uninit; 0/1/2 = enum */
-    if(cached_int < 0) cached_int = (int)nlr_init_force_mode();
-    return (NlrForceMode)cached_int;
-}
-
-NlrForceMode gizmo_nlr_force_mode_for(const char *loop_name)
-{
-    if(!loop_name || !loop_name[0]) return gizmo_nlr_force_mode();
-    struct entry_t { const char *name; int cached; };
-    static entry_t cache[16] = {
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
-        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1}};
-    for(int k = 0; k < 16; k++) {
-        if(cache[k].name == loop_name) return (NlrForceMode)cache[k].cached;
-        if(cache[k].name == nullptr) {
-            char env_name[160];
-            nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
-            const char *raw = getenv(env_name);
-            NlrForceMode mode = raw && raw[0]
-                ? nlr_parse_force_mode_value(env_name, raw)
-                : gizmo_nlr_force_mode();
-            cache[k].name = loop_name;
-            cache[k].cached = (int)mode;
-            return mode;
-        }
-    }
-    char env_name[160];
-    nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
-    const char *raw = getenv(env_name);
-    return raw && raw[0] ? nlr_parse_force_mode_value(env_name, raw)
-                         : gizmo_nlr_force_mode();
-}
-
-bool gizmo_nlr_spike_accum_dump_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) cached = nlr_init_spike_accum_dump() ? 1 : 0;
-    return cached != 0;
-}
-
-bool gizmo_nlr_spike_nb_dump_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) cached = nlr_init_spike_nb_dump() ? 1 : 0;
-    return cached != 0;
-}
-
 /* Adapters — preserve existing call-site names. */
 bool gizmo_nlr_phase0_diag_enabled(void)    { return gizmo_nlr_diag_level() >= 1; }
 bool gizmo_nlr_dispatch_trace_enabled(void) { return gizmo_nlr_diag_level() >= 2; }
-bool gizmo_nlr_xval_dump_enabled(void)      { return gizmo_nlr_spike_accum_dump_enabled(); }
-bool gizmo_nlr_xval_nb_dump_enabled(void)   { return gizmo_nlr_spike_nb_dump_enabled(); }
-
-/* Subgroup-audit env gate. Off by default; harness +
- * test-mode runs set GIZMO_NLR_SUBGROUP_AUDIT=1 to enable hard-aborting
- * runtime checks for subgroups[] collective-symmetry + no-duplicate-actives. */
-static bool gizmo_nlr_subgroup_audit_enabled(void) {
-    return nlr_env_is_one("GIZMO_NLR_SUBGROUP_AUDIT");
-}
 
 /* ============================================================================
  * NeighborLoopPlan path predicates — single source of truth keyed on path.
@@ -778,49 +400,6 @@ struct StageTimer {
 };
 } /* anonymous namespace */
 
-bool gizmo_nlr_force_mode_b_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::B; }
-bool gizmo_nlr_force_mode_a_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::A; }
-bool gizmo_nlr_oracle_enabled_global(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_NLR_ORACLE");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
-bool gizmo_nlr_oracle_enabled_for(const char *loop_name) {
-    /* Per-loop env: GIZMO_<UPPERCASE_LOOP_NAME>_ORACLE. Lookup is per-call
-     * but loop_name is a Spec::loop_name constexpr literal, so the env-name
-     * derivation is deterministic; we cache via a small intrusive map of up
-     * to 8 entries (cheap linear scan). 8 covers every Spec we expect through
-     * 3c-3g; bump if a future stage exceeds. */
-    if(!loop_name || !loop_name[0]) return false;
-    struct entry_t { const char *name; int cached; };
-    static entry_t cache[8] = {
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0},
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0}};
-    for(int k = 0; k < 8; k++) {
-        if(cache[k].name == loop_name) return cache[k].cached != 0;
-        if(cache[k].name == nullptr) {
-            char env_name[128];
-            int j = 0;
-            const char *prefix = "GIZMO_";
-            for(int p = 0; prefix[p] && j < 120; p++) env_name[j++] = prefix[p];
-            for(int p = 0; loop_name[p] && j < 120; p++) {
-                env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
-            }
-            const char *suffix = "_ORACLE";
-            for(int p = 0; suffix[p] && j < 127; p++) env_name[j++] = suffix[p];
-            env_name[j] = '\0';
-            const char *e = getenv(env_name);
-            cache[k].name   = loop_name;
-            cache[k].cached = (e && e[0] == '1') ? 1 : 0;
-            return cache[k].cached != 0;
-        }
-    }
-    /* Cache full — fall through with a one-shot lookup, no caching. */
-    return false;
-}
 
 /* ============================================================================
  * SIDX cache kind resolver (private to runner; see neighbor_loop_runner.h
@@ -859,7 +438,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  *     lazy_drift_candidates<Spec>          — drift_particle on every j to
  *                                            All.Ti_Current (idempotent;
  *                                            duplicate j's between Mode B and
- *                                            Brute oracle are dedupe-free
+ *                                            are dedupe-free
  *                                            via drift_particle's
  *                                            time1==time0 early-return)
  *     evaluate_pairs_post_drift<Spec>      — calls Spec::pair_kernel via the
@@ -868,8 +447,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  *                                            Spec::load_neighbor used by
  *                                            run_mode_a (host invocation here)
  *
- * Brute oracle uses the SAME drift epoch as Mode B (we collect both candidate
- * sets before drifting either — see run_mode_b_local_with_oracle). Annotation
+ * Candidate sets are collected before any drift. Annotation
  * on each helper makes the ordering enforcement structural.
  *
  * Self-rank only here: candidates are local real P[] indices in
@@ -909,9 +487,8 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
 }
 
 /* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
- * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier); the brute/oracle REFERENCE eval
- * always runs serial so the reference stays independent of the threaded path it
- * validates. Passed explicitly at every call site (no default) so production vs
+ * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier).
+ * Passed explicitly at every call site (no default) so production vs
  * reference eval is greppable and can never be silently mis-gated. */
 enum class EvalOMPPolicy { AllowProduction, ForceSerialReference };
 
@@ -965,19 +542,16 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
      * (~24 MB × N_active on fire_m11i). */
     per_active_cands.assign(N, std::vector<int>{});
     if(num_local <= 0) return;
-    if(backend != DispatchPath::ModeB_HostWalker &&
-       backend != DispatchPath::Brute_Oracle) {
+    if(backend != DispatchPath::ModeB_HostWalker) {
         fprintf(stderr, "neighbor_loop_runner: collect_candidates_pre_drift "
-                "called with non-Mode-B/Brute backend (%d) for loop '%s'\n",
+                "called with non-Mode-B backend (%d) for loop '%s'\n",
                 (int)backend, Spec::loop_name);
         fflush(stderr);
         endrun(81033);
         return;
     }
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
-    /* Thread the real tree walk above the work threshold; the brute oracle
-     * stays serial (reference stays independent of the machinery under test)
-     * and below-threshold stays serial (byte-identical to today). */
+    /* Thread the tree walk above the work threshold; below it stays serial. */
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(N, nthreads);
@@ -1024,15 +598,9 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
         double pos_arr[3] = {(double)args.P[i].Pos[0],
                               (double)args.P[i].Pos[1],
                               (double)args.P[i].Pos[2]};
-        if(backend == DispatchPath::ModeB_HostWalker) {
-            mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
-                                        Spec::search_mode, Spec::radius_policy,
-                                        cands, jscale);
-        } else {
-            mode_b_local_brute_walk(pos_arr, h_q, neighbor_type_mask,
-                                     Spec::search_mode, Spec::radius_policy,
-                                     cands, jscale);
-        }
+        mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                    Spec::search_mode, Spec::radius_policy,
+                                    cands, jscale);
     }
 }
 
@@ -1051,7 +619,6 @@ static void collect_candidates_for_remote_queries(
     const std::vector<typename Spec::ActiveData>& peer_actives,
     const std::vector<int>& peer_nodelist_flat,   /* K*NODELISTLENGTH; exported start-nodes per query */
     const std::vector<int>& peer_nnodes,          /* K; valid entries per query's NodeList */
-    const std::vector<int>& peer_group_first,     /* K; 0 = continuation chunk of the previous (peer,slot) */
     unsigned int neighbor_type_mask,
     DispatchPath backend,
     std::vector<std::vector<int>>& per_query_cands,
@@ -1063,15 +630,13 @@ static void collect_candidates_for_remote_queries(
      * refactor). Non-iter callers pass Spec::neighbor_type_mask; iter
      * dispatch passes sg.j_type_bitmask.
      *
-     * ModeB_HostWalker resumes the walk from the exported NodeList start-nodes
-     * (legacy mode==1); Brute_Oracle scans the whole local pool
-     * (the ground-truth oracle that catches any under-route). */
+     * ModeB_HostWalker resumes the walk from the exported NodeList
+     * start-nodes (legacy mode==1). */
     const int K = (int)peer_actives.size();
     const int num_local = ghost_get_num_local();
     per_query_cands.assign(K, std::vector<int>{});
     if(num_local <= 0) return;
-    if(backend != DispatchPath::ModeB_HostWalker &&
-       backend != DispatchPath::Brute_Oracle) {
+    if(backend != DispatchPath::ModeB_HostWalker) {
         fprintf(stderr, "neighbor_loop_runner: collect_candidates_for_remote_queries"
                 " bad backend %d for loop '%s'\n", (int)backend, Spec::loop_name);
         fflush(stderr);
@@ -1080,7 +645,7 @@ static void collect_candidates_for_remote_queries(
     }
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
     /* Thread the received-query tree walk above the work threshold; brute
-     * oracle stays serial; below-threshold stays serial (byte-identical). */
+     * below-threshold stays serial (byte-identical). */
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(K, nthreads);
@@ -1127,30 +692,19 @@ static void collect_candidates_for_remote_queries(
         cands.clear();
         if(cands.capacity() == 0) cands.reserve(64);
         double pos_arr[3] = {(double)active.pos[0], (double)active.pos[1], (double)active.pos[2]};
-        if(backend == DispatchPath::ModeB_HostWalker) {
-            if(peer_nnodes[k] > 0) {
-                /* Targeted query: bounded resume from the exported start-nodes. */
-                mode_b_walk_from_start_nodes(pos_arr, h_q, neighbor_type_mask,
-                                             Spec::search_mode, Spec::radius_policy,
-                                             &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
-                                             peer_nnodes[k], cands, jscale);
-            } else {
-                /* Broadcast query (n_nodes==0): the sender took the broadcast
-                 * path (uncovered radius policy) — full local
-                 * walk from root (the prior broadcast behavior). */
-                mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
-                                            Spec::search_mode, Spec::radius_policy,
-                                            cands, jscale);
-            }
-        } else {
-            /* Brute_Oracle full-query ground truth: run ONCE per chunk group
-             * (see group_first in the flatten); continuation chunks keep an
-             * empty candidate list → zero accum reply. */
-            if(peer_group_first[k]) {
-                mode_b_local_brute_walk(pos_arr, h_q, neighbor_type_mask,
+        if(peer_nnodes[k] > 0) {
+            /* Targeted query: bounded resume from the exported start-nodes. */
+            mode_b_walk_from_start_nodes(pos_arr, h_q, neighbor_type_mask,
                                          Spec::search_mode, Spec::radius_policy,
-                                         cands, jscale);
-            }
+                                         &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
+                                         peer_nnodes[k], cands, jscale);
+        } else {
+            /* Broadcast query (n_nodes==0): the sender took the broadcast
+             * path (uncovered radius policy) — full local
+             * walk from root (the prior broadcast behavior). */
+            mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
+                                        Spec::search_mode, Spec::radius_policy,
+                                        cands, jscale);
         }
     }
 }
@@ -1197,8 +751,8 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
         const auto& cands = per_active_cands[aa];
         if constexpr (nlr_spec_has_bind_active_to_eval_context_v<Spec>) {
             /* Spec needs per-eval-pass rebinding of rank-local + eval-pass-local
-             * fields embedded in ActiveData (P_base / CellP_base / oracle_dry_run
-             * / per-rank gas-delta ptrs / per-rank index bounds). Take a local
+             * fields embedded in ActiveData (P_base / CellP_base / per-rank
+             * gas-delta ptrs / per-rank index bounds). Take a local
              * mutable copy, refresh from the eval ctx, then walk. See
              * nlr_spec_has_bind_active_to_eval_context_v in
              * mesh/neighbor_loop_runner.h for the contract. */
@@ -1231,7 +785,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
      *     threading only re-orders those atomic updates -> ulp-class
      *     nondeterminism, NOT a new race. The per-active AccumData stays
      *     order-independent (no j-write is read back into the kernel).
-     * Only the production path threads; the brute/oracle reference eval
+     * Only the production path threads; the reference eval
      * (ForceSerialReference) and SerialOnly specs run the serial loop verbatim.
      * Below the work threshold no OpenMP region is entered — the serial path is
      * byte-identical to the unthreaded code. */
@@ -1269,8 +823,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
  *
  * No Kokkos kernels in this path → no fence (project rule from contract).
  * No GPU NGL build, no SIDX, no arena_acquire — Mode B's whole point is
- * escaping that overhead for tiny-N. `compare_accum`-gated brute oracle is
- * orchestrated by run_mode_b_local_with_oracle below.
+ * escaping that overhead for tiny-N.
  * ========================================================================== */
 
 /* Helper: build the host-frozen ActiveData[] for self-rank actives. Called
@@ -1290,52 +843,6 @@ static void build_self_actives_host_pre_drift(
     for(int aa = 0; aa < N; aa++) {
         actives_out[aa] = Spec::load_active(ctx, aa, args.active_list[aa],
                                              radii[aa], cs);
-    }
-}
-
-/* ============================================================================
- * Diagnostic active-dump emit helper
- *
- * Iterates per-active and calls Spec::diagnostic_dump_active when the env
- * gate is on AND the spec opts in via the SFINAE-detected hook.
- *
- * Timing invariant: post-Spec::apply_active_writeback, pre-caller-side
- * SinkTempInfo scatter. Fires inside the runner before returning to the
- * caller, so the caller's ghost_write_detector_end / scatter loop have
- * not yet run. (Legacy emit fired post-ghost-detector but pre-scatter; the
- * runner-driven emit fires pre-ghost-detector but still pre-scatter.
- * Accumulator values are byte-identical between the two timing points —
- * writeback is the last write into the per-active accumulator buffer
- * before scatter — so the cross-validation dump line content is unchanged.)
- *
- * Mode A path supplies actives_or_null = d_actives (UVM-resident; host-
- * coherent post-fence). Mode B local/remote supply host-frozen actives.
- * Spec hooks read view.active->{pos,h_search,...} fields when needed.
- * ========================================================================== */
-template <typename Spec>
-static void runner_emit_active_dumps(const neighbor_loop_args& args,
-                                      const typename Spec::AccumData *accums,
-                                      const typename Spec::ActiveData *actives_or_null,
-                                      const char *path)
-{
-    if(!gizmo_nlr_xval_dump_enabled()) return;
-    if constexpr (spec_has_dump_active<Spec>::value) {
-        int rank = 0;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        for(int aa = 0; aa < args.num_active; aa++) {
-            ActiveDumpView<Spec> v;
-            v.rank        = rank;
-            v.origin_rank = rank;
-            v.origin_slot = aa;
-            v.active_slot = aa;
-            v.path        = path;
-            v.call_id     = 0;
-            v.args        = &args;
-            v.active      = actives_or_null ? &actives_or_null[aa] : nullptr;
-            v.accum       = &accums[aa];
-            Spec::diagnostic_dump_active(v);
-        }
-        std::fflush(stdout);
     }
 }
 
@@ -1403,254 +910,35 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
             Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
         }
     }
-    runner_emit_active_dumps<Spec>(args, accums.data(), actives.data(), "mode_b");
 }
 
-/* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
- * sets BEFORE drifting either, then drifts the union (drift_particle is
- * idempotent so two separate lazy_drift calls dedupe naturally).
- *
- * Mode B path is the result; Brute is the comparison. Mismatches print the
- * line shape `[mode_b ORACLE MISMATCH ...]` (parser-stable across the runner
- * extraction).
- *
- * Brute oracle uses ONLY Mode B / Brute machinery — no GPU NGL, no SIDX, no
- * arena. Invariant: the oracle's pair kernel is the SAME pair_kernel
- * Mode B runs; only the search differs. */
-/* Mismatch print cap — shared between local and remote oracle paths so we
- * don't double the cap when both fire (e.g. multi-rank-with-oracle
- * runs the local path under NTask==1 dispatch and the remote path under
- * NTask>1). */
-static const long long kMismatchPrintCap = 1024;
 
-template <typename Spec>
-static void emit_oracle_mismatch_if_any(int rank, int active_slot,
-                                          const typename Spec::AccumData& tree,
-                                          const typename Spec::AccumData& brute,
-                                          const char *origin_tag,
-                                          long long *print_count)
-{
-    double resid = Spec::compare_accum(tree, brute);
-    if(!(resid <= Spec::accum_tolerance)) {  /* NaN-safe */
-        if(*print_count < kMismatchPrintCap) {
-            fprintf(stderr,
-                    "[mode_b ORACLE MISMATCH rank=%d caller=%s origin=%s "
-                    "active_slot=%d resid=%g (tol=%g)]\n",
-                    rank, Spec::loop_name, origin_tag, active_slot, resid,
-                    (double)Spec::accum_tolerance);
-            fflush(stderr);
-            (*print_count)++;
-            if(*print_count == kMismatchPrintCap) {
-                fprintf(stderr,
-                        "[mode_b ORACLE rank=%d caller=%s] mismatch print cap "
-                        "reached (%lld); suppressing further mismatches.\n",
-                        rank, Spec::loop_name, (long long)kMismatchPrintCap);
-                fflush(stderr);
-            }
-        }
-    }
-}
 
-/* ============================================================================
- * Iterative-oracle per-iter mismatch emit helpers.
- *
- * Note: per-iter compare must cover four things, not just
- * AccumData. These four helpers complement emit_oracle_mismatch_if_any
- * (which handles AccumData via Spec::compare_accum) with IterStatus
- * control-flow / radius / active-set-membership compare lines. All share
- * the kMismatchPrintCap counter via the caller-passed long long*.
- * ========================================================================== */
-template <typename Spec>
-static void emit_oracle_status_mismatch(int rank, int sg, int slot, int iter,
-                                          int prod_status, int oracle_status,
-                                          long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE STATUS MISMATCH rank=%d caller=%s sg=%d slot=%d "
-                "iter=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, slot, iter, prod_status, oracle_status);
-        fflush(stderr);
-        (*print_count)++;
-        if (*print_count == kMismatchPrintCap) {
-            fprintf(stderr,
-                    "[mode_b ORACLE rank=%d caller=%s] mismatch print cap "
-                    "reached (%lld); suppressing further mismatches.\n",
-                    rank, Spec::loop_name, (long long)kMismatchPrintCap);
-            fflush(stderr);
-        }
-    }
-}
 
-template <typename Spec>
-static void emit_oracle_radius_mismatch(int rank, int sg, int slot, int iter,
-                                          double h_prod, double h_oracle,
-                                          long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE RADIUS MISMATCH rank=%d caller=%s sg=%d slot=%d "
-                "iter=%d prod=%g oracle=%g (tol=%g)]\n",
-                rank, Spec::loop_name, sg, slot, iter, h_prod, h_oracle,
-                nlr_spec_radius_tolerance_v<Spec>);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
 
-template <typename Spec>
-static void emit_oracle_membership_count_mismatch(int rank, int sg, int iter,
-                                                    int n_prod, int n_oracle,
-                                                    long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE MEMBERSHIP COUNT MISMATCH rank=%d caller=%s sg=%d "
-                "iter=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, iter, n_prod, n_oracle);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
-
-template <typename Spec>
-static void emit_oracle_membership_slot_mismatch(int rank, int sg, int iter,
-                                                   int k,
-                                                   int slot_prod, int slot_oracle,
-                                                   long long *print_count)
-{
-    if (*print_count < kMismatchPrintCap) {
-        fprintf(stderr,
-                "[mode_b ORACLE MEMBERSHIP SLOT MISMATCH rank=%d caller=%s sg=%d "
-                "iter=%d k=%d prod=%d oracle=%d]\n",
-                rank, Spec::loop_name, sg, iter, k, slot_prod, slot_oracle);
-        fflush(stderr);
-        (*print_count)++;
-    }
-}
-
-template <typename Spec>
-static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const double *radii,
-                                         RunnerStageTimer *tim = nullptr)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-    using DeviceCtx  = typename Spec::DeviceContext;
-
-    const int N = args.num_active;
-    if(N <= 0) { return; }
-
-    /* Radii runner-staged and passed in; pointer is call-lifetime only. */
-    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
-
-    DeviceCtx ctx;
-    ctx.P         = args.P;
-    ctx.CellP     = args.CellP;
-    ctx.num_total = args.num_total;
-    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
-                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
-    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
-                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
-    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-        Spec::populate_device_context(args, ctx);
-    }
-    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
-
-    /* Freeze actives BEFORE drift (same snapshot for tree and brute). */
-    std::vector<ActiveData> actives(N);
-    build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs, actives.data());
-
-    /* Collect BOTH BEFORE any drift — preserves identical pre-drift state for
-     * each search backend. PHASE0 timing covers ONLY the Mode B path stages,
-     * not the Brute oracle (diagnostic-only, not production cost). */
-    std::vector<std::vector<int>> cand_modeB, cand_brute;
-    {
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
-        collect_candidates_pre_drift<Spec>(args, radii,
-                                            nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                            DispatchPath::ModeB_HostWalker, cand_modeB);
-    }
-    collect_candidates_pre_drift<Spec>(args, radii,
-                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                        DispatchPath::Brute_Oracle, cand_brute);
-
-    /* Drift the union. drift_particle's early-return on time1==time0 means
-     * order doesn't matter and duplicates are free. */
-    {
-        StageTimer t(tim ? &tim->dt_drift : nullptr);
-        lazy_drift_candidates<Spec>(cand_modeB);
-    }
-    lazy_drift_candidates<Spec>(cand_brute);
-
-    std::vector<AccumData> accums_modeB(N);
-    std::vector<AccumData> accums_brute(N);
-    /* ORDERING: for j-write Specs, the brute oracle pass must run BEFORE the
-     * tree pass so that brute reads the same pre-mutation j-state the tree
-     * pass starts from. With the previous (tree-first) order, dry-run blocked
-     * the brute's writes but did not restore the post-tree state, so brute
-     * read e.g. zeroed Mass / changed SwallowID and produced a different
-     * accumulator than tree -- a silent false-pass on the oracle whenever no
-     * actual j-writes happened in the test config.
-     * For non-j-write Specs the order is irrelevant; we use brute-first
-     * universally for one consistent oracle shape. */
-    DeviceCtx ctx_oracle = ctx;
-    if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-        Spec::set_oracle_brute_pass(ctx_oracle, true);
-    }
-    evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data(), EvalOMPPolicy::ForceSerialReference);
-    {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data(), EvalOMPPolicy::AllowProduction);
-    }
-
-    int rank = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    static long long s_mismatch_print_count = 0;
-    for(int aa = 0; aa < N; aa++) {
-        emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_modeB[aa],
-                                            accums_brute[aa], "self",
-                                            &s_mismatch_print_count);
-    }
-
-    /* Mode B path is the result. */
-    {
-        StageTimer t(tim ? &tim->dt_writeback : nullptr);
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
-        }
-    }
-    runner_emit_active_dumps<Spec>(args, accums_modeB.data(), actives.data(), "mode_b");
-}
 
 /* ============================================================================
  * Mode B remote (multi-rank) helpers
  *
- * STRONG INVARIANT (both oracle and non-oracle paths):
+ * STRONG INVARIANT:
  *   collect-all → drift-union → evaluate-all on each rank.
  *
  * On each rank, the local pool is walked TWICE per call: once for this
  * rank's own self-pair queries (its own actives), and once for queries
  * received from peers. Both candidate sets must be collected pre-drift,
  * then the drift covers their UNION (idempotent so duplicates are free),
- * then evaluation runs post-drift. The non-oracle path does NOT simplify
- * back to per-query drift — single shared structure, oracle off only
- * skips the brute candidate sets and the compare step.
+ * then evaluation runs post-drift.
  *
  * Sequence:
  *   stage 1 (active rank) build self radii, cs, frozen actives[]
  *   stage 2 (active rank) build envelopes, ALL peers in broadcast pattern
- *   stage 3 (this rank)   collect self_tree[, self_brute] pre-drift
+ *   stage 3 (this rank)   collect self candidates pre-drift
  *   stage 4 (collective)  exchange queries (peer-to-peer) -> recv envelopes
  *   stage 5 (this rank)   flatten envelopes to peer_actives[] + provenance[]
- *   stage 6 (this rank)   collect peer_tree[, peer_brute] pre-drift
- *   stage 7 (this rank)   drift UNION of (self_tree, self_brute, peer_tree,
- *                                          peer_brute)
- *   stage 8 (this rank)   evaluate self_tree[, self_brute]; oracle compare
- *                                  self before any remote merge so prints
- *                                  isolate local-pool walker bugs
- *   stage 9 (this rank)   evaluate peer_tree[, peer_brute]; oracle compare
- *                                  peer-side BEFORE reply transport (peer-
- *                                  rank prints isolate peer-pool bugs)
+ *   stage 6 (this rank)   collect peer candidates pre-drift
+ *   stage 7 (this rank)   drift the UNION of the self and peer candidate sets
+ *   stage 8 (this rank)   evaluate self candidates
+ *   stage 9 (this rank)   evaluate peer candidates
  *   stage 10 (collective) exchange replies (tree result is what ships)
  *   stage 11 (active rank) merge replies via Spec::merge_accum, ascending
  *                                  rank for FP-reproducible order
@@ -1658,12 +946,11 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
  *
  * Note: the host-frozen actives[] match Mode B /
  * legacy pack_query epoch, NOT Mode A's device-staged post-NGL-build
- * epoch. Oracle in this path is Mode B tree vs brute on the same frozen
- * query — it does NOT cross-validate against Mode A's active epoch.
+ * epoch — the two active epochs are not bit-equivalent.
  * ========================================================================== */
 
 /* ============================================================================
- * mode_b_remote_evaluate_into_buffer<Spec, ORACLE> — extracted helper.
+ * mode_b_remote_evaluate_into_buffer<Spec> — extracted helper.
  *
  * Mechanical refactor of the existing run_mode_b_remote_impl body, extracting
  * stages 1-12 (queries / collect / drift / evaluate / merge / replies / merge)
@@ -1685,11 +972,11 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
  *
  * Epoch order is preserved EXACTLY: build self/peer
  * queries -> collect all candidate sets pre-drift -> exchange -> drift union
- * -> brute-FIRST if oracle -> evaluate -> exchange replies -> merge replies
+ * -> evaluate -> exchange replies -> merge replies
  * in deterministic peer order. No re-derivation; line-for-line move from
  * the old impl.
  * ========================================================================== */
-template <typename Spec, RemoteHelperMode MODE>
+template <typename Spec>
 static void mode_b_remote_evaluate_into_buffer(
     const neighbor_loop_args& args,
     const double *radii,
@@ -1697,46 +984,24 @@ static void mode_b_remote_evaluate_into_buffer(
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    typename Spec::ActiveData *actives_out = nullptr, /* size = args.num_active OR nullptr */
-    RunnerStageTimer *tim = nullptr,
-    typename Spec::AccumData *accums_oracle_out = nullptr, /* OracleIterative only: brute accum output */
-    const typename Spec::DeviceContext *ctx_oracle = nullptr) /* OracleIterative brute context */
+    RunnerStageTimer *tim = nullptr)
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
-    using DeviceCtx     = typename Spec::DeviceContext;     /* needed for oracle ctx copies (Stages 8/9) */
+    using DeviceCtx     = typename Spec::DeviceContext;
     using Envelope      = NlrQueryEnvelope<ActiveData>;
     using ReplyEnvelope = NlrReplyEnvelope<AccumData>;
-    using DualReplyEnvelope = NlrDualReplyEnvelope<AccumData>;
 
     /* Mode predicates (single source of truth). Constexpr so the dead
      * branches are elided per instantiation. */
-    constexpr bool RUN_TREE         = (MODE == RemoteHelperMode::Production ||
-                                        MODE == RemoteHelperMode::OracleCompare ||
-                                        MODE == RemoteHelperMode::OracleIterative);
-    constexpr bool RUN_BRUTE        = (MODE == RemoteHelperMode::OracleCompare ||
-                                        MODE == RemoteHelperMode::OracleBrutePass ||
-                                        MODE == RemoteHelperMode::OracleIterative);
-    constexpr bool RUN_INLINE_COMPARE = (MODE == RemoteHelperMode::OracleCompare);
-    constexpr bool BRUTE_WRITES_OUT = (MODE == RemoteHelperMode::OracleBrutePass);
-    /* OracleIterative: collect both candidate sets in one epoch, output tree
-     * -> accums_out and brute -> accums_oracle_out separately (no inline compare). */
-    constexpr bool DUAL_OUT         = (MODE == RemoteHelperMode::OracleIterative);
-
     static_assert(std::is_trivially_copyable<Envelope>::value,
         "NlrQueryEnvelope must be trivially-copyable for byte-level MPI transfer");
     static_assert(std::is_trivially_copyable<ReplyEnvelope>::value,
         "NlrReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
-    static_assert(std::is_trivially_copyable<DualReplyEnvelope>::value,
-        "NlrDualReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
 
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
     const int rank = ThisTask;
-    /* Oracle under-route accumulator: reduced + hard-stopped at the collective
-     * end of this helper (every rank enters here → the Allreduce is symmetric). */
-    int local_underroute = 0;
-
     /* CallScalars and DeviceContext passed in by caller:
      *   - Iterative: driver-owned via NlrIterDriver, populated once at iter-0 entry.
      *   - Non-iterative wrapper: locally-owned, populated + RAII-cleaned by wrapper.
@@ -1768,11 +1033,11 @@ static void mode_b_remote_evaluate_into_buffer(
      *     PRESERVING specs (density, gradients, MFM hydro_force) the reorder is
      *     EXACTLY neutral. For mass-MUTATING specs a j crossing the Mass>0 gate
      *     during self eval could shift its peer-candidate membership — but those
-     *     specs are ALREADY order-dependent (see thermal_fb accum_tolerance) and
-     *     this stays within that tolerance regime, not a new exactness contract.
+     *     specs are ALREADY order-dependent, and this stays within that regime,
+     *     not a new exactness contract.
      * NO generic j-write-exactness claim is made. Any mass-mutating spec routed
-     * through streamed Mode-B at multi-round MUST be re-audited + oracle-checked
-     * (evrard, the validated case, is mass-preserving MFM). */
+     * through streamed Mode-B at multi-round MUST be re-audited (evrard, the
+     * validated case, is mass-preserving MFM). */
 
     /* The eligibility gate is RETIRED — EVERY Mode-B loop routes via
      * targeted export (per-type node band is cross-rank-fresh + dominates every
@@ -1837,14 +1102,14 @@ static void mode_b_remote_evaluate_into_buffer(
      * on the frozen actives[] snapshot (== the query the receiver walks) so the
      * candidate / export / receiver walks share one query SSOT. Broadcast specs
      * keep the plain candidate walk (they have no export walk to fuse). */
-    std::vector<std::vector<int>> cand_self_tree, cand_self_brute;
+    std::vector<std::vector<int>> cand_self_tree;
     if(N > 0) {
         if constexpr (targeted_export_ok) {
             if(nt > 1) {
-                /* want_cands: only RUN_TREE needs candidates; OracleBrutePass
-                 * (RUN_BRUTE-only) still needs the export CSR for the round loop,
+                /* want_cands: the tree walk needs candidates; the export CSR
+                 * for the round loop is built regardless,
                  * so the fused walk runs with cand_out=nullptr there. */
-                const bool want_cands = RUN_TREE;
+                const bool want_cands = true;
                 if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
                 csr_rec_off.assign(N + 1, 0);
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
@@ -1854,7 +1119,7 @@ static void mode_b_remote_evaluate_into_buffer(
                  * serial prefix-sum then assembles the active-ordered CSR
                  * BYTE-IDENTICALLY to the serial build (per-active walk order
                  * fixed; peers ascending within an active; node order = walk
-                 * append order). The OracleBrutePass export walk (want_cands
+                 * append order). The export walk (want_cands
                  * false) stays serial. */
                 const bool use_omp_self = want_cands && nlr_modeb_use_omp(N, modeb_nthreads);
                 if(use_omp_self) {
@@ -1970,7 +1235,7 @@ static void mode_b_remote_evaluate_into_buffer(
                 }
                 diag_csr_bytes = (long long)csr_recs.size() * (long long)sizeof(FusedExportRec)
                                + (long long)csr_nodes.size() * (long long)sizeof(int);
-            } else if (RUN_TREE) {
+            } else {
                 /* single rank: no peers to export to → plain candidate walk. */
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
                 int tu_self = 0;
@@ -1980,7 +1245,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                                     cand_self_tree, drift_sink, &tu_self);
                 if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
             }
-        } else if (RUN_TREE) {
+        } else {
             StageTimer t(tim ? &tim->dt_collect : nullptr);
             int tu_self = 0;
             collect_candidates_pre_drift<Spec>(args, radii,
@@ -1988,12 +1253,6 @@ static void mode_b_remote_evaluate_into_buffer(
                                                 DispatchPath::ModeB_HostWalker,
                                                 cand_self_tree, drift_sink, &tu_self);
             if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
-        }
-        if (RUN_BRUTE) {
-            collect_candidates_pre_drift<Spec>(args, radii,
-                                                neighbor_type_mask,
-                                                DispatchPath::Brute_Oracle,
-                                                cand_self_brute);
         }
     }
 
@@ -2003,55 +1262,14 @@ static void mode_b_remote_evaluate_into_buffer(
      * candidate drifts once — identical to the old combined union drift. */
     {
         StageTimer t(tim ? &tim->dt_drift : nullptr);
-        if (RUN_TREE  && N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
-        if (RUN_BRUTE && N > 0) lazy_drift_candidates<Spec>(cand_self_brute);
+        if (N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
     }
 
-    /* Stage 8: evaluate SELF post-drift.
-     *   Production:       tree -> accums_out.
-     *   OracleCompare:    brute dry-run (own buffer) -> tree -> accums_out, emit
-     *                     per-slot inline compare.
-     *   OracleBrutePass:  brute -> accums_out (caller-owned ctx already
-     *                     brute-pass-guarded). No tree, no compare.
-     * Brute-FIRST ordering: dry-run BEFORE tree so brute reads pre-mutation
-     * j-state; without it, tree's j-writes leak into brute's read. */
-    std::vector<AccumData> accums_self_brute;
+    /* Stage 8: evaluate SELF post-drift -> accums_out. */
     if(N > 0) {
-        if constexpr (RUN_INLINE_COMPARE) {
-            accums_self_brute.assign(N, AccumData{});
-            DeviceCtx ctx_oracle_self = ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_self, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
-                                              cand_self_brute, accums_self_brute.data(), EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (BRUTE_WRITES_OUT) {
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_brute, accums_out, EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (DUAL_OUT) {
-            DeviceCtx ctx_oracle_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_dual, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_dual, actives.data(), N,
-                                              cand_self_brute, accums_oracle_out, EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (RUN_TREE) {
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
-        }
-        if constexpr (RUN_INLINE_COMPARE) {
-            static long long s_self_mismatch_count = 0;
-            for(int aa = 0; aa < N; aa++) {
-                emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_out[aa],
-                                                    accums_self_brute[aa], "self",
-                                                    &s_self_mismatch_count);
-            }
-        }
+        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+                                          cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
     }
 
     /* ---- PEER round loop (streaming). Build a BufferSize-bounded batch of
@@ -2070,19 +1288,13 @@ static void mode_b_remote_evaluate_into_buffer(
      * peers. The `else` broadcast arm (n_nodes==0 to all peers) is compile-time-DEAD
      * cleanup debt, pending removal. Self-pair handled above; self entry stays
      * empty. */
-    /* (targeted_export_ok, jscale, exporter hoisted above Stage 3 for the fused walk.)
-     * Oracle under-route probes (oracle modes only): ALSO ship each query to the
-     * peers targeting did NOT select, flagged probe=1 / n_nodes=0; a probe that
-     * finds matches = SENDER UNDER-ROUTE, alarmed receiver-side. Probes count
-     * against the same cap. Production sends NO probes. */
-    constexpr bool ORACLE_PROBES = (MODE != RemoteHelperMode::Production);
-
+    /* targeted_export_ok, jscale and exporter are hoisted above Stage 3 for
+     * the fused walk. */
     /* Cap = legacy All.BunchSize analog: BufferSize / (query env + reply env).
      * Our NlrQueryEnvelope IS data_index+data_nodelist+ActiveData fused, so
      * counting envelopes == legacy counting DataIndexTable entries. (No env var;
      * All.BufferSize is the existing parameterfile parameter, default 100MB.) */
-    constexpr size_t kReplyBytes = DUAL_OUT ? sizeof(DualReplyEnvelope)
-                                            : sizeof(ReplyEnvelope);
+    constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
     long long bunch = ((long long)All.BufferSize * 1024 * 1024) /
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
@@ -2116,7 +1328,6 @@ static void mode_b_remote_evaluate_into_buffer(
                     long long add = 0;
                     for(int r = r0; r < r1; r++)
                         add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;
-                    if constexpr (ORACLE_PROBES) add += (long long)(nt - 1) - (long long)(r1 - r0);
                     if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active",
@@ -2125,9 +1336,7 @@ static void mode_b_remote_evaluate_into_buffer(
                             "oversized round — cap ineffective for this call (raise BufferSize).",
                             Spec::loop_name, add, add * kEnvPairBytes, bunch);
                     }
-                    /* commit: chunked envelopes per exported peer (CSR records are
-                     * peer-ascending); an under-route probe for each zero-export
-                     * peer (oracle modes only). */
+                    /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
                     int rr = r0;
                     for(int p = 0; p < nt; p++) {
                         if(p == rank) continue;
@@ -2141,8 +1350,7 @@ static void mode_b_remote_evaluate_into_buffer(
                              * disjoint subtrees → the slot-keyed reply merge sums their
                              * partial results without double counting. All chunks of a
                              * (query,peer) group land in THIS round (all-or-nothing
-                             * above), so the group stays contiguous for peer_group_first
-                             * / the oracle group-sum compare. */
+                             * above), so each group stays contiguous. */
                             for(int c = 0; c < nn; c += NODELISTLENGTH) {
                                 Envelope env;
                                 env.origin_slot = aa;
@@ -2152,23 +1360,13 @@ static void mode_b_remote_evaluate_into_buffer(
                                     env.NodeList[cnt] = nd[c + cnt];
                                 }
                                 env.n_nodes = cnt;
-                                env.oracle_untargeted_probe = 0;
+                                env.reserved_wire_padding = 0;
                                 for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                                 env.active = actives[aa];
                                 queries_per_peer[p].push_back(env);
                             }
                             rr++;
                             continue;
-                        }
-                        if constexpr (ORACLE_PROBES) {
-                            Envelope env;
-                            env.origin_slot = aa;
-                            env.origin_rank = rank;
-                            env.n_nodes = 0;
-                            env.oracle_untargeted_probe = 1;
-                            for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                            env.active = actives[aa];
-                            queries_per_peer[p].push_back(env);
                         }
                     }
                     round_env_count += add;
@@ -2192,7 +1390,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         env.origin_slot = aa;
                         env.origin_rank = rank;
                         env.n_nodes = 0;
-                        env.oracle_untargeted_probe = 0;   /* legit broadcast, matches expected */
+                        env.reserved_wire_padding = 0;   /* legit broadcast, matches expected */
                         for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
                         env.active = actives[aa];
                         queries_per_peer[p].push_back(env);
@@ -2222,8 +1420,7 @@ static void mode_b_remote_evaluate_into_buffer(
          * NTask. Peers are consumed in ascending rank order, so the
          * concatenated per-group evaluation sequence — and the post-loop reply
          * merge — keep the exact pre-group order (matters for j-writing specs). */
-        using XReply = typename std::conditional<DUAL_OUT, DualReplyEnvelope,
-                                                 ReplyEnvelope>::type;
+        using XReply = ReplyEnvelope;
         ModeBBoundedExchange<Envelope, XReply> xch;
         {
             StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
@@ -2260,11 +1457,9 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<Provenance> peer_provenance;
     /* Parallel to peer_actives[k]: the exported start-node list carried in the
      * received envelope, flattened K*NODELISTLENGTH, so the receiver walk
-     * (collect_candidates_for_remote_queries) resumes from those nodes; plus
-     * the oracle under-route probe flag (alarmed after Stage 6). */
+     * (collect_candidates_for_remote_queries) resumes from those nodes. */
     std::vector<int> peer_nodelist_flat;
     std::vector<int> peer_nnodes;
-    std::vector<int> peer_probe;
     size_t total_recv = 0, total_recv_bytes = 0;
     for(size_t gi = 0; gi < group_peers.size(); gi++) {
         total_recv += group_queries[gi].size();
@@ -2276,7 +1471,6 @@ static void mode_b_remote_evaluate_into_buffer(
     peer_provenance.reserve(total_recv);
     peer_nodelist_flat.reserve(total_recv * NODELISTLENGTH);
     peer_nnodes.reserve(total_recv);
-    peer_probe.reserve(total_recv);
     for(size_t gi = 0; gi < group_peers.size(); gi++) {
         const int p = group_peers[gi];
         for(int qi = 0; qi < (int)group_queries[gi].size(); qi++) {
@@ -2298,168 +1492,52 @@ static void mode_b_remote_evaluate_into_buffer(
             peer_actives.push_back(env.active);
             peer_provenance.push_back({(int)gi, p, qi, env.origin_slot, p});
             peer_nnodes.push_back(env.n_nodes);
-            peer_probe.push_back(env.oracle_untargeted_probe);
             for(int t = 0; t < NODELISTLENGTH; t++) peer_nodelist_flat.push_back(env.NodeList[t]);
         }
     }
-    /* Chunk groups: a (query,peer) needing >NODELISTLENGTH start-nodes arrives
-     * as CONSECUTIVE envelopes (Stage 2 pushes them contiguously; the flatten
-     * above preserves order). Production sums their disjoint partial accums —
-     * correct. The ORACLE brute walk, however, answers the FULL query per
-     * envelope; evaluating it per chunk double-counts on the merge (and makes
-     * per-envelope compare partial-vs-full). So brute runs only on each
-     * group's FIRST chunk; continuations reply zero (exact under summation). */
-    std::vector<int> peer_group_first(peer_actives.size(), 1);
-    for(size_t k = 1; k < peer_provenance.size(); k++) {
-        if(peer_provenance[k].source_peer == peer_provenance[k-1].source_peer &&
-           peer_provenance[k].origin_slot == peer_provenance[k-1].origin_slot) {
-            peer_group_first[k] = 0;
-        }
-    }
-
     /* Note: receiver-side binding of peer_actives (and per-eval-pass rebinding
      * of both self actives and peer actives) is performed inside
      * evaluate_pairs_post_drift, gated on
      * nlr_spec_has_bind_active_to_eval_context_v<Spec>. The bind runs once
-     * per active per eval pass with the EXACT eval ctx, so oracle brute-pass
-     * vs tree-pass and Production vs Oracle ctx copies are all bound
-     * correctly. No standalone post-flatten rebind needed here. */
+     * per active per eval pass with the EXACT eval ctx. No standalone
+     * post-flatten rebind needed here. */
 
     /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
-    std::vector<std::vector<int>> cand_peer_tree, cand_peer_brute;
-    if (RUN_TREE) {
+    std::vector<std::vector<int>> cand_peer_tree;
+    {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         int tu_recv = 0;
         collect_candidates_for_remote_queries<Spec>(peer_actives,
                                                      peer_nodelist_flat, peer_nnodes,
-                                                     peer_group_first,
                                                      neighbor_type_mask,
                                                      DispatchPath::ModeB_HostWalker,
                                                      cand_peer_tree, drift_sink, &tu_recv);
         if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
-    }
-    if (RUN_BRUTE) {
-        collect_candidates_for_remote_queries<Spec>(peer_actives,
-                                                     peer_nodelist_flat, peer_nnodes,
-                                                     peer_group_first,
-                                                     neighbor_type_mask,
-                                                     DispatchPath::Brute_Oracle,
-                                                     cand_peer_brute);
-    }
-
-    /* Oracle SENDER-UNDER-ROUTE detection: a probe (peer NOT selected by the
-     * sender's targeted export) that finds matches in my pool means the
-     * sender's routing missed a physically-required (query,rank) pair — silent
-     * wrong physics in production. Under-route is the one failure we cannot let
-     * pass as "looked fine in logs": accumulate here, then HARD-STOP at the
-     * collective end of the helper (reduced across ranks). The oracle run's
-     * physics stays correct (the probe's matches were evaluated + merged like a
-     * broadcast reply), so the run reaches the safe stop point cleanly. */
-    if constexpr (MODE != RemoteHelperMode::Production) {
-        static long long s_underroute_alarms = 0;
-        const std::vector<std::vector<int>>& probe_cands =
-            (!cand_peer_tree.empty()) ? cand_peer_tree : cand_peer_brute;
-        const int KP = (int)probe_cands.size();
-        for(int k = 0; k < KP && k < (int)peer_probe.size(); k++) {
-            if(peer_probe[k] && !probe_cands[k].empty()) {
-                if(s_underroute_alarms < 20) {
-                    fprintf(stderr, "[mode_b ORACLE SENDER-UNDER-ROUTE rank=%d caller=%s] "
-                            "untargeted probe from rank=%d slot=%d matched %d local candidates "
-                            "— targeted export MISSED this (query,rank) pair.\n",
-                            rank, Spec::loop_name, peer_provenance[k].source_peer,
-                            peer_provenance[k].origin_slot, (int)probe_cands[k].size());
-                    fflush(stderr);
-                }
-                s_underroute_alarms++;
-                local_underroute++;
-            }
-        }
     }
 
     /* Stage 7 (peer): drift THIS round's peer candidate sets (self candidates
      * were drifted once before the round loop). Idempotent to All.Ti_Current. */
     {
         StageTimer t(tim ? &tim->dt_drift : nullptr);
-        if (RUN_TREE)  lazy_drift_candidates<Spec>(cand_peer_tree);
+        lazy_drift_candidates<Spec>(cand_peer_tree);
     }
-    if (RUN_BRUTE)     lazy_drift_candidates<Spec>(cand_peer_brute);
 
-    /* Stage 9: evaluate PEER queries post-drift.
-     *   Production / OracleCompare: tree result -> peer_replies, shipped
-     *     back to home rank.
-     *   OracleBrutePass:            brute result -> peer_replies, shipped
-     *     back to home rank — peer-side brute trajectory for iterative
-     *     oracle.
-     *   OracleIterative:            brute -> peer_replies_oracle; tree ->
-     *     peer_replies; both are exchanged together in one dual payload. */
+    /* Stage 9: evaluate PEER queries post-drift -> peer_replies, shipped back
+     * to the home rank. */
     const int K = (int)peer_actives.size();
     std::vector<AccumData> peer_replies(K);
-    std::vector<AccumData> peer_replies_brute;
-    std::vector<AccumData> peer_replies_oracle;
     if(K > 0) {
-        if constexpr (RUN_INLINE_COMPARE) {
-            peer_replies_brute.assign(K, AccumData{});
-            DeviceCtx ctx_oracle_peer = ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_peer, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_peer, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies_brute.data(), EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (BRUTE_WRITES_OUT) {
-            /* Caller's ctx is already brute-pass-guarded; peer-side brute
-             * replies fill peer_replies directly (will then exchange and
-             * merge into accums_out alongside the self-side brute result). */
-            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies.data(), EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (DUAL_OUT) {
-            /* OracleIterative: peer brute -> peer_replies_oracle, peer tree
-             * -> peer_replies. Brute first for j-write specs. */
-            peer_replies_oracle.assign(K, AccumData{});
-            DeviceCtx ctx_oracle_peer_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
-            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
-                Spec::set_oracle_brute_pass(ctx_oracle_peer_dual, true);
-            }
-            evaluate_pairs_post_drift<Spec>(ctx_oracle_peer_dual, peer_actives.data(), K,
-                                              cand_peer_brute, peer_replies_oracle.data(), EvalOMPPolicy::ForceSerialReference);
-        }
-        if constexpr (RUN_TREE) {
-            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-            if((long long)K > eval_peer_work_peak) eval_peer_work_peak = K;
-            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_tree, peer_replies.data(), EvalOMPPolicy::AllowProduction);
-        }
-        if constexpr (RUN_INLINE_COMPARE) {
-            /* Compare per chunk GROUP: sum the tree partials over the group's
-             * consecutive chunks (disjoint subtrees), then compare against the
-             * group-first brute (the only chunk that ran the full-query brute).
-             * Per-chunk compare would be partial-vs-full = guaranteed false
-             * mismatch on any multi-chunk query. */
-            static long long s_peer_mismatch_count = 0;
-            int k = 0;
-            while(k < K) {
-                AccumData tree_sum = peer_replies[k];
-                int kk = k + 1;
-                while(kk < K && !peer_group_first[kk]) {
-                    Spec::merge_accum(tree_sum, peer_replies[kk]);
-                    kk++;
-                }
-                emit_oracle_mismatch_if_any<Spec>(rank, peer_provenance[k].origin_slot,
-                                                    tree_sum,
-                                                    peer_replies_brute[k],
-                                                    "peer", &s_peer_mismatch_count);
-                k = kk;
-            }
-        }
+        StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+        if((long long)K > eval_peer_work_peak) eval_peer_work_peak = K;
+        evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
+                                          cand_peer_tree, peer_replies.data(), EvalOMPPolicy::AllowProduction);
     }
 
     /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
      * each received query envelope), unflatten into per-peer arrays via the
      * provenance map, then send THIS group's replies — after which the group's
      * buffers are released (the whole point of the group staging). Production
-     * and dual-oracle replies share one payload type (XReply), so there is one
+     * replies share one payload type (XReply), so there is one
      * reply exchange per group, never two with identical MPI tags. */
     {
         std::vector<std::vector<XReply>> replies_for_group(group_peers.size());
@@ -2471,12 +1549,7 @@ static void mode_b_remote_evaluate_into_buffer(
             XReply& re = replies_for_group[pv.source_gidx][pv.source_qi];
             re.origin_slot = pv.origin_slot;
             re.origin_rank = pv.origin_rank;
-            if constexpr (DUAL_OUT) {
-                re.accum_prod   = peer_replies[k];
-                re.accum_oracle = peer_replies_oracle[k];
-            } else {
-                re.accum = peer_replies[k];
-            }
+            re.accum = peer_replies[k];
         }
         StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
         /* send_group_replies posts the reply Isends and waits them in finish();
@@ -2520,14 +1593,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         /* skip: continuing would merge into accums_out[slot] with slot OOB. */
                         endrun(81224); continue;
                     }
-                    if constexpr (DUAL_OUT) {
-                        if (N > 0 && accums_oracle_out != nullptr) {
-                            Spec::merge_accum(accums_out[slot], re.accum_prod);
-                            Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
-                        }
-                    } else {
-                        Spec::merge_accum(accums_out[slot], re.accum);
-                    }
+                    Spec::merge_accum(accums_out[slot], re.accum);
                 }
             }
         }
@@ -2592,33 +1658,6 @@ static void mode_b_remote_evaluate_into_buffer(
         fflush(stdout);
     }
 
-    /* Optionally export the actives[] snapshot to caller for post-writeback
-     * diagnostic emit (non-iter dump ordering must be
-     * apply_active_writeback FIRST, then runner_emit_active_dumps — the
-     * original timing preserved by exporting actives + letting wrapper emit AFTER its
-     * writeback loop). Iter dispatch caller passes nullptr — diagnostic
-     * plumbing for the iterative path is not yet implemented. */
-    if (actives_out != nullptr && N > 0) {
-        for (int aa = 0; aa < N; aa++) actives_out[aa] = actives[aa];
-    }
-
-    /* Oracle under-route HARD-STOP (collective: every rank reaches here). Any
-     * rank that saw an untargeted probe match means targeted export is
-     * incomplete — a correctness-contract violation, not a warning. Reduce and
-     * stop all ranks together. Only compiled/run in oracle modes. */
-    if constexpr (MODE != RemoteHelperMode::Production) {
-        int global_underroute = 0;
-        MPI_Allreduce(&local_underroute, &global_underroute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(global_underroute > 0) {
-            if(rank == 0) {
-                fprintf(stderr, "[mode_b ORACLE SENDER-UNDER-ROUTE FATAL caller=%s] targeted export "
-                        "missed physically-required (query,rank) pairs (see per-rank lines above). "
-                        "Mode-B targeted export is INCOMPLETE — stopping.\n", Spec::loop_name);
-                fflush(stderr);
-            }
-            endrun(81225);
-        }
-    }
 
     /* End of helper. Caller decides whether to call apply_active_writeback
      * (final-only for iterative; per-call for non-iterative) and whether
@@ -2627,19 +1666,17 @@ static void mode_b_remote_evaluate_into_buffer(
 }
 
 /* ============================================================================
- * run_mode_b_remote_impl<Spec, ORACLE> — non-iterative thin wrapper.
+ * run_mode_b_remote_impl<Spec> — non-iterative thin wrapper.
  *
  * Allocates per-call AccumData buffer, calls helper, runs final
- * apply_active_writeback + active_dumps emit. Behavior is byte-identical to
- * the earlier monolithic impl — same epoch order, same oracle handling,
- * same writeback per active.
+ * apply_active_writeback + active_dumps emit. Same epoch order and same
+ * writeback per active as the earlier monolithic impl.
  * ========================================================================== */
-template <typename Spec, bool ORACLE>
+template <typename Spec>
 static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double *radii,
                                    RunnerStageTimer *tim = nullptr)
 {
     using AccumData    = typename Spec::AccumData;
-    using ActiveData   = typename Spec::ActiveData;
     using DeviceCtx    = typename Spec::DeviceContext;
 
     const int N = args.num_active;
@@ -2678,23 +1715,11 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         Spec::zero_accum(accums_self[aa]);
     }
 
-    /* Caller-owned actives buffer for post-writeback diagnostic emit.
-     * Helper fills this when actives_out != nullptr; earlier emit ordering
-     * (apply_active_writeback FIRST, runner_emit_active_dumps SECOND) is
-     * preserved by emitting from this buffer AFTER the writeback loop below. */
-    std::vector<ActiveData> actives_for_dumps(N);
-
-    /* Helper runs Stages 1-12; writeback + dumps are the wrapper's
-     * responsibility (preserves the earlier timing). */
-    /* SSOT extension: helper takes a RemoteEvalMode enum
-     * (Production / OracleCompare / OracleBrutePass). Non-iter wrapper
-     * keeps the legacy bool ORACLE template parameter and translates. */
-    constexpr RemoteHelperMode MODE = ORACLE ? RemoteHelperMode::OracleCompare
-                                            : RemoteHelperMode::Production;
-    mode_b_remote_evaluate_into_buffer<Spec, MODE>(args, radii, cs, ctx,
+    /* Helper runs Stages 1-12; writeback is the wrapper's responsibility
+     * (preserves the earlier timing). */
+    mode_b_remote_evaluate_into_buffer<Spec>(args, radii, cs, ctx,
                                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                                        (N > 0) ? accums_self.data() : nullptr,
-                                                       (N > 0) ? actives_for_dumps.data() : nullptr,
                                                        tim);
 
     /* Stage 12 final: writeback per active. */
@@ -2705,22 +1730,12 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         }
     }
 
-    /* Post-writeback diagnostic emit (env-gated; original ordering restored). */
-    if (N > 0) {
-        runner_emit_active_dumps<Spec>(args, accums_self.data(),
-                                         actives_for_dumps.data(), "mode_b");
-    }
 }
 
 template <typename Spec>
 static void run_mode_b_remote(const neighbor_loop_args& args, const double *radii,
                               RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args, radii, tim);
-}
-template <typename Spec>
-static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const double *radii,
-                                          RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args, radii, tim);
+    run_mode_b_remote_impl<Spec>(args, radii, tim);
 }
 
 /* ============================================================================
@@ -2866,7 +1881,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
          * set external_csr. Compile-time enforcement is impossible since
          * external_csr is a runtime args field, not a Spec constexpr.
          *
-         * All checks are UNCONDITIONAL (not GIZMO_VERBOSE_DIAG-gated):
+         * All checks are UNCONDITIONAL (never diagnostic-gated):
          * external CSR injection is a sharp tool, contract violations
          * cause silent wrong-particle writeback (kernel stages for
          * external_csr->active_indices[aa] but writeback applies
@@ -2990,38 +2005,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         }
     }
 
-    /* (5) Optional diagnostic dumps. Order matches legacy whole-log
-     * shape: NB lines first (legacy emitted from sink_environment_gpu.cc
-     * BEFORE returning to sink_environment.cc, where the accumulator dump
-     * fired), then accumulator lines. NB dump is Mode A only; the GPU CSR
-     * host-copy is allocated only when its env gate is on (zero overhead
-     * off). Accumulator dump preserves legacy line shape. */
-    if constexpr (spec_has_dump_neighbor_list<Spec>::value) {
-        if(gizmo_nlr_xval_nb_dump_enabled() && gnl.total_pairs > 0) {
-            std::vector<int> nbrs_host((size_t)gnl.total_pairs);
-            gpu_ngb_copy_neighbors_to_host(&gnl, nbrs_host.data());
-            int64_t *offsets = gnl.offsets;
-            int rank = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            for(int aa = 0; aa < N; aa++) {
-                NeighborListDumpView<Spec> v;
-                v.rank          = rank;
-                v.origin_rank   = rank;
-                v.origin_slot   = aa;
-                v.active_slot   = aa;
-                v.path          = "gpu_ngl";
-                v.call_id       = 1;
-                v.args          = &args;
-                v.active        = &d_actives[aa];
-                v.candidate_ids = nbrs_host.data() + offsets[aa];
-                /* per-active neighbor count is bounded by num_total < 2^31 */
-                v.n_candidates  = (int)(offsets[aa + 1] - offsets[aa]);
-                Spec::diagnostic_dump_neighbor_list(v);
-            }
-            std::fflush(stdout);
-        }
-    }
-    runner_emit_active_dumps<Spec>(args, d_accums, d_actives, "gpu_ngl");
 
     /* Cleanup. SIDX cache pointer passed so the free leaves cached storage
      * intact for sink_feed/sink_swk reuse (matches existing
@@ -3272,35 +2255,29 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     /* ---- Dispatch ----
      *
      * Selection precedence (highest first):
-     *   1. GIZMO_NLR_FORCE_MODE=A → Mode A unconditionally.
-     *   2. GIZMO_NLR_FORCE_MODE=B → Mode B (local if NTask==1, remote else).
+     *   1. args.dispatch_override = A -> Mode A unconditionally.
+     *   2. args.dispatch_override = B -> Mode B (local if NTask==1, remote else).
      *   3. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
      *      max_active<=TM) → Mode B; else Mode A. Hierarchy of TS/TM:
-     *      per-loop env > global env > Spec::modeb_threshold_{sum,max}
-     *      constexpr defaults (64/64 today).
-     *
-     * Force-mode conflict cases (both old and new vars set, both old vars
-     * set together, invalid value) are caught and endrun'd centrally inside
-     * gizmo_nlr_force_mode(); see the env-config block earlier in this TU.
+     *      parameterfile NeighborLoopModeBThreshold{Sum,Max} >
+     *      Spec::modeb_threshold_{sum,max} constexpr defaults (64/64 today).
+     *      Setting the parameterfile pair above every active count selects
+     *      Mode B for the whole run; setting it to 0 selects Mode A.
      *
      * Note (active-epoch caveat): Mode B host-frozen actives[] are
      * NOT bit-equivalent to Mode A's device-staged post-neighbor-list-build
-     * actives. Oracle in this dispatch is Mode B tree vs Mode B brute on the
-     * same frozen query — it does NOT cross-validate Mode A. Mode A vs
-     * Mode B active-epoch consistency is a separate concern, deferred.
+     * actives. The two modes therefore need not agree bit-for-bit on which
+     * particles a call treats as active; consistency between them is a
+     * property of the dispatch policy, not of this helper.
      */
-    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive.
+    /* Dispatch priority: args.dispatch_override > adaptive threshold.
      * The args field is the corridor mode-decision hook (hydro_corridor.cc): when
      * a corridor consumer sets this to force coherent Mode A or Mode B across the
      * whole hydro corridor (cellcorrections/gradients/hydro_force), the per-call
-     * override wins over env vars so corridor coherence is enforced, not advisory. */
-    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
-                                      ? args.dispatch_override
-                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
+     * override wins so corridor coherence is enforced, not advisory. */
+    const NlrForceMode force_mode = args.dispatch_override;
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
-    const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
-                            gizmo_nlr_oracle_enabled_for(Spec::loop_name);
 
     /* PHASE0 timing scaffolding. Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the
@@ -3314,7 +2291,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const double t_runner_start = phase0_on ? MPI_Wtime() : 0.0;
 
     /* Threshold dispatch. Allreduce sum + max of args.num_active.
-     * Skipped when force-mode envs are set (cheap path).
+     * Skipped when the caller supplied a dispatch override (cheap path).
      * PHASE0 num_active_global is captured here when the threshold path
      * already did the Allreduce; on force paths an extra Allreduce is done
      * ONLY when phase0_on. */
@@ -3340,11 +2317,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         phase0_sum_active = sum_act;
     }
-    if(force_b) {
-        nlr_abort_if_forced_modeb_too_large(
-            Spec::loop_name, args.num_active, phase0_sum_active, oracle_on);
-    }
-
     /* Globally-zero-active call: do NO neighbor work. phase0_sum_active is the
      * dispatch Allreduce of active particles (set on the threshold + force-B
      * paths), so it is identical on every rank -> this return is collective-
@@ -3385,9 +2357,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
                 force_a       ? "force" :
                 force_b       ? "force" :
                                 "threshold";
-            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d oracle=%d]\n",
+            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d]\n",
                     Spec::loop_name, nlr_path_label(plan.path), src,
-                    NTask, args.num_active, (int)oracle_on);
+                    NTask, args.num_active);
             fflush(stderr);
         }
     }
@@ -3499,17 +2471,13 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     /* ---- Path dispatch ---- */
     switch(plan.path) {
         case NeighborLoopPlan::Path::ModeA_GpuNgl:
-            /* Oracle on Mode A is a no-op (oracle compares Mode B vs Brute;
-             * no Brute-vs-Mode-A oracle in scope). */
             run_mode_a<Spec>(effective_args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Local:
-            if(oracle_on) run_mode_b_local_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
-            else          run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Remote:
-            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
-            else          run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
             break;
     }
 
@@ -3662,61 +2630,6 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
         }
         local_active_total += n;
     }
-
-    /* ========================================================================
-     * Iterative-oracle field init.
-     *
-     * `oracle_enabled` is set from the same env-gate the non-iter oracle
-     * uses; Mode A iterative oracle is hard-stubbed in the outer body
-     * (run_neighbor_loop_iterative) BEFORE this constructor runs,
-     * so reaching here with oracle_enabled=true implies Mode B production
-     * path. Vectors stay empty when oracle_enabled=false (UVM frees in
-     * dtor are guarded on pointer state, so empty vectors are safe).
-     * ====================================================================== */
-    oracle_enabled = gizmo_nlr_oracle_enabled_global() ||
-                     gizmo_nlr_oracle_enabled_for(Spec::loop_name);
-    if (oracle_enabled) {
-        scratch_oracle_uvm    .assign(args.num_subgroups, nullptr);
-        accum_oracle_uvm      .assign(args.num_subgroups, nullptr);
-        radii_oracle_uvm      .assign(args.num_subgroups, nullptr);
-        active_set_oracle_uvm .assign(args.num_subgroups, nullptr);
-        active_set_oracle_size.assign(args.num_subgroups, 0);
-        status_prod_uvm       .assign(args.num_subgroups, nullptr);
-        status_oracle_uvm     .assign(args.num_subgroups, nullptr);
-        new_h_prod_uvm        .assign(args.num_subgroups, nullptr);
-        new_h_oracle_uvm      .assign(args.num_subgroups, nullptr);
-
-        for (int sg = 0; sg < args.num_subgroups; sg++) {
-            const NlrSubgroup& sgr = args.subgroups[sg];
-            const int n = sgr.num_active_local;
-            active_set_oracle_size[sg] = n;
-            if (n <= 0) continue;
-
-            scratch_oracle_uvm   [sg] = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(IterScratch));
-            accum_oracle_uvm     [sg] = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(AccumData));
-            radii_oracle_uvm     [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-            active_set_oracle_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            status_prod_uvm      [sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            status_oracle_uvm    [sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-            new_h_prod_uvm       [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-            new_h_oracle_uvm     [sg] = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(double));
-
-            std::memset(scratch_oracle_uvm[sg], 0, n * sizeof(IterScratch));
-
-            neighbor_loop_args sub = args;
-            sub.active_list = sgr.active_indices;
-            sub.num_active  = n;
-
-            for (int slot = 0; slot < n; slot++) {
-                radii_oracle_uvm[sg][slot]      = Spec::search_radius(sub, slot, sgr.active_indices[slot]);
-                active_set_oracle_uvm[sg][slot] = slot;
-                status_prod_uvm[sg][slot]       = static_cast<int>(IterStatus::NeedsMore);
-                status_oracle_uvm[sg][slot]     = static_cast<int>(IterStatus::NeedsMore);
-                new_h_prod_uvm[sg][slot]        = radii_uvm[sg][slot];
-                new_h_oracle_uvm[sg][slot]      = radii_oracle_uvm[sg][slot];
-            }
-        }
-    }
 }
 
 template <typename Spec>
@@ -3739,15 +2652,6 @@ NlrIterDriver<Spec>::~NlrIterDriver()
     if (ctx_initialized) {
         if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
             Spec::cleanup_device_context(args, ctx);
-        }
-    }
-
-    /* Iterative-oracle ctx_oracle cleanup. Independent
-     * lifecycle from production ctx: own populate + own cleanup. Guarded
-     * on ctx_oracle_initialized — only fire if init actually completed. */
-    if (ctx_oracle_initialized) {
-        if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
-            Spec::cleanup_device_context(args, ctx_oracle);
         }
     }
 
@@ -3801,21 +2705,6 @@ NlrIterDriver<Spec>::~NlrIterDriver()
         if (accum_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(accum_uvm[sg]);
         if (radii_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm[sg]);
         if (active_set_uvm[sg]) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active_set_uvm[sg]);
-    }
-
-    /* Iterative-oracle UVM frees. Vectors are sized to
-     * num_subgroups only when oracle_enabled was true at construction; if
-     * empty, the per-sg loop iterates zero times. Pointers are nullptr by
-     * default — kokkos_free guarded on non-null. */
-    for (size_t sg = 0; sg < scratch_oracle_uvm.size(); sg++) {
-        if (scratch_oracle_uvm[sg])    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_oracle_uvm[sg]);
-        if (accum_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(accum_oracle_uvm[sg]);
-        if (radii_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oracle_uvm[sg]);
-        if (active_set_oracle_uvm[sg]) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active_set_oracle_uvm[sg]);
-        if (status_prod_uvm[sg])       Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(status_prod_uvm[sg]);
-        if (status_oracle_uvm[sg])     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(status_oracle_uvm[sg]);
-        if (new_h_prod_uvm[sg])        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(new_h_prod_uvm[sg]);
-        if (new_h_oracle_uvm[sg])      Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(new_h_oracle_uvm[sg]);
     }
 }
 
@@ -3991,7 +2880,6 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
     arena_acquired = true;
-    arena_acquire_count++;       /* step 3 harness counter */
 
     /* === (3) Bind ctx to arena-resident pointers + populate extended DeviceContext === */
     initialize_device_context_mode_a_after_arena();
@@ -4134,8 +3022,6 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
     arena_acquired = true;
-    arena_acquire_count++;       /* step 3 harness counter */
-    csr_rebuild_count++;         /* step 3 harness counter — union rebuild fired */
 
     /* === (7) Rebind ctx + (8) populate extended ctx for NEW pool === */
     initialize_device_context_mode_a_after_arena();
@@ -4162,8 +3048,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
  * existing run_mode_b_local — same helper chain, just driver-owned output
  * buffer instead of stack vector.
  *
- * Iterative oracle iter is still hard-stubbed; Mode A iter lands
- * via the sibling nlr_iter_dispatch_subgroup_mode_a helper.
+ * Mode A iter lands via the sibling nlr_iter_dispatch_subgroup_mode_a helper.
  *
  * DEVICE CONTEXT LIFETIME:
  * The dispatch helper uses driver-owned drv.ctx (populated once via
@@ -4181,10 +3066,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
  * non-iterative wrapper uses — SSOT preserved. The driver-owned compacted
  * AccumData buffer is the only difference. apply_active_writeback NOT
  * called here — that's final-only after the outer iter loop.
- *
- * Scope: non-oracle only. ORACLE template parameter is hard-
- * coded false at the helper invocation; iterative oracle (brute-dry-run-
- * FIRST production-SECOND per iter) lands separately. */
+ */
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, int sg)
 {
@@ -4220,15 +3102,13 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
         Spec::zero_accum(accums_compacted[k]);
     }
 
-    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::Production>(
+    mode_b_remote_evaluate_into_buffer<Spec>(
         sub,
         radii_compacted.data(),
         drv.cs,                          /* driver-owned CallScalars */
         drv.ctx,                         /* driver-owned DeviceContext */
         (unsigned int)sgr.j_type_bitmask, /* per-subgroup mask */
         (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*actives_out=*/nullptr,         /* iter path: skip dumps (proper
-                                             diagnostic plumbing lands later) */
         /*tim=*/nullptr);
 
     /* Scatter compacted accums back into driver-owned per-slot accum_uvm.
@@ -4382,7 +3262,6 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             drv.mode_a_csr_buffered_h[sg][slot]    = radii_buffered_host_build[k];
         }
         drv.mode_a_csr_valid[sg] = true;
-        drv.csr_local_rebuild_count++;       /* step 3 harness counter */
     }
 
     /* ===== (2) Ghost write detector + writeback begin =====
@@ -4520,346 +3399,6 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
     }
 }
 
-/* ============================================================================
- * nlr_iter_dispatch_subgroup_oracle_b_local<Spec>(drv, sg).
- *
- * Independent brute trajectory for the iterative oracle on Mode B local
- * (NTask==1). Mirrors nlr_iter_dispatch_subgroup_mode_b_local exactly,
- * substituting:
- *   - oracle's compacted active_set + radii (independent trajectory).
- *   - DispatchPath::Brute_Oracle backend in collect_candidates_pre_drift.
- *   - drv.ctx_oracle (brute-pass-guarded via NlrOracleBrutePassGuard) for
- *     evaluate_pairs_post_drift.
- *   - drv.accum_oracle_uvm[sg] as the output buffer (no apply_active_writeback).
- *
- * Per-iter brute-FIRST ordering enforced by the OUTER dispatch loop —
- * caller invokes this helper BEFORE production dispatch.
- * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_oracle_b_local(NlrIterDriver<Spec>& drv, int sg)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-    const int n_compacted  = drv.active_set_oracle_size[sg];
-    if (n_compacted <= 0) return;
-
-    std::vector<int> active_particle_indices(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-    }
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = active_particle_indices.data();
-    sub.num_active  = n_compacted;
-
-    std::vector<double> radii_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        radii_compacted[k] = drv.radii_oracle_uvm[sg][drv.active_set_oracle_uvm[sg][k]];
-    }
-
-    /* RAII brute-pass guard: set_oracle_brute_pass(ctx_oracle, true) on
-     * construction, false on scope exit (any path, including endrun).
-     * SFINAE-no-op for Specs without the hook. */
-    NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-
-    std::vector<ActiveData> actives_compacted(n_compacted);
-    build_self_actives_host_pre_drift<Spec>(sub, drv.ctx_oracle, radii_compacted.data(),
-                                              drv.cs, actives_compacted.data());
-
-    std::vector<AccumData> accums_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_compacted[k]);
-    }
-
-    std::vector<std::vector<int>> cand_brute;
-    collect_candidates_pre_drift<Spec>(sub, radii_compacted.data(),
-                                         (unsigned int)sgr.j_type_bitmask,
-                                         DispatchPath::Brute_Oracle, cand_brute);
-    lazy_drift_candidates<Spec>(cand_brute);
-    evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_compacted.data(), n_compacted,
-                                      cand_brute, accums_compacted.data(), EvalOMPPolicy::ForceSerialReference);
-
-    /* Scatter brute results back into driver's per-slot oracle AccumData
-     * (slot keyspace is the same as production — sgr.active_indices). */
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        drv.accum_oracle_uvm[sg][slot] = accums_compacted[k];
-    }
-    /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
-}
-
-/* Local Mode-B iterative oracle combined dispatch.
- *
- * The separate brute-first helper is not sufficient for local iterative
- * density: its lazy drift mutates P[] before production snapshots ActiveData,
- * so oracle and production compare different i-side states. Keep the legacy
- * Mode-B epoch contract explicit here: snapshot both i-side active arrays and
- * collect both candidate lists before either path drifts j-side candidates.
- */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Spec>& drv, int sg)
-{
-    using ActiveData = typename Spec::ActiveData;
-    using AccumData  = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-
-    const int n_prod = drv.active_set_size[sg];
-    std::vector<int> active_particle_indices_prod(n_prod > 0 ? n_prod : 0);
-    std::vector<double> radii_compacted_prod(n_prod > 0 ? n_prod : 0);
-    for(int k = 0; k < n_prod; k++) {
-        int slot = drv.active_set_uvm[sg][k];
-        active_particle_indices_prod[k] = sgr.active_indices[slot];
-        radii_compacted_prod[k] = drv.radii_uvm[sg][slot];
-    }
-    neighbor_loop_args sub_prod = drv.args;
-    sub_prod.active_list = (n_prod > 0) ? active_particle_indices_prod.data() : nullptr;
-    sub_prod.num_active  = n_prod;
-
-    const int n_oracle = drv.active_set_oracle_size[sg];
-    std::vector<int> active_particle_indices_oracle(n_oracle > 0 ? n_oracle : 0);
-    std::vector<double> radii_compacted_oracle(n_oracle > 0 ? n_oracle : 0);
-    for(int k = 0; k < n_oracle; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices_oracle[k] = sgr.active_indices[slot];
-        radii_compacted_oracle[k] = drv.radii_oracle_uvm[sg][slot];
-    }
-    neighbor_loop_args sub_oracle = drv.args;
-    sub_oracle.active_list = (n_oracle > 0) ? active_particle_indices_oracle.data() : nullptr;
-    sub_oracle.num_active  = n_oracle;
-
-    std::vector<ActiveData> actives_prod(n_prod > 0 ? n_prod : 0);
-    if(n_prod > 0) {
-        build_self_actives_host_pre_drift<Spec>(sub_prod, drv.ctx,
-                                                radii_compacted_prod.data(),
-                                                drv.cs, actives_prod.data());
-    }
-
-    std::vector<ActiveData> actives_oracle(n_oracle > 0 ? n_oracle : 0);
-    if(n_oracle > 0) {
-        build_self_actives_host_pre_drift<Spec>(sub_oracle, drv.ctx_oracle,
-                                                radii_compacted_oracle.data(),
-                                                drv.cs, actives_oracle.data());
-    }
-
-    std::vector<AccumData> accums_prod(n_prod > 0 ? n_prod : 0);
-    for(int k = 0; k < n_prod; k++) Spec::zero_accum(accums_prod[k]);
-    std::vector<AccumData> accums_oracle(n_oracle > 0 ? n_oracle : 0);
-    for(int k = 0; k < n_oracle; k++) Spec::zero_accum(accums_oracle[k]);
-
-    std::vector<std::vector<int>> cand_prod;
-    collect_candidates_pre_drift<Spec>(sub_prod, radii_compacted_prod.data(),
-                                       (unsigned int)sgr.j_type_bitmask,
-                                       DispatchPath::ModeB_HostWalker, cand_prod);
-
-    std::vector<std::vector<int>> cand_oracle;
-    collect_candidates_pre_drift<Spec>(sub_oracle, radii_compacted_oracle.data(),
-                                       (unsigned int)sgr.j_type_bitmask,
-                                       DispatchPath::Brute_Oracle, cand_oracle);
-
-    lazy_drift_candidates<Spec>(cand_prod);
-    lazy_drift_candidates<Spec>(cand_oracle);
-
-    if(n_prod > 0) {
-        evaluate_pairs_post_drift<Spec>(drv.ctx, actives_prod.data(), n_prod,
-                                        cand_prod, accums_prod.data(), EvalOMPPolicy::AllowProduction);
-        for(int k = 0; k < n_prod; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            drv.accum_uvm[sg][slot] = accums_prod[k];
-        }
-    }
-
-    if(n_oracle > 0) {
-        NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-        evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_oracle.data(), n_oracle,
-                                        cand_oracle, accums_oracle.data(), EvalOMPPolicy::ForceSerialReference);
-        for(int k = 0; k < n_oracle; k++) {
-            int slot = drv.active_set_oracle_uvm[sg][k];
-            drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
-        }
-    }
-
-    /* TEMPORARY oracle accum comparison from host vectors — UVM write broken
-     * for Vel fields (same root cause as remote path).  Build slot→accum maps
-     * for both prod and oracle, then compare over the production active set.
-     * Remove with oracle teardown. */
-    if(n_prod > 0) {
-        std::unordered_map<int,int> oracle_k_by_slot;
-        oracle_k_by_slot.reserve(n_oracle);
-        for(int k = 0; k < n_oracle; k++) {
-            int slot = drv.active_set_oracle_uvm[sg][k];
-            oracle_k_by_slot[slot] = k;
-        }
-        char origin_tag[40];
-        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
-        for(int k = 0; k < n_prod; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            auto it = oracle_k_by_slot.find(slot);
-            if(it != oracle_k_by_slot.end()) {
-                emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
-                    accums_prod[k], accums_oracle[it->second],
-                    origin_tag, &drv.oracle_mismatch_count);
-            }
-        }
-        drv.oracle_accum_compared_in_dispatch = true;
-    }
-}
-
-/* ============================================================================
- * nlr_iter_dispatch_subgroup_oracle_b_remote<Spec>(drv, sg).
- *
- * Independent brute trajectory for the iterative oracle on Mode B remote
- * (NTask>1). Reuses the extracted helper mode_b_remote_evaluate_into_buffer
- * with RemoteHelperMode::OracleBrutePass — same epoch order (queries /
- * collect-brute / drift / brute walk / exchange replies / merge), brute
- * backend throughout. Caller-owned brute-pass guard at this scope.
- *
- * SSOT guardrail: no duplicated remote body. The helper
- * handles self+peer brute walks and replies-merge via the existing
- * Stage 4 / 10 / 11 machinery.
- * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv, int sg)
-{
-    using AccumData = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr = drv.args.subgroups[sg];
-    const int n_compacted  = drv.active_set_oracle_size[sg];
-    /* NOTE: helper is COLLECTIVE — must be entered on every rank for the
-     * MPI Allgather/Alltoall stages. Empty-rank participation uses
-     * n_compacted=0 with nullptr buffers. */
-
-    std::vector<int> active_particle_indices(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-    }
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
-    sub.num_active  = n_compacted;
-
-    std::vector<double> radii_compacted(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        radii_compacted[k] = drv.radii_oracle_uvm[sg][drv.active_set_oracle_uvm[sg][k]];
-    }
-
-    /* Caller-owned brute-pass guard scopes the entire helper call. */
-    NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
-
-    /* Driver-owned compacted AccumData buffer; scatter back to per-slot
-     * oracle AccumData after helper returns. */
-    std::vector<AccumData> accums_compacted(n_compacted > 0 ? n_compacted : 0);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_compacted[k]);
-    }
-
-    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::OracleBrutePass>(
-        sub,
-        (n_compacted > 0) ? radii_compacted.data() : nullptr,
-        drv.cs,
-        drv.ctx_oracle,
-        (unsigned int)sgr.j_type_bitmask,
-        (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*actives_out=*/nullptr,
-        /*tim=*/nullptr);
-
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_oracle_uvm[sg][k];
-        drv.accum_oracle_uvm[sg][slot] = accums_compacted[k];
-    }
-    /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
-}
-
-/* ============================================================================
- * nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg)
- *
- * Combined single-epoch iterative oracle for Mode B remote (NTask>1).
- * Replaces the two-call sequence (oracle_b_remote + mode_b_remote) that
- * ran two independent helper round-trips, causing an epoch skew: the brute
- * oracle drifted candidates before the production tree even collected its
- * candidate set.
- *
- * Uses RemoteHelperMode::OracleIterative to collect tree + brute candidate
- * sets in ONE shared epoch (pre-drift both, drift union, evaluate brute-
- * first then tree), receiving tree -> drv.accum_uvm and brute ->
- * drv.accum_oracle_uvm.  Both use the PRODUCTION active set and radii so
- * the oracle comparison is "same radius, same epoch: does tree match brute?"
- *
- * Oracle radii are synced to production radii after each iter so that the
- * oracle after_iter (b.oracle) runs on the same h_search as production.
- * ========================================================================== */
-template <typename Spec>
-static void nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle(
-    NlrIterDriver<Spec>& drv, int sg)
-{
-    using AccumData = typename Spec::AccumData;
-
-    const NlrSubgroup& sgr    = drv.args.subgroups[sg];
-    const int n_compacted     = drv.active_set_size[sg];
-
-    std::vector<int>    active_particle_indices(n_compacted);
-    std::vector<double> radii_compacted(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        int slot                   = drv.active_set_uvm[sg][k];
-        active_particle_indices[k] = sgr.active_indices[slot];
-        radii_compacted[k]         = drv.radii_uvm[sg][slot];
-    }
-
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
-    sub.num_active  = n_compacted;
-
-    std::vector<AccumData> accums_prod(n_compacted);
-    std::vector<AccumData> accums_oracle(n_compacted);
-    for (int k = 0; k < n_compacted; k++) {
-        Spec::zero_accum(accums_prod[k]);
-        Spec::zero_accum(accums_oracle[k]);
-    }
-
-    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::OracleIterative>(
-        sub,
-        (n_compacted > 0) ? radii_compacted.data() : nullptr,
-        drv.cs,
-        drv.ctx,
-        (unsigned int)sgr.j_type_bitmask,
-        (n_compacted > 0) ? accums_prod.data()   : nullptr,
-        /*actives_out=*/nullptr,
-        /*tim=*/nullptr,
-        (n_compacted > 0) ? accums_oracle.data() : nullptr,
-        &drv.ctx_oracle);
-
-    /* TEMPORARY oracle accum comparison — host vectors known-correct (oracle UVM
-     * mismatches); oracle UVM write is broken for Vel fields (Probe3 shows Vel=0
-     * despite correct host source).  Compare here from host vectors and set flag
-     * so b.compare skips the UVM-based emit_oracle_mismatch_if_any.
-     * Remove with oracle teardown. */
-    {
-        char origin_tag[40];
-        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
-        for (int k = 0; k < n_compacted; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
-                accums_prod[k], accums_oracle[k], origin_tag, &drv.oracle_mismatch_count);
-        }
-        drv.oracle_accum_compared_in_dispatch = true;
-    }
-    /* Scatter both into driver-owned per-slot buffers.  Sync oracle radii to
-     * production radii so oracle after_iter uses the same h_search. */
-    for (int k = 0; k < n_compacted; k++) {
-        int slot = drv.active_set_uvm[sg][k];
-        drv.accum_uvm[sg][slot]        = accums_prod[k];
-        drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
-        drv.radii_oracle_uvm[sg][slot] = drv.radii_uvm[sg][slot];
-    }
-    /* Sync oracle active set to production active set for this iteration so
-     * (b.oracle) after_iter iterates the same slots. */
-    drv.active_set_oracle_size[sg] = n_compacted;
-    for (int k = 0; k < n_compacted; k++) {
-        drv.active_set_oracle_uvm[sg][k] = drv.active_set_uvm[sg][k];
-    }
-}
 
 /* ============================================================================
  * Default on_max_iter_exceeded — runner-supplied bad-stop on max iteration.
@@ -4889,12 +3428,6 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
 template <typename Spec>
 void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
 {
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-    if constexpr (std::is_same_v<Spec, IterHarnessSpec> ||
-                  std::is_same_v<Spec, IterHarnessGhostSpec>) {
-        g_iter_harness_telemetry = IterHarnessTelemetry{};
-    }
-#endif
 
     /* ===== Compile-time spec consistency ===== */
     static_assert(std::is_same_v<typename Spec::IterControl, Iterative>,
@@ -4959,37 +3492,27 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      *   - Per-subgroup global activity tracking via global_active_per_sg[].
      *   - Pre-dispatch invalidation sweep rebuilds CSR caches once per iter
      *     when any subgroup invalidated.
-     *   - Multi-subgroup actives partition + collective-symmetry validated
-     *     under GIZMO_NLR_SUBGROUP_AUDIT=1 (audit block above).
+     *   - The caller must fill subgroups[] from the global_bm_presence union
+     *     with identical ordering on every rank, and must place each particle
+     *     in at most one subgroup.
      * Per-Spec opt-in still REQUIRED via `using SupportsSubgroups = std::true_type;`
      * (runtime abort 81201 above catches missing trait). */
 
-    /* ===== Oracle env detection =====
-     * Mode B oracle paths are implemented; Mode A + oracle still
-     * hard-stubbed (Mode A oracle would catch only
-     * cached-CSR/lookup/rebuild bugs (covered by the synthetic harness)
-     * and cannot validate ghost-import completeness (walks the
-     * same imported pool as production). Its complexity is not justified
-     * for temporary scaffolding code). */
-    const bool oracle_enabled = gizmo_nlr_oracle_enabled_global() ||
-                                gizmo_nlr_oracle_enabled_for(Spec::loop_name);
 
     /* ===== Path selection at iter 0 (FIXED for whole call) =====
-     * Integrates with the canonical force-mode / threshold dispatch
-     * (mirrors run_neighbor_loop logic at line 1936+). Path is held fixed
+     * Integrates with the canonical override / threshold dispatch
+     * (mirrors the selection in run_neighbor_loop). Path is held fixed
      * across all iterations of one iterative call.
      *
      * num_active for threshold uses the UNION across all subgroups (base
      * args.num_active per the doc convention). This selection is single-subgroup-only;
      * multi-subgroup walker mask-threading is handled separately. */
-    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive
-     * (mirrors non-iter site near line 2442). Iterative Specs (density, ags_density,
+    /* Dispatch priority: args.dispatch_override > adaptive threshold
+     * (mirrors the non-iterative site). Iterative Specs (density, ags_density,
      * mechfb, etc.) generally won't set dispatch_override since the
      * corridor mode flows through cellcorrections/gradients/hydro_force; preserved
      * here for completeness and future use. */
-    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
-                                      ? args.dispatch_override
-                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
+    const NlrForceMode force_mode = args.dispatch_override;
     DispatchPath path;
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
@@ -5003,9 +3526,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
                       MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         global_active_sum = forced_modeb_global_active;
-        nlr_abort_if_forced_modeb_too_large(
-            Spec::loop_name, args.num_active, forced_modeb_global_active,
-            oracle_enabled);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
@@ -5042,35 +3562,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         return;
     }
 
-    /* ===== Mode A + oracle hard-stub =====
-     * Mode A iterative production path is fully ported; only the *oracle*
-     * backend on Mode A is intentionally not implemented. Oracle is
-     * temporary port-validation scaffolding; Mode A oracle over the
-     * imported pool catches only CSR/cached-lookup/rebuild bugs (covered
-     * by the synthetic harness) and cannot validate ghost-import
-     * completeness (walks the same imported pool as production). For
-     * oracle validation force Mode B: GIZMO_NLR_FORCE_MODE=B GIZMO_NLR_ORACLE=1. */
-    if (oracle_enabled && path == DispatchPath::ModeA_GPU_NGL) {
-        if (ThisTask == 0) {
-            fprintf(stderr,
-                "[run_neighbor_loop_iterative<%s>] FATAL: Mode A iterative "
-                "oracle intentionally not implemented. The Mode A *production* "
-                "path is fully ported and validated separately. Mode A oracle "
-                "would only catch cached-CSR/lookup/rebuild bugs (covered by "
-                "the synthetic harness in step 3) and cannot validate ghost-"
-                "import completeness (walks the same imported pool as "
-                "production). For oracle validation, force Mode B: "
-                "GIZMO_NLR_FORCE_MODE=B GIZMO_NLR_ORACLE=1.\n",
-                Spec::loop_name);
-            fflush(stderr);
-        }
-        endrun(81203);
-        /* All-rank symmetric (oracle_enabled from env + path from reduced
-         * thresholds): drain immediately rather than run the unimplemented
-         * Mode-A-oracle path over uninitialized oracle state. */
-        gizmo_exit_bad_stop_if_requested("neighbor_loop_runner:modea_iter_oracle_unsupported");
-    }
-
     if(gizmo_nlr_dispatch_trace_enabled()) {
         int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         if(rank == 0) {
@@ -5079,113 +3570,17 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 ? "force" : "threshold";
             fprintf(stderr,
                     "[NLR ITER DISPATCH caller=%s path=%s (%s) NTask=%d "
-                    "local_active=%d forced_modeb_global_active=%d oracle=%d]\n",
+                    "local_active=%d forced_modeb_global_active=%d]\n",
                     Spec::loop_name,
                     path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl" : "mode_b",
                     src, NTask, args.num_active,
-                    forced_modeb_global_active, (int)oracle_enabled);
+                    forced_modeb_global_active);
             fflush(stderr);
         }
     }
 
     /* ===== CallScalars captured ONCE for whole call ===== */
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
-
-    /* ===== GIZMO_NLR_SUBGROUP_AUDIT collective-symmetry +
-     * no-duplicate-actives runtime checks. Hard-abort on violation. Off by
-     * default; harness / test-mode enables.
-     *
-     * Check 1: subgroups[] length AND ordered bm-key sequence identical
-     * across all ranks (MIN/MAX hash, NOT BOR).
-     *
-     * Check 2: each particle index appears in AT MOST ONE subgroup
-     * (pitfall 6 — no duplicate active ownership; would double-apply final
-     * writeback state). */
-    if (gizmo_nlr_subgroup_audit_enabled()) {
-        /* Check 1: 64-bit FNV-1a ordered hash of (i << 32) | bm_key. */
-        uint64_t local_hash = 0xCBF29CE484222325ULL;
-        for (int i = 0; i < args.num_subgroups; i++) {
-            local_hash ^= ((uint64_t)(unsigned int)i << 32) |
-                          (uint64_t)args.subgroups[i].j_type_bitmask;
-            local_hash *= 0x100000001B3ULL;
-        }
-        int      local_n = args.num_subgroups;
-        int      n_min = local_n, n_max = local_n;
-        uint64_t h_min = local_hash, h_max = local_hash;
-        if (NTask > 1) {
-            MPI_Allreduce(&local_n,    &n_min, 1, MPI_INT,      MPI_MIN, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_n,    &n_max, 1, MPI_INT,      MPI_MAX, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_hash, &h_min, 1, MPI_UINT64_T, MPI_MIN, MPI_COMM_WORLD);
-            MPI_Allreduce(&local_hash, &h_max, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
-        }
-        if (n_min != n_max || h_min != h_max) {
-            int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            fprintf(stderr,
-                "[NLR_ITER SUBGROUP_AUDIT ABORT rank=%d caller=%s] subgroups[] "
-                "length/order mismatch across ranks: local_num=%d (global "
-                "min=%d max=%d), local_hash=%llx (global min=%llx max=%llx). "
-                "Caller must fill subgroups[] from global_bm_presence union "
-                "with identical ordering on all ranks.\n",
-                rank, Spec::loop_name, local_n, n_min, n_max,
-                (unsigned long long)local_hash,
-                (unsigned long long)h_min, (unsigned long long)h_max);
-            fprintf(stderr, "  rank=%d subgroups[] bm_keys: [", rank);
-            for (int i = 0; i < args.num_subgroups; i++) {
-                fprintf(stderr, "%s%u", (i > 0 ? "," : ""),
-                        args.subgroups[i].j_type_bitmask);
-            }
-            fprintf(stderr, "]\n");
-            fflush(stderr);
-            /* Symmetric: the mismatch is detected from the MPI_Allreduce'd
-             * min/max/hash above, so EVERY rank enters this branch together.
-             * Graceful bad-stop + return drains all ranks identically (run
-             * loop returns void) to the next poll -- no MPI_Abort, no wedge. */
-            gizmo_request_controlled_stop(81214, "NLR_ITER subgroups[] length/order mismatch across ranks (caller partition contract violated)", __FILE__, __LINE__, __FUNCTION__);
-            return;
-        }
-
-        /* Check 2: no duplicate particle indices across subgroups (local-rank
-         * only — cross-rank is governed by caller's partition logic). */
-        {
-            std::vector<int> seen;
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                const NlrSubgroup& sgr = args.subgroups[sg];
-                for (int k = 0; k < sgr.num_active_local; k++) {
-                    seen.push_back(sgr.active_indices[k]);
-                }
-            }
-            std::sort(seen.begin(), seen.end());
-            int local_dup = 0;
-            for (size_t k = 1; k < seen.size(); k++) {
-                if (seen[k] == seen[k-1]) {
-                    int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-                    fprintf(stderr,
-                        "[NLR_ITER SUBGROUP_AUDIT ABORT rank=%d caller=%s] "
-                        "particle index %d appears in 2+ subgroups. Caller "
-                        "partition must satisfy no-duplicate-active-ownership "
-                        "invariant (pitfall 6) — each particle in AT MOST ONE "
-                        "subgroup.\n",
-                        rank, Spec::loop_name, seen[k]);
-                    fflush(stderr);
-                    local_dup = 1;
-                    break;
-                }
-            }
-            /* The duplicate scan is per-rank/asymmetric, so reconcile collectively
-             * BEFORE the ghost-exchange/device dispatch: offending ranks soft bad-stop,
-             * every rank polls together and drains (no deadlock, no MPI_Abort). The
-             * audit block is symmetric -- all ranks enter on the env gate -- and Check-1
-             * above already uses Allreduce, so this added Allreduce is in-pattern. */
-            int any_dup = local_dup;
-            if (NTask > 1) {MPI_Allreduce(&local_dup, &any_dup, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);}
-            if (any_dup) {
-                if (local_dup) {endrun(81215);}
-                else {gizmo_request_controlled_stop(81215, "NLR_ITER duplicate particle index across subgroups (peer rank detected)", __FILE__, __LINE__, __FUNCTION__);}
-                gizmo_exit_bad_stop_if_requested("nlr:subgroup_duplicate");
-                return;
-            }
-        }
-    }
 
     /* ===== Mode B hard-corridor counter snapshot =====
      * Mode B paths MUST NOT enter move_particles / ghost_exchange_impl /
@@ -5217,7 +3612,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         drv.acquire_arena_and_init_ctx_mode_a();
     } else {
-        /* Brute_Oracle or future path — not currently reachable. */
+        /* Future path — not currently reachable. */
         if (ThisTask == 0) {
             fprintf(stderr,
                 "[run_neighbor_loop_iterative<%s>] FATAL: unhandled path %d.\n",
@@ -5229,26 +3624,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         endrun(81208); gizmo_exit_bad_stop_if_requested("nlr:unhandled_dispatch");
     }
     /* Drain a soft bad-stop raised inside the path-specific init (Mode-A arena
-     * lifecycle 81211/81212 return early without binding ctx) BEFORE any oracle ctx
-     * init or device dispatch. All-rank: Mode-A path is symmetric. */
+     * lifecycle 81211/81212 return early without binding ctx) BEFORE any device
+     * dispatch. All-rank: Mode-A path is symmetric. */
     gizmo_exit_bad_stop_if_requested("nlr:iter_context_init");
-
-    /* ===== Independent ctx_oracle init =====
-     * ctx_oracle gets its OWN populate_device_context
-     * + cleanup_device_context, never aliased to production ctx. Bound to
-     * args.P/CellP (Mode B lazy-drift contract — production reads owner-
-     * local args.P[j] directly, oracle reads the same args.* with the
-     * brute backend). Only reached on Mode B (Mode A + oracle hard-stubbed
-     * above). */
-    if (drv.oracle_enabled) {
-        drv.ctx_oracle.P         = drv.args.P;
-        drv.ctx_oracle.CellP     = drv.args.CellP;
-        drv.ctx_oracle.num_total = drv.args.num_total;
-        if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-            Spec::populate_device_context(drv.args, drv.ctx_oracle);
-        }
-        drv.ctx_oracle_initialized = true;
-    }
 
     /* ===== Outer iter loop =====
      *
@@ -5394,30 +3772,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         /* (a0) Per-iter Spec hook: reset_per_iter_device_context.
          * Optional. Runs HOST-side on every rank before subgroup dispatch.
          * Use case: ags_density's per_iter_wakeup_detected counter zero.
-         * Synthetic harness may consume this
-         * for validation. Hook MUST NOT do MPI. */
+         * Hook MUST NOT do MPI. */
         if constexpr (nlr_spec_has_reset_per_iter_device_context_v<Spec>) {
             Spec::reset_per_iter_device_context(args, drv.ctx, drv.iter_index);
-            /* Note: ctx_oracle has its own
-             * independent lifecycle and carries the same per-iter counter
-             * fields (e.g. ags-style wakeup counters, harness diagnostic
-             * counters). Without the symmetric reset here, the oracle's
-             * brute walk would read stale-from-last-iter state out of
-             * ctx_oracle while production walks with freshly-reset state
-             * out of ctx — guaranteed per-iter divergence on j-side
-             * counter fields. Fires BEFORE oracle dispatch (a.oracle)
-             * which is itself brute-first per iter (G1). Mode A is hard-
-             * stubbed so no rebuild complication. */
-            if (drv.oracle_enabled) {
-                Spec::reset_per_iter_device_context(args, drv.ctx_oracle, drv.iter_index);
-            }
         }
 
         /* (a) Per-subgroup dispatch — fixed path for the call. This
          * implements Mode B local (np=1) and Mode B remote (np>1) via the
          * same DispatchPath::ModeB_HostWalker label; the per-subgroup helper
-         * picks local vs remote based on NTask. Mode A iter and iterative
-         * oracle still hard-stubbed at the env / path-selection block. */
+         * picks local vs remote based on NTask. Mode A iter is still
+         * hard-stubbed at the path-selection block. */
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             /* Skip globally-converged subgroups. Saves
              * per-iter no-op collectives. On iter 0 global_active_per_sg
@@ -5431,28 +3795,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 : (drv.global_active_per_sg[sg] > 0);
             if (!sg_globally_active) continue;
 
-            /* (a.oracle) brute-FIRST per iter. Independent
-             * oracle trajectory; Mode B only (Mode A + oracle hard-stubbed
-             * at outer entry). Helpers are collective on remote — must be
-             * entered on every rank regardless of local n_compacted.
-             *
-             * Both single-rank and multi-rank paths use a COMBINED helper
-             * that collects tree + brute candidate sets in one shared epoch
-             * (pre-drift both → drift union → evaluate brute-first, then
-             * tree).  The old two-call remote sequence was epoch-skewed:
-             * nlr_iter_dispatch_subgroup_oracle_b_remote drifted candidates
-             * before nlr_iter_dispatch_subgroup_mode_b_remote even collected
-             * its set, causing spurious iter-sg0-it0 mismatches at the first
-             * dm_dispersion call. */
-            if (drv.oracle_enabled) {
-                if (NTask == 1) {
-                    nlr_iter_dispatch_subgroup_mode_b_local_with_oracle<Spec>(drv, sg);
-                } else {
-                    nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg);
-                }
-                continue;
-            }
-
+            /* (a) Mode B only (Mode A hard-stubbed at outer entry).
+             * Helpers are collective on remote — must be
+             * entered on every rank regardless of local n_compacted. */
             switch (path) {
                 case DispatchPath::ModeB_HostWalker:
                     if (NTask == 1) {
@@ -5464,34 +3809,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 case DispatchPath::ModeA_GPU_NGL:
                     nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg);
                     break;
-                case DispatchPath::Brute_Oracle:
-                    /* Brute_Oracle is the oracle backend, NEVER selected as a
-                     * production path. Defense-in-depth. path + subgroups are symmetric
-                     * across ranks, so soft bad-stop + an immediate poll drains all ranks
-                     * here -- before after_iter could run on stale accum. */
-                    if (ThisTask == 0) {
-                        fprintf(stderr,
-                            "[run_neighbor_loop_iterative<%s>] FATAL: Brute_Oracle "
-                            "as production path at sg=%d iter=%d.\n",
-                            Spec::loop_name, sg, drv.iter_index);
-                        fflush(stderr);
-                    }
-                    endrun(81202); gizmo_exit_bad_stop_if_requested("nlr:brute_oracle_production");
-                    break;
-            }
-        }
-
-        /* Snapshot production active sets BEFORE after_iter compaction so
-         * (b.compare) can compare only slots evaluated this iteration, not
-         * stale slots from prior iterations whose accum_uvm entries were
-         * never updated this iter. */
-        std::vector<std::vector<int>> prod_active_snapshot;
-        if (drv.oracle_enabled) {
-            prod_active_snapshot.resize(args.num_subgroups);
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                int n = drv.active_set_size[sg];
-                prod_active_snapshot[sg].assign(
-                    drv.active_set_uvm[sg], drv.active_set_uvm[sg] + n);
             }
         }
 
@@ -5511,15 +3828,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot]
                 };
                 IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
-                /* Audit instrumentation: stash status + new_h for
-                 * per-iter 4-thing compare against oracle trajectory. */
-                if (drv.oracle_enabled) {
-                    drv.status_prod_uvm[sg][slot] = static_cast<int>(r.status);
-                    drv.new_h_prod_uvm[sg][slot]  =
-                        (r.status == IterStatus::AdjustRadius)
-                            ? r.new_h_search
-                            : drv.radii_uvm[sg][slot];
-                }
                 switch (r.status) {
                     case IterStatus::Converged:
                         /* Drop slot from compacted active_set; its accum_uvm
@@ -5557,147 +3865,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             drv.local_active_total     += write_idx;
         }
 
-        /* (b.oracle) oracle after_iter — symmetric pattern over
-         * the brute trajectory's state. Mutates oracle's radii / scratch /
-         * active_set and stashes status + new_h into status_oracle_uvm /
-         * new_h_oracle_uvm for the 4-thing compare below. */
-        if (drv.oracle_enabled) {
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                const NlrSubgroup& sgr_o = args.subgroups[sg];
-                int n_compacted = drv.active_set_oracle_size[sg];
-                int write_idx_o = 0;
-                for (int k = 0; k < n_compacted; k++) {
-                    int slot = drv.active_set_oracle_uvm[sg][k];
-                    int i    = sgr_o.active_indices[slot];
-                    AfterIterContext<Spec> ctx_o{
-                        args, sg, slot, i, drv.iter_index,
-                        /* h_search_current */ drv.radii_oracle_uvm[sg][slot],
-                        /* scalars */         drv.cs,
-                        /* scratch */         drv.scratch_oracle_uvm[sg][slot]
-                    };
-                    IterResult r_o = Spec::after_iter(ctx_o, drv.accum_oracle_uvm[sg][slot]);
-                    drv.status_oracle_uvm[sg][slot] = static_cast<int>(r_o.status);
-                    drv.new_h_oracle_uvm[sg][slot]  =
-                        (r_o.status == IterStatus::AdjustRadius)
-                            ? r_o.new_h_search
-                            : drv.radii_oracle_uvm[sg][slot];
-                    switch (r_o.status) {
-                        case IterStatus::Converged: break;
-                        case IterStatus::NeedsMore:
-                            drv.active_set_oracle_uvm[sg][write_idx_o++] = slot;
-                            break;
-                        case IterStatus::AdjustRadius:
-                            drv.radii_oracle_uvm[sg][slot] = r_o.new_h_search;
-                            drv.active_set_oracle_uvm[sg][write_idx_o++] = slot;
-                            break;
-                        default:
-                            if (ThisTask == 0) {
-                                fprintf(stderr,
-                                    "[run_neighbor_loop_iterative<%s>] FATAL: oracle "
-                                    "Spec::after_iter returned unknown IterStatus=%d "
-                                    "at iter=%d sg=%d slot=%d (i=%d).\n",
-                                    Spec::loop_name, (int)r_o.status,
-                                    drv.iter_index, sg, slot, i);
-                                fflush(stderr);
-                            }
-                            /* Unknown enum = Spec bug. Soft bad-stop + drop the
-                             * oracle slot as converged; stays lockstep, drains
-                             * at the next poll. stderr above surfaces it. */
-                            endrun(81206);
-                            break;
-                    }
-                }
-                drv.active_set_oracle_size[sg] = write_idx_o;
-            }
-
-            /* (b.compare) per-iter 4-thing compare.
-             *   (1) AccumData via Spec::compare_accum (existing helper).
-             *   (2) IterStatus (control-flow divergence).
-             *   (3) new_h_search on AdjustRadius (radius-update divergence).
-             *   (4) Active-set membership count + per-slot ordering. */
-            int rank_now = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank_now);
-            for (int sg = 0; sg < args.num_subgroups; sg++) {
-                /* Encode sg + iter
-                 * into the origin tag so multi-subgroup iterative mismatch
-                 * lines are diagnosable. Format keeps the existing "iter_"
-                 * prefix the helper's [mode_b ORACLE MISMATCH ... origin=X] line
-                 * uses, extended with sg+iter context. */
-                char origin_tag[40];
-                std::snprintf(origin_tag, sizeof(origin_tag),
-                              "iter_sg%d_it%d", sg, drv.iter_index);
-                /* Compare only slots that were active (evaluated) in this
-                 * iteration.  The old loop over 0..n_max re-emitted stale
-                 * accum_uvm entries for slots that converged in prior iters,
-                 * producing identical residuals repeating across iterations. */
-                for (int slot : prod_active_snapshot[sg]) {
-                    /* Workaround for a Vista UVM-scatter regression observed in
-                     * the dm_dispersion port (2026-05-16): the oracle
-                     * UVM write of multi-field AccumData silently zeroed the
-                     * non-leading fields (e.g. DMDispOut::Vx/Vy/Vz/VelDisp
-                     * after Ngb) after scatter; pre-scatter values were
-                     * correct. The dispatch helpers below now compare oracle
-                     * vs production accums from host vectors before scatter
-                     * and set this flag; here we skip the broken UVM-based
-                     * compare to avoid false mismatches.
-                     * REMOVAL CONDITION: oracle is itself temporary scaffolding;
-                     * when the oracle path is removed entirely, this flag +
-                     * guard go with it. Until then, do NOT remove without
-                     * first proving the UVM-scatter regression is fixed for
-                     * multi-field AccumData. */
-                    if (!drv.oracle_accum_compared_in_dispatch) {
-                        emit_oracle_mismatch_if_any<Spec>(rank_now, slot,
-                            drv.accum_uvm[sg][slot],
-                            drv.accum_oracle_uvm[sg][slot],
-                            origin_tag,
-                            &drv.oracle_mismatch_count);
-                    }
-
-                    if (drv.status_prod_uvm[sg][slot] != drv.status_oracle_uvm[sg][slot]) {
-                        emit_oracle_status_mismatch<Spec>(rank_now, sg, slot,
-                            drv.iter_index,
-                            drv.status_prod_uvm[sg][slot],
-                            drv.status_oracle_uvm[sg][slot],
-                            &drv.oracle_mismatch_count);
-                    }
-
-                    if (drv.status_prod_uvm[sg][slot] ==
-                            static_cast<int>(IterStatus::AdjustRadius) &&
-                        drv.status_oracle_uvm[sg][slot] ==
-                            static_cast<int>(IterStatus::AdjustRadius)) {
-                        double hp = drv.new_h_prod_uvm[sg][slot];
-                        double ho = drv.new_h_oracle_uvm[sg][slot];
-                        double dh = std::fabs(hp - ho);
-                        double tol = nlr_spec_radius_tolerance_v<Spec> * std::fabs(hp);
-                        if (!(dh <= tol)) {
-                            emit_oracle_radius_mismatch<Spec>(rank_now, sg, slot,
-                                drv.iter_index, hp, ho,
-                                &drv.oracle_mismatch_count);
-                        }
-                    }
-                }
-
-                int n_prod   = drv.active_set_size[sg];
-                int n_oracle = drv.active_set_oracle_size[sg];
-                if (n_prod != n_oracle) {
-                    emit_oracle_membership_count_mismatch<Spec>(rank_now, sg,
-                        drv.iter_index, n_prod, n_oracle,
-                        &drv.oracle_mismatch_count);
-                } else {
-                    for (int k = 0; k < n_prod; k++) {
-                        if (drv.active_set_uvm[sg][k] !=
-                            drv.active_set_oracle_uvm[sg][k]) {
-                            emit_oracle_membership_slot_mismatch<Spec>(rank_now, sg,
-                                drv.iter_index, k,
-                                drv.active_set_uvm[sg][k],
-                                drv.active_set_oracle_uvm[sg][k],
-                                &drv.oracle_mismatch_count);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
 
         /* (b.5) Mode A buffer-exceedance rebuild trigger.
          * After radii mutation on AdjustRadius, check if any still-active
@@ -5771,12 +3938,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
             int i = sgr.active_indices[slot];
-            /* If Spec opts into the
-             * iterative-variant hook, route the converged radius +
-             * IterScratch through it. Production-only path (oracle has
-             * its own accum_oracle_uvm / radii_oracle_uvm; oracle does
-             * NOT call apply_active_writeback). Specs that don't declare
-             * the iterative hook fall through to the original. */
+            /* If Spec opts into the iterative-variant hook, route the
+             * converged radius + IterScratch through it. Specs that don't
+             * declare the iterative hook fall through to the original. */
             if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
                 Spec::apply_active_writeback_iterative(
                     sub, slot, i,
@@ -5789,63 +3953,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         }
     }
 
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-    /* Harness telemetry: populate
-     * the harness's compile-gated snapshot struct BEFORE driver destruction
-     * so per-subgroup arrays are still live. Only fires for IterHarnessSpec
-     * via `if constexpr` on Spec::loop_name; the strcmp lifts to a
-     * compile-time string compare via SFINAE-equivalent constexpr.
-     * Production Specs see this block as dead code at zero overhead. */
-    if constexpr (std::is_same_v<Spec, IterHarnessSpec> ||
-                  std::is_same_v<Spec, IterHarnessGhostSpec>) {
-        g_iter_harness_telemetry.last_iter_index          = drv.iter_index;
-        g_iter_harness_telemetry.last_global_active_total = drv.global_active_total;
-        g_iter_harness_telemetry.csr_rebuild_count        = drv.csr_rebuild_count;
-        g_iter_harness_telemetry.arena_acquire_count      = drv.arena_acquire_count;
-        g_iter_harness_telemetry.csr_local_rebuild_count  = drv.csr_local_rebuild_count;
-        g_iter_harness_telemetry.final_dummy_jflag_prod   = drv.ctx.dummy_jflag;
-        g_iter_harness_telemetry.final_dummy_jflag_oracle =
-            drv.oracle_enabled ? drv.ctx_oracle.dummy_jflag : 0;
-        g_iter_harness_telemetry.oracle_mismatch_count    = drv.oracle_mismatch_count;
-        g_iter_harness_telemetry.oracle_enabled           = drv.oracle_enabled ? 1 : 0;
-        /* Sum pair counts across all converged slots in all subgroups.
-         * accum_uvm holds the final-iter accum for each slot (never zeroed
-         * after convergence — invariant). For non-oracle runs,
-         * accum_oracle_uvm pointers are nullptr; skip the sum. */
-        long long pairs_prod = 0, pairs_oracle = 0;
-        for (int sg = 0; sg < args.num_subgroups; sg++) {
-            int n_local = args.subgroups[sg].num_active_local;
-            if (drv.accum_uvm[sg]) {
-                for (int s = 0; s < n_local; s++) {
-                    pairs_prod += drv.accum_uvm[sg][s].n_pairs;
-                }
-            }
-            if (drv.oracle_enabled && drv.accum_oracle_uvm[sg]) {
-                for (int s = 0; s < n_local; s++) {
-                    pairs_oracle += drv.accum_oracle_uvm[sg][s].n_pairs;
-                }
-            }
-        }
-        g_iter_harness_telemetry.total_pairs_prod   = pairs_prod;
-        g_iter_harness_telemetry.total_pairs_oracle = pairs_oracle;
-        /* Per-slot scratch + status — sg=0, up to 4 slots. */
-        for (int s = 0; s < 4; s++) {
-            g_iter_harness_telemetry.scratch_passes[s]    = 0;
-            g_iter_harness_telemetry.final_status_prod[s] = -1;
-        }
-        if (args.num_subgroups > 0 && args.subgroups[0].num_active_local > 0) {
-            const int n_max = std::min(args.subgroups[0].num_active_local, 4);
-            for (int s = 0; s < n_max; s++) {
-                g_iter_harness_telemetry.scratch_passes[s] =
-                    drv.scratch_uvm[0][s].passes_so_far;
-                if (drv.oracle_enabled && drv.status_prod_uvm[0] != nullptr) {
-                    g_iter_harness_telemetry.final_status_prod[s] =
-                        drv.status_prod_uvm[0][s];
-                }
-            }
-        }
-    }
-#endif
 
     }  /* end inner scope: driver destructs HERE */
 
@@ -5899,14 +4006,6 @@ template void run_neighbor_loop<SinkEnv2Spec>(const neighbor_loop_args&);
 #endif
 #endif
 
-#ifdef GIZMO_NLR_ITER_HARNESS_TEST
-/* Harness header is included near top of file (above run_neighbor_loop_iterative
- * body) so the telemetry struct + IterHarnessSpec name are visible inside
- * the template body's `if constexpr (std::is_same_v<Spec, IterHarnessSpec>)`
- * gates. Only the explicit instantiation lives here. */
-template void run_neighbor_loop_iterative<IterHarnessSpec>(const neighbor_loop_args_iterative&);
-template void run_neighbor_loop_iterative<IterHarnessGhostSpec>(const neighbor_loop_args_iterative&);
-#endif
 
 /* AgsDensitySpec — first production iterative Spec consumer of the
  * runner + partition-by-subgroup + sticky-call-scope wakeup
@@ -5921,8 +4020,8 @@ template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args
 #endif
 
 /* DensitySpec — hydro density runner port.
- * Single gas-only subgroup, oracle-safe (no after_iter P/CellP writes),
- * uses apply_active_writeback_iterative for oracle-safe radius
+ * Single gas-only subgroup, no after_iter P/CellP writes,
+ * uses apply_active_writeback_iterative for single-valued radius
  * channeling. See hydro/density_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_iterative&);
 
@@ -5981,9 +4080,7 @@ template void run_neighbor_loop<GradientsIterSpec>(const neighbor_loop_args&);
  * GradientsSpec). uses_ghost_writeback=true with a snapshot-diff bundle
  * (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass)) for Mode A imported-ghost
  * lifecycle; Mode B direct-owner-rank j-writes via request-driven P2P.
- * Helper hydro_accumulate_neighbor carries an allow_j_writes gate so the
- * oracle brute pass doesn't double-apply j-writes. See
- * hydro/hydro_force_loop.{h,cc}. */
+ * See hydro/hydro_force_loop.{h,cc}. */
 template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
 /* RadFBRPSpec — local radiation-pressure winds.

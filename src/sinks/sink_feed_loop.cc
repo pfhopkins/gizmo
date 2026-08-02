@@ -3,12 +3,11 @@
  * KOKKOS_INLINE_FUNCTION hooks (load_active, load_neighbor, pair_kernel,
  * zero_accum) and the inline pair body (sink_feed_pair_kernel) live in
  * sink_feed_loop.h so they inline from device kernels (Mode A) and host
- * walkers (Mode B / Brute oracle). This translation unit holds host-only
- * hooks: per-active radius, per-call scalars capture (with sink_feed-
- * unique RNG shift), populate/cleanup_device_context (UVM staging for
- * per-active SinkFeedLocalIn), apply_active_writeback,
- * merge_accum, ghost-writeback manifest + lifecycle hooks, and the
- * env-gated diagnostics block.
+ * walkers (Mode B). This translation unit holds host-only hooks: per-active
+ * radius, per-call scalars capture (with sink_feed-unique RNG shift),
+ * populate/cleanup_device_context (UVM staging for per-active
+ * SinkFeedLocalIn), apply_active_writeback, merge_accum, and the
+ * ghost-writeback manifest + lifecycle hooks.
  *
  * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h.
  *
@@ -101,8 +100,8 @@ void SinkFeedSpec::apply_active_writeback(const neighbor_loop_args& args,
 /* Per-field merge of a peer's contribution (Mode B remote). Per-field op
  * MUST match the pair_kernel writes. mass_markedswallow_scratch is
  * intentionally NOT in the manifest — per-i scratch, not aggregable
- * across peers. The oracle (FORCE_MODE=B + ORACLE=1) catches drift between
- * this manifest and pair_kernel writes.
+ * across peers. Nothing checks this manifest against pair_kernel at runtime,
+ * so drift between them is silent.
  *
  * Adding a new accumulator field for this loop = ONE LINE under the
  * appropriate physics flag's #ifdef. */
@@ -141,16 +140,14 @@ void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
  *
  * cleanup_device_context frees the UVM. Runs unconditionally via
  * NlrDeviceContextCleanupGuard at runner exit (any path — Mode A,
- * Mode B local, Mode B remote, oracle).
+ * Mode B local, Mode B remote).
  * ========================================================================== */
 
 void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
     /* Null all UVM pointers BEFORE any early-return so cleanup is safe on
-     * every path. Oracle dry-run flag defaults off; runner flips on for
-     * the brute pass via Spec::set_oracle_brute_pass on a copied ctx. */
-    ctx.oracle_dry_run    = false;
+     * every path. */
     ctx.per_active_local  = nullptr;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
     ctx.binary_merge_eligible = nullptr;
@@ -255,52 +252,6 @@ void SinkFeedSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                         const NeighborLoopPlan& /*plan*/)
 {
     ghost_writeback_end_bundle(sink_feed_ghost_writeback_bundle_ptr());
-}
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1.
- * ========================================================================== */
-
-double SinkFeedSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    /* Walk byte representation as MyFloat; same approach as sink_env1. The
-     * mass_markedswallow_scratch field is per-i scratch and NOT replicated
-     * across peers in merge_accum, so single-rank Mode B and Brute see the
-     * same value. We include it in the byte walk; if it ever disagrees,
-     * the oracle output identifies the field.
-     *
-     * NOTE (targeted-export peer splitting): sink_feed is modeb_eval_omp=
-     * SerialOnly and its swallow selection is STRICT-SERIAL order-dependent -- it
-     * reads P[j].SwallowID at pair entry and atomic_exchanges it at commit, so the
-     * ORDER in which peers are visited decides which sink claims a contested
-     * particle (sink_feed_loop.h docblock). Under targeted export a query's peers
-     * are visited in a different order than under broadcast/brute, so a resid on
-     * mass_markedswallow_scratch (a peer-origin claim resolving to a different sink)
-     * is EXPECTED order-of-operations, NOT an under-route -- do not re-litigate it
-     * as a routing bug. The B3a routing-correctness gate for this loop is the
-     * SENDER-UNDER-ROUTE probe (neighbor_loop_runner.cc:2352): it ships each query
-     * to the peers targeting did NOT select and hard-stops if any finds a match, so
-     * SENDER-UNDER-ROUTE=0 proves no peer was missed. Any nonzero under-route stays
-     * fatal. (If this compare_accum false positive ever blocks automation, the fix
-     * is a separate order-independent-fields peer comparator, NOT a blind mask of
-     * this scratch field -- masking would hide real sink_feed logic drift.) */
-    double max_rel = 0.0;
-    /* AccumData mixes double + Vec3<double>; both are "double" at the byte
-     * level. Treat as a byte-walk of doubles. */
-    const double *pa = reinterpret_cast<const double*>(&local);
-    const double *pb = reinterpret_cast<const double*>(&oracle);
-    static_assert(sizeof(AccumData) % sizeof(double) == 0,
-        "SinkFeedSpec::AccumData must be double-aligned for byte-walk compare");
-    const size_t n = sizeof(AccumData) / sizeof(double);
-    for(size_t k = 0; k < n; k++) {
-        double va = pa[k], vb = pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) max_rel = rel;
-    }
-    return max_rel;
 }
 
 #else  /* !SINK_PARTICLES */

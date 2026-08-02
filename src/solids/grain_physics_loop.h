@@ -45,8 +45,8 @@
  * Neighbors: gas particles (Type==0).
  * Writes: atomic j-side updates to P[j].Vel, P[j].dp, P[j].Grain_AccelTimeMin,
  *         CellP[j].VelPred (+ GRAIN_EVOLUTION fields). Ghost writeback required.
- * AccumData: empty (no i-side reduction). Oracle compare is vacuous — validation
- * relies on cross-rank ghost-writeback records count and field comparison.
+ * AccumData: empty (no i-side reduction) — validation relies on cross-rank
+ * ghost-writeback record count and field comparison.
  * ========================================================================== */
 #if defined(GRAIN_BACKREACTION)
 
@@ -63,28 +63,23 @@ struct GrainBackrxAccum {
     char _unused;
 };
 
-/* DeviceContext: extends base with oracle_dry_run so set_oracle_brute_pass can
- * suppress j-writes during the brute oracle pass (blocker fix: without this,
- * the oracle pass would fire grain_backrx_pair_kernel atomics before production,
+/* DeviceContext: extends base.
  * applying backreaction twice). Same pattern as ThermalFBDeviceContext. */
 struct GrainBackrxDeviceContext : NeighborLoopDeviceContextBase {
-    bool oracle_dry_run = false;
 };
 
 /* NeighborData: carries the array-level P/CellP pointers + neighbor index j
  * so pair_kernel can forward to grain_backrx_pair_kernel(local, j, P, CellP,
- * dp, r2) without physics duplication. oracle_dry_run is propagated from ctx
- * to suppress j-writes during the brute oracle pass. */
+ * dp, r2) without physics duplication. */
 struct GrainBackrxNeighborData {
     struct particle_data *P_arr;
     struct gas_cell_data *CellP_arr;
     int  j;
-    bool oracle_dry_run;
 };
 
 struct GrainBackrxSpec {
     static constexpr const char *loop_name = "grain_backrx";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: drag back-reaction atomic_add(Pj.Vel/dp)+atomic_min(AccelTimeMin), gated !oracle_dry_run, stable Pj snapshot, no read-back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: drag back-reaction atomic_add(Pj.Vel/dp)+atomic_min(AccelTimeMin), stable Pj snapshot, no read-back -> ulp */
 
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;
     static constexpr unsigned int           neighbor_type_mask = 1u << 0;  /* gas */
@@ -96,9 +91,6 @@ struct GrainBackrxSpec {
     static constexpr bool mode_a_active_sources_in_sidx_pool = false; /* non-pool active sources (sink/star/grain) -> runner stages explicit P[].Pos */
     static constexpr bool          uses_ghost_writeback      = true;
     static constexpr bool          uses_ghost_write_detector = false;
-
-    /* AccumData is empty; oracle compare is vacuous. */
-    static constexpr double accum_tolerance = 1e-10;
 
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GrainBackrxActiveState;
@@ -122,14 +114,12 @@ struct GrainBackrxSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
     static void        ghost_writeback_begin(const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
     static void        ghost_writeback_end  (const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
     /* populate_device_context: required because DeviceContext extends the base.
-     * oracle_dry_run is default-initialized to false; no UVM allocation needed. */
+     * No UVM allocation needed. */
     static void populate_device_context(const neighbor_loop_args& /*args*/,
                                         DeviceContext& /*ctx*/) {}
 
@@ -170,7 +160,6 @@ struct GrainBackrxSpec {
         n.P_arr         = ctx.P;
         n.CellP_arr     = ctx.CellP;
         n.j             = j;
-        n.oracle_dry_run = ctx.oracle_dry_run;
         return n;
     }
 
@@ -179,11 +168,6 @@ struct GrainBackrxSpec {
                             const NeighborData& nb,
                             AccumData& /*accum*/,
                             NoScatter& /*scatter*/) {
-        /* Suppress j-writes during the oracle brute pass so the pass does not
-         * apply backreaction before production (double-application bug). The
-         * oracle pass validates search parity only; AccumData is empty so the
-         * compare is vacuous regardless. */
-        if(nb.oracle_dry_run) return;
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr || nb.CellP_arr == nullptr) return;
 #ifdef HYDRO_MULTIFLUID
@@ -266,8 +250,6 @@ struct GrainRTGasSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GasGrainRTActiveState;
     using AccumData      = GrainRTGasAccum;
@@ -287,8 +269,6 @@ struct GrainRTGasSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Device hooks — header-inline. */
 
@@ -395,8 +375,6 @@ struct GrainRTGrainSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = NlrCommonScalars;
     using ActiveData     = GasGrainRTActiveState;
     using AccumData      = GrainRTGrainAccum;
@@ -416,8 +394,6 @@ struct GrainRTGrainSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Device hooks — header-inline. */
 

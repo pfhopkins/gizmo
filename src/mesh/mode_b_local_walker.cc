@@ -1,11 +1,11 @@
-/* Mode B local neighbor walker — host-side range-walk + brute-force oracle.
+/* Mode B local neighbor walker — host-side range-walk.
  *
- * See header for design constraints. Both paths return LOCAL real P[]
+ * See header for design constraints. Returns LOCAL real P[]
  * indices in [0, ghost_get_num_local()) intersecting (pos, h_q).
  *
  * SYMMETRIC tree walk prunes internal nodes by the per-type hmax bands
  * (Extnodes[no].hmax_per_type via mode_b_node_symmetric_radius); ONEWAY
- * prunes by h_q alone. The brute walk is the oracle for both.
+ * prunes by h_q alone.
  *
  * The three public tree walks (mode_b_local_neighbor_walk / _walk_and_export /
  * _walk_from_start_nodes) are thin wrappers over the one shared traversal body
@@ -69,21 +69,6 @@ static inline int particle_passes(int j,
     return r2 < cutoff * cutoff;
 }
 
-void mode_b_local_brute_walk(const double pos[3],
-                             double h_q,
-                             unsigned int type_mask,
-                             int search_mode,
-                             mode_b_radius_policy_t radius_policy,
-                             std::vector<int>& out,
-                             double j_radius_scale)
-{
-    const int num_local = ghost_get_num_local();
-    for(int j = 0; j < num_local; j++) {
-        if(!particle_passes(j, pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale)) continue;
-        out.push_back(j);
-    }
-}
-
 /* Sphere-vs-AABB pruning test. Returns 1 if the sphere of radius R
  * centered at pos overlaps the AABB defined by node center + half-len.
  * Uses NEAREST_XYZ for periodic minimum image. */
@@ -129,11 +114,11 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * force_update_hmax refreshed every step, the within-step gas growth is covered
  * by the enclosing-sphere 0.866*len node term, so no inflation is needed. Set
  * to 0 to match legacy. Over-search is safe (extra candidates filter at the
- * leaf); under-search is a correctness bug — full-oracle membership on the
- * downsampled m11i confirmed 0 lost neighbors under real FIRE (gas) drift at
- * slack 0. AGS-active builds (larger per-step growth) rely on the same
- * per-step refresh cadence and are not independently oracle-checked here;
- * re-verify with the oracle if a SYMMETRIC Mode-B loop runs in an AGS config. */
+ * leaf); under-search is a correctness bug — an exhaustive membership check on
+ * the downsampled m11i confirmed 0 lost neighbors under real FIRE (gas) drift
+ * at slack 0. AGS-active builds (larger per-step growth) rely on the same
+ * per-step refresh cadence and were not separately checked; re-verify by
+ * exhaustive comparison if a SYMMETRIC Mode-B loop runs in an AGS config. */
 static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 
 static inline double mode_b_node_symmetric_radius(int no,
@@ -435,9 +420,3 @@ void mode_b_lazy_drift_candidates(const int *indices, int n)
      * drifted KernelRadius values. */
     gizmo_mark_kernel_radius_dirty_indices(indices, n);
 }
-
-/* Per-call same-rank tree-vs-brute oracle is owned by the runner via
- * GIZMO_NLR_ORACLE in mesh/neighbor_loop_runner.cc::run_mode_b_*_with_oracle.
- * The legacy public wrapper mode_b_local_walk_with_oracle() and its
- * GIZMO_MODE_B_ORACLE env helper were retired in this commit; both had
- * zero callers post-3c.3. */

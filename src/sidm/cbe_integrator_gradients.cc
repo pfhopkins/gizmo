@@ -221,40 +221,6 @@ void CBEGradSpec::merge_accum(AccumData& local, const AccumData& peer)
     }
 }
 
-/* compare_accum — NaN-aware float-relative across M, B, phi. Any non-finite
- * mismatch returns MAX_REAL_NUMBER so the oracle never silently passes with
- * NaN/inf in any field. */
-double CBEGradSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double max_rel = 0.0;
-    auto upd = [&](double a, double b) {
-        /* Any non-finite on either side is a bug — M/B are bounded under
-         * correct execution and phi is bounded in [0, 1]. +inf vs +inf
-         * (or NaN vs NaN) is NOT a pass; fail unconditionally. */
-        if(!isfinite(a) || !isfinite(b)) {
-            max_rel = MAX_REAL_NUMBER;
-            return;
-        }
-        const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-        const double rel   = std::fabs(a - b) / denom;
-        if(rel > max_rel) max_rel = rel;
-    };
-    for(int a = 0; a < 3; a++)
-        for(int b = 0; b < 3; b++)
-            upd(local.M[a][b], oracle.M[a][b]);
-    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
-        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-            for(int d = 0; d < 3; d++)
-                upd(local.B[m][k][d], oracle.B[m][k][d]);
-            upd(local.phi[m][k], oracle.phi[m][k]);
-        }
-    }
-    return max_rel;
-}
-
-/* Pure i-side accumulation — no j-side writes to suppress. */
-void CBEGradSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
-
 /* ============================================================================
  * CBEGrad_gradient_calc — toplevel. Two passes through the runner, separated
  * so pass 1's standard P[] ghost import sees the persistent

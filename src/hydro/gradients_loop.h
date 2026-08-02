@@ -182,7 +182,6 @@ struct GradientsSpec
     static constexpr WritePattern   write_pattern              = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind            = SidxCacheKind::GasOnly;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* gas-only active (Type 0) == pool member */
-    static constexpr double         accum_tolerance            = 1e-10;
     static constexpr bool           uses_ghost_writeback       = false;
     static constexpr bool           uses_ghost_write_detector  = false;
 
@@ -412,8 +411,6 @@ struct GradientsSpec
      * MaxDistance, additive for everything else. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
-    /* Oracle comparison. Body in gradients_loop.cc. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 
@@ -440,7 +437,6 @@ struct GradientsIterSpec
     static constexpr WritePattern   write_pattern              = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind            = SidxCacheKind::GasOnly;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true;
-    static constexpr double         accum_tolerance            = 1e-10;
     static constexpr bool           uses_ghost_writeback       = false;
     static constexpr bool           uses_ghost_write_detector  = false;
 
@@ -507,11 +503,10 @@ struct GradientsIterSpec
             neighbor.P, neighbor.CellP);
     }
 
-    /* Slim writeback / merge / oracle (own bodies, gradients_loop.cc). */
+    /* Slim writeback / merge (own bodies, gradients_loop.cc). */
     static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i,
                                         const AccumData& accum);
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 #endif /* MHD_CONSTRAINED_GRADIENT */
 

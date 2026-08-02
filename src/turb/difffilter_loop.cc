@@ -5,8 +5,8 @@
  * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
  * live in difffilter_loop.h so the runner instantiates them from GPU TUs.
  * This file owns: is_active, search_radius, populate_call_scalars,
- * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
- * symmetric_neighbor_radius_scale, and the toplevels.
+ * apply_active_writeback, merge_accum, symmetric_neighbor_radius_scale,
+ * and the toplevels.
  *
  * Replaces turb/difffilter_gpu.cc.
  *
@@ -27,25 +27,6 @@
 
 #ifdef TURB_DIFF_DYNAMIC
 
-/* ============================================================================
- * Shared finite-aware per-field relative-difference accumulator for
- * compare_accum. A non-finite value on EITHER side (NaN/Inf — e.g. the
- * deliberate no-guard Norm_hat division in DynDiff::pair_kernel) forces a
- * huge residual so the oracle flags it loudly rather than silently dropping
- * it (a plain `rel > max_rel` compare is false for NaN). The finite test is
- * written inline — (x==x) rejects NaN, (x-x==0) rejects Inf — to avoid the
- * isfinite-macro-vs-std::isfinite ambiguity in GPU TUs (runner checklist §2).
- * ========================================================================== */
-namespace {
-inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
-
-inline double nlr_rel_update(double max_rel, double a, double b) {
-    if (!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-    const double rel   = std::fabs(a - b) / denom;
-    return (rel > max_rel) ? rel : max_rel;
-}
-} /* anonymous namespace */
 
 /* ============================================================================
  * DiffFilterSpec host hooks.
@@ -102,19 +83,6 @@ void DiffFilterSpec::merge_accum(AccumData& local, const AccumData& peer)
     if (peer.max_dist_for_grad > local.max_dist_for_grad) local.max_dist_for_grad = peer.max_dist_for_grad;
 }
 
-double DiffFilterSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    m = nlr_rel_update(m, local.norm_hat,          oracle.norm_hat);
-    for (int k = 0; k < 3; k++)
-        m = nlr_rel_update(m, local.velocity_bar_delta[k], oracle.velocity_bar_delta[k]);
-    m = nlr_rel_update(m, local.filter_width_bar,  oracle.filter_width_bar);
-    m = nlr_rel_update(m, local.max_dist_for_grad, oracle.max_dist_for_grad);
-    return m;
-}
-
-/* No j-side writes → oracle brute pass needs no suppression. */
-void DiffFilterSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 double DiffFilterSpec::symmetric_neighbor_radius_scale()
 {
@@ -208,29 +176,6 @@ void DynDiffSpec::merge_accum(AccumData& local, const AccumData& peer)
     local.dynamic_numerator_hat   += peer.dynamic_numerator_hat;
     local.dynamic_denominator_hat += peer.dynamic_denominator_hat;
 }
-
-double DynDiffSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    for (int k = 0; k < 3; k++) {
-        for (int v = 0; v < 3; v++) {
-            m = nlr_rel_update(m, local.dynamic_fac[k][v],          oracle.dynamic_fac[k][v]);
-#ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
-            m = nlr_rel_update(m, local.dynamic_fac_const[k][v],    oracle.dynamic_fac_const[k][v]);
-#endif
-            m = nlr_rel_update(m, local.grad_velocity_hat[k][v],    oracle.grad_velocity_hat[k][v]);
-            m = nlr_rel_update(m, local.product_velocity_hat[k][v], oracle.product_velocity_hat[k][v]);
-        }
-        m = nlr_rel_update(m, local.maxima_velocity_hat[k], oracle.maxima_velocity_hat[k]);
-        m = nlr_rel_update(m, local.minima_velocity_hat[k], oracle.minima_velocity_hat[k]);
-    }
-    m = nlr_rel_update(m, local.filter_width_hat,        oracle.filter_width_hat);
-    m = nlr_rel_update(m, local.dynamic_numerator_hat,   oracle.dynamic_numerator_hat);
-    m = nlr_rel_update(m, local.dynamic_denominator_hat, oracle.dynamic_denominator_hat);
-    return m;
-}
-
-void DynDiffSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 double DynDiffSpec::symmetric_neighbor_radius_scale()
 {

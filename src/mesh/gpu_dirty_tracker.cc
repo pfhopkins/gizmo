@@ -44,7 +44,7 @@ static inline void clear_cache_state_(struct dirty_cache_t *c)
     c->popcount_hint = 0;
 }
 
-gpu_dirty_handle_t gpu_dirty_tracker_register(int base, int count)
+gpu_dirty_handle_t gpu_dirty_tracker_register(int base, int count, int start_clean)
 {
     if(count <= 0) return -1;
     for(int h = 0; h < GPU_DIRTY_MAX_CACHES; h++) {
@@ -53,10 +53,10 @@ gpu_dirty_handle_t gpu_dirty_tracker_register(int base, int count)
             g_caches[h].count = count;
             g_caches[h].bits = (bword_t *) malloc((size_t)n_words_(count) * sizeof(bword_t));
             memset(g_caches[h].bits, 0, (size_t)n_words_(count) * sizeof(bword_t));
-            /* Fresh registration starts all_dirty = 1: the cache's compact_xyzh
-             * was just (re)built so callers will refresh on next consume; this
-             * matches the old g_dirty_all=true initial state in gpu_neighbor_list.cc. */
-            g_caches[h].all_dirty = 1;
+            /* A caller that has just written every row from the live P[] passes
+             * start_clean=1, so the first consume refreshes nothing. Anyone else
+             * starts all-dirty, which refreshes the whole range once. */
+            g_caches[h].all_dirty = start_clean ? 0 : 1;
             g_caches[h].popcount_hint = 0;
             g_caches[h].valid = 1;
             return h;

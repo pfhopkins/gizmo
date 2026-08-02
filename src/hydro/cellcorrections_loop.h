@@ -139,7 +139,6 @@ struct CellcorrectionsSpec {
     static constexpr WritePattern   write_pattern    = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind  = SidxCacheKind::GasOnly;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* gas-only active (Type 0) == pool member */
-    static constexpr double         accum_tolerance  = 1e-10;
     static constexpr bool           uses_ghost_writeback       = false;
     static constexpr bool           uses_ghost_write_detector  = false;
 
@@ -252,8 +251,6 @@ struct CellcorrectionsSpec {
         local.volume_1 += peer.volume_1;
     }
 
-    /* Oracle comparison (env-gated by runner). Body in .cc. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* HYDRO_VOLUME_CORRECTIONS */

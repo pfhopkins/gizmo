@@ -92,19 +92,17 @@ struct gpu_spatial_index_t {
      * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
      * are recomputed in place from current particle positions, the BVH
      * is re-fitted from the updated tile bboxes (build_tile_bvh re-call,
-     * O(ntiles)), then re-staged to device. Skips the expensive SFC
-     * sort (build_sfc_tiles ~1s on 12.4M particles) which is the
-     * dominant cost in a fresh build. Only freed at full invalidate
-     * (post-domain_decomp boundary). */
+     * O(ntiles)), then re-staged to device. What this saves is the
+     * membership work: build_sfc_tiles derives pool membership with two
+     * passes over P[] and then tiles it with a third, and those passes
+     * (not any sort — P[] arrives Peano-ordered from the domain
+     * decomposition, so tiles are consecutive runs) dominate a fresh
+     * build. Only freed at full invalidate (post-domain_decomp boundary). */
     sfc_tile_t *h_tiles;        /* [ntiles] */
     int *h_pool;                /* [num_pool] */
     tile_bvh_node_t *h_bvh;     /* [2*ntiles-1] */
     int h_bvh_nnodes;
     int num_pool;
-    /* Per-tile original extent (max axis range at last full rebuild). Used to
-     * monitor cumulative bbox dispersion across drifts; if it grows pathologically
-     * the next gpu_step_sidx_invalidate_full() resets it. */
-    double *h_tile_orig_max_extent; /* [ntiles] */
     /* Host + device position-staging buffers used by the drift refresh path to
      * bypass the UVM-fault storm of a device-side parallel_for over P_shared.Pos.
      * The bbox-recompute pass on host fills h_pos_buf for every pool member;
@@ -119,7 +117,7 @@ struct gpu_spatial_index_t {
 
 /* Build spatial index (tiles + BVH) on CPU, copy to SharedSpace.
    P_shared must be in SharedSpace (managed memory).
-   caller_label: short tag printed in DIAG_SIDX so we can attribute rebuilds.
+   caller_label: short tag identifying which caller triggered a rebuild.
    radius_policy: per-particle reach used to seed tile->hmax[_by_type] and the
    per-particle compact_xyzh[j*4+3] field — runner Mode A passes
    Spec::radius_policy; non-runner callers (merge_split / radfb_local / twopoint /
@@ -166,7 +164,8 @@ gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void);
 void gpu_step_sidx_invalidate(void);
 
 /* Full invalidate: free SIDXes so the next gpu_ngb_list_build does a
- * complete rebuild including the SFC sort. Called from run.cc after
+ * complete rebuild, re-deriving pool membership and tiles. Called from
+ * run.cc after
  * any domain_decomp variant, since decomp shuffles particle indices
  * and pool/tile assignments become stale. */
 void gpu_step_sidx_invalidate_full(void);
@@ -210,8 +209,8 @@ void gpu_compact_xyzh_dirty_drop_above(int threshold);
 
 /* SIDX lifecycle notification hooks. ghost_exchange owns the import/cleanup
  * lifecycle; SIDX owns the spatial-index representation. These are the
- * lifecycle signals SIDX consumes (currently just bumps epochs + diagnostic
- * counters; consumed by the segmented SIDX in a later commit).
+ * lifecycle signals SIDX consumes. They currently bump the epoch counters
+ * and nothing more; no consumer reads those counters yet.
  *
  * Contract:
  *  - ghost_imported(start, count): MUST be called on every rank at the end of
@@ -228,15 +227,9 @@ void gpu_sidx_notify_ghost_imported(int start, int count);
 void gpu_sidx_notify_ghost_cleanup(void);
 void gpu_sidx_notify_pool_changed(void);
 
-/* Diagnostic accessors for the SIDX lifecycle counters. Used by GX_RD_CACHE /
- * DIAG_NGL prints under the verbose-diag gate. */
 #ifdef __cplusplus
 extern "C" {
 #endif
-uint64_t gpu_sidx_ghost_epoch(void);
-uint64_t gpu_sidx_pool_epoch(void);
-int      gpu_sidx_last_ghost_start(void);
-int      gpu_sidx_last_ghost_count(void);
 #ifdef __cplusplus
 }
 #endif

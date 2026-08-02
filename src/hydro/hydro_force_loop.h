@@ -6,8 +6,7 @@
  * `hydro_accumulate_neighbor` is reused verbatim from
  * hydro/hydro_functions.h — physics unchanged. The j-side write block
  * (P[j].wakeup atomic-max, MFV CellP[j].dMass atomic-add, NeedToWakeup_flag
- * store) is gated by `allow_j_writes` so the runner's
- * Mode B + oracle brute pass can dry-run without mutating production state.
+ * store) all happen at the end of that helper.
  *
  * Ghost writeback (Mode A imported-ghost path): runner's snapshot-diff
  * bundle handles wakeup + MFV dMass reverse-comm via PARTICLE_MAX(wakeup)
@@ -71,8 +70,7 @@
  * pair body dereferences on the j-owning rank (TimeBinActive_ptr,
  * need_wakeup_ptr) live in NeighborData below — they MUST be peer-ctx
  * pointers in Mode B remote, not serialized origin pointers, or the peer
- * segfaults on dereference. oracle_dry_run lives in NeighborData too so the
- * j-write gate is derived consistently from the evaluating rank's ctx. */
+ * segfaults on dereference. */
 struct HydroForceActiveData
 {
     /* Mode B remote walker requirements */
@@ -105,28 +103,24 @@ struct HydroForceNeighborData
     struct particle_data *P;
     struct gas_cell_data *CellP;
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
-    int                  *need_wakeup_ptr;      /* evaluating ctx UVM; nullptr under oracle dry-run */
-    unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base; nullptr under oracle dry-run */
-    bool                  oracle_dry_run;       /* gates allow_j_writes */
+    int                  *need_wakeup_ptr;      /* evaluating ctx UVM */
+    unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base */
 };
 
 /* DeviceContext extension. UVM pointers backing the per-call scratch the
- * pair body atomically writes (need_wakeup_uvm) or reads (TimeBinActive_uvm),
- * plus the oracle_dry_run flag set by the runner's set_oracle_brute_pass
- * before the brute oracle pass. Trivially copyable — captured by value into
- * Kokkos device lambdas (static_assert in runner). */
+ * pair body atomically writes (need_wakeup_uvm) or reads (TimeBinActive_uvm).
+ * Trivially copyable — captured by value into Kokkos device lambdas
+ * (static_assert in runner). */
 struct HydroForceDeviceContext : NeighborLoopDeviceContextBase
 {
     int  *TimeBinActive_uvm;   /* UVM int[TIMEBINS]; populate copies from host */
     int  *need_wakeup_uvm;     /* UVM int[1]; populate inits to 0 */
     unsigned char *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    bool  oracle_dry_run;      /* set true by set_oracle_brute_pass */
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* UVM double[num_active * NUM_ISMDUSTCHEM_PASSIVE_SCALARS]; host-precomputed
      * per-active passive scalars (legacy density_gpu.cc:169-188). nullptr when
      * NUM_ISMDUSTCHEM_PASSIVE_SCALARS == 0 || num_active == 0. Owning context
-     * frees it in cleanup_device_context; oracle shallow-copy ctx must NOT
-     * free (read-only alias of the same UVM pointer). Gate matches
+     * frees it in cleanup_device_context. Gate matches
      * load_active's actual write reachability (hydro_data_in::Metallicity is
      * gated by TURB_DIFF_METALS || METALS+MFV — see hydro_structs.h:129). */
     double *ismdc_uvm;
@@ -142,7 +136,7 @@ struct HydroForceSpec
     /* Eval-thread tier: j-side writes are CellP[j].dMass (Kokkos::atomic_add,
      * MFV), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
      * (Kokkos::atomic_store 1, idempotent) — all via HYDRO_ATOMIC_* in
-     * hydro_functions.h, all gated by allow_j_writes. Only dMass is
+     * hydro_functions.h. Only dMass is
      * order-sensitive (FP reduction across concurrent actives -> ulp class);
      * neither dMass nor wakeup is read back in the kernel, so the i-side
      * AccumData is order-independent. Threaded eval re-orders the SAME atomics
@@ -158,7 +152,6 @@ struct HydroForceSpec
     static constexpr WritePattern   write_pattern              = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind            = SidxCacheKind::GasOnly;
     static constexpr bool mode_a_active_sources_in_sidx_pool = true; /* gas-only active (Type 0) == pool member */
-    static constexpr double         accum_tolerance            = 1e-10;
     static constexpr bool           uses_ghost_writeback       = true;
     static constexpr bool           uses_ghost_write_detector  = true;
 
@@ -200,7 +193,6 @@ struct HydroForceSpec
                                          DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args,
                                          DeviceContext& ctx);
-    static void set_oracle_brute_pass  (DeviceContext& ctx, bool on);
 
     /* Ghost lifecycle hooks. Mode A snapshot-diff lifecycle:
      *   ghost_write_detector_begin -> ghost_writeback_begin -> kernel ->
@@ -430,9 +422,8 @@ struct HydroForceSpec
         nb.P                  = ctx.P;
         nb.CellP              = ctx.CellP;
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
-        nb.oracle_dry_run     = ctx.oracle_dry_run;
-        nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
-        nb.wakeup_dirty_ptr   = ctx.oracle_dry_run ? nullptr : ctx.wakeup_dirty_base;
+        nb.need_wakeup_ptr    = ctx.need_wakeup_uvm;
+        nb.wakeup_dirty_ptr   = ctx.wakeup_dirty_base;
         return nb;
     }
 
@@ -478,8 +469,7 @@ struct HydroForceSpec
             neighbor.P, neighbor.CellP,
             neighbor.TimeBinActive_ptr,
             neighbor.need_wakeup_ptr,
-            neighbor.wakeup_dirty_ptr,
-            /*allow_j_writes=*/!neighbor.oracle_dry_run);
+            neighbor.wakeup_dirty_ptr);
     }
 
     /* Host writebacks (post-dispatch). Body in hydro_force_loop.cc.
@@ -495,11 +485,6 @@ struct HydroForceSpec
      * additive for most fields, MAX for MaxSignalVel + MaxShockMachNumber +
      * MaxKineticEnergyNgb. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
-
-    /* Oracle gate. Body in hydro_force_loop.cc, same shape as gradients
-     * commit 7 — field-wise per-#ifdef coverage + 1e-12 abs-tol floor for
-     * sum-to-zero cancellation noise. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* HYDRO_FORCE_LOOP_H */

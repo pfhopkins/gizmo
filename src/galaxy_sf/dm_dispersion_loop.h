@@ -107,8 +107,6 @@ struct DMDispersionSpec {
     static constexpr bool           uses_ghost_write_detector = false;
 
     /* Convergence + iter policy */
-    static constexpr double accum_tolerance  = 1e-10;
-    static constexpr double radius_tolerance = 1e-9;
     using                    IterControl = Iterative;
     using                    IterScratch = DMDispIterScratch;
     static constexpr int     max_iters   = MAXITER;
@@ -156,7 +154,7 @@ struct DMDispersionSpec {
                                        int active_slot, int i,
                                        const AccumData& accum);
 
-    /* apply_active_writeback_iterative: oracle-safe production writeback.
+    /* apply_active_writeback_iterative: production writeback.
      * Runner calls this INSTEAD of apply_active_writeback. Copies converged
      * accum + final_h into Aux for dm_dispersion_finalize_post_runner. */
     static void apply_active_writeback_iterative(const neighbor_loop_args& args,
@@ -166,8 +164,6 @@ struct DMDispersionSpec {
                                                   const IterScratch& scratch);
 
     static void   merge_accum(AccumData& local, const AccumData& peer);
-    static void   set_oracle_brute_pass(DeviceContext& ctx, bool on);
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     static IterResult after_iter(const AfterIterContext<DMDispersionSpec>& ctx,
                                  const AccumData& accum);

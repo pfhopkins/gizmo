@@ -89,9 +89,6 @@ struct DiffFilterSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    /* Pure-read pair kernel (no j-writes) → no order dependence → tight oracle. */
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = DiffFilterCallScalars;
     using ActiveData     = DiffFilterActiveState;
     using AccumData      = DiffFilterAccum;
@@ -115,8 +112,6 @@ struct DiffFilterSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Scaled-symmetric search hook: j-side radius scaled by All.TurbDynamicDiffFac. */
     static double      symmetric_neighbor_radius_scale();
@@ -313,8 +308,6 @@ struct DynDiffSpec {
     static constexpr bool          uses_ghost_writeback      = false;
     static constexpr bool          uses_ghost_write_detector = false;
 
-    static constexpr double accum_tolerance = 1e-10;
-
     using CallScalars    = DynDiffCallScalars;
     using ActiveData     = DynDiffActiveState;
     using AccumData      = DynDiffAccum;
@@ -341,8 +334,6 @@ struct DynDiffSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
     static double      symmetric_neighbor_radius_scale();
 
     KOKKOS_INLINE_FUNCTION

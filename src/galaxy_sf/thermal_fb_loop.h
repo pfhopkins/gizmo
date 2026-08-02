@@ -123,12 +123,11 @@ struct ThermalFBActiveState {
     ThermalFBCallScalars scalars;
 };
 
-/* DeviceContext extension: UVM-resident per-active host-fill array + oracle
- * flag. Trivially copyable; runner captures by value into device lambdas. */
+/* DeviceContext extension: UVM-resident per-active host-fill array.
+ * Trivially copyable; runner captures by value into device lambdas. */
 struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
     const ThermalFBLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
     unsigned char          *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    bool                    oracle_dry_run;     /* flipped by set_oracle_brute_pass for brute pass */
 };
 
 /* ============================================================================
@@ -137,8 +136,7 @@ struct ThermalFBDeviceContext : NeighborLoopDeviceContextBase {
  * Caller pre-filters Pj.Type==0 / Pj.Mass>0 via the gas-only neighbor mask in
  * load_neighbor (defensive checks still inside as safety). dp = source.Pos -
  * Pj.Pos with nearest_xyz applied. r2 > 0 and r2 < KernelRadius^2 pre-checked
- * by the lambda. `oracle_dry_run` short-circuits j-side atomic writes (oracle
- * brute pass mustn't double-deposit); i-side accum always runs.
+ * by the lambda.
  *
  * All `All.*` and `UNIT_*` macro reads go through `scalars` — Mode B no-
  * globals rule (project directive 3).
@@ -150,7 +148,6 @@ static void thermal_fb_pair_kernel(
     struct particle_data& Pj,
     struct gas_cell_data& Cj,
     double r2,
-    bool oracle_dry_run,
     unsigned char* wakeup_dirty_slot,
     ThermalFBOut& out)
 {
@@ -204,11 +201,9 @@ static void thermal_fb_pair_kernel(
     /* Energy: IE += wk * Esne / Mass_j. */
     double dIE = wk * (double)local.Esne / Mass_j;
 
-    /* i-side accum always runs (oracle compares this for parity). */
     out.M_coupled += dM;
 
-    /* j-side atomic writes — suppressed under oracle dry-run. */
-    if (oracle_dry_run) return;
+    /* j-side atomic writes. */
 
     Kokkos::atomic_add(&Pj.Mass, (MyDouble)dM);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -261,8 +256,8 @@ static void thermal_fb_pair_kernel(
  * ThermalFBSpec — non-iterative scatter Spec (sink_feed pattern).
  * ========================================================================== */
 struct ThermalFBSpec {
-    /* Identity. loop_name drives env-var derivation (GIZMO_THERMALFB_* per
-     * nlr_loop_env_name uppercasing) and the new generic _end_bundle print. */
+    /* Identity. loop_name labels this loop in runner diagnostics and the
+     * generic _end_bundle print. */
     static constexpr const char *loop_name = "thermalfb";
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass (divisor of dIE/delta_rho/dMet) then atomic_add(&Pj.Mass); same for Cj.Density, Pj.Metallicity -> multi-source order-dependent physics (read-then-atomic-add) */
 
@@ -279,15 +274,13 @@ struct ThermalFBSpec {
     static constexpr bool           uses_ghost_writeback      = true;
     static constexpr bool           uses_ghost_write_detector = true;
 
-    /* Oracle compare tolerance for AccumData (M_coupled). The ejecta are split
-     * by the number-weighted kernel fraction W_j / Sum_k W_k, which depends only
-     * on neighbor geometry and the source kernel radius — NOT on the gas mass
-     * the deposits mutate during the loop. So each source couples exactly
-     * M_coupled = Msne regardless of source order, and the oracle dry-run (which
-     * only suppresses the j-side writes, not the i-side M_coupled accumulation)
-     * computes the identical value. A tight bound applies; the only residual is
-     * floating-point summation order across CSR / Mode-B partial sums. */
-    static constexpr double accum_tolerance = 1e-10;
+    /* Source-order independence of M_coupled. The ejecta are split by the
+     * number-weighted kernel fraction W_j / Sum_k W_k, which depends only on
+     * neighbor geometry and the source kernel radius — NOT on the gas mass the
+     * deposits mutate during the loop. So each source couples exactly
+     * M_coupled = Msne no matter what order the sources are processed in; the
+     * only residual is floating-point summation order across CSR / Mode-B
+     * partial sums. */
 
     /* Type aliases. */
     using CallScalars    = ThermalFBCallScalars;
@@ -298,14 +291,12 @@ struct ThermalFBSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* NeighborData carries non-const pointers (kernel writes to *neighbor_*).
-     * Oracle flag propagated per-call from ctx via load_neighbor (mirrors
-     * SinkFeedSpec::NeighborData). */
+    /* NeighborData carries non-const pointers (kernel writes to *neighbor_*);
+     * mirrors SinkFeedSpec::NeighborData. */
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;   /* nullptr for non-gas; gas-only mask should prevent */
-        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
-        bool                  oracle_dry_run;
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j] */
     };
 
     /* Aux — empty; thermalfb needs no host-only per-call state beyond what
@@ -338,18 +329,12 @@ struct ThermalFBSpec {
     /* Per-field merge — manifest in thermal_fb_loop.cc. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
-    /* Oracle suppression flag. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
-    }
-
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "thermalfb"). */
     static void ghost_writeback_begin     (const neighbor_loop_args&, const NeighborLoopPlan&);
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 
     /* Diagnostics — env-gated. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* ====================================================================
      * Device hooks (header-inline).
@@ -392,8 +377,7 @@ struct ThermalFBSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
-        n.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
+        n.wakeup_dirty_slot = dctx.wakeup_dirty_base ? &dctx.wakeup_dirty_base[j] : nullptr;
         return n;
     }
 
@@ -435,7 +419,7 @@ struct ThermalFBSpec {
         if (r2 >= h2) return;
 
         thermal_fb_pair_kernel(active.local, active.scalars, Pj, Cj,
-                                r2, neighbor.oracle_dry_run, neighbor.wakeup_dirty_slot, accum);
+                                r2, neighbor.wakeup_dirty_slot, accum);
     }
 };
 

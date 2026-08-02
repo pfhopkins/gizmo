@@ -5,14 +5,9 @@
  *
  * Two implementations behind one API:
  *   - mode_b_local_neighbor_walk()  — TREE-WALK path. Fast.
- *   - mode_b_local_brute_walk()     — BRUTE-FORCE path. The oracle.
  *
  * Both return the same set of LOCAL real P[] indices intersecting the
  * spherical query (pos, h_q) with type/mode filter. Sorted ascending.
- *
- * Oracle: cross-rank Mode B oracle is owned by the runner via
- * GIZMO_NLR_ORACLE (mesh/neighbor_loop_runner.cc). The runner calls
- * both walks for each query and diffs results.
  *
  * Design constraints:
  *   - Walk uses Nodes[]/Nextnode[] for pruning. Node bounds come from
@@ -101,18 +96,6 @@ void mode_b_local_neighbor_walk(const double pos[3],
                                 std::vector<int>& out,
                                 double j_radius_scale = 1.0,
                                 ModeBDriftCounters* drift_ctr = nullptr);
-
-/* Brute-force path. Iterates 0..num_local. Slow but obviously correct.
- * Used as the runner-owned oracle. Same append-oriented contract as the
- * tree walker: appends matches to `out` via push_back; does NOT clear
- * or sort. */
-void mode_b_local_brute_walk(const double pos[3],
-                             double h_q,
-                             unsigned int type_mask,
-                             int search_mode,
-                             mode_b_radius_policy_t radius_policy,
-                             std::vector<int>& out,
-                             double j_radius_scale = 1.0);
 
 /* Cross-rank targeted-export support (restores the legacy source-tree export
  * the port dropped). The three

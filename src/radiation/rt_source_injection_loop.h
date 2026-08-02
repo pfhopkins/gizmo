@@ -83,24 +83,21 @@ struct RtSrcInjCallScalars {
 };
 
 /* ============================================================================
- * AccumData — ORACLE / DEBUG TELEMETRY ONLY.
+ * AccumData — EMPTY for this Spec, and that is correct.
  *
- * Production physics is the atomic_adds into Pj / Cj inside the pair kernel
- * (gas-side fields: Rad_Je / Rad_E_gamma / Rad_E_gamma_Pred /
- * Rad_Intensity[/Pred] / Rad_Flux[/Pred] / VelPred, particle-side fields:
- * P[j].Vel / P[j].dp). AccumData here is NOT a physics surrogate — it carries
- * a single scalar (sum of pair-wise dE = wk * Σ_k local.Luminosity[k]) and a
- * pair counter, used by compare_accum for the env-gated oracle pass.
+ * This loop accumulates nothing per active. All of its output is the
+ * atomic_adds into Pj / Cj inside the pair kernel (gas-side: Rad_Je /
+ * Rad_E_gamma / Rad_E_gamma_Pred / Rad_Intensity[/Pred] / Rad_Flux[/Pred] /
+ * VelPred; particle-side: P[j].Vel / P[j].dp), carried across ranks by the
+ * ghost-writeback bundle. The type remains because the Spec contract requires
+ * the alias and the runner's per-active reduce is written in terms of it.
  *
  * Order-independence: every j-side write this loop performs is a fresh
  * atomic_add into fields this loop neither reads nor accumulates from within
- * the pair body. Contrast with thermal_fb (Pj.Mass read then atomic_add'd in
- * the same loop → algorithmic order-dependence → accum_tolerance=1e-3).
- * Hence accum_tolerance = 1e-10 here (real precision bound, not parity bound).
+ * the pair body, so the result does not depend on source order. Contrast with
+ * thermal_fb, which reads Pj.Mass and atomic_adds to it in the same loop.
  * ========================================================================== */
 struct RtSrcInjAccum {
-    double    sum_dE;
-    long long pair_count;
 };
 
 /* Runner ActiveData. `pos` and `h_search` are top-level (runner's Mode B
@@ -112,11 +109,10 @@ struct RtSrcInjActiveState {
     RtSrcInjCallScalars    scalars;
 };
 
-/* DeviceContext extension: UVM-resident per-active host-fill array + oracle
- * flag. Trivially copyable; runner captures by value into device lambdas. */
+/* DeviceContext extension: UVM-resident per-active host-fill array.
+ * Trivially copyable; runner captures by value into device lambdas. */
 struct RtSrcInjDeviceContext : NeighborLoopDeviceContextBase {
     const RtSrcLocalIn *per_active_local;   /* UVM, [num_active]; nullptr when num_active==0 */
-    bool                oracle_dry_run;
 };
 
 /* ============================================================================
@@ -140,9 +136,7 @@ static void rt_source_injection_pair_body(
     struct particle_data& Pj,
     struct gas_cell_data& Cj,
     double r2,
-    const Vec3<double>& dp,
-    bool oracle_dry_run,
-    RtSrcInjAccum& accum)
+    const Vec3<double>& dp)
 {
     double r = sqrt(r2);
     double hinv, hinv3, hinv4;
@@ -175,18 +169,6 @@ static void rt_source_injection_pair_body(
         angle_wt_Inu_sum += wt;
     }
 #endif
-
-    /* Oracle/debug accumulator — order-independent (atomic across pairs by
-     * runner-provided AccumData reduce). NOT a physics surrogate. */
-    double dE_pair_sum = 0;
-    for (int k_acc = 0; k_acc < N_RT_FREQ_BINS; k_acc++) {
-        dE_pair_sum += wk * local.Luminosity[k_acc];
-    }
-    accum.sum_dE     += dE_pair_sum;
-    accum.pair_count += 1;
-
-    /* j-side atomic writes — suppressed under oracle dry-run. */
-    if (oracle_dry_run) return;
 
     for (int k = 0; k < N_RT_FREQ_BINS; k++) {
         double dE = wk * local.Luminosity[k];
@@ -288,7 +270,7 @@ static void rt_source_injection_pair_body(
  * ========================================================================== */
 struct RtSrcInjectionSpec {
     static constexpr const char *loop_name = "rtsrcinjection";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: radiation scatter atomic_add to Cj.Rad fields, Pj.Vel, Pj.dp; gated !oracle_dry_run; source-snapshot deltas never read back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: radiation scatter atomic_add to Cj.Rad fields, Pj.Vel, Pj.dp; source-snapshot deltas never read back -> ulp */
 
     /* Search policy. SYMMETRIC matches legacy rt_source_injection_gpu.cc:178
      * (NGB_SEARCH_SYMMETRIC unconditional). Correctness-required under
@@ -307,7 +289,6 @@ struct RtSrcInjectionSpec {
     /* Real precision bound (not algorithmic-parity floor): the pair kernel
      * writes only into Pj/Cj fields that this loop never reads back during
      * the loop. No thermal_fb-style read-then-write self-coupling. */
-    static constexpr double accum_tolerance = 1e-10;
 
     /* Type aliases. */
     using CallScalars    = RtSrcInjCallScalars;
@@ -318,12 +299,10 @@ struct RtSrcInjectionSpec {
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
 
-    /* NeighborData: non-const pointers (kernel writes to *neighbor_*).
-     * Oracle flag propagated per-call from ctx via load_neighbor. */
+    /* NeighborData: non-const pointers (kernel writes to *neighbor_*). */
     struct NeighborData {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;
-        bool                  oracle_dry_run;
     };
 
     /* Aux — toplevel-owned active source pack. host_locals[active_slot] is
@@ -367,26 +346,18 @@ struct RtSrcInjectionSpec {
     /* Additive merge — manifest in rt_source_injection_loop.cc. */
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
 
-    /* Oracle suppression flag. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
-    }
-
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "rtsrcinjection"). */
     static void ghost_writeback_begin     (const neighbor_loop_args&, const NeighborLoopPlan&);
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 
     /* Diagnostics — env-gated. */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 
     /* ====================================================================
      * Device hooks (header-inline).
      * ==================================================================== */
     KOKKOS_INLINE_FUNCTION
-    static void zero_accum(AccumData& accum) {
-        accum.sum_dE     = 0;
-        accum.pair_count = 0;
+    static void zero_accum(AccumData& /*accum*/) {
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -421,14 +392,13 @@ struct RtSrcInjectionSpec {
         n.neighbor_particle = &dctx.P[j];
         n.neighbor_cell     = (dctx.CellP != nullptr && dctx.P[j].Type == 0)
                               ? &dctx.CellP[j] : nullptr;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
         return n;
     }
 
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
-                             AccumData& accum,
+                             AccumData& /*accum*/,
                              NoScatter& /*scatter*/) {
         /* Source-level early-outs — mirror the legacy lambda guard at
          * rt_source_injection_gpu.cc:193. wk = (1 - r2/h2) / KernelSum_Around_RT_Source
@@ -476,8 +446,7 @@ struct RtSrcInjectionSpec {
         if (Pj.StellarAge == All.Time) return;
 #endif
 
-        rt_source_injection_pair_body(active.local, Pj, Cj,
-                                       r2, dp, neighbor.oracle_dry_run, accum);
+        rt_source_injection_pair_body(active.local, Pj, Cj, r2, dp);
     }
 };
 

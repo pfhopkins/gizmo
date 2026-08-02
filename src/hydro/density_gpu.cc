@@ -33,7 +33,6 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/step_phases.h"
 #include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
@@ -111,7 +110,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
-    double t_hyd_start = my_second(); /* sub-bucket timing */
 
     /* Persistent decomp-scoped arena. Replaces per-call
      * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
@@ -119,7 +117,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
-    double t_hyd_arena = my_second();
 
     /* Copy CSR neighbor list to SharedSpace (offsets 64-bit; neighbor values int) */
     int64_t *d_offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)(num_active + 1) * sizeof(int64_t));
@@ -128,7 +125,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     memcpy(d_offsets, csr_offsets_host, (size_t)(num_active + 1) * sizeof(int64_t));
     memcpy(d_neighbors, csr_neighbors_host, (size_t)csr_total_pairs * sizeof(int));
     memcpy(d_active, active_indices_host, num_active * sizeof(int));
-    double t_hyd_csr_copy = my_second();
 
     /* Copy TimeBinActive to SharedSpace */
     int *d_TimeBinActive = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
@@ -142,30 +138,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     struct hydro_data_out *d_out = (struct hydro_data_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct hydro_data_out));
 
     PRINT_STATUS("  GPU hydro: %d active, %lld pairs", num_active, (long long)csr_total_pairs);
-
-    /* Verification harness (β): GIZMO_VERIFY_KERNEL_WRITES=1 snapshots the
-     * arena fields the kernel is permitted to write (P[j].wakeup, CellP[j].dMass
-     * MFV-only) so the post-kernel sparse scatter can prove the kernel touched
-     * ONLY j's that appear in csr_neighbors_host[]. O(N) cost, off by default.
-     * Used once after each new wrapper sparse-scatter conversion to confirm
-     * the kernel-writes header comment is complete. */
-    static int gizmo_verify_init = 0, gizmo_verify_on = 0;
-    if(!gizmo_verify_init) {
-        gizmo_verify_init = 1;
-        gizmo_verify_on = (getenv("GIZMO_VERIFY_KERNEL_WRITES") != nullptr) ? 1 : 0;
-    }
-    short int *verify_snap_wakeup = nullptr;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    MyDouble *verify_snap_dMass = nullptr;
-#endif
-    if(gizmo_verify_on && num_total > 0) {
-        verify_snap_wakeup = (short int *) malloc((size_t)num_total * sizeof(short int));
-        for(int j = 0; j < num_total; j++) verify_snap_wakeup[j] = P_gpu[j].wakeup;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        verify_snap_dMass = (MyDouble *) malloc((size_t)num_total * sizeof(MyDouble));
-        for(int j = 0; j < num_total; j++) verify_snap_dMass[j] = CellP_gpu[j].dMass;
-#endif
-    }
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     /* Pre-compute ISMDustChem passive scalar diffusion values on host.
@@ -388,8 +360,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
-                                          kTimeBinActive, kNeedWakeup, kWakeupDirty,
-                                          /*allow_j_writes=*/true);
+                                          kTimeBinActive, kNeedWakeup, kWakeupDirty);
             }
 
             /* Store output for this particle */
@@ -399,14 +370,12 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
         gizmo_gpu_check_last_error("hydro kernel", num_active);
     }
-    double t_hyd_kernel = my_second();
 
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct hydro_data_out));
 
     /* Copy wakeup flag back */
     if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
-    double t_hyd_out_copy = my_second();
 
     /* SPARSE scatter (replaces former full-num_total loop). The kernel writes
      * only P_gpu[j].wakeup (atomic_max) and, MFV-only, CellP_gpu[j].dMass
@@ -420,41 +389,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP_host[j].dMass = CellP_gpu[j].dMass;
 #endif
-    }
-    double t_hyd_scatter = my_second();
-
-    /* Verification harness (β): for any untouched j, P_gpu[j] must match the
-     * pre-kernel snapshot. Any violation means the kernel-writes header is
-     * incomplete (a write the audit missed). Off by default. */
-    if(verify_snap_wakeup) {
-        char *touched = (char *) calloc((size_t)num_total, sizeof(char));
-        for(int64_t idx = 0; idx < csr_total_pairs; idx++) touched[csr_neighbors_host[idx]] = 1;
-        long wakeup_violations = 0;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        long dMass_violations = 0;
-#endif
-        for(int j = 0; j < num_total; j++) {
-            if(touched[j]) continue;
-            if(P_gpu[j].wakeup != verify_snap_wakeup[j]) wakeup_violations++;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            if(CellP_gpu[j].dMass != verify_snap_dMass[j]) dMass_violations++;
-#endif
-        }
-        if(wakeup_violations) {
-            printf("[VERIFY_KERNEL_WRITES] hydro: %ld untouched j's had P_gpu.wakeup mutated (rank=%d, num_total=%d, csr_pairs=%lld)\n",
-                   wakeup_violations, ThisTask, num_total, (long long)csr_total_pairs);
-            fflush(stdout);
-        }
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        if(dMass_violations) {
-            printf("[VERIFY_KERNEL_WRITES] hydro: %ld untouched j's had CellP_gpu.dMass mutated (rank=%d)\n",
-                   dMass_violations, ThisTask);
-            fflush(stdout);
-        }
-        free(verify_snap_dMass);
-#endif
-        free(touched);
-        free(verify_snap_wakeup);
     }
 
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
@@ -472,15 +406,5 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 
-    /* sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
-    {
-        double t_postloop_end = my_second();
-        gizmo_step_phase_record("hydro_arena",       timediff(t_hyd_start,    t_hyd_arena));
-        gizmo_step_phase_record("hydro_csr_copy",    timediff(t_hyd_arena,    t_hyd_csr_copy));
-        gizmo_step_phase_record("hydro_kernel",      timediff(t_hyd_csr_copy, t_hyd_kernel));
-        gizmo_step_phase_record("hydro_out_copy",    timediff(t_hyd_kernel,   t_hyd_out_copy));
-        gizmo_step_phase_record("hydro_scatter",     timediff(t_hyd_out_copy, t_hyd_scatter));
-        gizmo_step_phase_record("hydro_postloop",    timediff(t_hyd_scatter,  t_postloop_end));
-    }
 }
 

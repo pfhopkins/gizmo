@@ -111,8 +111,7 @@ struct DMGradSpec {
     static constexpr bool          uses_ghost_write_detector = false;
 
     /* Pure-read pair kernel (no j-writes) → order-independent up to FP
-     * summation → tight oracle. */
-    static constexpr double accum_tolerance = 1e-10;
+     * summation. */
 
     using CallScalars    = DMGradCallScalars;
     using ActiveData     = DMGradActiveState;
@@ -140,8 +139,6 @@ struct DMGradSpec {
                                               int active_slot, int i,
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
-    static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* ---- Device hooks (header-inline; runner instantiates from GPU TUs). ---- */
     KOKKOS_INLINE_FUNCTION

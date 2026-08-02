@@ -52,10 +52,6 @@ static double *g_band        = NULL;   /* SharedSpace [cap*TLR_NUM_PTYPES] */
 static int     g_band_cap    = 0;
 static int     g_band_ntl    = 0;
 static int     g_band_valid  = 0;
-/* flat-fill reference band: built ONLY in band-oracle mode to validate the
- * production hierarchical fill (g_band) against the trusted flat owned-leaf scan. */
-static double *g_band_flat    = NULL;
-static int     g_band_flat_cap = 0;
 /* band epoch key (mirrors the supply-pool-view epoch) */
 static int          g_band_numpart = -1;
 static long long    g_band_ti      = -1;
@@ -191,8 +187,6 @@ extern "C" void topleaf_router_geometry_release(void)
     g_band_cap = 0; g_band_ntl = 0; g_band_valid = 0;
     if(g_tn_band) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_tn_band); g_tn_band = NULL; }
     g_tn_band_cap = 0; g_cband_valid = 0; g_cband_ntl = 0; g_cband_ntn = 0;
-    if(g_band_flat) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_band_flat); g_band_flat = NULL; }
-    g_band_flat_cap = 0;
 }
 
 /* Mark the geometry cache (and the topology-keyed band) INVALID without freeing
@@ -374,71 +368,6 @@ extern "C" int topleaf_router_route_queries_hier(const double *q_pos, const doub
     return rc ? -1 : (int)cursor;
 }
 
-/* flat-vs-hierarchical owner-set oracle: for each query build the flat (leaf-scan)
- * and hierarchical (tree-descent) REMOTE owner sets on the SAME geometry and
- * compare as SETS.  symmetric==0 => ONEWAY (band=NULL, H1; byte-identical to the
- * original).  symmetric!=0 => SYMMETRIC (H4b): flat consumes the GLOBAL per-leaf
- * band g_band, hier consumes the per-topnode band g_tn_band, both reduced over
- * supply_mask -- requires the collective global band (g_cband_valid).
- * Returns the count of queries whose sets differ (0 = all equal), or a NEGATIVE
- * code if UNAVAILABLE (distinct so the caller can report a reason and FAIL LOUD --
- * a validation oracle must never look green when it could not validate):
- *   -1 = geometry (or, SYMM, global band) invalid, -2 = scratch alloc fail,
- *   -3 = hierarchical stack overflow.  *first_bad = first mismatching query index
- * (or -1).  Pure host check; caller does the collective Allreduce + controlled-stop.
- * Validates the hierarchical traversal + per-topnode geometry/band against the
- * trusted flat router before the hierarchical constructor is ever authoritative. */
-extern "C" int topleaf_router_hier_vs_flat_check(
-    const double *q_pos, const double *q_h, int nq,
-    unsigned int supply_mask, int symmetric,
-    const int periodic_flags[3], const double box_sizes[3], int self_rank,
-    int *first_bad)
-{
-    if(first_bad) *first_bad = -1;
-    if(!g_geom_valid) return -1;
-    /* SYMM consumes the GLOBAL per-leaf band (flat) + per-topnode band (hier);
-     * both must be built+valid or the comparison is meaningless. */
-    const double *flat_band = NULL;
-    const double *node_band = NULL;
-    if(symmetric) {
-        if(!g_cband_valid) return -1;
-        flat_band = g_band;
-        node_band = g_tn_band;
-    }
-    const int ntask = NTask;
-    int  *flat_owners = (int *)  malloc((size_t)(ntask > 0 ? ntask : 1) * sizeof(int));
-    int  *hier_owners = (int *)  malloc((size_t)(ntask > 0 ? ntask : 1) * sizeof(int));
-    char *seen_f = (char *) calloc((size_t)(ntask > 0 ? ntask : 1), sizeof(char));
-    char *seen_h = (char *) calloc((size_t)(ntask > 0 ? ntask : 1), sizeof(char));
-    char *member = (char *) calloc((size_t)(ntask > 0 ? ntask : 1), sizeof(char));
-    if(!flat_owners || !hier_owners || !seen_f || !seen_h || !member) {
-        free(flat_owners); free(hier_owners); free(seen_f); free(seen_h); free(member);
-        return -2;   /* scratch alloc failure */
-    }
-    int mismatch = 0, unavailable = 0;
-    for(int i = 0; i < nq; i++) {
-        const double *pos = &q_pos[(size_t)i * 3];
-        double h = q_h[i];
-        /* flat: ONEWAY band=NULL / SYMM flat_band=g_band; includes self -> filtered below */
-        int nf = tlr_route_query_over_topleaves(g_leaf_center, g_leaf_len, DomainTask, g_geom_ntl, ntask,
-                                                pos, h, flat_band, supply_mask, periodic_flags, box_sizes, flat_owners, seen_f);
-        int nh = tlr_route_query_hierarchical(TopNodes, g_tn_count, g_tn_center, g_tn_len, DomainTask, ntask,
-                                              pos, h, node_band, supply_mask, periodic_flags, box_sizes, self_rank, hier_owners, seen_h);
-        for(int k = 0; k < nf; k++) seen_f[flat_owners[k]] = 0;   /* reset dedup scratch */
-        if(nh >= 0) for(int k = 0; k < nh; k++) seen_h[hier_owners[k]] = 0;
-        if(nh < 0) { unavailable = 1; break; }                    /* hier overflow -> bail, not a mismatch */
-        /* flat REMOTE set in member[]; compare to hier set */
-        int nf_remote = 0;
-        for(int k = 0; k < nf; k++) { int o = flat_owners[k]; if(o == self_rank) continue; member[o] = 1; nf_remote++; }
-        int eq = (nf_remote == nh);
-        if(eq) for(int k = 0; k < nh; k++) { if(!member[hier_owners[k]]) { eq = 0; break; } }
-        for(int k = 0; k < nf; k++) { if(flat_owners[k] != self_rank) member[flat_owners[k]] = 0; }  /* reset */
-        if(!eq) { mismatch++; if(first_bad && *first_bad < 0) *first_bad = i; }
-    }
-    free(flat_owners); free(hier_owners); free(seen_f); free(seen_h); free(member);
-    return unavailable ? -3 : mismatch;   /* -3 = hierarchical stack overflow */
-}
-
 /* LEGACY local-only band builder.  Builds the per-top-leaf supply reach band
  * hmax_by_type[] from the OWNED-LOCAL supply pool only -- correct just for leaves
  * this rank owns.  SUPERSEDED for routing by topleaf_router_band_build_collective
@@ -509,19 +438,6 @@ extern "C" int topleaf_router_band_build(void)
     g_band_jscale  = v.j_scale_when_built;
     g_band_valid   = 1;
     return 0;
-}
-
-/* Band-oracle gate: when set (AND collect_diag), the collective builder ALSO builds
- * the trusted flat owned-leaf scan and validates the production hierarchical fill
- * against it (hier<flat => fatal under-cover).  Diagnostic-only; default off. */
-static int tlr_symm_band_oracle_enabled(void)
-{
-    static int initialized = 0, enabled = 0;
-    if(initialized) return enabled;
-    initialized = 1;
-    const char *e = getenv("GIZMO_GHOST_ROUTE_SYMM_BAND_ORACLE");
-    enabled = (e && e[0] && e[0] != '0') ? 1 : 0;
-    return enabled;
 }
 
 /* COLLECTIVE per-top-leaf GLOBAL band + per-topnode propagation (H4a), the SSOT
@@ -635,27 +551,19 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
      * THIS rank's nearby owned leaves (no under-route) -- unlike a per-particle
      * current-leaf band, which loses walker-rank identity after drift.
      *
-     * PRODUCTION fill = HIERARCHICAL: descend the TopNodes octree per tile to the
-     * overlapping owned leaves (O(depth x fanout)), replacing the flat O(ntiles x
-     * owned-leaves) scan that cost ~100M overlap tests/call at FIRE scale.  In
-     * band-oracle mode the flat scan is ALSO built (g_band_flat) and compared
-     * per-leaf/per-type to validate the hierarchical fill before it is trusted:
-     * hier<flat = UNDER-COVER (fatal, Gate 4c), hier>flat = over-cover (reported).
-     * Conservative; proven no-under-route only by the H4c ghost-set oracle. */
+     * The fill is HIERARCHICAL: descend the TopNodes octree per tile to the
+     * overlapping owned leaves (O(depth x fanout)), replacing a flat O(ntiles x
+     * owned-leaves) scan that cost ~100M overlap tests/call at FIRE scale.
+     * Conservative: it may over-cover, never under-cover. */
     long band_writes = 0, sum_leaves_per_tile = 0, max_leaves_per_tile = 0;
-    long n_owned_leaves = 0, tile_leaf_tests = 0;
+    long n_owned_leaves = 0;
     long zero_leaf_tiles = 0, zero_leaf_tiles_pos_h = 0;
-    long band_overflow_local = 0, n_band_missing = 0, n_band_extra = 0;
-    int band_oracle = (collect_diag && tlr_symm_band_oracle_enabled()) ? 1 : 0;
+    long band_overflow_local = 0;
     int *owned_leaves = NULL, *hier_buf = NULL;
     if(!alloc_fail_local) {
         owned_leaves = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
         hier_buf     = (int *) malloc((size_t)(ntl > 0 ? ntl : 1) * sizeof(int));
-        if(band_oracle && g_band_flat_cap < ntl) {
-            g_band_flat = shared_alloc_double(g_band_flat, g_band_flat_cap, ntl * TLR_NUM_PTYPES, "band_flat");
-            if(!g_band_flat) g_band_flat_cap = 0; else g_band_flat_cap = ntl;
-        }
-        if(!owned_leaves || !hier_buf || (band_oracle && !g_band_flat)) {
+        if(!owned_leaves || !hier_buf) {
             alloc_fail_local = 1;
         } else {
             for(int leaf = 0; leaf < ntl; leaf++)
@@ -680,29 +588,6 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
                 sum_leaves_per_tile += n;
                 if((long)n > max_leaves_per_tile) max_leaves_per_tile = n;
                 if(n == 0) { zero_leaf_tiles++; if(reach > 0.0) zero_leaf_tiles_pos_h++; }
-            }
-
-            /* BAND ORACLE: trusted flat scan into g_band_flat + per-leaf/per-type compare. */
-            if(band_oracle && !band_overflow_local) {
-                for(int k = 0; k < ntl * TLR_NUM_PTYPES; k++) g_band_flat[k] = 0.0;
-                for(int t = 0; t < v.ntiles; t++) {
-                    const struct sfc_tile_t *tile = &v.tiles[t];
-                    if(tile->count <= 0) continue;
-                    double reach = tile->hmax;
-                    for(long li = 0; li < n_owned_leaves; li++) {
-                        int leaf = owned_leaves[li];
-                        if(!tlr_cell_overlaps_aabb(&g_leaf_center[(size_t)leaf * 3], g_leaf_len[leaf],
-                                                   tile->lo, tile->hi, reach, periodic_flags, box_sizes)) continue;
-                        double *slot = &g_band_flat[(size_t)leaf * TLR_NUM_PTYPES];
-                        for(int ty = 0; ty < TLR_NUM_PTYPES; ty++)
-                            if(tile->hmax_by_type[ty] > slot[ty]) slot[ty] = tile->hmax_by_type[ty];
-                    }
-                    tile_leaf_tests += n_owned_leaves;   /* the flat-scan cost the hier fill eliminates */
-                }
-                for(long i = 0; i < (long)ntl * TLR_NUM_PTYPES; i++) {
-                    if(g_band[i] < g_band_flat[i]) n_band_missing++;      /* hier UNDER-covers -> fatal */
-                    else if(g_band[i] > g_band_flat[i]) n_band_extra++;   /* hier OVER-covers -> report */
-                }
             }
         }
     }
@@ -739,22 +624,6 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
                    ThisTask, alloc_fail_local, band_overflow_local);
         g_cband_valid = 0;
         return;   /* benign_fail_any uniform -> all return together */
-    }
-
-    /* --- Gate 4c: BAND-ORACLE equivalence.  The hierarchical fill must COVER the
-     * trusted flat scan -- any leaf/type where hier band < flat band is an UNDER-COVER
-     * (the descent wrongly pruned a leaf the flat scan attributes) => consistency fail.
-     * hier>flat (over-cover) is reported in the diag, not fatal.  Only runs in band-
-     * oracle mode (n_band_missing=0 otherwise), so the reduce is collective-uniform. --- */
-    long band_missing_any = 0;
-    MPI_Allreduce(&n_band_missing, &band_missing_any, 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
-    if(band_missing_any > 0) {
-        if(n_band_missing > 0)
-            printf("topleaf_router: SYMM band rank %d HIER<FLAT under-cover: %ld leaf/type slots where the "
-                   "hierarchical fill is below the flat reference -> consistency fail\n", ThisTask, n_band_missing);
-        if(consistency_fail) *consistency_fail = 1;
-        g_cband_valid = 0;
-        return;
     }
 
     /* --- Gate 4b: UNDER-ROUTE guard.  A positive-reach owned-local supply tile that
@@ -828,21 +697,20 @@ extern "C" void topleaf_router_band_build_collective(const int periodic_flags[3]
      * bound the over-attribution (the SYMM perf risk); drifted_supply confirms the
      * boundary-drift magnitude the tile band absorbs. */
     if(collect_diag) {
-        long diag_local[9] = { band_writes, sum_leaves_per_tile, max_leaves_per_tile,
+        long diag_local[7] = { band_writes, sum_leaves_per_tile, max_leaves_per_tile,
                                n_drift_local, (long)v.ntiles, n_owned_leaves,
-                               tile_leaf_tests, zero_leaf_tiles, n_band_extra };
-        long diag_sum[9] = {0,0,0,0,0,0,0,0,0}, diag_max[9] = {0,0,0,0,0,0,0,0,0};
-        MPI_Allreduce(diag_local, diag_sum, 9, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(diag_local, diag_max, 9, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+                               zero_leaf_tiles };
+        long diag_sum[7] = {0,0,0,0,0,0,0}, diag_max[7] = {0,0,0,0,0,0,0};
+        MPI_Allreduce(diag_local, diag_sum, 7, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(diag_local, diag_max, 7, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
         if(ThisTask == 0) {
             double avg_lpt = (diag_sum[4] > 0) ? (double)diag_sum[1] / (double)diag_sum[4] : 0.0;
-            /* leaf_tests/band_oracle_extra are nonzero ONLY in band-oracle mode (the flat
-             * scan + flat-vs-hier compare); band_writes is the hierarchical production fill. */
-            printf("[SYMM_BAND_DIAG ntl=%d ntn=%d tiles(sum)=%ld owned_leaves(sum)=%ld flat_leaf_tests(sum)=%ld "
-                   "band_writes(sum)=%ld leaves/tile avg=%.2f max=%ld zero_leaf_tiles(sum)=%ld drifted_supply(sum)=%ld "
-                   "band_oracle_over_cover(sum)=%ld]\n",
-                   ntl, ntn, diag_sum[4], diag_sum[5], diag_sum[6], diag_sum[0], avg_lpt, diag_max[2],
-                   diag_sum[7], diag_sum[3], diag_sum[8]);
+            /* band_writes is the hierarchical production fill. */
+            printf("[SYMM_BAND_DIAG ntl=%d ntn=%d tiles(sum)=%ld owned_leaves(sum)=%ld "
+                   "band_writes(sum)=%ld leaves/tile avg=%.2f max=%ld zero_leaf_tiles(sum)=%ld "
+                   "drifted_supply(sum)=%ld]\n",
+                   ntl, ntn, diag_sum[4], diag_sum[5], diag_sum[0], avg_lpt, diag_max[2],
+                   diag_sum[6], diag_sum[3]);
             fflush(stdout);
         }
     }

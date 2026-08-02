@@ -10,19 +10,14 @@
  * subgroup per j_type_bitmask returned by ags_gravity_kernel_shared_BITFLAG).
  * Same iterative-shaped pattern used by mechfb / radfb_rp / dm_dispersion.
  *
- * Three deliberate corrections vs the retired GPU file:
+ * Two deliberate corrections vs the retired GPU file:
  *   1. SIDM RNG gets a per-loop salt (AGS_FORCE_RNG_SALT = FNV-1a("ags_force"))
  *      mixed into the counter. Was unsalted in legacy — could correlate with
- *      any other loop sharing (Ti_Current, ID_i^ID_j, tag). Oracle parity is
- *      preserved (both pass through the same salted stream).
+ *      any other loop sharing (Ti_Current, ID_i^ID_j, tag).
  *   2. Ghost wakeup zeroed BEFORE the bundle snapshot (matches legacy
  *      ghost_writeback_zero_agsforce event semantics that generic PARTICLE_MAX
  *      alone wouldn't preserve when the imported ghost wakeup is already
  *      nonzero).
- *   3. j-side atomic writes (Vel / dp / NInteractions / wakeup) gated on
- *      !oracle_dry_run, enabling the Wave 3 PB-O oracle compare. i-side
- *      accumulator writes remain unconditional (oracle compares them
- *      field-for-field after the brute pass).
  *
  * Pair-body physics: verbatim port of gravity/ags_force_gpu.cc:222-360 with
  * the runner's NeighborData adapter. The per-pair flux templates in
@@ -249,7 +244,6 @@ struct AgsForceActiveState {
 struct AgsForceDeviceContext : NeighborLoopDeviceContextBase {
     int               *need_wakeup_uvm;    /* UVM, single int; sticky across iters/subgroups */
     unsigned char     *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    bool               oracle_dry_run;
 #if defined(DM_SIDM)
     MyDouble          *geofactor_uvm;      /* UVM, GEOFACTOR_TABLE_LENGTH entries */
 #endif
@@ -262,9 +256,9 @@ struct AgsForceIterScratch { };
 
 /* ============================================================================
  * Inline pair body — verbatim translation of the kernel at
- * gravity/ags_force_gpu.cc:222-357, with three corrections noted in the
- * file docblock: (a) j-writes gated on oracle_dry_run; (b) SIDM RNG salt
- * threaded; (c) wakeup pre-zero handled host-side in ghost_writeback_begin.
+ * gravity/ags_force_gpu.cc:222-357, with two corrections noted in the
+ * file docblock: (a) SIDM RNG salt threaded; (b) wakeup pre-zero handled
+ * host-side in ghost_writeback_begin.
  * ========================================================================== */
 template <typename NeighborT>
 KOKKOS_INLINE_FUNCTION
@@ -277,7 +271,6 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     struct particle_data &Pj           = *neighbor.neighbor_particle;
     int                  *need_wakeup  = neighbor.need_wakeup;
     unsigned char        *wakeup_dirty_base = neighbor.wakeup_dirty_base;
-    const bool            oracle       = neighbor.oracle_dry_run;
     const AgsForceLocalIn& local       = active.local;
 
     if(!(Pj.Mass > 0) || !(Pj.AGS_KernelRadius > 0)) return;
@@ -326,7 +319,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     {
         CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(
             local, j, P_base, kernel, accum, active.scalars.TimeBinActive);
-        if(cbe_r.set_wakeup_j && !oracle) {
+        if(cbe_r.set_wakeup_j) {
             /* Hydro-convention wakeup: active.TimeBin+1 (positive), MAX
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
             short int wakeup_val = (short int)(active.TimeBin + 1);
@@ -347,13 +340,24 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             local, j, P_base, kernel, accum,
             neighbor.geofactor, active.scalars.TimeBinActive,
             active.scalars.rng_salt);
-        if(sidm_r.scattered && !oracle) {
+        if(sidm_r.scattered) {
             if(sidm_r.set_wakeup_j) {
                 short int wakeup_val = (short int)(active.TimeBin + 1);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
                 Kokkos::atomic_store(need_wakeup, 1);
                 if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
             }
+            /* The kick lands on Pj.Vel immediately, mid-loop, so a later pair
+             * involving j scatters off the UPDATED velocity. That is required,
+             * not incidental: SIDM scatter is a discrete Monte-Carlo collision
+             * operator, and evaluating successive collisions against a snapshot
+             * of the initial velocities would violate energy and momentum
+             * conservation nonlinearly. It is also why this loop is
+             * ModeBEvalOMP::SerialOnly (see modeb_eval_omp below) — the
+             * read-then-write of Pj.Vel is order-dependent by construction.
+             * SIDM is validated by conservation and statistical checks (scatter
+             * event count, wakeup activations, momentum/energy, snapshot vs IC),
+             * never by per-field agreement against a suppressed-write pass. */
             for(int kv = 0; kv < 3; kv++) {
                 Kokkos::atomic_add(&Pj.Vel[kv], (MyDouble)sidm_r.dv_sidm[kv]);
                 Kokkos::atomic_add(&Pj.dp[kv],  (MyDouble)(sidm_r.dv_sidm[kv] * Pj.Mass));
@@ -395,17 +399,6 @@ struct AgsForceSpec {
      * different masks. Build a local SIDX per CSR each call. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    /* Default 1e-10 oracle bound. The pair body's read-then-atomic-add
-     * sites (Pj.Vel via atomic_load + atomic_add under DM_SIDM) are
-     * race-tolerant by construction — out.sidm_kick depends only on the
-     * pre-scatter Vel snapshot, and oracle dry-run suppresses j-writes
-     * exactly so the brute pass sees the unmutated state. Multiplicative
-     * Grain_DeltaErosionFrac may show tiny order-dependent residuals; if
-     * validation flags those, address via field-specific tolerance, NOT
-     * a broad loosening (per reference_wave3_thermalfb_lessons.md). */
-    static constexpr double accum_tolerance  = 1e-10;
-    static constexpr double radius_tolerance = 1e-9;     /* unused; no radius adjust */
-
     static bool is_active(int particle_index) {
         return AGSForce_isactive(particle_index) != 0;
     }
@@ -432,8 +425,7 @@ struct AgsForceSpec {
         int                   j;            /* for flux helpers' (j, P) signature */
         struct particle_data *P_base;       /* = dctx.P */
         int                  *need_wakeup;
-        unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base; nullptr under oracle */
-        bool                  oracle_dry_run;
+        unsigned char        *wakeup_dirty_base;  /* WakeupDirty sidecar base */
 #if defined(DM_SIDM)
         const MyDouble       *geofactor;
 #endif
@@ -634,16 +626,11 @@ struct AgsForceSpec {
         n.j                 = j;
         n.P_base            = dctx.P;
         n.need_wakeup       = dctx.need_wakeup_uvm;
-        n.wakeup_dirty_base = dctx.oracle_dry_run ? nullptr : dctx.wakeup_dirty_base;
-        n.oracle_dry_run    = dctx.oracle_dry_run;
+        n.wakeup_dirty_base = dctx.wakeup_dirty_base;
 #if defined(DM_SIDM)
         n.geofactor         = dctx.geofactor_uvm;
 #endif
         return n;
-    }
-
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -673,10 +660,6 @@ struct AgsForceSpec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 /* `extern template` declaration so call sites bind to the explicit instantiation

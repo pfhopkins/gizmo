@@ -6,8 +6,8 @@
  * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
  * live in dm_fuzzy_loop.h so the runner instantiates them from GPU TUs. This
  * file owns: is_active, search_radius, populate_call_scalars,
- * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
- * the construct_dmgrad_gradient post-process helper, and DMGrad_gradient_calc.
+ * apply_active_writeback, merge_accum, the construct_dmgrad_gradient
+ * post-process helper, and DMGrad_gradient_calc.
  *
  * Replaces sidm/dm_fuzzy_gpu.cc (retired in this commit). The unrelated
  * host-only routines (do_dm_fuzzy_drift_kick, do_dm_fuzzy_initialization)
@@ -32,22 +32,6 @@
 
 #ifdef DM_FUZZY
 
-/* ============================================================================
- * Finite-aware per-field relative-difference accumulator for compare_accum.
- * A non-finite value on either side forces a huge residual so the oracle flags
- * it loudly. The finite test is inline — (x==x) rejects NaN, (x-x==0) rejects
- * Inf — to avoid the isfinite-macro-vs-std::isfinite ambiguity in GPU TUs
- * (runner checklist §2). Same helper as difffilter_loop.cc.
- * ========================================================================== */
-namespace {
-inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
-
-inline double nlr_rel_update(double max_rel, double a, double b) {
-    if (!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
-    const double rel   = std::fabs(a - b) / denom;
-    return (rel > max_rel) ? rel : max_rel;
-}
 
 /* construct_dmgrad_gradient — apply P[i].NV_T to a gradient vector in place.
  *
@@ -55,12 +39,13 @@ inline double nlr_rel_update(double max_rel, double a, double b) {
  * the NV_T matrix-based gradient estimator, applied UNCONDITIONALLY. It must
  * NOT be replaced by the hydro construct_gradient (hydro/gradients.cc) — that
  * reads CellP[i].ConditionNumber/Density/NV_T (gas-cell state), which is the
- * documented garbage trap for non-gas particles (reference_legacy_definition_
- * cellp_mass.md). DMGrad runs on Type-1 DM; P[i].NV_T is the correct tensor.
+ * documented garbage trap for non-gas particles. DMGrad runs on Type-1 DM;
+ * P[i].NV_T is the correct tensor.
  *
  * Templated on the row type so it accepts both Vec3<MyFloat>& (AGS_Gradients_*)
  * and a Mat3 row proxy (AGS_Gradients2_*[k]).
  * ========================================================================== */
+namespace {
 template <typename RowT>
 inline void construct_dmgrad_gradient(RowT&& grad, int i) {
     const double v0 = (double)grad[0], v1 = (double)grad[1], v2 = (double)grad[2];
@@ -152,27 +137,6 @@ void DMGradSpec::merge_accum(AccumData& local, const AccumData& peer)
     }
 }
 
-double DMGradSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    double m = 0.0;
-    for (int k = 0; k < 3; k++) {
-        m = nlr_rel_update(m, local.grad_rho[k], oracle.grad_rho[k]);
-        for (int k2 = 0; k2 < 3; k2++)
-            m = nlr_rel_update(m, local.grad2_rho[k2][k], oracle.grad2_rho[k2][k]);
-#if (DM_FUZZY > 0)
-        m = nlr_rel_update(m, local.grad_psi_re[k], oracle.grad_psi_re[k]);
-        m = nlr_rel_update(m, local.grad_psi_im[k], oracle.grad_psi_im[k]);
-        for (int k2 = 0; k2 < 3; k2++) {
-            m = nlr_rel_update(m, local.grad2_psi_re[k2][k], oracle.grad2_psi_re[k2][k]);
-            m = nlr_rel_update(m, local.grad2_psi_im[k2][k], oracle.grad2_psi_im[k2][k]);
-        }
-#endif
-    }
-    return m;
-}
-
-/* No j-side writes → oracle brute pass needs no suppression. */
-void DMGradSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 /* ============================================================================
  * DMGrad_gradient_calc — toplevel. Two external gradient passes; within each,

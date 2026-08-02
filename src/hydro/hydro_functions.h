@@ -62,8 +62,7 @@ void hydro_accumulate_neighbor(
     int j, double dt_hydrostep_i,
     struct particle_data *P, struct gas_cell_data *CellP,
     int *TimeBinActive_arr, int *NeedToWakeup_flag,
-    unsigned char *WakeupDirty_arr,
-    bool allow_j_writes)
+    unsigned char *WakeupDirty_arr)
 {
     int k;
     if(P[j].Mass <= 0) return;
@@ -425,25 +424,13 @@ void hydro_accumulate_neighbor(
 #endif
 #endif
 
-    /* ---- J-particle writes (Kokkos atomics for thread safety) ----
-     *
-     * allow_j_writes gates the entire j-side block. Production passes
-     * true (legacy behavior). The runner-Spec oracle "brute" pass
-     * (Mode B + oracle, diagnostic-only) passes false so the oracle
-     * dry-run does not mutate production CellP[j].dMass / P[j].wakeup
-     * state — without this gate the brute pass would double-apply
-     * j-side writes that the main pass already applied, corrupting
-     * the simulation. Same shape as sink_feed's oracle_dry_run pattern. */
-    /* Signal velocity for timestepping (i-side accum — MUST update every pair
-     * regardless of allow_j_writes. Without this update outside the gate,
-     * the oracle brute pass (allow_j_writes=false) leaves out.MaxSignalVel
-     * stuck at the kernel.sound_i seed → uniform 2× mismatch against the
-     * tree pass. Bug introduced by commit 8a (allow_j_writes gate) which
-     * accidentally swallowed this i-side update; surfaced by the commit 8
-     * runtime matrix oracle pass on 2026-05-20. */
+    /* Signal velocity for timestepping. This is an i-side accumulation and
+     * MUST stay here, updated on every pair, ABOVE the j-side writes below.
+     * It was once placed among them behind a gate that could skip them, which
+     * left out.MaxSignalVel stuck at the kernel.sound_i seed. */
     if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
 
-    if(allow_j_writes) {
+    /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* MFV mass conservation: machine-accurate two-sided mass exchange, using
@@ -478,7 +465,6 @@ void hydro_accumulate_neighbor(
         }
     }
 
-    } /* end allow_j_writes */
 }
 
 

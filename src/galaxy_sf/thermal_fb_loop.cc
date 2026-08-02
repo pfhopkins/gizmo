@@ -2,13 +2,13 @@
  *
  * Inline pair body (thermal_fb_pair_kernel), structs, and KOKKOS_INLINE_FUNCTION
  * hooks live in thermal_fb_loop.h so they inline from device kernels (Mode A)
- * and host walkers (Mode B / Brute oracle). This translation unit holds
+ * and host walkers (Mode B). This translation unit holds
  * host-only hooks: is_active, per-active radius, per-call scalars capture
  * (NlrCommonScalars + host-precomputed unit factors via nlr_host_all_ptr),
  * populate/cleanup_device_context (Phase 4.A.0 UVM staging),
  * apply_active_writeback (source-side mass + momentum loss), merge_accum,
- * ghost-writeback manifest + lifecycle hooks, compare_accum, and
- * thermal_fb_local_fill (the per-source host pack — SSOT).
+ * ghost-writeback manifest + lifecycle hooks, and thermal_fb_local_fill
+ * (the per-source host pack — SSOT).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu)
  * for GIZMO.
@@ -127,7 +127,6 @@ ThermalFBSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void ThermalFBSpec::populate_device_context(const neighbor_loop_args& args,
                                              DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = false;
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup. Set before the num_active<=0 early return so the field is never uninitialized. */
 
     Aux *aux = nlr_aux<ThermalFBSpec>(args);
@@ -324,22 +323,6 @@ void ThermalFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)
 {
     ghost_writeback_end_bundle(thermalfb_ghost_writeback_bundle_ptr());
-}
-
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- * compare_accum: byte-walk of M_coupled (oracle gate; GIZMO_NLR_ORACLE=1).
- * ========================================================================== */
-
-double ThermalFBSpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    const double va = (double)local.M_coupled;
-    const double vb = (double)oracle.M_coupled;
-    /* Denom floor = max(1, |a|, |b|) keeps relative comparisons stable when
-     * M_coupled is tiny (e.g. early-step transient): avoids amplifying
-     * floating-point noise on small denominators. */
-    const double denom = std::fmax(1.0, std::fmax(std::fabs(va), std::fabs(vb)));
-    return std::fabs(va - vb) / denom;
 }
 
 #else  /* !GALSF_FB_THERMAL */

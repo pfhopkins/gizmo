@@ -131,7 +131,7 @@ struct AgsDensityIterScratch {
 };
 
 /* DeviceContext extension. Single sticky call-scope flag for "any wakeup
- * written across all iters of this call" + oracle-suppression flag.
+ * written across all iters of this call".
  * Trivially copyable: the runner captures by value into Kokkos device
  * lambdas.
  *
@@ -149,16 +149,6 @@ struct AgsDensityDeviceContext : NeighborLoopDeviceContextBase {
                                                   * Sticky across all iters
                                                   * of one runner call. */
     unsigned char           *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
-    int                      oracle_dry_run;     /* MUST stay 0 for AGS — see
-                                                  * caller-side endrun in
-                                                  * ags_density() against
-                                                  * GIZMO_NLR_ORACLE=1.
-                                                  * Oracle is unsafe here
-                                                  * because after_iter
-                                                  * mutates P[i], which
-                                                  * contaminates the brute
-                                                  * pass's pair_kernel reads
-                                                  * of P[j].AGS_vsig. */
 };
 
 /* Active-particle state passed into the pair body. `pos` and `h_search`
@@ -195,8 +185,7 @@ struct AgsDensityActiveState {
  *      instead of legacy atomic_store(-1); the legacy `-1` sentinel would
  *      silently drop under MAX reverse-comm.
  *
- *   3. j-side writes are suppressed when ctx.oracle_dry_run is true so the
- *      runner's brute oracle pass doesn't double-apply (matches sink_feed
+ *   3. (removed)
  *      pattern).
  *
  *   4. *need_wakeup is atomic_or-d to 1 on any wakeup write (local or
@@ -214,8 +203,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
                                           struct gas_cell_data*        neighbor_cell,
                                           AgsDensityAccumData&         accum,
                                           int*                         need_wakeup,
-                                          unsigned char*               wakeup_dirty_slot,
-                                          int                          oracle_dry_run)
+                                          unsigned char*               wakeup_dirty_slot)
 {
     /* neighbor_cell is read for gas neighbors (CellP[j].VelPred); never
      * written. nullptr for non-gas neighbors and skipped via the
@@ -293,7 +281,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
             wakeup_condition = 0;
         }
 #endif
-        if(wakeup_condition && !oracle_dry_run) {
+        if(wakeup_condition) {
             /* Hydro-convention wakeup write — `active.TimeBin + 1` (positive).
              * Cross-rank propagation works through ghost_writeback's MAX
              * reverse-comm. Legacy wrote (short int)-1, which the MAX path
@@ -361,15 +349,6 @@ struct AgsDensitySpec {
      * invalid. Build a local SIDX per CSR until/unless a per-mask cache lands. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    static constexpr double accum_tolerance  = 1e-10;
-    /* Runner reads radius_tolerance for iterative Specs (separate semantic
-     * object from accum_tolerance per 4.B.0 v3 Q2). For AGS the load-bearing
-     * convergence is the neighbor-count band check inside after_iter
-     * (rkern.cc:222-223), not a runner-level radius compare; this value
-     * is therefore not physics-load-bearing. Mirrors IterHarnessSpec's
-     * choice. */
-    static constexpr double radius_tolerance = 1e-9;
-
     static bool is_active(int particle_index) { return ags_density_isactive(particle_index) != 0; }
 
     /* Iterative + multi-subgroup traits (step 0 prep-commit additions) */
@@ -406,8 +385,7 @@ struct AgsDensitySpec {
         struct particle_data *neighbor_particle;
         struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
         int                  *need_wakeup;       /* shared scratch in ctx */
-        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j]; nullptr under oracle dry-run */
-        int                   oracle_dry_run;    /* propagated from ctx */
+        unsigned char        *wakeup_dirty_slot; /* &WakeupDirty[j] */
     };
 
     /* Empty Aux — the Spec contract requires the typedef but ags_density
@@ -437,16 +415,6 @@ struct AgsDensitySpec {
      * would lose non-final-iter wakeups. */
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
-
-    /* Oracle brute-pass hook — REQUIRED by runner contract but stays a
-     * no-op-with-warning here. AgsDensitySpec hard-stubs oracle: after_iter
-     * mutates P[i] for the convergence test, which
-     * contaminates the brute oracle pass's pair_kernel reads of
-     * P[j].AGS_vsig (the wakeup threshold). Caller (ags_rkern.cc::ags_density)
-     * endruns if GIZMO_NLR_ORACLE=1 is set. Two-binary parity (runner-build
-     * vs legacy-build) was the validation route before the legacy path was
-     * retired; the in-runner oracle remains hard-stubbed for AGS. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Partition-key hook. Returns the bm key for the
      * subgroup this active belongs to.
@@ -541,7 +509,7 @@ struct AgsDensitySpec {
     }
 
     /* Build NeighborData. ctx.P / ctx.CellP are path-correct (Mode A arena
-     * or Mode B request-driven slab). need_wakeup and oracle_dry_run come
+     * or Mode B request-driven slab). need_wakeup comes
      * from the ctx. */
     KOKKOS_INLINE_FUNCTION
     static NeighborData load_neighbor(const DeviceContext& dctx,
@@ -553,8 +521,7 @@ struct AgsDensitySpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
         neighbor.need_wakeup       = dctx.need_wakeup_uvm;
-        neighbor.wakeup_dirty_slot = (dctx.wakeup_dirty_base && !dctx.oracle_dry_run) ? &dctx.wakeup_dirty_base[j] : nullptr;
-        neighbor.oracle_dry_run    = dctx.oracle_dry_run;
+        neighbor.wakeup_dirty_slot = dctx.wakeup_dirty_base ? &dctx.wakeup_dirty_base[j] : nullptr;
         return neighbor;
     }
 
@@ -578,8 +545,7 @@ struct AgsDensitySpec {
                                       neighbor.neighbor_cell,
                                       accum,
                                       neighbor.need_wakeup,
-                                      neighbor.wakeup_dirty_slot,
-                                      neighbor.oracle_dry_run);
+                                      neighbor.wakeup_dirty_slot);
     }
 
     /* NO-OP for AgsDensitySpec. after_iter writes post-processed per-iter
@@ -607,10 +573,6 @@ struct AgsDensitySpec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
 
-    /* ====================================================================
-     * DIAGNOSTICS — env-gated.
-     * ==================================================================== */
-    static double compare_accum(const AccumData& local, const AccumData& oracle);
 };
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

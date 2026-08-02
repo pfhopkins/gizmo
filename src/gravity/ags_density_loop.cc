@@ -16,10 +16,6 @@
  *     P[i].AGS_KernelRadius every iter)
  *   - after_iter_global (iter > 10 print only)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
- *   - set_oracle_brute_pass HARD-STUB (controlled stop on true; AGS validation
- *     used two-binary parity, not in-runner oracle)
- *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
- *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
  * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
  * cleanup after two-binary parity passed).
@@ -133,7 +129,6 @@ AgsDensitySpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 void AgsDensitySpec::populate_device_context(const neighbor_loop_args& /*args*/,
                                               DeviceContext& ctx)
 {
-    ctx.oracle_dry_run = 0;
 
     /* Single-int UVM scratch — pair_kernel atomic_or-s a 1 here on any
      * wakeup write. Accumulates across all iters; cleanup_device_context
@@ -157,23 +152,6 @@ void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
         }
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.need_wakeup_uvm);
         ctx.need_wakeup_uvm = nullptr;
-    }
-}
-
-/* Oracle hard-stub: required by runner contract but AgsDensitySpec should
- * never be invoked with GIZMO_NLR_ORACLE=1 — after_iter mutates P[i] and
- * the pair body reads P[j].AGS_vsig (the threshold field), so an oracle
- * brute pass would see contaminated state. Caller (ags_rkern.cc::ags_density)
- * endruns on entry if oracle env is set. If we reach this hook anyway,
- * fail loudly. */
-void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
-{
-    if(on) {
-        printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
-               "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
-               "the in-runner oracle is unavailable for AgsDensitySpec).\n"); fflush(stdout);
-        endrun(90001019);
-        gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
     }
 }
 
@@ -203,7 +181,7 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  *
  * Manifest pattern matching sink_feed_loop.cc::merge_accum. Per-field op
  * MUST match what pair_kernel writes (field parity was validated by the
- * retired two-binary route; the in-runner oracle is hard-stubbed for AGS).
+ * retired two-binary route).
  *
  * AGS_vsig_max is MAX-merged (legacy ASSIGN_MAX in scatter); everything
  * else is ADD-merged. AGS_FACE NV_T fields are ADD-merged (each peer
@@ -685,39 +663,8 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
     ghost_writeback_end_bundle(ags_density_ghost_writeback_bundle_ptr());
 }
 
-/* ============================================================================
- * DIAGNOSTICS — env-gated.
- *
- * compare_accum: oracle gate, called only when GIZMO_NLR_ORACLE=1. For
- * AgsDensitySpec the oracle path is HARD-STUBBED (set_oracle_brute_pass
- * controlled-stops on true; caller endruns on GIZMO_NLR_ORACLE=1). This
- * compare_accum implementation therefore exists to satisfy the runner's
- * Spec contract but is unreachable under correct caller-gating. The body
- * is kept identical to the sink_feed pattern in case the caller-side
- * endrun guard is ever bypassed (defense-in-depth — emit a sane
- * comparison rather than UB).
- *
- * AGS validation was done via two-binary parity (runner build vs post-fix
- * legacy build), not in-runner oracle. See design v0.4.3 §3a / §7.
- * ========================================================================== */
-double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& oracle)
-{
-    /* Byte-walk as doubles, same pattern as sink_feed_loop.cc::compare_accum. */
-    double max_rel = 0.0;
-    const double *pa = reinterpret_cast<const double*>(&local);
-    const double *pb = reinterpret_cast<const double*>(&oracle);
-    static_assert(sizeof(AccumData) % sizeof(double) == 0,
-        "AgsDensitySpec::AccumData must be double-aligned for byte-walk compare");
-    const size_t n = sizeof(AccumData) / sizeof(double);
-    for(size_t k = 0; k < n; k++) {
-        double va = pa[k], vb = pb[k];
-        double denom = std::fmax(std::fabs(va), std::fabs(vb));
-        double diff  = std::fabs(va - vb);
-        double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) max_rel = rel;
-    }
-    return max_rel;
-}
+/* AGS field parity was validated by the retired two-binary route: the runner
+ * build against a post-fix legacy build. */
 
 /* ============================================================================
  * ags_density() — runner-driven caller surface.
@@ -726,18 +673,12 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  * gravity/ags_rkern.cc; the legacy body and its GIZMO_NLR_AGSDENSITY_USE_LEGACY
  * two-binary-parity compile gate were retired after parity passed on Vista.
  *
- *   1. Hard-stub oracle: endrun if GIZMO_NLR_ORACLE=1 is set
- *      (AgsDensitySpec::after_iter mutates P[i], which contaminates
- *      brute-pass pair_kernel reads of P[j].AGS_vsig).
- *      Two-binary parity was the validation route before the
- *      legacy path was retired; the in-runner oracle remains hard-stubbed.
- *
- *   2. Per-active pre-loop init (legacy rkern.cc:94-98): for each
+ *   1. Per-active pre-loop init (legacy rkern.cc:94-98): for each
  *      ags-active i, capture entry-time AGS_KernelRadius into the
  *      AGS_Prev[] array for the final-final pass's minsoft/maxsoft
  *      clamp; reset P[i].wakeup=0 and P[i].AGS_vsig=0.
  *
- *   3. Build per-bm subgroup partition (legacy rkern.cc:112-128):
+ *   2. Build per-bm subgroup partition (legacy rkern.cc:112-128):
  *      ags_gravity_kernel_shared_BITFLAG(P[i].Type) is a pure function of
  *      Type, so each active belongs to exactly one bm group (the runner's
  *      partition assertion checks this every iter under DEBUG /
@@ -745,21 +686,21 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *      ranks see the same subgroup ordering (empty-on-this-rank subgroups
  *      get nullptr active_indices + num_active_local=0).
  *
- *   4. Ghost lifecycle (kept verbatim caller-side):
+ *   3. Ghost lifecycle (kept verbatim caller-side):
  *      ghost_exchange_cleanup() + gizmo_density_prep_ghosts(). The runner's
  *      internal `rebuild_mode_a_arena_and_ctx_for_current_active_union`
  *      handles per-iter ghost regrow on Mode A; Mode B P2P doesn't need
  *      ghosts, so no outer re-exchange loop is needed around the call.
  *
- *   5. run_neighbor_loop_iterative<AgsDensitySpec>(args) — owns the iter
+ *   4. run_neighbor_loop_iterative<AgsDensitySpec>(args) — owns the iter
  *      loop, per-iter pair_kernel dispatch, per-iter after_iter call which
  *      writes post-processed values + new AGS_KernelRadius to P[i].
  *
- *   6. Final-final pass (legacy rkern.cc:431-453, verbatim): AGS_zeta
+ *   5. Final-final pass (legacy rkern.cc:431-453, verbatim): AGS_zeta
  *      normalization + NumNgb cube-root. Uses AGS_Prev[i] for the
  *      minsoft/maxsoft clamp; reads/writes P[i] directly.
  *
- *   7. Timing accounting (legacy rkern.cc:456-458).
+ *   6. Timing accounting (legacy rkern.cc:456-458).
  *
  * No outer do-while, no per-iter ghost_writeback_zero_wakeup /
  * ghost_writeback_wakeup ladder (the runner's bundle + Spec ghost_writeback
@@ -768,25 +709,6 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
 
 void ags_density(void)
 {
-    /* (1) Oracle hard-stub. */
-    const char *oracle_env = getenv("GIZMO_NLR_ORACLE");
-    if(oracle_env && oracle_env[0] && oracle_env[0] != '0') {
-        if(ThisTask == 0) {
-            fprintf(stderr,
-                "[ags_density] FATAL: GIZMO_NLR_ORACLE=1 is incompatible with "
-                "AgsDensitySpec. after_iter mutates P[i] (NumNgb, AGS_vsig, ...) "
-                "which contaminates the brute oracle pass's pair_kernel reads of "
-                "P[j].AGS_vsig.\n");
-            fflush(stderr);
-        }
-        endrun(81350);
-        /* All-rank symmetric guard (GIZMO_NLR_ORACLE is a job-wide env var), so drain
-         * immediately here rather than running a knowingly oracle-contaminated AGS solve
-         * to the next barrier. */
-        gizmo_exit_bad_stop_if_requested("ags_density:oracle_incompat");
-        return;
-    }
-
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
 
@@ -797,7 +719,7 @@ void ags_density(void)
      * Spec::populate_call_scalars. */
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
 
-    /* (2) AGS_Prev[] alloc + per-active pre-loop init. AGS_Prev[] is used
+    /* (1) AGS_Prev[] alloc + per-active pre-loop init. AGS_Prev[] is used
      * by the final-final pass; runner's per-active IterScratch.AGS_Prev
      * handles the per-iter clamp internally. */
     MyFloat *AGS_Prev = (MyFloat *) mymalloc("AGS_Prev", NumPart * sizeof(MyFloat));
@@ -840,7 +762,7 @@ void ags_density(void)
     }
 #endif
 
-    /* (3) Build per-bm subgroup partition. */
+    /* (2) Build per-bm subgroup partition. */
     std::map<int, std::vector<int>> bm_groups_host;
     uint64_t local_bm_presence = 0;
     for (int i : ActiveParticleList) {
@@ -898,12 +820,12 @@ void ags_density(void)
         for(int i : sg_actives) active_list_concat.push_back(i);
     }
 
-    /* (4) Ghost lifecycle. Mirrors legacy rkern.cc:104-108. */
+    /* (3) Ghost lifecycle. Mirrors legacy rkern.cc:104-108. */
     double ags_ghost_safety = gizmo_ghost_safety_factor();
     if(NTask > 1) ghost_exchange_cleanup();
     gizmo_density_prep_ghosts(ags_ghost_safety);
 
-    /* (5) Build iterative args + drive the runner. */
+    /* (4) Build iterative args + drive the runner. */
     AgsDensitySpec::Aux aux{};                    /* empty per design v0.4.3 */
 
     neighbor_loop_args_iterative args{};
@@ -928,7 +850,7 @@ void ags_density(void)
     /* Post-runner cleanup. */
     if(NTask > 1) ghost_exchange_cleanup();
 
-    /* (6) Final-final pass — AGS_zeta normalization + NumNgb cube-root.
+    /* (5) Final-final pass — AGS_zeta normalization + NumNgb cube-root.
      * Verbatim from legacy rkern.cc:431-453. */
     for (int i : ActiveParticleList) {
         if(ags_density_isactive(i)) {
@@ -963,7 +885,7 @@ void ags_density(void)
 
     myfree(AGS_Prev);
 
-    /* (7) Timing accounting. */
+    /* (6) Timing accounting. */
     double t1 = my_second(); cpu_chain_sync(t1);
     double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
     /* NOT IN SCOPE: refined sub-accounting

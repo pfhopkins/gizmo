@@ -540,8 +540,8 @@ endif
 CORE_OBJS =	core/main.o core/accel.o core/timestep.o core/init.o file_io/restart.o file_io/io.o \
 			core/predict.o declarations/global.o core/begrun.o core/run.o core/gizmo_fatal.o declarations/allvars.o \
 			declarations/lifecycle_counters.o \
-			file_io/read_ic.o file_io/hdf5_deflate_filter.o domain/domain.o core/driftfac.o core/kicks.o core/step_phases.o \
-			mesh/ghost_exchange.o mesh/ghost_writeback.o mesh/neighbor_list.o mesh/sfc_tiles.o mesh/gpu_dirty_tracker.o mesh/mode_b_local_walker.o mesh/mode_b_p2p_transport.o mesh/state_hash.o compile_time_info.o mesh/merge_split.o \
+			file_io/read_ic.o file_io/hdf5_deflate_filter.o domain/domain.o core/driftfac.o core/kicks.o \
+			mesh/ghost_exchange.o mesh/ghost_writeback.o mesh/neighbor_list.o mesh/sfc_tiles.o mesh/gpu_dirty_tracker.o mesh/mode_b_local_walker.o mesh/mode_b_p2p_transport.o compile_time_info.o mesh/merge_split.o \
 			core/transport_subcycle.o
 
 SYSTEM_OBJS =   system/system.o \
@@ -579,7 +579,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o mesh/topleaf_router.o mesh/gpu_fine_sidecar.o mesh/test_iter_harness_loop.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o mesh/topleaf_router.o mesh/gpu_fine_sidecar.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -798,8 +798,6 @@ mesh/neighbor_loop_runner.o: mesh/neighbor_loop_runner.cc $(INCL) $(CONFIG) comp
 mesh/topleaf_router.o: mesh/topleaf_router.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 mesh/gpu_fine_sidecar.o: mesh/gpu_fine_sidecar.cc $(INCL) $(CONFIG) compile_time_info.cc
-	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-mesh/test_iter_harness_loop.o: mesh/test_iter_harness_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 radiation/rt_chem.o: radiation/rt_chem.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
