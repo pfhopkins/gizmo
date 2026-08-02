@@ -131,7 +131,7 @@ struct AgsDensityIterScratch {
 };
 
 /* DeviceContext extension. Single sticky call-scope flag for "any wakeup
- * written across all iters of this call" + oracle-suppression flag.
+ * written across all iters of this call".
  * Trivially copyable: the runner captures by value into Kokkos device
  * lambdas.
  *
@@ -185,8 +185,7 @@ struct AgsDensityActiveState {
  *      instead of legacy atomic_store(-1); the legacy `-1` sentinel would
  *      silently drop under MAX reverse-comm.
  *
- *   3. j-side writes are suppressed when ctx.oracle_dry_run is true so the
- *      runner's brute oracle pass doesn't double-apply (matches sink_feed
+ *   3. (removed)
  *      pattern).
  *
  *   4. *need_wakeup is atomic_or-d to 1 on any wakeup write (local or
@@ -422,15 +421,6 @@ struct AgsDensitySpec {
     static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 
-    /* Oracle brute-pass hook — REQUIRED by runner contract but stays a
-     * no-op-with-warning here. AgsDensitySpec hard-stubs oracle: after_iter
-     * mutates P[i] for the convergence test, which
-     * contaminates the brute oracle pass's pair_kernel reads of
-     * P[j].AGS_vsig (the wakeup threshold). Caller (ags_rkern.cc::ags_density)
-     * endruns if GIZMO_NLR_ORACLE=1 is set. Two-binary parity (runner-build
-     * vs legacy-build) was the validation route before the legacy path was
-     * retired; the in-runner oracle remains hard-stubbed for AGS. */
-
     /* Partition-key hook. Returns the bm key for the
      * subgroup this active belongs to.
      *
@@ -524,7 +514,7 @@ struct AgsDensitySpec {
     }
 
     /* Build NeighborData. ctx.P / ctx.CellP are path-correct (Mode A arena
-     * or Mode B request-driven slab). need_wakeup and oracle_dry_run come
+     * or Mode B request-driven slab). need_wakeup comes
      * from the ctx. */
     KOKKOS_INLINE_FUNCTION
     static NeighborData load_neighbor(const DeviceContext& dctx,
