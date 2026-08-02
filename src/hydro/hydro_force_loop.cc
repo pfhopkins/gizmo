@@ -19,8 +19,7 @@
  *   - apply_active_writeback (the body from the retired out2particle_hydra
  *     in hydro/hydro_toplevel.cc:115-295, with the MaxSignalVel floor
  *     restored via fmax(out->MaxSignalVel, effective_soundspeed()))
- *   - merge_accum + compare_accum (field-wise per #ifdef, mirroring
- *     the GradientsSpec pattern)
+ *   - merge_accum (field-wise per #ifdef, mirroring the GradientsSpec pattern)
  *   - hydro_force() toplevel
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
