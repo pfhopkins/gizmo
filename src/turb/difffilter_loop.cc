@@ -114,7 +114,6 @@ double DiffFilterSpec::compare_accum(const AccumData& local, const AccumData& or
 }
 
 /* No j-side writes → oracle brute pass needs no suppression. */
-void DiffFilterSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 double DiffFilterSpec::symmetric_neighbor_radius_scale()
 {
@@ -229,8 +228,6 @@ double DynDiffSpec::compare_accum(const AccumData& local, const AccumData& oracl
     m = nlr_rel_update(m, local.dynamic_denominator_hat, oracle.dynamic_denominator_hat);
     return m;
 }
-
-void DynDiffSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 double DynDiffSpec::symmetric_neighbor_radius_scale()
 {

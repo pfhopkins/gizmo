@@ -159,11 +159,6 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
     }
 }
 
-void HydroForceSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on)
-{
-    ctx.oracle_dry_run = on;
-}
-
 /* ============================================================================
  * Ghost-region pre-zero + lifecycle hooks (Mode A only).
  *

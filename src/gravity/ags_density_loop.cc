@@ -166,16 +166,6 @@ void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  * brute pass would see contaminated state. Caller (ags_rkern.cc::ags_density)
  * endruns on entry if oracle env is set. If we reach this hook anyway,
  * fail loudly. */
-void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
-{
-    if(on) {
-        printf("AgsDensitySpec::set_oracle_brute_pass: oracle is hard-stubbed for AGS "
-               "(after_iter mutates P[i], contaminating brute-pass pair_kernel reads, so "
-               "the in-runner oracle is unavailable for AgsDensitySpec).\n"); fflush(stdout);
-        endrun(90001019);
-        gizmo_exit_bad_stop_if_requested("ags_density:oracle_hard_stub");  /* symmetric: oracle mode is identical on all ranks */
-    }
-}
 
 /* ============================================================================
  * APPLY_ACTIVE_WRITEBACK — NO-OP for AgsDensitySpec.

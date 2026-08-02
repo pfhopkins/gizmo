@@ -199,7 +199,6 @@ struct HydroForceSpec
                                          DeviceContext& ctx);
     static void cleanup_device_context (const neighbor_loop_args& args,
                                          DeviceContext& ctx);
-    static void set_oracle_brute_pass  (DeviceContext& ctx, bool on);
 
     /* Ghost lifecycle hooks. Mode A snapshot-diff lifecycle:
      *   ghost_write_detector_begin -> ghost_writeback_begin -> kernel ->

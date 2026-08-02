@@ -119,10 +119,6 @@ void DMDispersionSpec::apply_active_writeback_iterative(
  * suppression is needed during the oracle brute pass. Runner calls without
  * SFINAE guard; body is a no-op.
  * ========================================================================== */
-void DMDispersionSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/)
-{
-    /* no-op; dm_dispersion pair_kernel has no j-side writes */
-}
 
 /* ============================================================================
  * compare_accum — per-field max relative diff for oracle comparison.

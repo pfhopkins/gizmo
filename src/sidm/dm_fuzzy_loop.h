@@ -140,7 +140,6 @@ struct DMGradSpec {
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
     static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* ---- Device hooks (header-inline; runner instantiates from GPU TUs). ---- */
     KOKKOS_INLINE_FUNCTION

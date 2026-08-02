@@ -641,10 +641,6 @@ struct AgsForceSpec {
         return n;
     }
 
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-        ctx.oracle_dry_run = on;
-    }
-
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,

@@ -113,7 +113,6 @@ struct DiffFilterSpec {
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
     static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Scaled-symmetric search hook: j-side radius scaled by All.TurbDynamicDiffFac. */
     static double      symmetric_neighbor_radius_scale();
@@ -337,7 +336,6 @@ struct DynDiffSpec {
                                               const AccumData& accum);
     static void        merge_accum(AccumData& local, const AccumData& peer);
     static double      compare_accum(const AccumData& local, const AccumData& oracle);
-    static void        set_oracle_brute_pass(DeviceContext& ctx, bool on);
     static double      symmetric_neighbor_radius_scale();
 
     KOKKOS_INLINE_FUNCTION

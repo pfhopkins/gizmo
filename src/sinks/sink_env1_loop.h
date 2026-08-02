@@ -471,10 +471,6 @@ struct SinkEnv1Spec {
     /* Oracle brute-pass hook (Phase 4.A.0 contract): runner copies ctx and
      * calls this before the brute evaluate pass to suppress j-side writes.
      * Mirror of SinkFeedSpec::set_oracle_brute_pass. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on)
-    {
-        ctx.oracle_dry_run = on;
-    }
 
     /* The physics — forwards to the inline pair body above. */
     KOKKOS_INLINE_FUNCTION

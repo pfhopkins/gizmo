@@ -253,7 +253,6 @@ double CBEGradSpec::compare_accum(const AccumData& local, const AccumData& oracl
 }
 
 /* Pure i-side accumulation — no j-side writes to suppress. */
-void CBEGradSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
 
 /* ============================================================================
  * CBEGrad_gradient_calc — toplevel. Two passes through the runner, separated

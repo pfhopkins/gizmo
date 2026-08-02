@@ -645,10 +645,6 @@ struct SinkFeedSpec {
      * calls this before the brute evaluate pass to suppress j-side writes.
      * Without it, oracle would atomic_exchange / atomic_add into P[j] /
      * CellP[j] twice (tree + brute) and corrupt additive fields. */
-    static void set_oracle_brute_pass(DeviceContext& ctx, bool on)
-    {
-        ctx.oracle_dry_run = on;
-    }
 
     /* The physics — forwards to the inline pair body above. The pair body
      * does direct j-side atomic writes through neighbor.neighbor_particle

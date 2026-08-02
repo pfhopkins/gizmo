@@ -343,9 +343,6 @@ void MechFBSpec::merge_accum(AccumData& local, const AccumData& peer) {
  * Mirrors sink_feed pattern: pair_kernel checks ctx.oracle_dry_run before
  * any atomic_add into LocalGasMechFBInfoTemp / d_gas_iter (i-side accum
  * still completes; oracle's separate accum_oracle_uvm receives it). */
-void MechFBSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on) {
-    ctx.oracle_dry_run = on;
-}
 
 /* compare_accum — per-pair-active oracle comparison. Byte-walk-as-doubles
  * pattern (matches sink_feed_loop.cc and ags_density_loop.cc). The
