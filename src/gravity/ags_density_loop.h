@@ -349,11 +349,6 @@ struct AgsDensitySpec {
      * invalid. Build a local SIDX per CSR until/unless a per-mask cache lands. */
     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
-    /* Not physics-load-bearing, and read by nothing: AGS convergence is the
-     * neighbour-count band check inside after_iter (rkern.cc:222-223), never a
-     * radius compare. Kept only so the Spec still states a radius tolerance. */
-    static constexpr double radius_tolerance = 1e-9;
-
     static bool is_active(int particle_index) { return ags_density_isactive(particle_index) != 0; }
 
     /* Iterative + multi-subgroup traits (step 0 prep-commit additions) */

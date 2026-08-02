@@ -270,7 +270,6 @@ struct DensitySpec {
     static constexpr bool           uses_ghost_write_detector = false;
 
     /* Convergence + iter policy */
-    static constexpr double radius_tolerance = 1e-9;
     using                    IterControl = Iterative;
     using                    IterScratch = DensityIterScratch;
     static constexpr int     max_iters   = MAXITER;  /* legacy density.cc bisection bound */

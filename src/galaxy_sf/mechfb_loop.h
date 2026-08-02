@@ -172,10 +172,8 @@ struct MechFBSpec {
     static constexpr bool           uses_ghost_write_detector = false;
 
     /* Convergence + iter policy. Mode-machine: max_iters = 6 covers the
-     * widest FIRE config (-2..3); accum/radius tolerances are non-radius-
-     * iterative and never trigger Converged-by-tolerance (after_iter uses
-     * mode_idx to drive the state machine). */
-    static constexpr double radius_tolerance = 1e-9;
+     * widest FIRE config (-2..3). This loop is not radius-iterative; after_iter
+     * uses mode_idx to drive the state machine. */
     using                    IterControl = Iterative;
     using                    IterScratch = NoIterScratch;
     static constexpr int     max_iters   = 6;

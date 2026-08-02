@@ -398,10 +398,6 @@ struct RadFBRPSpec {
      * entry. NO actives_partition_by_subgroup (that's only for
      * multi-subgroup Specs like ags_density). Mirrors mechfb. */
     static constexpr double mode_a_csr_buffer_factor      = 1.3;
-    /* radius_tolerance unused — we don't AdjustRadius; convergence is by
-     * iter-1 always returning Converged. Provide a non-zero value to keep
-     * runner contract happy (mirrors AgsDensitySpec's choice). */
-    static constexpr double radius_tolerance              = 1e-9;
 
     /* Default 1e-10 — the iter-0
      * wt_sum aggregation reads only Pj.Get_Particle_Size() which is not
