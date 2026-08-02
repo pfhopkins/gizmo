@@ -1211,7 +1211,7 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum
  */
 KOKKOS_INLINE_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    if(!((pp[i].Type == 4) || ((All.ComovingIntegrationOn==0)&&((pp[i].Type==2)||(pp[i].Type==3))))) {return 0;} // only star-type particles act in this subroutine //
+    if(!is_galsf_stellar_candidate_type(pp[i].Type, All.ComovingIntegrationOn)) {return 0;} // only star-type particles act in this subroutine //
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // (P[].Mass is SSOT for particle mass; CellP[].Mass is gas-only and uninitialized for stars)
     int active_check = 0; // default to inactive //
 #if defined(GALSF) /* basically none of these modules make sense without the GALSF module active */
@@ -1460,7 +1460,7 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity_chimes(int i, int mode, doub
 {
     int value_to_return = 0;
     value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
-    if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) ) // (P[].Mass is SSOT for stars; CellP[].Mass is gas-only)
+    if( is_galsf_stellar_candidate_type(pp[i].Type, All.ComovingIntegrationOn) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) ) // (P[].Mass is SSOT for stars; CellP[].Mass is gas-only)
     {
         int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr_core(i, pp), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;
         if(log_age_Myr < CHIMES_LOCAL_UV_AGE_LOW) {age_bin = 0;} else if (log_age_Myr < CHIMES_LOCAL_UV_AGE_MID) {age_bin = (int) floor(((log_age_Myr - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW) + 1);} else {

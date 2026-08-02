@@ -128,6 +128,20 @@ double ForceSoftening_KernelRadius(int p);
 double compute_force_softening_kernel_radius(int p); /* internal: source-of-truth softening computation */
 void   compute_all_force_softening(int mode);        /* mode=0 active-only; mode=1 all NumPart (init/restart) */
 GIZMO_GPU_FUNCTION inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /* inline for GPU single-TU; definition also in global.cc for non-GPU TUs */
+
+/* SSOT for "is this particle TYPE a stellar feedback/source candidate": type 4 is
+   always a 'star'; in non-cosmological runs types 2/3 too, EXCEPT in nuclear-zoom /
+   Jeans-refinement / grain-fluid builds where those types are reserved for
+   non-stellar roles (analytic-BH anchor; grains, GRAIN_PTYPES defaults to type 3).
+   Callers apply their own Mass>0 / KernelRadius>0 / age guards on top. */
+GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, int comoving_on)
+{
+    if(type == 4) {return 1;}
+#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(GRAIN_FLUID)
+    if(comoving_on == 0 && (type == 2 || type == 3)) {return 1;}
+#endif
+    return 0;
+}
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
 #ifdef BOX_SHEARING
@@ -190,6 +204,37 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
                              MPI_Status *status);
 
 int getNodeCount(void);
+void gizmo_node_comm_init(void);
+extern MPI_Comm GizmoNodeComm;
+extern int GizmoNodeRankOfTask;
+extern int GizmoRanksThisNode;
+extern int GizmoNodeCount;
+/* Allocation families the memory ledger tracks outside the central Base arena.
+   Each family updates its byte counter at its own allocation seam. */
+enum {
+  GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
+  GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
+  GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
+  GIZMO_MEM_NFAMILY
+};
+void gizmo_mem_account_add(int family, long long delta_bytes);
+void gizmo_mem_account_set(int family, long long value_bytes);
+/* LET wire transient buffers -- tracked as a high-water, not a persistent family. */
+void gizmo_let_wire_grow(long long delta_bytes);
+void gizmo_let_wire_reset(void);
+void gizmo_let_wire_note_failed(long long bytes);
+void report_memory_ledger(const char *when);
+void report_memory_ledger_on_growth(const char *when);
+int gizmo_memory_preflight(void);
+
+/* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
+   TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the
+   ledger -- NOT a per-family counter. extern "C" so the host ledger/main TUs link it
+   across the device-compiler boundary. */
+extern "C" void      gizmo_kokkos_mem_register(void);
+extern "C" int       gizmo_kokkos_mem_available(void);
+extern "C" long long gizmo_kokkos_mem_current_bytes(void);
+extern "C" long long gizmo_kokkos_mem_highwater_bytes(void);
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);

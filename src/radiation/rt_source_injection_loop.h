@@ -324,10 +324,10 @@ struct RtSrcInjectionSpec {
      * belt-and-suspenders re-check. */
     static bool        is_active(int particle_index);
 
-    /* Per-active search radius. Reads from aux->host_locals[active_slot]; under
-     * RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION the legacy code scaled the search
-     * radius by 3 (rt_source_injection.cc:91); the LocalIn field itself stays
-     * un-scaled (truthful name), the ×3 is applied here only. */
+    /* Per-active search radius = the source's un-scaled KernelRadius (reads from
+     * aux->host_locals[active_slot]). The SYMMETRIC search discovers the j-side
+     * (r < h_j) reach independently, so the source radius is NOT inflated to
+     * find large-h_j gas. */
     static double      search_radius(const neighbor_loop_args& args,
                                       int active_slot, int i);
 
@@ -371,8 +371,8 @@ struct RtSrcInjectionSpec {
             a.pos[0] = (double)a.local.Pos[0];
             a.pos[1] = (double)a.local.Pos[1];
             a.pos[2] = (double)a.local.Pos[2];
-            /* h_search comes from the runner (already includes the
-             * RT_SINK_ANGLEWEIGHT 3x scaling via Spec::search_radius). */
+            /* h_search comes from the runner (the un-scaled source radius; the
+             * SYMMETRIC search adds the j-side reach). */
             a.h_search = h_search;
         } else {
             a.pos[0] = (double)dctx.P[i].Pos[0];
@@ -427,8 +427,9 @@ struct RtSrcInjectionSpec {
         if (r2 <= 0) return;
 
         /* Rejection mirrors legacy lambda at rt_source_injection_gpu.cc:205-208.
-         * KernelRadius (loc.KernelRadius) is the source's UN-scaled radius;
-         * Spec::search_radius applies any ×3 scaling for the BVH/walker only.
+         * KernelRadius (loc.KernelRadius) is the source's un-scaled radius, the
+         * same radius the search uses; the extended-reach branch below accepts
+         * the j-side (r < h_j) pairs the SYMMETRIC search discovers.
          * The r2>=h2 exclusion must be unconditional: All.TimeStep reads 0 at
          * the first step after any sync-point, and gating the exclusion on it
          * let far-outside-kernel pairs through with a negative kernel weight. */

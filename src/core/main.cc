@@ -49,7 +49,9 @@ int main(int argc, char **argv)
      SLURM CG). See core/gizmo_fatal.h. */
   gizmo_install_fatal_signal_handlers();
   gizmo_install_mpi_error_handler();
+  gizmo_node_comm_init();  /* persistent node-local communicator, used for node-scoped memory reporting */
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
+  gizmo_kokkos_mem_register();  /* observe Kokkos allocations from here on (after Kokkos init, before GIZMO allocations) */
   /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
      On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).
      On x86, check MXCSR bits 15 (FZ) and 6 (DAZ). */
@@ -162,6 +164,8 @@ int main(int argc, char **argv)
   cpu_chain_sync(my_second());
 
   begrun();			/* set-up run  */
+
+  report_memory_ledger("startup");  /* all ranks reach this point after begrun(); its node-scoped reduce is collective */
 
   /* Bad-stop poll after setup (Vista no-MPI_Abort policy). If begrun() flagged
    * an unrecoverable bad stop (bad params / missing table / IO setup failure),

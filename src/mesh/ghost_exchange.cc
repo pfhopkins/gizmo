@@ -1358,8 +1358,9 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {
         double usage_frac = (double)NumPart / (double)All.MaxPart;
-        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). "
-                      "Consider increasing PartAllocFactor (currently %.2f) to avoid running out of space.",
+        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). PartAllocFactor (currently %.2f) "
+                      "adds ghost slots but also inflates P/CellP/tree storage and may not fix overlarge "
+                      "imports; consider more ranks/nodes or reducing ghost-import demand.",
                       100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
     }
 
@@ -1882,6 +1883,15 @@ static char *compute_matched_walk_export(
     return matched_walk_export;
 }
 
+/* Non-finite test that survives fast-math (isnan/isfinite may fold to false under
+ * -ffinite-math-only): exponent all-ones => Inf or NaN. A non-finite query position
+ * or radius makes every distance test "match" and would import the whole domain, so
+ * the request-driven build below fails closed on it. */
+static inline int gx_query_nonfinite(double v) {
+    unsigned long long b; memcpy(&b, &v, sizeof(b));
+    return (((b >> 52) & 0x7ffULL) == 0x7ffULL);
+}
+
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
@@ -1910,6 +1920,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      *       / ghost_exchange_hydro_oneway wrappers. */
     int n_local_queries = 0;
     struct gx_query_t *local_queries = NULL;
+    int q_bad = -1;   /* first query index with a non-finite pos/h; -1 = all finite */
     if(spec->n_queries >= 0) {
         n_local_queries = spec->n_queries;
         local_queries = (struct gx_query_t *)
@@ -1921,6 +1932,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             local_queries[q].h    = spec->query_h[q] * safety_factor;
             local_queries[q].type = -1;   /* unspecified for caller-explicit */
             local_queries[q]._pad = 0;
+            if(q_bad < 0 &&
+               (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
+                gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
         }
     } else {
         for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
@@ -1945,9 +1959,23 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             local_queries[q].h    = h * safety_factor;
             local_queries[q].type = (int)P[i].Type;
             local_queries[q]._pad = 0;
+            if(q_bad < 0 &&
+               (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
+                gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
             q++;
         }
     }
+
+    /* Fail-closed: a non-finite query position or radius makes every distance test
+     * "match" and would import the entire domain (a corrupt query must never turn
+     * into "ship everything"). Stop loudly instead; drains collectively at the poll. */
+    if(q_bad >= 0) {
+        printf("ERROR: non-finite request-driven query on task %d (caller=%s q=%d pos=(%g,%g,%g) h=%g)\n",
+               ThisTask, (spec->caller_name ? spec->caller_name : "?"), q_bad,
+               local_queries[q_bad].pos[0], local_queries[q_bad].pos[1], local_queries[q_bad].pos[2], local_queries[q_bad].h);
+        gizmo_request_controlled_stop(7708, "ghost_exchange (request-driven): non-finite query position or radius", __FILE__, __LINE__, __FUNCTION__);
+    }
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:query_finite");
 
     /* === Step 2: LAZY query distribution === The broadcast Allgather/
      * Allgatherv now runs on demand via ensure_broadcast_queries(): SKIPPED in
@@ -2419,7 +2447,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
-        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor, add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
     }
     /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
      * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the

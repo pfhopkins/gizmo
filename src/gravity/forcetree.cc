@@ -383,6 +383,14 @@ let_build_attempt:
         /* Non-retryable. The failing rank records the cause; pseudodata failures
          * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
          * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
+        if(let_status == LET_PACK_OOM)
+        {
+            printf("LET wire OOM on rank %d: ran out of memory reserving ghost-import (LET) transport buffers "
+                   "(the memory ledger's LET-wire 'failed' bytes shows how much). This configuration's ghost import "
+                   "does not fit in node memory; feasible: fewer ranks/node, or lower resolution. Stopping cleanly.\n",
+                   ThisTask);
+            fflush(stdout);
+        }
         if(let_status == LET_PACK_OOM || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
     }
     else if(overflow_any)
@@ -2475,6 +2483,15 @@ void force_treeallocate(int maxnodes, int maxpart)
     double u;
     
     tree_allocated_flag = 1;
+    /* Reset the tree-node byte total for a fresh tree. Every caller frees the prior
+       tree before rebuilding (domain and subfind free first; the LET/tree retry frees
+       inside its loop) or starts from a fresh state (restart), so the counter is
+       already 0 here in normal flow; the reset additionally clears any stale total left
+       by a prior partial-allocation controlled-stop. Bytes accumulate per successful
+       UVM array below and zero again on free. DomainNodeIndex / TopNodeNodeIndex go
+       through mymalloc (Base arena) and are not counted here, to avoid double-counting
+       the Base total. */
+    gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);
     DomainNodeIndex = (int *) mymalloc("DomainNodeIndex", bytes = NTopleaves * sizeof(int));
     allbytes_topleaves += bytes;
     /* Top-leaf-router geometry SSOT (allocated immediately after DomainNodeIndex
@@ -2546,6 +2563,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(90000082);
         return;
     }
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Nodes_base */
     bytes = (size_t) total_node_slots * sizeof(struct extNODE);
     Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
     if(!Extnodes_base)
@@ -2557,6 +2575,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(90000083);
         return;
     }
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Extnodes_base */
     Nodes = Nodes_base - All.MaxPart;
     Extnodes = Extnodes_base - All.MaxPart;
     /* Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
@@ -2578,6 +2597,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         return;
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Nextnode */
     /* Father[] is UVM (SharedSpace) so the GPU father kernel can
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
@@ -2593,6 +2613,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(90000085);
         return;
     }
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Father */
     /* Foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
      * allocator (gpu_tree_alloc_bytes), the SAME discipline as Nodes_base/Extnodes_base/Nextnode --
      * freed in force_treefree, re-allocated on every force_treebuild retry.  Sized MaxForeignNodes,
@@ -2600,10 +2621,17 @@ void force_treeallocate(int maxnodes, int maxpart)
      * leaf_tag=0 (node) before any LET exchange installs real foreign leaves. */
     if(MaxForeignNodes > 0)
     {
+        /* Account each sidecar the moment it succeeds, not after all four: a partial
+           failure (e.g. Tag succeeds, Type fails) still leaves the successful arrays
+           live, and the ledger must show them. */
         ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        if(ForeignLeafTag)  gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
         ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        if(ForeignLeafType) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
         ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        if(ForeignLeafZeta) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
         ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        if(ForeignLeafSoft) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
         if(!ForeignLeafTag || !ForeignLeafType || !ForeignLeafZeta || !ForeignLeafSoft)
         {
             printf("Failed to allocate %d foreign-leaf sidecar slots.\n", MaxForeignNodes);
@@ -2702,6 +2730,7 @@ void force_treefree(void)
         if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
+        gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
         tree_allocated_flag = 0;
     }
 }

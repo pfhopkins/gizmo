@@ -277,9 +277,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
 #if defined(GALSF)
         /* Suppress wakeup for stars / non-cosmo middle types
          * (legacy ags_density_gpu.cc:170-174). */
-        if((neighbor_particle.Type == 4) ||
-           ((scalars.common.comoving_integration_on == 0) &&
-            ((neighbor_particle.Type == 2) || (neighbor_particle.Type == 3)))) {
+        if(is_galsf_stellar_candidate_type(neighbor_particle.Type, scalars.common.comoving_integration_on)) {
             wakeup_condition = 0;
         }
 #endif

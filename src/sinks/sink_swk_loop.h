@@ -432,9 +432,7 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
 #if defined(SINK_GRAVCAPTURE_NONGAS)
         if(neighbor_particle.Type > 0 && neighbor_particle.Type < 5) {
             out.accreted_Mass += Mass_j;
-            if(neighbor_particle.Type == 1 ||
-               (scalars.common.comoving_integration_on &&
-                (neighbor_particle.Type == 2 || neighbor_particle.Type == 3))) {
+            if(!is_galsf_stellar_candidate_type(neighbor_particle.Type, scalars.common.comoving_integration_on)) { // non-star (DM/collisionless) over types 1-4
                 out.accreted_Sink_Mass += Mass_j;
                 out.n_dm_swallowed++;
             } else {

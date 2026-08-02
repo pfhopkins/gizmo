@@ -69,11 +69,7 @@ bool RadFBRPSpec::is_active(int i)
      * the canonical out-of-line accessor is retained as explicit-intent
      * documentation. */
     const struct global_data_all_processes *HostAll = gizmo_host_all_ptr();
-    if (HostAll->ComovingIntegrationOn) {
-        if (P[i].Type != 4) return false;
-    } else {
-        if (P[i].Type < 2 || P[i].Type > 4) return false;
-    }
+    if (!is_galsf_stellar_candidate_type(P[i].Type, HostAll->ComovingIntegrationOn)) return false; // stellar-candidate type (see proto.h)
     if (P[i].Mass <= 0 || !isfinite((double)P[i].Mass)) return false;
     if (P[i].KernelRadius <= 0) return false;
     if (P[i].DensityAroundParticle <= 0) return false;
@@ -362,10 +358,7 @@ int radfb_rp_local_fill(int i,
     const double unit_density_in_nhcgs = unit_density_in_cgs / PROTONMASS_CGS;
 
     /* type / mass / age guards — cosmo-aware */
-    if (P_host[i].Type != 4) {
-        if (!(!HostAll->ComovingIntegrationOn
-              && (P_host[i].Type == 2 || P_host[i].Type == 3))) return 0;
-    }
+    if (!is_galsf_stellar_candidate_type(P_host[i].Type, HostAll->ComovingIntegrationOn)) return 0; // stellar-candidate type (see proto.h)
     if (P_host[i].Mass <= 0 || !isfinite((double)P_host[i].Mass)) return 0;
     if (P_host[i].DensityAroundParticle <= 0) return 0;
 

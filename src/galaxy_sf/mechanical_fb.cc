@@ -71,13 +71,11 @@ void determine_where_SNe_occur(void)
         {   // single sink type, for type 5
             if((P[i].ProtoStellarStage != 5) && (P[i].ProtoStellarStage != 6)) {continue;} // only MS or SN-tagged particles eligible to have winds or SN in this routine
         } else { // stellar population type allowed here
-            if(All.ComovingIntegrationOn) {if(P[i].Type != 4) {continue;}} // in cosmological simulations, 'stars' have particle type=4
-            if(All.ComovingIntegrationOn==0) {if((P[i].Type<2)||(P[i].Type>4)) {continue;}} // in non-cosmological sims, types 2,3,4 are valid 'stars'
+            if(!is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn)) {continue;} // stellar-candidate type (see proto.h)
         }
 #endif
 #else
-        if(All.ComovingIntegrationOn) {if(P[i].Type != 4) {continue;}} // in cosmological simulations, 'stars' have particle type=4
-        if(All.ComovingIntegrationOn==0) {if((P[i].Type<2)||(P[i].Type>4)) {continue;}} // in non-cosmological sims, types 2,3,4 are valid 'stars'
+        if(!is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn)) {continue;} // stellar-candidate type (see proto.h)
 #endif
         if(P[i].Mass<=0) {continue;}
         dt = get_particle_feedback_timestep_in_physical(i);

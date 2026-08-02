@@ -69,9 +69,9 @@ struct global_data_all_processes
   double BufferSize;		/*!< size of communication buffer in MB */
   long BunchSize;     	        /*!< number of particles fitting into the buffer in the parallel tree algorithm  */
 
-  double PartAllocFactor;	/*!< in order to maintain work-load balance, the particle load will usually NOT be balanced.  Each processor allocates memory for PartAllocFactor times the average number of particles to allow for that */
+  double PartAllocFactor;	/*!< Master multiplier for per-rank particle storage: MaxPart = PartAllocFactor * (TotNumPart/NTask), and MaxPartGas / MaxNodes / MaxForeignNodes / domain maxLoad all key off it.  It carries TWO duties at once: (a) load-imbalance headroom (the local particle count is usually not balanced) and (b) the reservoir for imported ghost particles (Mode-A ghosts share the P[]/CellP[] arrays), which is why the default is large (~10). Raising it inflates ALL of the above, not just ghost room. */
   double TreeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
-  double TopNodeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
+  double TopNodeAllocFactor;	/*!< Sizes the TOP-level (domain-decomposition) tree, not the full local tree: MaxTopNodes = TopNodeAllocFactor * MaxPart + 1.  Much smaller than TreeAllocFactor (default ~0.008 vs ~0.45) because the top-tree holds one node per top-level domain cell, not one per particle; auto-ratchets on top-node overflow. */
   double LETAllocFactor;        /*!< foreign-node headroom in Nodes_base/Extnodes_base/Nextnode for the Locally Essential Tree.  Foreign-node capacity = ceil(LETAllocFactor * MaxNodes).  Default 1.0; raise for clustered runs that exhaust the foreign buffer (endrun message will name this param).  Only used on GPU builds. */
 
 #ifdef DM_SCALARFIELD_SCREENING
@@ -226,7 +226,7 @@ struct global_data_all_processes
          MaxSizeTimestep;		/*!< maximum allowed timestep */
   double MaxRMSDisplacementFac;	/*!< this determines a global timestep criterion for cosmological simulations in comoving coordinates.  To this end, the code computes the rms velocity
 				   of all particles, and limits the timestep such that the rms displacement is a fraction of the mean particle separation (determined from the particle mass and the cosmological parameters). This parameter specifies this fraction. */
-  int MaxMemSize;
+  int MaxMemSize;		/*!< Per-MPI-task size in MB of the legacy Base/mymalloc arena. NOT a total memory budget: particle SoA, tree UVM, Kokkos scratch, LET wire buffers, and MPI/ghost buffers are accounted separately, outside this arena. */
   int NeighborLoopModeBThresholdSum;	/*!< optional Mode-A/B dispatch threshold on the summed active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_sum) */
   int NeighborLoopModeBThresholdMax;	/*!< optional Mode-A/B dispatch threshold on the max-rank active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_max) */
   double CourantFac;		/*!< Courant factor */

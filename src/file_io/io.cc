@@ -2596,6 +2596,10 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
     long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
     nall = 0; nsel = 0; ntot_withmasses = 0; nstars_tot=0;
 
+    /* NOTE: this is an I/O-block membership bitmask (which types write e.g. the ages block),
+       a DIFFERENT concept from is_galsf_stellar_candidate_type() (feedback/source activation):
+       it is a type bitmask, includes sinks (type 5), and needs no zoom/grain exclusion since
+       writing an extra harmless output field for a special particle is not a physics change. */
     int valid_star_types=16; if(All.ComovingIntegrationOn==0) {valid_star_types+=4+8;} /* used in e.g. ages block below, not for all, but easier to define here */
 #ifdef SINK_PARTICLES
     valid_star_types += 32;
