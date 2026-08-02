@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <Kokkos_Core.hpp>
+#include <exception>
 
 /* GPU All mirror: must precede allvars.h so nvc++ sees `All` (=All_dev) when it
  * eagerly parses templates in declarations/allvars.h that reference it. Matches
@@ -78,10 +79,15 @@ extern "C" void gpu_particles_arena_release(void)
     arena_valid_    = 0;
 }
 
-extern "C" void *gpu_particles_uvm_alloc(size_t nbytes)
+extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
 {
     if(nbytes == 0) {return NULL;}
-    void *p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nbytes);
+    /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
+       (allocate.cc alloc_fail_local) fires instead of a hard terminate. The label
+       names the buffer in the Kokkos allocation stream and any future OOM message. */
+    void *p = NULL;
+    try { p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "particle_soa", nbytes); }
+    catch(const std::exception &) { return NULL; }
     if(p) {memset(p, 0, nbytes);}
     return p;
 }

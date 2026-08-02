@@ -99,7 +99,7 @@ void gpu_particles_arena_release(void);
  * persists until process exit.  This wrapper exists so allocate.cc — which
  * is compiled as a host (non-CUDA) TU — does not have to include
  * <Kokkos_Core.hpp> directly. */
-void *gpu_particles_uvm_alloc(size_t nbytes);
+void *gpu_particles_uvm_alloc(size_t nbytes, const char *label);
 
 /* Accessors. Return NULL / 0 when arena is not currently held. */
 struct particle_data *gpu_particles_arena_P(void);
