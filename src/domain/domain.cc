@@ -10,7 +10,6 @@
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
-#include "../mesh/topleaf_router.h"    /* topleaf_router_geometry_invalidate */
 
 
 /*! Announce that the local particle array was re-indexed: particles were
@@ -40,7 +39,6 @@ static void domain_particle_layout_changed(const char *reason)
     ghost_exchange_supply_identity_changed(reason);
     ghost_exchange_local_tree_invalidate_full();
     gpu_step_sidx_invalidate_full();
-    topleaf_router_geometry_invalidate();
 }
 
 

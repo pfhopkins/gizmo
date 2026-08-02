@@ -40,7 +40,6 @@
 #include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
-#include "topleaf_router.h"      /* gx_supply_pool_view + ghost_exchange_supply_pool_view (band builder) */
 #include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
 #include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
 #include "mode_b_local_walker.h"  /* mode_b_walk_and_export / mode_b_walk_from_start_nodes */
@@ -151,6 +150,15 @@ extern "C" void ghost_exchange_supply_identity_changed(const char *reason)
     (void)reason;   /* named at the call site so the reason is greppable there */
     g_supply_identity_epoch++;
 }
+
+/* Which parts of the supply cache a consumer requires.  IDENTITY (pool,
+ * pool_types, num_pool) is membership only: type-mask + positive mass, so it
+ * stays valid as particles move.  GEOMETRY (compact_xyzh, tiles) carries
+ * positions and the baked per-member reach, and is built only for the walkers
+ * that need it.  A consumer that reads geometry without requesting it would
+ * silently read NULL, so the request is mandatory and checked. */
+#define GX_POOL_IDENTITY  0x1u
+#define GX_POOL_GEOMETRY  0x2u
 
 struct ghost_local_tree_cache_t {
     int valid;
@@ -316,40 +324,6 @@ extern "C" void ghost_exchange_local_tree_invalidate_drift(void)
 }
 extern "C" void ghost_exchange_local_tree_invalidate_full(void)  { glt_cache_free(); }
 
-/* Read-only view of the owned-local supply pool + its epoch key, for the
- * top-leaf router band builder.  Returns num_pool, or -1 if the cache is not
- * safe to read (absent, or dirtied and awaiting refit -> compact_xyzh stale).
- * EXCLUDES ghosts by construction (the pool is the owned-local set the local
- * BVH walk uses); compact_xyzh[p*4+3] is the baked gx_policy_scaled_h reach. */
-extern "C" int ghost_exchange_supply_pool_view(struct gx_supply_pool_view *out,
-                                               unsigned int required_caps)
-{
-    if(!out || !required_caps) return -1;
-    if(!g_glt_cache.valid || g_glt_cache.needs_refit) return -1;
-    if((g_glt_cache.caps & required_caps) != required_caps) return -1;
-    /* Identity is pool membership/order alone. pool_types is geometry-class — it is
-     * read by the leaf supply-mask filter, a geometry walker — so it is required
-     * only alongside the rest of the geometry. (A full rebuild happens to fill it
-     * for identity-only entries too; it is absent only after the geometry half has
-     * been dropped for a policy change.) */
-    if(!g_glt_cache.pool) return -1;
-    if((required_caps & GX_POOL_GEOMETRY)
-       && (!g_glt_cache.compact_xyzh || !g_glt_cache.tiles
-           || !g_glt_cache.bvh || !g_glt_cache.pool_types)) return -1;
-    out->pool                  = g_glt_cache.pool;
-    out->pool_types            = g_glt_cache.pool_types;
-    out->compact_xyzh          = g_glt_cache.compact_xyzh;
-    out->num_pool              = g_glt_cache.num_pool;
-    out->tiles                 = g_glt_cache.tiles;
-    out->ntiles                = g_glt_cache.ntiles;
-    out->numpart_when_built    = g_glt_cache.NumPart_when_built;
-    out->ti_when_built         = (long long)g_glt_cache.Ti_when_built;
-    out->safety_when_built     = g_glt_cache.safety_factor_when_built;
-    out->eligible_mask_when_built = g_glt_cache.eligible_type_mask_when_built;
-    out->radius_policy_when_built = (int)g_glt_cache.radius_policy_when_built;
-    out->j_scale_when_built    = g_glt_cache.j_radius_scale_when_built;
-    return g_glt_cache.num_pool;
-}
 
 extern "C" void ghost_exchange_local_tree_mark_h_dirty_indices(const int *indices, int n)
 {
