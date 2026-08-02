@@ -42,7 +42,7 @@
 #include "ghost_exchange_spec.h"
 #include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
 #include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
-#include "mode_b_local_walker.h"  /* mode_b_walk_and_export / mode_b_walk_from_start_nodes */
+#include "mode_b_local_walker.h"
 #ifdef _OPENMP
 #include <omp.h>                 /* threaded sender export + receiver walk below */
 #endif
@@ -613,20 +613,24 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
  *
  * SYMMETRIC: eligible only when the supply-side reach is bounded by the per-type
  * node band the sender opener walks against — otherwise a reach beyond the band
- * silently under-imports.  Two structural conditions:
+ * silently under-imports.  ONE structural condition:
  *   supply_band_dominated  the spec's reach is proven bounded by that band
- *   safety_factor <= 1     a widened query (TURB_DIFF_DYNAMIC) outgrows the
- *                          band until the opener is scaled to match
- * Fails closed: anything unproven keeps the broadcast path it uses today.
+ * A safety factor above 1 (TURB_DIFF_DYNAMIC) is NOT a disqualifier: both walks
+ * scale the j-side reach they search with by the spec's safety factor, so their
+ * reach equals the accept's at any safety and a widened query cannot outgrow the
+ * opener.  Fails closed: anything unproven keeps the broadcast path it uses today.
  * Rank-uniform — search_mode and both fields are spec constants, identical on
  * every rank, so this never splits ranks across a collective. */
 static inline int gx_walk_export_eligible(const struct ghost_exchange_spec_t *spec)
 {
     if(!spec) return 0;
     if(spec->search_mode == NGB_SEARCH_ONEWAY) return 1;
+    /* safety_factor is NOT a disqualifier: the walk-export sender opener and
+     * receiver walk fold it into the j-side reach they search with, so their
+     * reach equals the accept's for any safety. Only an unproven supply band
+     * still forces broadcast. */
     return spec->search_mode == NGB_SEARCH_SYMMETRIC
-           && spec->supply_band_dominated
-           && spec->safety_factor <= 1.0;
+           && spec->supply_band_dominated;
 }
 
 /* Announce, ONCE per caller per run, that a SYMMETRIC caller is on broadcast.
@@ -656,7 +660,7 @@ static void gx_report_symm_broadcast(const struct ghost_exchange_spec_t *spec)
     }
     seen[n_seen++] = name;
     printf("GHOST_SYMM_BCAST caller=%s reason=%s\n", name,
-           spec->supply_band_dominated ? "safety_gt_1" : "band_unproven");
+           "band_unproven");   /* the only remaining disqualifier */
     fflush(stdout);
 }
 
@@ -1666,6 +1670,14 @@ static char *compute_matched_walk_export(
     struct gx_walk_export_result *res)
 {
     if(res) memset(res, 0, sizeof(*res));
+    /* The walk searches with the SAME j-side reach the accept admits with.
+     * The accept uses gx_policy_scaled_h = radius(j,policy) * j_radius_scale *
+     * safety_factor, so both factors are folded here; the query side already
+     * carries safety (queries are built as h*safety). Were the walk to search
+     * with a smaller reach than the accept admits, it would silently discover
+     * fewer pairs than the caller asked for -- which is why a safety factor
+     * above 1 previously had to fall back to broadcast. */
+    const double walker_j_reach_scale = spec->j_radius_scale * spec->safety_factor;
     /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
      * envelope Alltoallv below / the caller's compare Allreduce). */
     int ok_local = (All.MaxPart > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
@@ -1705,7 +1717,7 @@ static char *compute_matched_walk_export(
             sink.clear_all();
             mode_b_walk_and_export(local_queries[qi].pos, local_queries[qi].h,
                                    supply_mask, search_mode, spec->radius_policy,
-                                   /*cand_out=*/NULL, map, sink, spec->j_radius_scale, /*drift_ctr=*/NULL);
+                                   /*cand_out=*/NULL, map, sink, walker_j_reach_scale, /*drift_ctr=*/NULL);
             for(int t = 0; t < NTask; t++) {
                 if(t == ThisTask) continue;
                 long nn = (long)sink.nodes_per_peer[t].size();
@@ -1820,7 +1832,7 @@ static char *compute_matched_walk_export(
             cvk.clear();
             mode_b_walk_from_start_nodes(e->pos, e->h, supply_mask, search_mode,
                                          spec->radius_policy, e->nodes, e->n_nodes,
-                                         cvk, spec->j_radius_scale, NULL);
+                                         cvk, walker_j_reach_scale, NULL);
         }
         for(int t = 0; t < NTask; t++) {
             if(t == ThisTask) continue;

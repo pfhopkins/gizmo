@@ -37,17 +37,20 @@ double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy)
 }
 
 /* Predicate: does P[j] satisfy the query (pos, h_q) under search_mode? */
-/* j_radius_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
+/* j_reach_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
  * (1.0 = legacy). TURB_DIFF_DYNAMIC wide-filter loops pass
  * All.TurbDynamicDiffFac so the Mode B reach matches the Mode A scaled-
- * symmetric NGL. */
+ * symmetric NGL. It is the TOTAL j-side scale, not one named factor: a caller
+ * whose acceptance test applies further multipliers (ghost exchange folds its
+ * safety factor in here) must include them, or the walk searches a smaller
+ * neighbourhood than the caller then accepts from. */
 static inline int particle_passes(int j,
                                   const double pos[3],
                                   double h_q,
                                   unsigned int type_mask,
                                   int search_mode,
                                   mode_b_radius_policy_t radius_policy,
-                                  double j_radius_scale)
+                                  double j_reach_scale)
 {
     if(!(type_mask & (1u << P[j].Type))) return 0;
     if(P[j].Mass <= 0) return 0;
@@ -63,7 +66,7 @@ static inline int particle_passes(int j,
          * without AGS opt-in, h_j contribution is 0 and the test
          * collapses to ONEWAY r < h_q for that j.
          */
-        double hj = mode_b_neighbor_symmetric_radius(j, radius_policy) * j_radius_scale;
+        double hj = mode_b_neighbor_symmetric_radius(j, radius_policy) * j_reach_scale;
         if(hj > cutoff) cutoff = hj;
     }
     return r2 < cutoff * cutoff;
@@ -123,7 +126,7 @@ static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack;
 
 static inline double mode_b_node_symmetric_radius(int no,
                                                   unsigned int type_mask,
-                                                  double j_radius_scale)
+                                                  double j_reach_scale)
 {
     double rmax = 0.0;
     for(int t = 0; t < 6; t++) {
@@ -131,7 +134,7 @@ static inline double mode_b_node_symmetric_radius(int no,
         double v = (double)Extnodes[no].hmax_per_type[t];
         if(v > rmax) rmax = v;
     }
-    return rmax * (1.0 + MODE_B_NODE_H_SLACK) * j_radius_scale;
+    return rmax * (1.0 + MODE_B_NODE_H_SLACK) * j_reach_scale;
 }
 
 /* SYMMETRIC node-open reach: a SINGLE per-type band for BOTH candidate traversal
@@ -203,7 +206,7 @@ static void mode_b_walk_impl(const double pos[3],
                              unsigned int type_mask,
                              int search_mode,
                              mode_b_radius_policy_t radius_policy,
-                             double j_radius_scale,
+                             double j_reach_scale,
                              int start_no,
                              bool stop_at_toplevel,
                              std::vector<int>* cand_out,
@@ -224,7 +227,7 @@ static void mode_b_walk_impl(const double pos[3],
             /* Particle leaf. Only return domain-owned local particles (not a
              * ghost import). cand_out==nullptr on a pure export-discovery walk. */
             if(cand_out && no < num_local &&
-               particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale)) {
+               particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale)) {
                 cand_out->push_back(no);
             }
             no = Nextnode[no];
@@ -261,7 +264,7 @@ static void mode_b_walk_impl(const double pos[3],
             if(oneway) {
                 R_open = h_q;
             } else {
-                const double node_h = mode_b_node_symmetric_radius(no, type_mask, j_radius_scale);
+                const double node_h = mode_b_node_symmetric_radius(no, type_mask, j_reach_scale);
                 R_open = (node_h > h_q) ? node_h : h_q;
             }
             int do_open = sphere_aabb_overlap(pos, nop, R_open);
@@ -316,7 +319,7 @@ static void mode_b_walk_impl(const double pos[3],
                     if(!oneway) {   /* re-test at the topleaf's OWN box + per-type reach */
                         const int tl_node = DomainNodeIndex[leaf];
                         if(tl_node >= max_part && tl_node < pseudo_start) {
-                            const double node_h = mode_b_node_symmetric_radius(tl_node, type_mask, j_radius_scale);
+                            const double node_h = mode_b_node_symmetric_radius(tl_node, type_mask, j_reach_scale);
                             const double R_exp_tl = (node_h > h_q) ? node_h : h_q;
                             do_export = sphere_aabb_overlap(pos, &Nodes[tl_node], R_exp_tl);
                         }
@@ -338,10 +341,10 @@ void mode_b_local_neighbor_walk(const double pos[3],
                                 int search_mode,
                                 mode_b_radius_policy_t radius_policy,
                                 std::vector<int>& out,
-                                double j_radius_scale,
+                                double j_reach_scale,
                                 ModeBDriftCounters* drift_ctr)
 {
-    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
                      &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr, drift_ctr);
 }
@@ -360,10 +363,10 @@ void mode_b_walk_and_export(const double pos[3],
                             std::vector<int>* cand_out,
                             const ModeBTopleafMap& topleaf_map,
                             ModeBExportSink& sink,
-                            double j_radius_scale,
+                            double j_reach_scale,
                             ModeBDriftCounters* drift_ctr)
 {
-    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+    mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                      /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
                      cand_out, &topleaf_map, &sink, drift_ctr);
 }
@@ -379,7 +382,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   const int *node_list,
                                   int n_nodes,
                                   std::vector<int>& out,
-                                  double j_radius_scale,
+                                  double j_reach_scale,
                                   ModeBDriftCounters* drift_ctr)
 {
     if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
@@ -392,7 +395,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
          * node index. Skip a corrupt entry rather than dereference OOB. */
         if(nl < max_part || nl >= pseudo_start) continue;
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
-        mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_radius_scale,
+        mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                          start, /*stop_at_toplevel=*/true,
                          &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr, drift_ctr);
     }

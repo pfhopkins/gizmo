@@ -81,10 +81,13 @@ struct ModeBDriftCounters {
     }
 };
 
-/* j_radius_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
+/* j_reach_scale: SYMMETRIC-mode multiplier on the j-side kernel radius
  * (1.0 = legacy). TURB_DIFF_DYNAMIC wide-filter loops pass
  * All.TurbDynamicDiffFac so the Mode B reach matches the Mode A scaled-
- * symmetric NGL.
+ * symmetric NGL. It is the TOTAL j-side scale, not one named factor: a caller
+ * whose acceptance test applies further multipliers (ghost exchange folds its
+ * safety factor in here) must include them, or the walk searches a smaller
+ * neighbourhood than the caller then accepts from.
  *
  * drift_ctr (optional, default nullptr): per-thread lazy-drift accounting for a
  * threaded caller; nullptr for a serial walk. */
@@ -94,7 +97,7 @@ void mode_b_local_neighbor_walk(const double pos[3],
                                 int search_mode,
                                 mode_b_radius_policy_t radius_policy,
                                 std::vector<int>& out,
-                                double j_radius_scale = 1.0,
+                                double j_reach_scale = 1.0,
                                 ModeBDriftCounters* drift_ctr = nullptr);
 
 /* Cross-rank targeted-export support (restores the legacy source-tree export
@@ -159,7 +162,7 @@ void mode_b_walk_and_export(const double pos[3],
                             std::vector<int>* cand_out,
                             const ModeBTopleafMap& topleaf_map,
                             ModeBExportSink& sink,
-                            double j_radius_scale = 1.0,
+                            double j_reach_scale = 1.0,
                             ModeBDriftCounters* drift_ctr = nullptr);
 
 /* RECEIVER walk (legacy mode==1): for each exported start-node in
@@ -176,7 +179,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   const int *node_list,
                                   int n_nodes,
                                   std::vector<int>& out,
-                                  double j_radius_scale = 1.0,
+                                  double j_reach_scale = 1.0,
                                   ModeBDriftCounters* drift_ctr = nullptr);
 
 /* Targeted-export eligibility gate RETIRED. Every Mode-B loop now

@@ -6,9 +6,9 @@
  * loop's (supply_type_mask, search_mode, query list). Editing those there
  * is the only edit needed to flip the call's physics. Dispatch keys only on
  * spec fields: an explicit query list (n_queries >= 0), search_mode ==
- * NGB_SEARCH_ONEWAY, or a SYMMETRIC spec with supply_band_dominated set and
- * safety_factor <= 1 selects request-driven; every other SYMMETRIC caller
- * uses tile-overlap/broadcast. No per-caller special-casing lives in
+ * NGB_SEARCH_ONEWAY, or a SYMMETRIC spec with supply_band_dominated set
+ * selects request-driven; every other SYMMETRIC caller uses
+ * tile-overlap/broadcast. No per-caller special-casing lives in
  * ghost_exchange.cc.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
