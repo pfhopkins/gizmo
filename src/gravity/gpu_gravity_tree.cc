@@ -123,17 +123,17 @@ static int alloc_arrays_(int n)
     /* moment/force fields retyped as MyGravFloat (flag-gated:
      * float when GIZMO_MIXED_PRECISION_GRAVITY set, double otherwise).
      * Geometric (center, len) stays MyFloat — opening-criterion precision. */
-    soa_.center   = (Vec3<MyFloat>     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
-    soa_.len      = (MyFloat           *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
-    soa_.s        = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
-    soa_.mass     = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.sibling  = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-    soa_.nextnode = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-    soa_.father   = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-    soa_.bitflags = (unsigned int      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(unsigned int));
-    soa_.maxsoft  = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.N_part   = (long              *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(long));
-    soa_.suns_backup = (int             *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)n * 8 * sizeof(int));
+    soa_.center   = (Vec3<MyFloat>     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyFloat>));
+    soa_.len      = (MyFloat           *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyFloat));
+    soa_.s        = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
+    soa_.mass     = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.sibling  = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(int));
+    soa_.nextnode = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(int));
+    soa_.father   = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(int));
+    soa_.bitflags = (unsigned int      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(unsigned int));
+    soa_.maxsoft  = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.N_part   = (long              *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(long));
+    soa_.suns_backup = (int             *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (long)n * 8 * sizeof(int));
     if(!soa_.center || !soa_.len || !soa_.s || !soa_.mass || !soa_.sibling ||
        !soa_.nextnode || !soa_.father || !soa_.bitflags || !soa_.maxsoft || !soa_.N_part ||
        !soa_.suns_backup) {
@@ -145,10 +145,10 @@ static int alloc_arrays_(int n)
      * adds MaxForeignNodes to its capacity request, so this runs with the current MaxForeignNodes. */
     soa_.foreign_leaf_cap = (MaxForeignNodes > 0) ? MaxForeignNodes : 0;
     if(soa_.foreign_leaf_cap > 0) {
-        soa_.foreign_leaf_tag  = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(int));
-        soa_.foreign_leaf_type = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(int));
-        soa_.foreign_leaf_zeta = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
-        soa_.foreign_leaf_soft = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
+        soa_.foreign_leaf_tag  = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(int));
+        soa_.foreign_leaf_type = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(int));
+        soa_.foreign_leaf_zeta = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
+        soa_.foreign_leaf_soft = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(MyFloat));
         if(!soa_.foreign_leaf_tag || !soa_.foreign_leaf_type || !soa_.foreign_leaf_zeta || !soa_.foreign_leaf_soft) {
             printf("gpu_gravity_tree: foreign_leaf sidecar alloc failed (%d)\n", soa_.foreign_leaf_cap); return 0;
         }
@@ -156,71 +156,71 @@ static int alloc_arrays_(int n)
         soa_.foreign_leaf_tag = NULL; soa_.foreign_leaf_type = NULL; soa_.foreign_leaf_zeta = NULL; soa_.foreign_leaf_soft = NULL;
     }
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    soa_.gasmass = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
+    soa_.gasmass = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
     if(!soa_.gasmass) {printf("gpu_gravity_tree: gasmass alloc failed (%d)\n", n); return 0;}
 #endif
 #ifdef RT_USE_GRAVTREE
-    soa_.stellar_lum = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * N_RT_FREQ_BINS * sizeof(MyGravFloat));
+    soa_.stellar_lum = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * N_RT_FREQ_BINS * sizeof(MyGravFloat));
     if(!soa_.stellar_lum) {printf("gpu_gravity_tree: stellar_lum alloc failed (%d)\n", n); return 0;}
 #ifdef CHIMES_STELLAR_FLUXES
     /* CHIMES stays double — chemistry tolerances. */
-    soa_.chimes_stellar_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
-    soa_.chimes_stellar_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    soa_.chimes_stellar_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    soa_.chimes_stellar_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
     if(!soa_.chimes_stellar_lum_G0 || !soa_.chimes_stellar_lum_ion) {printf("gpu_gravity_tree: chimes lum alloc failed (%d)\n", n); return 0;}
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    soa_.rt_source_lum_s  = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
-    soa_.rt_source_lum_vs = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.rt_source_lum_s  = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
+    soa_.rt_source_lum_vs = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.rt_source_lum_s || !soa_.rt_source_lum_vs) {printf("gpu_gravity_tree: rt_source_lum alloc failed (%d)\n", n); return 0;}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    soa_.sink_lum      = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.sink_lum_grad = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.sink_lum      = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.sink_lum_grad = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_lum || !soa_.sink_lum_grad) {printf("gpu_gravity_tree: sink_lum alloc failed (%d)\n", n); return 0;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    soa_.cr_injection = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
+    soa_.cr_injection = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
     if(!soa_.cr_injection) {printf("gpu_gravity_tree: cr_injection alloc failed (%d)\n", n); return 0;}
 #endif
 #ifdef SINK_CALC_DISTANCES
-    soa_.sink_mass = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.sink_pos  = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.sink_mass = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.sink_pos  = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_mass || !soa_.sink_pos) {printf("gpu_gravity_tree: sink_mass/pos alloc failed (%d)\n", n); return 0;}
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    soa_.sink_vel = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.sink_vel = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_vel) {printf("gpu_gravity_tree: sink_vel alloc failed (%d)\n", n); return 0;}
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    soa_.sink_acc = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.sink_acc = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_acc) {printf("gpu_gravity_tree: sink_acc alloc failed (%d)\n", n); return 0;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    soa_.N_SINK = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
+    soa_.N_SINK = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(int));
     if(!soa_.N_SINK) {printf("gpu_gravity_tree: N_SINK alloc failed (%d)\n", n); return 0;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    soa_.MaxFeedbackVel = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
+    soa_.MaxFeedbackVel = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
     if(!soa_.MaxFeedbackVel) {printf("gpu_gravity_tree: MaxFeedbackVel alloc failed (%d)\n", n); return 0;}
 #endif
 #endif
     /* Unconditional Extnodes mirrors (retyped for mixed-precision gravity). */
-    soa_.node_vs = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
-    soa_.hmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.vmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.divVmax = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
+    soa_.node_vs = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
+    soa_.hmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.vmax    = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.divVmax = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
     if(!soa_.node_vs || !soa_.hmax || !soa_.vmax || !soa_.divVmax) {
         printf("gpu_gravity_tree: unconditional extnode mirrors alloc failed (n=%d)\n", n);
         return 0;
     }
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    soa_.tidal_tensorps = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * 6 * sizeof(MyGravFloat));
+    soa_.tidal_tensorps = (MyGravFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * 6 * sizeof(MyGravFloat));
     if(!soa_.tidal_tensorps) {printf("gpu_gravity_tree: tidal_tensorps alloc failed (%d)\n", n); return 0;}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    soa_.mass_dm = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
-    soa_.s_dm    = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
-    soa_.vs_dm   = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyGravFloat>));
+    soa_.mass_dm = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(MyGravFloat));
+    soa_.s_dm    = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
+    soa_.vs_dm   = (Vec3<MyGravFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.mass_dm || !soa_.s_dm || !soa_.vs_dm) {
         printf("gpu_gravity_tree: DM_SCALARFIELD mirrors alloc failed (n=%d)\n", n); return 0;
     }

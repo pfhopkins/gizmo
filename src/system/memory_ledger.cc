@@ -139,6 +139,16 @@ static void report_memory_ledger_impl(const char *when, int always)
     long long tb_n_in[3] = {tb_fcap, tb_fused, tb_ffloor}, node_tb_n[3] = {0, 0, 0};
     MPI_Reduce(tb_mb_in, node_tb_mb, 3, MPI_DOUBLE,   MPI_SUM, 0, GizmoNodeComm);
     MPI_Reduce(tb_n_in,  node_tb_n,  3, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
+    /* Rank-PAIRED foreign-LET stat: find the node-comm rank with the peak foreign
+       used high-water, then read THAT rank's capacity+floor -- so slack is a single
+       coherent rank, not node-max-capacity vs node-max-used mixed across ranks. */
+    struct { double val; int rank; } fu_in = {(double) tb_fused, GizmoNodeRankOfTask}, fu_out = {0, 0};
+    MPI_Allreduce(&fu_in, &fu_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, GizmoNodeComm);
+    long long wf_mask[2] = { (GizmoNodeRankOfTask == fu_out.rank) ? tb_fcap : -1LL,
+                             (GizmoNodeRankOfTask == fu_out.rank) ? tb_ffloor : -1LL };
+    long long wf_pair[2] = {0, 0};
+    MPI_Reduce(wf_mask, wf_pair, 2, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
+    long long wf_used = (long long) fu_out.val;   /* the peak rank's used high-water */
 
     /* Byte categories: per-process VIRTUAL/committed and RESIDENT, summed over the node,
        so the commit-vs-physical gap (e.g. Base reserved 56 GB / resident 33 GB) is visible. */
@@ -207,6 +217,10 @@ static void report_memory_ledger_impl(const char *when, int always)
                       "    tree split: local node arrays node %.1f MB | foreign-LET arrays node %.1f MB | aux (Father+Nextnode) node %.1f MB\n"
                       "    foreign-LET nodes (rank-max): capacity %lld | used high-water %lld (since start) | adaptive floor %lld\n",
                       node_tb_mb[0], node_tb_mb[1], node_tb_mb[2], node_tb_n[0], node_tb_n[1], node_tb_n[2]);
+        if(wf_used > 0)
+            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                          "    foreign-LET peak-used rank (paired): capacity %lld | used %lld | slack %lld | cap/used %.2f\n",
+                          wf_pair[0], wf_used, wf_pair[0] - wf_used, (double) wf_pair[0] / (double) wf_used);
         /* Byte categories: the family lines above are LOGICAL requested bytes; these are
            the commit vs physical categories (the Base reserved-vs-used gap lives here). */
         if(node_vm[0] > 0 || node_vm[1] > 0)
@@ -233,8 +247,10 @@ static void report_memory_ledger_impl(const char *when, int always)
                     bkt_mb[b] += mb; spc_mb[s] += mb;
                 }
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Kokkos buckets (node current MB): SoA %.1f | tree %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl %.1f | unclassified %.1f\n",
+                          "  Kokkos buckets (node current MB): SoA %.1f | tree-AoS %.1f | tree-SoA %.1f | gravity-walk %.1f | modea-runner %.1f | fine-sidecar %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl %.1f | unclassified %.1f\n",
                           bkt_mb[GIZMO_KOKBUCKET_PARTICLE_SOA], bkt_mb[GIZMO_KOKBUCKET_TREE_ARRAYS],
+                          bkt_mb[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA], bkt_mb[GIZMO_KOKBUCKET_GRAVITY_WALK],
+                          bkt_mb[GIZMO_KOKBUCKET_MODEA_RUNNER], bkt_mb[GIZMO_KOKBUCKET_FINE_SIDECAR],
                           bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_BUILD], bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_MOMENT],
                           bkt_mb[GIZMO_KOKBUCKET_NGL], bkt_mb[GIZMO_KOKBUCKET_UNCLASSIFIED]);
             /* Space split only when more than one space class is nonzero (on a CPU/OpenMP

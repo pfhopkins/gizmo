@@ -86,7 +86,7 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
        (allocate.cc alloc_fail_local) fires instead of a hard terminate. The label
        names the buffer in the Kokkos allocation stream and any future OOM message. */
     void *p = NULL;
-    try { p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "particle_soa", nbytes); }
+    try { p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "particle_soa_unlabeled", nbytes); }
     catch(const std::exception &) { return NULL; }
     if(p) {memset(p, 0, nbytes);}
     return p;

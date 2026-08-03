@@ -1260,13 +1260,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     if(!use_lazy_source) {
         long sz = (long)NumPart * N_RT_FREQ_BINS * sizeof(MyFloat);
-        d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+        d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
         if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202); myfree(idx_host); return 1;}
         memset(d_src_lum, 0, sz);
 #ifdef CHIMES_STELLAR_FLUXES
         long szc = (long)NumPart * CHIMES_LOCAL_UV_NBINS * sizeof(double);
-        d_src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
-        d_src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
+        d_src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szc);
+        d_src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szc);
         if(!d_src_lum_G0 || !d_src_lum_ion) {printf("gpu_gravtree_walk_primary: CHIMES lum alloc failed\n"); endrun(913203); myfree(idx_host); return 1;}
         memset(d_src_lum_G0,  0, szc);
         memset(d_src_lum_ion, 0, szc);
@@ -1280,8 +1280,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(!use_lazy_source) {
         long sz_lum  = (long)NumPart * sizeof(MyFloat);
         long sz_ang  = (long)NumPart * sizeof(Vec3<MyFloat>);
-        d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
-        d_bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_ang);
+        d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz_lum);
+        d_bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz_ang);
         if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210); myfree(idx_host); return 1;}
         memset(d_bh_lum,   0, sz_lum);
         memset(d_bh_angle, 0, sz_ang);
@@ -1301,7 +1301,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
     if(!use_lazy_source) {
         long sz = (long)NumPart * sizeof(MyFloat);
-        d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+        d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
         if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211); myfree(idx_host); return 1;}
         memset(d_cr_inject, 0, sz);
     }
@@ -1360,11 +1360,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 
     /* Scratch arrays for per-target results */
-    int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
-    int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+    int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
+    int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
+    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(Vec3<double>));
+    int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
+    double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(double));
     if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
@@ -1389,13 +1389,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
     double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
     /* shortrange_table is a host global (forcetree.cc); copy to SharedSpace so
      * the CUDA kernel can read it from device code. */
-    float *d_st  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    float *d_sp  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    float *d_st  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    float *d_sp  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
     if(!d_st || !d_sp) {printf("gpu_gravtree_walk_primary: shortrange table alloc failed\n"); endrun(913205); myfree(idx_host); return 1;}
     memcpy(d_st, shortrange_table,           GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
     memcpy(d_sp, shortrange_table_potential, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    float *d_stid = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    float *d_stid = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
     if(!d_stid) {printf("gpu_gravtree_walk_primary: shortrange tidal table alloc failed\n"); endrun(913206); myfree(idx_host); return 1;}
     memcpy(d_stid, shortrange_table_tidal, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #endif
@@ -1689,10 +1689,10 @@ static int gpu_ewald_tables_acquire(void)
     gizmo_get_ewald_tables(&fx, &fy, &fz, &fp, &fi);
     long n  = (long)(GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1);
     long sz = n * sizeof(MyFloat);
-    g_d_fcorrx  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-    g_d_fcorry  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-    g_d_fcorrz  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
-    g_d_potcorr = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+    g_d_fcorrx  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_fcorry  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_fcorrz  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_potcorr = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
     if(!g_d_fcorrx || !g_d_fcorry || !g_d_fcorrz || !g_d_potcorr) {
         printf("gpu_ewald_tables_acquire: kokkos_malloc failed\n");
         endrun(914101);
@@ -1869,9 +1869,9 @@ extern "C" int gpu_ewald_walk_primary(void)
     }
     if(num_active == 0) { myfree(idx_host); return 0; }
 
-    int *d_idx    = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    int *d_failed = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
+    int *d_idx    = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
+    int *d_failed = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
+    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(Vec3<double>));
     if(!d_idx || !d_failed || !d_acc) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102); myfree(idx_host); return 1;}
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));

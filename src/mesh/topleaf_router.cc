@@ -85,7 +85,7 @@ static double *shared_alloc_double(double *old, int old_cap, int new_cap, const 
     if(old) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(old);
     (void)old_cap;
     long bytes = (long)new_cap * (long)sizeof(double);
-    double *p = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bytes);
+    double *p = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", bytes);
     if(!p) printf("topleaf_router: %s alloc failed (%d doubles, %ld B)\n", what, new_cap, bytes);
     return p;
 }

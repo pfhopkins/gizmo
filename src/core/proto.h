@@ -241,7 +241,11 @@ extern "C" long long gizmo_kokkos_mem_highwater_bytes(void);
    honest, never assumed exhaustive. */
 enum {
   GIZMO_KOKBUCKET_PARTICLE_SOA = 0,     /* label prefix particle_soa_  */
-  GIZMO_KOKBUCKET_TREE_ARRAYS,          /* label prefix tree_          */
+  GIZMO_KOKBUCKET_TREE_ARRAYS,          /* label prefix tree_ (AoS node arrays Nodes_base/Extnodes/Nextnode) */
+  GIZMO_KOKBUCKET_GRAVITY_TREE_SOA,     /* label gravity_tree_soa (GPU node-SoA mirror -- 2nd tree representation) */
+  GIZMO_KOKBUCKET_GRAVITY_WALK,         /* label gravity_walk (per-particle gravity-walk accel/pot/source buffers) */
+  GIZMO_KOKBUCKET_MODEA_RUNNER,         /* label modea_runner (Mode-A/iterative runner scratch + CSR + router) */
+  GIZMO_KOKBUCKET_FINE_SIDECAR,         /* label fine_sidecar (device fine sidecar) */
   GIZMO_KOKBUCKET_TREESCRATCH_BUILD,    /* label prefix treescratch_build_  (topology/Peano/Morton) */
   GIZMO_KOKBUCKET_TREESCRATCH_MOMENT,   /* label prefix treescratch_moment_ (moment-refresh pools)  */
   GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_           */
