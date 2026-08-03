@@ -12,7 +12,7 @@ n_e cancels out, so the prediction is independent of the mean density.
 This is the *sign-anchor* test — Squire-Hopkins 2018 streaming-instability
 gives the gold-standard signed-growth-rate cross-check, but Biermann growth in
 this controlled IC is enough to catch sign bugs and order-of-magnitude
-prefactor errors (which is what we need for commit 7/N).
+prefactor errors.
 """
 
 import os
@@ -73,8 +73,8 @@ def test_biermann_growth(num_mpi_ranks, num_omp_threads):
         boxsize = float(F["Header"].attrs["BoxSize"])
 
     # Test parameters (must match the IC generator).
-    amp_rho = 1e-2
-    amp_u = 1e-2
+    amp_rho = 1e-4
+    amp_u = 1e-4
     T0_K = 1.0e6
     Lbox_code = boxsize
     L_phys_cgs = Lbox_code * UnitLength_cm

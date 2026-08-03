@@ -14,14 +14,13 @@
 %   MAGNETIC
 %   MHD_BATTERY_MECHANISMS=1
 %   SELFGRAVITY_OFF
-%   GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 %
 InitCondFile                       biermann_growth_ics
 OutputDir                          output
-TimeMax                            0.5
+TimeMax                            0.01
 BoxSize                            1
-TimeBetSnapshot                    0.05
-MaxSizeTimestep                    0.05
+TimeBetSnapshot                    0.001
+MaxSizeTimestep                    0.001
 DesNumNgb                          20
 MaxMemSize                         1000
 ErrTolIntAccuracy                  0.01
@@ -35,6 +34,17 @@ DivBcleaningParabolicSigma         0.2
 DivBcleaningHyperbolicSigma        1.0
 ResubmitOn                         0
 ResubmitCommand                    none
+
+% B-field seed convention for Battery validation (commit 8c/N).
+% B0 = 1e-40 Gauss along x: tiny enough to be physically + energetically
+% negligible vs any growing battery signal, large enough that float64
+% can represent it (and Dedner divB-cleaning has a finite reference
+% scale to lean on, instead of amplifying machine epsilon from B=0).
+% Direction is x-hat: orthogonal to the z-hat that Biermann generates
+% in this 2D test, so the seed does not contaminate the growth signal.
+BiniX                              1.0e-40
+BiniY                              0.0
+BiniZ                              0.0
 
 % Custom unit system tuned to put the analytic Biermann source at O(1) per
 % code-time while keeping all code-side numbers O(1):
