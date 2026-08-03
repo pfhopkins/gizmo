@@ -461,9 +461,9 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     int bvh_size = (2 * ntiles - 1);
     if(bvh_size < 1) bvh_size = 1;
     int pool_size = (num_pool > 0) ? num_pool : 1;
-    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(ntiles * sizeof(sfc_tile_t));
-    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(bvh_size * sizeof(tile_bvh_node_t));
-    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(pool_size * sizeof(int));
+    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_tiles", ntiles * sizeof(sfc_tile_t));
+    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_bvh", bvh_size * sizeof(tile_bvh_node_t));
+    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_pool", pool_size * sizeof(int));
 
     /* Stage host buffers into device memory.  On non-CUDA builds DEVICE_SPACE
      * == SharedSpace and Kokkos::deep_copy reduces to a memcpy. */
@@ -486,7 +486,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
        ~64MB for 2M particles vs 800MB for full P_shared. h (slot 3) is a relative
        reach; kept double so the leaf accept stays consistent with the double opener.
        In DEVICE_SPACE so the BVH-walk kernels read from HBM directly. */
-    idx->d_compact_xyzh = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(double));
+    idx->d_compact_xyzh = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_compact_xyzh", num_total * 4 * sizeof(double));
     {
         double *compact = idx->d_compact_xyzh;
         double h_inflate = 1.0 + SIDX_H_SLACK; /* lazy-drift slack: see SIDX_H_SLACK comment */
@@ -517,11 +517,11 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * from being freed in LIFO order. The transient mymalloc'd h_tiles /
      * h_pool / h_bvh from build_sfc_tiles + build_tile_bvh are copied
      * out then myfree'd in proper LIFO order below. */
-    idx->h_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(ntiles * sizeof(sfc_tile_t));
+    idx->h_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_tiles", ntiles * sizeof(sfc_tile_t));
     memcpy(idx->h_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
-    idx->h_pool = (int *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(pool_size * sizeof(int));
+    idx->h_pool = (int *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_pool", pool_size * sizeof(int));
     memcpy(idx->h_pool, h_pool, num_pool * sizeof(int));
-    idx->h_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(bvh_size * sizeof(tile_bvh_node_t));
+    idx->h_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_bvh", bvh_size * sizeof(tile_bvh_node_t));
     memcpy(idx->h_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
     idx->h_bvh_nnodes = bvh_nnodes;
     idx->num_pool = num_pool;
@@ -534,8 +534,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * positions are never read by BVH queries (BVH only visits tiles, tiles
      * only contain pool members). */
     int pos_buf_count = (num_total > 0 ? num_total : 1);
-    idx->h_pos_buf = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(3 * pos_buf_count * sizeof(double));
-    idx->d_pos_buf = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(3 * pos_buf_count * sizeof(double));
+    idx->h_pos_buf = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_pos_buf", 3 * pos_buf_count * sizeof(double));
+    idx->d_pos_buf = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_pos_buf", 3 * pos_buf_count * sizeof(double));
 
 
     /* Free the transient mymalloc'd build buffers in proper LIFO order
@@ -616,8 +616,8 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
 {
     integertime time1 = gizmo_host_ti_current();
     size_t nt = (size_t)(num_total > 0 ? num_total : 1);
-    double *pos_dbl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nt * 3 * sizeof(double));
-    double *h_dbl   = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nt * sizeof(double));
+    double *pos_dbl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_tilebuild_pos", nt * 3 * sizeof(double));
+    double *h_dbl   = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_tilebuild_h", nt * sizeof(double));
     long n_dt_nonzero = 0;
     #pragma omp parallel for reduction(+:n_dt_nonzero) schedule(static)
     for(int j = 0; j < num_total; j++) {
@@ -771,10 +771,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             memset(gnl->box_sizes,      0, 3*sizeof(double));
             memset(gnl->box_halves,     0, 3*sizeof(double));
         }
-        gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-        gnl->offsets   = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int64_t));
+        gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_active_stub", sizeof(int));
+        gnl->offsets   = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_offsets_stub", sizeof(int64_t));
         gnl->offsets[0] = 0;
-        gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(sizeof(int));
+        gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_neighbors_stub", sizeof(int));
         gnl->total_pairs = 0;
         cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
@@ -865,7 +865,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
                 &dirty_host);
             int n_dirty = (int)dirty_host.size();
-            int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(n_dirty * sizeof(int));
+            int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dirty", n_dirty * sizeof(int));
             {
                 Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                     hv(dirty_host.data(), n_dirty);
@@ -887,14 +887,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
 
     /* Active indices: always re-uploaded (changes per call) */
-    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_active", ((num_active > 0) ? num_active : 1) * sizeof(int));
     memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
 
     /* Optional explicit per-active search radii (for loops with a different kernel
        than P[i].KernelRadius, e.g. KernelRadiusDM or AGS_Hsml). NULL → use P[i].KernelRadius. */
     double *d_radii = NULL;
     if(search_radii_host) {
-        d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(double));
+        d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_radii", ((num_active > 0) ? num_active : 1) * sizeof(double));
         memcpy(d_radii, search_radii_host, num_active * sizeof(double));
     }
 
@@ -903,12 +903,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
        Layout in caller's array: source_positions_host[aa*3 + k] for axis k. */
     double *d_source_pos = NULL;
     if(source_positions_host) {
-        d_source_pos = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * 3 * sizeof(double));
+        d_source_pos = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_source_pos", ((num_active > 0) ? num_active : 1) * 3 * sizeof(double));
         memcpy(d_source_pos, source_positions_host, num_active * 3 * sizeof(double));
     }
 
     /* Allocate CSR offsets (64-bit row pointers) */
-    gnl->offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)(num_active + 1) * sizeof(int64_t));
+    gnl->offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_offsets", (size_t)(num_active + 1) * sizeof(int64_t));
 
     /* Per-particle scratchpad for fused single-pass build. Each active particle
      * gets a fixed stride (NGL_SCRATCH_STRIDE) of int slots in d_scratch; the BVH
@@ -919,8 +919,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
-    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
-    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
+    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_scratch", na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
+    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_counts", na_safe * sizeof(int));
 
     /* Drain any prior async GPU work before the passes below. */
     Kokkos::fence();
@@ -1139,7 +1139,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->total_pairs = total;
 
     /* Allocate CSR neighbors array (length is 64-bit; element type stays int) */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)((total > 0) ? total : 1) * sizeof(int));
+    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_neighbors", (size_t)((total > 0) ? total : 1) * sizeof(int));
 
     /* Compact: copy from per-particle scratchpad into dense CSR neighbors[]. */
     {

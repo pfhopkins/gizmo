@@ -59,7 +59,7 @@ double *grow_dev_double_l(double *cur, long *cap, long need)
     if(need <= 0) need = 1;
     if(cur && *cap >= need) return cur;
     if(cur) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(cur);
-    double *p = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(double));
+    double *p = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(double));
     *cap = p ? need : 0;
     return p;
 }
@@ -68,7 +68,7 @@ int *grow_dev_int(int *cur, int *cap, long need)
     if(need <= 0) need = 1;
     if(cur && *cap >= need) return cur;
     if(cur) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(cur);
-    int *p = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(int));
+    int *p = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(int));
     *cap = (int)(p ? need : 0);
     return p;
 }
@@ -93,11 +93,11 @@ int ensure_pool_arrays(FineSidecar *s, long need)
     if(need <= 0) need = 1;
     if(s->d_sx && s->cap_pool >= need) return 0;   /* reuse */
     free_pool_arrays(s);
-    s->d_sx    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(double));
-    s->d_sy    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(double));
-    s->d_sz    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(double));
-    s->d_sh    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(double));
-    s->d_stype = (int *)    Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(int));
+    s->d_sx    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(double));
+    s->d_sy    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(double));
+    s->d_sz    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(double));
+    s->d_sh    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(double));
+    s->d_stype = (int *)    Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(int));
     if(!s->d_sx || !s->d_sy || !s->d_sz || !s->d_sh || !s->d_stype) {
         free_pool_arrays(s);
         return -1;
@@ -139,7 +139,7 @@ char *grow_dev_char(char *cur, long *cap, long need)
     if(need <= 0) need = 1;
     if(cur && *cap >= need) return cur;
     if(cur) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(cur);
-    char *p = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need);
+    char *p = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need);
     *cap = p ? need : 0;
     return p;
 }
@@ -148,7 +148,7 @@ long *grow_dev_long(long *cur, long *cap, long need)
     if(need <= 0) need = 1;
     if(cur && *cap >= need) return cur;
     if(cur) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(cur);
-    long *p = (long *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)need * sizeof(long));
+    long *p = (long *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("fine_sidecar", (size_t)need * sizeof(long));
     *cap = p ? need : 0;
     return p;
 }

@@ -2550,29 +2550,29 @@ void force_treeallocate(int maxnodes, int maxpart)
      * Nextnode[] below.  Skip mymalloc accounting; kokkos_malloc has its
      * own.  Extended by MaxForeignNodes for foreign-tree storage. */
     bytes = (size_t) total_node_slots * sizeof(struct NODE);
-    Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes);
+    Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes, "tree_nodes");
     if(!Nodes_base)
     {
         printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Nodes = Nodes_base - MaxPart`
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Nodes = Nodes_base - MaxPart`
          * so the wild alias is never formed; Nodes_base stays NULL for the caller's check.
          * DomainNodeIndex + tree_allocated_flag are already set (partial allocation) -- safe
          * not because nothing was allocated, but because the caller immediately polls (all-rank
          * sites) or NULL-checks + skips payload (restart turn) before any tree use. */
-        endrun(90000082);
+        gizmo_request_controlled_stop(90000082, "force_treeallocate: tree Nodes UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Nodes_base */
     bytes = (size_t) total_node_slots * sizeof(struct extNODE);
-    Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
+    Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes, "tree_extnodes");
     if(!Extnodes_base)
     {
         printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE `Extnodes = Extnodes_base - MaxPart`
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Extnodes = Extnodes_base - MaxPart`
          * so the wild alias is never formed; Extnodes_base stays NULL for the caller's check. */
-        endrun(90000083);
+        gizmo_request_controlled_stop(90000083, "force_treeallocate: tree Extnodes UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Extnodes_base */
@@ -2586,14 +2586,14 @@ void force_treeallocate(int maxnodes, int maxpart)
      * pseudo-particle range stays in bounds after the index shift. */
     long long nextnode_slots = (long long) maxpart + (long long) NTopnodes + (long long) MaxForeignNodes;
     bytes = (size_t) nextnode_slots * sizeof(int);
-    Nextnode = (int *) gpu_tree_alloc_bytes(bytes);
+    Nextnode = (int *) gpu_tree_alloc_bytes(bytes, "tree_nextnode");
     if(!Nextnode)
     {
         printf("Failed to allocate %lld 'Nextnode' slots (%g MB) in SharedSpace\n",
                nextnode_slots, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE gpu_gravity_tree_alias_nextnode()
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE gpu_gravity_tree_alias_nextnode()
          * so a NULL Nextnode is never registered; Nextnode stays NULL for the caller's check. */
-        endrun(90000084);
+        gizmo_request_controlled_stop(90000084, "force_treeallocate: tree Nextnode UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
@@ -2608,9 +2608,9 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
                maxpart, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Soft bad-stop + return BEFORE any Father[i] write/use;
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE any Father[i] write/use;
          * Father stays NULL for the caller's check. */
-        endrun(90000085);
+        gizmo_request_controlled_stop(90000085, "force_treeallocate: tree Father UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Father */
@@ -2624,18 +2624,18 @@ void force_treeallocate(int maxnodes, int maxpart)
         /* Account each sidecar the moment it succeeds, not after all four: a partial
            failure (e.g. Tag succeeds, Type fails) still leaves the successful arrays
            live, and the ledger must show them. */
-        ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int), "tree_foreign_tag");
         if(ForeignLeafTag)  gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
-        ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int));
+        ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int), "tree_foreign_type");
         if(ForeignLeafType) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
-        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat), "tree_foreign_zeta");
         if(ForeignLeafZeta) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
-        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat));
+        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat), "tree_foreign_soft");
         if(ForeignLeafSoft) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
         if(!ForeignLeafTag || !ForeignLeafType || !ForeignLeafZeta || !ForeignLeafSoft)
         {
             printf("Failed to allocate %d foreign-leaf sidecar slots.\n", MaxForeignNodes);
-            endrun(90000086);
+            gizmo_request_controlled_stop(90000086, "force_treeallocate: tree foreign-leaf sidecar UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
             return;
         }
         memset(ForeignLeafTag,  0, (size_t) MaxForeignNodes * sizeof(int));
@@ -2707,6 +2707,36 @@ void force_treeallocate(int maxnodes, int maxpart)
     }
 }
 
+
+/*! Memory-ledger provider (diagnostic): the CAPACITY / REQUESTED byte breakdown of
+ *  the tree Kokkos allocations -- local node arrays vs foreign-LET node arrays (incl.
+ *  foreign-leaf sidecars) vs Father/Nextnode aux -- plus foreign capacity, since-start
+ *  used high-water, and the adaptive floor. This reports DEMAND from MaxNodes/
+ *  MaxForeignNodes, not the live allocation: `tree_allocated_flag` is set at the TOP of
+ *  force_treeallocate, so on a partial-allocation controlled-stop this reports the
+ *  requested capacity that could not be met (which is exactly what we want at a stop).
+ *  Returns zeros when no tree is allocated. Called at ledger print time (host). Byte
+ *  model mirrors force_treeallocate: Nodes_base/Extnodes_base span
+ *  total_node_slots = MaxNodes + MaxForeignNodes + 1 (the +1 sentinel folded into local);
+ *  DomainNodeIndex/TopNodeNodeIndex are mymalloc (Base family) and excluded here. */
+void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
+                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes)
+{
+    *local_mb = *foreign_cap_mb = *aux_mb = 0.0;
+    *foreign_cap_nodes = *foreign_used_hw_nodes = *foreign_floor_nodes = 0;
+    if(!tree_allocated_flag) {return;}
+    const double MB = 1024.0 * 1024.0;
+    long long node_pair = (long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE);
+    *local_mb = (double)(((long long) MaxNodes + 1LL) * node_pair) / MB;  /* +1 sentinel slot */
+    long long sidecar = 2LL * (long long) sizeof(int) + 2LL * (long long) sizeof(MyFloat);  /* Tag+Type+Zeta+Soft */
+    *foreign_cap_mb = (double)((long long) MaxForeignNodes * (node_pair + sidecar)) / MB;
+    long long nextnode_slots = (long long) All.MaxPart + (long long) NTopnodes + (long long) MaxForeignNodes;
+    *aux_mb = (double)(((long long) All.MaxPart + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
+    *foreign_cap_nodes     = MaxForeignNodes;
+    *foreign_used_hw_nodes = Numforeignnodes_highwater;
+    *foreign_floor_nodes   = RuntimeMinLETForeignNodes;
+}
 
 /*! This function frees the memory allocated for the tree, i.e. it frees
  *  the space allocated by the function force_treeallocate().

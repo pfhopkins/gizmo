@@ -123,7 +123,7 @@ int allocate_memory(int do_collective_preflight)
   if(All.MaxPart > 0 && !alloc_fail_local)
     {
       bytes = All.MaxPart * sizeof(struct particle_data);
-      P = (struct particle_data *) gpu_particles_uvm_alloc(bytes);
+      P = (struct particle_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_P");
       if(P == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
       else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
@@ -134,7 +134,7 @@ int allocate_memory(int do_collective_preflight)
       if(!alloc_fail_local)
         {
           bytes = All.MaxPart * sizeof(unsigned char);
-          WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes);
+          WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes, "particle_soa_wakeupdirty");
           if(WakeupDirty == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for WakeupDirty sidecar (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
           else { gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); }
           WakeupDirtyValid = 0;
@@ -146,7 +146,7 @@ int allocate_memory(int do_collective_preflight)
       bytes_tot = 0;
 
       bytes = All.MaxPartGas * sizeof(struct gas_cell_data);
-      CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes);
+      CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_CellP");
       if(CellP == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
       else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 

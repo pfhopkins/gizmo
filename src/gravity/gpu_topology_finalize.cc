@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <Kokkos_Core.hpp>
+#include <exception>
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
@@ -234,8 +235,11 @@ extern "C" int gpu_node_reset_ephemeral(int n)
 extern "C" int *gpu_father_alloc(int maxpart)
 {
     size_t bytes = (size_t)maxpart * sizeof(int);
-    int *p = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bytes);
-    return p;
+    if(bytes == 0) {return NULL;}
+    /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
+       controlled-stop path (force_treeallocate) fires instead of a hard terminate. */
+    try { return (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("tree_father", bytes); }
+    catch(const std::exception &) { return NULL; }
 }
 
 extern "C" void gpu_father_free(int *p)
@@ -247,10 +251,14 @@ extern "C" void gpu_father_free(int *p)
  * Nextnode (and any future tree-storage array that needs to be GPU-addressable).
  * Pattern matches gpu_father_alloc/free; struct sizes are computed at call site
  * in forcetree.cc which has the NODE/extNODE definitions in scope. */
-extern "C" void *gpu_tree_alloc_bytes(size_t bytes)
+extern "C" void *gpu_tree_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}
-    return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bytes);
+    /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
+       controlled-stop path fires instead of a hard terminate. The label names the
+       buffer in the Kokkos allocation stream and any future OOM message. */
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "tree_alloc", bytes); }
+    catch(const std::exception &) { return NULL; }
 }
 
 extern "C" void gpu_tree_free_bytes(void *p)

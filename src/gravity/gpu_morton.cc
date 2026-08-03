@@ -47,7 +47,7 @@ extern "C" struct Morton128 *gpu_morton_keys_acquire(int npart)
             g_morton_keys = NULL;
         }
         g_morton_keys = (Morton128 *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-            (long)npart * sizeof(Morton128));
+            "treescratch_build_morton", (long)npart * sizeof(Morton128));
         if(!g_morton_keys) {
             printf("gpu_morton: keys alloc failed (npart=%d)\n", npart);
             g_morton_keys_cap = 0;
