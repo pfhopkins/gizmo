@@ -1993,6 +1993,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * Cache invalidated via ghost_exchange_local_tree_invalidate_*()
      * hooks at drift / domain_decomp boundaries (run.cc). Within a step
      * the pool is stable, so 2nd..Nth calls skip this whole stanza. */
+
     sfc_tile_t *h_tiles = NULL;
     int *h_pool = NULL;
     int num_pool = 0;
