@@ -2446,22 +2446,36 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_rd_sC",
         (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
     int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
-    {
-        int *task_offset = (int *) mymalloc("gx_rd_toff", NTask * sizeof(int));
-        memcpy(task_offset, send_disp, NTask * sizeof(int));
-        for(int t = 0; t < NTask; t++) {
-            if(t == ThisTask) continue;
-            char *match_for_t = matched + (size_t)t * (size_t)num_pool;
-            for(int p = 0; p < num_pool; p++) {
-                if(!match_for_t[p]) continue;
-                int j = h_pool[p];
-                int off = task_offset[t]++;
-                gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
-                send_home_idx[off] = j;
-            }
-        }
-        myfree(task_offset);
+    /* Two integer-only streams over the match bitmap instead of one that also
+     * carries the payload copy.  Packing while streaming meant every particle_data
+     * + gas_cell_data copy was interleaved with a walk over an NTask x num_pool
+     * bitmap that is almost entirely zero, so the pack paid the sparse walk's
+     * memory behaviour; the destination offsets also had to be tracked per rank
+     * as the walk went.  Here the walk only records which pool slots match, and
+     * the pack then runs over that dense list.
+     * Send order is unchanged -- destination rank ascending, then pool index
+     * ascending, each rank's run based at send_disp[t] -- so the packed buffers
+     * are identical to what the interleaved walk produced. */
+    int *send_pool_slot = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
+    if(!send_pool_slot) {
+        printf("ERROR: request-driven ghost exchange send-slot list allocation failed on task %d.\n", ThisTask);
+        gizmo_request_controlled_stop(7726, "ghost_exchange (request-driven): send-slot list allocation failed",
+                                      __FILE__, __LINE__, __FUNCTION__);
     }
+    gizmo_exit_bad_stop_if_requested("ghost_exchange:send_slot_alloc_rd");
+    for(int t = 0; t < NTask; t++) {
+        if(t == ThisTask) continue;
+        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
+        int *dst = send_pool_slot + send_disp[t];
+        int  k = 0;
+        for(int p = 0; p < num_pool; p++) if(match_for_t[p]) dst[k++] = p;
+    }
+    for(int off = 0; off < total_send; off++) {
+        int j = h_pool[send_pool_slot[off]];
+        gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
+        send_home_idx[off] = j;
+    }
+    free(send_pool_slot);
 
     /* === Step 6: Alltoallv particles + cells + home_idx === */
     gx_forward_particle_exchange(send_P, send_CellP, send_count, send_disp,
