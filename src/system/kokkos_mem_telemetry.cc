@@ -23,19 +23,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../declarations/allvars.h"
-#include "../core/proto.h"   /* GIZMO_KOKBUCKET_* / GIZMO_KOKSPACE_* enums */
 
 #ifndef GIZMO_KOKKOS_MEM_TELEMETRY
 #define GIZMO_KOKKOS_MEM_TELEMETRY 1
 #endif
 
+/* Kokkos headers come before allvars.h: allvars.h pulls in macros.h, which supplies
+   host-only fallback definitions of KOKKOS_FUNCTION / KOKKOS_INLINE_FUNCTION for TUs
+   built without Kokkos. Including it first would leave anything in between compiled
+   against the fallbacks and make Kokkos redefine them. */
 #if GIZMO_KOKKOS_MEM_TELEMETRY
-
 #include <Kokkos_Core.hpp>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#endif
+
+#include "../declarations/allvars.h"
+#include "../core/proto.h"   /* GIZMO_KOKBUCKET_* / GIZMO_KOKSPACE_* enums */
+
+#if GIZMO_KOKKOS_MEM_TELEMETRY
 
 /* Updated from the allocation callbacks. Atomic because the callback fires on
    whichever host thread performs the allocation; current can be raced by concurrent
@@ -44,8 +51,8 @@ static std::atomic<long long> g_kok_current{0};
 static std::atomic<long long> g_kok_highwater{0};
 
 /* Bucket x space counters (row-major bucket x space, same layout the accessor emits). */
-static std::atomic<long long> g_bucket_cur[GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT];
-static std::atomic<long long> g_bucket_hw [GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT];
+static std::atomic<long long> g_bucket_cur[GIZMO_KOKCELL_COUNT];
+static std::atomic<long long> g_bucket_hw [GIZMO_KOKCELL_COUNT];
 /* First unrecognized space name seen. The callback fires on any host thread, so a
    single atomic "claimed" flag lets exactly one thread write the buffer race-free;
    after that it is only read (at ledger print, well after all writers). */
@@ -120,7 +127,7 @@ extern "C" long long gizmo_kokkos_mem_highwater_bytes(void) {return g_kok_highwa
 
 extern "C" void gizmo_kokkos_mem_buckets(long long *cur, long long *hw)
 {
-    for(int i = 0; i < GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT; i++) {
+    for(int i = 0; i < GIZMO_KOKCELL_COUNT; i++) {
         cur[i] = g_bucket_cur[i].load(std::memory_order_relaxed);
         hw[i]  = g_bucket_hw[i].load(std::memory_order_relaxed);
     }
@@ -139,8 +146,8 @@ extern "C" long long gizmo_kokkos_mem_current_bytes(void)   {return 0;}
 extern "C" long long gizmo_kokkos_mem_highwater_bytes(void) {return 0;}
 extern "C" void gizmo_kokkos_mem_buckets(long long *cur, long long *hw)
 {
-    memset(cur, 0, sizeof(long long) * GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT);
-    memset(hw,  0, sizeof(long long) * GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT);
+    memset(cur, 0, sizeof(long long) * GIZMO_KOKCELL_COUNT);
+    memset(hw,  0, sizeof(long long) * GIZMO_KOKCELL_COUNT);
 }
 extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void) {return 0;}
 

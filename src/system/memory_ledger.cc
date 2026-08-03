@@ -124,7 +124,7 @@ static void report_memory_ledger_impl(const char *when, int always)
     /* Label-classified Kokkos buckets (current, bucket x space) -> node sums, so the
        "Kokkos observed" superset is decomposed into SoA / tree / tree-build scratch /
        moment scratch / NGL / unclassified, split by memory-space class. */
-    const int NCELL = GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT;
+    const int NCELL = GIZMO_KOKCELL_COUNT;
     long long bkt_cur[NCELL], bkt_hw[NCELL], node_bkt[NCELL];
     gizmo_kokkos_mem_buckets(bkt_cur, bkt_hw);
     MPI_Reduce(bkt_cur, node_bkt, NCELL, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);

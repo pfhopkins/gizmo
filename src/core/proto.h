@@ -256,7 +256,10 @@ enum {
   GIZMO_KOKSPACE_HOST = 0, GIZMO_KOKSPACE_SHARED, GIZMO_KOKSPACE_DEVICE, GIZMO_KOKSPACE_UNKNOWN,
   GIZMO_KOKSPACE_COUNT
 };
-/* Fill caller arrays [GIZMO_KOKBUCKET_COUNT * GIZMO_KOKSPACE_COUNT], row-major bucket x space. */
+/* Cells in the flattened bucket x space table. The int casts keep the product out of
+   arithmetic between two distinct enumeration types, which C++20 deprecates. */
+enum { GIZMO_KOKCELL_COUNT = (int)GIZMO_KOKBUCKET_COUNT * (int)GIZMO_KOKSPACE_COUNT };
+/* Fill caller arrays [GIZMO_KOKCELL_COUNT], row-major bucket x space. */
 extern "C" void        gizmo_kokkos_mem_buckets(long long *cur, long long *hw);
 extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unrecognized space seen, or NULL */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
