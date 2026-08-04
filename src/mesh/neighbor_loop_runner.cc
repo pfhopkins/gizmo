@@ -1775,13 +1775,13 @@ nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
     const size_t nbr_bytes = (size_t)(pairs > 0 ? pairs : 1) * sizeof(int);
 
     /* offsets and d_active in SharedSpace (UVM) — host memcpy is fine */
-    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", off_bytes);
-    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", act_bytes);
+    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_offsets", off_bytes);
+    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active", act_bytes);
     memcpy(gnl->offsets,  ext->offsets,          off_bytes);
     memcpy(gnl->d_active, ext->active_indices,   act_bytes);
 
     /* neighbors in DeviceSpace (GPU HBM) — must deep_copy from host view */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("modea_runner", nbr_bytes);
+    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("modea_csr_neighbors", nbr_bytes);
     if(pairs > 0) {
         Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
             h_n(ext->neighbors, (size_t)pairs);
@@ -1848,7 +1848,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
      * device-visible NGL build. Source `radii` is runner-staged on host
      * (call-lifetime only); we copy into shared/UVM so gpu_ngb_list_build
      * and the device pair kernel can read the per-active values. */
-    double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+    double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
         N * sizeof(double));
     for(int aa = 0; aa < N; aa++) {
         radii_uvm[aa] = radii[aa];
@@ -1944,9 +1944,9 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
 
     /* UVM-allocate ActiveData[] and AccumData[] arrays. */
     ActiveData *d_actives = (ActiveData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", N * sizeof(ActiveData));
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data", N * sizeof(ActiveData));
     AccumData *d_accums = (AccumData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", N * sizeof(AccumData));
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data", N * sizeof(AccumData));
 
     /* Build DeviceContext. Specs that extend Spec::DeviceContext beyond
      * NeighborLoopDeviceContextBase get populate_device_context invoked
@@ -2608,10 +2608,10 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
         active_set_size[sg] = n;
         if (n <= 0) continue;     /* leave pointers as nullptr; pair_kernel is no-op */
 
-        scratch_uvm[sg]    = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(IterScratch));
-        accum_uvm  [sg]    = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(AccumData));
-        radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(double));
-        active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(int));
+        scratch_uvm[sg]    = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_iter_scratch", n * sizeof(IterScratch));
+        accum_uvm  [sg]    = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data", n * sizeof(AccumData));
+        radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii", n * sizeof(double));
+        active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_set", n * sizeof(int));
 
         /* Byte-zero IterScratch ONCE — persists across iters. */
         std::memset(scratch_uvm[sg], 0, n * sizeof(IterScratch));
@@ -3220,7 +3220,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             active_particle_indices_host_build[k] = sgr.active_indices[slot];
             radii_buffered_host_build[k]          = drv.radii_uvm[sg][slot] * Spec::mode_a_csr_buffer_factor;
         }
-        double *radii_oversized_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        double *radii_oversized_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
             n_compacted * sizeof(double));
         for (int k = 0; k < n_compacted; k++) radii_oversized_uvm[k] = radii_buffered_host_build[k];
 
@@ -3248,9 +3248,9 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *                              current actives, and converged slots
          *                              never re-enter active_set). */
         const int n_max = sgr.num_active_local;
-        drv.mode_a_csr_offset_lookup[sg] = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        drv.mode_a_csr_offset_lookup[sg] = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_lookup",
             n_max * sizeof(int));
-        drv.mode_a_csr_buffered_h[sg]    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        drv.mode_a_csr_buffered_h[sg]    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_h",
             n_max * sizeof(double));
         for (int s = 0; s < n_max; s++) {
             drv.mode_a_csr_offset_lookup[sg][s] = -1;
@@ -3282,9 +3282,9 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *   h    = radii_uvm[slot]            (current radius — kernel filter)
          * CSR build uses drv.ctx.num_total (= post-import effective num_total).
          * Walk gnl.offsets[row]..offsets[row+1]. */
-        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data",
             n_compacted * sizeof(ActiveData));
-        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data",
             n_compacted * sizeof(AccumData));
         {
             auto cs_ref = drv.cs;

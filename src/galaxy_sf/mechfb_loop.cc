@@ -747,7 +747,7 @@ struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas) {
     if (n > s_cap) {
         if (s_buf) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(s_buf);
         s_buf = (struct MechFBGasDelta *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(struct MechFBGasDelta));
+            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("mechfb_gas_delta", n * sizeof(struct MechFBGasDelta));
         Kokkos::fence();
         for (int j = 0; j < n; ++j) mechfb_writeback_detail::mechfb_gas_delta_zero(&s_buf[j]);
         Kokkos::fence();
