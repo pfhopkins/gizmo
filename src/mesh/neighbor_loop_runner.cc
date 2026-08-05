@@ -1863,6 +1863,17 @@ template <typename Spec> static constexpr bool nlr_mode_a_chunked_active_staging
  * a defensive backstop so a mis-set opt-in on a ghost-writeback Spec cannot chunk. */
 template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v();
 
+/* Non-throwing SharedSpace alloc: kokkos_malloc throws on host-OOM; catch -> NULL
+ * so a caller NULL-check can controlled-stop with attribution (the label appears
+ * in the memory ledger) instead of a hard terminate. Mirrors gpu_tree_alloc_bytes
+ * / gpu_particles_uvm_alloc for the runner's own staging buffers. */
+static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
+{
+    if(bytes == 0) { return NULL; }
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, bytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
 template <typename Spec>
 static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                        RunnerStageTimer *tim = nullptr)
@@ -2001,11 +2012,27 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         if(k < (size_t)N) { K = (int)k; }
     }
 
-    /* UVM-allocate chunk-sized ActiveData[] and AccumData[] arrays. */
-    ActiveData *d_actives = (ActiveData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data", (size_t)K * sizeof(ActiveData));
-    AccumData *d_accums = (AccumData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data", (size_t)K * sizeof(AccumData));
+    /* UVM-allocate chunk-sized ActiveData[] and AccumData[] arrays via the
+     * non-throwing SharedSpace allocator. These are the largest per-active
+     * transients (the demonstrated FIF OOM site); an allocation failure here
+     * means a genuinely full node (K is byte-capped), so controlled-stop with
+     * the buffer named in the ledger rather than a hard terminate. run_mode_a
+     * issues no MPI, so the request drains collectively at the caller's next
+     * phase poll (same as the external-CSR contract-violation path above). */
+    ActiveData *d_actives = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
+    AccumData  *d_accums  = (AccumData  *) nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData),  "modea_accum_data");
+    if(d_actives == NULL || d_accums == NULL) {
+        if(d_accums)  { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
+        if(d_actives) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives); }
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+        if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
+        else { gpu_ngb_list_free(&gnl, sidx); }
+        gpu_particles_arena_release();
+        gizmo_request_controlled_stop(7710,
+            "run_mode_a: Mode-A per-active staging (modea_active_data/modea_accum_data) SharedSpace OOM "
+            "-- add ranks/nodes or reduce the active set", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
 
     /* Build DeviceContext. Specs that extend Spec::DeviceContext beyond
      * NeighborLoopDeviceContextBase get populate_device_context invoked
