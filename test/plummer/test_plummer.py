@@ -1,6 +1,6 @@
 """Plummer-sphere gravity-only equilibrium stability test.
 
-Runs the same Plummer IC through five different gravity-solver variants and
+Runs the same Plummer IC through several gravity-solver variants and
 verifies energy conservation and preservation of the initial mass-Lagrange
 radii (10th, 50th, 90th percentiles). Each variant isolates one feature:
 
@@ -20,11 +20,19 @@ Code units: G = M = a = 1, dynamical time ~ 1, run to TimeMax = 5.
 
 from os import path
 import glob
+import os
+import sys
 
 import h5py
 import numpy as np
 import pytest
 from matplotlib import pyplot as plt
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from momentum_drift_common import (  # noqa: E402
+    DRIFT_SANITY_CEILING, assert_randomized_drift, measure_and_record, plot_momentum_drift,
+    report_momentum_drift,
+)
 
 from gizmo.test import (
     build_and_run_test,
@@ -61,6 +69,12 @@ VARIANTS = [
         ),
         id="tidal_ags",
     ),
+    # RANDOMIZE_GRAVTREE: an isolated sphere at rest is the canonical case for this feature.
+    # Both code paths, each paired with a flag-off variant (see momentum_drift_common):
+    #   randomize        <-> baseline   (non-periodic: move/enlarge the root node)
+    #   randomize_pmgrid <-> pmgrid     (periodic TreePM: random coordinate translation)
+    pytest.param(("RANDOMIZE_GRAVTREE",), id="randomize"),
+    pytest.param(("BOX_PERIODIC", "PMGRID=64", "RANDOMIZE_GRAVTREE"), id="randomize_pmgrid"),
 ]
 
 
@@ -305,6 +319,18 @@ def test_plummer(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     )
     _plot_summary()
     _plot_variant_density_evolution(variant_id, snaps, periodic)
+
+    # --- spurious COM drift from correlated tree-force errors (RANDOMIZE_GRAVTREE) ---
+    traj = measure_and_record(TEST_DIR, variant_id, outputdir, parttype="PartType1")
+    if traj is not None:
+        final_drift = report_momentum_drift(TEST_DIR, TEST_NAME, variant_id, traj)
+        plot_momentum_drift(TEST_DIR, TEST_NAME)
+        assert final_drift < DRIFT_SANITY_CEILING, (
+            f"[{variant_id}] spurious COM velocity reached {final_drift:.3e} of the internal "
+            f"velocity dispersion (sanity ceiling {DRIFT_SANITY_CEILING}): the system is being "
+            f"pushed by force errors"
+        )
+        assert_randomized_drift(TEST_NAME, variant_id, final_drift)
 
     e0, ke0, pe0 = _total_energy(vel0, mass0, pot0)
     ef, _, _ = _total_energy(velf, massf, potf)

@@ -770,6 +770,9 @@ void density_decouple(void);
 void determine_interior(void);
 int dissolvegas(void);
 void do_box_wrapping(void);
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+void domain_apply_random_shift(void);
+#endif
 double enclosed_mass(double R);
 void energy_statistics(void);
 void ensure_neighbours(void);

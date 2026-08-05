@@ -107,6 +107,27 @@ extern MyDouble Shearing_Box_Vel_Offset;
 extern MyDouble Shearing_Box_Pos_Offset;
 #endif
 
+#ifdef RANDOMIZE_GRAVTREE
+/* the periodic path shifts all coordinates by a random vector mod box, which is only valid
+ * where every periodic dimension is a pure translation symmetry */
+#if defined(BOX_SHEARING)
+#error "RANDOMIZE_GRAVTREE is incompatible with BOX_SHEARING: an x-translation couples into the shear velocity offset (see do_box_wrapping) and corrupts velocities."
+#endif
+#if defined(BOX_PERIODIC) && (defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z))
+#error "RANDOMIZE_GRAVTREE + BOX_PERIODIC is incompatible with reflecting/outflow boundaries: those dimensions are not translation-invariant."
+#endif
+/* Which randomization method applies is decided by whether GRAVITY is periodic, NOT by whether
+ * the box is. Under GRAVITY_NOT_PERIODIC the tree uses bare |dx| (see the GRAVITY_NGB_* macros
+ * in forcetree.cc), so translating coordinates mod box is NOT a symmetry: wrapping a particle
+ * across the boundary moves it a full box away gravitationally, which would corrupt the forces.
+ * Those runs (STARFORGE-style setups, and anything BOX_SHEARING implies) must therefore use the
+ * non-periodic method -- moving and enlarging the root node -- even though the box is periodic.
+ * The cost is the root-node doubling and the bit of Peano resolution it spends. */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#define RANDOMIZE_GRAVTREE_PERIODIC /* use the coordinate-translation method */
+#endif
+#endif
+
 #if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
 extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
@@ -510,6 +531,9 @@ extern struct global_data_all_processes
     TimeBetStatistics,		/*!< simulation time interval between computations of energy statistics */
     TimeLastStatistics;		/*!< simulation time when the energy statistics was computed the last time */
   integertime NumCurrentTiStep;		/*!< counts the number of system steps taken up to this point */
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+  double RandomShift[3];		/*!< current random frame translation: coordinates are stored shifted by this (mod box) and un-shifted on output */
+#endif
 
   /* Current time of the simulation, global step, and end of simulation */
   double Time,			/*!< current time of the simulation */
