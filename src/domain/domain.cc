@@ -2234,16 +2234,40 @@ int domain_compare_key(const void *a, const void *b)
 }
 
 
+/* Minimum particle count below which COST-driven top-tree refinement is suppressed. At low
+ * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
+ * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
+ * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
+ * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
+static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+static long   g_domain_cost_suppressed = 0;         /* nodes where cost-refine was floor-suppressed this decomposition */
+static double g_domain_cost_suppressed_maxratio = 0;
 int domain_check_for_local_refine(int i, double countlimit, double costlimit)
 {
-  int j, p, sub, flag = 0;
-  
+  int j, p, sub, flag_count = 0, flag_cost = 0;
+
   if(topNodes[i].Parent >= 0)
     {
-      if(topNodes[i].Count > 0.8 * topNodes[topNodes[i].Parent].Count || topNodes[i].Cost > 0.8 * topNodes[topNodes[i].Parent].Cost) {flag = 1;}
+      if(topNodes[i].Count > 0.8 * topNodes[topNodes[i].Parent].Count) {flag_count = 1;}
+      if(topNodes[i].Cost  > 0.8 * topNodes[topNodes[i].Parent].Cost)  {flag_cost  = 1;}
     }
 
-  if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8)
+  /* Count-driven refinement is unguarded (particle count is spatially divisible). Cost-driven
+   * refinement is guarded: below DOMAIN_COST_REFINE_MIN_COUNT the node's cost is dominated by
+   * indivisible per-particle work that further splitting cannot redistribute. Full particle cost
+   * is still used unchanged for domain ASSIGNMENT (domain_sumCost) -- only the refinement DECISION
+   * here is guarded. */
+  int count_refine = (topNodes[i].Count > countlimit) || flag_count;
+  int cost_wants   = (topNodes[i].Cost > costlimit) || flag_cost;
+  int cost_refine  = (topNodes[i].Count > DOMAIN_COST_REFINE_MIN_COUNT) && cost_wants;
+  if(cost_wants && !cost_refine && !count_refine)
+    {
+      g_domain_cost_suppressed++;
+      double r = (costlimit > 0) ? topNodes[i].Cost / costlimit : 0.0;
+      if(r > g_domain_cost_suppressed_maxratio) {g_domain_cost_suppressed_maxratio = r;}
+    }
+
+  if((count_refine || cost_refine) && topNodes[i].Size >= 8)
     {
       if(topNodes[i].Size >= 8)
 	{
@@ -2526,7 +2550,13 @@ int domain_determineTopTree(void)
   costlimit = totgravcost / (TOPNODEFACTOR * multipledomains * NTask);
   countlimit = totpartcount / (TOPNODEFACTOR * multipledomains * NTask);
 
+  g_domain_cost_suppressed = 0; g_domain_cost_suppressed_maxratio = 0;
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
+  /* Compact aggregate report when the indivisible-cost floor suppressed cost-driven refinement,
+   * so the guard's effect is visible without per-node spam. Count-driven refinement is unaffected. */
+  if(ThisTask == 0 && g_domain_cost_suppressed > 0)
+    PRINT_STATUS(" ..top-tree: suppressed cost refinement in %ld low-count node(s) (min_count=%d, max Cost/costlimit=%.1f); count refinement unchanged",
+                 g_domain_cost_suppressed, DOMAIN_COST_REFINE_MIN_COUNT, g_domain_cost_suppressed_maxratio);
 
   myfree(mp);
 

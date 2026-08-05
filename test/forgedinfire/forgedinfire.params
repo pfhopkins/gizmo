@@ -35,4 +35,3 @@ CpuTimeBetRestartFile             3350
 ParticleNumberMemoryImbalance_Limit 1.9
 SofteningHalo                     2.e6
 SofteningDisk                     2.e7
-SofteningStars                    2.e4

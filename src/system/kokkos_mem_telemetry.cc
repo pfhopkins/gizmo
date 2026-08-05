@@ -68,7 +68,7 @@ static int classify_bucket(const char *label)
     if(!strncmp(label, "particle_soa_",      13)) {return GIZMO_KOKBUCKET_PARTICLE_SOA;}
     if(!strncmp(label, "gravity_tree_soa",   16)) {return GIZMO_KOKBUCKET_GRAVITY_TREE_SOA;}
     if(!strncmp(label, "gravity_walk",       12)) {return GIZMO_KOKBUCKET_GRAVITY_WALK;}
-    if(!strncmp(label, "modea_runner",       12)) {return GIZMO_KOKBUCKET_MODEA_RUNNER;}
+    if(!strncmp(label, "modea_",              6))  {return GIZMO_KOKBUCKET_MODEA_RUNNER;}
     if(!strncmp(label, "fine_sidecar",       12)) {return GIZMO_KOKBUCKET_FINE_SIDECAR;}
     if(!strncmp(label, "treescratch_build_", 18)) {return GIZMO_KOKBUCKET_TREESCRATCH_BUILD;}
     if(!strncmp(label, "treescratch_moment_",19)) {return GIZMO_KOKBUCKET_TREESCRATCH_MOMENT;}

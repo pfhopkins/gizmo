@@ -185,6 +185,18 @@ struct GradientsSpec
     static constexpr bool           uses_ghost_writeback       = false;
     static constexpr bool           uses_ghost_write_detector  = false;
 
+#ifndef MHD_CONSTRAINED_GRADIENT
+    /* run_mode_a may chunk this Spec's per-active staging. Audited safe: the
+     * pair kernel reads only primitive GQuant fields; apply_active_writeback
+     * writes only OUTPUT gradients (CellP[i].Gradients.*) + the separate
+     * GasGradDataPasser -- never a pair-read primitive -- so a per-chunk
+     * writeback is disjoint from later chunks' reads. Excluded under
+     * MHD_CONSTRAINED_GRADIENT, where the pair reads CellP[j].Gradients.B
+     * (constrained_facedotb_delta) that the writeback writes: a read-after-write
+     * the chunk interleave would expose. */
+    static constexpr bool           mode_a_chunked_active_staging = true;
+#endif
+
     /* Broad active predicate matching legacy GPU walker's row source
      * `gizmo_sym_active_indices` (Type==0 && Mass>0). The narrow filter
      * (GasGrad_isactive: KernelRadius>0, Density>0, DelayTime>0 gates) is

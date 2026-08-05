@@ -1775,13 +1775,13 @@ nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
     const size_t nbr_bytes = (size_t)(pairs > 0 ? pairs : 1) * sizeof(int);
 
     /* offsets and d_active in SharedSpace (UVM) — host memcpy is fine */
-    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", off_bytes);
-    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", act_bytes);
+    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_offsets", off_bytes);
+    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active", act_bytes);
     memcpy(gnl->offsets,  ext->offsets,          off_bytes);
     memcpy(gnl->d_active, ext->active_indices,   act_bytes);
 
     /* neighbors in DeviceSpace (GPU HBM) — must deep_copy from host view */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("modea_runner", nbr_bytes);
+    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("modea_csr_neighbors", nbr_bytes);
     if(pairs > 0) {
         Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
             h_n(ext->neighbors, (size_t)pairs);
@@ -1824,6 +1824,56 @@ nlr_free_external_csr_gnl(gpu_neighbor_list_t *gnl)
  * MUST leave args.external_csr null. Existing Specs unaffected.
  * ========================================================================== */
 
+/* Per-active Mode-A staging can be CHUNKED so the PER-ACTIVE arrays
+ * (d_actives + d_accums) stay bounded regardless of the rank-active count. This
+ * cap bounds ONLY those two arrays: radii_uvm and the gnl CSR (offsets/neighbors)
+ * are built ONCE over all N and stay full-N, so a loop whose CSR dominates its
+ * per-active PODs is not helped by this cap (for the gradient loop the fat
+ * accumulator dominates the CSR, which is why it is the useful customer). The
+ * bound is an internal per-rank byte target (not a user knob, not a live
+ * free-memory query), sized conservatively so ranks_per_node * cap stays under a
+ * node's transient headroom for the target rank counts; it is NOT derived from
+ * the live rank count, so a very dense packing may need a lower value -- a
+ * rank-count-aware node budget is the eventual fix.
+ *
+ * SAFETY: the Mode-A arena ALIASES the host P/CellP (gpu_particles_arena_acquire
+ * sets arena_P = P_host; there is no snapshot), so a per-chunk writeback IS
+ * visible to later chunks' stage/pair reads. The unchunked path ran every pair
+ * kernel BEFORE any writeback; chunking interleaves them. It is therefore
+ * bitwise-safe ONLY when a Spec's apply_active_writeback writes no field that
+ * any pair_kernel reads. That is a per-Spec AND per-config property, NOT implied
+ * by "i-side" or "no ghost writeback" -- so it is an explicit opt-in trait
+ * (Spec::mode_a_chunked_active_staging) the Spec author sets after auditing it.
+ * Absent -> the Spec always stages the full set (K == N). */
+static constexpr size_t NLR_MODE_A_STAGING_BYTES_CAP = (size_t)128 * 1024 * 1024;
+
+/* Opt-in Spec trait gating the staging chunker above. Absent -> false. */
+template <typename Spec, typename = void>
+struct nlr_has_mode_a_chunked_active_staging : std::false_type {};
+template <typename Spec>
+struct nlr_has_mode_a_chunked_active_staging<Spec, decltype((void)Spec::mode_a_chunked_active_staging)>
+    : std::true_type {};
+template <typename Spec> static constexpr bool nlr_mode_a_chunked_active_staging_v() {
+    if constexpr (nlr_has_mode_a_chunked_active_staging<Spec>::value) {
+        return Spec::mode_a_chunked_active_staging;
+    } else { return false; }
+}
+
+/* Defined below with the other lifecycle-trait helpers; forward-declared here as
+ * a defensive backstop so a mis-set opt-in on a ghost-writeback Spec cannot chunk. */
+template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v();
+
+/* Non-throwing SharedSpace alloc: kokkos_malloc throws on host-OOM; catch -> NULL
+ * so a caller NULL-check can controlled-stop with attribution (the label appears
+ * in the memory ledger) instead of a hard terminate. Mirrors gpu_tree_alloc_bytes
+ * / gpu_particles_uvm_alloc for the runner's own staging buffers. */
+static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
+{
+    if(bytes == 0) { return NULL; }
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, bytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
 template <typename Spec>
 static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                        RunnerStageTimer *tim = nullptr)
@@ -1848,7 +1898,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
      * device-visible NGL build. Source `radii` is runner-staged on host
      * (call-lifetime only); we copy into shared/UVM so gpu_ngb_list_build
      * and the device pair kernel can read the per-active values. */
-    double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+    double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
         N * sizeof(double));
     for(int aa = 0; aa < N; aa++) {
         radii_uvm[aa] = radii[aa];
@@ -1942,11 +1992,47 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                            Spec::radius_policy);
     }
 
-    /* UVM-allocate ActiveData[] and AccumData[] arrays. */
-    ActiveData *d_actives = (ActiveData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", N * sizeof(ActiveData));
-    AccumData *d_accums = (AccumData *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", N * sizeof(AccumData));
+    /* Chunk the fat per-active staging so its transient footprint is bounded.
+     * K stays at the full N unless (a) the Spec opts into chunked staging (its
+     * writeback is disjoint from every pair read -- see the trait contract) AND
+     * (b) staging all N rows would exceed the internal per-rank byte cap. The
+     * NoScatter / !uses_ghost_writeback conjuncts are defensive backstops (every
+     * current Spec is NoScatter; the opt-in trait is the real contract). K
+     * degrades to 1 if a single record exceeds the cap. K == N reproduces the
+     * unchunked path exactly. */
+    const bool chunk_ok =
+        nlr_mode_a_chunked_active_staging_v<Spec>()
+        && std::is_same<typename Spec::ScatterData, NoScatter>::value
+        && !nlr_uses_ghost_writeback_v<Spec>();
+    const size_t rec_bytes = sizeof(ActiveData) + sizeof(AccumData);
+    int K = N;
+    if(chunk_ok && (size_t)N * rec_bytes > NLR_MODE_A_STAGING_BYTES_CAP) {
+        size_t k = NLR_MODE_A_STAGING_BYTES_CAP / rec_bytes;
+        if(k < 1) { k = 1; }
+        if(k < (size_t)N) { K = (int)k; }
+    }
+
+    /* UVM-allocate chunk-sized ActiveData[] and AccumData[] arrays via the
+     * non-throwing SharedSpace allocator. These are the largest per-active
+     * transients (the demonstrated FIF OOM site); an allocation failure here
+     * means a genuinely full node (K is byte-capped), so controlled-stop with
+     * the buffer named in the ledger rather than a hard terminate. run_mode_a
+     * issues no MPI, so the request drains collectively at the caller's next
+     * phase poll (same as the external-CSR contract-violation path above). */
+    ActiveData *d_actives = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
+    AccumData  *d_accums  = (AccumData  *) nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData),  "modea_accum_data");
+    if(d_actives == NULL || d_accums == NULL) {
+        if(d_accums)  { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
+        if(d_actives) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives); }
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+        if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
+        else { gpu_ngb_list_free(&gnl, sidx); }
+        gpu_particles_arena_release();
+        gizmo_request_controlled_stop(7710,
+            "run_mode_a: Mode-A per-active staging (modea_active_data/modea_accum_data) SharedSpace OOM "
+            "-- add ranks/nodes or reduce the active set", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
 
     /* Build DeviceContext. Specs that extend Spec::DeviceContext beyond
      * NeighborLoopDeviceContextBase get populate_device_context invoked
@@ -1964,44 +2050,54 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     }
     NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
-    /* (3) Device, post-NGL-build: stage ActiveData. Same device epoch as
-     * the legacy GPU lambda's q-packing. d_active is gnl-resident. */
-    int *d_active_idx = gnl.d_active;
-    {
-        gizmo_gpu_kernel_launch("nlr_stage_active", N, KOKKOS_LAMBDA(int aa) {
-            d_actives[aa] = Spec::load_active(ctx, aa, d_active_idx[aa],
+    /* (3)-(4) Chunked stage -> pair-kernel -> writeback. Each chunk [c0, c0+n)
+     * stages into chunk-local slots [0,n): CSR rows / radii are read at the
+     * absolute active index aa = c0 + kk, results land in d_actives[kk] /
+     * d_accums[kk], and the writeback re-applies them to args.active_list[aa]
+     * before the next chunk reuses the arrays. d_active/offsets/neighbors are
+     * gnl-resident (built once over all N). K == N is a single pass identical
+     * to the unchunked path. */
+    int     *d_active_idx = gnl.d_active;
+    int64_t *offsets      = gnl.offsets;
+    int     *neighbors    = gnl.neighbors;
+    for(int c0 = 0; c0 < N; c0 += K) {
+        const int n = (N - c0 < K) ? (N - c0) : K;
+
+        /* stage ActiveData for [c0, c0+n) into chunk-local [0,n). */
+        gizmo_gpu_kernel_launch("nlr_stage_active", n, KOKKOS_LAMBDA(int kk) {
+            const int aa = c0 + kk;
+            d_actives[kk] = Spec::load_active(ctx, aa, d_active_idx[aa],
                                               radii_uvm[aa], cs);
         });
-    }
 
-    /* Pair-kernel launch — generic over Spec. */
-    {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        int64_t *offsets = gnl.offsets;
-        int *neighbors = gnl.neighbors;
-        const double t_pair_kernel_start = my_second();
-        gizmo_gpu_kernel_launch(Spec::loop_name, N, KOKKOS_LAMBDA(int aa) {
-            Spec::zero_accum(d_accums[aa]);
-            const ActiveData& a = d_actives[aa];
-            ScatterData s{};                     /* NoScatter for ActiveReduceOnly */
-            int64_t start = offsets[aa], end = offsets[aa + 1];
-            for(int64_t nn = start; nn < end; nn++) {
-                int j = neighbors[nn];
-                IdentitySidecar id{};            /* NoIdentity */
-                NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
-                Spec::pair_kernel(a, nb, d_accums[aa], s);
+        /* pair-kernel over [c0, c0+n) — generic over Spec. */
+        {
+            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+            const double t_pair_kernel_start = my_second();
+            gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+                const int aa = c0 + kk;
+                Spec::zero_accum(d_accums[kk]);
+                const ActiveData& a = d_actives[kk];
+                ScatterData s{};                     /* NoScatter for ActiveReduceOnly */
+                int64_t start = offsets[aa], end = offsets[aa + 1];
+                for(int64_t nn = start; nn < end; nn++) {
+                    int j = neighbors[nn];
+                    IdentitySidecar id{};            /* NoIdentity */
+                    NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
+                    Spec::pair_kernel(a, nb, d_accums[kk], s);
+                }
+            });
+            cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
+        }
+        /* Launches fenced internally by gizmo_gpu_kernel_launch. UVM coherent ->
+         * host reads d_accums[0,n) directly. */
+
+        /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
+        {
+            StageTimer t(tim ? &tim->dt_writeback : nullptr);
+            for(int kk = 0; kk < n; kk++) {
+                Spec::apply_active_writeback(args, c0 + kk, args.active_list[c0 + kk], d_accums[kk]);
             }
-        });
-        cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
-    }
-    /* Both launches fenced internally by gizmo_gpu_kernel_launch. UVM is
-     * coherent → host can read d_accums directly. */
-
-    /* (4) Host writeback via spec. */
-    {
-        StageTimer t(tim ? &tim->dt_writeback : nullptr);
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], d_accums[aa]);
         }
     }
 
@@ -2608,10 +2704,10 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
         active_set_size[sg] = n;
         if (n <= 0) continue;     /* leave pointers as nullptr; pair_kernel is no-op */
 
-        scratch_uvm[sg]    = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(IterScratch));
-        accum_uvm  [sg]    = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(AccumData));
-        radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(double));
-        active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner", n * sizeof(int));
+        scratch_uvm[sg]    = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_iter_scratch", n * sizeof(IterScratch));
+        accum_uvm  [sg]    = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data", n * sizeof(AccumData));
+        radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii", n * sizeof(double));
+        active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_set", n * sizeof(int));
 
         /* Byte-zero IterScratch ONCE — persists across iters. */
         std::memset(scratch_uvm[sg], 0, n * sizeof(IterScratch));
@@ -3220,7 +3316,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             active_particle_indices_host_build[k] = sgr.active_indices[slot];
             radii_buffered_host_build[k]          = drv.radii_uvm[sg][slot] * Spec::mode_a_csr_buffer_factor;
         }
-        double *radii_oversized_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        double *radii_oversized_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
             n_compacted * sizeof(double));
         for (int k = 0; k < n_compacted; k++) radii_oversized_uvm[k] = radii_buffered_host_build[k];
 
@@ -3248,9 +3344,9 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *                              current actives, and converged slots
          *                              never re-enter active_set). */
         const int n_max = sgr.num_active_local;
-        drv.mode_a_csr_offset_lookup[sg] = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        drv.mode_a_csr_offset_lookup[sg] = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_lookup",
             n_max * sizeof(int));
-        drv.mode_a_csr_buffered_h[sg]    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        drv.mode_a_csr_buffered_h[sg]    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_h",
             n_max * sizeof(double));
         for (int s = 0; s < n_max; s++) {
             drv.mode_a_csr_offset_lookup[sg][s] = -1;
@@ -3282,9 +3378,9 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *   h    = radii_uvm[slot]            (current radius — kernel filter)
          * CSR build uses drv.ctx.num_total (= post-import effective num_total).
          * Walk gnl.offsets[row]..offsets[row+1]. */
-        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data",
             n_compacted * sizeof(ActiveData));
-        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_runner",
+        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data",
             n_compacted * sizeof(AccumData));
         {
             auto cs_ref = drv.cs;
