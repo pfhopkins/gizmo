@@ -23,11 +23,11 @@ def exclusive_tree_lock():
 
     Every test builds ./GIZMO in the repo root and writes to test/<name>/output/ before that
     directory is moved to its per-variant name, so two concurrent sessions silently interleave
-    each other's snapshots and binaries. The failure is invisible: each output directory ends up
-    holding a mix of two runs, and the resulting energy budgets are spliced across physically
-    different setups. Two overlapping Slurm jobs produced exactly that -- a 27% apparent
-    conservation error that was purely an artifact of the splice, plus a spurious "No snapshots
-    produced" when one job moved output/ out from under the other. Fail loudly instead.
+    each other's snapshots and binaries. The failure mode is the dangerous kind: an output
+    directory ends up holding a mix of two runs, so analysis is spliced across physically
+    different setups and reports a large error that is purely an artifact -- or a run appears to
+    produce no snapshots at all, because the other session moved output/ out from under it.
+    Fail loudly instead. Interleaved snapshot mtimes are the giveaway if you meet it anyway.
 
     Use a separate checkout or `git worktree` for concurrent runs; that is what the sbatch
     wrappers are for. Set GIZMO_TEST_ALLOW_CONCURRENT=1 to override (e.g. if a stale lock

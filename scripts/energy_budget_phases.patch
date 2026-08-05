@@ -7,16 +7,18 @@ line retains only the synchronized-total report (energy_budget_sync_report).
 
     git apply scripts/energy_budget_phases.patch      # or: git apply -3 for a 3-way merge
 
-WHAT IT FOUND (2026-08, adiabatic wind_singlestar + SN_singlestar, both spawning):
-  Three independent energy errors, in a run where E_kin + E_th = L_w*t holds exactly:
+WHAT IT FOUND, in the adiabatic wind_singlestar and SN_singlestar tests (both spawning), where
+E_kin + E_th equals the injected energy exactly:
+  Two large errors of opposite sign, which nearly cancelled:
     - merge_particles_ij discarding the pair's COM-frame KE   ~ -23% of L*t
-    - the WAKEUP kick reversal on mid-step demotion            ~ +18% of L*t  (+5.96% of E_SN)
-    - the residual KDK kick1/kick2 asymmetry                   ~  -4.5% of L*t
-  The first two nearly cancel, so the default configuration looked healthy at ~0.95 while carrying
-  a 23% sink and an 18% source. Fixed by MERGE_SPLIT_CONSERVE_ENERGY and
-  WAKEUP_TRUNCATE_STEP_ON_DEMOTION respectively; the third is untouched and now dominant.
+    - the WAKEUP kick reversal on mid-step demotion           ~ +18% of L*t  (~6% of E_SN)
+  Because they cancelled, the default configuration read a healthy-looking ~0.95 of the injected
+  total while carrying a large sink and a large source. Fixed by MERGE_SPLIT_CONSERVE_ENERGY and
+  WAKEUP_TRUNCATE_STEP_ON_DEMOTION respectively. A residual few percent survives both; it is
+  merge-associated but is neither a bookkeeping error nor temporal truncation error -- see
+  scripts/merge_energy_diagnostic.patch, which is the instrument for that one.
 
-READ THE OUTPUT WITH CARE -- this is the trap that cost the most time:
+READ THE OUTPUT WITH CARE -- this is the easiest way to misread it:
   Only phases bracketing an INSTANTANEOUS operation (mergesplit, spawn) are meaningful. A phase
   spanning a drift or kick sums particles sitting at different kick times, which is not a conserved
   quantity, so energy appears to move between such phases with no error present. For an actual

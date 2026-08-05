@@ -17,24 +17,23 @@ Three cumulative, MPI-reduced reports, printed once per merge_and_split_particle
 
     git apply scripts/merge_energy_diagnostic.patch      # or: git apply -3
 
-WHAT IT ESTABLISHED (2026-08, adiabatic wind_singlestar, spawning, where E_kin+E_th = L*t exactly):
-  - The merge discard is ~23% of injected energy, and MERGE_SPLIT_CONSERVE_ENERGY fixes it exactly:
-    dE goes to ~4e-10 with resid == KE_com identically. (Both now default for SINK_WIND_SPAWN.)
-  - dE_pred was +3.75e5 while dE was ~0: the residual was computed from the true state and then added
-    to BOTH books, which cannot balance the predicted one since VelPred != Vel mid-step. Fixed by
-    giving the predicted state its own residual; dE_pred is now roundoff.
-  - The Pred floor NEVER fires: 0 of 5069 merges. Do not go hunting there.
-  - Merged pairs ALWAYS share Ti_current (0 of 5062, 0.0000 of the mass), so no merge ever grafts on
-    mass from a different clock -- structural, since merging runs inside the drift after every
-    participant is drifted to the current time. But 77% of pairs differ in TimeBin (mean |dbin| 1.18)
-    and the survivor keeps its own bin. Restricting merges to same-bin pairs was tried and made
-    conservation WORSE (0.9516 vs 0.9694): the veto redirects merges to worse-matched partners rather
-    than suppressing them, and partner quality matters more than bin matching.
+WHAT IT ESTABLISHED, in the adiabatic wind_singlestar test where E_kin+E_th = L*t exactly:
+  - The merge discard costs ~23% of the injected energy, and MERGE_SPLIT_CONSERVE_ENERGY removes it
+    exactly: dE falls to roundoff with resid == KE_com identically.
+  - dE_pred was large while dE was ~0, because the residual was computed from the true state and then
+    added to BOTH books -- which cannot balance the predicted one, since VelPred != Vel mid-step. Fixed
+    by giving the predicted state its own residual.
+  - The Pred floor never fires at all here. Do not go hunting there.
+  - Merged pairs always share Ti_current, so no merge grafts on mass integrated against another clock.
+    That is structural: merging runs inside the drift, after every participant has been drifted to the
+    current time. Most pairs DO differ in TimeBin and the survivor keeps its own bin, but restricting
+    merges to same-bin pairs was tried and made conservation worse -- the veto redirects merges to
+    worse-matched partners rather than suppressing them, and partner quality matters more than the bin.
 
-THE ~3% THAT REMAINS is merge-associated but is NOT a bookkeeping error: at the merge instant the true
-energy, the predicted energy and the mass all balance to roundoff, merged pairs are time-synchronized,
-and the deficit is insensitive to CourantFac (3.06% at 0.2 vs 3.33% at 0.05, i.e. not temporal
-truncation error). It scales with how badly matched the merged partners are. Not chased further.
+A residual few percent remains. It is merge-associated but is NOT a bookkeeping error: at the merge
+instant the true energy, the predicted energy and the mass all balance to roundoff, and the deficit is
+insensitive to CourantFac, so it is not temporal truncation error either. It scales with how badly
+matched the merged partners are. Not chased further.
 
 --- a/mesh/merge_split.cc
 +++ b/mesh/merge_split.cc

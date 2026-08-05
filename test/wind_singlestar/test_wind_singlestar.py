@@ -360,29 +360,23 @@ def test_wind_singlestar(num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode
     # --- Assertions ---
 
     if not cooling_flags:
-        # Adiabatic: energy conservation. 10% matches the SN_singlestar tolerance. Measured margin with
-        # MERGE_SPLIT_CONSERVE_ENERGY and WAKEUP_TRUNCATE_STEP_ON_DEMOTION (both auto-enabled for spawning):
-        # worst |ratio-1| is 0.025-0.029, so ~3x headroom. It fails loudly if either regresses -- the merge
-        # discard alone put this at 0.229 and the wakeup kick reversal at 0.187.
+        # Adiabatic: energy conservation. 10% for spawning, matching SN_singlestar, with a few times that
+        # much margin in practice; it catches a regression in either MERGE_SPLIT_CONSERVE_ENERGY or
+        # WAKEUP_TRUNCATE_STEP_ON_DEMOTION, each of which costs ~20% of L*t on its own.
         #
         # Note the instrument: a snapshot is not a conserved total, since io.cc writes Velocities from
-        # P[].Vel (kick-time) but InternalEnergy from InternalEnergyPred (drift-time). In the established
-        # window that mixed-clock bias is small here (snapshot 0.971 vs the in-code synced 0.969 for the
-        # same run), but it is not zero, and E_inj = L_w*t -> 0 leaves the ratio ill-conditioned at early
-        # times, hence the mask. ENERGY_BUDGET_DIAGNOSTIC's 'Energy (synced)' line is the authoritative
-        # test; use it, not this, when chasing a real conservation question.
+        # P[].Vel (kick-time) but InternalEnergy from InternalEnergyPred (drift-time). That mixed-clock
+        # bias is small once the bubble is established but not zero, and E_inj = L_w*t -> 0 leaves the
+        # ratio ill-conditioned early, hence the mask. ENERGY_BUDGET_DIAGNOSTIC's 'Energy (synced)' line
+        # is the authoritative test; use that, not this, to chase a real conservation question.
         #
-        # KNOWN OPEN DEFECT, wind_mode=2 (local mechanical injection): this run delivers ~30% MORE energy
-        # than L_w*t -- measured final ratio 1.3029, worst 0.3029, reproducibly. That is NOT an accepted
-        # error budget, it is an unexplained bug held at arm's length so the spawning path can be tested
-        # at 10%. Three things say it is unrelated to anything fixed here: (a) vmax never exceeds ~299 vs
-        # the 3000 of the wind, since local injection heats existing gas instead of spawning fast cells,
-        # so neither MERGE_SPLIT_CONSERVE_ENERGY nor WAKEUP_TRUNCATE_STEP_ON_DEMOTION applies -- there is
-        # no spawned-cell merging to fix; (b) the excess is POSITIVE, where every error fixed in this work
-        # was a sink; (c) it is flat in time (max single-snapshot step 0.006), so it is not an event.
-        # Either local injection over-delivers, or WIND_LUMINOSITY means something different for mode 2
-        # than the L_w*t this compares against. Whoever picks this up: start by checking whether the
-        # injected energy the code tracks agrees with L_w*t at all, before trusting the 30%.
+        # KNOWN OPEN DEFECT, wind_mode=2 (local mechanical injection): delivers ~30% MORE energy than
+        # L_w*t. Held at a loose tolerance so the spawning path can still be tested at 10% -- this is an
+        # unexplained bug, not an accepted error budget. It is unrelated to the merge and wakeup fixes:
+        # local injection heats existing gas rather than spawning fast cells, so there is no spawned-cell
+        # merging for either to act on, and the discrepancy is a steady excess rather than a loss. Either
+        # local injection over-delivers, or WIND_LUMINOSITY means something different for mode 2 than the
+        # L_w*t compared against here; check the code's own tracked injected energy against L_w*t first.
         tol = 0.10 if wind_mode == 1 else 0.35
         established = snap_times > 0.25 * snap_times.max()  # past the startup transient
         if established.any():
