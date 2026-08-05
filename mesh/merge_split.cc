@@ -29,12 +29,42 @@
 #define MASS_THRESHOLD_FOR_WINDPROMO(i) (DMAX(5.*target_mass_for_wind_spawning(i),0.25*All.MaxMassForParticleSplit))
 #endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#ifndef MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION
+#define MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION (0.5) /* veto once KE_com exceeds E_light */
+#endif
+/*! Fraction of the energy involved in a candidate merger which is kinetic, KE_com/(KE_com+E_light).
+    Merging conserves momentum but not energy: it thermalizes KE_com = (1/2)*mu*|dv|^2 (mu = reduced
+    mass), which cooling then radiates away. Where that dominates, the merger is an unresolved shock
+    and is vetoed so the solver follows the shock instead. Normalized to the thermal+magnetic energy of
+    the LIGHTER cell (the one destroyed); normalizing to the pair total would let the heavier target
+    dominate and weaken the test by ~1/q. Equivalent to a magnetosonic Mach test on the lighter cell. */
+static inline double merge_kinetic_dissipation_fraction(int i, int j)
+{
+    double mi = P[i].Mass, mj = P[j].Mass; if((mi <= 0) || (mj <= 0)) {return 0;}
+    Vec3<MyDouble> dvel = P[i].Vel; dvel -= P[j].Vel;
+    double ke_com = 0.5 * (mi*mj/(mi+mj)) * dvel.norm_sq() * All.cf_a2inv; /* physical; what the merge dissipates */
+    if(!(ke_com > 0)) {return 0;}
+    int l = (mi <= mj) ? i : j; double m_l = (mi <= mj) ? mi : mj; /* lighter cell = the one destroyed */
+    double vA_l = CellP[l].Alfven_speed(); /* E_B = (1/2)*v_A^2*m since v_A^2 = B^2/rho; =0 without MAGNETIC */
+    double e_light = m_l * (CellP[l].InternalEnergyPred + 0.5*vA_l*vA_l);
+    if(!(e_light > 0)) {return 1;} /* nothing to compare against: purely kinetic */
+    return ke_com / (ke_com + e_light);
+}
+#endif
+
+
 
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
     when particles fall below some minimum mass threshold */
 int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
+#ifdef PREVENT_PARTICLE_MERGE
+    /* disable merging but still allow splitting (cf. PREVENT_PARTICLE_MERGE_SPLIT, which disables
+       both): the diffusion-free, finest-resolution reference case. */
+    return 0;
+#endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
@@ -281,6 +311,9 @@ void merge_and_split_particles(void)
     int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
     Ngblist.resize(NumPart);
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+    int n_spawn_no_ambient=0, MPI_n_spawn_no_ambient=0; /* spawned cells with no ambient gas in kernel */
+#endif
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
     // TO: need initialization
@@ -309,6 +342,34 @@ void merge_and_split_particles(void)
                 {
                     target_for_merger = -1;
                     threshold_val = MAX_REAL_NUMBER;
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+                    /* Characterize the ambient medium around a spawned cell, so retirement is judged
+                       against the bulk flow rather than whichever single neighbor is picked as target.
+                       Spawned cells excluded: a jet cell among jet cells is still resolving the outflow. */
+                    int is_spawned_i = (P[i].ID==All.SpawnedWindCellID && P[i].Type==0);
+                    Vec3<double> v_ambient = {0,0,0}; double m_ambient = 0, cs_ambient = 0;
+                    if(is_spawned_i)
+                    {
+                        int n_amb; for(n_amb=0; n_amb<numngb_inbox; n_amb++)
+                        {
+                            int j_amb = Ngblist[n_amb]; if((j_amb<0) || (j_amb==i)) {continue;}
+                            if((P[j_amb].Type!=0) || (P[j_amb].Mass<=0)) {continue;}
+                            if(P[j_amb].ID==All.SpawnedWindCellID) {continue;} /* ambient = non-spawned gas only */
+                            double w = P[j_amb].Mass; int k; for(k=0;k<3;k++) {v_ambient[k] += w * P[j_amb].Vel[k];}
+                            cs_ambient += w * CellP[j_amb].effective_soundspeed(); m_ambient += w;
+                        }
+                        if(m_ambient > 0)
+                        {
+                            v_ambient /= m_ambient; cs_ambient /= m_ambient;
+                            /* Sound speed alone, deliberately: kinematic measures of the ambient velocity
+                               spread (kernel dispersion, |grad v|*cell size) are inflated near the outflow
+                               by the outflow itself, so thresholding on them is circular and admits fast
+                               jet material (18% and 44% of spawned cells mergeable vs 1.4%, when tested).
+                               Errs toward retiring late in sheared gas: the safe direction. */
+                        }
+                        else {n_spawn_no_ambient++;} /* cannot retire: no ambient gas to be absorbed into */
+                    }
+#endif
                     for(n=0; n<numngb_inbox; n++) /* loop over neighbors */
                     {
                         j = Ngblist[n]; double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
@@ -334,6 +395,21 @@ void merge_and_split_particles(void)
 #endif
 #endif
                             }
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+                            /* Retire into ambient gas only: restores the no-intermerging restriction
+                               added in 9ce8be04 (2020-03-25) and disabled for STARFORGE by 22c755df. */
+                            if(P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;}
+                            /* ...and only once subsonic wrt the mean ambient velocity. No ambient gas
+                               in the kernel => still pure outflow. */
+                            if(do_allow_merger)
+                            {
+                                if(!(m_ambient > 0)) {do_allow_merger = 0;}
+                                else {
+                                    Vec3<double> dv_amb = {P[i].Vel[0]-v_ambient[0], P[i].Vel[1]-v_ambient[1], P[i].Vel[2]-v_ambient[2]};
+                                    if(dv_amb.norm()*sqrt(All.cf_a2inv) > cs_ambient) {do_allow_merger = 0;}
+                                }
+                            }
+#endif
                         }
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
                         /* recall 'i' was already flagged to merge; for this module can get in a timestep trap when BH surrounded only by spawns, keep waking each other up and driving down; put a timestep 'escape' clause explicitly in here -- can tune timestep for different problems of course */
@@ -345,6 +421,20 @@ void merge_and_split_particles(void)
                             }}
 #endif
                         if(P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;} /* boost this enough to ensure the spawned element will never chosen if 'real' candidate exists */
+#endif
+#if defined(SINK_SPAWN_NO_MERGE) && defined(SINK_WIND_SPAWN)
+                        /* never merge a spawned cell, either direction: holds the population fixed so
+                           merged and unmerged outflows can be compared directly. */
+                        if((P[i].ID==All.SpawnedWindCellID && P[i].Type==0) ||
+                           (P[j].ID==All.SpawnedWindCellID && P[j].Type==0)) {do_allow_merger=0;}
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+                        /* Never merge through a shock. After every module clause above (incl. the
+                           SINK_RIAF timestep escape, which forces =1) so it cannot be overridden. */
+                        if(do_allow_merger && (P[i].Type==0) && (P[j].Type==0) && (P[j].Mass>0) && (j>=0) && (j!=i))
+                        {
+                            if(merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
+                        }
 #endif
                         /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
                         if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
@@ -419,6 +509,14 @@ void merge_and_split_particles(void)
             printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
         }
     }
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+    /* These cells cannot retire, and under HYDRO_MESHLESS_FINITE_MASS cannot grow either, so they are
+       held indefinitely: correct inside a collimated beam, but a population still growing after the
+       outflow stops is a resolution-element leak. Locally a beam and a stalled clump look identical,
+       so report the count rather than trying to distinguish them here. */
+    MPI_Allreduce(&n_spawn_no_ambient, &MPI_n_spawn_no_ambient, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {if(MPI_n_spawn_no_ambient > 0) {printf("Spawned-cell retirement: %d cells have no ambient gas in their kernel and cannot be retired.\n", MPI_n_spawn_no_ambient);}}
+#endif
     /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- be called immediately after this routine! */
     All.TotNumPart += (long long)MPI_n_particles_split;
     All.TotN_gas += (long long)MPI_n_particles_gas_split;

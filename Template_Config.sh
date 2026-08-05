@@ -558,11 +558,15 @@
 # ----- Particle Merging/Splitting/Deletion/Boundaries
 #MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
+#PREVENT_PARTICLE_MERGE            # don't allow gas MERGING but still allow splitting (cf. PREVENT_PARTICLE_MERGE_SPLIT, which disables both). Gives a diffusion-free, finest-resolution reference for spawned outflows; cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells.
+
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)
 #MERGESPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #MERGESPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP     # force merge/split operations to occur every timestep, instead of only on domain decomposition steps
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
+#MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION   # never merge a gas pair if that would convert the majority of the energy involved from kinetic into heat. Merging thermalizes KE_com=(1/2)*mu*|dv|^2, which cooling then radiates away, making such a merger an artificial unresolved shock; vetoing it lets the solver follow the shock instead. Compared against the thermal+magnetic energy of the lighter cell (the one destroyed), which keeps the test mass-ratio-neutral. Threshold: MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION.
+#MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION=(0.5)  # max allowed KE_com/(KE_com+E_light) under MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION. 0.5 = "majority is kinetic"; lower is more conservative (~0.34 = Mach 1 on the lighter cell).
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features
 #RT_DISABLE_UV_BACKGROUND          # disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
@@ -576,6 +580,8 @@
 # ----- Sink particle/sink particle special options
 #SINK_WIND_SPAWN_SET_BFIELD_POLTOR  # set poloridal and toroidal magnetic field for spawn particles (should work for all particle spawning). Cite Su et al., arXiv:2102.02206, for methods.
 #SINK_WIND_SPAWN_SET_JET_PRECESSION # manually set precession in parameter file (does not work for cosmological simulations).  Cite Su et al., arXiv:2102.02206, for methods.
+#SINK_SPAWN_NO_MERGE            # never merge spawned jet/wind cells, in either direction, holding the spawned population fixed (e.g. to compare merged vs unmerged outflows). Diagnostic: it removes retirement entirely, so cell counts grow without bound. cf. SINK_SPAWN_MERGE_WHEN_AMBIENT.
+#SINK_SPAWN_MERGE_WHEN_AMBIENT   # retire spawned jet/wind cells only once they have joined the ambient medium, rather than as soon as their relative velocity dips below one neighbor's sound speed. Requires (a) the target to be a normal cell, never another spawned cell (restoring the restriction from 9ce8be04, disabled for STARFORGE by 22c755df), and (b) the cell to be subsonic wrt the mass-weighted mean velocity of non-spawned gas in its kernel; no ambient gas in kernel = still in the outflow. Pair with MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION for the energetic half.
 #SINK_SCALE_SPAWNINGMASS_WITH_INITIALMASS # rescale the cell spawning mass criterion to scale with the initial sink mass for any sink and sink feedback model (instead of setting the spawning mass to a fixed universal constant in code units).
 #SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA # modifies SINK_SEED_FROM_LOCALGAS to require that the local acceleration scale (including all mass/gravity sources) exceeds the critical value defined in arXiv:2103.10444. cite that paper for implementation
 #SINK_INTERACT_ON_GAS_TIMESTEP      # force sink particles to be active in the timestep hierarchy on a timestep no larger than the minimum timestep of any gas cell inside the sink particle interaction/accretion/neighbor kernel
