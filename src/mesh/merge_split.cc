@@ -382,7 +382,7 @@ void merge_and_split_particles(void)
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
                     if (P[i].Type==0 && P[j].Type==0) {
                         if ((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
-                            double dti = get_particle_timestep_in_physical(i), dtj=get_particle_timestep_in_physical(j);
+                            double dti = get_particle_timestep_in_physical(i, P), dtj=get_particle_timestep_in_physical(j, P);
                             double dt0 = 1.e-7;
                             if (dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
                         }}
@@ -1374,7 +1374,7 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
         if(ngb_dist > h_i) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
     }
 #else
-    if(get_particle_timestep_in_physical(i)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
+    if(get_particle_timestep_in_physical(i, P)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
 #endif
     return 1; // allow this particle to -consider- the possibility of a merger
 }
@@ -1392,7 +1392,7 @@ int check_if_sufficient_mergesplit_time_has_passed(int i)
 #endif
     if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
-    double dt_incodescale = (get_particle_timestep_in_physical(i) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
+    double dt_incodescale = (get_particle_timestep_in_physical(i, P) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     if(All.ComovingIntegrationOn) {if(dtime_code < 1.e-8) {return 0;}} // also enforce an absolute time limit (don't use for nuclear zooms since absolute timesteps can become arbitrarily short

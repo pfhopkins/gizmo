@@ -492,7 +492,7 @@ void calculate_non_standard_physics(void)
         double min_transport_dt_local = MAX_REAL_NUMBER, max_hydro_dt_local = 0;
         for(int idx : ActiveParticleList) {
             if(P[idx].Type != 0 || P[idx].Mass <= 0) continue;
-            double hydro_dt = get_particle_timestep_in_physical(idx);
+            double hydro_dt = get_particle_timestep_in_physical(idx, P);
             min_transport_dt_local = DMIN(min_transport_dt_local, CellP[idx].Transport_Dt_Subcycle);
             max_hydro_dt_local = DMAX(max_hydro_dt_local, hydro_dt);
         }

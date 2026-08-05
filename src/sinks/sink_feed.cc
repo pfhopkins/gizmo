@@ -43,7 +43,7 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
     loc->ID           = P[i].ID;
     loc->Density      = P[i].DensityAroundParticle;
     loc->Mdot         = P[i].Sink_Mdot;
-    loc->Dt           = (MyFloat)get_particle_feedback_timestep_in_physical(i);
+    loc->Dt           = (MyFloat)get_particle_feedback_timestep_in_physical(i, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     loc->Dt           = P[i].dt_since_last_gas_search;
 #endif

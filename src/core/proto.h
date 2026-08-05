@@ -824,10 +824,10 @@ integertime get_timestep(int p, double *a, int flag);
 double return_timestep_dilation_factor(int i, struct particle_data *pp);      /* live, host-only: particle */
 double return_node_timestep_dilation_factor(int no);                          /* live, host-only: tree node */
 GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, struct particle_data *pp); /* value frozen at timestep assignment */
-GIZMO_GPU_FUNCTION double unit_integertime_in_physical(int i, struct particle_data *pp = P);
-GIZMO_GPU_FUNCTION double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp = P);
-GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct particle_data *pp = P);
-GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double unit_integertime_in_physical(int i, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp);
 
 void gravity_tree(void);
 void hydro_force(void);

@@ -686,7 +686,7 @@ void sink_final_operations(void)
             if(P[n].Sink_PotentialMinimumOfNeighbors < 0.5 * SINK_MINPOTVALUE_INIT)
             {
                 double fac_sink_shift=0;
-                dt = get_particle_feedback_timestep_in_physical(n);
+                dt = get_particle_feedback_timestep_in_physical(n, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
                 dt = P[n].dt_since_last_gas_search;
 #endif
@@ -779,7 +779,7 @@ void sink_final_operations(void)
 
         /* Correct for the mass loss due to radiation and BAL winds */
         /* always substract the radiation energy from P[n].Sink_Mass && P[n].Mass */
-        dt = get_particle_feedback_timestep_in_physical(n);
+        dt = get_particle_feedback_timestep_in_physical(n, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         dt = P[n].dt_since_last_gas_search;
 #endif

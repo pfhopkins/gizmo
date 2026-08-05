@@ -199,7 +199,7 @@ void drift_particle(int i, integertime time1)
     if((P[i].Type == 0) && (P[i].Mass > 0))
         {
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
-            dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i);
+            dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i, P);
             dt_gravkick = get_gravkick_factor(time0, time1, i, 0);
             
 #ifdef PMGRID
@@ -504,7 +504,7 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
     return 1;
 #else
     /* define some variables */
-    double dt_entr = get_particle_timestep_in_physical(i);
+    double dt_entr = get_particle_timestep_in_physical(i, P);
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
     Vec3<double> dB = cell[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
     double dBmag = dB.norm(), Bmag = cell[i].BPred.norm();

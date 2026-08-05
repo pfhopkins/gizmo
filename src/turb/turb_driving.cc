@@ -286,7 +286,7 @@ void st_turbdrive_calc_phases(void)
 /* Check whether the phases of the turbulent driving force must be recomputed this timestep */
 int new_turbforce_needed_this_timestep(void)
 {
-    double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1), Dt_Update=st_return_dt_between_updates();
+    double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1, P), Dt_Update=st_return_dt_between_updates();
     if(delta >= Dt_Update){return 1;} else {return 0;}
 }
 
@@ -295,7 +295,7 @@ void set_turb_ampl(void)
 {
     if(new_turbforce_needed_this_timestep())
     {
-        double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1);
+        double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1, P);
         if(delta > 0)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;

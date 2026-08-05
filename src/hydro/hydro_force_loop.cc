@@ -249,7 +249,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
             dBdt_battery_total += dBdt_T2_phys_cgs * dBdt_phys_to_code;
         }
 #endif
-        const double dt_code   = get_particle_timestep_in_physical(i);
+        const double dt_code   = get_particle_timestep_in_physical(i, P);
         const double V_code    = P[i].Mass / DMAX(CellP[i].Density, MIN_REAL_NUMBER);
         const Vec3<double> B_phys_codeunits = CellP[i].Bfield() * All.cf_a2inv;
         const Vec3<double> dB_step          = dBdt_battery_total * dt_code;

@@ -356,7 +356,7 @@ void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i)
     double M_norm = (P[i].Mass*UNIT_MASS_IN_SOLAR) * P[i].AgeDeposition_ThisTimeStep; /* AJE: may need to switch to normalizing over log bin spacing if bins are large too avoid small number issues  - this requires undoing the normalization in post */
     double age_myr = evaluate_stellar_age_Gyr(i) * 1000.; int k = get_age_tracer_bin(age_myr); // get age in Myr and corresponding age bin
     if(k==-9) {printf("Stellar age greater than maximum allows in AGE_TRACERS bins\n"); return;} // legacy error trap for age > max bin
-    double dt=get_particle_feedback_timestep_in_physical(i)*UNIT_TIME_IN_MYR, age_initial = age_myr - 0.5*dt, age_final = age_myr + 0.5*dt; // get particle timestep in Myr, and age at beginning and end of this timestep
+    double dt=get_particle_feedback_timestep_in_physical(i, P)*UNIT_TIME_IN_MYR, age_initial = age_myr - 0.5*dt, age_final = age_myr + 0.5*dt; // get particle timestep in Myr, and age at beginning and end of this timestep
     if(dt <= 0) {return;} // no event possible - must have arrived here in error
     int k_age_start = 1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES; // first index of enrichment-age-tracers
 
@@ -608,7 +608,7 @@ void update_stellarnumber_and_timedistribofstarformation(void)
             if((dt_since_form_code < P[i].TimeDistribOfStarFormation) && (P[i].TimeDistribOfStarFormation > 0)) // candidate for 'spawning'
             {
                 double dt_remaining = P[i].TimeDistribOfStarFormation - dt_since_form_code; // time remaining to spawn
-                double dt_timestep = get_particle_feedback_timestep_in_physical(i); // timestep being taken [code units]
+                double dt_timestep = get_particle_feedback_timestep_in_physical(i, P); // timestep being taken [code units]
                 double d_tau = DMAX(DMIN( dt_timestep , dt_remaining) , 0) / P[i].TimeDistribOfStarFormation; // effective step size in dimensionless units
                 double f_highz=0.0115, f_m; f_m = f_highz; // 1/mass in solar per O-star number
 #ifdef FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT // SIMPLE_POPTHREE_MODEL

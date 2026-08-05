@@ -49,7 +49,7 @@ void compute_global_quantities_of_system(void)
         sys.EnergyPotComp[P[i].Type] += 0.5 * P[i].Mass * P[i].Potential / a1;
 #endif
         integertime dt_integerstep = P[i].integertime_step();
-        dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * unit_integertime_in_physical(i);
+        dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * unit_integertime_in_physical(i, P);
         dt_gravkick = get_gravkick_factor((P[i].Ti_begstep + dt_integerstep / 2), All.Ti_Current, i, 0);
 
         vel = P[i].Vel + P[i].GravAccel * dt_gravkick;

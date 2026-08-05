@@ -219,11 +219,11 @@ void find_timesteps(void)
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5){
             if(All.Ti_Current == 0) { // first timestep
-                P[i].dt_since_last_gas_search = get_physical_timestep_from_timebin(P[i].TimeBin, i);
+                P[i].dt_since_last_gas_search = get_physical_timestep_from_timebin(P[i].TimeBin, i, P);
                 P[i].do_gas_search_this_timestep = 1;
             } else {
-                P[i].dt_since_last_gas_search += get_physical_timestep_from_timebin(P[i].TimeBin, i);
-                if(P[i].dt_since_last_gas_search > 0.49 * get_physical_timestep_from_timebin(P[i].Sink_TimeBinGasNeighbor, i)){
+                P[i].dt_since_last_gas_search += get_physical_timestep_from_timebin(P[i].TimeBin, i, P);
+                if(P[i].dt_since_last_gas_search > 0.49 * get_physical_timestep_from_timebin(P[i].Sink_TimeBinGasNeighbor, i, P)){
                     P[i].do_gas_search_this_timestep = 1;
                 } else {P[i].do_gas_search_this_timestep = 0;}
             }
@@ -421,7 +421,7 @@ integertime get_timestep(int p,		/*!< particle index */
     if(flag > 0)
     {
         /* this is the non-standard mode; use timestep to get the maximum acceleration tolerated */
-        dt = flag * unit_integertime_in_physical(p); /* convert dloga to physical timestep  */
+        dt = flag * unit_integertime_in_physical(p, P); /* convert dloga to physical timestep  */
         ac = 2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p) / (dt * dt);
         *aphys = ac;
         return flag;
@@ -452,7 +452,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     double tidal_mag = P[p].tidal_tensorps.frobenius_norm(); // can estimate time derivative here, via: dt_ttmag = (tidal_mag-P[p].tidal_tensor_mag_prev) / get_particle_timestep_in_physical(p);
-    double dt_tidalsoft = All.CourantFac * NUMDIMS * DMAX(DMAX(get_particle_timestep_in_physical(p), dt), All.MinSizeTimestep) * (tidal_mag+P[p].tidal_tensor_mag_prev) / (fabs(tidal_mag-P[p].tidal_tensor_mag_prev) + MIN_REAL_NUMBER);
+    double dt_tidalsoft = All.CourantFac * NUMDIMS * DMAX(DMAX(get_particle_timestep_in_physical(p, P), dt), All.MinSizeTimestep) * (tidal_mag+P[p].tidal_tensor_mag_prev) / (fabs(tidal_mag-P[p].tidal_tensor_mag_prev) + MIN_REAL_NUMBER);
     if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) && (P[p].tidal_tensor_mag_prev>0 && All.Time>All.TimeBegin)) {dt = DMIN(dt, dt_tidalsoft);} // use as a timestep criterion for tidal-ags-active particles
     P[p].tidal_tensor_mag_prev = tidal_mag; // save it (overwriting previous value)
     {
@@ -983,7 +983,7 @@ integertime get_timestep(int p,		/*!< particle index */
                         while(TimeBinActive[bin] == 0 && bin > binold) {bin--;} /* make sure the new step is synchronized */
                     }
                     /* now convert this -back- to a physical timestep */
-                    double dt_allowed = GET_INTEGERTIME_FROM_TIMEBIN(bin) * unit_integertime_in_physical(-1);
+                    double dt_allowed = GET_INTEGERTIME_FROM_TIMEBIN(bin) * unit_integertime_in_physical(-1, P);
                     if(dt_superstep > 1.5*dt_allowed)
                     {
                         /* the next allowed timestep [because of synchronization] is not big enough to fit the 'big step'
@@ -1108,7 +1108,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         if(dt_accr > 0 && dt_accr < dt) {dt = dt_accr;}
 
-        double dt_ngbs = 4.1 * get_physical_timestep_from_timebin(P[p].Sink_TimeBinGasNeighbor, p); /* standard wakeup-type threshold: use this by default here, unless dynamical interaction important (e.g. back-rx term from oscillation of sink c-o-m, which is important for single-sink sims */
+        double dt_ngbs = 4.1 * get_physical_timestep_from_timebin(P[p].Sink_TimeBinGasNeighbor, p, P); /* standard wakeup-type threshold: use this by default here, unless dynamical interaction important (e.g. back-rx term from oscillation of sink c-o-m, which is important for single-sink sims */
         if(dt > dt_ngbs && dt_ngbs > 0) {dt = 1.01 * dt_ngbs; }
 
 #if defined(SINGLE_STAR_TIMESTEPPING)
@@ -1136,7 +1136,7 @@ integertime get_timestep(int p,		/*!< particle index */
         if(P[p].StellarAge == All.Time)
         {   // want a brand new sink to be on the lowest occupied timebin
             long bin; for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin] > 0) break;}
-            double dt_min =  get_physical_timestep_from_timebin(bin, p);
+            double dt_min =  get_physical_timestep_from_timebin(bin, p, P);
             if(dt > dt_min && dt_min > 0) dt = 1.01 * dt_min;
         }
 #endif // SINGLE_STAR_TIMESTEPPING

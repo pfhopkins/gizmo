@@ -136,7 +136,7 @@ void hydro_final_operations_and_cleanup(void)
     { int i = ActiveParticleList[_apl]; int k = 0; /* k is declared here (not at function scope) so it is thread-private under OpenMP — a shared k would race between threads and corrupt CR bin index */
         if(P[i].Type == 0 && P[i].Mass > 0)
         {
-            double dt; dt = get_particle_timestep_in_physical(i);
+            double dt; dt = get_particle_timestep_in_physical(i, P);
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* signal velocity needs to include rate of gas flow -over- the resolution element, which can be non-zero here */

@@ -347,7 +347,7 @@ void AGSForce_calc(void)
 #if defined(DM_SIDM)
     for(int i : ActiveParticleList) {
         if(AGSForce_isactive(i)) {
-            P[i].dtime_sidm = 10. * get_particle_timestep_in_physical(i);
+            P[i].dtime_sidm = 10. * get_particle_timestep_in_physical(i, P);
         }
     }
 #endif

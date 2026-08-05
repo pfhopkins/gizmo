@@ -935,7 +935,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) (get_particle_timestep_in_physical(pindex));
+                    *fp++ = (MyOutputFloat) (get_particle_timestep_in_physical(pindex, P));
                     n++;
                 }
 #endif

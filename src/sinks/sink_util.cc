@@ -169,7 +169,7 @@ void sink_properties_loop(void) /* Note, normalize_temp_info_struct is now done 
     for(i=0; i<N_active_loc_Sink; i++)
     {
         n = SinkTempInfo[i].index;
-        dt = get_particle_feedback_timestep_in_physical(n);
+        dt = get_particle_feedback_timestep_in_physical(n, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         dt = P[n].dt_since_last_gas_search;
 #endif

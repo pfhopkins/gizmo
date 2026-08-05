@@ -430,7 +430,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
         if(!is_galsf_stellar_candidate_type(P[ip].Type, All.ComovingIntegrationOn)) continue;
 #endif
         if(P[ip].Mass <= 0 || !isfinite(P[ip].Mass)) continue;
-        double dt_i = get_particle_feedback_timestep_in_physical(ip);
+        double dt_i = get_particle_feedback_timestep_in_physical(ip, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[ip].Type == 5) dt_i = P[ip].dt_since_last_gas_search;
 #endif

@@ -71,7 +71,7 @@ void do_first_halfstep_kick(void)
             int ii = ActiveParticleList[_a];
             if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
                 cbe_active[k] = ii;
-                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
+                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii, P);
                 k++;
             }
         }
@@ -102,7 +102,7 @@ void do_second_halfstep_kick(void)
             int ii = ActiveParticleList[_a];
             if(P[ii].Mass > 0 && CBE_INTEGRATOR_DOES_TYPE(P[ii].Type)) {
                 cbe_active[k] = ii;
-                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
+                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii, P);
                 k++;
             }
         }
@@ -172,7 +172,7 @@ int eligible_for_hermite(int i)
     if((1 << P[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
 #endif
 #if defined(SINK_PARTICLES) || defined(GALSF)
-    if(P[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
+    if(P[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, P)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
     if(P[i].AccretedThisTimestep) {return 0;}
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -275,7 +275,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             double dMass=0; // fraction of delta_conserved to couple per kick step (each 'kick' is 1/2-timestep) // double dv[3], v_old[3], dMass, ent_old=0, d_inc = 0.5;
             if(mode != 0) // update the --conserved-- variables of each particle //
             {
-                dMass = ((tend - tstart) * unit_integertime_in_physical(i)) * CellP[i].DtMass; if(dMass * CellP[i].dMass < 0) {dMass = 0;} // slope-limit: no opposite reconstruction! //
+                dMass = ((tend - tstart) * unit_integertime_in_physical(i, P)) * CellP[i].DtMass; if(dMass * CellP[i].dMass < 0) {dMass = 0;} // slope-limit: no opposite reconstruction! //
                 if((fabs(dMass) > fabs(CellP[i].dMass))) {dMass = CellP[i].dMass;} // try to get close to what the time-integration scheme would give //
                 CellP[i].dMass -= dMass;
             } else {dMass = CellP[i].dMass;}
@@ -302,7 +302,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     if(TimeBinActive[P[i].TimeBin])
     {
         /* get the timestep (physical units for dt_entr and dt_hydrokick) */
-        dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i);
+        dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i, P);
         dt_gravkick = get_gravkick_factor(tstart, tend, i, 0);
         
         if(P[i].Type==0)

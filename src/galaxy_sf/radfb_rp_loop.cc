@@ -365,7 +365,7 @@ int radfb_rp_local_fill(int i,
     double star_age = evaluate_stellar_age_Gyr(i);
     if (star_age >= radfb_rp_age_threshold_value()) return 0;
 
-    double dt = get_particle_feedback_timestep_in_physical(i);
+    double dt = get_particle_feedback_timestep_in_physical(i, P);
     if (dt <= 0 || !isfinite(dt)) return 0;
 
     /* luminosity */

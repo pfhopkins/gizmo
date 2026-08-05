@@ -70,7 +70,7 @@ static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     loc->Sink_angle_weighted_kernel_sum = SinkTempInfo[j_tempinfo].Sink_angle_weighted_kernel_sum;
 #endif
-    loc->Dt = (MyFloat)get_particle_feedback_timestep_in_physical(i);
+    loc->Dt = (MyFloat)get_particle_feedback_timestep_in_physical(i, P);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     loc->Dt = P[i].dt_since_last_gas_search;
 #endif

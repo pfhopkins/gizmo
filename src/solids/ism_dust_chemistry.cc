@@ -361,7 +361,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
     // yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY+source_key] = dust_yields[0]; // total yield goes to the source term of this type
     // return; // end routine
     double dt,Z,elem_yield,wind_rate;
-    dt=get_particle_feedback_timestep_in_physical(i)*UNIT_TIME_IN_GYR;
+    dt=get_particle_feedback_timestep_in_physical(i, P)*UNIT_TIME_IN_GYR;
     Z = Z_for_stellar_evol(i);
     // Take difference in cumulative dust production between start and end time to get estimate of instantaneous dust injection rate (M_solar/Gyr)
     double total_dust=0;

@@ -999,7 +999,7 @@ void hydro_gradient_calc(void)
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
         {
             CellP[i].alpha_limiter /= CellP[i].Density;
-            double NV_dt = get_particle_timestep_in_physical(i);
+            double NV_dt = get_particle_timestep_in_physical(i, P);
             double NV_dummy = fabs(1.0 * pow(1.0 - CellP[i].alpha_limiter, 4.0) * CellP[i].NV_DivVel);
             double NV_limiter = NV_dummy * NV_dummy / (NV_dummy * NV_dummy + CellP[i].NV_trSSt);
             double NV_A = DMAX(-CellP[i].NV_dt_DivVel, 0.0);
@@ -1253,7 +1253,7 @@ void hydro_gradient_calc(void)
             double L_i_code = P[i].Get_Particle_Size();
             Vec3<double> dvel = L_i_code * L_i_code * passer_base[i].GlassAcc;
             double velnorm = dvel.norm();
-            double dtx = get_particle_timestep_in_physical(i);
+            double dtx = get_particle_timestep_in_physical(i, P);
             if(velnorm > 0 && dtx > 0) {
                 double v00 = 0.5 * DMIN(cs_invelunits * (0.5 * velnorm),
                                        All.CourantFac * (L_i_code / dtx) / All.cf_a2inv);
