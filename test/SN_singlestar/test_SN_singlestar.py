@@ -175,7 +175,9 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
         f"(relative error {rel_err:.3f})"
     )
 
-    if not extra_config_flags:
+    # Every variant but 'cooling' is adiabatic, so these hold for all of them -- and checking each rather
+    # than just the bare run is what catches a regression on whichever wakeup path is not the default.
+    if "COOLING" not in extra_config_flags:
         # Adiabatic: strong-shock density jump should be ~ 4x ambient
         assert rho_binned[i_peak] > 2.0 * RHO_AMBIENT_CODE, (
             f"Post-shock density {rho_binned[i_peak]:.3f} too low; "

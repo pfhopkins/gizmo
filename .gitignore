@@ -20,3 +20,5 @@ test/*/test_*.err
 test/*/__pycache__/
 test/*/*.png
 python_src/gizmo.egg-info/
+# pytest concurrency guard (test/conftest.py)
+.pytest_tree.lock

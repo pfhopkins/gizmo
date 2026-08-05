@@ -3,7 +3,7 @@
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove
 from urllib.request import urlretrieve, HTTPError
-from shutil import move, rmtree
+from shutil import move, rmtree, copyfile
 from glob import glob
 import numpy as np
 import pytest
@@ -259,6 +259,11 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
     if path.isdir(stash):
         _robust_replace_dir(plain)
         move(stash, plain)
+    # Preserve GIZMO's stdout with the variant: run_test opens test/<name>/test_<name>.out with mode
+    # "w", so otherwise each variant truncates the previous one's in-code diagnostics.
+    log = f"test/{test_name}/test_{test_name}.out"
+    if path.isfile(log) and path.isdir(dst):
+        copyfile(log, path.join(dst, f"test_{test_name}.out"))
 
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None):
@@ -321,6 +326,69 @@ def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
     assert abs(time - time_max) < rtol * abs(
         time_max
     ), f"Snapshot time {time} does not match TimeMax {time_max} (rtol={rtol})"
+
+
+def gas_energy(snapshot_file: str, include_magnetic: bool = False,
+               include_potential: bool = False) -> float:
+    """Total gas energy from a snapshot: thermal + kinetic, optionally magnetic and gravitational.
+
+    The caller must include every reservoir the problem actually has, or the "conserved" quantity
+    will not be conserved. Thermal+kinetic alone is right only with SELFGRAVITY_OFF and no MAGNETIC.
+      include_magnetic: adds sum(B^2/2 * m/rho), needs MagneticField in the snapshot.
+      include_potential: adds 0.5*sum(m*phi) (the 1/2 avoids double-counting pairs), needs
+        Potential in the snapshot, i.e. OUTPUT_POTENTIAL in the Config.
+    """
+    with h5py.File(snapshot_file, "r") as F:
+        g = F["PartType0"]
+        m = g["Masses"][:]
+        v = g["Velocities"][:]
+        u = g["InternalEnergy"][:]
+        e = float(np.sum(m * u) + 0.5 * np.sum(m * np.sum(v**2, axis=1)))
+        if include_magnetic:
+            if "MagneticField" not in g:
+                raise KeyError(f"{snapshot_file}: MagneticField absent; MAGNETIC not enabled?")
+            b = g["MagneticField"][:]
+            rho = g["Density"][:]
+            e += float(np.sum(0.5 * np.sum(b**2, axis=1) * m / np.maximum(rho, 1e-300)))
+        if include_potential:
+            if "Potential" not in g:
+                raise KeyError(f"{snapshot_file}: Potential absent; add OUTPUT_POTENTIAL to Config.sh")
+            e += float(0.5 * np.sum(m * g["Potential"][:]))
+    return e
+
+
+def assert_energy_conserved(test_name: str, extra_config_flags=(), tol: float = 0.1,
+                            injected_energy: float | None = None,
+                            include_magnetic: bool = False, include_potential: bool = False):
+    """Assert the gas energy budget closes, comparing the first and last snapshot.
+
+    With injected_energy=None the problem is assumed closed (no source after t=0) and the total
+    must be constant. Otherwise the CHANGE in total energy must equal injected_energy, which is
+    the right form for a test that deposits a known amount (e.g. 1e51 erg for a supernova).
+
+    Only valid where thermal+kinetic is the whole budget -- see gas_energy(). tol defaults to 10%,
+    deliberately loose: this is meant to catch gross violations, not to police integration
+    accuracy. For scale, a rejected wakeup-limiter variant (deferring the demotion rather than
+    truncating the step) destroyed 62% of the blast energy in sedov, and the density-profile
+    assertion caught it only indirectly, as a displaced shell.
+    """
+    outdir = variant_output_dir(test_name, extra_config_flags)
+    snaps = sorted(glob(f"{outdir}/snapshot_*.hdf5"))
+    assert len(snaps) >= 2, f"need >=2 snapshots to check conservation, found {len(snaps)}"
+    kw = {"include_magnetic": include_magnetic, "include_potential": include_potential}
+    e_0, e_f = gas_energy(snaps[0], **kw), gas_energy(snaps[-1], **kw)
+    if injected_energy is None:
+        assert abs(e_f / e_0 - 1.0) < tol, (
+            f"{test_name}: gas energy not conserved: E_final/E_initial = {e_f / e_0:.4f} "
+            f"(tolerance {tol:.0%}); E_0={e_0:.6e} E_f={e_f:.6e}"
+        )
+        return e_f / e_0
+    ratio = (e_f - e_0) / injected_energy
+    assert abs(ratio - 1.0) < tol, (
+        f"{test_name}: energy budget does not close: dE/E_injected = {ratio:.4f} "
+        f"(tolerance {tol:.0%}); dE={e_f - e_0:.6e} E_injected={injected_energy:.6e}"
+    )
+    return ratio
 
 
 def assert_snapshots_are_close(

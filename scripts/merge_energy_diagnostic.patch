@@ -1,0 +1,181 @@
+Merge/split energy instrumentation for GIZMO (diagnostic only).
+
+Re-applies the MERGE_SPLIT_ENERGY_DIAGNOSTIC tallies that were hoisted out of merge_particles_ij.
+Three cumulative, MPI-reduced reports, printed once per merge_and_split_particles call:
+
+  Merge energy budget  dE      change in the TRUE state (InternalEnergy + KE from P[].Vel)
+                       dE_pred same for the PREDICTED state (InternalEnergyPred + VelPred), which is
+                               what the hydro integrates -- these differ, and that mattered
+                       KE_com  (1/2)*mu*|dv|^2, what a momentum-conserving merge must dissipate
+                       resid   the correction merge_particles_ij computes
+                       dE+KE_com vanishes iff the discarded COM-frame KE is the only error
+  Merge Pred floor     how much the InternalEnergyPred >= 0.5*InternalEnergy clamp injects, and how
+                       often. That clamp is one-directional (can only add energy), so it looks like a
+                       suspect; the tally is how you rule it out.
+  Merge pair timing    TimeBin distribution of merged pairs and whether Ti_current differs, i.e.
+                       whether the survivor inherits mass integrated on another clock.
+
+    git apply scripts/merge_energy_diagnostic.patch      # or: git apply -3
+
+WHAT IT ESTABLISHED (2026-08, adiabatic wind_singlestar, spawning, where E_kin+E_th = L*t exactly):
+  - The merge discard is ~23% of injected energy, and MERGE_SPLIT_CONSERVE_ENERGY fixes it exactly:
+    dE goes to ~4e-10 with resid == KE_com identically. (Both now default for SINK_WIND_SPAWN.)
+  - dE_pred was +3.75e5 while dE was ~0: the residual was computed from the true state and then added
+    to BOTH books, which cannot balance the predicted one since VelPred != Vel mid-step. Fixed by
+    giving the predicted state its own residual; dE_pred is now roundoff.
+  - The Pred floor NEVER fires: 0 of 5069 merges. Do not go hunting there.
+  - Merged pairs ALWAYS share Ti_current (0 of 5062, 0.0000 of the mass), so no merge ever grafts on
+    mass from a different clock -- structural, since merging runs inside the drift after every
+    participant is drifted to the current time. But 77% of pairs differ in TimeBin (mean |dbin| 1.18)
+    and the survivor keeps its own bin. Restricting merges to same-bin pairs was tried and made
+    conservation WORSE (0.9516 vs 0.9694): the veto redirects merges to worse-matched partners rather
+    than suppressing them, and partner quality matters more than bin matching.
+
+THE ~3% THAT REMAINS is merge-associated but is NOT a bookkeeping error: at the merge instant the true
+energy, the predicted energy and the mass all balance to roundoff, merged pairs are time-synchronized,
+and the deficit is insensitive to CourantFac (3.06% at 0.2 vs 3.33% at 0.05, i.e. not temporal
+truncation error). It scales with how badly matched the merged partners are. Not chased further.
+
+--- a/mesh/merge_split.cc
++++ b/mesh/merge_split.cc
+@@ -54,6 +54,17 @@
+ #endif
+ 
+ 
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++/*! Attribution of the energy budget of merge operations. In an adiabatic run total energy is
++    exactly conserved, so any net accumulation here is numerical. The 'true' variables
++    (InternalEnergy, Vel) and the predicted ones (InternalEnergyPred, VelPred) are tracked
++    separately because the hydro integrates on the latter: if the two budgets disagree, the error
++    lives in the predictor state rather than in the merge arithmetic. KEcom is the energy a
++    momentum-conserving merge must dissipate, and 'resid' is what the code computes as the
++    correction, so resid vs KEcom validates egy_old independently. */
++double MergeEgy_dE=0, MergeEgy_dEpred=0, MergeEgy_KEcom=0, MergeEgy_resid=0, MergeEgy_floor=0; long MergeEgy_count=0, MergeEgy_nfloor=0;
++double MergeBin_absdti=0, MergeBin_mass_dti=0, MergeBin_mass_all=0; long MergeBin_n[3]={0,0,0}, MergeBin_absbin=0, MergeBin_ndti=0;
++#endif
+ 
+ /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
+     when particles fall below some minimum mass threshold */
+@@ -509,6 +520,40 @@
+             printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
+         }
+     }
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++    {
++        double loc[5] = {MergeEgy_dE, MergeEgy_dEpred, MergeEgy_KEcom, MergeEgy_resid, MergeEgy_floor}, glob[5];
++        long nloc[2] = {MergeEgy_count, MergeEgy_nfloor}, nglob[2] = {0,0};
++        MPI_Allreduce(loc, glob, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
++        MPI_Allreduce(nloc, nglob, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
++        if(ThisTask == 0 && nglob[0] > 0)
++        {
++            printf("Merge energy budget [cumulative, %ld merges]: dE=%.6e dE_pred=%.6e KE_com=%.6e resid=%.6e ; dE+KE_com=%.6e (0 if the only error is the discarded KE)\n",
++                   nglob[0], glob[0], glob[1], glob[2], glob[3], glob[0]+glob[2]);
++            printf("Merge Pred floor [cumulative]: dE_floor=%.6e n=%ld of %ld merges (%.3f) -- one-directional, can only add energy\n",
++                   glob[4], nglob[1], nglob[0], (double)nglob[1]/(double)nglob[0]);
++            fflush(stdout);
++        }
++    }
++    {   /* time-mismatch of merged pairs: is the survivor inheriting mass integrated on another clock? */
++        double bloc[3] = {MergeBin_absdti, MergeBin_mass_dti, MergeBin_mass_all}, bglob[3];
++        long bnloc[5] = {MergeBin_n[0], MergeBin_n[1], MergeBin_n[2], MergeBin_absbin, MergeBin_ndti}, bnglob[5];
++        MPI_Allreduce(bloc, bglob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
++        MPI_Allreduce(bnloc, bnglob, 5, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
++        long ntot = bnglob[0]+bnglob[1]+bnglob[2];
++        if(ThisTask == 0 && ntot > 0)
++        {
++            printf("Merge pair timing [cumulative, %ld merges]: bins i<j=%ld (%.3f) i==j=%ld (%.3f) i>j=%ld (%.3f) mean|dbin|=%.3f "
++                   "| Ti_current mismatched n=%ld (%.3f) mean|dTi|=%.4g mass_frac=%.4f\n",
++                   ntot, bnglob[0], (double)bnglob[0]/ntot, bnglob[1], (double)bnglob[1]/ntot,
++                   bnglob[2], (double)bnglob[2]/ntot, (double)bnglob[3]/ntot,
++                   bnglob[4], (double)bnglob[4]/ntot,
++                   (bnglob[4] > 0) ? bglob[0]/(double)bnglob[4] : 0.0,
++                   (bglob[2] > 0) ? bglob[1]/bglob[2] : 0.0);
++            fflush(stdout);
++        }
++    }
++#endif
+ #if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+     /* These cells cannot retire, and under HYDRO_MESHLESS_FINITE_MASS cannot grow either, so they are
+        held indefinitely: correct inside a collimated beam, but a population still growing after the
+@@ -889,6 +934,31 @@
+ 
+     // now we have to deal with gas particle mergers //
+     double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++    /* Is the pair time-mismatched? Merging cells whose states sit at different times grafts mass with a
++       different integration history onto the survivor, which nothing at the merge instant can repair.
++       Ti_current is the decisive measure; TimeBin only bounds it. */
++    {
++        long dbin = (long)P[i].TimeBin - (long)P[j].TimeBin;
++        long dti  = (long)P[i].Ti_current - (long)P[j].Ti_current;
++        int slot = (dbin < 0) ? 0 : ((dbin == 0) ? 1 : 2);
++        #pragma omp atomic update
++        MergeBin_n[slot] += 1;
++        #pragma omp atomic update
++        MergeBin_absbin += (dbin < 0) ? -dbin : dbin;
++        #pragma omp atomic update
++        MergeBin_mass_all += P[i].Mass;
++        if(dti != 0)
++        {
++            #pragma omp atomic update
++            MergeBin_ndti += 1;
++            #pragma omp atomic update
++            MergeBin_absdti += (double)((dti < 0) ? -dti : dti);
++            #pragma omp atomic update
++            MergeBin_mass_dti += P[i].Mass;
++        }
++    }
++#endif
+     if(P[i].TimeBin < P[j].TimeBin)
+     {
+ #ifdef WAKEUP
+@@ -963,6 +1033,15 @@
+ #endif
+ 
+ 
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++    /* capture the pre-merge state; mtot*wt_i and mtot*wt_j are the original masses */
++    double mi_0 = mtot*wt_i, mj_0 = mtot*wt_j;
++    double E0 = mi_0*CellP[i].InternalEnergy + mj_0*CellP[j].InternalEnergy
++              + 0.5*All.cf_a2inv*(mi_0*P[i].Vel.norm_sq() + mj_0*P[j].Vel.norm_sq());
++    double E0p = mi_0*CellP[i].InternalEnergyPred + mj_0*CellP[j].InternalEnergyPred
++               + 0.5*All.cf_a2inv*(mi_0*CellP[i].VelPred.norm_sq() + mj_0*CellP[j].VelPred.norm_sq());
++    double KEcom_0 = 0.5 * mtot*wt_i*wt_j * (P[i].Vel - P[j].Vel).norm_sq() * All.cf_a2inv;
++#endif
+     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
+     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
+     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
+@@ -1009,7 +1088,33 @@
+ #else
+     //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
+ #endif
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++    /* the floor below can only raise InternalEnergyPred, so it is a one-directional energy source; tally
++       how much it injects and how often, to tell it apart from the residual misapplication above */
++    if(CellP[j].InternalEnergyPred < 0.5*CellP[j].InternalEnergy)
++    {
++        #pragma omp atomic update
++        MergeEgy_floor += mtot * (0.5*CellP[j].InternalEnergy - CellP[j].InternalEnergyPred);
++        #pragma omp atomic update
++        MergeEgy_nfloor += 1;
++    }
++#endif
+     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
++#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
++    /* post-merge state, measured after every assignment above including the Pred floor */
++    double E1 = mtot*CellP[j].InternalEnergy + 0.5*All.cf_a2inv*mtot*P[j].Vel.norm_sq();
++    double E1p = mtot*CellP[j].InternalEnergyPred + 0.5*All.cf_a2inv*mtot*CellP[j].VelPred.norm_sq();
++    #pragma omp atomic update
++    MergeEgy_dE     += E1  - E0;
++    #pragma omp atomic update
++    MergeEgy_dEpred += E1p - E0p;
++    #pragma omp atomic update
++    MergeEgy_KEcom  += KEcom_0;
++    #pragma omp atomic update
++    MergeEgy_resid  += egy_new * mtot;
++    #pragma omp atomic update
++    MergeEgy_count  += 1;
++#endif
+ 
+ 
+     // now use the conserved variables to correct the derivatives to primitive variables //

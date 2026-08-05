@@ -1,0 +1,187 @@
+Per-phase energy budget instrumentation for GIZMO (diagnostic only).
+
+Re-applies the 11-phase gas-energy accounting that was hoisted out of the main line: it reports
+the change in total gas energy (thermal + kinetic) across each phase of the timestep, so an energy
+error can be localized to a specific stage. Enabled by ENERGY_BUDGET_DIAGNOSTIC, which on the main
+line retains only the synchronized-total report (energy_budget_sync_report).
+
+    git apply scripts/energy_budget_phases.patch      # or: git apply -3 for a 3-way merge
+
+WHAT IT FOUND (2026-08, adiabatic wind_singlestar + SN_singlestar, both spawning):
+  Three independent energy errors, in a run where E_kin + E_th = L_w*t holds exactly:
+    - merge_particles_ij discarding the pair's COM-frame KE   ~ -23% of L*t
+    - the WAKEUP kick reversal on mid-step demotion            ~ +18% of L*t  (+5.96% of E_SN)
+    - the residual KDK kick1/kick2 asymmetry                   ~  -4.5% of L*t
+  The first two nearly cancel, so the default configuration looked healthy at ~0.95 while carrying
+  a 23% sink and an 18% source. Fixed by MERGE_SPLIT_CONSERVE_ENERGY and
+  WAKEUP_TRUNCATE_STEP_ON_DEMOTION respectively; the third is untouched and now dominant.
+
+READ THE OUTPUT WITH CARE -- this is the trap that cost the most time:
+  Only phases bracketing an INSTANTANEOUS operation (mergesplit, spawn) are meaningful. A phase
+  spanning a drift or kick sums particles sitting at different kick times, which is not a conserved
+  quantity, so energy appears to move between such phases with no error present. For an actual
+  conservation test use the 'Energy (synced)' line, which reports only when
+  All.HighestActiveTimeBin == All.HighestOccupiedTimeBin -- the sole point where Vel and
+  InternalEnergy share a clock. Snapshots never satisfy this: io.cc writes Velocities from P[].Vel
+  (kick-time) but InternalEnergy from InternalEnergyPred (drift-time).
+
+  Every EB_MARK is collective (one MPI_Allreduce). Marks MUST sit where every rank reaches them --
+  outside branch-dependent conditionals -- or the run deadlocks. See EB_SRCA/EB_SPAWN in run.cc and
+  EB_PREMERGE/EB_MERGESPLIT in domain.cc, all deliberately hoisted out of their adjacent branches.
+
+--- a/core/proto.h
++++ b/core/proto.h
+@@ -1080,10 +1080,28 @@
+ #endif
+ 
+ #ifdef ENERGY_BUDGET_DIAGNOSTIC
+-/* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. The
+-   per-phase breakdown this once accompanied lives on branch diag/energy-budget-phases. */
++/* Per-phase gas-energy accounting: see energy_budget_mark() in run.cc. Each mark is collective,
++   so marks must be placed where every rank reaches them (outside branch-dependent conditionals). */
++#define EB_NPHASE 11
++#define EB_OTHER 0       /* [end of prev step -> find_timesteps] */
++#define EB_KICK1 1       /* do_first_halfstep_kick */
++#define EB_PREMERGE 2    /* [after kick1 -> just before merge, inside domain decomposition] */
++#define EB_MERGESPLIT 3  /* merge_and_split_particles */
++#define EB_DRIFT 4       /* [after merge -> end of find_next_sync_point_and_drift] */
++#define EB_GRAV 5        /* compute_grav_accelerations */
++#define EB_HYDRO 6       /* compute_hydro_densities_and_forces */
++#define EB_KICK2 7       /* do_second_halfstep_kick */
++#define EB_SRCA 8        /* [start of source terms -> before wind spawning] */
++#define EB_SPAWN 9       /* spawn_sink_wind_feedback + rearrange */
++#define EB_SRC 10        /* [after spawning -> end of source terms] */
++void energy_budget_mark(int phase);
++void energy_budget_report(void);
+ void energy_budget_sync_report(void);
++#define EB_MARK(p) energy_budget_mark(p)
++#define EB_REPORT() energy_budget_report()
+ #define EB_SYNC_REPORT() energy_budget_sync_report()
+ #else
++#define EB_MARK(p)
++#define EB_REPORT()
+ #define EB_SYNC_REPORT()
+ #endif
+--- a/core/run.cc
++++ b/core/run.cc
+@@ -10,6 +10,38 @@
+ #include "../core/proto.h"
+ 
+ #ifdef ENERGY_BUDGET_DIAGNOSTIC
++/* Total gas energy by phase of the timestep. In an adiabatic run only the feedback injection
++   should change the total, so accumulation in any other phase localizes a numerical energy error
++   to a specific stage. Costs one MPI_Allreduce per mark, hence diagnostic-only. */
++static const char *EB_names[EB_NPHASE] = {"other","kick1","premerge","mergesplit","drift","grav","hydro","kick2","srcA","spawn","srcterms"};
++static double EB_phase[EB_NPHASE], EB_prev; static int EB_started = 0; static long EB_calls = 0;
++void energy_budget_mark(int phase)
++{
++    double loc = 0; int i;
++    for(i = 0; i < NumPart; i++)
++    {
++        if(P[i].Type == 0 && P[i].Mass > 0)
++        {
++            loc += P[i].Mass * (CellP[i].InternalEnergy + 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv);
++        }
++    }
++    double e = 0; MPI_Allreduce(&loc, &e, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
++    if(EB_started && phase >= 0 && phase < EB_NPHASE) {EB_phase[phase] += e - EB_prev;}
++    EB_prev = e; EB_started = 1;
++}
++void energy_budget_report(void)
++{
++    if((++EB_calls % 200) != 0) {return;}
++    if(ThisTask != 0) {return;}
++    int k; double tot = 0; for(k = 0; k < EB_NPHASE; k++) {tot += EB_phase[k];}
++    /* CAVEAT: only phases bracketing an INSTANTANEOUS operation (mergesplit, spawn) mean anything --
++       across a drift or kick this sums particles at different kick times, so energy can appear to move
++       with no error present. Use the 'Energy (synced)' line below to test conservation. */
++    printf("Energy budget by phase [t=%.8g]:", All.Time);
++    for(k = 0; k < EB_NPHASE; k++) {printf(" %s=%.5e", EB_names[k], EB_phase[k]);}
++    printf(" | sum=%.5e\n", tot); fflush(stdout);
++}
++
+ /*! Total gas energy, reported ONLY at full synchronization (HighestActiveTimeBin ==
+     HighestOccupiedTimeBin) -- the only point where Vel and InternalEnergy share a clock and the sum is
+     conserved. Snapshots never satisfy this, since io.cc writes Velocities from Vel (kick-time) but
+@@ -89,6 +121,7 @@
+         }
+ 
+         find_timesteps();		/* find-timesteps */
++        EB_MARK(EB_OTHER);
+         int TreeReconstructFlag_local = TreeReconstructFlag;
+ #ifdef HERMITE_INTEGRATION
+         HermiteOnlyFlag = 1;
+@@ -96,11 +129,13 @@
+         HermiteOnlyFlag = 0;
+ #endif
+         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
++        EB_MARK(EB_KICK1);
+ 
+         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
+                                              * If needed, this function will also write an output file
+                                              * at the desired time.
+                                              */
++        EB_MARK(EB_DRIFT);
+ 
+         output_log_messages();	/* write some info to log-files */
+ 
+@@ -130,6 +165,7 @@
+         }
+ 
+         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
++        EB_MARK(EB_GRAV);
+ 
+ #ifdef GALSF_SUBGRID_WINDS
+ #if (GALSF_SUBGRID_WIND_SCALING==2)
+@@ -155,6 +191,7 @@
+ #endif
+ 
+         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
++        EB_MARK(EB_HYDRO);
+ 
+ #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
+         if(!reconstructed_tree)
+@@ -165,9 +202,10 @@
+ #endif
+         
+         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
++        EB_MARK(EB_KICK2);
+ 
+         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+-        EB_SYNC_REPORT();
++        EB_MARK(EB_SRC); EB_REPORT(); EB_SYNC_REPORT();
+ 
+ #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
+         do_hermite_prediction();
+@@ -286,6 +324,7 @@
+         sink_accretion();
+ #ifdef SINK_WIND_SPAWN
+         double Max_Unspawned_MassUnits_fromSink_global;
++        EB_MARK(EB_SRCA); /* close out the pre-spawn source terms; marks stay outside the branch below so they remain collective */
+         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         if(Max_Unspawned_MassUnits_fromSink_global > 1)
+         {
+@@ -293,6 +332,7 @@
+             rearrange_particle_sequence();
+             Max_Unspawned_MassUnits_fromSink=Max_Unspawned_MassUnits_fromSink_global=0.;
+         }
++        EB_MARK(EB_SPAWN);
+ #if defined(SNE_NONSINK_SPAWN)
+         {int i; for(i=0;i<NumPart;i++) {if(P[i].Type != 4) {continue;}
+             double n_unspawned = P[i].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)); // number of spawned gas cells that can be made from the mass in the reservoir
+--- a/domain/domain.cc
++++ b/domain/domain.cc
+@@ -220,10 +220,13 @@
+     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
+     //rearrange_particle_sequence();
+     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
++    EB_MARK(EB_PREMERGE); /* own phase, not EB_OTHER: domain decomposition runs inside the drift, so reusing
++                             EB_OTHER made that bucket claim two unrelated intervals and starved EB_DRIFT */
+     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
+     {
+         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
+     }
++    EB_MARK(EB_MERGESPLIT);
+     t_mergesplit = timediff(t_drift_start, my_second());
+     double t_tmp = my_second();
+     rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */

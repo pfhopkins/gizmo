@@ -765,7 +765,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
-        P[i].wakeup = -1; P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
+        P[i].wakeup = -2; P[j].wakeup = -2; NeedToWakeupParticles_local = 1; /* -2 = split; only the sign is semantic, the value is for attribution */
 #endif
 
     } // closes special operations required only of gas particles
@@ -944,6 +944,23 @@ int merge_particles_ij(int i, int j)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[j].GravWorkTerm = {}; // since we're accounting for the work above and dont want to accidentally double-count //
 #endif
+#ifdef MERGE_SPLIT_CONSERVE_ENERGY
+    /* Same accounting for the PREDICTED state, which carries its own (VelPred, InternalEnergyPred) pair
+       and is mass-weighted separately below -- so the true-state residual does not balance it, and reusing
+       it leaves the predicted state inconsistent (measured: dE_pred ~ +4e5 against dE ~ 0). The hydro
+       builds its fluxes from the predicted state, so that error propagates. Must be captured here, before
+       the assignments below overwrite VelPred/InternalEnergyPred. GravAccel has no predicted variant, so
+       the work terms are the same ones. */
+    double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
+    egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_j * dot(dr_j, P[j].GravAccel) * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_i * dot(dr_i, P[i].GravAccel) * All.cf_a2inv;
+#ifdef PMGRID
+    egy_old_pred -= mtot*wt_j * dot(dr_j, P[j].GravPM) * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_i * dot(dr_i, P[i].GravPM) * All.cf_a2inv;
+#endif
+#endif
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
@@ -974,7 +991,24 @@ int merge_particles_ij(int i, int j)
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
+#ifdef MERGE_SPLIT_CONSERVE_ENERGY
+    /* The merge sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy
+       (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat makes the operation
+       energy-conserving. Without this the residual is computed and then discarded -- the line had
+       been commented out (originally marked '//???') since the earliest revision in this repo, so
+       every merge silently destroyed that energy. Measured in the adiabatic wind test, where
+       E_kin+E_th = L*t exactly, that loss is ~23% of the injected energy by t=0.1 (0.771 of L*t with the
+       discard, 0.999 with merging disabled entirely). An earlier ~9% figure was measured while the wakeup
+       kick reversal was still adding ~+18% and masking most of it; with the reversal truncated the discard
+       stands alone at its true size. Now auto-enabled with SINK_WIND_SPAWN (precompiler_logic.h);
+       MERGE_SPLIT_DISCARD_ENERGY opts back out. */
+    double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
+    if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
+    CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
+#else
     //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
+#endif
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
 
 
