@@ -10,8 +10,8 @@
  * function of the former. The one exception is gas cells driven to
  * Mass<=0 mid-span (sink swallow, full SF conversion); consumers guard on
  * Mass>0 and merge_split removes eliminated elements. What DOES change mid-span is ghost FIELD VALUES
- * (stellar feedback dirties hydro fields before gradients; gradients
- * produce CellP.Gradients that hydro_force needs on ghost copies).
+ * (cellcorrections writes owner-side Volume_1 that gradients consume;
+ * gradients produce CellP.Gradients that hydro_force needs on ghost copies).
  * Sequence in core/accel.cc::compute_hydro_densities_and_forces:
  *
  *   ---- MODE-DECISION ENTRY: gizmo_hydro_corridor_decide_mode() ----
@@ -25,15 +25,29 @@
  *   force_update_hmax()                        [tree update; freezes
  *                                               KernelRadius for the rest
  *                                               of the corridor]
- *   ---- TOPOLOGY BEGIN: gizmo_hydro_corridor_begin() ----
- *       (AFTER density()+force_update_hmax(), BEFORE cellcorrections:
- *        the one place the corridor's shared symmetric gas CSR is built)
- *   cellcorrections_calc()                     [corridor consumer]
  *   dynamic_diff_vel_calc / rt_source_injection / opacity_interp /
- *     compute_stellar_feedback                 [intervening; dirty ghost
- *                                               field values, not topology]
+ *     compute_stellar_feedback                 [each runs its own neighbor
+ *                                               loop and so its own ghost
+ *                                               import, which tears down the
+ *                                               single global ghost pool;
+ *                                               kept ABOVE the corridor so
+ *                                               they cannot tear its pool]
+ *   ---- TOPOLOGY BEGIN: gizmo_hydro_corridor_begin() ----
+ *       (AFTER density()+force_update_hmax() and after the loops above,
+ *        BEFORE cellcorrections: the one place the corridor's shared
+ *        symmetric gas CSR is built)
+ *   cellcorrections_calc()                     [corridor consumer]
  *   hydro_gradient_calc()                      [corridor consumer]
  *   mg_gradient_correction_calc()              [MHD_MODIFIED_GRADIENT]
+ *   selfshield_local_incident_uv_flux()        [local-only; no ghost reads]
+ *   special_rt_feedback_injection()            [local-only; corridor-aware]
+ *   dynamic_diff_calc()                        [TURB_DIFF_DYNAMIC; NOT a
+ *                                               consumer — runs its own
+ *                                               neighbor loop and its own
+ *                                               ghost import, so it TEARS
+ *                                               the pool and forces the
+ *                                               corridor to re-import before
+ *                                               hydro_force]
  *   hydro_force()                              [corridor consumer —
  *                                               closes the corridor]
  *   ---- CORRIDOR EXIT: gizmo_hydro_corridor_end() ----
@@ -96,9 +110,10 @@ GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void);
  * pointer view (no extra free). */
 void gizmo_hydro_corridor_begin(void);
 
-/* Refresh ghost field values mid-corridor (owner values changed: feedback
- * before gradients; CellP.Gradients before hydro_force; MHD-CG slope-limited
- * fields between gradient iterations). No-op unless the corridor published a
+/* Refresh ghost field values mid-corridor (owner values changed:
+ * cellcorrections' Volume_1 before gradients; CellP.Gradients before
+ * hydro_force; MHD-CG slope-limited fields between gradient iterations).
+ * No-op unless the corridor published a
  * Mode-A CSR view. THE ONLY function that may rebuild and republish the
  * corridor CSR. Two paths:
  *   FAST — when the live ghost pool is the very import the CSR was built

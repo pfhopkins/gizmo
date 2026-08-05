@@ -545,7 +545,7 @@ void hydro_gradient_calc(void)
      * ghost pool + CSR) was built ONCE at gizmo_hydro_corridor_begin(); this
      * function builds nothing. Mode A with a published view: refresh ghost
      * field values (owner-side hydro fields changed since the corridor
-     * import: cellcorrections, stellar feedback) — the refresh may
+     * import: cellcorrections' Volume_1) — the refresh may
      * rebuild+republish the CSR view, so the view is re-fetched per
      * iteration below, never cached across a refresh. Mode B: nothing to do
      * here (request-driven walkers use the corridor-built active list; no
