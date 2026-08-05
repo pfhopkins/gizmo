@@ -821,9 +821,9 @@ double ewald_psi(double x[3]);
 double ewald_pot_corr(double dx, double dy, double dz);
 integertime find_next_outputtime(integertime time);
 integertime get_timestep(int p, double *a, int flag);
-GIZMO_GPU_FUNCTION double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
-GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
-void refresh_timestep_dilation_factors_for_gpu(void);
+double return_timestep_dilation_factor(int i, struct particle_data *pp);      /* live, host-only: particle */
+double return_node_timestep_dilation_factor(int no);                          /* live, host-only: tree node */
+GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, struct particle_data *pp); /* value frozen at timestep assignment */
 GIZMO_GPU_FUNCTION double unit_integertime_in_physical(int i, struct particle_data *pp = P);
 GIZMO_GPU_FUNCTION double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp = P);
 GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct particle_data *pp = P);

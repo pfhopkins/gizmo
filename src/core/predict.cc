@@ -146,10 +146,13 @@ void drift_particle(int i, integertime time1)
 #endif
 
 #ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-    double a_fac = return_timestep_dilation_factor(i,0);
-    if(a_fac > 1.) {
-        double cfac = dt_drift * (1. - 1./a_fac);
-        P[i].Pos += P[i].vel_of_nearest_special * cfac; /* add back in the mean drift of the surrounding stuff to dilate only the local dynamics */
+    double dilation = timestep_dilation_factor(i, P); /* f = 1/a <= 1 */
+    if(dilation < 1.) {
+        /* the drift above advanced the particle over only the fraction f of the raw interval, since
+           dt_drift already carries the f. add back the bulk motion over the remaining (1-f) of the
+           raw interval, so that only the motion relative to the surroundings is dilated */
+        double cfac = dt_drift * (1./dilation - 1.);
+        P[i].Pos += P[i].vel_of_nearest_special * cfac;
     }
 #endif
 

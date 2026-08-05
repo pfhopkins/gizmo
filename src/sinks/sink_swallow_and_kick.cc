@@ -804,6 +804,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         // actually lay down position and velocities using coordinate basis
         get_wind_spawn_direction(i, j - (NumPart + num_already_spawned), mode, jy, jz, veldir, dpdir);
         P[j].Pos = P[i].Pos + dpdir*d_r; P[j].Vel = P[i].Vel + veldir*(v_magnitude_physical*All.cf_atime); CellP[j].VelPred = P[j].Vel; // convert to code (comoving) velocity units
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+        /* the clone inherited the template cell's factor, which belongs to a different position; this
+           cell was assigned a timebin and Ti_begstep of its own above, so freeze its factor here at
+           the position just laid down, as any other timestep assignment would */
+        P[j].TimestepDilationFactor = return_timestep_dilation_factor(j, P);
+#endif
 
         /* condition number, smoothing length, and density */
         CellP[j].ConditionNumber *= 100.0; /* boost the condition number to be conservative, so we don't trigger madness in the kernel */

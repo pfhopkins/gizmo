@@ -2948,9 +2948,8 @@ extern "C" void gizmo_register_all_device_mirror(struct global_data_all_processe
    copies: leading fence drains any in-flight kernels reading mirrors,
    trailing fence publishes new values to subsequent launches. On
    host-only Kokkos backends there is no mirror; the function reduces
-   to the dilation-factor refresh + fences. */
+   to the fences. */
 void gizmo_gpu_sync_all(void) {
-    refresh_timestep_dilation_factors_for_gpu();
     Kokkos::fence();
 #if defined(GIZMO_GPU_COMPILER)
     const struct global_data_all_processes *host_all = gizmo_host_all_ptr();

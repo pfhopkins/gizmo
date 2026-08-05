@@ -817,8 +817,6 @@ void find_next_sync_point_and_drift(void)
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }
 
-  refresh_timestep_dilation_factors_for_gpu();
-
 }
 
 

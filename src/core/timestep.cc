@@ -92,7 +92,10 @@ void find_timesteps(void)
     for (int i : ActiveParticleList)
     {
 #if defined(FORCE_EQUAL_TIMESTEPS)
-        ti_step = (integertime)(((double)get_timestep(i, &aphys, 0)) / timestep_dilation_factor(i,0)); // get the timestep for this particle, and apply any dilation factor -- we're trying to find the minimum active BIN, not the minimum active timestep in float
+        /* get the timestep for this particle, and apply any dilation factor -- we're trying to find the minimum active BIN, not the minimum active timestep in float.
+           get_timestep sets the particle's dilation factor, so it must be called in its own statement before the factor is read. */
+        integertime ti_step_undilated = get_timestep(i, &aphys, 0);
+        ti_step = (integertime)(((double)ti_step_undilated) / timestep_dilation_factor(i, P));
 #elif defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
         if(is_particle_a_special_zoom_target(i)==0) {ti_step = P[i].dt_step;} else {ti_step = TIMEBASE;} // set the source particle to have a timestep no more than 4 bins larger than the previous smallest active particle/cell bin timestep
 #endif
@@ -126,7 +129,7 @@ void find_timesteps(void)
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else
         ti_step = get_timestep(i, &aphys, 0);
-        ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i,0));
+        ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
 #endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
@@ -306,6 +309,14 @@ integertime get_timestep(int p,		/*!< particle index */
     integertime ti_step; int k; k=0;
 #ifdef TRANSPORT_SUBCYCLE
     if(P[p].Type == 0) {CellP[p].Transport_Dt_Subcycle = MAX_REAL_NUMBER;}
+#endif
+
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+    /* freeze this particle's dilation factor for the step we are about to assign. Every later
+       conversion of its integer step back to physical time must use this same value, so that the
+       physical landing time of the step cannot mutate as the particle moves. Set here at entry so
+       it covers every exit from this function. */
+    P[p].TimestepDilationFactor = return_timestep_dilation_factor(p, P);
 #endif
 
 #ifdef IO_GRADUAL_SNAPSHOT_RESTART // if on the first timestep of a snapshot restart, start at the lowest allowed timestep to minimize any transient effects
@@ -1549,6 +1560,13 @@ void process_wake_ups(void)
 		}
 		P[i].Ti_begstep = All.Ti_Current;
 		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+        /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
+           position it now holds, as a normal timestep assignment would. This must follow the
+           partial kick reversed just above, which cancels the kick it undoes only while the
+           factor still matches the one that kick was applied with. */
+        P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, P);
+#endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 	    }
 	}
@@ -1577,18 +1595,59 @@ void calc_shearing_box_pos_offset(void) /* function that calculates the shear-of
 #endif
 
 
-/* timestep dilation factor for computing quantities in zoom-in runs with variable extreme dynamic range.
-   pp is used when mode==0 (particle); when mode==1, i refers to a tree node and pp is unused. */
-double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp)
+/* Timestep dilation for zoom-in runs with extreme dynamic range. The dilation factor f = 1/a <= 1
+   is the rate at which a particle's clock advances relative to the global integer timeline: the
+   assigned integer step is divided by f, and every conversion of an integer step back to physical
+   time multiplies by f, so the physical landing time of the step is unchanged while the local
+   dynamics are integrated more finely. f is frozen for each particle when its timestep is assigned
+   (see get_timestep) and cached in P[].TimestepDilationFactor; read the cached value with
+   timestep_dilation_factor(). The two functions below are the live evaluations, needed only where
+   no cache exists: at timestep assignment, and for tree nodes. */
+
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+/* smallest physical distance from pos to any of the refinement centers */
+static double distance_to_nearest_refinement_center(Vec3<double> pos)
+{
+    double rmin = MAX_REAL_NUMBER;
+    for(int j = 0; j < SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM; j++)
+    {
+        Vec3<double> p0 = All.SpecialParticle_Position_ForRefinement[j];
+        Vec3<double> dp = All.cf_atime * (pos - p0);
+        double r = dp.norm(); if(r < rmin) {rmin = r;}
+    }
+    return rmin;
+}
+
+/* dilation amplitude a >= 1 at distance r from the refinement center: unity far away, saturating
+   at amax on approach */
+static double nuclear_zoom_dilation_amplitude(double r)
+{
+    double fac_amax = 100.;
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES
+#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
+    fac_amax = 1.e6;
+#endif
+#endif
+    double amax = fac_amax;
+    double r_amax = fac_amax * All.ForceSoftening[3]; // modify as needed
+    double index = 1;
+    if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
+    return 1. + 1. / (1./amax + pow(r / r_amax, index));
+}
+#endif
+
+
+/* live dilation factor for particle i. Called at timestep assignment; all other consumers read the
+   frozen value via timestep_dilation_factor(). */
+double return_timestep_dilation_factor(int i, struct particle_data *pp)
 {
 #if !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
-    return 1;
+    (void)i; (void)pp; return 1;
 #else
 
     if(All.Time <= All.TimeBegin) {return 1;}
     if(i < 0) {return 1;}
 #ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-    if(mode != 0) {return 1;}
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     if(pp[i].Type != 4 && pp[i].Type != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {return 1;} /* only do cosmological 'stars' type -and- the special smoothing-source-types */
 #else
@@ -1600,55 +1659,52 @@ double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp
     double a = 1;
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    double r = pp[i].Min_Distance_to_Sink;
-    if(pp[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {r = 0;}
-    double wt = weight_function_for_weighted_motion_smoothing(r, 0);
+    double r_to_sink = pp[i].Min_Distance_to_Sink;
+    if(pp[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {r_to_sink = 0;}
+    double wt = weight_function_for_weighted_motion_smoothing(r_to_sink, 0);
     if(wt > 0 && wt < 1) {a = 1. / wt;}
 #endif
 
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    double fac_amax = 100.;
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES
+    double r = distance_to_nearest_refinement_center(pp[i].Pos);
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
-    fac_amax = 1.e6;
+    r = sqrt(pp[i].Pos[0]*pp[i].Pos[0] + pp[i].Pos[1]*pp[i].Pos[1] + pp[i].Pos[2]*pp[i].Pos[2]);
 #endif
-#endif
-    double amax = fac_amax;
-    double r_amax = fac_amax * All.ForceSoftening[3]; // modify as needed
-    double index = 1;
-    int j, k; double rmin = MAX_REAL_NUMBER, r=0; a=1;
-    for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
-    {
-        Vec3<double> p0 = All.SpecialParticle_Position_ForRefinement[j];
-        Vec3<double> pos_i;
-        if(mode==0) {pos_i = pp[i].Pos;} /* the reference index refers to a real particle */
-            else {pos_i = Nodes[i].u.d.s;} /* the reference index refers to a node or pseudo-particle */
-        Vec3<double> dp = All.cf_atime * (pos_i - p0);
-        r = dp.norm(); if(r < rmin) {rmin = r;}
-    }
-    r = rmin;
-#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
-    if(mode==0) {r = sqrt(pp[i].Pos[0]*pp[i].Pos[0] + pp[i].Pos[1]*pp[i].Pos[1] + pp[i].Pos[2]*pp[i].Pos[2]);}
-#endif
-    if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
-    a = 1. + 1. / (1./amax + pow(r / r_amax, index));
+    a = nuclear_zoom_dilation_amplitude(r);
 #endif
 
     return 1. / a;
 #endif
 }
 
-void refresh_timestep_dilation_factors_for_gpu(void)
+
+/* live dilation factor at the center of mass of tree node 'no', for drifting the node itself. Nodes
+   carry no particle type, so the stars-only restriction is particle-only and does not apply here.
+
+   Nodes also carry no sink distance: Min_Distance_to_Sink is a per-particle result of the gravity
+   walk, and there is no node-level equivalent to feed the weighted-motion smoothing. So under
+   SPECIAL_POINT_WEIGHTED_MOTION (without the nuclear-zoom term, which does work for nodes) a node
+   drifts undilated while the particles it summarises drift at the smoothing weight, leaving its
+   center of mass inconsistent with them. Giving nodes that term means carrying a sink distance
+   through the tree moments. The weighted-motion module is still in development; this needs
+   resolving before it is relied on. */
+double return_node_timestep_dilation_factor(int no)
 {
-#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
-    if(P == NULL || NumPart <= 0) {return;}
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
+#if !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(DILATION_FOR_STELLAR_KINEMATICS_ONLY)
+    (void)no; return 1;
+#else
+
+    if(All.Time <= All.TimeBegin) {return 1;}
+    if(no < 0) {return 1;}
+
+    double a = 1;
+
+#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+    Vec3<double> pos_node; pos_node = Nodes[no].u.d.s;
+    a = nuclear_zoom_dilation_amplitude(distance_to_nearest_refinement_center(pos_node));
 #endif
-    for(int i = 0; i < NumPart; i++)
-    {
-        P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, 0, P);
-    }
+
+    return 1. / a;
 #endif
 }
 

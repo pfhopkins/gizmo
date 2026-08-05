@@ -718,6 +718,12 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
      any other operations on the particles */
     P[i].Pos[0] += dx; P[j].Pos[0] -= dx; P[i].Pos[1] += dy; P[j].Pos[1] -= dy; P[i].Pos[2] += dz; P[j].Pos[2] -= dz;
 
+    /* note: neither particle's TimestepDilationFactor is touched here. Splitting happens between the
+       two half-kicks of a step, and the daughter inherits the parent's timebin and Ti_begstep rather
+       than being assigned a step of its own, so both are mid-step: changing the factor would leave
+       the two half-kicks of that step disagreeing about its physical length. Each picks up its own
+       factor at the next timestep assignment. */
+
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     P[i].Time_Of_Last_MergeSplit = All.Time; P[j].Time_Of_Last_MergeSplit = All.Time;
 #endif

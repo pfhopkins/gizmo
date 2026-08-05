@@ -41,8 +41,8 @@
 /* USE_TIMESTEP_DILATION_FOR_ZOOMS: node-indexed dilation is supported via a
  * per-call host-pre-compute cache. The dispatcher below allocates a SharedSpace
  * `dilation_dev` array of length n_local_nodes + n_foreign_nodes, populates it
- * on the host using return_timestep_dilation_factor(no, 1, P), then the GPU
- * drift kernel reads the cached value.  No more compile-time gate. */
+ * on the host using return_node_timestep_dilation_factor(no), then the GPU
+ * drift kernel reads the cached value. */
 
 /* --- DriftTable mirror (cosmological only) ------------------------------- */
 static double *drift_table_dev_ = NULL;   /* SharedSpace, length DRIFT_TABLE_LENGTH */
@@ -130,7 +130,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
         int no_kk;
         if(kk < n_local_nodes) no_kk = MaxPart + kk;
         else                   no_kk = MaxPart + maxNodes_snap + (kk - n_local_nodes);
-        dilation_dev[kk] = return_timestep_dilation_factor(no_kk, 1, P);
+        dilation_dev[kk] = return_node_timestep_dilation_factor(no_kk);
     }
 #endif
 

@@ -239,6 +239,13 @@ void init(void)
         P[i].Ti_begstep = 0;
         P[i].Ti_current = (integertime)0;
         P[i].TimeBin = 0;
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+        /* seed from the function that maintains this field rather than a literal. It yields unity
+           here on every startup path, since All.Time equals All.TimeBegin until the first step, but
+           writing it this way keeps the seed correct if that ever stops holding. Each timestep
+           assignment re-freezes the value thereafter. */
+        P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, P);
+#endif
         if(header.flag_ic_info != FLAG_SECOND_ORDER_ICS) {P[i].OldAcc = 0;}	/* Do not zero in 2lpt case as masses are stored here */
 
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY)

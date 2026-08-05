@@ -86,7 +86,7 @@ void init_drift_table(void)
 double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode)
 {
     if(time0 == time1) return 0.0;
-    double dilation = return_timestep_dilation_factor(i, mode, P);
+    double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
     if(All.ComovingIntegrationOn == 0) {
         return (time1 - time0) * All.Timebase_interval * dilation;
     }
@@ -111,16 +111,20 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 {
     double a1, a2, df1, df2, u1, u2;
     int i1, i2;
+    /* the memo holds the RAW table integral, which depends only on (time0,time1); the per-particle
+       (or per-node) dilation is applied at every exit, since it varies between calls that share a
+       cached interval */
     static integertime last_time0 = -1, last_time1 = -1;
     static double last_value;
+    double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
 
     if(All.ComovingIntegrationOn == 0)
     {
-        return (time1 - time0) * All.Timebase_interval * return_timestep_dilation_factor(i, mode);
+        return (time1 - time0) * All.Timebase_interval * dilation;
     }
     else
     {
-        if(time0 == last_time0 && time1 == last_time1) {return last_value;}
+        if(time0 == last_time0 && time1 == last_time1) {return last_value * dilation;}
         /* note: will only be called for cosmological integration */
         a1 = logTimeBegin + time0 * All.Timebase_interval;
         a2 = logTimeBegin + time1 * All.Timebase_interval;
@@ -154,8 +158,8 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
         last_time0 = time0;
         last_time1 = time1;
         last_value = (df2 - df1);
-        
-        return last_value * return_timestep_dilation_factor(i, mode);
+
+        return last_value * dilation;
     }
 }
 
@@ -164,17 +168,19 @@ double get_gravkick_factor(integertime time0, integertime time1, int i, int mode
 {
   double a1, a2, df1, df2, u1, u2;
   int i1, i2;
+  /* as in get_drift_factor: the memo holds the raw integral, dilation is applied at every exit */
   static integertime last_time0 = -1, last_time1 = -1;
   static double last_value;
+  double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
 
     if(All.ComovingIntegrationOn == 0)
     {
-        return (time1 - time0) * All.Timebase_interval * return_timestep_dilation_factor(i, mode);
+        return (time1 - time0) * All.Timebase_interval * dilation;
     }
     else
     {
-        
-        if(time0 == last_time0 && time1 == last_time1) {return last_value;}
+
+        if(time0 == last_time0 && time1 == last_time1) {return last_value * dilation;}
         
         /* note: will only be called for cosmological integration */
         
@@ -211,7 +217,7 @@ double get_gravkick_factor(integertime time0, integertime time1, int i, int mode
         last_time1 = time1;
         
         last_value = (df2 - df1);
-        
-        return last_value * return_timestep_dilation_factor(i, mode);
+
+        return last_value * dilation;
     }
 }

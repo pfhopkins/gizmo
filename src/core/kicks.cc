@@ -447,10 +447,13 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         P[i].Vel += dp * (1.0 / mass_new); /* correctly accounts for mass change if its allowed */
 
 #ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-        double a_fac = return_timestep_dilation_factor(i,0);
-        if(a_fac > 1.) {
-            double cfac = dt_gravkick * (1. - 1./a_fac);
-            P[i].Vel += P[i].acc_of_nearest_special * cfac; /* add back in the mean kick of the surrounding stuff to dilate only the local dynamics */
+        double dilation = timestep_dilation_factor(i, P); /* f = 1/a <= 1 */
+        if(dilation < 1.) {
+            /* the kick above spanned only the fraction f of the raw interval, since dt_gravkick
+               already carries the f. add back the mean kick of the surroundings over the remaining
+               (1-f) of the raw interval, so that only the relative dynamics are dilated */
+            double cfac = dt_gravkick * (1./dilation - 1.);
+            P[i].Vel += P[i].acc_of_nearest_special * cfac;
         }
 #endif
 
