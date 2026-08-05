@@ -495,6 +495,7 @@
 #OUTPUT_UNSPAWNED_SINKMASS      # save the unspawned mass variable used for sink cell-spawning modules
 #INPUT_READ_KERNELRADIUS        # force reading rkern from IC file (instead of re-computing them; in general this is redundant but useful if special guesses needed)
 #INPUT_READ_SINKPROPS           # force reading sink properties including sink radius, zams mass, luminosity, age, etc, from ICs file if it includes sink particles and the IC is designed for use with the single-star modules
+#INPUT_READ_TEMPERATURE         # force reading the gas Temperature block from gadget-binary ICs (ICFormat 1/2), which are skipped by default because a missing block cannot be detected there and the read would fail with end-of-file. Only enable if your binary ICs genuinely contain one. HDF5 ICs are unaffected: they always read it when present
 #OUTPUT_TWOPOINT_ENABLED        # allows user to calculate mass 2-point function by enabling and setting restartflag=5
 #IO_COMPRESS_HDF5     		    # write HDF5 in compressed form (will slow down snapshot I/O and may cause issues on old machines, but reduce snapshots 2x)
 #IO_SUPPRESS_TIMEBIN_STDOUT=10  # only prints timebin-list to log file if highest active timebin index is within N (value set) of the highest timebin (dt_bin=2^(-N)*dt_bin,max)
