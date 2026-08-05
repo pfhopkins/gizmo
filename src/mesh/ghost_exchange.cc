@@ -40,8 +40,6 @@
 #include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
-#include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
-#include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
 #include "mode_b_local_walker.h"
 #ifdef _OPENMP
 #include <omp.h>                 /* threaded sender export + receiver walk below */
