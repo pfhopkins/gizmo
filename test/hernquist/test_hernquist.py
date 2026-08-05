@@ -57,8 +57,8 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)  # 1..99 % for plot 
 
 # --- known pre-existing defect: periodic-gravity half-mass-radius runaway ---------------
 # Every flag-OFF periodic variant secularly inflates r_h to ~10% by TimeMax=118, right on the
-# 0.10 tolerance, so the assertion flips run to run (ewald 0.1076, pmgrid256 0.1019, pmgrid
-# 0.0984/0.1005 on repeats). It comes with ~4x the COM momentum drift of the non-periodic
+# 0.10 tolerance, so the assertion flips run to run (ewald 0.1076, pmgrid 0.0984/0.1005 on
+# repeats; a since-retired PMGRID=256 probe gave 0.1019). It comes with ~4x the COM momentum drift of the non-periodic
 # baseline (2.85-2.93e-2 vs 7.6e-3), and both quantities reproduce to ~1%, so the pathology is
 # real -- only the *test* is marginal, because TimeMax lands where the runaway crosses the
 # tolerance. Cause is position-correlated tree-force errors in the periodic gravity path.
@@ -68,11 +68,13 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)  # 1..99 % for plot 
 # (BoxSize 500->2000, 86x volume: momentum drift unchanged to 1%). The effect is identical with
 # PM absent, PMGRID=64 and PMGRID=256, so it is periodicity itself, not the mesh. The mechanism
 # is NOT identified; narrowing it needs direct force-error measurement, not parameter sweeps.
+# The PMGRID=256 probe is not kept as a suite variant: 32768 particles over a 256^3 mesh is
+# 0.002 particles/cell, a degenerate setup that also segfaults in gravity_tree() at 48 ranks.
 # RANDOMIZE_GRAVTREE removes it entirely (randomize_pmgrid r_h drift 0.0118, better than the
 # non-periodic baseline's 0.0152). Do NOT loosen the 0.10 tolerance or enlarge the box to make
 # this green: BoxSize=2000 gives a passing 0.0821 while leaving the force error untouched.
 # See domain/RANDOMIZE_GRAVTREE_TreePM.md.
-PERIODIC_RH_RUNAWAY_VARIANTS = {"ewald", "pmgrid", "pmgrid256"}
+PERIODIC_RH_RUNAWAY_VARIANTS = {"ewald", "pmgrid"}
 PERIODIC_RH_RUNAWAY_REASON = (
     "Flag-off periodic gravity (with or without PM) accumulates correlated tree-force "
     "errors that secularly inflate r_h to ~10% by TimeMax, straddling the 0.10 tolerance. "
@@ -85,11 +87,6 @@ VARIANTS = [
     pytest.param((), id="baseline"),
     pytest.param(("ADAPTIVE_GRAVSOFT_FORALL=2",), id="ags"),
     pytest.param(("BOX_PERIODIC", "PMGRID=64"), id="pmgrid"),
-    # PMGRID=256 probe for the r_h runaway above: at PMGRID=64 the mesh cell (7.81) is ~3x
-    # larger than r_h (2.38), so the whole halo sits in one PM cell. Raising to cell=1.95 also
-    # shrinks Rcut (43.9 -> 11.0) though, handing more force to a shot-noise-dominated mesh
-    # (32768 particles over 256^3 cells), so resolution and split are not separable here.
-    pytest.param(("BOX_PERIODIC", "PMGRID=256"), id="pmgrid256"),
     pytest.param(("BOX_PERIODIC",), id="ewald"),
     pytest.param(("TIDAL_TIMESTEP_CRITERION",), id="tidal"),
     pytest.param(

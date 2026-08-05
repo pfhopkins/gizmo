@@ -1,7 +1,17 @@
 # RANDOMIZE_GRAVTREE and periodic TreePM
 
-**Status:** diagnosed, reproduced, fix **implemented and verified** (see Results below). Not
-committed. Two items remain unproven: imbalance-at-scale and `PM_PLACEHIGHRESREGION`.
+**Status:** fixed, verified and committed on `starforge_dev_randomize_gravtree`.
+`PM_PLACEHIGHRESREGION` is now exercised at runtime on a real 146M-particle m12i zoom (it
+failed there first -- see the hi-res region section -- and is fixed). Still unproven:
+imbalance-at-scale, since z~100 is too uniform to exhibit it.
+
+The final implementation differs from the sketch in the Fix section below in three ways found
+after it was written: the method is selected on whether **gravity** is periodic
+(`RANDOMIZE_GRAVTREE_PERIODIC`, i.e. `BOX_PERIODIC && !GRAVITY_NOT_PERIODIC`) rather than the
+box, because under `GRAVITY_NOT_PERIODIC` the tree uses bare `|dx|` and a translation mod box
+is not a symmetry; the offset is constrained so a nested high-res region cannot straddle the
+boundary; and the seed is `NumCurrentTiStep*3 + j`, since `+j` alone made consecutive steps
+share draws across axes.
 **Scope:** why `RANDOMIZE_GRAVTREE` breaks periodic TreePM (esp. cosmological zoom-ins), and how to fix it to match AREPO's periodic method.
 
 ---
@@ -326,7 +336,9 @@ Four candidate causes tested and eliminated:
 | periodic image tides | a periodic translation is an exact symmetry of the image lattice, so randomization could not affect image tides — yet it removes the runaway | logically excluded |
 | halo fills its box | BoxSize 500 → 2000, halo/image gap 17.5 → 1517.5 (86x volume) | momentum drift unchanged to 1% (2.933e-2 → 2.916e-2); r_h only 1.31x better |
 
-The effect is identical with PM absent (ewald), PMGRID=64 and PMGRID=256, so it is
+(The PMGRID=256 probe was a one-off and is not kept in the suite: 0.002 particles per PM
+cell is degenerate, and it segfaults in `gravity_tree()` at 48 ranks -- a separate, unresolved
+issue.) The effect is identical with PM absent (ewald), PMGRID=64 and PMGRID=256, so it is
 periodicity itself, not the mesh. **The mechanism is not identified**; narrowing it further
 needs direct force-error measurement against a brute-force reference, not more parameter
 sweeps. `RANDOMIZE_GRAVTREE` removes it entirely (randomize_pmgrid r_h drift 0.0118, better
