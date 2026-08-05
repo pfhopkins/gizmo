@@ -49,12 +49,19 @@ DRIFT_SANITY_CEILING = 1.0
 #   plummer/randomize_pmgrid    1.37e-3    5.0e-3     3.6x    9.68e-4   NO -- see below
 #   hernquist/randomize         2.26e-4    1.0e-3     4.4x    7.62e-3   yes
 #   hernquist/randomize_pmgrid  1.13e-3    4.0e-3     3.5x    2.93e-2   yes
-#   evrard/randomize            PENDING re-measurement under the v_grav normalization
-#   shu1977/randomize           PENDING re-measurement under the v_grav normalization
+#   evrard/randomize            8.34e-6    1.7e-5     2.0x    3.13e-5   yes (1.8x below)
+#   shu1977/randomize           5.34e-4    1.1e-3     2.1x    6.36e-4   NO (only 1.2x above)
 #
-# (Values above are under the v_grav normalization; they moved <1% from the old v_rms(0) ones
-# because plummer/hernquist are virialized, 2K/|W| ~ 1.0. The cold-start tests move by ~80x,
-# hence PENDING -- their old loose ceilings were an artifact of the bad normalization.)
+# All values are under the v_grav normalization. plummer/hernquist moved <1% from the old
+# v_rms(0) numbers (they are virialized, 2K/|W| ~ 1.0); the cold-start tests moved by ~80x,
+# because dividing by a near-zero v_rms(0) had inflated them -- evrard was 1.8e-2 before.
+#
+# evrard and shu1977 are set to 2x their measured value, tighter than the 3.5-7x used above.
+# That is deliberate but carries more flake risk: it rests on a SINGLE measurement each, with
+# no run-to-run scatter estimate. For comparison, plummer/randomize varied 16% between 8 and
+# 48 ranks, so 2x is ~6x that scatter -- but the cold collapses have not been repeated, and
+# shu1977 in particular improves only 1.19x over its flag-off run, so its ceiling sits close
+# to the flag-off value and cannot distinguish a revert. Loosen to 3-4x if either proves flaky.
 #
 # plummer/randomize_pmgrid is the one pair whose flag-OFF drift came out BELOW the randomized
 # value (that run drew a low value; the same config in hernquist drifted 30x more), so it
@@ -64,7 +71,8 @@ RANDOMIZED_DRIFT_CEILING = {
     ("plummer", "randomize_pmgrid"): 5.0e-3,
     ("hernquist", "randomize"): 1.0e-3,
     ("hernquist", "randomize_pmgrid"): 4.0e-3,
-    ("evrard", "randomize"): 6.0e-2,
+    ("evrard", "randomize"): 1.7e-5,
+    ("shu1977", "randomize"): 1.1e-3,
 }
 # for any (test, variant) not tabulated -- loose, since there is no measurement to justify more
 RANDOMIZED_DRIFT_CEILING_DEFAULT = 5.0e-2
