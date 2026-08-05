@@ -78,9 +78,6 @@ void compute_hydro_densities_and_forces(void)
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
-#ifdef TURB_DIFF_DYNAMIC
-        dynamic_diff_vel_calc(); /* This must be called between density and gradient calculations */
-#endif
 #if defined(RADTRANSFER) && defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
         rt_source_injection(); /* doing source injection here (just before interpolation and hydro gradients) is slightly more accurate for this setup, but not possible in total generality owing to dependence of some injection modules on quantities calculated below */
 #endif
@@ -122,6 +119,13 @@ void compute_hydro_densities_and_forces(void)
          * post-feedback state — the same state the gradients below consume,
          * which is the self-consistent choice. */
         cellcorrections_calc(); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+        /* Between density and gradients, and below feedback: the diffusion
+         * coefficient this filter estimates is applied to the post-feedback
+         * state, so measuring it on the post-feedback velocity field is the
+         * self-consistent choice. */
+        dynamic_diff_vel_calc();
 #endif
 
         double t_bench_grad_start = my_second(); double child0_grad = CPU_ChildCharged;

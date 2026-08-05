@@ -35,10 +35,16 @@
  * ========================================================================== */
 
 /* is_active — legacy dynamic_diff_vel_calc active filter (gas, live, massive). */
+/* is_active — gas + massive. This is character-identical to the predicate the
+ * hydro corridor builds its shared row list from, which is what lets this loop
+ * consume that list directly. The legacy TimeBin >= 0 test is gone: TimeBin is
+ * driven negative only as a transient done-marker inside the density kernel
+ * radius iteration, and ActiveParticleList is walked out of the per-bin lists,
+ * so an active particle always carries a non-negative bin. Keeping the test
+ * would only make this predicate disagree with the corridor's. */
 bool DiffFilterSpec::is_active(int i)
 {
     if (P[i].Type != 0)   return false;
-    if (P[i].TimeBin < 0) return false;
     if (P[i].Mass <= 0)   return false;
     return true;
 }
@@ -188,24 +194,69 @@ double DynDiffSpec::symmetric_neighbor_radius_scale()
  * Toplevels.
  * ========================================================================== */
 
+/* Runs inside the corridor span, between cellcorrections and the gradients, so
+ * it consumes the corridor's shared topology on the same ownership contract as
+ * the other consumers. Rows are exact: is_active is the corridor's own row
+ * predicate. Reach matches DynDiff's — TurbDynamicDiffFac * h on both sides,
+ * with the pair kernel's distance test discarding anything the corridor is
+ * over-inclusive about when the factor is below one.
+ *
+ * Ghost values: the only routine between the corridor's import and this loop is
+ * cellcorrections, and it rewrites owner-side Density, which this pair kernel
+ * reads on neighbours. So under volume corrections the ghost copies must be
+ * resynced first; with volume corrections compiled out nothing has dirtied them
+ * and the corridor's import is still current. VelPred, the other field of
+ * interest here, is written by feedback above the corridor and so is already
+ * current in that import. */
 void difffilter_vel_calc_gpu_toplevel(void)
 {
-    int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
-    if (!nlr_build_active_list(DiffFilterSpec::is_active,
-                               &active_list, &num_active, &num_global_active,
-                               "difffilter_active_list")) {
-        return;   /* no active gas anywhere this step */
+#ifdef HYDRO_VOLUME_CORRECTIONS
+    if (gizmo_hydro_corridor_external_csr() != nullptr) {
+        gizmo_hydro_corridor_refresh_ghost_values("pre_diff_vel");
     }
+#endif
+    const nlr_external_csr       *corridor_csr  = gizmo_hydro_corridor_external_csr();
+    const GizmoHydroCorridorMode  corridor_mode = gizmo_hydro_corridor_get_mode();
+
+    int *active_list_local = nullptr;   /* allocated by nlr_build_active_list in the fallback only */
+    int  num_active = 0, num_global_active = 0;
 
     DiffFilterSpec::Aux aux;   /* unused — DiffFilter scatters straight to CellP */
     neighbor_loop_args args = nlr_default_args();
-    args.active_list = active_list;
-    args.num_active  = num_active;
-    args.aux         = &aux;
+    args.aux = &aux;
+
+    if (corridor_csr != nullptr) {
+        /* Mode A external-CSR path. The row list belongs to the corridor and
+         * outlives this call; do NOT free it here. */
+        args.active_list       = corridor_csr->active_indices;
+        args.num_active        = corridor_csr->num_active;
+        args.external_csr      = corridor_csr;
+        args.dispatch_override = NlrForceMode::A;
+    } else {
+        /* Mode B (request-driven, no corridor CSR): build the list here. */
+        if (!nlr_build_active_list(DiffFilterSpec::is_active,
+                                   &active_list_local, &num_active, &num_global_active,
+                                   "difffilter_active_list")) {
+            return;   /* no active gas anywhere this step */
+        }
+        /* Mode A always publishes a corridor view when there is active gas, so
+         * reaching here in Mode A is a corridor sequencing bug — fail loudly
+         * rather than quietly rebuilding a second topology. */
+        if (corridor_mode == GizmoHydroCorridorMode::MODE_A) {
+            printf("FATAL: difffilter_vel_calc_gpu_toplevel in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
+            fflush(stdout);
+            endrun(7318);
+        }
+        args.active_list = active_list_local;
+        args.num_active  = num_active;
+        if (corridor_mode == GizmoHydroCorridorMode::MODE_B) {
+            args.dispatch_override = NlrForceMode::B;
+        }
+    }
+
     run_neighbor_loop<DiffFilterSpec>(args);
 
-    nlr_free_active_list(active_list);
+    if (active_list_local) nlr_free_active_list(active_list_local);
 }
 
 /* This loop runs between the gradient and hydro-force consumers, so the
