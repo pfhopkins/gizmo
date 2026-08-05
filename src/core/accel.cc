@@ -78,20 +78,6 @@ void compute_hydro_densities_and_forces(void)
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
-        /* Hydro corridor begin: in Mode A (any rank count) imports the gas
-         * ghost pool and builds the shared active list + symmetric gas CSR
-         * consumed by cellcorrections + gradients + hydro_force via
-         * gizmo_hydro_corridor_external_csr(). In Mode B builds only the
-         * shared active list (request-driven, no CSR). See hydro_corridor.h
-         * for the ownership contract and mid-span refresh points. */
-        gizmo_hydro_corridor_begin();
-
-#ifdef HYDRO_VOLUME_CORRECTIONS
-        cellcorrections_calc(); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-        dynamic_diff_vel_calc(); /* This must be called between density and gradient calculations */
-#endif
 #if defined(RADTRANSFER) && defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
         rt_source_injection(); /* doing source injection here (just before interpolation and hydro gradients) is slightly more accurate for this setup, but not possible in total generality owing to dependence of some injection modules on quantities calculated below */
 #endif
@@ -100,6 +86,46 @@ void compute_hydro_densities_and_forces(void)
 #endif
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
         compute_stellar_feedback();
+#endif
+
+        /* Hydro corridor begin: in Mode A (any rank count) imports the gas
+         * ghost pool and builds the shared active list + symmetric gas CSR
+         * consumed by cellcorrections + gradients + hydro_force via
+         * gizmo_hydro_corridor_external_csr(). In Mode B builds only the
+         * shared active list (request-driven, no CSR). See hydro_corridor.h
+         * for the ownership contract and mid-span refresh points.
+         *
+         * It sits below the injection/feedback block above because each of
+         * those routines runs its own neighbor loop, and a neighbor loop's
+         * ghost import first tears down the single global ghost pool. With
+         * them above the corridor they can no longer tear its pool, so the
+         * refresh before gradients stays on the in-place path instead of
+         * re-importing and rebuilding the CSR for a neighbor list that never
+         * changed. This does NOT make the span tear-free: a loop inside the
+         * span that still runs its own ghost import tears it just the same.
+         * Under TURB_DIFF_DYNAMIC, dynamic_diff_calc between gradients and
+         * hydro_force does exactly that and costs one corridor re-import per
+         * step. Consuming this CSR, the way cellcorrections and gradients do,
+         * is what removes such a tear. */
+        gizmo_hydro_corridor_begin();
+
+#ifdef HYDRO_VOLUME_CORRECTIONS
+        /* Running below feedback is NOT neutral for this routine, by intent.
+         * Its volume correction reads only positions, kernel radii and the
+         * zeroth-order volumes, none of which feedback touches, so that part
+         * is unchanged. But its closing Density = Mass/Volume_1 and pressure
+         * update read mass and internal energy, which feedback DOES write, so
+         * in a feedback build those primitives are now derived from the
+         * post-feedback state — the same state the gradients below consume,
+         * which is the self-consistent choice. */
+        cellcorrections_calc(); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+        /* Between density and gradients, and below feedback: the diffusion
+         * coefficient this filter estimates is applied to the post-feedback
+         * state, so measuring it on the post-feedback velocity field is the
+         * self-consistent choice. */
+        dynamic_diff_vel_calc();
 #endif
 
         double t_bench_grad_start = my_second(); double child0_grad = CPU_ChildCharged;
