@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
 
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot, assert_energy_conserved
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,)) #default_mpi_ranks(),))
@@ -59,3 +59,6 @@ def test_interactblast(num_mpi_ranks, num_omp_threads):
 
     assert L1_rho < 0.1, f"Density L1 error {L1_rho:.4f} exceeds tolerance"
     assert L1_vel < 0.15, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance"
+
+    # Interacting blast waves: adiabatic, no gravity, no MHD, no source after t=0.
+    assert_energy_conserved(test_name, tol=0.1)

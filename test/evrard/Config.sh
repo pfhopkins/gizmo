@@ -3,4 +3,4 @@ EOS_GAMMA=(5.0/3.0)
 ADAPTIVE_GRAVSOFT_FORGAS
 OUTPUT_IN_DOUBLEPRECISION
 DEVELOPER_MODE
-OUTPUT_POTENTIAL
+OUTPUT_POTENTIAL   # needed for the gravitational term in the energy-conservation check

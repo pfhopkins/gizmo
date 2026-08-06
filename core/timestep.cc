@@ -1261,6 +1261,20 @@ int get_timestep_bin(integertime ti_step)
 
 
 #ifdef WAKEUP
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/*! Tallies the residual left by the wakeup kick-reversal below, which un-does part of an
+    already-applied kick via do_the_kick with reversed bounds. That cancels only if HydroAccel and
+    DtInternalEnergy are unchanged since the original kick, which they are not. Plain increments:
+    process_wake_ups is serial, and the only omp parallel region in this file is in the timestep
+    computation. */
+static double WakeRev_dE = 0, WakeRev_dE_active = 0;
+static long WakeRev_nrev = 0, WakeRev_nmoved = 0, WakeRev_calls = 0, WakeRev_nnoop = 0, WakeRev_nactive = 0;
+/* processed wakeups by trigger and demotion depth. wakeup>0 hydro (set in hydro_evaluate.h when
+   vsig > WAKEUP*MaxSignalVel), -1 merge, -2 split, -3 newly-spawned cell. Measures as ~all hydro. */
+static long WakeSrc_n[4] = {0,0,0,0}; static double WakeSrc_dE[4] = {0,0,0,0};
+static long WakeDepth_sum = 0, WakeDepth_max = 0;
+#endif
+
 void process_wake_ups(void)
 {
     int i, n, max_time_bin_active, bin, binold, prev, next; long long ntot;
@@ -1311,6 +1325,9 @@ void process_wake_ups(void)
 	    if(P[i].Mass <= 0) {continue;}
 	    binold = P[i].TimeBin;
 	    if(TimeBinActive[binold]) {continue;}
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+	    int eb_src = (P[i].wakeup > 0) ? 0 : ((P[i].wakeup == -1) ? 1 : ((P[i].wakeup == -2) ? 2 : 3));
+#endif
 
 	    if(P[i].wakeup > 0) {
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
@@ -1362,13 +1379,46 @@ void process_wake_ups(void)
 
 		/* reverse part of the last second-half kick this particle received
 		   (to correct it back to its new active time) */
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+		WakeRev_nmoved++;
+#endif
 		if(tend < tstart)
 		{
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+		    double eb_e0 = P[i].Mass * (CellP[i].InternalEnergy + 0.5*P[i].Vel.norm_sq()*All.cf_a2inv);
+		    int eb_will_kick = TimeBinActive[P[i].TimeBin]; /* the gate inside do_the_kick's normal loop */
+#endif
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		    /* Do NOT reverse the kick: re-deriving the increment with reversed bounds does not cancel
+		       the original and injects energy. Saitoh & Makino (2009) eq (3) exists to detect exactly
+		       this case, and sets the new time consistent with the system time instead -- done below. */
+		    set_predicted_quantities_for_extra_physics(i);
+#else
 		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
 		    set_predicted_quantities_for_extra_physics(i);
+#endif
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+		    double eb_d = P[i].Mass * (CellP[i].InternalEnergy + 0.5*P[i].Vel.norm_sq()*All.cf_a2inv) - eb_e0;
+		    WakeRev_dE += eb_d; WakeRev_nrev++;
+		    if(eb_will_kick) {WakeRev_nactive++; WakeRev_dE_active += eb_d;} else {WakeRev_nnoop++;}
+		    WakeSrc_n[eb_src]++; WakeSrc_dE[eb_src] += eb_d;
+		    {long eb_depth = (long)binold - (long)bin; WakeDepth_sum += eb_depth; if(eb_depth > WakeDepth_max) {WakeDepth_max = eb_depth;}}
+#endif
 		}
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		/* End the step at the current system time, so the interval the applied kick already covered is
+		   not integrated twice and no reversal is needed. dt_step stays authoritative (integertime_step()
+		   returns it under WAKEUP) but is no longer a power-of-two bin length, so it deliberately
+		   disagrees with TimeBin: anything reading a step off TimeBin over-reports it, cf. density.cc. */
+		{
+		    integertime dt_trunc = All.Ti_Current - P[i].Ti_current;
+		    if(dt_trunc > 0) {P[i].Ti_begstep = P[i].Ti_current; P[i].dt_step = dt_trunc;}
+		    else {P[i].Ti_begstep = All.Ti_Current; P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);}
+		}
+#else
 		P[i].Ti_begstep = All.Ti_Current;
 		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+#endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 	    }
 	}
@@ -1376,6 +1426,28 @@ void process_wake_ups(void)
 
     sumup_large_ints(1, &n, &ntot);
     if(ThisTask == 0) {if(ntot > 0) {printf("%d%09d particles activated (in wakeup check).\n", (int) (ntot / 1000000000), (int) (ntot % 1000000000));}}
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+    {   /* unconditional and collective: every rank reaches process_wake_ups every step */
+        double eb_loc[2] = {WakeRev_dE, WakeRev_dE_active}, eb_glob[2];
+        long eb_nl[4] = {WakeRev_nrev, WakeRev_nmoved, WakeRev_nactive, WakeRev_nnoop}, eb_ng[4];
+        MPI_Allreduce(eb_loc, eb_glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(eb_nl, eb_ng, 4, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long eb_sg[4], eb_dl[2] = {WakeDepth_sum, WakeDepth_max}, eb_dg[2]; double eb_sd[4];
+        MPI_Allreduce(WakeSrc_n, eb_sg, 4, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(WakeSrc_dE, eb_sd, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(eb_dl, eb_dg, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&eb_dl[1], &eb_dg[1], 1, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(((++WakeRev_calls % 200) == 0) && ThisTask == 0 && eb_ng[1] > 0)
+        {
+            printf("Wakeup reversal budget [cumulative]: dE=%.6e (of which executed=%.6e) n_moved=%ld n_executed=%ld n_noop=%ld noop_frac=%.3f\n",
+                   eb_glob[0], eb_glob[1], eb_ng[1], eb_ng[2], eb_ng[3],
+                   (eb_ng[0] > 0) ? (double)eb_ng[3]/(double)eb_ng[0] : 0.0);
+            printf("Wakeup sources [cumulative]: hydro n=%ld dE=%.4e | merge n=%ld dE=%.4e | split n=%ld dE=%.4e | spawn n=%ld dE=%.4e | mean_depth=%.2f max_depth=%ld\n",
+                   eb_sg[0], eb_sd[0], eb_sg[1], eb_sd[1], eb_sg[2], eb_sd[2], eb_sg[3], eb_sd[3],
+                   (eb_ng[0] > 0) ? (double)eb_dg[0]/(double)eb_ng[0] : 0.0, eb_dg[1]); fflush(stdout);
+        }
+    }
+#endif
     NeedToWakeupParticles = 0;
     NeedToWakeupParticles_local = 0;
 }

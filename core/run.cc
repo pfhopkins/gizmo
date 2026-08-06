@@ -9,6 +9,33 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/*! Total gas energy, reported ONLY at full synchronization (HighestActiveTimeBin ==
+    HighestOccupiedTimeBin) -- the only point where Vel and InternalEnergy share a clock and the sum is
+    conserved. Snapshots never satisfy this, since io.cc writes Velocities from Vel (kick-time) but
+    InternalEnergy from InternalEnergyPred (drift-time). Compare successive lines against energy injected. */
+void energy_budget_sync_report(void)
+{
+    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
+    double loc[3] = {0,0,0}, glob[3]; int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type == 0 && P[i].Mass > 0)
+        {
+            loc[0] += P[i].Mass * CellP[i].InternalEnergy;
+            loc[1] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
+            loc[2] += P[i].Mass;
+        }
+    }
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0)
+    {
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+    }
+}
+#endif
+
 
 /*! \file run.c
  *  \brief  iterates over timesteps, main loop
@@ -140,6 +167,7 @@ void run(void)
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+        EB_SYNC_REPORT();
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();

@@ -414,6 +414,7 @@ double INLINE_FUNC hubble_function_external(double a);
 void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
 void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
+void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz);
 void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
 double get_spawned_cell_launch_speed(int i, struct particle_data *pp);
 #ifdef MAGNETIC
@@ -1080,4 +1081,13 @@ double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
 void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
 double eccentric_anomaly(double mean_anomaly, double ecc);
+#endif
+
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. The
+   per-phase breakdown this once accompanied lives on branch diag/energy-budget-phases. */
+void energy_budget_sync_report(void);
+#define EB_SYNC_REPORT() energy_budget_sync_report()
+#else
+#define EB_SYNC_REPORT()
 #endif

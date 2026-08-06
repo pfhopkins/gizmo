@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 import h5py
 
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot, variant_output_dir, assert_energy_conserved
 
 
 def plot_noh_density_slice(coords, rho, output_dir="."):
@@ -33,6 +33,9 @@ def plot_noh_density_slice(coords, rho, output_dir="."):
     plt.close(fig)
 
 
+# Noh is the most timestep-contrast-sensitive test available: cold, zero-pressure gas converging at
+# uniform velocity gives a formally infinite Mach number, so the pre/post-shock dt ratio is extreme --
+# the sharpest check on changes to the WAKEUP limiter (Saitoh & Makino 2009). Exact post-shock rho = 64.
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_noh(num_mpi_ranks, num_omp_threads):
@@ -82,3 +85,7 @@ def test_noh(num_mpi_ranks, num_omp_threads):
         assert abs(median_post_shock_rho - 64.0) / 64.0 < 0.15, (
             f"Post-shock density {median_post_shock_rho:.1f} deviates >15% from analytic value 64"
         )
+
+    # Noh converts uniform inflow kinetic energy into thermal with no source term, so the total must be
+    # constant. Kept outside the post-shock-particle-count guard above so it runs unconditionally.
+    assert_energy_conserved(test_name, tol=0.1)

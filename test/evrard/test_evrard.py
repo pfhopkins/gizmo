@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 import h5py
 
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot, default_omp_threads, variant_output_dir
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot, default_omp_threads, variant_output_dir, assert_energy_conserved
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from momentum_drift_common import (  # noqa: E402
@@ -150,3 +150,9 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     if np.any(good):
         L1_rho = np.nanmean(np.abs(np.log10(rho_binned[good]) - np.log10(rho_exact_interp[good])))
         assert L1_rho < 0.3, f"Log density profile L1 error {L1_rho:.4f} exceeds tolerance"
+
+    # Energy conservation. Evrard is self-gravitating, so the budget needs the gravitational term
+    # (0.5*sum(m*phi)) on top of thermal+kinetic -- hence OUTPUT_POTENTIAL in Config.sh. CAVEAT: the least
+    # certain check here, since ADAPTIVE_GRAVSOFT_FORGAS evolves the softening and the potential is then
+    # not a fixed functional of the configuration. A baseline failure is the setup, not a regression.
+    assert_energy_conserved(test_name, extra_config_flags, tol=0.1, include_potential=True)
