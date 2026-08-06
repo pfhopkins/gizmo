@@ -1619,6 +1619,45 @@ double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particl
 }
 
 
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+/*! Planck-mean dust absorption opacity in code units for radiation from a source at T_eff. Taken from the
+    same accessor RT_INFRARED uses -- rt_kappa_adaptive_IR_band() -> dust_planck_mean_opacity(), the
+    Semenov et al. 2003 porous-shell Planck means -- so this tracks the IR module rather than being an
+    independent dust model, and returns code units directly.
+
+    i<0 is deliberate: there is no gas cell at a source, and under the uniform-dust assumption the
+    metallicity and dust-to-metals scalings are both unity (return_dust_to_metals_ratio_vs_solar() returns
+    1 for i<0, the METALS block is guarded on i>=0, and dust_or_gas_opacity_only_flag=1 skips the gas-phase
+    branch, which is the only part that dereferences cell[i]).
+
+    T_dust selects the grain composition -- i.e. which species have sublimated -- so it belongs to the
+    absorbing dust, not to the source. We use the same cold fiducial the ambient IR opacity uses in
+    cooling.cc. Passing T_eff here instead would be both wrong and catastrophic: above the 1500 K table
+    limit dust_planck_mean_opacity() returns MIN_REAL_NUMBER on a config like this one (no
+    RT_OPACITY_FROM_EXPLICIT_GRAINS / GALSF_ISMDUSTCHEM_MODEL / RT_INFRARED, and SINGLE_STAR_SINK_DYNAMICS
+    is on), which would silently zero the heating entirely. */
+#define SINK_DUST_HEATING_TDUST_FIDUCIAL (20.) /* K; grain composition of the absorbing dust */
+double kappa_planck_mean_dust(double T_eff)
+{
+    if(!(T_eff > 0)) {return 0;}
+    /* mode=-1: absorption opacity only, evaluated at the radiation temperature. flag=1: dust only. */
+    return rt_kappa_adaptive_IR_band(-1, SINK_DUST_HEATING_TDUST_FIDUCIAL, T_eff, -1, 1, P, CellP);
+}
+
+double sink_dust_heating_lum(struct particle_data *pa, double lum)
+{
+    if(!(lum > 0)) {return 0;}
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2)
+    double r_sol = pa->ProtoStellarRadius_inSolar, l_sol = pa->StarLuminosity_Solar;
+#else
+    double r_sol = pow(pa->Mass*UNIT_MASS_IN_SOLAR, 0.738), l_sol = lum*UNIT_LUM_IN_SOLAR;
+#endif
+    if(!(l_sol > 0) || !(r_sol > 0)) {return 0;}
+    return kappa_planck_mean_dust(5780. * pow(l_sol/(r_sol*r_sol), 0.25)) * lum;
+}
+#endif
+
+
 
 
 #if defined(CHIMES_STELLAR_FLUXES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))

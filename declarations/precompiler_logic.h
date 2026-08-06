@@ -506,6 +506,16 @@
 #define RT_DISABLE_RAD_PRESSURE
 #endif
 
+#ifdef SINK_DUST_HEATING_PLANCKMEAN /* dust heating rate summed in the gravity tree with the per-source Planck-mean opacity. needs the
+                                      luminosity tree, and rides on the per-sink node plumbing SINK_PHOTONMOMENTUM provides */
+#if !defined(SINK_PHOTONMOMENTUM)
+#define SINK_PHOTONMOMENTUM
+#endif
+#if !defined(RT_USE_GRAVTREE)
+#define RT_USE_GRAVTREE
+#endif
+#endif
+
 #if (defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE)) && !defined(GALSF_FB_MECHANICAL)
 #define GALSF_FB_MECHANICAL // we will use the mechanical wind module for low mass loss rate stars (spawning leads to issues). enable regardless if either the winds or sne module is active
 #define GALSF_USE_SNE_ONELOOP_SCHEME
@@ -871,6 +881,10 @@
 
 #ifdef RT_CHEM_PHOTOION
 #define RT_BAND_IS_IONIZING(k) ((k==RT_FREQ_BIN_H0) || (k==RT_FREQ_BIN_He0) || (k==RT_FREQ_BIN_He1) || (k==RT_FREQ_BIN_He2))
+#else
+#define RT_BAND_IS_IONIZING(k) (0) /* no photoionization bands are evolved, so no band is ionizing. needed
+                                      because callers are gated on RADTRANSFER||RT_USE_GRAVTREE_SAVE_RAD_ENERGY,
+                                      which the LEBRON path satisfies without RT_CHEM_PHOTOION */
 #endif
 
 #ifndef GALSF_FB_FIRE_RT_LONGRANGE

@@ -2187,6 +2187,13 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 	    absorption_rate += fac_abs * rt_kappa(i,k, pp, cell) * cell[i].Rad_E_gamma_Pred[k] * vol_inv;
 	}
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+	    /* protostellar dust heating summed directly in the gravity tree with the per-source Planck-mean opacity.
+	       DustHeatingRate is already sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) per unit gas mass, so multiplying by
+	       rho gives the volumetric absorption rate that rt_eqm_dust_temp() expects. No reduced-speed-of-light
+	       factor: this is a real energy deposition rate rather than a photon energy density. */
+	    absorption_rate += cell[i].Density * All.cf_a3inv * cell[i].DustHeatingRate;
+#endif
 	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
 #if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
 	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp); // column density in code units

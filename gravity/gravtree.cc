@@ -439,6 +439,9 @@ void gravity_tree(void)
 #ifdef SINK_COMPTON_HEATING
                 if(P[place].Type==0) CellP[place].Rad_Flux_AGN += GravDataOut[j].Rad_Flux_AGN;
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                if(P[place].Type==0) {CellP[place].DustHeatingRate += GravDataOut[j].DustHeatingRate;}
+#endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
                 if(P[place].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[place].Rad_E_gamma[kf] += GravDataOut[j].Rad_E_gamma[kf];}}
 #endif

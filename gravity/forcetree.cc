@@ -534,6 +534,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         MyFloat sink_lum = 0; Vec3<MyFloat> sink_lum_grad = {};
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        MyFloat sink_lum_dustheat = 0;
+#endif
 #endif
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass=0; Vec3<MyFloat> sink_pos_times_mass = {};   /* position of each sink particle in the node times its mass; divide by total mass at the end to get COM */
@@ -613,6 +616,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef SINK_PHOTONMOMENTUM
                         sink_lum += Nodes[p].sink_lum;
                         sink_lum_grad += Nodes[p].sink_lum * Nodes[p].sink_lum_grad;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                        sink_lum_dustheat += Nodes[p].sink_lum_dustheat;
+#endif
 #endif
 #ifdef SINK_CALC_DISTANCES
                         sink_mass += Nodes[p].sink_mass;
@@ -699,6 +705,9 @@ void force_update_node_recursive(int no, int sib, int father)
                         {
                             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p);
                             sink_lum += BHLum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                            sink_lum_dustheat += sink_dust_heating_lum(pa, BHLum);
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
                             sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
 #else
@@ -833,6 +842,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         Nodes[no].sink_lum = sink_lum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        Nodes[no].sink_lum_dustheat = sink_lum_dustheat;
+#endif
         Nodes[no].sink_lum_grad = sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
@@ -933,6 +945,9 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         MyFloat sink_lum; Vec3<MyFloat> sink_lum_grad;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        MyFloat sink_lum_dustheat;
+#endif
 #endif
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
@@ -1004,6 +1019,9 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
             DomainMoment[i].sink_lum = Nodes[no].sink_lum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+            DomainMoment[i].sink_lum_dustheat = Nodes[no].sink_lum_dustheat;
+#endif
             DomainMoment[i].sink_lum_grad = Nodes[no].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
@@ -1088,6 +1106,9 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                     Nodes[no].sink_lum = DomainMoment[i].sink_lum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                    Nodes[no].sink_lum_dustheat = DomainMoment[i].sink_lum_dustheat;
+#endif
                     Nodes[no].sink_lum_grad = DomainMoment[i].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
@@ -1155,6 +1176,9 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat sink_lum = 0; Vec3<MyFloat> sink_lum_grad = {};
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    MyFloat sink_lum_dustheat = 0;
+#endif
 #endif
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
@@ -1219,6 +1243,9 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_PHOTONMOMENTUM
             sink_lum += Nodes[p].sink_lum;
             sink_lum_grad += Nodes[p].sink_lum * Nodes[p].sink_lum_grad;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+            sink_lum_dustheat += Nodes[p].sink_lum_dustheat;
+#endif
 #endif
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
@@ -1329,6 +1356,9 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     Nodes[no].sink_lum = sink_lum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    Nodes[no].sink_lum_dustheat = sink_lum_dustheat;
+#endif
     Nodes[no].sink_lum_grad = sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
@@ -1530,6 +1560,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    double mass_sinkdustheat=0, incident_dustheat=0;
+#endif
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     double incident_flux_uv=0, incident_flux_euv=0;
@@ -1798,6 +1831,15 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         if(P[no].Type == 5)
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                            {double bhdust_t = sink_dust_heating_lum(&P[no], bhlum_t);
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+                            mass_sinkdustheat = sink_fb_angleweight(bhdust_t, P[no].Sink_Specific_AngMom, dr[0],dr[1],dr[2]);
+#else
+                            mass_sinkdustheat = sink_fb_angleweight(bhdust_t, P[no].GradRho, dr[0],dr[1],dr[2]);
+#endif
+                            }
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
                             mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, dr[0],dr[1],dr[2]);
 #else
@@ -2016,6 +2058,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                     mass_sinklumwt_forradfb = sink_fb_angleweight(nop->sink_lum, nop->sink_lum_grad, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                    mass_sinkdustheat = sink_fb_angleweight(nop->sink_lum_dustheat, nop->sink_lum_grad, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
+#endif
 #endif
                 }
 #endif // RT_USE_GRAVTREE
@@ -2382,7 +2427,15 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     // don't multiply by shortrange_table since that is to prevent 2x-counting by PMgrid (which never happens here) //
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                    /* the dust heating rate itself. the source SED enters through kappa_P evaluated at the source,
+                       which is why the weight had to be attached before the node aggregation. */
+                    incident_dustheat += fac_intensity * mass_sinkdustheat;
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) && !defined(SINK_DUST_HEATING_PLANCKMEAN)
+                    /* NB this puts the entire bolometric sink luminosity into the far-IR band, i.e. assumes an
+                       already-reprocessed cold SED. Superseded by the block above, and disabled there because
+                       keeping both would count the luminosity twice. */
                     Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * mass_sinklumwt_forradfb;
 #endif
 #ifdef SINK_COMPTON_HEATING
@@ -2513,6 +2566,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_COMPTON_HEATING
         if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_AGN = incident_flux_agn;}
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        if(valid_gas_particle_for_rt) {CellP[target].DustHeatingRate = incident_dustheat;}
+#endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
         if(P[target].Type==0) {CellP[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;}
 #endif
@@ -2587,6 +2643,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_COMPTON_HEATING
         GravDataResult[target].Rad_Flux_AGN = incident_flux_agn;
+#endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        GravDataResult[target].DustHeatingRate = incident_dustheat;
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
         GravDataResult[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;
@@ -3842,6 +3901,9 @@ void force_refresh_node_moments(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         Nodes[no].sink_lum = 0;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        Nodes[no].sink_lum_dustheat = 0;
+#endif
         Nodes[no].sink_lum_grad = {};
 #endif
 #ifdef SINK_CALC_DISTANCES
@@ -3932,6 +3994,9 @@ void force_refresh_node_moments(void)
         if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0) {
             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
             Nodes[no].sink_lum += BHLum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+            Nodes[no].sink_lum_dustheat += sink_dust_heating_lum(pa, BHLum);
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
             Nodes[no].sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
 #else
@@ -3999,6 +4064,9 @@ void force_refresh_node_moments(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         Nodes[father].sink_lum += Nodes[no].sink_lum;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+        Nodes[father].sink_lum_dustheat += Nodes[no].sink_lum_dustheat;
+#endif
         Nodes[father].sink_lum_grad += Nodes[no].sink_lum_grad; /* still lum-weighted sum */
 #endif
 #ifdef SINK_CALC_DISTANCES

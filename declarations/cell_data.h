@@ -207,6 +207,12 @@ extern struct gas_cell_data
 #ifdef SINK_COMPTON_HEATING
     MyFloat Rad_Flux_AGN;             /*!< local AGN flux */
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    MyFloat DustHeatingRate;          /*!< sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) summed in the gravity tree:
+                                           radiative dust heating rate per unit gas mass, code units. this is a
+                                           real energy deposition rate, not a photon energy density, so no
+                                           reduced-speed-of-light rescaling applies to it. */
+#endif
     
     
 #if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)

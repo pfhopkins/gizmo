@@ -1138,6 +1138,9 @@ extern struct gravdata_out
 #ifdef SINK_COMPTON_HEATING
     MyDouble Rad_Flux_AGN;
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    MyDouble DustHeatingRate;
+#endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     MyDouble MencInRcrit;
 #endif
@@ -1509,6 +1512,11 @@ extern ALIGN(32) struct NODE
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat sink_lum;		    /*!< luminosity of BHs in the node */
     Vec3<MyFloat> sink_lum_grad;	/*!< gradient vector for gas around sink (for angular dependence) */
+#endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    MyFloat sink_lum_dustheat;      /*!< sum over sinks in the node of kappa_P(T_eff)*L_bol. the opacity must be
+                                         applied per-source, before aggregation, since sources sharing a node can
+                                         have different T_eff */
 #endif
     
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
