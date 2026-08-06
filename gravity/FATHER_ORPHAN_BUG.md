@@ -114,10 +114,15 @@ jets + radiation + winds + SNe), 48 ranks x 2 threads, exclusive genoa node, fix
 budget per arm, arms alternated with the order reversed in the second round. Both arms were
 bit-reproducible across rounds, so run-to-run variance is negligible:
 
-| build | sync-points (r1, r2) | sim time reached |
-|---|---|---|
-| `-O3 -ffast-math` | 102, 102 | 0.0153149 |
-| `-O3` | 85, 85 | 0.0127625 |
+| build | sync-points | sim time reached | vs plain `-O3` |
+|---|---|---|---|
+| `-O3` | 85, 85 | 0.0127625 | -- |
+| `-O3 -ffast-math -fno-unsafe-math-optimizations` | 92, 92 | 0.0138135 | +8.2% |
+| `-O3 -ffast-math` | 102, 102, 102 | 0.0153149 | +20.0% |
+
+Every arm reproduced bit-identically, including `-ffast-math` across two different nodes (a same-node
+control was run alongside the third arm precisely to check that), so run-to-run and node-to-node
+variance are both negligible.
 
 `-ffast-math` is **20.0% faster** (102/85 = 1.200; 0.0153149/0.0127625 = 1.2000 -- same timestep
 cadence, simply more steps). Per sync-point, by component:
@@ -132,8 +137,27 @@ cadence, simply more steps). Per sync-point, by component:
 | treewalk | 0.8% | 1.23x |
 
 The gain is concentrated in cooling/chemistry -- table lookups and transcendental rate arithmetic --
-not in the tree walk, which is under 1% of runtime in this configuration. So the flag stays, and the
-structural fix above is what makes that safe.
+not in the tree walk, which is under 1% of runtime in this configuration.
+
+### Cost of the flag-level mitigation
+
+`-fno-unsafe-math-optimizations` is the only flag setting that removes the divergence (see the
+bisection above), and it retains **41% of the speedup** -- 7 of the 17 sync-points of gain, i.e. +8.2%
+over baseline against the full +20.0%. Choosing it over plain `-ffast-math` therefore costs about
+**10% throughput** (102/92 = 1.109; per-step 5.370 vs 4.774 s, 1.125x).
+
+Since the structural fix already makes the mapping immune to the flag -- on both GCC and AOCC, with
+and without LTO -- paying 10% for redundant protection is not worthwhile, so **`-ffast-math` stays**.
+The number does matter for anyone running a GIZMO without the fix: for them
+`-ffast-math -fno-unsafe-math-optimizations` buys correctness at 10% rather than the 17% lost by
+dropping the flag entirely.
+
+Worth recording that instruction counts predicted this badly. `-fno-unsafe-math-optimizations`
+produces almost exactly the plain `-O3` division count (`vdivsd` 3014 vs 3060, against 1903 for
+`-ffast-math`), which suggested it would perform like plain `-O3`; it actually landed 41% of the way
+to `-ffast-math`. The retained gain evidently comes from umbrella components such as
+`-ffinite-math-only` and `-fno-math-errno`, which strip guard branches and error paths from hot loops
+without changing the arithmetic.
 
 The 10-minute budget includes initialisation (IC read, cooling tables, setup): GIZMO accounts 486.69 s
 of step loop for `fast` and 488.68 s for `nofast`, so ~112 s of the 600 s is startup in both. Because
