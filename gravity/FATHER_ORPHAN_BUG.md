@@ -20,10 +20,43 @@ unit**:
 | `domain.o` | `vfmadd132sd` -- `domain_double_to_int` is defined here, so it inlined and the whole expression fused to `fma(Pos-Corner, 1/DomainLen, 1.0)` |
 | `forcetree.o` | `vsubsd` / `vdivsd` / `vaddsd` -- only the declaration is visible, so it emitted a call and computed `(Pos-Corner)/DomainLen + 1.0` |
 
-`fma(a, 1/L, 1)` and `(a/L) + 1` round differently. `domain_double_to_int` then extracts the top
-`BITS_PER_DIMENSION` mantissa bits, so a 1-ULP difference is usually discarded -- but when it
-propagates a carry up into the bits that select the top-node leaf, the two sides disagree about
-which leaf, and therefore which task, the particle belongs to.
+These round differently. `domain_double_to_int` then extracts the top `BITS_PER_DIMENSION` mantissa
+bits, so a 1-ULP difference is usually discarded -- but when it propagates a carry up into the bits
+that select the top-node leaf, the two sides disagree about which leaf, and therefore which task,
+the particle belongs to.
+
+### Which optimization, exactly
+
+Bisected with two translation units that reproduce the asymmetry (conversion visible in one, only
+declared in the other) over 4e6 positions spanning the domain, same flags applied to both, counting
+keys that differ. Production compiler (GCC 13.3, `-march=znver4`):
+
+| flags | keys differing |
+|---|---|
+| `-O3` | 0 |
+| `-O3 -ffp-contract=fast` / `-ffp-contract=off` | 0 |
+| `-O3 -freciprocal-math` | 0 |
+| `-O3 -fassociative-math -fno-signed-zeros -fno-trapping-math` | 0 |
+| `-O3 -ffinite-math-only` | 0 |
+| `-O3 -freciprocal-math -fassociative-math -fno-signed-zeros -fno-trapping-math` | 0 |
+| **`-O3 -funsafe-math-optimizations`** | **206** |
+| `-O3 -ffast-math` | 206 |
+| `-O3 -funsafe-math-optimizations -fno-reciprocal-math` | 206 |
+| `-O3 -funsafe-math-optimizations -fno-associative-math` | 211 |
+| `-O3 -funsafe-math-optimizations -fno-reciprocal-math -fno-associative-math` | 211 |
+| `-O3 -ffast-math -ffp-contract=off` | 278 |
+| **`-O3 -ffast-math -fno-unsafe-math-optimizations`** | **0** |
+
+`-funsafe-math-optimizations` is necessary and sufficient, and it is **not reducible to its
+documented sub-options**: those combined give 0, while unsafe-math with them explicitly disabled
+still gives 211. GCC gates the relevant transformations on the internal
+`flag_unsafe_math_optimizations`, which passes test directly. So there is no finer-grained flag that
+keeps unsafe-math and avoids this; the only flag-level mitigation is `-fno-unsafe-math-optimizations`
+(which may be appended to `-ffast-math`, retaining the rest of the umbrella).
+
+Note that FMA contraction is *not* the cause, despite being the visible difference in the
+disassembly: `-ffp-contract=off` makes the disagreement **worse** (278), so contraction was partly
+masking it. Enabling contraction alone, without unsafe-math, produces no disagreement at all.
 
 Measured on `test/hernquist`, 48 ranks, 32768 particles, 8194 tree builds per run:
 
@@ -43,8 +76,13 @@ particles *at the end of the decomposition* versus 3-10 at the treebuild.
 
 **Fix:** `domain_peano_key()` in `domain.cc` is now the only place a position becomes a key, and all
 four sites call it. `__attribute__((noinline))` is required rather than cosmetic -- an inlinable
-definition can be contracted differently at each call site, which `-flto` (offered as `OPT_EXTRA`)
+definition can be optimised differently at each call site, which `-flto` (offered as `OPT_EXTRA`)
 would reintroduce.
+
+This is deliberately a structural fix rather than a flag change, so it holds regardless of build
+flags, compiler, or whether LTO is enabled. Dropping `-funsafe-math-optimizations` would also close
+this particular hole, but it would leave the underlying fragility -- four copies of one formula whose
+agreement is assumed -- in place for the next optimiser to find.
 
 **Verified:** 3 runs x 8194 builds, 0 foreign and 0 orphans, versus 3-10 and 1-4 before. The
 cross-TU divergence itself is *still measurable* in those runs (60-76 leaf differences between the
