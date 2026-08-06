@@ -2202,14 +2202,32 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 #ifdef METALS
 	Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];
 #endif
-	double kappa_opt = 180. * Zfac * UNIT_SURFDEN_IN_CGS;
-	double tau_opt = kappa_opt*column;
+	/* Multi-band treatment of the starlight (high-energy) component of the BACKGROUND ISRF -- distinct from
+	   the sink's own radiation above, which is handled with a single Planck-integrated opacity per source.
+	   The background starlight is not grey: a 5800 K blackbody puts
+	   ~10% of its energy above 3.44 eV, where the dust opacity is an order of magnitude above the optical
+	   value, so attenuating all of e_HiEgy with kappa_opt simultaneously under-extinguishes the UV at depth
+	   and under-counts its heating where the gas is thin. Split it into UV and optical, attenuate each with
+	   its own opacity times the same column-density estimator, and reprocess the extinguished part into the
+	   IR as before. */
+	double kappa_uv = 1800. * Zfac * UNIT_SURFDEN_IN_CGS, kappa_opt = 180. * Zfac * UNIT_SURFDEN_IN_CGS;
+	double tau_uv = kappa_uv*column, tau_opt = kappa_opt*column;
+	/* upper limit capped at x = h*nu/kT = 40: blackbody_lum_frac()'s large-x branch overflows beyond that */
+	double f_uv = blackbody_lum_frac(3.444, DMAX(3.444*1.001, 40.*8.617e-5*T_hiegy), T_hiegy);
+	double f_opt = DMAX(0., 1.-f_uv);
 	e_HiEgy += 7.8e-3 * pow(All.cf_atime,3.9)/(1.+pow(DMAX(-1.+1./All.cf_atime,0.001)/1.7,4.4)); // extragalactic UV/optical background
-	absorption_rate += fac_abs * kappa_opt * (e_HiEgy/UNIT_PRESSURE_IN_EV) * exp(DMAX(-tau_opt,-100));
-	absorption_rate += fac_abs * kappa_IR * ((-0.5*expm1(DMAX(-tau_opt,-100)) * e_HiEgy + e_IR)/UNIT_PRESSURE_IN_EV); // this assumes absorbed ONIR photons are reradiated into IR, factor of 0.5 assumes 1/2 of reradiated IR photons do not go deeper into the cloud
+	double e_uv = f_uv*e_HiEgy, e_opt = f_opt*e_HiEgy;
+	absorption_rate += fac_abs * (kappa_uv*e_uv*exp(DMAX(-tau_uv,-100)) + kappa_opt*e_opt*exp(DMAX(-tau_opt,-100))) / UNIT_PRESSURE_IN_EV;
+	double e_reproc = -0.5*(expm1(DMAX(-tau_uv,-100))*e_uv + expm1(DMAX(-tau_opt,-100))*e_opt); /* half the absorbed ONIR is re-radiated inward */
+	absorption_rate += fac_abs * kappa_IR * ((e_reproc + e_IR)/UNIT_PRESSURE_IN_EV);
 #endif
 	// OK now we have our dust absorption rate, let's call the solver
 	double Tdust = rt_eqm_dust_temp(i, T, absorption_rate, pp, cell);
+#if defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+	/* this branch returns early, so the assignment at the end of the routine is unreachable here;
+	   without this the field is never set on any SINGLE_STAR_SINK_DYNAMICS path. */
+	cell[i].Dust_Temperature = DMAX(DMIN(Tdust,2000.),1.);
+#endif
 	return Tdust;
 #endif // SINGLE_STAR_SINK_DYNAMICS
 

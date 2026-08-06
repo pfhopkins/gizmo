@@ -207,6 +207,12 @@ extern struct gas_cell_data
 #ifdef SINK_COMPTON_HEATING
     MyFloat Rad_Flux_AGN;             /*!< local AGN flux */
 #endif
+/* OUTPUT_DUST_TEMPERATURE is honoured in io.cc under a guard that does not match either existing
+   declaration of this field: one is nested inside GALSF_ISMDUSTCHEM_MODEL, the other inside
+   RADTRANSFER+RT_INFRARED. Declare it here for the configurations io.cc admits but neither covers. */
+#if (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2)) && !defined(GALSF_ISMDUSTCHEM_MODEL) && !(defined(RADTRANSFER) && defined(RT_INFRARED))
+    MyFloat Dust_Temperature;         /*!< equilibrium dust temperature from rt_eqm_dust_temp(); diagnostic */
+#endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
     MyFloat DustHeatingRate;          /*!< sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) summed in the gravity tree:
                                            radiative dust heating rate per unit gas mass, code units. this is a

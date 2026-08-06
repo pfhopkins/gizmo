@@ -469,6 +469,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_DUST_TEMP:
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+
+            /* fall through: written for diagnostics, not required on input */
+#endif
+
+        case IO_DUST_HEATING_RATE:
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
             for(n = 0; n < pc; n++) {CellP[offset + n].Dust_Temperature = *fp++;}
 #endif

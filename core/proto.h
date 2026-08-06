@@ -925,6 +925,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 void rt_source_injection(void);
 #endif
 MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
+/* also declared inside the RADTRANSFER block below; repeated here unguarded because callers such as
+   cooling.cc's dust-temperature routine are reachable without RADTRANSFER. */
+double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
 
 #ifdef TRANSPORT_SUBCYCLE
 void transport_subcycle_build_cache(void);

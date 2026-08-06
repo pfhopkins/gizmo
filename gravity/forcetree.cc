@@ -701,7 +701,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef SINK_PHOTONMOMENTUM
                     if(pa->Type == 5)
                     {
-                        if((pa->Mass>0)&&(pa->DensityAroundParticle>0)&&(pa->Sink_Mdot>0))
+                        if((pa->Mass>0)&&(pa->DensityAroundParticle>0)&&(sink_lum_bol(pa->Sink_Mdot,pa->Sink_Mass,p)>0)) /* gate on luminosity, not Mdot: an intrinsically luminous star radiates whether or not it is accreting at this instant */
                         {
                             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p);
                             sink_lum += BHLum;
@@ -1828,6 +1828,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                         mass_sinklumwt_forradfb=0;
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+                        mass_sinkdustheat=0; /* must be reset alongside the line above: otherwise the value from the last
+                                                sink is re-deposited on every subsequent non-sink particle interaction */
+#endif
                         if(P[no].Type == 5)
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
@@ -3991,7 +3995,7 @@ void force_refresh_node_moments(void)
         }}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0) {
+        if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && sink_lum_bol(pa->Sink_Mdot,pa->Sink_Mass,i) > 0) { /* see note at the other site: gate on luminosity, not Mdot */
             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
             Nodes[no].sink_lum += BHLum;
 #ifdef SINK_DUST_HEATING_PLANCKMEAN

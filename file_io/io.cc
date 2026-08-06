@@ -1554,6 +1554,17 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_DUST_HEATING_RATE:
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].DustHeatingRate;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_DUST_TEMP:
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             for(n = 0; n < pc; pindex++)
@@ -1912,6 +1923,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_HeII:
         case IO_RAD_TEMP:
         case IO_DUST_TEMP:
+        case IO_DUST_HEATING_RATE:
         case IO_UNSPMASS:
         case IO_CRATE:
         case IO_HRATE:
@@ -2245,6 +2257,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_HeII:
         case IO_RAD_TEMP:
         case IO_DUST_TEMP:
+        case IO_DUST_HEATING_RATE:
         case IO_UNSPMASS:
         case IO_CRATE:
         case IO_HRATE:
@@ -2527,6 +2540,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_RAD_OPACITY:
         case IO_RAD_TEMP:
         case IO_DUST_TEMP:
+        case IO_DUST_HEATING_RATE:
         case IO_RAD_FLUX:
         case IO_EDDINGTON_TENSOR:
         case IO_U:
@@ -2738,6 +2752,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_DUST_TEMP:
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
+            return 1;
+#endif
+            break;
+
+        case IO_DUST_HEATING_RATE:
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
             return 1;
 #endif
             break;
@@ -3674,6 +3694,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DUST_TEMP:
             strncpy(label, "DTMP", 4);
             break;
+        case IO_DUST_HEATING_RATE:
+            strncpy(label, "DHRT", 4);
+            break;
         case IO_RAD_FLUX:
             strncpy(label, "RADF", 4);
             break;
@@ -3810,6 +3833,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_DUST_TEMP:
             strcpy(buf, "Dust_Temperature");
+            break;
+        case IO_DUST_HEATING_RATE:
+            strcpy(buf, "DustHeatingRate");
             break;
         case IO_RAD_FLUX:
             strcpy(buf, "PhotonFluxDensity");
