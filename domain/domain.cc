@@ -2667,9 +2667,11 @@ void domain_sumCost(void)
  *  and when the difference carried into the high mantissa bits that select the top-node leaf the
  *  two sides disagreed about ownership.
  *
- *  noinline is required rather than cosmetic: an inlinable definition can be contracted differently
- *  at each call site, which -flto (offered as OPT_EXTRA) would reintroduce. Pass morton=NULL if the
- *  Morton key is not needed. */
+ *  noinline is belt-and-braces: it removes any possibility of the definition being optimised
+ *  differently per call site, which matters because the two callers sit in structurally different
+ *  loops. Measured on GCC 13.3 and AOCC 17, the shared definition alone gives bit-identical keys
+ *  with or without it, so this is insurance rather than a demonstrated requirement; it costs one
+ *  call per particle per treebuild. Pass morton=NULL if the Morton key is not needed. */
 __attribute__((noinline)) peanokey domain_peano_key(int i, peanokey *morton)
 {
     peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);

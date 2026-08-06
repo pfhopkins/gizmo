@@ -75,9 +75,32 @@ once-per-run orphan and a rare crash. Diagnostics that confirmed it and ruled ou
 particles *at the end of the decomposition* versus 3-10 at the treebuild.
 
 **Fix:** `domain_peano_key()` in `domain.cc` is now the only place a position becomes a key, and all
-four sites call it. `__attribute__((noinline))` is required rather than cosmetic -- an inlinable
-definition can be optimised differently at each call site, which `-flto` (offered as `OPT_EXTRA`)
-would reintroduce.
+four sites call it.
+
+### Portability
+
+Measured on both compilers used for production runs, same probe, 4e6 positions:
+
+| | GCC 13.3 | AOCC 17 (clang) |
+|---|---|---|
+| original, duplicated expression | 206 differing | 224 differing |
+| original, `-flto` | 0 | 0 |
+| fixed, shared `noinline` definition | 0 | 0 |
+| fixed, shared definition without `noinline` | 0 | 0 |
+| fixed, either, with `-flto` | 0 | 0 |
+
+So the bug is **not** GCC-specific -- AOCC diverges too -- and the fix holds on both, with and
+without LTO. Both accept `__attribute__((noinline))` without an unknown-attribute warning, and both
+support it, as does Intel's compiler; it is a GNU extension honoured by every compiler GIZMO
+targets.
+
+Two corrections to earlier claims made here. `-flto` does **not** reintroduce the divergence: with
+whole-program visibility both compilers unify the computation, so LTO alone reduces the original to 0
+differing keys. And `noinline` is **not** demonstrably required -- the shared definition without it
+also gives 0 everywhere tested. It is retained as insurance, because the probe's two call sites are
+structurally identical whereas the real callers sit in different loops, which is the case where
+per-call-site optimisation could in principle diverge again. It costs one call per particle per
+treebuild.
 
 This is deliberately a structural fix rather than a flag change, so it holds regardless of build
 flags, compiler, or whether LTO is enabled. Dropping `-funsafe-math-optimizations` would also close
