@@ -478,6 +478,16 @@ void gravity_tree(void)
             int no = Father[i];
             while(no >= 0)
             {
+                /* Father[] is seeded to -1 per treebuild, so no>=0 means the recursion really did
+                 * reach this particle and the chain should be walkable. An index outside the node
+                 * array therefore means genuine corruption of u.d.father; say so instead of
+                 * dereferencing it and dying in a way that points nowhere. */
+                if(no < All.MaxPart || no >= All.MaxPart + MaxNodes)
+                {
+                    printf("task %d: corrupt tree father chain for particle %d (ID=%llu): node index %d outside [%d, %d)\n",
+                           ThisTask, i, (unsigned long long) P[i].ID, no, All.MaxPart, All.MaxPart + MaxNodes);
+                    fflush(stdout); endrun(918273);
+                }
                 if(Nodes[no].u.d.mass > 0) {P[i].GravCost[TakeLevel] += Nodes[no].GravCost * P[i].Mass / Nodes[no].u.d.mass;}
                 no = Nodes[no].u.d.father;
             }

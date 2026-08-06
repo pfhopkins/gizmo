@@ -321,6 +321,19 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* insert the pseudo particles that represent the mass distribution of other domains */
     force_insert_pseudo_particles();
     
+    /* Seed Father[] for the recursion below, which is its only writer and only reaches particles
+     * the u.suns[] walk visits. A local particle whose position keys into a top-node region owned
+     * by another task is inserted under that node, and force_insert_pseudo_particles() above then
+     * overwrites u.suns[0] there, detaching the subtree it sits in, so the recursion misses it.
+     * Father comes from the LIFO mymalloc arena, so an unwritten slot holds the previous build's
+     * value for that particle: usually a valid node index, which consumers then follow, silently
+     * attributing the particle to the wrong node (and segfaulting when it is stale enough to fall
+     * outside the node array). Consumers already treat a negative entry as "no parent"; seeding
+     * -1 makes that convention real, so a missed particle is skipped instead.
+     * This bounds the damage, it does not fix the orphaning: the particle is still absent from the
+     * tree moments, so forces are still wrong by its mass. */
+    for(i = 0; i < All.MaxPart; i++) {Father[i] = -1;}
+
     /* now compute the multipole moments recursively */
     last = -1;
     force_update_node_recursive(All.MaxPart, -1, -1);
@@ -1399,6 +1412,11 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = Father[iparent]; // set parent node to be the same
+    /* Father[] is seeded to -1 per treebuild, so a negative entry means the parent was never
+     * reached by force_update_node_recursive (see the note there) and has no node to update.
+     * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
+     * alone; the child inherits the same -1 and is skipped by the other consumers too. */
+    if(Father[iparent] < 0) {return;}
     // update parent node properties [maximum softening, speed] for opening criteria
     Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
     double vmax = Extnodes[Father[iparent]].vmax;
