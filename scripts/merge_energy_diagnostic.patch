@@ -15,6 +15,10 @@ Three cumulative, MPI-reduced reports, printed once per merge_and_split_particle
   Merge pair timing    TimeBin distribution of merged pairs and whether Ti_current differs, i.e.
                        whether the survivor inherits mass integrated on another clock.
 
+The retirement criterion this instrumentation was built to calibrate now compares specific internal
+energy, not an entropic function -- A=P/rho^gamma is a state function only for a single-gamma ideal
+gas. That does not affect anything measured here; the merge budget is EOS-agnostic.
+
     git apply scripts/merge_energy_diagnostic.patch      # or: git apply -3
 
 WHAT IT ESTABLISHED, in the adiabatic wind_singlestar test where E_kin+E_th = L*t exactly:
@@ -37,8 +41,8 @@ matched the merged partners are. Not chased further.
 
 --- a/mesh/merge_split.cc
 +++ b/mesh/merge_split.cc
-@@ -54,6 +54,17 @@
- #endif
+@@ -63,6 +63,17 @@
+ 
  
  
 +#ifdef MERGE_SPLIT_ENERGY_DIAGNOSTIC
@@ -55,7 +59,7 @@ matched the merged partners are. Not chased further.
  
  /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
      when particles fall below some minimum mass threshold */
-@@ -509,6 +520,40 @@
+@@ -542,6 +553,40 @@
              printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
          }
      }
@@ -93,10 +97,10 @@ matched the merged partners are. Not chased further.
 +        }
 +    }
 +#endif
- #if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
-     /* These cells cannot retire, and under HYDRO_MESHLESS_FINITE_MASS cannot grow either, so they are
-        held indefinitely: correct inside a collimated beam, but a population still growing after the
-@@ -889,6 +934,31 @@
+     /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- be called immediately after this routine! */
+     All.TotNumPart += (long long)MPI_n_particles_split;
+     All.TotN_gas += (long long)MPI_n_particles_gas_split;
+@@ -914,6 +959,25 @@
  
      // now we have to deal with gas particle mergers //
      double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
@@ -108,19 +112,13 @@ matched the merged partners are. Not chased further.
 +        long dbin = (long)P[i].TimeBin - (long)P[j].TimeBin;
 +        long dti  = (long)P[i].Ti_current - (long)P[j].Ti_current;
 +        int slot = (dbin < 0) ? 0 : ((dbin == 0) ? 1 : 2);
-+        #pragma omp atomic update
 +        MergeBin_n[slot] += 1;
-+        #pragma omp atomic update
 +        MergeBin_absbin += (dbin < 0) ? -dbin : dbin;
-+        #pragma omp atomic update
 +        MergeBin_mass_all += P[i].Mass;
 +        if(dti != 0)
 +        {
-+            #pragma omp atomic update
 +            MergeBin_ndti += 1;
-+            #pragma omp atomic update
 +            MergeBin_absdti += (double)((dti < 0) ? -dti : dti);
-+            #pragma omp atomic update
 +            MergeBin_mass_dti += P[i].Mass;
 +        }
 +    }
@@ -128,7 +126,7 @@ matched the merged partners are. Not chased further.
      if(P[i].TimeBin < P[j].TimeBin)
      {
  #ifdef WAKEUP
-@@ -963,6 +1033,15 @@
+@@ -988,6 +1052,15 @@
  #endif
  
  
@@ -144,7 +142,7 @@ matched the merged partners are. Not chased further.
      CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
      CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
      Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
-@@ -1009,7 +1088,33 @@
+@@ -1031,7 +1104,26 @@
  #else
      //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
  #endif
@@ -153,9 +151,7 @@ matched the merged partners are. Not chased further.
 +       how much it injects and how often, to tell it apart from the residual misapplication above */
 +    if(CellP[j].InternalEnergyPred < 0.5*CellP[j].InternalEnergy)
 +    {
-+        #pragma omp atomic update
 +        MergeEgy_floor += mtot * (0.5*CellP[j].InternalEnergy - CellP[j].InternalEnergyPred);
-+        #pragma omp atomic update
 +        MergeEgy_nfloor += 1;
 +    }
 +#endif
@@ -164,15 +160,10 @@ matched the merged partners are. Not chased further.
 +    /* post-merge state, measured after every assignment above including the Pred floor */
 +    double E1 = mtot*CellP[j].InternalEnergy + 0.5*All.cf_a2inv*mtot*P[j].Vel.norm_sq();
 +    double E1p = mtot*CellP[j].InternalEnergyPred + 0.5*All.cf_a2inv*mtot*CellP[j].VelPred.norm_sq();
-+    #pragma omp atomic update
 +    MergeEgy_dE     += E1  - E0;
-+    #pragma omp atomic update
 +    MergeEgy_dEpred += E1p - E0p;
-+    #pragma omp atomic update
 +    MergeEgy_KEcom  += KEcom_0;
-+    #pragma omp atomic update
 +    MergeEgy_resid  += egy_new * mtot;
-+    #pragma omp atomic update
 +    MergeEgy_count  += 1;
 +#endif
  

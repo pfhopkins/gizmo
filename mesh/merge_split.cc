@@ -54,6 +54,15 @@ static inline double merge_kinetic_dissipation_fraction(int i, int j)
 #endif
 
 
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+#ifndef SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST
+#define SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST (1.0)
+#endif
+#endif
+
+
+
+
 
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
     when particles fall below some minimum mass threshold */
@@ -311,9 +320,6 @@ void merge_and_split_particles(void)
     int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
     Ngblist.resize(NumPart);
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
-#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
-    int n_spawn_no_ambient=0, MPI_n_spawn_no_ambient=0; /* spawned cells with no ambient gas in kernel */
-#endif
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
     // TO: need initialization
@@ -347,7 +353,8 @@ void merge_and_split_particles(void)
                        against the bulk flow rather than whichever single neighbor is picked as target.
                        Spawned cells excluded: a jet cell among jet cells is still resolving the outflow. */
                     int is_spawned_i = (P[i].ID==All.SpawnedWindCellID && P[i].Type==0);
-                    Vec3<double> v_ambient = {0,0,0}; double m_ambient = 0, cs_ambient = 0;
+                    Vec3<double> v_ambient = {0,0,0}; double m_ambient = 0, cs_ambient = 0, lnU_ambient = 0;
+
                     if(is_spawned_i)
                     {
                         int n_amb; for(n_amb=0; n_amb<numngb_inbox; n_amb++)
@@ -357,17 +364,18 @@ void merge_and_split_particles(void)
                             if(P[j_amb].ID==All.SpawnedWindCellID) {continue;} /* ambient = non-spawned gas only */
                             double w = P[j_amb].Mass; int k; for(k=0;k<3;k++) {v_ambient[k] += w * P[j_amb].Vel[k];}
                             cs_ambient += w * CellP[j_amb].effective_soundspeed(); m_ambient += w;
+                            double uj = CellP[j_amb].InternalEnergyPred;
+                            if(uj > 0) {lnU_ambient += w * log(uj);}
                         }
                         if(m_ambient > 0)
                         {
-                            v_ambient /= m_ambient; cs_ambient /= m_ambient;
+                            v_ambient /= m_ambient; cs_ambient /= m_ambient; lnU_ambient /= m_ambient;
                             /* Sound speed alone, deliberately: kinematic measures of the ambient velocity
                                spread (kernel dispersion, |grad v|*cell size) are inflated near the outflow
                                by the outflow itself, so thresholding on them is circular and admits fast
                                jet material (18% and 44% of spawned cells mergeable vs 1.4%, when tested).
                                Errs toward retiring late in sheared gas: the safe direction. */
                         }
-                        else {n_spawn_no_ambient++;} /* cannot retire: no ambient gas to be absorbed into */
                     }
 #endif
                     for(n=0; n<numngb_inbox; n++) /* loop over neighbors */
@@ -407,6 +415,31 @@ void merge_and_split_particles(void)
                                 else {
                                     Vec3<double> dv_amb = {P[i].Vel[0]-v_ambient[0], P[i].Vel[1]-v_ambient[1], P[i].Vel[2]-v_ambient[2]};
                                     if(dv_amb.norm()*sqrt(All.cf_a2inv) > cs_ambient) {do_allow_merger = 0;}
+                                    /* ...and only once thermally equilibrated with it too. Subsonic is not
+                                       enough: a contact discontinuity is by definition in pressure equilibrium
+                                       with no velocity jump, so outflow material sitting at the contact passes
+                                       every kinematic test while remaining a distinct phase.
+                                       Compares specific internal energy, NOT an entropic function. A=P/rho^gamma
+                                       is only a state function for a single-gamma ideal gas; with gamma varying
+                                       by composition and temperature (EOS_GAMMA_VARIABLE, COOL_MOLECFRAC_NONEQM)
+                                       equal P/rho^gamma does not mean equal entropy, so that test is not merely
+                                       imprecise there but ill-founded. u needs no EOS assumption, and it is the
+                                       quantity the merge actually averages: merging cells of equal u leaves u
+                                       unchanged and destroys no thermal structure, while merging across a u jump
+                                       averages the jump away. Deliberately a state of this cell against its own
+                                       kernel rather than a property of a candidate pair: a pairwise test is
+                                       evaded by picking another target or retrying next step, a cell state is
+                                       not. A cell that genuinely mixes into the ISM relaxes toward the local
+                                       value and becomes retirable, which is what bounds the spawned population. */
+                                    if(do_allow_merger)
+                                    {
+                                        double ui_ = CellP[i].InternalEnergyPred;
+                                        if(ui_ > 0)
+                                        {
+                                            double dlnU = fabs(log(ui_) - lnU_ambient);
+                                            if(dlnU > SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST) {do_allow_merger = 0;}
+                                        }
+                                    }
                                 }
                             }
 #endif
@@ -509,14 +542,6 @@ void merge_and_split_particles(void)
             printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
         }
     }
-#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
-    /* These cells cannot retire, and under HYDRO_MESHLESS_FINITE_MASS cannot grow either, so they are
-       held indefinitely: correct inside a collimated beam, but a population still growing after the
-       outflow stops is a resolution-element leak. Locally a beam and a stalled clump look identical,
-       so report the count rather than trying to distinguish them here. */
-    MPI_Allreduce(&n_spawn_no_ambient, &MPI_n_spawn_no_ambient, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if(ThisTask == 0) {if(MPI_n_spawn_no_ambient > 0) {printf("Spawned-cell retirement: %d cells have no ambient gas in their kernel and cannot be retired.\n", MPI_n_spawn_no_ambient);}}
-#endif
     /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- be called immediately after this routine! */
     All.TotNumPart += (long long)MPI_n_particles_split;
     All.TotN_gas += (long long)MPI_n_particles_gas_split;

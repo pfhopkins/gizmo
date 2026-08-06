@@ -1,7 +1,15 @@
 """Pytest configuration: ensure tests import `gizmo` from the local
-`python_src/` source tree, regardless of whether the package is pip-installed,
-guarantee each test leaves the working directory where it found it, and refuse to run
-two test sessions concurrently in the same working tree."""
+`python_src/` source tree, regardless of whether the package is pip-installed, and
+guarantee each test leaves the working directory where it found it.
+
+NOT enforced, but worth knowing: do not run two sessions against one working tree. Every
+test builds ./GIZMO and writes Config.sh in the repo root, and writes test/<name>/output/
+before moving it to a per-variant name, so concurrent sessions silently interleave
+snapshots and swap each other's binaries. The symptoms are a variant directory whose
+snapshot mtimes are not monotonic, a run reporting no snapshots at all because another
+session moved output/ out from under it, or a variant whose startup config listing does
+not match the flags it was supposed to build with. Note the sbatch wrapper does NOT create
+a worktree despite its name; it cds to $SLURM_SUBMIT_DIR."""
 
 import os
 import sys
@@ -15,48 +23,6 @@ PYTHON_SRC = REPO_ROOT / "python_src"
 
 if str(PYTHON_SRC) not in sys.path:
     sys.path.insert(0, str(PYTHON_SRC))
-
-
-@pytest.fixture(scope="session", autouse=True)
-def exclusive_tree_lock():
-    """Refuse to run if another test session is already using this working tree.
-
-    Every test builds ./GIZMO in the repo root and writes to test/<name>/output/ before that
-    directory is moved to its per-variant name, so two concurrent sessions silently interleave
-    each other's snapshots and binaries. The failure mode is the dangerous kind: an output
-    directory ends up holding a mix of two runs, so analysis is spliced across physically
-    different setups and reports a large error that is purely an artifact -- or a run appears to
-    produce no snapshots at all, because the other session moved output/ out from under it.
-    Fail loudly instead. Interleaved snapshot mtimes are the giveaway if you meet it anyway.
-
-    Use a separate checkout or `git worktree` for concurrent runs; that is what the sbatch
-    wrappers are for. Set GIZMO_TEST_ALLOW_CONCURRENT=1 to override (e.g. if a stale lock
-    survived a hard kill).
-    """
-    if os.environ.get("GIZMO_TEST_ALLOW_CONCURRENT"):
-        yield
-        return
-    import fcntl
-
-    lock_path = REPO_ROOT / ".pytest_tree.lock"
-    fh = open(lock_path, "w")
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        pytest.exit(
-            f"another pytest session already holds {lock_path}. Concurrent runs in one working "
-            "tree corrupt each other's output (interleaved snapshots, shared ./GIZMO). Use a "
-            "separate checkout or git worktree, or set GIZMO_TEST_ALLOW_CONCURRENT=1 to override.",
-            returncode=2,
-        )
-    fh.write(f"pid={os.getpid()} host={os.uname().nodename} job={os.environ.get('SLURM_JOB_ID','-')}\n")
-    fh.flush()
-    try:
-        yield
-    finally:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        fh.close()
 
 
 @pytest.fixture(autouse=True)

@@ -1264,7 +1264,9 @@ int get_timestep_bin(integertime ti_step)
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 /*! Tallies the residual left by the wakeup kick-reversal below, which un-does part of an
     already-applied kick via do_the_kick with reversed bounds. That cancels only if HydroAccel and
-    DtInternalEnergy are unchanged since the original kick, which they are not. */
+    DtInternalEnergy are unchanged since the original kick, which they are not. Plain increments:
+    process_wake_ups is serial, and the only omp parallel region in this file is in the timestep
+    computation. */
 static double WakeRev_dE = 0, WakeRev_dE_active = 0;
 static long WakeRev_nrev = 0, WakeRev_nmoved = 0, WakeRev_calls = 0, WakeRev_nnoop = 0, WakeRev_nactive = 0;
 /* processed wakeups by trigger and demotion depth. wakeup>0 hydro (set in hydro_evaluate.h when
