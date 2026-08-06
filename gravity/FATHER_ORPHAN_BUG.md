@@ -84,6 +84,34 @@ flags, compiler, or whether LTO is enabled. Dropping `-funsafe-math-optimization
 this particular hole, but it would leave the underlying fragility -- four copies of one formula whose
 agreement is assumed -- in place for the next optimiser to find.
 
+### And the flag is worth keeping
+
+Measured on the STARFORGE benchmark problem (`gizmo_benchmark`: M2e3_R3 Res126, MHD + cooling +
+jets + radiation + winds + SNe), 48 ranks x 2 threads, exclusive genoa node, fixed 10-minute wall
+budget per arm, arms alternated with the order reversed in the second round. Both arms were
+bit-reproducible across rounds, so run-to-run variance is negligible:
+
+| build | sync-points (r1, r2) | sim time reached |
+|---|---|---|
+| `-O3 -ffast-math` | 102, 102 | 0.0153149 |
+| `-O3` | 85, 85 | 0.0127625 |
+
+`-ffast-math` is **20.0% faster** (102/85 = 1.200; 0.0153149/0.0127625 = 1.2000 -- same timestep
+cadence, simply more steps). Per sync-point, by component:
+
+| component | share of runtime | speedup |
+|---|---|---|
+| total | -- | 1.21x |
+| hydro/fluids | 60-65% | 1.12x |
+| cooling+chem | 19-22% | 1.37x |
+| domain | 8-9% | 1.35x |
+| misc | 4-5% | 1.53x |
+| treewalk | 0.8% | 1.23x |
+
+The gain is concentrated in cooling/chemistry -- table lookups and transcendental rate arithmetic --
+not in the tree walk, which is under 1% of runtime in this configuration. So the flag stays, and the
+structural fix above is what makes that safe.
+
 **Verified:** 3 runs x 8194 builds, 0 foreign and 0 orphans, versus 3-10 and 1-4 before. The
 cross-TU divergence itself is *still measurable* in those runs (60-76 leaf differences between the
 two original expressions), which is the point: the discrepancy is harmless once ownership and
