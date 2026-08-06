@@ -142,7 +142,7 @@ static float *domainWorkGas;	/*!< a table that gives the total "work" due to the
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
 static int *domainCountGas;	/*!< a table that gives the total number of gas cells held by each processor */
 static int domain_allocated_flag = 0;
-static int maxLoad, maxLoadgas;
+static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): MaxPart*REDUC_FAC, then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below MaxPart/2 */
 static double totgravcost, gravcost, totgascost, gascost;
 static long long totpartcount;
 static int UseAllParticles;
@@ -150,6 +150,33 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+
+/*! Compute the domain local-particle assignment caps into DomainMaxPartLocal /
+ *  DomainMaxGasLocal. Base cap = MaxPart*REDUC_FAC; the all-type cap is then reduced
+ *  by the predicted ghost headroom (MPI-MAX of the previous-epoch ghost count * 1.3)
+ *  so boundary ranks keep room for imported ghosts, never below MaxPart/2. The gas cap
+ *  is not ghost-reduced. report=1 prints the reduction on rank 0 (the historical
+ *  full-decomposition message); the lightweight-repartition caller passes 0 (silent,
+ *  as before). Single source of truth for both callers. */
+static void domain_compute_local_caps(int report)
+{
+    DomainMaxGasLocal = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+    int cap = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+    int prev_ghost_local = ghost_get_previous_count();
+    int prev_ghost_max;
+    MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(prev_ghost_max > 0) {
+        int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
+        int cap_new = All.MaxPart - ghost_headroom;
+        if(cap_new < All.MaxPart / 2) {cap_new = All.MaxPart / 2;} /* never reserve more than half */
+        if(cap_new < cap) {
+            if(report && ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
+                                                       ghost_headroom, prev_ghost_max, cap, cap_new);}
+            cap = cap_new;
+        }
+    }
+    DomainMaxPartLocal = cap;
+}
 
 #if (DOMAIN_TIMEBINS == 1)
 /* Per-timebin cost tracking for Gadget-4-style domain decomposition.
@@ -355,26 +382,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
 	  PRINT_STATUS(" ..using %g MB of temporary storage for domain decomposition... (presently allocated=%g MB)",all_bytes / (1024.0 * 1024.0), AllocatedBytes / (1024.0 * 1024.0));
 
-      maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-      maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-      /* Adaptive ghost headroom: reduce maxLoad by the previous ghost count (with safety margin)
-         so domain decomposition leaves room for ghost particles on boundary ranks.
-         Uses MPI_MAX of per-rank ghost counts as a conservative global estimate. */
-      {
-          int prev_ghost_local = ghost_get_previous_count();
-          int prev_ghost_max;
-          MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-          if(prev_ghost_max > 0) {
-              int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
-              int maxLoad_new = All.MaxPart - ghost_headroom;
-              if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;} /* never reserve more than half */
-              if(maxLoad_new < maxLoad) {
-                  if(ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
-                                                   ghost_headroom, prev_ghost_max, maxLoad, maxLoad_new);}
-                  maxLoad = maxLoad_new;
-              }
-          }
-      }
+      domain_compute_local_caps(1);	/* sets DomainMaxPartLocal/DomainMaxGasLocal; reports the ghost-headroom reduction */
 
       report_memory_usage(&HighMark_domain, "DOMAIN");
 
@@ -612,19 +620,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     list_work = (double *) mymalloc("list_work", NTask * sizeof(double));
     list_workgas = (double *) mymalloc("list_workgas", NTask * sizeof(double));
 
-    maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    {   /* adaptive ghost headroom (same logic as full decomposition above) */
-        int prev_ghost_local = ghost_get_previous_count();
-        int prev_ghost_max;
-        MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(prev_ghost_max > 0) {
-            int ghost_headroom = (int)(prev_ghost_max * 1.3);
-            int maxLoad_new = All.MaxPart - ghost_headroom;
-            if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;}
-            if(maxLoad_new < maxLoad) {maxLoad = maxLoad_new;}
-        }
-    }
+    domain_compute_local_caps(0);	/* light repartition: same caps, silent (matches historical no-report here) */
 
     /* re-split and re-assign */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
@@ -1098,15 +1094,15 @@ int domain_check_memory_bound(int multipledomains)
     }
 #endif
 
-    if(max_load > maxLoad)
+    if(max_load > DomainMaxPartLocal)
     {
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / maxLoad, maxLoad, max_load);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
       return 1;
     }
 
-    if(max_gasload > maxLoadgas)
+    if(max_gasload > DomainMaxGasLocal)
     {
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / maxLoadgas, maxLoadgas, max_gasload);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
       return 1;
     }
 
@@ -1535,8 +1531,8 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 
   /* memory limits: reject assignments that would push a rank above this fraction of max capacity */
   double memory_safety_frac = 0.9;
-  double max_load_per_task = memory_safety_frac * maxLoad;
-  double max_gasload_per_task = memory_safety_frac * maxLoadgas;
+  double max_load_per_task = memory_safety_frac * DomainMaxPartLocal;
+  double max_gasload_per_task = memory_safety_frac * DomainMaxGasLocal;
 
   domainAssign = (struct domain_segments_data *) mymalloc("domainAssign",
 							  multipledomains * NTask *
