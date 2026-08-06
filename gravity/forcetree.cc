@@ -2570,7 +2570,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_COMPTON_HEATING
         if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_AGN = incident_flux_agn;}
 #endif
-#ifdef SINK_DUST_HEATING_PLANCKMEAN
+#if defined(SINK_DUST_HEATING_PLANCKMEAN) && defined(RT_USE_GRAVTREE) /* valid_gas_particle_for_rt/incident_dustheat only exist there */
         if(valid_gas_particle_for_rt) {CellP[target].DustHeatingRate = incident_dustheat;}
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
@@ -2648,7 +2648,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_COMPTON_HEATING
         GravDataResult[target].Rad_Flux_AGN = incident_flux_agn;
 #endif
-#ifdef SINK_DUST_HEATING_PLANCKMEAN
+#if defined(SINK_DUST_HEATING_PLANCKMEAN) && defined(RT_USE_GRAVTREE) /* valid_gas_particle_for_rt/incident_dustheat only exist there */
         GravDataResult[target].DustHeatingRate = incident_dustheat;
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)

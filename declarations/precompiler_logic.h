@@ -508,11 +508,15 @@
 
 #ifdef SINK_DUST_HEATING_PLANCKMEAN /* dust heating rate summed in the gravity tree with the per-source Planck-mean opacity. needs the
                                       luminosity tree, and rides on the per-sink node plumbing SINK_PHOTONMOMENTUM provides */
+#if !defined(RT_OTVET) && !defined(RT_FLUXLIMITEDDIFFUSION) && !defined(RT_M1) && !defined(RT_LOCALRAYGRID) && !defined(GALSF_FB_FIRE_RT_LONGRANGE)
+/* No radiation module at all. Enabling RT_USE_GRAVTREE on its own is NOT sufficient: it switches on the
+   band-index machinery, but with no band-providing flag every FIRE band collapses onto the same index and
+   N_RT_FREQ_BINS evaluates to 0, giving zero-length arrays. Pull in the LEBRON approximation, which supplies
+   both the tree walk and a band structure (and is what SINGLE_STAR_FB_RT_HEATING uses anyway). */
+#define GALSF_FB_FIRE_RT_LONGRANGE
+#endif
 #if !defined(SINK_PHOTONMOMENTUM)
 #define SINK_PHOTONMOMENTUM
-#endif
-#if !defined(RT_USE_GRAVTREE)
-#define RT_USE_GRAVTREE
 #endif
 #endif
 
@@ -752,6 +756,10 @@
 #endif
 #endif
 
+#if defined(SINK_DUST_HEATING_PLANCKMEAN) && !defined(RT_USE_GRAVTREE)
+#error "SINK_DUST_HEATING_PLANCKMEAN sums the dust heating rate through the gravity tree, so it requires RT_USE_GRAVTREE (i.e. the LEBRON approximation). It is not meaningful alongside an explicit solver such as RT_M1: that would double-count the radiation, once through the solver and once through the tree sum. Use the solver's own dust coupling there instead."
+#endif
+
 /* check whether we want to use the implicit solver [only usable for very special cases, not recommended] */
 #if defined(RT_DIFFUSION_IMPLICIT) && (defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION)) // only modules the implicit solver works with
 #define RT_DIFFUSION_CG // use our implicit solver [will crash with any other modules, hence checking this before the others below]
@@ -956,6 +964,9 @@
 #endif
 
 #define N_RT_FREQ_BINS (RT_FREQ_BIN_INFRARED+1)
+#if defined(SINK_DUST_HEATING_PLANCKMEAN) && (N_RT_FREQ_BINS < 1)
+#error "SINK_DUST_HEATING_PLANCKMEAN requires a radiation band structure (N_RT_FREQ_BINS >= 1). Enable a radiation module, e.g. SINGLE_STAR_FB_RT_HEATING or SINGLE_STAR_FB_RAD."
+#endif
 
 #endif // #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 
