@@ -465,10 +465,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     Key = PersistentKey; /* reuse persistent key storage directly */
     for(i = 0; i < NumPart; i++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        Key[i] = domain_peano_key(i, NULL);
     }
 
     /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
@@ -585,10 +582,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     /* update persistent keys for moved particles */
     for(i = 0; i < NumPart; i++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        PersistentKey[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        PersistentKey[i] = domain_peano_key(i, NULL);
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
@@ -2324,10 +2318,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      Key[i] = domain_peano_key(i, NULL);
     }
   for(i = 0, count = 0; i < NumPart; i++)
     {
@@ -2343,10 +2334,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      mp[i].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      mp[i].key = Key[i] = domain_peano_key(i, NULL);
       mp[i].index = i;
     }
   count = NumPart;
@@ -2663,6 +2651,34 @@ void domain_sumCost(void)
   myfree(local_domainCount);
   myfree(local_domainWorkGas);
   myfree(local_domainWork);
+}
+
+
+/*! The single definition of the position -> Peano-Hilbert key mapping. Every caller must go through
+ *  this, because domain decomposition (which task owns a particle) and the treebuild (which top
+ *  node it is inserted under) have to agree bit-for-bit: a particle assigned to one task but
+ *  inserted under a top node owned by another is detached from the tree by
+ *  force_insert_pseudo_particles() and its mass then appears in no rank's multipole moments.
+ *
+ *  Duplicating the expression instead lets -ffast-math compile it differently per translation unit.
+ *  It did: domain.cc defines domain_double_to_int, so the conversion inlined and the whole
+ *  expression contracted to fma(Pos-Corner, 1/DomainLen, 1.0), while forcetree.cc had only the
+ *  declaration, emitted a call, and computed (Pos-Corner)/DomainLen + 1.0. Those round differently,
+ *  and when the difference carried into the high mantissa bits that select the top-node leaf the
+ *  two sides disagreed about ownership.
+ *
+ *  noinline is belt-and-braces: it removes any possibility of the definition being optimised
+ *  differently per call site, which matters because the two callers sit in structurally different
+ *  loops. Measured on GCC 13.3 and AOCC 17, the shared definition alone gives bit-identical keys
+ *  with or without it, so this is insurance rather than a demonstrated requirement; it costs one
+ *  call per particle per treebuild. Pass morton=NULL if the Morton key is not needed. */
+__attribute__((noinline)) peanokey domain_peano_key(int i, peanokey *morton)
+{
+    peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+    peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+    peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+    if(morton) {return peano_and_morton_key(xb, yb, zb, BITS_PER_DIMENSION, morton);}
+    return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
 }
 
 
