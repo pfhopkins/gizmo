@@ -470,6 +470,16 @@ void subfind_save_final(int num)
   char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
   double t0, t1;
 
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+  /* see fof_save_groups(): (sub)group positions are written outside fill_write_buffer and are
+   * never un-shifted, so refuse to save a catalogue in a randomized frame */
+  if(All.RandomShift[0] != 0 || All.RandomShift[1] != 0 || All.RandomShift[2] != 0)
+    {
+      if(ThisTask == 0) {printf("FATAL: subfind_save_final() in a RANDOMIZE_GRAVTREE frame (RandomShift=%g,%g,%g): (sub)group positions are not un-shifted. Run subfind in postprocessing on snapshots.\n", All.RandomShift[0], All.RandomShift[1], All.RandomShift[2]);}
+      endrun(561002);
+    }
+#endif
+
   /* prepare list of ids with assigned group numbers */
 
   t0 = my_second();

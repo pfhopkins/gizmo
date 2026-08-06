@@ -238,6 +238,13 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
     t_drift_loop = timediff(t_tmp, my_second());
 
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+    /* main-integration decompositions only. FOF/SUBFIND pass UseAllTimeBins=1 and must not
+     * change the frame: their group catalogs bypass fill_write_buffer and are never
+     * un-shifted. Group-finding is translation-invariant, so the stable frame is fine. */
+    if(UseAllTimeBins == 0) {domain_apply_random_shift();}
+#endif
+
     t_tmp = my_second();
     force_treefree();
     domain_free();
@@ -2735,19 +2742,92 @@ void domain_findExtent(void)
       DomainCenter[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]);
       DomainCorner[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]) - 0.5 * len;
     }
-#ifdef RANDOMIZE_GRAVTREE // double the size of the root node and pick a random offset for its center, so that forcetree errors get decorrelated each time the tree is rebuilt
-  double dx[3]; 
-  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType) (All.NumCurrentTiStep) + j) - 0.5);}}
+/* Non-periodic randomization (AREPO, Weinberger+2020 sec 3.1): move and enlarge the root node
+ * so forcetree errors decorrelate between rebuilds. Periodic boxes must NOT use this -- doubling
+ * the root node costs a bit of Peano resolution per dimension and wrecks zoom load balance; they
+ * translate coordinates instead (domain_apply_random_shift), keeping DomainLen == box. */
+#if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC)
+  double dx[3];
+  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j) - 0.5); /* *3+j so the three axes draw distinct seeds: with +j alone, step N's y-shift reused step N+1's x-shift */}}
   MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   for(j=0; j<3; j++) {
       DomainCenter[j] += dx[j];
       DomainCorner[j] = DomainCenter[j] - len;
   }
   len *= 2;
-#endif  
+#endif
   DomainLen = len;
   DomainFac = 1.0 / len * (((peanokey) 1) << (BITS_PER_DIMENSION));
+#ifdef RANDOMIZE_GRAVTREE /* diagnostic: lets regression tests check the root node is not enlarged */
+  if(ThisTask == 0) {printf("RANDOMIZE_GRAVTREE: DomainLen=%g DomainCorner=(%g,%g,%g) BoxSize=%g\n", DomainLen, DomainCorner[0], DomainCorner[1], DomainCorner[2], All.BoxSize);}
+#endif
 }
+
+
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+/*! RANDOMIZE_GRAVTREE, periodic path (AREPO method, Weinberger+2020 sec 3.1): translate all
+ *  coordinates by a fresh random vector mod box each decomposition, decorrelating tree-force
+ *  errors between rebuilds without enlarging the root node, so DomainLen stays == box and
+ *  zoom load balance is preserved. Coordinates live in the shifted frame until the next
+ *  shift; All.RandomShift is subtracted back out on output (fill_write_buffer). Forces and
+ *  velocities are translation-invariant, so the physics is unchanged. Drawn on rank 0 and
+ *  broadcast so all ranks agree; seeding on NumCurrentTiStep keeps it restart-reproducible. */
+void domain_apply_random_shift(void)
+{
+    int i, j;
+    double box[3], delta[3], u[3] = {0,0,0};
+    box[0] = boxSize_X; box[1] = boxSize_Y; box[2] = boxSize_Z;
+    if(ThisTask == 0) {for(j = 0; j < 3; j++) {u[j] = get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j);}}
+    MPI_Bcast(u, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD); /* every rank must agree on the frame */
+
+    for(j = 0; j < 3; j++)
+    {
+#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
+        /* Zoom runs: the nested high-res region must stay whole inside the box.
+         * pm_init_regionsize() derives its extent with a plain min/max over the (wrapped)
+         * coordinates, so a region straddling the periodic boundary is measured as box-sized.
+         * On m12i that inflated the extent 6146 -> 66000, hence TotalMeshSize[1] and
+         * Rcut[1] ~10x, ballooning the tree walk (treewalk +57%, treecomm +137%,
+         * treeimbal +257%) and coarsening the nested mesh 6.6 -> 65 so it lost its purpose.
+         * So do not translate freely: place the region's lower corner uniformly in the range
+         * that keeps it entire, [0, box-L]. For a zoom L << box, so almost all of the
+         * randomization range survives. If the bounds are not yet initialized (L<=0) or the
+         * region fills the box (L>=box) there is no safe placement -- skip this step. */
+        double L = All.Xmaxtot[1][j] - All.Xmintot[1][j];
+        if(L > 0 && L < box[j]) {delta[j] = (box[j] - L) * u[j] - All.Xmintot[1][j];}
+        else {delta[j] = 0;}
+#else
+        delta[j] = box[j] * u[j] - All.RandomShift[j]; /* uniform box: translate freely */
+#endif
+    }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
+    for(i = 0; i < NumPart; i++) {int k; for(k = 0; k < 3; k++) {P[i].Pos[k] += delta[k];}}
+
+    /* accumulate the frame offset, kept in [0,box) so it cannot drift off over a long run
+     * (positions are only defined mod box, and the output un-shift is followed by a wrap) */
+    for(j = 0; j < 3; j++)
+    {
+        All.RandomShift[j] += delta[j];
+        while(All.RandomShift[j] < 0) {All.RandomShift[j] += box[j];}
+        while(All.RandomShift[j] >= box[j]) {All.RandomShift[j] -= box[j];}
+    }
+#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
+    /* carry the cached region bounds along, so classification and mesh mapping stay consistent
+     * until the next pm_init_regionsize(); by construction these stay inside [0,box) */
+    for(j = 0; j < 3; j++) {
+        All.Xmintot[1][j] += delta[j]; All.Xmaxtot[1][j] += delta[j];
+        All.Corner[1][j]  += delta[j]; All.UpperCorner[1][j] += delta[j];
+    }
+    if(ThisTask == 0) {printf("RANDOMIZE_GRAVTREE: hi-res region now (%g|%g|%g) -> (%g|%g|%g) box=%g\n",
+        All.Xmintot[1][0], All.Xmintot[1][1], All.Xmintot[1][2],
+        All.Xmaxtot[1][0], All.Xmaxtot[1][1], All.Xmaxtot[1][2], box[0]);}
+#endif
+    do_box_wrapping(); /* fold coordinates back into [0,box) in the new frame */
+}
+#endif
 
 
 

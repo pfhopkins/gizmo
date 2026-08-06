@@ -33,8 +33,15 @@ def _short(label, maxlen=30):
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
     "extra_config_flags",
-    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
-    ids=["baseline", "tidal_adaptive"],
+    [
+        (),
+        ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06"),
+        # RANDOMIZE_GRAVTREE, periodic-TreePM path. Held to the SAME tolerance as baseline:
+        # a translation cannot change the physics. Also validates the output un-shift, since
+        # the profile comparison below is position-sensitive.
+        ("RANDOMIZE_GRAVTREE",),
+    ],
+    ids=["baseline", "tidal_adaptive", "randomize_gravtree"],
 )
 def test_zeldovich(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "zeldovich"

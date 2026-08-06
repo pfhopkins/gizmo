@@ -1125,6 +1125,18 @@ void fof_save_groups(int num)
   char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
   double t0, t1;
 
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+  /* Group.CM/Pos are written outside fill_write_buffer and never un-shifted, so a catalogue
+   * saved in a randomized frame would have wrong positions -- refuse rather than emit it
+   * silently. FOF for sink/BH seeding never reaches here, and postprocessing runs have
+   * RandomShift==0. */
+  if(All.RandomShift[0] != 0 || All.RandomShift[1] != 0 || All.RandomShift[2] != 0)
+    {
+      if(ThisTask == 0) {printf("FATAL: fof_save_groups() in a RANDOMIZE_GRAVTREE frame (RandomShift=%g,%g,%g): group positions are not un-shifted. Run group-finding in postprocessing on snapshots, or un-shift the group position-output sites first.\n", All.RandomShift[0], All.RandomShift[1], All.RandomShift[2]);}
+      endrun(561001);
+    }
+#endif
+
   PRINT_STATUS("start global sorting of group catalogues");
     
   t0 = my_second();
