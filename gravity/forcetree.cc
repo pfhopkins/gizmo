@@ -190,11 +190,9 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     {
         if(mp) {i = mp[k].index;} else {i = k;}
         rep = 0;
-        /* new code */
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        key = peano_and_morton_key(xb, yb, zb, BITS_PER_DIMENSION, &morton);
+        /* must be the same mapping the domain decomposition assigned ownership with, hence the
+         * shared definition rather than a local copy of the expression -- see domain_peano_key() */
+        key = domain_peano_key(i, &morton);
         morton_list[i] = morton;
         shift = 3 * (BITS_PER_DIMENSION - 1);
         no = 0;

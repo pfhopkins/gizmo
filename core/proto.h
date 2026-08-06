@@ -501,6 +501,7 @@ size_t sizemax(size_t a, size_t b);
 void reconstruct_timebins(void);
 void init_peano_map(void);
 peano1D domain_double_to_int(double d);
+peanokey domain_peano_key(int i, peanokey *morton); /* the ONLY place a position becomes a key; see domain.cc */
 peanokey peano_hilbert_key(peano1D x, peano1D y, peano1D z, int bits);
 peanokey peano_and_morton_key(peano1D x, peano1D y, peano1D z, int bits, peanokey *morton);
 peanokey morton_key(peano1D x, peano1D y, peano1D z, int bits);
