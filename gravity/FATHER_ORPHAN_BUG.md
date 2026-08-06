@@ -65,11 +65,18 @@ Measured on `test/hernquist`, 48 ranks, 32768 particles, 8194 tree builds per ru
 | particle-key evaluations | 2.7e8 | -- |
 | raw key differs between the two TUs | 115197 | 4.3e-4 |
 | top-node **leaf** differs | 77 | 6.7e-4 |
-| owning **task** differs (particle now foreign) | 3-10 | ~4-10% |
-| lands in `suns[0]` and is orphaned | 1-4 | ~1/3 |
+| owning **task** differs -- **mass lost from the global tree here** | 3-10 | ~4-10% |
+| additionally lands in `suns[0]`, so `Father[]` breaks too | 1-4 | ~1/3 |
 
 Each filter is why a pervasive discrepancy (7850 of 8194 builds contain at least one) surfaced as a
-once-per-run orphan and a rare crash. Diagnostics that confirmed it and ruled out everything else:
+handful of events per run and a rare crash.
+
+Note where the mass is actually lost. `force_treeupdate_pseudos` **overwrites** a foreign top node's
+moments with the owner's values (`Nodes[no].N_part = DomainMoment[i].N_part`), so a local particle
+under a foreign top node has its contribution discarded whether or not it was detached from
+`suns[0]`. The `suns[0]` clobbering is what additionally corrupts `Father[]` and produces the
+segfault, but every foreign-keyed particle is missing from the global moments -- 3-10 per run, not
+the 1-4 that are also orphaned. The integrity check below measures the wider number directly. Diagnostics that confirmed it and ruled out everything else:
 `dt = 0` between decomposition and treebuild (nothing drifted); `DomainCorner`/`DomainLen` unchanged;
 `DomainTask[]` and top-tree checksums, base pointers and array sizes all unchanged; and 0 foreign
 particles *at the end of the decomposition* versus 3-10 at the treebuild.
@@ -206,6 +213,43 @@ guarded here: the three kernel-radius guesses in `init.cc` and the link-length g
 touching `Extnodes`. The `forcetree_update.cc` sites already use `while(no >= 0)`.
 
 Non-orphan behaviour is bit-identical: every guard fires only when `Father < 0`.
+
+## Standing check
+
+Nothing in the code tested the tree against a global invariant, which is why this survived for years:
+every symptom was either silent or an intermittent crash with no attribution. `force_treebuild()` now
+ends with one:
+
+`Nodes[All.MaxPart].N_part` must equal `All.TotNumPart`. `N_part` is exchanged with the
+pseudo-particle data and re-accumulated across foreign domains, so after the build the root node
+counts every particle globally. A particle missing from the tree shows up as a deficit immediately.
+
+Details that make it usable:
+
+- **Integer, not mass.** A mass-based check cannot resolve one lost particle in ~1e6 -- node masses are
+  `MyFloat` and the deficit falls below the accumulated summation error. The count is exact.
+- **Zero-mass particles are allowed for.** Leaves count unconditionally but internal nodes only
+  propagate `N_part` when `mass > 0`, so an all-zero-mass subtree is legitimately dropped (swallowed
+  sinks await cleanup at `Mass = 0`). The global zero-mass count is subtracted before flagging.
+- **Whole-tree builds only** (`mp == NULL`); FOF/SUBFIND build over subsets where the invariant does
+  not hold.
+- **Warns, does not abort.** A false positive must not be able to kill a long production run, and a
+  warning is enough to stop the failure being silent -- which was the actual problem.
+- **Negative deficits are flagged too**, catching double-counting rather than only loss.
+
+Cost is one `MPI_Allreduce` of a single long plus an `O(N)` local count per treebuild: negligible
+against the build.
+
+Validated by running it against a build with the key fix deliberately reverted -- a check that never
+fires is worthless:
+
+| build | integrity warnings |
+|---|---|
+| key fix reverted | **8** (`root node holds 32767, expected 32768, deficit 1, 0 zero-mass allowed`) |
+| key fix present | **0** |
+
+Both runs completed to `TimeMax` with no crash, so the check detects the defect it was designed for
+and does not false-positive.
 
 ## Reproducer
 

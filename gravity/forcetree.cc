@@ -136,6 +136,39 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_flag_localnodes();
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
+
+    /* Tree-integrity invariant. N_part is exchanged with the pseudo-particle data and re-accumulated
+     * across foreign domains just above, so the root node now counts every particle globally and must
+     * agree with All.TotNumPart. A particle inserted under a top node owned by another task gets
+     * detached by force_insert_pseudo_particles() and then appears in NO rank's tree: its mass is
+     * absent from every multipole moment and the error is otherwise completely silent. This is an
+     * integer comparison, which matters -- node masses are MyFloat, so one lost particle in ~1e6
+     * is below the accumulated summation error and a mass-based check would miss it.
+     * Only meaningful for whole-tree builds; FOF/SUBFIND build over subsets (mp != NULL).
+     * Zero-mass particles (e.g. swallowed sinks awaiting cleanup) are legitimately uncounted when
+     * they occupy a subtree by themselves, since internal nodes only propagate N_part when mass > 0,
+     * so they are allowed for before flagging. Warn rather than abort: a false positive should not
+     * be able to kill a long production run, and a warning is enough to stop this being silent. */
+    if(mp == NULL)
+    {
+        int i; long long n_zero_loc = 0, n_zero_tot = 0;
+        for(i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
+        MPI_Allreduce(&n_zero_loc, &n_zero_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long in_tree = (long long) Nodes[All.MaxPart].N_part;
+        long long deficit = (long long) All.TotNumPart - in_tree;
+        if(deficit > n_zero_tot || deficit < 0)
+        {
+            if(ThisTask == 0)
+            {
+                printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
+                       "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
+                       "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
+                       in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
+                fflush(stdout);
+            }
+        }
+    }
+
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
