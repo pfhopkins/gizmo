@@ -623,7 +623,7 @@ void init(void)
             CellP[i].Rad_Flux_AGN = 0;
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-            CellP[i].DustHeatingRate = 0;
+            CellP[i].DustRadFlux = 0; CellP[i].DustRadColorFlux = 0; CellP[i].DustHeatingRate = 0;
 #endif
         }
 #ifdef GALSF_SUBGRID_WINDS
@@ -900,7 +900,7 @@ void init(void)
         CellP[i].Rad_Flux_AGN = 0;
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-        CellP[i].DustHeatingRate = 0;
+        CellP[i].DustRadFlux = 0; CellP[i].DustRadColorFlux = 0; CellP[i].DustHeatingRate = 0;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
         {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_E_gamma[kf]=0;}}

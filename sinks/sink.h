@@ -93,6 +93,7 @@ double sink_eddington_mdot(double sink_mass);
 double sink_lum_bol(double mdot, double mass, long pindex);
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
 double kappa_planck_mean_dust(double T_eff);
+double sink_emergent_color_temp(struct particle_data *pa, double lum);
 double sink_dust_heating_lum(struct particle_data *pa, double lum);
 #endif
 double evaluate_sink_radiative_efficiency(double mdot, double mass, long pindex);

@@ -1443,6 +1443,33 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
     double tau = column * kappa_emission;
     dust_emission /= (1 + tau*tau); // e.g. Masunaha & Inutsuka 1999, Rafikov 2007
 #endif
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    /* Stellar term, evaluated here rather than passed in because its opacity depends on Tdust.
+       The arriving radiation is a mixture: a fraction exp(-tau_direct) still carries the emitter's
+       emergent colour, the rest has been absorbed and re-emitted locally and so carries Tdust. Blend
+       the OPACITIES, not the temperatures -- absorption is linear in kappa and the field really is a
+       two-component mixture, whereas kappa_P(T) is steeply nonlinear.
+    
+       This reddens rather than attenuates, so the flux is untouched and energy is conserved by
+       construction -- important for a tree sum with nowhere to deposit absorbed energy. Effective
+       extinction still emerges, because kappa_P falls steeply as the colour degrades.
+    
+       Limits: tau->0 gives kappa_P(T_colour), the unattenuated scheme; tau->infinity gives
+       kappa_P(Tdust), the same opacity the emission term above uses, so a deeply buried cell stops
+       absorbing as though it had a clear line of sight to a hot photosphere. */
+    if(cell[i].DustRadFlux > 0)
+    {
+        double T_colour = cell[i].DustRadColorFlux / cell[i].DustRadFlux;
+        double k_direct = rt_kappa_adaptive_IR_band(i, Tdust, DMAX(T_colour,Tdust), -1, 1, pp, cell);
+        double k_therm  = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, -1, 1, pp, cell);
+        double col_dir = evaluate_NH_from_GradRho(cell[i].Gradients.Density,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i);
+        double f_direct = exp(-DMIN(col_dir*k_direct, 100.));
+        double rate_stellar = cell[i].Density * All.cf_a3inv
+                              * (k_direct*f_direct + k_therm*(1.-f_direct)) * cell[i].DustRadFlux;
+        dust_absorption_rate += rate_stellar;
+        cell[i].DustHeatingRate = rate_stellar; /* diagnostic; the root-finder's last call is the converged one */
+    }
+#endif
     double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
     if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell) / fdustmet_init;}
     return LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
@@ -1469,6 +1496,16 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
     if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
     double rho_c_arad_fac = (4.*5.67e-5)/(UNIT_VEL_IN_CGS*UNIT_PRESSURE_IN_CGS)*cell[i].Density*All.cf_a3inv; // a c rho in code units
+#ifdef SINK_DUST_HEATING_PLANCKMEAN
+    /* dust_dEdt() adds the stellar term internally, so fold an unblended estimate of it into the
+       bracketing guess here -- otherwise the guess can be orders of magnitude low near a source and
+       the bracketing loop takes many needless iterations. */
+    if(cell[i].DustRadFlux > 0) {
+        double T_c = cell[i].DustRadColorFlux / cell[i].DustRadFlux;
+        dust_absorption_rate += cell[i].Density * All.cf_a3inv * cell[i].DustRadFlux
+                                * rt_kappa_adaptive_IR_band(i, 20., DMAX(T_c,20.), -1, 1, pp, cell);
+    }
+#endif
     Tdust_guess = sqrt(cbrt(100 * dust_absorption_rate/(rho_c_arad_fac * (0.1*UNIT_SURFDEN_IN_CGS) * Zfac)));  // guess neglecting gas-dust coupling term and assuming a beta=2 emission opacity law kappa = 0.1 cm^2/g Z (T/10K)^2
     Tdust_guess = DMAX(Tdust_guess, sqrt(sqrt(dust_absorption_rate / (rho_c_arad_fac * (5.*UNIT_SURFDEN_IN_CGS) * Zfac)))); // account for how opacity tops out around 5 Z cm^2/g
 #ifdef COOLING // account for gas-dust coupling
@@ -1637,6 +1674,8 @@ double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particl
     RT_OPACITY_FROM_EXPLICIT_GRAINS / GALSF_ISMDUSTCHEM_MODEL / RT_INFRARED, and SINGLE_STAR_SINK_DYNAMICS
     is on), which would silently zero the heating entirely. */
 #define SINK_DUST_HEATING_TDUST_FIDUCIAL (20.) /* K; grain composition of the absorbing dust */
+#define SINK_DUST_HEATING_RPHOT_MAX_FAC (3.) /* how far beyond the sink kernel the unresolved-envelope
+                                                 extrapolation is trusted, in units of KernelRadius */
 double kappa_planck_mean_dust(double T_eff)
 {
     if(!(T_eff > 0)) {return 0;}
@@ -1644,20 +1683,103 @@ double kappa_planck_mean_dust(double T_eff)
     return rt_kappa_adaptive_IR_band(-1, SINK_DUST_HEATING_TDUST_FIDUCIAL, T_eff, -1, 1, P, CellP);
 }
 
-/*! kappa_P(T_eff)*L for a single sink: the weight which, summed as 1/(4 pi r^2) through the gravity
-    tree, yields the dust heating rate per unit gas mass. This is the optically-thin,
-    instantaneous-propagation limit -- fluxes are summed geometrically, so no light-travel time and no
-    signal speed enter anywhere. T_eff follows stellar_lum_in_band()'s convention. */
-double sink_dust_heating_lum(struct particle_data *pa, double lum)
+/*! Emergent colour temperature of a sink's radiation, as seen by distant dust.
+
+    A deeply embedded source does not irradiate its surroundings with its stellar photosphere: the
+    radiation thermalises inside the envelope and emerges at the dust photosphere, so the colour that
+    matters for kappa_P is set there, not at the star. Chakrabarti & McKee (2005) show the emergent
+    spectrum becomes nearly independent of the central source temperature once the envelope is thick,
+    which is exactly the regime where using T_eff,star is worst -- kappa_P runs from ~76 cm^2/g at
+    5600 K to ~1 cm^2/g at 30 K, so this is the dominant error, not geometry.
+
+    Local envelope model: rho ~ r^-2 anchored on the sink's own (KernelRadius, DensityAroundParticle),
+    which is the collapsing-envelope profile and needs nothing the tree has not already computed. Then
+    the column outside radius R is Sigma(R) = rho0 r0^2 / R, so the photosphere kappa_P(T) Sigma = 1
+    sits at R_phot = kappa_P(T) rho0 r0^2, and T_phot = (L / 4 pi sigma R_phot^2)^(1/4). The pair is
+    coupled through kappa_P(T) and solved by fixed-point iteration -- a few scalar steps per sink.
+
+    R_phot <= r0 is exactly the locally-optically-thin condition (tau(r0) = R_phot/r0), and there the
+    function returns the stellar temperature, recovering the previous behaviour. T_phot is also capped
+    at T_star: reprocessing can only redden. */
+double sink_emergent_color_temp(struct particle_data *pa, double lum)
 {
-    if(!(lum > 0)) {return 0;}
+    double T_star = 0;
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2)
     double r_sol = pa->ProtoStellarRadius_inSolar, l_sol = pa->StarLuminosity_Solar;
 #else
     double r_sol = pow(pa->Mass*UNIT_MASS_IN_SOLAR, 0.738), l_sol = lum*UNIT_LUM_IN_SOLAR;
 #endif
-    if(!(l_sol > 0) || !(r_sol > 0)) {return 0;}
-    return kappa_planck_mean_dust(5780. * pow(l_sol/(r_sol*r_sol), 0.25)) * lum;
+    if((l_sol > 0) && (r_sol > 0)) {T_star = 5780. * pow(l_sol/(r_sol*r_sol), 0.25);}
+    if(!(T_star > 0) || !(lum > 0)) {return T_star;}
+    double rho0 = pa->DensityAroundParticle * All.cf_a3inv, r0 = pa->KernelRadius * All.cf_atime;
+    if(!(rho0 > 0) || !(r0 > 0)) {return T_star;} /* no local envelope information: fall back to the star */
+
+    /* Is the source optically thin to its OWN emitted radiation? That is a property of the emitted
+       spectrum, so it is decided once, here, at T_star. Re-testing it against the reddened colour inside
+       the iteration below is wrong and actively pathological: as the fixed point cools, kappa_P collapses,
+       R_phot shrinks back inside r0, and the test would flip to the thin branch and return T_star -- the
+       hottest available answer -- in precisely the deeply-embedded case where the answer should be
+       coldest. */
+    if(!(kappa_planck_mean_dust(T_star) * rho0 * r0 > 1.)) {return T_star;}
+
+    /* Local logarithmic density slope, measured rather than assumed: n = |grad rho| r0 / rho0. The
+       comoving factors cancel in the ratio, so the raw values are used. n must exceed 1 for the column
+       outside r0 to converge, and a kernel-scale gradient cannot credibly resolve a very steep profile,
+       so it is clamped. n = 2 (the singular isothermal sphere) is only the fallback when no gradient is
+       available; the infalling region of a collapsing core is nearer n = 3/2, and the choice matters:
+       R_phot ~ kappa^(1/(n-1)), so n sets how the answer scales with opacity, not just its size. */
+    double n_env = 2.0, gradmag = sqrt(pa->GradRho.norm_sq());
+    if(gradmag > 0) {n_env = gradmag * pa->KernelRadius / pa->DensityAroundParticle;}
+    n_env = DMIN(DMAX(n_env, 1.2), 4.0);
+
+    /* Cap the extrapolation. This power law is a prior about structure the simulation does NOT resolve;
+       once R_phot runs beyond a few kernel radii the photosphere sits in gas that IS resolved, where a
+       profile assumption can be wrong by more than an order of magnitude (in a uniform medium it misses
+       the column by ~15x). Beyond the cap we stop inventing envelope and hand the job to the absorber,
+       whose exp(-tau) blend already accounts for further thermalisation using the resolved local column.
+       Emitter handles the unresolved envelope; absorber handles the resolved gas. */
+    double R_max = SINK_DUST_HEATING_RPHOT_MAX_FAC * r0;
+
+    double sigma_SB = 5.67e-5 / (UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS); /* Stefan-Boltzmann, code units */
+
+    /* Inner boundary: extrapolate the profile INWARD past the kernel to the innermost radius where a
+       photosphere can physically sit. Clamping at r0 instead would make the emergent colour scale as
+       r0^-1/2, i.e. depend on resolution -- and it binds, because the envelope is optically thick to the
+       star's optical output but transparent to its own reprocessed far-IR, so the tau=1 surface for the
+       emergent radiation wants to sit inside the kernel.
+
+       R_dust: dust sublimates above T_sub, so no dust photosphere exists inside it. For a grain in a
+       dilute field T_d = (L/16 pi sigma R^2)^(1/4), giving R_dust = sqrt(L / (16 pi sigma T_sub^4)).
+       T_sub = 1500 K matches T_evap in return_dust_to_metals_ratio_vs_solar().
+       R_star: inside the star there is no envelope at all. */
+    double T_sub = 1500.;
+    double R_dust = sqrt(lum / (16.*M_PI*sigma_SB*T_sub*T_sub*T_sub*T_sub));
+    double R_star = r_sol * (6.957e10/UNIT_LENGTH_IN_CGS) / All.cf_atime;
+    double R_in = DMAX(DMAX(R_dust, R_star), 0.);
+    if(!(R_in > 0) || !(R_in < R_max)) {R_in = DMIN(r0, R_max);} /* degenerate inputs: fall back to the kernel */
+    double T = T_star; int k;
+    for(k=0; k<24; k++)
+    {
+        /* R_phot from kappa_P(T) Sigma(R) = 1 with Sigma(R) = rho0 r0^n / ((n-1) R^(n-1)) */
+        double R_phot = pow(kappa_planck_mean_dust(T) * rho0 * pow(r0,n_env) / (n_env-1.), 1./(n_env-1.));
+        R_phot = DMIN(DMAX(R_phot, R_in), R_max);
+        double T_new = pow(lum/(4.*M_PI*sigma_SB*R_phot*R_phot), 0.25);
+        T_new = DMIN(DMAX(T_new, 2.73), T_star); /* reprocessing only reddens; floor at the CMB */
+        if(fabs(T_new-T) < 1.e-3*T) {T = T_new; break;}
+        /* damped: T ~ kappa(T)^-1/2 and kappa ~ T^beta, so the undamped map has slope -beta/2, which
+           exceeds unity in magnitude below ~50 K (beta = 2.25 at 30 K) and would oscillate. */
+        T = 0.5*(T+T_new);
+    }
+    return T;
+}
+
+/*! The tree weight: luminosity-weighted colour temperature. The tree separately carries the plain
+    luminosity, so the absorber recovers <T_colour> = sum(T_phot L) / sum(L) and picks its own opacity.
+    Carrying kappa_P(T_phot)*L instead would freeze the opacity at the emitter and prevent that. */
+double sink_dust_heating_lum(struct particle_data *pa, double lum)
+{
+    if(!(lum > 0)) {return 0;}
+    return sink_emergent_color_temp(pa, lum) * lum;
 }
 #endif
 

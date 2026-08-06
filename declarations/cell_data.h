@@ -214,11 +214,13 @@ extern struct gas_cell_data
     MyFloat Dust_Temperature;         /*!< equilibrium dust temperature from rt_eqm_dust_temp(); diagnostic */
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-    MyFloat DustHeatingRate;          /*!< sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) summed in the gravity tree:
-                                           radiative dust heating rate per unit gas mass, code units. This is the
-                                           optically-thin, instantaneous-propagation (infinite signal speed) limit:
-                                           the tree sums fluxes geometrically, so no light-travel time and no
-                                           photon energy density enter, and no signal speed appears anywhere. */
+    MyFloat DustRadFlux;              /*!< sum_s L_s/(4pi r_s^2): incident stellar flux, code units */
+    MyFloat DustRadColorFlux;         /*!< sum_s T_phot,s L_s/(4pi r_s^2). The ratio to DustRadFlux is the
+                                           flux-weighted emergent colour temperature this cell sees. Flux and
+                                           colour are carried separately so the absorber, not the emitter, picks
+                                           the opacity. Optically-thin instantaneous propagation: the tree sums
+                                           fluxes geometrically, so no light-travel time or signal speed enters. */
+    MyFloat DustHeatingRate;          /*!< diagnostic: volumetric rate finally applied; set in cooling */
 #endif
     
     

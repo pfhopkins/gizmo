@@ -1561,7 +1561,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_PHOTONMOMENTUM
     double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-    double mass_sinkdustheat=0, incident_dustheat=0;
+    double mass_sinkdustheat=0, incident_dustflux=0, incident_dustcolor=0;
 #endif
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -2434,7 +2434,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
                     /* the dust heating rate itself. the source SED enters through kappa_P evaluated at the source,
                        which is why the weight had to be attached before the node aggregation. */
-                    incident_dustheat += fac_intensity * mass_sinkdustheat;
+                    /* flux and colour are carried separately so the absorber can choose its own opacity.
+                       mass_sinklumwt_forradfb is the same angle-weighted luminosity the default path uses. */
+                    incident_dustflux  += fac_intensity * mass_sinklumwt_forradfb;
+                    incident_dustcolor += fac_intensity * mass_sinkdustheat;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) && !defined(SINK_DUST_HEATING_PLANCKMEAN)
                     /* NB this puts the entire bolometric sink luminosity into the far-IR band, i.e. assumes an
@@ -2571,7 +2574,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_AGN = incident_flux_agn;}
 #endif
 #if defined(SINK_DUST_HEATING_PLANCKMEAN) && defined(RT_USE_GRAVTREE) /* valid_gas_particle_for_rt/incident_dustheat only exist there */
-        if(valid_gas_particle_for_rt) {CellP[target].DustHeatingRate = incident_dustheat;}
+        if(valid_gas_particle_for_rt) {CellP[target].DustRadFlux = incident_dustflux; CellP[target].DustRadColorFlux = incident_dustcolor;}
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
         if(P[target].Type==0) {CellP[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;}
@@ -2649,7 +2652,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         GravDataResult[target].Rad_Flux_AGN = incident_flux_agn;
 #endif
 #if defined(SINK_DUST_HEATING_PLANCKMEAN) && defined(RT_USE_GRAVTREE) /* valid_gas_particle_for_rt/incident_dustheat only exist there */
-        GravDataResult[target].DustHeatingRate = incident_dustheat;
+        GravDataResult[target].DustRadFlux = incident_dustflux; GravDataResult[target].DustRadColorFlux = incident_dustcolor;
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
         GravDataResult[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;

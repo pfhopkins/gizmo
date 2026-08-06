@@ -1139,7 +1139,7 @@ extern struct gravdata_out
     MyDouble Rad_Flux_AGN;
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-    MyDouble DustHeatingRate;
+    MyDouble DustRadFlux, DustRadColorFlux;
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     MyDouble MencInRcrit;

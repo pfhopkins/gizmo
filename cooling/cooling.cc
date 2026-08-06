@@ -2188,11 +2188,8 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 	}
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
-	    /* protostellar dust heating summed directly in the gravity tree with the per-source Planck-mean opacity.
-	       DustHeatingRate is already sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) per unit gas mass, so multiplying by
-	       rho gives the volumetric absorption rate that rt_eqm_dust_temp() expects. This is the optically-thin
-	       infinite-signal-speed limit throughout: fluxes are summed geometrically, so no signal speed enters. */
-	    absorption_rate += cell[i].Density * All.cf_a3inv * cell[i].DustHeatingRate;
+	    /* The stellar term is deliberately NOT added here. Its opacity depends on the dust temperature we are
+	       about to solve for, so it is evaluated inside dust_dEdt() at each iterate; see the blend there. */
 #endif
 	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
 #if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
