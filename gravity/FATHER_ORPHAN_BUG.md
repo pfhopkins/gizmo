@@ -135,6 +135,13 @@ The gain is concentrated in cooling/chemistry -- table lookups and transcendenta
 not in the tree walk, which is under 1% of runtime in this configuration. So the flag stays, and the
 structural fix above is what makes that safe.
 
+The 10-minute budget includes initialisation (IC read, cooling tables, setup): GIZMO accounts 486.69 s
+of step loop for `fast` and 488.68 s for `nofast`, so ~112 s of the 600 s is startup in both. Because
+that cost is the same to within 2 s, it cancels rather than biasing the result: per-step from the
+accounted loop alone is 5.749/4.771 = 1.205, against a throughput ratio of 1.200. The throughput
+figure is therefore marginally conservative, and for production runs, where startup amortises to
+nothing, the relevant number is the per-step 20.5%.
+
 **Verified:** 3 runs x 8194 builds, 0 foreign and 0 orphans, versus 3-10 and 1-4 before. The
 cross-TU divergence itself is *still measurable* in those runs (60-76 leaf differences between the
 two original expressions), which is the point: the discrepancy is harmless once ownership and
