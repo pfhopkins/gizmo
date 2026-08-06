@@ -86,6 +86,25 @@ Garbage that is **in range** → silent corruption, which is the more serious ca
 Independently of `Father[]`, the orphaned particle is missing from its correct node's moments, so
 the forces are wrong by its mass regardless.
 
+### Why a local fix cannot be correct
+
+`force_exchange_pseudodata()` packs moments only for the top-node leaves this task owns
+(`DomainStartList[ThisTask*MULTIPLEDOMAINS+m] .. DomainEndList[...]`). So ownership matching
+position is a *requirement* of the pseudo-particle scheme, not an incidental assumption.
+
+If a local particle sits under a top node owned by another task, we never export that node's
+moments (we do not own it) and the owner exports moments computed from its own particles, which do
+not include ours. The particle's mass is therefore **absent from every other rank's tree** while
+present in our own — which is exactly the asymmetry that shows up as a Newton's-third-law
+violation.
+
+The consequence for the fix: any approach that leaves the particle local while its position keys
+foreign — reattaching the detached subtree, giving the pseudo-particle a non-colliding slot,
+attaching the particle to the root — leaves this global error untouched. Attaching to the root is
+the tempting one and is geometrically harmless for *our* walk, since the opening criterion uses
+node centre and length, which stay correct; but our root moments are not what other ranks import.
+All of these bound damage. Only making ownership match position fixes it.
+
 ## Measured rate
 
 `test/hernquist`, 48 ranks, 32768 particles, full run to t=118, with `Father[]` filled each build
@@ -187,12 +206,29 @@ Two parts. Only the first is implemented; the real fix is ordering/insertion.
    This does **not** fix the orphaning — the particle is still absent from the tree moments and
    forces are still wrong by its mass. It bounds the damage.
 
-2. **Root fix (not attempted).** Either insert pseudo-particles *before* local particles so nothing
-   can be detached — though insertion must then cope with a pseudo-particle already occupying
-   `suns[0]` — or refuse to insert a local particle under a top node owned by another task. The
-   latter treats it as a decomposition-invariant violation and puts the assert in
-   `domain_Decomposition` instead. Which invariant is intended is the open question; it is not
-   obviously a treebuild bug rather than a decomposition one.
+2. **Root fix (not attempted).** Given the exchange constraint above, the only correct fix is to
+   restore ownership == position. Two variants:
+
+   - **Assert/enforce in `domain_Decomposition`.** Correct and cheap *if* the disagreement is a
+     decomposition-side bug (e.g. a boundary case in the key assignment). But if some legitimate
+     path rebuilds the tree without an intervening decomposition, a bare assert fires in normal
+     operation and the fix degrades into "force a full decomposition before every treebuild",
+     which is far more expensive than a treebuild.
+   - **Lazy migration at treebuild.** Detect foreign-keyed local particles and exchange just those,
+     instead of redoing the whole decomposition. Affordable in the structural case, but a
+     substantially bigger change.
+
+   Note that simply reordering — inserting pseudo-particles *before* local particles — does not
+   work. The insertion loop follows a non-empty slot unconditionally
+   (`nn = Nodes[th].u.suns[subnode]; if(nn >= 0) {parent = th; th = nn;}`), and a pseudo-particle
+   index `All.MaxPart + MaxNodes + i` satisfies the `th >= All.MaxPart` internal-node test, so the
+   next iteration indexes `Nodes[]` past its end. Reordering converts a detached subtree into an
+   out-of-bounds access unless the insertion loop is taught about pseudo-particles. It also would
+   not prevent foreign-keyed particles, since only `suns[0]` is ever overwritten.
+
+   Which variant applies depends on whether time advances between the decomposition and the
+   treebuild that orphans a particle. Both compute the key from identical expressions, so with
+   unchanged positions the keys must agree; a mismatch requires the positions to have moved.
 
 ## Reproducer
 
