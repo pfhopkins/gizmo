@@ -1644,6 +1644,10 @@ double kappa_planck_mean_dust(double T_eff)
     return rt_kappa_adaptive_IR_band(-1, SINK_DUST_HEATING_TDUST_FIDUCIAL, T_eff, -1, 1, P, CellP);
 }
 
+/*! kappa_P(T_eff)*L for a single sink: the weight which, summed as 1/(4 pi r^2) through the gravity
+    tree, yields the dust heating rate per unit gas mass. This is the optically-thin,
+    instantaneous-propagation limit -- fluxes are summed geometrically, so no light-travel time and no
+    signal speed enter anywhere. T_eff follows stellar_lum_in_band()'s convention. */
 double sink_dust_heating_lum(struct particle_data *pa, double lum)
 {
     if(!(lum > 0)) {return 0;}

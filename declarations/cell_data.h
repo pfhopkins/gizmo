@@ -215,9 +215,10 @@ extern struct gas_cell_data
 #endif
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
     MyFloat DustHeatingRate;          /*!< sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) summed in the gravity tree:
-                                           radiative dust heating rate per unit gas mass, code units. this is a
-                                           real energy deposition rate, not a photon energy density, so no
-                                           reduced-speed-of-light rescaling applies to it. */
+                                           radiative dust heating rate per unit gas mass, code units. This is the
+                                           optically-thin, instantaneous-propagation (infinite signal speed) limit:
+                                           the tree sums fluxes geometrically, so no light-travel time and no
+                                           photon energy density enter, and no signal speed appears anywhere. */
 #endif
     
     

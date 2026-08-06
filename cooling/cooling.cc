@@ -2190,8 +2190,8 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 #ifdef SINK_DUST_HEATING_PLANCKMEAN
 	    /* protostellar dust heating summed directly in the gravity tree with the per-source Planck-mean opacity.
 	       DustHeatingRate is already sum_s kappa_P(T_eff,s)*L_s/(4pi r_s^2) per unit gas mass, so multiplying by
-	       rho gives the volumetric absorption rate that rt_eqm_dust_temp() expects. No reduced-speed-of-light
-	       factor: this is a real energy deposition rate rather than a photon energy density. */
+	       rho gives the volumetric absorption rate that rt_eqm_dust_temp() expects. This is the optically-thin
+	       infinite-signal-speed limit throughout: fluxes are summed geometrically, so no signal speed enters. */
 	    absorption_rate += cell[i].Density * All.cf_a3inv * cell[i].DustHeatingRate;
 #endif
 	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
@@ -2210,15 +2210,39 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 	   and under-counts its heating where the gas is thin. Split it into UV and optical, attenuate each with
 	   its own opacity times the same column-density estimator, and reprocess the extinguished part into the
 	   IR as before. */
+#ifdef RT_ISRF_GREY_LEGACY
+	double kappa_uv = 180. * Zfac * UNIT_SURFDEN_IN_CGS, kappa_opt = 180. * Zfac * UNIT_SURFDEN_IN_CGS; /* both bands at the optical opacity == the old grey treatment */
+#else
 	double kappa_uv = 1800. * Zfac * UNIT_SURFDEN_IN_CGS, kappa_opt = 180. * Zfac * UNIT_SURFDEN_IN_CGS;
+#endif
 	double tau_uv = kappa_uv*column, tau_opt = kappa_opt*column;
 	/* upper limit capped at x = h*nu/kT = 40: blackbody_lum_frac()'s large-x branch overflows beyond that */
 	double f_uv = blackbody_lum_frac(3.444, DMAX(3.444*1.001, 40.*8.617e-5*T_hiegy), T_hiegy);
 	double f_opt = DMAX(0., 1.-f_uv);
 	e_HiEgy += 7.8e-3 * pow(All.cf_atime,3.9)/(1.+pow(DMAX(-1.+1./All.cf_atime,0.001)/1.7,4.4)); // extragalactic UV/optical background
 	double e_uv = f_uv*e_HiEgy, e_opt = f_opt*e_HiEgy;
-	absorption_rate += fac_abs * (kappa_uv*e_uv*exp(DMAX(-tau_uv,-100)) + kappa_opt*e_opt*exp(DMAX(-tau_opt,-100))) / UNIT_PRESSURE_IN_EV;
-	double e_reproc = -0.5*(expm1(DMAX(-tau_uv,-100))*e_uv + expm1(DMAX(-tau_opt,-100))*e_opt); /* half the absorbed ONIR is re-radiated inward */
+	/* Per-band attenuation averaged over the TreeCol angular bins at each band's OWN opacity. Using
+	   SigmaEff here instead would be inconsistent: it is defined as -log(<exp(-kappa_PE*Sigma_bin)>)/kappa_PE
+	   with kappa_PE = 500*Z (see gravtree.cc), and -log(<exp(-kappa*Sigma)>)/kappa depends on kappa, so a
+	   column calibrated at 500 cm^2/g mis-attenuates bands at 1800 and 180. Averaging exp(-tau) over the
+	   bins directly is exact for each band, and correctly lets a partially-open sight line dominate. */
+	double att_uv, att_opt;
+#if defined(RT_USE_TREECOL_FOR_NH)
+	{
+	    att_uv = att_opt = 0; int kb;
+	    for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++)
+	    {
+	        double s_bin = pp[i].ColumnDensityBins[kb]; /* code units, as is kappa_* here */
+	        att_uv  += exp(DMAX(-kappa_uv *s_bin,-100));
+	        att_opt += exp(DMAX(-kappa_opt*s_bin,-100));
+	    }
+	    att_uv /= RT_USE_TREECOL_FOR_NH; att_opt /= RT_USE_TREECOL_FOR_NH;
+	}
+#else
+	att_uv = exp(DMAX(-tau_uv,-100)); att_opt = exp(DMAX(-tau_opt,-100)); /* Sobolev-type fallback */
+#endif
+	absorption_rate += fac_abs * (kappa_uv*e_uv*att_uv + kappa_opt*e_opt*att_opt) / UNIT_PRESSURE_IN_EV;
+	double e_reproc = 0.5*((1.-att_uv)*e_uv + (1.-att_opt)*e_opt); /* half the absorbed ONIR is re-radiated inward */
 	absorption_rate += fac_abs * kappa_IR * ((e_reproc + e_IR)/UNIT_PRESSURE_IN_EV);
 #endif
 	// OK now we have our dust absorption rate, let's call the solver
