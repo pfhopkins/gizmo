@@ -278,16 +278,16 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
             break;
 
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:	/* IC tag defining the nuclear-zoom refinement anchor */
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *ip++ = (MyIDType) P[pindex].Refinement_Flag;
                     n++;
                 }
-            break;
 #endif
+            break;
 
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; pindex++)
@@ -1505,34 +1505,38 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
-#ifdef EOS_DAMAGE_POROSITY
         case IO_DAMAGE_POROSITY_DAMAGE:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *fp++ = (MyOutputFloat) CellP[pindex].Damage;
                     n++;
                 }
+#endif
             break;
 
         case IO_DAMAGE_POROSITY_DISTENTION:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *fp++ = (MyOutputFloat) CellP[pindex].Distention;
                     n++;
                 }
+#endif
             break;
 
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *fp++ = (MyOutputFloat) CellP[pindex].ActiveCracks;
                     n++;
                 }
-            break;
 #endif
+            break;
 
             case IO_EOSPHASE:
 #ifdef EOS_ANEOS
@@ -1947,11 +1951,11 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             bytes_per_blockelement = sizeof(MyIDType);
             break;
 
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             bytes_per_blockelement = sizeof(MyIDType);
-            break;
 #endif
+            break;
 
         case IO_SINKPROGS:
         case IO_GRAINTYPE:
@@ -2348,9 +2352,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
-#endif
         case IO_MASS:
         case IO_SINK_DIST:
         case IO_U:
@@ -2628,9 +2630,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
-#endif
         case IO_POT:
         case IO_SOFT:
         case IO_AGS_HKERN:
@@ -2853,11 +2853,11 @@ int blockpresent(enum iofields blocknr)
             return 1;			/* always present */
             break;
 
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             return 1;			/* present iff the tag-anchor mode is compiled in */
-            break;
 #endif
+            break;
 
         case IO_NE:
         case IO_NH:
@@ -3527,11 +3527,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_GENERATION_ID:
             strncpy(label, "IDgn", 4);
             break;
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             strncpy(label, "RefF", 4);
-            break;
 #endif
+            break;
         case IO_ID:
             strncpy(label, "ID  ", 4);
             break;
@@ -3967,11 +3967,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_GENERATION_ID:
             strcpy(buf, "ParticleIDGenerationNumber");
             break;
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             strcpy(buf, "RefinementFlag");
-            break;
 #endif
+            break;
         case IO_MASS:
             strcpy(buf, "Masses");
             break;

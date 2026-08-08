@@ -338,11 +338,11 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
 
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
         case IO_REFINE_FLAG:		// nuclear-zoom refinement tag; read on ALL restart flags (incl. fresh IC start) so tagged ICs work as intended //
+#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             for(n = 0; n < pc; n++) {P[offset + n].Refinement_Flag = *ip++;}
-            break;
 #endif
+            break;
 
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; n++) {P[offset + n].Mass = *fp++;}
@@ -561,6 +561,15 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_EOSTEMP:
             for(n = 0; n < pc; n++) {CellP[offset + n].Temperature = *fp++;}
             break;
+
+#ifdef TWO_TEMPERATURE_PLASMA
+        /* the electron temperature is integrated state under the two-temperature module, not a
+         * per-step cache, so a snapshot restart has to read it back: u_e_cell is not written to
+         * snapshots and eos.cc rebuilds it from this value on the first call */
+        case IO_TWOTEMP_TE:
+            for(n = 0; n < pc; n++) {CellP[offset + n].T_e_cell = *fp++;}
+            break;
+#endif
 
         case IO_EOSABAR:
 #ifdef EOS_CARRIES_ABAR
@@ -798,23 +807,27 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
-#ifdef EOS_DAMAGE_POROSITY
         /* damage and porosity are integrated history, not diagnostics: they cannot be recomputed
          * from the other fields, so a snapshot restart has to read them back (init.cc initializes
          * them only on a fresh start). A snapshot written without these datasets arrives as zeros;
          * the distention floor in init.cc restores the material default in that case. */
         case IO_DAMAGE_POROSITY_DAMAGE:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; n++) {CellP[offset + n].Damage = *fp++;}
+#endif
             break;
 
         case IO_DAMAGE_POROSITY_DISTENTION:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; n++) {CellP[offset + n].Distention = *fp++;}
+#endif
             break;
 
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+#ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; n++) {CellP[offset + n].ActiveCracks = *fp++;}
-            break;
 #endif
+            break;
 
 
         /* the other input fields (if present) are not needed to define the

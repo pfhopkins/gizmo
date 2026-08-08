@@ -907,7 +907,7 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
                    new_cap, sizeof(struct LETNodeWire),
                    (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
-        g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
+        g_let_pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
@@ -926,7 +926,7 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
         if(let_realloc_fail_should_print())
             printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
-        g_let_pack_oom = 1;   /* leave *buf/*capacity unchanged; caller bails before any OOB write */
+        g_let_pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;

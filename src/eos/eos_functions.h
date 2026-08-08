@@ -444,12 +444,14 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
     /* electron-temperature cache. Battery-only (no TWO_TEMPERATURE_PLASMA):
        T_e == T_gas every step. Under TWO_TEMPERATURE_PLASMA: this is the
-       one-time LTE seed (initial T_e = TwoTemp_InitialTeOverTgas * T_gas);
-       after the first cooling step the integrator owns u_e_cell + T_e_cell
-       and we leave them alone here. */
+       one-time seed of u_e_cell, taken from the electron temperature a
+       snapshot restart read back, or from LTE (T_e = TwoTemp_InitialTeOverTgas
+       * T_gas) on a fresh start, where T_e_cell is still zero; after the first
+       cooling step the integrator owns u_e_cell + T_e_cell and we leave them
+       alone here. */
 #ifdef TWO_TEMPERATURE_PLASMA
     if(!(cell[i].u_e_cell > 0)) {
-        const double T_e_init = temp * All.TwoTemp_InitialTeOverTgas;
+        const double T_e_init = (cell[i].T_e_cell > 0) ? cell[i].T_e_cell : (temp * All.TwoTemp_InitialTeOverTgas);
         const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
         const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * T_e_init / rho_phys; /* erg/g */
         cell[i].T_e_cell = T_e_init;

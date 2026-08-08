@@ -589,10 +589,18 @@ void init(void)
 #endif
 #ifdef GIZMO_TRACK_ELECTRON_STATE
         CellP[i].n_e_cell = 0;
+#ifdef TWO_TEMPERATURE_PLASMA
+        /* here the electron temperature is integrated state, not a per-step cache: RestartFlag 1
+         * restores it from the restart files and RestartFlag 2 has already read it back from the
+         * snapshot, so only a fresh start zeros it. A snapshot written before the field existed
+         * reads back as zero, which sends eos.cc down its LTE seed exactly as a fresh start does */
+        if(RestartFlag != 1 && RestartFlag != 2) {CellP[i].T_e_cell = 0;}
+#else
         CellP[i].T_e_cell = 0;
 #endif
+#endif
 #ifdef TWO_TEMPERATURE_PLASMA
-        CellP[i].u_e_cell = 0; /* eos.cc populates from LTE (T_e = T_gas) on first call */
+        CellP[i].u_e_cell = 0; /* eos.cc rebuilds this from T_e_cell on first call */
 #if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
         CellP[i].DtInternalEnergy_FromConduction = 0;
 #endif
