@@ -1460,7 +1460,12 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
     if(cell[i].DustRadFlux > 0)
     {
         double T_colour = cell[i].DustRadColorFlux / cell[i].DustRadFlux;
-        double k_direct = rt_kappa_adaptive_IR_band(i, Tdust, DMAX(T_colour,Tdust), -1, 1, pp, cell);
+        /* Absorption depends on the colour of the ARRIVING radiation, not on how hot this cell happens
+           to be, so this is evaluated at T_colour. (The first argument is the grain-composition zone,
+           which correctly does depend on Tdust.) This replaced a DMAX(T_colour,Tdust) which was wrong in
+           principle but, as tested, made no difference: T_colour exceeds Tdust everywhere in the cases
+           examined, so the DMAX always selected T_colour anyway. */
+        double k_direct = rt_kappa_adaptive_IR_band(i, Tdust, T_colour, -1, 1, pp, cell);
         double k_therm  = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, -1, 1, pp, cell);
         double col_dir = evaluate_NH_from_GradRho(cell[i].Gradients.Density,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i);
         double f_direct = exp(-DMIN(col_dir*k_direct, 100.));
@@ -1770,6 +1775,18 @@ double sink_emergent_color_temp(struct particle_data *pa, double lum)
            exceeds unity in magnitude below ~50 K (beta = 2.25 at 30 K) and would oscillate. */
         T = 0.5*(T+T_new);
     }
+#ifdef SINK_DUST_HEATING_VERBOSE
+    /* per-sink diagnostic: everything needed to tell which branch/clamp determined the answer, so the
+       emitter can be debugged from the log instead of being inferred from downstream temperatures. */
+    {
+        double R_raw = pow(kappa_planck_mean_dust(T)*rho0*pow(r0,n_env)/(n_env-1.), 1./(n_env-1.));
+        const char *branch = (R_raw < R_in) ? "R_in_FLOOR" : ((R_raw > R_max) ? "R_max_CAP" : "unclamped");
+        printf("SinkPhot: rho0=%.4e r0=%.4e tau_star=%.4g gradmag=%.4e n_env=%.4g R_in=%.4e R_max=%.4e R_raw=%.4e T_phot=%.5g T_star=%.5g %s\n",
+               rho0, r0, kappa_planck_mean_dust(T_star)*rho0*r0, sqrt(pa->GradRho.norm_sq()),
+               n_env, R_in, R_max, R_raw, T, T_star, branch);
+        fflush(stdout);
+    }
+#endif
     return T;
 }
 
