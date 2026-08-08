@@ -7,13 +7,31 @@
  * cooling/cooling.cc:
  *
  *   1. __attribute__((constructor)) function — fires at C++ runtime
- *      startup (before main), broad safety net registering every
- *      TU's mirror.
+ *      startup (before main). Registers on CUDA, where the mirror's
+ *      address is a link-time constant. Registers NOTHING on HIP: the
+ *      address is still NULL at that point (see the note on
+ *      gizmo_all_device_mirror_register_this_tu below), so on AMD this
+ *      layer contributes no registrations at all.
  *   2. Dispatch-boundary forced registration — every call to
  *      GIZMO_GPU_ENSURE_ALL_FRESH() runs gizmo_all_device_mirror_register_this_tu()
- *      first, so any TU whose constructor was elided still registers
- *      on its first GPU dispatch. Correctness belt.
+ *      first, so a TU whose constructor registered nothing still registers
+ *      on its first GPU dispatch. Correctness belt, and the ONLY layer
+ *      that registers anything on HIP.
  *   3. Registry de-duplication — double registration is harmless.
+ *
+ * Because layer 2 is load-bearing on HIP, a GPU TU that launches kernels
+ * without ever calling GIZMO_GPU_ENSURE_ALL_FRESH() never registers its
+ * mirror, and every device-side `All.*` read in it returns ZERO — silently,
+ * with no crash, correct on CPU and CUDA, wrong on HIP. Place the call at
+ * an entry point that runs before every kernel launch in the TU (a coarse
+ * dispatch boundary, not immediately before one kernel); helpers reached
+ * only through such an entry point need no call of their own.
+ * To review coverage, list the .cc files that dispatch Kokkos work and
+ * confirm each has a belt call or a deliberate exemption:
+ *   grep -rlE 'Kokkos::parallel_(for|reduce|scan)' --include=*.cc src
+ * then check each hit for GIZMO_GPU_ENSURE_ALL_FRESH. This is a review aid,
+ * not a proof: whether an existing call actually precedes every launch
+ * still has to be read out of the code.
  *
  * During the device compilation pass (__CUDA_ARCH__ /
  * __HIP_DEVICE_COMPILE__), `#define All AllDeviceMirror` redirects

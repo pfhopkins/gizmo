@@ -313,6 +313,8 @@ extern "C" int gpu_gravity_tree_valid(void)                          {return soa
 extern "C" void gpu_nextnode_backup_suns(int n)
 {
     if(n <= 0) {return;}
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Allocate at MaxNodes+1 (full-tree capacity), not just n (=Numnodestree).
      * If we only allocated at n, the subsequent gpu_gravity_tree_acquire(MaxNodes+1)
      * inside gpu_nextnode_thread would see soa_capacity_ < MaxNodes+1, call

@@ -777,6 +777,8 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                           int n_gas) {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
      * global_num_active == 0 case. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's

@@ -365,6 +365,8 @@ static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
 
 void gpu_step_sidx_invalidate(void)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     struct particle_data *P_shared = gpu_particles_arena_P();
     if(!P_shared) {
         /* No arena -> no canonical particle storage; fall back to full free. */
@@ -414,6 +416,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              const char *caller_label,
                              mode_b_radius_policy_t radius_policy)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Capture periodicity parameters */
     idx->periodic_flags[0] = TILE_PERIODIC_X;
     idx->periodic_flags[1] = TILE_PERIODIC_Y;
@@ -646,6 +650,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         double j_kernel_radius_scale,
                         mode_b_radius_policy_t radius_policy)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
     const double cpu_rows_child0 = CPU_ChildCharged;

@@ -71,6 +71,8 @@ gpu_atomic_max_myfloat(MyFloat* addr, MyFloat val)
  * ========================================================================= */
 extern "C" void gpu_force_update_tree(void)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree (GPU)");
 
     GlobFlag++;
