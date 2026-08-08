@@ -202,7 +202,14 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                         
                         if(P[j].Type == 5)  /* we may have a sink particle merger -- check below if allowed */
                         {
-                            if(((local.ID != P[j].ID) || (r2>0)) && (SwallowID_j == 0) && (P[j].Sink_Mass < local.Sink_Mass)) /* we'll assume most massive BH swallows the other - simplifies analysis and ensures unique results */
+                            /* most massive sink swallows the other, which keeps the result unique and order-independent. The
+                                comparison must break exact ties: with a strict '<' neither direction passes, so the block
+                                below -- including its own equal-mass tie-breaker on ID -- is unreachable and the pair can
+                                never merge. Ties are not exotic; every cell in a glass/grid IC has identical mass, so two
+                                sinks that have not yet accreted have bit-identical Sink_Mass. Break on ID in the same sense
+                                as the inner check (higher ID swallows) so the two agree. */
+                            if(((local.ID != P[j].ID) || (r2>0)) && (SwallowID_j == 0) &&
+                               ((P[j].Sink_Mass < local.Sink_Mass) || ((P[j].Sink_Mass == local.Sink_Mass) && (P[j].ID < local.ID))))
                             {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                                 int allow_sink_merger = 1; /* flag here b/c we have different options */
