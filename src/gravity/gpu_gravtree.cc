@@ -236,8 +236,8 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * Tidal tensor accumulation + jerk both mirror forcetree.cc:2081-2292.
  * All sub-cases are ported; see the entries below for details. */
 /* COMPUTE_TIDAL_TENSOR + PMGRID: ported.  shortrange_table_tidal is mirrored
- * to SharedSpace at the top of gpu_gravtree_walk_primary() and consumed in the
- * tidal accumulation block (mirrors forcetree.cc:2538-2549). */
+ * to SharedSpace once per run by gpu_shortrange_tables_acquire() and consumed
+ * in the tidal accumulation block (mirrors forcetree.cc:2538-2549). */
 /* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE + ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING: ported.
  * The averaging branch in the inside-softening force-kernel section now sets fac_tidal
  * and averages fac2_tidal alongside fac_accel/fac_pot (mirrors forcetree.cc:2393-2394). */
@@ -1161,6 +1161,46 @@ gpu_gravtree_walk_one(int target,
 }
 
 
+#ifdef PMGRID
+/* SharedSpace mirrors of the PM short-range lookup tables. Seeded once and kept
+ * for the run: force_treeallocate() rebuilds the host tables from
+ * u = 3.0/NTAB*(i+0.5) via erfc/exp, a pure function of the table index, so
+ * every rebuild writes identical values and the device copy never goes stale.
+ * Same acquire-once shape as gpu_ewald_tables_acquire() below. */
+static float *g_d_shortrange_tab       = NULL;
+static float *g_d_shortrange_pot_tab   = NULL;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+static float *g_d_shortrange_tidal_tab = NULL;
+#endif
+static int    g_shortrange_tables_ready = 0;
+
+static int gpu_shortrange_tables_acquire(void)
+{
+    if(g_shortrange_tables_ready) return 0;
+    const size_t sz = GIZMO_GPU_GRAVTREE_NTAB * sizeof(float);
+    g_d_shortrange_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_shortrange_pot_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    if(!g_d_shortrange_tab || !g_d_shortrange_pot_tab) {
+        printf("gpu_shortrange_tables_acquire: shortrange table alloc failed\n");
+        endrun(913205);
+        return 1;   /* soft bad-stop: caller drains without walking */
+    }
+    memcpy(g_d_shortrange_tab,     shortrange_table,           sz);
+    memcpy(g_d_shortrange_pot_tab, shortrange_table_potential, sz);
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    g_d_shortrange_tidal_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    if(!g_d_shortrange_tidal_tab) {
+        printf("gpu_shortrange_tables_acquire: shortrange tidal table alloc failed\n");
+        endrun(913206);
+        return 1;
+    }
+    memcpy(g_d_shortrange_tidal_tab, shortrange_table_tidal, sz);
+#endif
+    g_shortrange_tables_ready = 1;
+    return 0;
+}
+#endif
+
 extern "C" int gpu_gravtree_walk_primary(void)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -1387,30 +1427,21 @@ extern "C" int gpu_gravtree_walk_primary(void)
     double rcut_snap     = All.Rcut[0];
     double rcut2_snap    = rcut_snap * rcut_snap;
     double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
-    /* shortrange_table is a host global (forcetree.cc); copy to SharedSpace so
-     * the CUDA kernel can read it from device code. */
-    float *d_st  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    float *d_sp  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    if(!d_st || !d_sp) {printf("gpu_gravtree_walk_primary: shortrange table alloc failed\n"); endrun(913205); myfree(idx_host); return 1;}
-    memcpy(d_st, shortrange_table,           GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    memcpy(d_sp, shortrange_table_potential, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    float *d_stid = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-    if(!d_stid) {printf("gpu_gravtree_walk_primary: shortrange tidal table alloc failed\n"); endrun(913206); myfree(idx_host); return 1;}
-    memcpy(d_stid, shortrange_table_tidal, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
-#endif
+    /* shortrange_table is a host global (forcetree.cc); the SharedSpace mirror the
+     * kernel reads is seeded once per run, not per call. */
+    if(gpu_shortrange_tables_acquire() != 0) {myfree(idx_host); return 1;}
 #endif
     /* read-only PM short-range config captured by value into the device walk (empty when
      * !PMGRID; per-target PLACEHIGHRESREGION override happens inside the walk on its copy). */
     grav_pm_shortrange_t pm_snap{};
 #ifdef PMGRID
     pm_snap.rcut = rcut_snap; pm_snap.rcut2 = rcut2_snap; pm_snap.asmthfac = asmthfac_snap;
-    pm_snap.shortrange_tab = d_st;
+    pm_snap.shortrange_tab = g_d_shortrange_tab;
 #ifdef EVALPOTENTIAL
-    pm_snap.shortrange_pot_tab = d_sp;
+    pm_snap.shortrange_pot_tab = g_d_shortrange_pot_tab;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    pm_snap.shortrange_tidal_tab = d_stid;
+    pm_snap.shortrange_tidal_tab = g_d_shortrange_tidal_tab;
 #endif
 #endif
 
@@ -1643,14 +1674,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     if(d_cr_inject){Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_cr_inject);}
 #endif
-#ifdef PMGRID
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_stid);
-#endif
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_sp);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_st);
-#endif
-
     myfree(idx_host);
 
     return nsucceeded;
