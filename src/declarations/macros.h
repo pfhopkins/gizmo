@@ -189,20 +189,25 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
-/* Device-only memory space: GPU HBM on CUDA builds, falls back to SharedSpace
-   elsewhere.  Use for arrays that are kernel-read-only and can be fed via
-   explicit deep_copy from a SharedSpace/HostSpace stage — the previous
-   "half-port" (only scratch/counts in CudaSpace, kernel still reading
-   compact_xyzh/tiles/bvh/pool through UVM) showed no benefit because the
-   hot read path was unchanged.  A complete port (build phase fills SharedSpace
-   stage, deep_copy to CudaSpace mirror, kernel reads CudaSpace) eliminates
-   HMM/TLB-miss overhead on small-N kernels where one thread does ~1000s of
-   scattered UVM reads through the BVH and compact_xyzh.  The PM_ERR_COUNT
-   crash that followed the prior partial port was independent (PMGRID=512
-   single-rank int overflow in MPI_Sendrecv slab transposes — fixed in
-   gravity/pm_*.cc memcpy-self-send patch). */
+/* Device-only memory space: GPU HBM on a GPU backend, SharedSpace when there is
+   no device (host builds).  Use for arrays that are kernel-read-only and can be
+   fed via explicit deep_copy from a SharedSpace/HostSpace stage — a partial move
+   (only scratch/counts device-resident, kernel still reading
+   compact_xyzh/tiles/bvh/pool through managed memory) buys nothing, because the
+   hot read path is unchanged.  Moving the whole read path (build phase fills a
+   SharedSpace stage, deep_copy to the device mirror, kernel reads the mirror)
+   is what removes the page-state/TLB-miss overhead on small-N kernels, where a
+   single thread makes thousands of scattered managed-memory reads through the
+   BVH and compact_xyzh.
+   Nothing allocated here may be dereferenced on the host: stage through
+   SharedSpace/HostSpace and deep_copy in both directions.
+   The PM_ERR_COUNT crash that once followed a partial move was independent
+   (PMGRID=512 single-rank int overflow in MPI_Sendrecv slab transposes — fixed
+   in gravity/pm_*.cc memcpy-self-send patch). */
 #ifdef KOKKOS_ENABLE_CUDA
 #define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::CudaSpace
+#elif defined(KOKKOS_ENABLE_HIP)
+#define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::HIPSpace
 #else
 #define GIZMO_KOKKOS_DEVICE_SPACE GIZMO_KOKKOS_SHARED_SPACE
 #endif
