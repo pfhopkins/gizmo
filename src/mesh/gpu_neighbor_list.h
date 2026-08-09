@@ -184,7 +184,7 @@ void gpu_step_sidx_invalidate_full(void);
  * * (1+SIDX_H_SLACK) — the CONSERVATIVE lazy-drift candidate margin, NOT the
  * bare KernelRadius. It must track arena[j]'s current reach for every j that
  * any cached neighbor search reads as a candidate (BVH-walk reads compact for
- * pruning + the leaf check_tile_particles reads compact[j*4+3] for h_j in
+ * pruning + the leaf check_tile_particles_gpu reads compact[j*4+3] for h_j in
  * SYMMETRIC mode).  Whenever code mutates arena[j].KernelRadius (or imports
  * a ghost slot that overwrites it), it must register j as dirty so the next
  * cached gpu_ngb_list_build's compact_h_refresh covers it.

@@ -1,11 +1,11 @@
 /* sfc_tiles_functions.h — GPU-callable SFC-tile neighbor search functions.
  *
- * Contains: bbox_overlaps_sphere(), check_tile_particles_gpu(),
+ * Contains: bbox_overlaps_sphere_gpu(), check_tile_particles_gpu(),
  *   search_neighbors_sfc_gpu().
  *
- * These are the per-particle search functions extracted from sfc_tiles.cc.
- * On CPU: sfc_tiles.cc includes this with KOKKOS_INLINE_FUNCTION redefined
- *   to empty (or just uses its own static copies directly).
+ * These are the per-particle search functions over the tiles and BVH that
+ * sfc_tiles.cc builds. They are the only traversal of that index; sfc_tiles.cc
+ * itself constructs it and does not search it.
  * On GPU: the Kokkos kernel includes this with KOKKOS_INLINE_FUNCTION as
  *   __device__ __host__ inline, making these callable from parallel_for.
  *
