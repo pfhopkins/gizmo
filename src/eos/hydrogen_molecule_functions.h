@@ -32,7 +32,14 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
 
     int j = 2;
     double dzterm, d2zterm;
-    while (error > EPSILON) {
+    /* Bounded, not "while (error > EPSILON)". EPSILON is DBL_EPSILON, so the exit test asks the
+     * series to converge to machine precision; if the terms stagnate at FP granularity the loop
+     * never terminates. This is device code (KOKKOS_INLINE_FUNCTION, reached from
+     * cooling_functions.h inside the offloaded cooling chain), where a non-terminating loop hangs
+     * the kernel rather than one rank. The series needs <=~15 terms below 3000 K (H2 is dissociated
+     * above that), so 200 iterations is ~13x headroom and cannot bind in normal operation. */
+    const int MAX_ITER = 200;
+    for (int iter = 0; error > EPSILON && iter < MAX_ITER; ++iter) {
         int s = j % 2;
         zterm[s] *= (2 * j + 1) * expterm / (2 * j - 3);
         int jjplusone = j * (j + 1);
