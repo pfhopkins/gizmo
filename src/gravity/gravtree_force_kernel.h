@@ -953,7 +953,10 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
         }
 #ifdef SINGLE_STAR_TIMESTEPPING
     Vec3<double> sink_dv = src.motion.vel - target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.sink_mass+target.pmass, r2soft;
-    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
+    /* sink_r2, not r2: these timestep limiters want the distance to the sink itself, not to the
+     * node's center of mass. The particle-source variant above uses r2 correctly, because there
+     * r2 IS the sink distance. */
+    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft;
     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     if(target.ptype == 0) {
