@@ -9,10 +9,11 @@
 #SYSTYPE="github-ubuntu"
 #SYSTYPE="Frontera"
 #SYSTYPE="MacBookCellar"
-SYSTYPE="MacBookCellar_Kokkos"
+#SYSTYPE="MacBookCellar_Kokkos"
 #SYSTYPE="Vista"
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"
+SYSTYPE="RUSTY_GENOA"
 #SYSTYPE="RUSTY"
 #SYSTYPE="Frontier"       # OLCF, MI250X via the Kokkos HIP backend
 #SYSTYPE="Frontier_CPU"   # OLCF, same source dispatched to the Kokkos OpenMP backend
