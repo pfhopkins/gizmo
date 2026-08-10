@@ -160,12 +160,15 @@ def test_c_shock(num_mpi_ranks, num_omp_threads):
             _restore_eos()
 
     # Download ICs and reference if not present, then run
-    from os import chdir
-    chdir(f"test/{test_name}/")
-    _download_if_missing("c_shock_ics.hdf5")
-    _download_if_missing("c_shock_exact.hdf5")
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
+    from os import chdir, getcwd
+    cwd = getcwd()
+    try:
+        chdir(f"test/{test_name}/")
+        _download_if_missing("c_shock_ics.hdf5")
+        _download_if_missing("c_shock_exact.hdf5")
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+    finally:
+        chdir(cwd)
 
     # Verify the simulation completed
     final_snap = get_final_snapshot(test_name)

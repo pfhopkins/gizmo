@@ -24,6 +24,7 @@ from gizmo.test import (
     get_final_snapshot,
     default_omp_threads,
     default_mpi_ranks,
+    parse_params,
     variant_output_dir,
     variant_suffix,
 )
@@ -342,7 +343,12 @@ def test_shu_jets(num_mpi_ranks, num_omp_threads, eos_flags, merge_flags):
 
 
 def _final_energetics(merge_flags):
-    """Total gas energy, outward momentum and sink mass from a variant's last snapshot."""
+    """Total gas energy, outward momentum and sink mass from a variant's last snapshot.
+
+    Also returns the snapshot's time, which the caller MUST check: these are cumulative
+    quantities in a collapse that is still running at TimeMax, so comparing two variants
+    at different times is meaningless. See test_shu_jets_merging_energetics.
+    """
     snaps = sorted(glob(f"{variant_output_dir(TEST_NAME, merge_flags + COOLING)}/snapshot_*.hdf5"))
     if not snaps:
         return None
@@ -354,6 +360,7 @@ def _final_energetics(merge_flags):
         m_sink = float(f["PartType5/Masses"][:].sum())
         ctr = f["PartType5/Coordinates"][:][0]
         v_sink = f["PartType5/Velocities"][:][0]
+        time = float(f["Header"].attrs["Time"])
     d = x - ctr
     r = np.linalg.norm(d, axis=1)
     vr = np.sum((v - v_sink) * d, axis=1) / (r + 1e-30)
@@ -362,35 +369,63 @@ def _final_energetics(merge_flags):
         "E_tot": 0.5 * np.sum(m * np.sum(v**2, axis=1)) + np.sum(m * u),
         "p_out": float(np.sum(m[out] * vr[out])),
         "M_sink": m_sink,
+        "N_gas": float(len(m)),  # whether retirement happened at all, when the energy check fails
+        "time": time,
+        "snap": snaps[-1],
     }
 
 
 def test_shu_jets_merging_energetics():
-    """The default merge criteria must not cost the outflow relative to not merging at all.
+    """The default merge criteria must not destroy the outflow relative to not merging at all.
 
-    The point of SINK_SPAWN_MERGE_WHEN_AMBIENT is to retire spawned cells that have genuinely
-    joined the ISM while protecting those that have not, so its energetics should land near the
-    no-merging case while still retiring cells -- and it does: it ends with ~0.3% fewer cells than
-    jets_nomerge, so retirement is happening, yet the outflow is intact.
+    SINK_SPAWN_MERGE_WHEN_AMBIENT retires spawned cells that have genuinely joined the ISM while
+    protecting those that have not, so its energetics should land near the no-merging case while
+    still retiring cells.
 
-    Compares total gas energy, outward momentum and sink mass rather than the jet kinetic energy
-    alone. That is deliberate and worth knowing: the purely kinetic measures (total KE, jet KE,
-    outward KE) all sit at 10.5-11% between these two runs, so a 10% bound on any of them would
-    fail on a healthy pair. They are also the quantities most sensitive to domain decomposition --
-    the retirement block fraction moved 7.9% -> 17.4% between 8 and 48 ranks on identical physics --
-    so a tight bound on them would be measuring the rank count. Measured here: E_tot 9.2%,
-    p_out 5.9%, M_sink 4.5%, at 48 ranks.
+    Deliberately a floor and not a two-sided bound. This collapse is chaotic and the quantities
+    below are not reproducible run to run: repeating jets_nomerge at a FIXED 48 ranks, same
+    binary and same parameters, moved E_tot by 12% and KE by 16% (4.851 vs 5.473 and 3.445 vs
+    4.063), with only the MPI reduction order and the work-based domain decomposition differing.
+    Any bound tighter than that scatter measures the decomposition rather than the merge criteria,
+    and a two-sided one would fail on a pair of identical runs. What is left worth asserting is
+    that merging does not cost most of the outflow, so this catches a retirement rule that eats
+    the jet and nothing subtler. The floor has roughly 4x the headroom of the scatter it has to
+    tolerate: the same null pair sat at 88.6% on E_tot, 92.8% on p_out and 95.2% on M_sink.
     """
     a = _final_energetics(JETS)
     b = _final_energetics(JETS_NOMERGE)
     if a is None or b is None:
         pytest.skip("needs both jets_merge and jets_nomerge to have run")
+
+    # Both variants must have reached TimeMax, or there is nothing to compare. E_tot, p_out and
+    # M_sink all grow monotonically through the collapse, so a variant that stopped early loses to
+    # one that did not by a margin that has nothing to do with merging -- this test would report a
+    # merge regression that does not exist.
+    #
+    # This is not hypothetical, and the failure is silent by construction: run_test kills GIZMO at
+    # GIZMO_TEST_TIMEOUT and raises pytest.skip, but Skipped is a BaseException, so
+    # build_and_run_test's finally still runs finalize_variant_output and renames the TRUNCATED
+    # output/ into the variant directory exactly as if the run had completed. The run's own
+    # test_shu_jets reports SKIPPED (so its assert_final_time never fires) and this test, which
+    # only globs directories and has no dependency on that one, is left holding the mismatch.
+    # Selecting a single variant with -k does the same thing via a stale sibling directory from a
+    # previous session. Skip rather than fail: a run that did not finish is the upstream test's
+    # business to report, not a merge-criteria result.
+    time_max = float(parse_params(str(TEST_DIR / f"{TEST_NAME}.params"))["TimeMax"])
+    for name, run in (("jets_merge", a), ("jets_nomerge", b)):
+        if abs(run["time"] - time_max) > 1e-6 * abs(time_max):
+            pytest.skip(
+                f"{name} ended at t = {run['time']:.6g}, not TimeMax = {time_max:.6g} "
+                f"({run['snap']}). Its run was truncated (timeout?) or the directory is stale from "
+                "an earlier session; comparing cumulative energetics across different times would "
+                "report a merge regression that is not there. Rerun both variants to completion."
+            )
+
     for key in ("E_tot", "p_out", "M_sink"):
-        rel = abs(a[key] - b[key]) / abs(b[key])
-        assert rel < 0.10, (
-            f"{key} differs by {100 * rel:.1f}% between the default merge criteria "
-            f"({a[key]:.5g}) and no merging ({b[key]:.5g}), expected within 10%. "
-            "Either retirement has started destroying the outflow, or it has stopped "
-            "retiring and the comparison is no longer meaningful -- check the "
-            "'Spawned-cell retirement' report in each run's log."
+        frac = a[key] / b[key]
+        assert frac > 0.50, (
+            f"the default merge criteria retain only {100 * frac:.1f}% of the no-merging run's "
+            f"{key} ({a[key]:.5g} vs {b[key]:.5g}), expected more than 50%. Retirement is "
+            "destroying the outflow rather than retiring cells that have joined the ambient "
+            f"medium (the two runs ended with {a['N_gas']:.0f} and {b['N_gas']:.0f} cells)."
         )

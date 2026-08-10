@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from os import path, chdir
+from os import path, chdir, getcwd
 from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, stash_baseline_output, finalize_variant_output
 
@@ -27,12 +27,17 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
     stash_baseline_output(test_name, extra_config_flags)
+    cwd = getcwd()
     try:
         chdir(f"test/{test_name}/")
-        download_test_files(test_name)
-        get_cooling_tables()
-        run_test(test_name, num_mpi_ranks, num_omp_threads)
-        chdir("../../")
+        try:
+            download_test_files(test_name)
+            get_cooling_tables()
+            run_test(test_name, num_mpi_ranks, num_omp_threads)
+        finally:
+            # Must restore cwd before finalize, including when run_test skips on timeout:
+            # finalize's paths are relative to the repo root.
+            chdir(cwd)
     finally:
         finalize_variant_output(test_name, extra_config_flags)
 
