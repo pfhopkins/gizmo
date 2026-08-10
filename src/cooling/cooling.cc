@@ -448,8 +448,9 @@ void cooling_parent_routine(void)
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
         /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
          * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
-        struct particle_data *oracle_P_scratch = (struct particle_data *) malloc(batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) malloc(batch_n * sizeof(struct gas_cell_data));
+        /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
+        struct particle_data *oracle_P_scratch = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), batch_n * sizeof(struct gas_cell_data));
         memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
         memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
 #endif
@@ -619,8 +620,11 @@ void cooling_parent_routine(void)
   } else
 #endif
   { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
-    struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+    /* aligned: particle_data is alignof 32, malloc guarantees only 16. This is the CPU cooling
+       dispatch path; do_the_cooling_for_particle() does Vec3 arithmetic on these buffers, which
+       the compiler emits as aligned 32-byte vector stores -- see gizmo_aligned_alloc. */
+    struct particle_data *compact_P    = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), N_active * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), N_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];

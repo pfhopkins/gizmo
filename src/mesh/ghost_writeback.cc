@@ -386,7 +386,8 @@ void ghost_write_detector_begin(const char *kernel_name)
                 kernel_name ? kernel_name : "(null)", gwd_kernel);
         endrun(91234);
     }
-    gwd_P_snap = (struct particle_data *) malloc(n * sizeof(struct particle_data));
+    /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
+    gwd_P_snap = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), n * sizeof(struct particle_data));
     memcpy(gwd_P_snap, P + local, n * sizeof(struct particle_data));
     /* CellP=NULL guard: DM-only / sidm-only / CBE-only runs have no gas
      * particles and no CellP backing. The detector was added via the
@@ -394,7 +395,7 @@ void ghost_write_detector_begin(const char *kernel_name)
      * detector client that can fire with CellP unallocated. Leave
      * gwd_CellP_snap=NULL in that case; end() skips the CellP memcmp. */
     if(CellP != NULL) {
-        gwd_CellP_snap = (struct gas_cell_data *) malloc(n * sizeof(struct gas_cell_data));
+        gwd_CellP_snap = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), n * sizeof(struct gas_cell_data));
         memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
     } else {
         gwd_CellP_snap = NULL;
