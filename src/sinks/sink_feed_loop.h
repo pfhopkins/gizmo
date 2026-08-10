@@ -313,8 +313,15 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 
     /* ---- sink-sink merger check ---- */
     if(neighbor_particle.Type == 5) {
-        if(((local.ID != neighbor_particle.ID) || (r2 > 0)) &&
-           (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
+        /* most massive sink swallows the other, which keeps the result unique and order-independent. The
+            comparison must break exact ties: with a strict '<' neither direction passes, so the block
+            below -- including its own equal-mass tie-breaker on ID -- is unreachable and the pair can
+            never merge. Ties are not exotic; every cell in a glass/grid IC has identical mass, so two
+            sinks that have not yet accreted have bit-identical Sink_Mass. Break on ID in the same sense
+            as the inner check (higher ID swallows) so the two agree. */
+        if(((local.ID != neighbor_particle.ID) || (r2 > 0)) && (SwallowID_j == 0) &&
+           ((neighbor_particle.Sink_Mass < local.Sink_Mass) ||
+            ((neighbor_particle.Sink_Mass == local.Sink_Mass) && (neighbor_particle.ID < local.ID)))) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
              * const-prop bug on int gate vars assigned conditionally —
