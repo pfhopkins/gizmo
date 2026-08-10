@@ -537,7 +537,22 @@ ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
 FC       =   mpifort
-OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=znver4 -mtune=znver4 -g -Wall $(OPT_EXTRA)
+## -O2, NO -ffast-math, NO -march=znver4 -- deliberately conservative, matching every Kokkos
+## systype this branch is actually validated on (Vista, Vista_CPU, Frontier, Frontera_Kokkos are
+## all plain -O2). The first version of this block copied -O3 -ffast-math -march=znver4 from the
+## RUSTY_GENOA block on starforge_dev_integration, which was wrong to import here:
+##   * -ffast-math is the documented cause of position->key divergence between translation units
+##     in this codebase (it let domain.cc contract the mapping to fma() while forcetree.cc emitted
+##     a call, so the two disagreed about which top node owns a particle). On starforge_dev that
+##     is safe only because 0614e00a routes every caller through one noinline domain_peano_key().
+##     THAT CONSOLIDATION IS NOT PORTED HERE YET -- domain_double_to_int is still duplicated across
+##     six files (domain.cc, proto.h, peano.cc, gpu_morton.cc/.h, gpu_morton_functions.h), so
+##     turning on fast-math is enabling exactly the optimization that makes the duplication bite.
+##   * -march=znver4 also permits FP contraction under GCC's default -ffp-contract=fast, which can
+##     reach the mantissa bits the key extraction reads.
+## Revisit once the host-side key consolidation lands and a run at high rank count with clustered
+## ICs is clean; OPT_EXTRA is there for experiments in the meantime.
+OPTIMIZE =  -O2 -funroll-loops -g -Wall $(OPT_EXTRA)
 ## Kokkos OpenMP backend needs -fopenmp regardless of the OPENMP Config flag, because the
 ## GPU_OBJS translation units below are Kokkos even in a CPU-only build.
 OPTIMIZE += -fopenmp   # remember --cpu-bind=none on srun when oversubscribing threads
