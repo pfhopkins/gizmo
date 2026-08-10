@@ -334,8 +334,9 @@ void rt_update_chemistry(void)
 
     } else if(N_active > 0)
     { /* CPU path: OpenMP-parallel dispatch (fallback for small N on GPU builds) */
-        struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+        /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
+        struct particle_data *compact_P    = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), N_active * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), N_active * sizeof(struct gas_cell_data));
         for(int j = 0; j < N_active; j++)
         {
             compact_P[j]    = P[chem_indices[j]];

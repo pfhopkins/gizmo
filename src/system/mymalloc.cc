@@ -120,6 +120,36 @@ size_t gizmo_mymalloc_rounded_size(size_t n)
   return n;
 }
 
+/* Over-aligned transient allocation, freed with plain free().
+ *
+ * For scratch buffers that live outside the mymalloc arena (its LIFO discipline makes it a poor
+ * fit for short-lived buffers freed out of order) but still hold types whose alignment exceeds
+ * what malloc() guarantees. struct particle_data is alignof 32 -- it contains 32-byte-aligned
+ * vector members -- while glibc malloc guarantees only 16 on x86-64. GCC compiles a struct copy
+ * such as `*dst = src[j]` into ALIGNED 32-byte vector stores based on the declared alignment, so
+ * a malloc'd particle_data buffer segfaults on the first copy whenever the returned pointer is
+ * 16-but-not-32-byte aligned -- roughly half the time, and dependent on optimization level,
+ * which is why it can hide for a long time.
+ *
+ * The arena itself has always known this: mymalloc_init() uses aligned_alloc(MIN_ALIGNMENT=32).
+ * This is the same guarantee for buffers that cannot use the arena.
+ *
+ * aligned_alloc() requires the size to be a multiple of the alignment, hence the round-up;
+ * over-allocating is harmless. Returns NULL on failure, like malloc. */
+void *gizmo_aligned_alloc(size_t alignment, size_t nbytes)
+{
+  if(alignment < MIN_ALIGNMENT) {alignment = MIN_ALIGNMENT;}
+  if(nbytes == 0) {nbytes = alignment;}
+  size_t rounded = ((nbytes + alignment - 1) / alignment) * alignment;
+#ifdef DISABLE_ALIGNED_ALLOC
+  void *p = NULL;
+  if(posix_memalign(&p, alignment, rounded) != 0) {return NULL;}
+  return p;
+#else
+  return aligned_alloc(alignment, rounded);
+#endif
+}
+
 void report_detailed_memory_usage_of_largest_task(size_t * OldHighMarkBytes, const char *label,
 						  const char *func, const char *file, int line)
 {

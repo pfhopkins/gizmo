@@ -2677,8 +2677,12 @@ int ghost_refresh_values(void)
     if(send_tot != (long long)ghost_send_home_count)        return GHOST_REFRESH_FAIL_POOL_MUTATED;
 
     int ns = ghost_send_home_count;
-    struct particle_data *send_P = (struct particle_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct particle_data));
-    struct gas_cell_data *send_CellP = (struct gas_cell_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct gas_cell_data));
+    /* gizmo_aligned_alloc, not malloc: struct particle_data is alignof 32 and glibc malloc
+       guarantees only 16, so gx_pack_send_slot's `*dst_P = src_P[j]` -- which the compiler
+       turns into aligned 32-byte vector stores -- segfaults whenever malloc hands back a
+       16-but-not-32-aligned pointer. */
+    struct particle_data *send_P = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), (ns > 0 ? ns : 1) * sizeof(struct particle_data));
+    struct gas_cell_data *send_CellP = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), (ns > 0 ? ns : 1) * sizeof(struct gas_cell_data));
     /* Re-pack current owner values via the SAME slot helper import uses, in the
        SAME send order (ghost_send_home_idx) that produced this pool. */
     for(int k = 0; k < ns; k++) {

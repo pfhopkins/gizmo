@@ -375,8 +375,9 @@ void cooling_parent_routine(void)
         if(diag_n > 0) {
             gpu_rt_diag_count++;
             /* Make a fresh copy of the saved inputs for CPU re-run */
-            struct particle_data *cpu_P = (struct particle_data *) malloc(diag_n * sizeof(struct particle_data));
-            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) malloc(diag_n * sizeof(struct gas_cell_data));
+            /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
+            struct particle_data *cpu_P = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), diag_n * sizeof(struct particle_data));
+            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), diag_n * sizeof(struct gas_cell_data));
             memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
             memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
             for(int dd = 0; dd < diag_n; dd++) {

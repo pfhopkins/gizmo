@@ -301,6 +301,7 @@ void find_particles_and_save_them(int num);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
 void x86_fix(void) ;
 
+void *gizmo_aligned_alloc(size_t alignment, size_t nbytes); /* over-aligned scratch outside the arena; free() with free(). see mymalloc.cc */
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
 void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const char *func, const char *file, int line);
 
