@@ -1821,44 +1821,51 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    /* update parent node property [maximum kernel radius] for opening criteria. The bound must
-     * cover the CHILD's kernel: for a sink-spawn call the parent is the sink, whose kernel radius is
-     * the wrong particle's, so the old form both missed a larger gas child and put sink kernels
-     * into the gas band. The miss is the direction that breaks neighbour-search completeness.
-     * Scalar-band eligibility follows force_update_hmax: gas only, every type under AGS-FORALL. */
+    /* Father[] is -1 for every slot the standing tree does not contain (gpu_topology_finalize_father
+     * seeds it so). Such a parent has no node whose opening criteria could be updated, and indexing
+     * Extnodes with it would be a wild write; the child inherits the same -1, which every other
+     * Father[] reader skips. It stays absent from the tree moments until the next build. */
+    if(father >= 0)
+    {
+        /* update parent node property [maximum kernel radius] for opening criteria. The bound must
+         * cover the CHILD's kernel: for a sink-spawn call the parent is the sink, whose kernel radius is
+         * the wrong particle's, so the old form both missed a larger gas child and put sink kernels
+         * into the gas band. The miss is the direction that breaks neighbour-search completeness.
+         * Scalar-band eligibility follows force_update_hmax: gas only, every type under AGS-FORALL. */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    const int child_scalar_eligible = 1;
+        const int child_scalar_eligible = 1;
 #else
-    const int child_scalar_eligible = (P[ichild].Type == 0);
+        const int child_scalar_eligible = (P[ichild].Type == 0);
 #endif
-    MyFloat new_hmax = Extnodes[father].hmax;
-    if(child_scalar_eligible) {new_hmax = DMAX(new_hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[ichild].KernelRadius, All.MaxKernelRadius));}
-    Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update: only the band of the CHILD's type can grow from this
-     * insertion. Conservative across every leaf-policy-selectable source via the shared helper. */
-    {
-        int ptype = (int)P[ichild].Type;
-        double htmp = force_hmax_per_type_particle_radius(ichild);
-        if(htmp > Extnodes[father].hmax_per_type[ptype]) {
-            Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
+        MyFloat new_hmax = Extnodes[father].hmax;
+        if(child_scalar_eligible) {new_hmax = DMAX(new_hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[ichild].KernelRadius, All.MaxKernelRadius));}
+        Extnodes[father].hmax = new_hmax;
+        /* Mode B per-type incremental update: only the band of the CHILD's type can grow from this
+         * insertion. Conservative across every leaf-policy-selectable source via the shared helper. */
+        {
+            int ptype = (int)P[ichild].Type;
+            double htmp = force_hmax_per_type_particle_radius(ichild);
+            if(htmp > Extnodes[father].hmax_per_type[ptype]) {
+                Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
+            }
         }
-    }
-    /* Keep SoA walk-mirror coherent with the AoS Extnodes
-     * change above.  hmax is read by the walk's opening criteria (vmax was
-     * mirrored by the chain raise above).  Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
-     * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
-     * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
-     * that exists, not by the index range it sits in. */
-    {
-        struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-        const int k_soa = gpu_gravity_tree_mirror_slot(father);
-        if(soa && k_soa >= 0) {
-            if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
-            /* ⛔ node_ti is deliberately NOT written here. It must pair with the
-               LENGTH it describes, and this site does not write soa->len: stamping a
-               newer time onto an older length makes the walk widen by too little --
-               silent under-inclusion. A fresher vmax is safe (running max, so it can
-               only over-widen); a fresher time is not. */
+        /* Keep SoA walk-mirror coherent with the AoS Extnodes
+         * change above.  hmax is read by the walk's opening criteria (vmax was
+         * mirrored by the chain raise above).  Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
+         * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
+         * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
+         * that exists, not by the index range it sits in. */
+        {
+            struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+            const int k_soa = gpu_gravity_tree_mirror_slot(father);
+            if(soa && k_soa >= 0) {
+                if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
+                /* ⛔ node_ti is deliberately NOT written here. It must pair with the
+                   LENGTH it describes, and this site does not write soa->len: stamping a
+                   newer time onto an older length makes the walk widen by too little --
+                   silent under-inclusion. A fresher vmax is safe (running max, so it can
+                   only over-widen); a fresher time is not. */
+            }
         }
     }
 
