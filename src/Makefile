@@ -546,7 +546,19 @@ OPTIMIZE += -fopenmp   # remember --cpu-bind=none on srun when oversubscribing t
 ## (KokkosCompat_*, Kokkos_DynRankView_Fad) WITHOUT Kokkos_Core.hpp or libkokkoscore. So point
 ## KOKKOS_PATH at a local build; scripts/build_kokkos_rusty.sh makes one. Override on the make
 ## command line or in the environment if you have your own.
-KOKKOS_PATH ?= $(HOME)/opt/kokkos-openmp
+## Resolution order: make command line > environment > default. This cannot be a plain "?=":
+## line ~83 above does an unconditional "KOKKOS_PATH =", which both clobbers the environment
+## value and leaves the variable *defined but empty*, so "?=" would never fire. The $(shell echo)
+## recovers the environment value that assignment discarded. This matters because the test
+## harness builds with a bare "make clean && make -j8" (test/harness/gizmo/test.py), passing
+## nothing on the command line -- without a self-contained default every pytest build fails at
+## "Kokkos_Core.hpp: No such file or directory" even though a manual build works.
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-openmp
+endif
 KOKKOS_INCL = -I$(KOKKOS_PATH)/include
 KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
 KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
