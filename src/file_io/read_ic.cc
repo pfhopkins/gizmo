@@ -117,12 +117,37 @@ void read_ic(char *fname)
          * the kernel radius and clustering, which are not known here. It is deliberately set
          * where a 562-particle subdomain gets several thousand ghost slots. */
         {
-            const int ghost_headroom_floor = 16384;   /* slots; ~6 MB of particle_data per rank */
-            if(All.MaxPart < ghost_headroom_floor) {All.MaxPart = ghost_headroom_floor;}
-            if(All.TotN_gas > 0 && All.MaxPartGas < ghost_headroom_floor) {All.MaxPartGas = ghost_headroom_floor;}
-            if(All.MaxPart > (int)(All.TotNumPart > 0 ? All.TotNumPart : All.MaxPart)) {All.MaxPart = (int) All.TotNumPart;}       /* never exceed the whole problem */
-            if(All.TotN_gas > 0 && All.MaxPartGas > (int) All.TotN_gas) {All.MaxPartGas = (int) All.TotN_gas;}
-            if(ThisTask == 0) {printf("Ghost-headroom floor applied: MaxPart=%d MaxPartGas=%d (%d ranks, %lld particles)\n", All.MaxPart, All.MaxPartGas, NTask, (long long) All.TotNumPart);}
+            /* The floor is TotNumPart, not a tuned constant, because that is a HARD BOUND on what
+               any rank can need: ghosts are copies of OTHER ranks' particles, so
+               local + ghosts <= TotNumPart always. Flooring there is therefore provably sufficient
+               and never wasteful beyond the true requirement. Measured ghost:local ratios at 48
+               ranks -- evrard 9:1, shu_M120 12:1, gmc_cooling_rt 34:1 -- show why no fixed
+               multiple of the LOCAL count is safe, and an earlier absolute floor of 16384 slots
+               was both too small for gmc_cooling_rt (needed 18011) and never even reached for
+               shu_M120 (needed 39540, natural MaxPart already 30920).
+
+               The cap bounds memory on very large problems. It only ever binds when
+               PartAllocFactor * N/NTask is ALREADY below it, i.e. small-to-moderate problems on
+               many ranks -- exactly the regime where the ghost:local ratio explodes and where
+               per-rank memory is most plentiful. Production runs with large N/rank never reach it.
+
+               RAISE ONLY. An earlier version of this block also clamped MaxPart DOWN to
+               TotNumPart, reasoning that a rank cannot hold more particles than exist. That was
+               wrong: MaxPart is a SLOT budget, not a particle count, and PartAllocFactor
+               deliberately provisions several times TotNumPart at low rank counts for load
+               imbalance plus ghosts. The clamp silently confiscated 80% of gmc_cooling's budget
+               (123770 -> 24754 at 2 ranks) and regressed both it and soundwave[1-8], which had
+               been passing. Never lower what the factor asked for. */
+            const long long ghost_headroom_cap = 262144;   /* slots; ~100 MB/rank of particle_data */
+            long long floor_slots = (long long) All.TotNumPart;
+            if(floor_slots > ghost_headroom_cap) {floor_slots = ghost_headroom_cap;}
+            if((long long) All.MaxPart < floor_slots) {All.MaxPart = (int) floor_slots;}
+            if(All.TotN_gas > 0) {
+                long long floor_gas = (long long) All.TotN_gas;
+                if(floor_gas > ghost_headroom_cap) {floor_gas = ghost_headroom_cap;}
+                if((long long) All.MaxPartGas < floor_gas) {All.MaxPartGas = (int) floor_gas;}
+            }
+            if(ThisTask == 0) {printf("Ghost-headroom floor: MaxPart=%d MaxPartGas=%d (%d ranks, %lld particles, %lld gas)\n", All.MaxPart, All.MaxPartGas, NTask, (long long) All.TotNumPart, (long long) All.TotN_gas);}
         }
         if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
             printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
