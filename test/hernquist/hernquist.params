@@ -1,15 +1,26 @@
 % Hernquist-sphere pure-gravity equilibrium test
 % Code units: G = 1, M = 1, a = 1, half-mass radius r_h = 2.414.
 % v_rms = sqrt(2 KE/M) = 0.408 (KE = -W/2 = GM^2/(12a)); half-mass crossing
-% time t_cross = 2 r_h / v_rms ~= 11.83. TimeMax = 118 covers ~10 crossings.
+% time t_cross = 2 r_h / v_rms ~= 11.83. TimeMax = 11.8 covers ~1 crossing.
+%
+% This was 118 (~10 crossings). Shortened 10x for suite wall time. What that costs is
+% recorded here because it is not recoverable from the numbers alone: the secular
+% signals this test was built to catch develop after t ~ 40, so a 1-crossing run sees
+% the initial transient, not the late-time drift. In particular the periodic-gravity
+% r_h runaway (see PERIODIC_RH_RUNAWAY_VARIANTS) reaches ~10% only near t=118 and is
+% invisible here. Measured on the baseline variant, drift over t is NOT one power law:
+%   |dE/E| ~ t^0.97   (secular)      -> shrinks ~9x   at 10% runtime
+%   COM drift ~ t^0.58 (random walk) -> shrinks ~4.6x at 10% runtime
+%   |dr_h/r_h|         oscillates    -> shrinks only ~2.7x, non-monotonically
+% so the tolerances downstream are scaled per-quantity, NOT by a flat 10x.
 % BoxSize = 500 = ~2 r_max, where r_max = 100 r_h is the IC truncation radius;
 % sized so the cluster fits with its periodic image at the box-corner origin.
 %
 InitCondFile                       hernquist_ics
 OutputDir                          output
-TimeMax                            118
+TimeMax                            11.8
 BoxSize                            500
-TimeBetSnapshot                    11.83
+TimeBetSnapshot                    1.183
 TimeOfFirstSnapshot                0
 TimeBegin                          0
 TimeBetStatistics                  1

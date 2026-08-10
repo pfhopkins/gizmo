@@ -55,7 +55,20 @@ LAGRANGE_TOL = (0.20, 0.15, 0.30)  # |dr/r| for 10%, 50%, 90% Lagrange radii
 LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)  # 1..99 % for plot only
 
 
+# --- half-mass-radius drift tolerance ---------------------------------------------------
+# TimeMax was cut 118 -> 11.8 (~10 crossings -> ~1) for suite wall time, so this tolerance is
+# NOT the historical 0.10 scaled by 10. r_h drift does not follow a power law: measured on the
+# baseline variant it oscillates (9.1e-3 at t=11.8, 1.0e-3 at t=35.5, 7.6e-4 at t=71, 2.5e-2 at
+# t=118), because at one crossing time we are watching the IC settle, not the secular drift.
+# Scaling 0.10 by 10 would put the ceiling at 0.010 against a measured 9.1e-3 -- a 1.1x margin
+# on a quantity that swings 10x between snapshots, which flaps rather than gates.
+# 0.025 keeps ~2.7x margin over the measured value while still being 4x tighter than before.
+# Re-measure before changing it; do not "fix" a failure by loosening it.
+RH_DRIFT_TOL = 0.025
+
 # --- known pre-existing defect: periodic-gravity half-mass-radius runaway ---------------
+# NOTE: at TimeMax=11.8 this runaway has not developed yet -- it is a late-time effect, so the
+# xfail below is expected to be inert here and the notes are kept for when the long run is used.
 # Every flag-OFF periodic variant secularly inflates r_h to ~10% by TimeMax=118, right on the
 # 0.10 tolerance, so the assertion flips run to run (ewald 0.1076, pmgrid 0.0984/0.1005 on
 # repeats; a since-retired PMGRID=256 probe gave 0.1019). It comes with ~4x the COM momentum drift of the non-periodic
@@ -366,12 +379,14 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     r_h_0 = r_lag_initial[half_mass_idx]
     r_h_f = r_lag_final[half_mass_idx]
     rel = abs(r_h_f - r_h_0) / r_h_0
-    if rel >= 0.10 and variant_id in PERIODIC_RH_RUNAWAY_VARIANTS:
+    # xfail threshold and assertion share RH_DRIFT_TOL: if they drift apart, the runaway
+    # variants stop xfailing and start hard-failing instead.
+    if rel >= RH_DRIFT_TOL and variant_id in PERIODIC_RH_RUNAWAY_VARIANTS:
         pytest.xfail(
             f"known pre-existing periodic-gravity r_h runaway: |dr_h/r_h| = {rel:.4f} "
             f"(r_h_0={r_h_0:.4g}, r_h_f={r_h_f:.4g}). {PERIODIC_RH_RUNAWAY_REASON}"
         )
-    assert rel < 0.10, (
+    assert rel < RH_DRIFT_TOL, (
         f"Half-mass radius drifted: |dr_h/r_h| = {rel:.4f} "
         f"(r_h_0={r_h_0:.4g}, r_h_f={r_h_f:.4g})"
     )

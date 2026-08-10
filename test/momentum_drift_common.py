@@ -69,8 +69,12 @@ DRIFT_SANITY_CEILING = 1.0
 RANDOMIZED_DRIFT_CEILING = {
     ("plummer", "randomize"): 1.0e-3,
     ("plummer", "randomize_pmgrid"): 5.0e-3,
-    ("hernquist", "randomize"): 1.0e-3,
-    ("hernquist", "randomize_pmgrid"): 4.0e-3,
+    # hernquist runs to TimeMax=11.8 (~1 crossing) rather than 118, so these are the
+    # long-run ceilings divided by 4.6 -- the measured shrink factor, from COM drift going
+    # as t^0.58 (random walk) on the baseline variant. NOT 10x: only the secular quantities
+    # scale linearly with time. Other tests in this table still run long; leave them alone.
+    ("hernquist", "randomize"): 2.2e-4,
+    ("hernquist", "randomize_pmgrid"): 8.6e-4,
     ("evrard", "randomize"): 1.7e-5,
     ("shu1977", "randomize"): 1.1e-3,
 }
