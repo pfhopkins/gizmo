@@ -226,16 +226,31 @@ def save_momentum_summary(test_dir, variant_id, traj):
     np.savez(momentum_summary_path(test_dir, variant_id), **traj)
 
 
-def load_momentum_summaries(test_dir):
-    """Load every momentum_<variant>.npz present, newest content wins. Returns dict."""
+def load_momentum_summaries(test_dir, end_time=None):
+    """Load every momentum_<variant>.npz present, newest content wins. Returns dict.
+
+    These files accumulate across runs and clean_test_outputs does not remove them, so after
+    a test's TimeMax changes the directory holds a mix of run lengths. Drift grows with time,
+    so tabulating or plotting those together compares variants that simply ran for different
+    durations. Pass end_time to keep only the summaries that reach it."""
     out = {}
     for f in sorted(glob.glob(f"{test_dir}/momentum_*.npz")):
         vid = path.basename(f)[len("momentum_"):-len(".npz")]
         try:
             with np.load(f) as d:
-                out[vid] = {k: d[k] for k in d.files}
+                rec = {k: d[k] for k in d.files}
         except Exception:
             continue
+        if end_time is not None:
+            t_end = float(rec["times"][-1])
+            if abs(t_end - end_time) > 1e-3 * max(1.0, abs(end_time)):
+                warnings.warn(
+                    f"{path.basename(f)}: ends at t={t_end:g}, expected {end_time:g}; skipping "
+                    "(stale run length -- rerun that variant to include it).",
+                    stacklevel=2,
+                )
+                continue
+        out[vid] = rec
     return out
 
 
@@ -249,17 +264,19 @@ def measure_and_record(test_dir, variant_id, output_dir, parttype="PartType1"):
     return traj
 
 
-def plot_momentum_drift(test_dir, test_name):
+def plot_momentum_drift(test_dir, test_name, end_time=None):
     """Overlay |dv_com|/v_rms vs time for every variant with a recorded summary.
 
     Rebuilt from whatever momentum_*.npz files are present, so running a single variant
     still refreshes the comparison (same idiom as the plummer/hernquist profile overlays).
+    Pass end_time to exclude summaries left over from a different TimeMax; without it the
+    overlay can show curves of different lengths as though they were comparable.
     """
     import matplotlib
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
-    summaries = load_momentum_summaries(test_dir)
+    summaries = load_momentum_summaries(test_dir, end_time=end_time)
     if not summaries:
         return None
 
@@ -296,7 +313,8 @@ def report_momentum_drift(test_dir, test_name, variant_id, traj):
     print(f"\n[momentum-drift] {test_name}/{variant_id}: final drift = {final:.3e}  "
           f"(norm={kind}={float(traj['norm']):.4g}, 2K/|W|={vir:.3g} -> {regime})")
 
-    summaries = load_momentum_summaries(test_dir)
+    # the run just measured defines the length every comparable summary must share
+    summaries = load_momentum_summaries(test_dir, end_time=float(traj["times"][-1]))
     if len(summaries) > 1:
         print(f"[momentum-drift] {test_name} recorded variants (final drift):")
         for vid, d in sorted(summaries.items(), key=lambda kv: float(kv[1]["drift"][-1])):

@@ -21,6 +21,7 @@ Code units: G = M = a = 1, dynamical time ~ 1, run to TimeMax = 5.
 from os import path
 import glob
 import os
+import warnings
 import sys
 
 import h5py
@@ -41,6 +42,7 @@ from gizmo.test import (
     default_omp_threads,
     variant_output_dir,
     assert_final_time,
+    parse_params,
 )
 
 TEST_NAME = "hernquist"
@@ -77,6 +79,30 @@ RH_DRIFT_TOL = 0.025
 # margin. 3x is deliberately snug: the regression this exists to catch is ~12x, and a 10x
 # margin would sail straight past it. Each reference number is a single run, so treat a
 # failure between 1x and 3x as "re-measure", not "bug".
+#
+# KNOWN WEAKNESS, read before trusting a verdict here. |dE/E0| is not a clean measure of
+# integration quality at this TimeMax: it is the residual of a near-total cancellation. Over
+# t=0..11.83 the baseline KE rises 2.04e-3 and PE falls 2.04e-3, and what is left is 4.7e-6 --
+# one part in 430. So this number reports how well the snapshot's Potential field agrees with
+# the forces the integrator actually used, as much as it reports energy conservation.
+#
+# Consequently it oscillates rather than growing: starforge_dev's baseline wanders over
+# 3.6e-5..3.6e-4 across its 10 outputs, a 10x spread with no trend. The ceilings above are
+# each ONE sample off such a curve, and t=11.83 happens to sit near the bottom of the swing.
+# Had it been sampled at t=118's phase the baseline ceiling would be ~1.1e-3 instead of 1.7e-4
+# and would admit 4x more error. Calibrating the margins honestly needs repeat runs at fixed
+# t (rank count, thread count), which do not exist yet -- 3x is a placeholder, not a measurement.
+#
+# ewald is the least trustworthy entry: its cancellation is one part in 4000, and it is only
+# "good" at t=11.83. At 7 of 10 output times it is WORSE than baseline (up to 11x), scaling as
+# t^1.42 against baseline's t^0.68. Do not read its small ceiling as Ewald summation being
+# accurate; nothing about the method predicts that, and over the run it is not.
+#
+# The robust signal, which this endpoint check does NOT capture, is the SHAPE: starforge_dev
+# oscillates within a bound (symplectic-looking), while kokkos grows monotonically
+# 6.55e-4 -> 5.90e-3, exceeding the reference at every output time by 10-113x. If this gate
+# ever needs to be trusted rather than merely consulted, test for secular growth over the
+# trajectory instead of thresholding the endpoint.
 #
 #   variant            starforge_dev @ t=11.83
 #   baseline                     5.508e-05
@@ -269,6 +295,11 @@ def _plot_signed_log(ax, x, y, color=None, label=None):
             line = ln
 
 
+def _current_time_max():
+    """TimeMax every current-generation summary must end at."""
+    return float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["TimeMax"])
+
+
 def _plot_summary():
     files = sorted(glob.glob(f"{TEST_DIR}/summary_*.npz"))
     if not files:
@@ -279,10 +310,24 @@ def _plot_summary():
     required = {"variant_id", "rc", "rho_initial", "rho_final",
                 "r_lag_initial_dense", "r_lag_final_dense",
                 "times", "energies", "ke0"}
+    # Summaries accumulate in the test directory and clean_test_outputs does not remove them,
+    # so after a TimeMax change the glob returns a mix of old and new runs. Plotting those
+    # together silently compares different end times -- an r_h or energy curve stopping at
+    # t=11.8 next to one running to 118 invites exactly the wrong conclusion. Drop the
+    # mismatched ones and say so.
+    time_max = _current_time_max()
     for f in files:
         data = np.load(f)
         if not required.issubset(set(data.files)):
             continue  # stale schema from an old run
+        t_end = float(data["times"][-1])
+        if abs(t_end - time_max) > 1e-3 * max(1.0, abs(time_max)):
+            warnings.warn(
+                f"{path.basename(f)}: ends at t={t_end:g}, but TimeMax is now {time_max:g}. "
+                "Skipping it -- rerun that variant to include it.",
+                stacklevel=2,
+            )
+            continue
         vid = str(data["variant_id"])
         rc = data["rc"]
         if not init_done:
@@ -400,7 +445,7 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     traj = measure_and_record(TEST_DIR, variant_id, outputdir, parttype="PartType1")
     if traj is not None:
         final_drift = report_momentum_drift(TEST_DIR, TEST_NAME, variant_id, traj)
-        plot_momentum_drift(TEST_DIR, TEST_NAME)
+        plot_momentum_drift(TEST_DIR, TEST_NAME, end_time=_current_time_max())
         assert final_drift < DRIFT_SANITY_CEILING, (
             f"[{variant_id}] spurious COM velocity reached {final_drift:.3e} of the internal "
             f"velocity dispersion (sanity ceiling {DRIFT_SANITY_CEILING}): the system is being "
