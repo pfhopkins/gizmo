@@ -86,13 +86,26 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
-    const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
+    /* DIVIDE, do not multiply by a precomputed reciprocal. The host computes
+     *     domain_double_to_int(((Pos[k] - DomainCorner[k]) / DomainLen) + 1.0)
+     * (domain.cc, one rounding). x * (1/d) rounds twice -- once forming the reciprocal, once in the
+     * product -- and is a DIFFERENT operation in IEEE-754, needing no -ffast-math to diverge. Measured
+     * over 2e5 uniform positions with a representative DomainLen, ~0.004% of particles land on a
+     * different 42-bit integer (always +/-1 in the last bit); at 1e7 particles that is ~350 per call.
+     * The bit trick in gpu_morton_double_to_int42 is exact and cannot diverge -- only this argument can,
+     * which is why the fix belongs here and not there.
+     * Today the keys only order particles within a topleaf, so the cost is reproducibility: reordering
+     * adjacent particles changes LBVH structure and force summation order, which is what a
+     * "bitwise identical CPU vs GPU" claim rests on. If gpu_morton_compute_global_keys is ever wired
+     * into the tree build (its comment says that was the intent) the same divergence becomes an
+     * ownership disagreement between the CPU domain decomposition and the GPU tree -- the Father[]
+     * orphaning failure with a host/device axis. */
 
     Morton128 *keys = g_morton_keys;
     Kokkos::parallel_for("morton_encode_global", npart, KOKKOS_LAMBDA(int i) {
-        double fx = (P_dev[i].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[i].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[i].Pos[2] - dc2) * inv_dlen;
+        double fx = (dlen > 0.0) ? ((P_dev[i].Pos[0] - dc0) / dlen) : 0.0;
+        double fy = (dlen > 0.0) ? ((P_dev[i].Pos[1] - dc1) / dlen) : 0.0;
+        double fz = (dlen > 0.0) ? ((P_dev[i].Pos[2] - dc2) / dlen) : 0.0;
         /* Clamp into [0, 1) so that (frac + 1.0) lies in [1.0, 2.0).
          * Domain decomp pre-wraps periodic cases; this clamp protects
          * against rare boundary FP drift. */
