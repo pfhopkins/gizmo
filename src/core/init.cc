@@ -1233,6 +1233,10 @@ void setup_smoothinglengths(void)
 #endif
         {
                 no = Father[i];
+                /* Negative means the topology build never reached this particle: gpu_topology_finalize_father()
+                 * seeds Father[] to -1 and only the BFS writes real parents. Start from the root rather than
+                 * indexing Nodes with -1; the guess is crude but finite, and gets refined iteratively. */
+                if(no < 0) {no = All.MaxPart;}
                 while(2 * All.DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1337,6 +1341,7 @@ void ags_setup_smoothinglengths(void)
                 if(P[i].Type > 0)
                 {
                     no = Father[i];
+                    if(no < 0) {no = All.MaxPart;} /* orphaned by the topology build; see setup_smoothinglengths note */
                     while(10 * All.AGS_DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                     {
                         p = Nodes[no].u.d.father;
@@ -1376,6 +1381,7 @@ void disp_setup_smoothinglengths(void)
             if(P[i].Type == 0)
             {
                 no = Father[i];
+                if(no < 0) {no = All.MaxPart;} /* orphaned by the topology build; see setup_smoothinglengths note */
                 while(10 * 2.0 * 64 * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;

@@ -1319,6 +1319,13 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
+    /* gpu_topology_finalize_father() seeds Father[] to -1 for every particle slot before the BFS
+     * writes real parents, so a negative entry means the topology build never reached this particle
+     * and there is no node whose opening criteria we could update. Indexing Extnodes with -1 would
+     * be a wild WRITE two lines below. Leave those fields alone; the child has already inherited the
+     * same -1 above and is skipped by the other Father[] consumers too. This bounds the damage, it
+     * does not fix the orphaning: the particle is still absent from the tree moments. */
+    if(father < 0) {return;}
     // update parent node properties [maximum softening, speed] for opening criteria
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
