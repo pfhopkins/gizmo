@@ -1,0 +1,48 @@
+% Hernquist-sphere pure-gravity equilibrium test
+% Code units: G = 1, M = 1, a = 1, half-mass radius r_h = 2.414.
+% v_rms = sqrt(2 KE/M) = 0.408 (KE = -W/2 = GM^2/(12a)); half-mass crossing
+% time t_cross = 2 r_h / v_rms ~= 11.83. TimeMax = 118 covers ~10 crossings.
+% BoxSize = 500 = ~2 r_max, where r_max = 100 r_h is the IC truncation radius;
+% sized so the cluster fits with its periodic image at the box-corner origin.
+%
+InitCondFile                       hernquist_ics
+OutputDir                          output
+TimeMax                            118
+BoxSize                            500
+TimeBetSnapshot                    11.83
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  1
+MaxSizeTimestep                    1.0
+MinSizeTimestep                    1e-9
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.05
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   1
+UnitMass_in_g                      1
+UnitVelocity_in_cm_per_s           1
+GravityConstantInternal            1
+Softening_Type0                    0.05
+Softening_Type1                    0.01
+Softening_Type2                    0.05
+Softening_Type3                    0.05
+Softening_Type4                    0.05
+Softening_Type5                    0.05
+Softening_Type0_MaxPhysLimit       0.05
+Softening_Type1_MaxPhysLimit       0.05
+Softening_Type2_MaxPhysLimit       0.05
+Softening_Type3_MaxPhysLimit       0.05
+Softening_Type4_MaxPhysLimit       0.05
+Softening_Type5_MaxPhysLimit       0.05
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
