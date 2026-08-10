@@ -101,6 +101,11 @@ void gpu_particles_arena_release(void);
  * <Kokkos_Core.hpp> directly. */
 void *gpu_particles_uvm_alloc(size_t nbytes, const char *label);
 
+/* Release a buffer obtained from gpu_particles_uvm_alloc(). Needed because the particle
+ * arrays are no longer strictly allocate-once: gizmo_grow_particle_storage() (allocate.cc)
+ * reallocates them when ghost-import demand exceeds MaxPart. NULL is a no-op. */
+void gpu_particles_uvm_free(void *p);
+
 /* Accessors. Return NULL / 0 when arena is not currently held. */
 struct particle_data *gpu_particles_arena_P(void);
 struct gas_cell_data *gpu_particles_arena_CellP(void);

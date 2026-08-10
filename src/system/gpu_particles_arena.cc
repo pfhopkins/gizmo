@@ -92,6 +92,11 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
     return p;
 }
 
+extern "C" void gpu_particles_uvm_free(void *p)
+{
+    if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+}
+
 extern "C" struct particle_data *gpu_particles_arena_P(void)     {return arena_valid_ ? arena_P     : NULL;}
 extern "C" struct gas_cell_data *gpu_particles_arena_CellP(void) {return arena_valid_ ? arena_CellP : NULL;}
 extern "C" int gpu_particles_arena_capacity(void)                {return arena_capacity_;}

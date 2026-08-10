@@ -97,6 +97,33 @@ void read_ic(char *fname)
 
         All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
         All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        /* Ghost headroom floor for heavy decomposition.
+         *
+         * Imported ghosts are appended into P[]/CellP[] at [NumPart, NumPart+NumGhost), so the
+         * ghost budget is whatever MaxPart leaves spare. But MaxPart scales with the LOCAL
+         * PARTICLE COUNT while ghost demand scales with the DOMAIN SURFACE, and those diverge
+         * as ranks are added: the surface-to-volume ratio of a subdomain grows without bound as
+         * it shrinks. Evrard at 27001 particles over 48 ranks (562/rank) wants ~5156 ghosts
+         * against 562 local -- 9:1 -- so even PartAllocFactor=10 leaves nothing and the run
+         * bad-stops in ghost_exchange (code 7702) having missed by under 2%.
+         *
+         * Growing on demand at the point of the miss is not viable: that call site sits inside
+         * an in-flight neighbour loop whose Spec hooks hold raw P/CellP views (see the note in
+         * mesh/ghost_exchange.cc). So give small subdomains an absolute floor instead, which
+         * costs a few MB per rank at exactly the decompositions where per-rank memory is
+         * cheapest, and nothing at all in the large-N-per-rank regime that dominates production.
+         *
+         * The floor is a headroom count, not a physical prediction -- ghost demand depends on
+         * the kernel radius and clustering, which are not known here. It is deliberately set
+         * where a 562-particle subdomain gets several thousand ghost slots. */
+        {
+            const int ghost_headroom_floor = 16384;   /* slots; ~6 MB of particle_data per rank */
+            if(All.MaxPart < ghost_headroom_floor) {All.MaxPart = ghost_headroom_floor;}
+            if(All.TotN_gas > 0 && All.MaxPartGas < ghost_headroom_floor) {All.MaxPartGas = ghost_headroom_floor;}
+            if(All.MaxPart > (int)(All.TotNumPart > 0 ? All.TotNumPart : All.MaxPart)) {All.MaxPart = (int) All.TotNumPart;}       /* never exceed the whole problem */
+            if(All.TotN_gas > 0 && All.MaxPartGas > (int) All.TotN_gas) {All.MaxPartGas = (int) All.TotN_gas;}
+            if(ThisTask == 0) {printf("Ghost-headroom floor applied: MaxPart=%d MaxPartGas=%d (%d ranks, %lld particles)\n", All.MaxPart, All.MaxPartGas, NTask, (long long) All.TotNumPart);}
+        }
         if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
             printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
             printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");

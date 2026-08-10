@@ -176,3 +176,124 @@ int allocate_memory(int do_collective_preflight)
 
   return 0;
 }
+
+
+/* ---------------------------------------------------------------------------------------
+ * Adaptive growth of the particle arrays.
+ *
+ * Ghosts are appended into P[]/CellP[] at [NumPart, NumPart+NumGhost), so ghost-import
+ * demand is bounded by All.MaxPart = PartAllocFactor * (TotNumPart / NTask). That sizing
+ * scales headroom with the LOCAL PARTICLE COUNT, while ghost demand scales with the
+ * DOMAIN SURFACE. Those diverge badly under heavy decomposition: at 27001 particles over
+ * 48 ranks (562/rank) an evrard collapse wants ~5156 ghosts against 562 local -- a 9:1
+ * ghost:local ratio -- so even PartAllocFactor=10 leaves nothing, and ghost_exchange
+ * bad-stops with code 7702 having missed by under 2%.
+ *
+ * Rather than making the user pre-tune PartAllocFactor for the decomposition, grow on
+ * demand. This mirrors what the LET foreign arena already does one frame up
+ * (forcetree.cc: "growing adaptive floor ... and rebuilding the tree (retry 1/3)").
+ *
+ * Safe because the particle arrays are plain pointers everywhere: no Kokkos View is
+ * constructed over P/CellP (they are UVM-canonical and passed as raw pointers), the arena
+ * only records the pointer (gpu_particles_arena_acquire) so re-acquiring is a single call,
+ * and the ~10 `args.P = P` sites are all rebuilt per call rather than cached across steps.
+ *
+ * Growth is LOCAL to a rank -- each rank sizes to its own demand. All.MaxPart is per-rank
+ * state and no collective depends on its value, only on the ghost counts already
+ * exchanged. Callers must still reach their collective poll in lockstep.
+ *
+ * Returns 1 on success (arrays grown, All.MaxPart raised), 0 on failure (arrays untouched,
+ * caller should fall back to its honest bad-stop).
+ * -------------------------------------------------------------------------------------*/
+int gizmo_grow_particle_storage(long long needed_slots, const char *why)
+{
+  if(needed_slots <= (long long) All.MaxPart) {return 1;}          /* already fits */
+
+  /* Headroom beyond the immediate need, so a slowly-growing demand does not realloc every
+   * step. Cap at INT_MAX/2 to keep the int-typed MaxPart and all its downstream index
+   * arithmetic well clear of overflow. */
+  long long want = needed_slots + needed_slots / 8 + 64;
+  if(want > (long long) (INT_MAX / 2)) {want = (long long) (INT_MAX / 2);}
+  if(want <= (long long) All.MaxPart) {return 0;}
+  int new_MaxPart = (int) want;
+  int old_MaxPart_local = All.MaxPart;
+  int new_MaxPartGas = All.MaxPartGas;
+  /* CellP is sized by MaxPartGas. Gas ghosts land in the same index range, so grow it in
+   * step whenever it was tracking MaxPart (the common case, incl. restart.cc's
+   * MaxPartGas = MaxPart). If it was deliberately smaller, scale it by the same factor. */
+  if(All.MaxPartGas >= old_MaxPart_local) {new_MaxPartGas = new_MaxPart;}
+  else {
+      long long g = (long long) All.MaxPartGas * (long long) new_MaxPart / (long long) (old_MaxPart_local > 0 ? old_MaxPart_local : 1);
+      new_MaxPartGas = (int) ((g > (long long)(INT_MAX/2)) ? (INT_MAX/2) : g);
+  }
+
+  /* Allocate the replacements FIRST; only commit once every one succeeded, so a partial
+   * OOM leaves the run exactly as it was and the caller's bad-stop is still truthful. */
+  struct particle_data *newP = (struct particle_data *) gpu_particles_uvm_alloc((size_t) new_MaxPart * sizeof(struct particle_data), "particle_soa_P_grown");
+  struct gas_cell_data *newCellP = NULL;
+  unsigned char *newWakeupDirty = NULL;
+  unsigned char *newProcessedFlag = NULL;
+  if(newP && new_MaxPartGas > 0) {newCellP = (struct gas_cell_data *) gpu_particles_uvm_alloc((size_t) new_MaxPartGas * sizeof(struct gas_cell_data), "particle_soa_CellP_grown");}
+  if(newP && (newCellP || new_MaxPartGas <= 0)) {newWakeupDirty = (unsigned char *) gpu_particles_uvm_alloc((size_t) new_MaxPart * sizeof(unsigned char), "particle_soa_wakeupdirty_grown");}
+  if(newWakeupDirty) {newProcessedFlag = (unsigned char *) malloc((size_t) new_MaxPart * sizeof(unsigned char));}
+
+  if(!newP || (new_MaxPartGas > 0 && !newCellP) || !newWakeupDirty || !newProcessedFlag)
+    {
+      if(newProcessedFlag) {free(newProcessedFlag);}
+      if(newWakeupDirty)   {gpu_particles_uvm_free(newWakeupDirty);}
+      if(newCellP)         {gpu_particles_uvm_free(newCellP);}
+      if(newP)             {gpu_particles_uvm_free(newP);}
+      printf("Task %d: gizmo_grow_particle_storage(%lld -> MaxPart %d) FAILED to allocate; leaving arrays at MaxPart=%d (%s)\n",
+             ThisTask, needed_slots, new_MaxPart, All.MaxPart, why ? why : "");
+      fflush(stdout);
+      return 0;
+    }
+
+  /* Carry over live contents. Only [0, NumPart) of P and [0, N_gas) of CellP are live;
+   * gpu_particles_uvm_alloc already zeroed the rest. */
+  int n_copy = (NumPart < old_MaxPart_local) ? NumPart : old_MaxPart_local;
+  if(n_copy > 0 && P)         {memcpy(newP, P, (size_t) n_copy * sizeof(struct particle_data));}
+  if(newCellP && CellP)
+    {
+      int ng_copy = (N_gas < All.MaxPartGas) ? N_gas : All.MaxPartGas;
+      if(ng_copy > 0) {memcpy(newCellP, CellP, (size_t) ng_copy * sizeof(struct gas_cell_data));}
+    }
+  if(n_copy > 0 && WakeupDirty) {memcpy(newWakeupDirty, WakeupDirty, (size_t) n_copy * sizeof(unsigned char));}
+  memset(newProcessedFlag, 0, (size_t) new_MaxPart * sizeof(unsigned char)); /* per-walk scratch: zeroed each gravity_tree() anyway */
+
+  struct particle_data *oldP = P; struct gas_cell_data *oldCellP = CellP; unsigned char *oldWakeupDirty = WakeupDirty;
+  P = newP; if(newCellP) {CellP = newCellP;} WakeupDirty = newWakeupDirty;
+  /* ProcessedFlag came from the mymalloc arena, which is LIFO -- blocks allocated after it
+   * sit above it, so it cannot be resized in place. It is never freed (it lives to process
+   * exit), so repoint it at a plain allocation and leave the old arena block dead. That
+   * block is All.MaxPart bytes (kilobytes here), and the arena is torn down wholesale at
+   * exit, so nothing leaks past the run. */
+  ProcessedFlag = newProcessedFlag;
+
+  All.MaxPart = new_MaxPart;
+  if(newCellP) {All.MaxPartGas = new_MaxPartGas;}
+
+  /* STL timebin vectors are indexed by particle slot, so they track MaxPart too. */
+  try {
+    ActiveParticleList.reserve(All.MaxPart);
+    NextInTimeBin.resize(All.MaxPart);
+    PrevInTimeBin.resize(All.MaxPart);
+  } catch(const std::bad_alloc&) {
+    printf("Task %d: gizmo_grow_particle_storage: timebin vector resize to %d threw bad_alloc\n", ThisTask, All.MaxPart); fflush(stdout);
+    return 0;   /* arrays already swapped and self-consistent; caller bad-stops */
+  }
+
+  /* The arena stores the raw pointer, so it must be re-pointed after the swap or every
+   * device-side consumer keeps dereferencing the freed buffer. */
+  gpu_particles_arena_set_site("gizmo_grow_particle_storage");
+  gpu_particles_arena_acquire(All.MaxPart, P, CellP);
+
+  gpu_particles_uvm_free(oldWakeupDirty);
+  if(newCellP) {gpu_particles_uvm_free(oldCellP);}
+  gpu_particles_uvm_free(oldP);
+
+  printf("Task %d: grew particle storage MaxPart %d -> %d (MaxPartGas -> %d) for %s\n",
+         ThisTask, old_MaxPart_local, All.MaxPart, All.MaxPartGas, why ? why : "demand");
+  fflush(stdout);
+  return 1;
+}

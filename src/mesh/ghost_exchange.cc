@@ -2432,6 +2432,17 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
+        /* NOTE: growing P[]/CellP[] HERE does not work, and the attempt is instructive.
+         * gizmo_grow_particle_storage() (allocate.cc) reallocates correctly, but this call
+         * site is inside an in-flight iterative neighbour loop: the runner refreshes its own
+         * effective_args after a ghost import (neighbor_loop_runner.cc, "may have realloc'd
+         * P/CellP") while the Spec hooks still read the original args, so DensitySpec::after_iter
+         * dereferences the freed buffer and segfaults. That refresh was defensive and had never
+         * been exercised, because MaxPart was fixed and nothing ever actually realloc'd.
+         * Making growth safe here means auditing every holder of P/CellP across the loop
+         * machinery -- and a missed one reads stale-but-valid memory, i.e. silent corruption
+         * rather than a crash. Sizing is handled up front instead (see the ghost-headroom floor
+         * in read_ic.cc/restart.cc), which is why this path should now be rare. */
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
         gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor, add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);

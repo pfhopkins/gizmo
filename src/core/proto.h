@@ -302,6 +302,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 void x86_fix(void) ;
 
 void *gizmo_aligned_alloc(size_t alignment, size_t nbytes); /* over-aligned scratch outside the arena; free() with free(). see mymalloc.cc */
+int gizmo_grow_particle_storage(long long needed_slots, const char *why); /* adaptive P/CellP growth; 1=grown, 0=left alone. see allocate.cc */
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
 void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const char *func, const char *file, int line);
 
