@@ -1185,3 +1185,27 @@
 #endif
 #endif
 
+#if defined(SINK_WIND_SPAWN) && !defined(WAKEUP_REVERSE_KICK_ON_DEMOTION) && !defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION)
+#define WAKEUP_TRUNCATE_STEP_ON_DEMOTION // the WAKEUP kick reversal injects energy and only fires with spawned cells present, so truncate the step instead whenever we are spawning. must come after every SINK_WIND_SPAWN derivation above. WAKEUP_REVERSE_KICK_ON_DEMOTION opts back out
+#endif
+
+#if defined(SINK_WIND_SPAWN) && !defined(MERGE_SPLIT_DISCARD_ENERGY) && !defined(MERGE_SPLIT_CONSERVE_ENERGY)
+#define MERGE_SPLIT_CONSERVE_ENERGY // merging sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy leaves the budget; discarding it costs ~23% of the injected wind energy in the adiabatic wind_singlestar test, so return it as heat whenever we are spawning. pairs with the truncation above: the two errors have opposite sign and were cancelling, which is why the discard went unnoticed. MERGE_SPLIT_DISCARD_ENERGY opts back out
+#endif
+
+/* The two above fix the ENERGY BOOKKEEPING of a merge; the two below govern WHICH pairs may merge at
+   all, which is what preserves the structure a sustained outflow builds. Keyed on the jet/wind modules
+   rather than on SINK_WIND_SPAWN, because the concern is a long-lived contact discontinuity between
+   outflow and ambient gas: SINGLE_STAR_FB_SNE also spawns cells but is a single impulsive event with
+   no such interface to maintain. With the bookkeeping fixed but these off, the adiabatic
+   wind_singlestar bubble still misses Weaver's coefficient by 2.4% and the radiative one by 5.7%,
+   losing ~11 points of retained energy and expanding closer to momentum- than energy-driven. */
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(SINK_SPAWN_MERGE_ANY_NEIGHBOR) && !defined(SINK_SPAWN_NO_MERGE) && !defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+#define SINK_SPAWN_MERGE_WHEN_AMBIENT // retire a spawned cell only once its own state has equilibrated with its kernel, kinematically and thermally, rather than as soon as it is subsonic wrt whichever neighbour is picked as target. A contact discontinuity is in pressure equilibrium with no velocity jump, so outflow material sitting at the contact passes every kinematic test while remaining a distinct phase. SINK_SPAWN_MERGE_ANY_NEIGHBOR opts back out; SINK_SPAWN_NO_MERGE supersedes it
+#endif
+
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
+#endif
+
+

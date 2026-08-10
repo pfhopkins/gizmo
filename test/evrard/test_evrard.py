@@ -5,6 +5,9 @@ a high-resolution reference solution.
 The exact solution file has columns: radius, density, entropy, velocity.
 """
 
+import os
+import sys
+
 import pytest
 import numpy as np
 from scipy.interpolate import interp1d
@@ -13,7 +16,13 @@ from matplotlib import pyplot as plt
 import h5py
 
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot, default_omp_threads
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot, default_omp_threads, variant_output_dir, assert_energy_conserved
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from momentum_drift_common import (  # noqa: E402
+    DRIFT_SANITY_CEILING, assert_randomized_drift, measure_and_record, plot_momentum_drift,
+    report_momentum_drift,
+)
 
 
 _variant_profiles = {}
@@ -47,10 +56,16 @@ def plot_evrard_density_slice(coords, rho, output_dir="."):
 @pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(default_mpi_ranks(), default_omp_threads())])
 @pytest.mark.parametrize(
     "extra_config_flags",
-    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
-    ids=["baseline", "tidal_adaptive"],
+    [
+        (),
+        ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06"),
+        # RANDOMIZE_GRAVTREE (non-periodic path). Evrard is initially at rest with zero net
+        # momentum by symmetry, so correlated force errors show up as spurious COM drift.
+        ("RANDOMIZE_GRAVTREE",),
+    ],
+    ids=["baseline", "tidal_adaptive", "randomize"],
 )
-def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
+def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     test_name = "evrard"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
@@ -115,8 +130,29 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
         plt.savefig(f"test/{test_name}/{label}.png", bbox_inches="tight")
         plt.close()
 
+    # --- spurious COM drift from correlated tree-force errors (RANDOMIZE_GRAVTREE) ---
+    variant_id = request.node.callspec.id.split("-")[0]
+    traj = measure_and_record(f"test/{test_name}", variant_id,
+                              variant_output_dir(test_name, extra_config_flags),
+                              parttype="PartType0")
+    if traj is not None:
+        final_drift = report_momentum_drift(f"test/{test_name}", test_name, variant_id, traj)
+        plot_momentum_drift(f"test/{test_name}", test_name)
+        assert final_drift < DRIFT_SANITY_CEILING, (
+            f"[{variant_id}] spurious COM velocity reached {final_drift:.3e} of the internal "
+            f"velocity dispersion (sanity ceiling {DRIFT_SANITY_CEILING}): the system is being "
+            f"pushed by force errors"
+        )
+        assert_randomized_drift(test_name, variant_id, final_drift)
+
     # Check density profile
     good = np.isfinite(rho_binned) & np.isfinite(rho_exact_interp) & (rho_exact_interp > 0)
     if np.any(good):
         L1_rho = np.nanmean(np.abs(np.log10(rho_binned[good]) - np.log10(rho_exact_interp[good])))
         assert L1_rho < 0.3, f"Log density profile L1 error {L1_rho:.4f} exceeds tolerance"
+
+    # Energy conservation. Evrard is self-gravitating, so the budget needs the gravitational term
+    # (0.5*sum(m*phi)) on top of thermal+kinetic -- hence OUTPUT_POTENTIAL in Config.sh. CAVEAT: the least
+    # certain check here, since ADAPTIVE_GRAVSOFT_FORGAS evolves the softening and the potential is then
+    # not a fixed functional of the configuration. A baseline failure is the setup, not a regression.
+    assert_energy_conserved(test_name, extra_config_flags, tol=0.1, include_potential=True)

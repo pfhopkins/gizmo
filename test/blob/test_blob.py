@@ -8,7 +8,7 @@ import pytest
 import numpy as np
 import h5py
 import glob
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time, default_omp_threads
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time, default_omp_threads, assert_energy_conserved
 from meshoid import Meshoid
 from matplotlib import pyplot as plt
 
@@ -76,3 +76,6 @@ def test_blob(num_mpi_ranks, num_omp_threads):
     assert (
         blob_mass_final > 0.1 * blob_mass_initial
     ), f"Blob lost too much mass: {blob_mass_final/blob_mass_initial:.2%} remaining"
+
+    # Blob: adiabatic wind-cloud interaction, no gravity, no MHD, no source after t=0.
+    assert_energy_conserved(test_name, tol=0.1)

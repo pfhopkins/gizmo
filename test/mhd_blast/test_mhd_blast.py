@@ -12,6 +12,7 @@ import h5py
 import glob
 from meshoid import Meshoid
 from gizmo.test import (
+    assert_energy_conserved,
     build_and_run_test,
     default_mpi_ranks,
     clean_test_outputs,
@@ -194,3 +195,7 @@ def test_mhd_blast(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     energy_err = abs(Etot_f - Etot0) / abs(Etot0)
     assert energy_err < 0.1, f"Total energy not conserved: relative error {energy_err:.4f}"
+
+    # Energy conservation, including the magnetic term: MHD blast has no source after t=0, so
+    # thermal + kinetic + magnetic must be constant.
+    assert_energy_conserved(test_name, extra_config_flags, tol=0.1, include_magnetic=True)

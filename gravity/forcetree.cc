@@ -136,6 +136,39 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_flag_localnodes();
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
+
+    /* Tree-integrity invariant. N_part is exchanged with the pseudo-particle data and re-accumulated
+     * across foreign domains just above, so the root node now counts every particle globally and must
+     * agree with All.TotNumPart. A particle inserted under a top node owned by another task gets
+     * detached by force_insert_pseudo_particles() and then appears in NO rank's tree: its mass is
+     * absent from every multipole moment and the error is otherwise completely silent. This is an
+     * integer comparison, which matters -- node masses are MyFloat, so one lost particle in ~1e6
+     * is below the accumulated summation error and a mass-based check would miss it.
+     * Only meaningful for whole-tree builds; FOF/SUBFIND build over subsets (mp != NULL).
+     * Zero-mass particles (e.g. swallowed sinks awaiting cleanup) are legitimately uncounted when
+     * they occupy a subtree by themselves, since internal nodes only propagate N_part when mass > 0,
+     * so they are allowed for before flagging. Warn rather than abort: a false positive should not
+     * be able to kill a long production run, and a warning is enough to stop this being silent. */
+    if(mp == NULL)
+    {
+        int i; long long n_zero_loc = 0, n_zero_tot = 0;
+        for(i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
+        MPI_Allreduce(&n_zero_loc, &n_zero_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long in_tree = (long long) Nodes[All.MaxPart].N_part;
+        long long deficit = (long long) All.TotNumPart - in_tree;
+        if(deficit > n_zero_tot || deficit < 0)
+        {
+            if(ThisTask == 0)
+            {
+                printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
+                       "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
+                       "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
+                       in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
+                fflush(stdout);
+            }
+        }
+    }
+
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
@@ -190,11 +223,9 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     {
         if(mp) {i = mp[k].index;} else {i = k;}
         rep = 0;
-        /* new code */
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        key = peano_and_morton_key(xb, yb, zb, BITS_PER_DIMENSION, &morton);
+        /* must be the same mapping the domain decomposition assigned ownership with, hence the
+         * shared definition rather than a local copy of the expression -- see domain_peano_key() */
+        key = domain_peano_key(i, &morton);
         morton_list[i] = morton;
         shift = 3 * (BITS_PER_DIMENSION - 1);
         no = 0;
@@ -321,6 +352,19 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* insert the pseudo particles that represent the mass distribution of other domains */
     force_insert_pseudo_particles();
     
+    /* Seed Father[] for the recursion below, which is its only writer and only reaches particles
+     * the u.suns[] walk visits. A local particle whose position keys into a top-node region owned
+     * by another task is inserted under that node, and force_insert_pseudo_particles() above then
+     * overwrites u.suns[0] there, detaching the subtree it sits in, so the recursion misses it.
+     * Father comes from the LIFO mymalloc arena, so an unwritten slot holds the previous build's
+     * value for that particle: usually a valid node index, which consumers then follow, silently
+     * attributing the particle to the wrong node (and segfaulting when it is stale enough to fall
+     * outside the node array). Consumers already treat a negative entry as "no parent"; seeding
+     * -1 makes that convention real, so a missed particle is skipped instead.
+     * This bounds the damage, it does not fix the orphaning: the particle is still absent from the
+     * tree moments, so forces are still wrong by its mass. */
+    for(i = 0; i < All.MaxPart; i++) {Father[i] = -1;}
+
     /* now compute the multipole moments recursively */
     last = -1;
     force_update_node_recursive(All.MaxPart, -1, -1);
@@ -1399,6 +1443,11 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = Father[iparent]; // set parent node to be the same
+    /* Father[] is seeded to -1 per treebuild, so a negative entry means the parent was never
+     * reached by force_update_node_recursive (see the note there) and has no node to update.
+     * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
+     * alone; the child inherits the same -1 and is skipped by the other consumers too. */
+    if(Father[iparent] < 0) {return;}
     // update parent node properties [maximum softening, speed] for opening criteria
     Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
     double vmax = Extnodes[Father[iparent]].vmax;

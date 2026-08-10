@@ -924,7 +924,19 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
+                   /* Temperature is derived output, not input: blockpresent() is keyed off
+                    * OUTPUT_TEMPERATURE (implicit for any COOLING run), so this demanded a
+                    * Temperature block in the ICs. The HDF5 reader probes with H5Dopen and skips
+                    * a missing dataset, but gadget-binary ICs carry no block labels, so absence
+                    * cannot be detected and the sequential fread ran off the end of the file
+                    * (endrun 778) -- which made every legacy binary IC unreadable, e.g. the MUSIC
+                    * zoom ICs behind the FIRE suite. Skip it for the binary formats ONLY, so HDF5
+                    * behaviour is untouched; INPUT_READ_TEMPERATURE forces the read regardless. */
+#ifdef INPUT_READ_TEMPERATURE
                    && blocknr != IO_EOSTEMP
+#else
+                   && (blocknr != IO_EOSTEMP || All.ICFormat == 1 || All.ICFormat == 2)
+#endif
 #ifdef EOS_CARRIES_ABAR
                    && blocknr != IO_EOSABAR
 #endif

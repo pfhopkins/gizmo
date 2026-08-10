@@ -210,6 +210,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     for(k = 0; k < 3; k++)
                     {
                         fp_pos[k] = (MyOutputPosFloat) P[pindex].Pos[k];
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+                        fp_pos[k] -= (MyOutputPosFloat) All.RandomShift[k]; /* un-shift the RANDOMIZE_GRAVTREE frame so snapshots hold physical coords; wrap below refolds */
+#endif
 #ifdef BOX_PERIODIC
                         double box_length_xyz;
                         if(k==0) {box_length_xyz = boxSize_X;}

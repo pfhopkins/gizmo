@@ -176,4 +176,6 @@ MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10
 DivBcleaningParabolicSigma   1.0
 DivBcleaningHyperbolicSigma  1.0
-Sink_outflow_particlemass 0.0152588
+%   test_wind_singlestar.py overwrites this per run as 1e-2 * (50000/res^3), so the value
+%   here only applies to a manual invocation. Kept in sync with the default res=64.
+Sink_outflow_particlemass 0.00190735

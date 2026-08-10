@@ -1,9 +1,13 @@
 /* values of various constants to be parsed as part of global definitions */
 
+#ifndef WAKEUP /* may be set in Config.sh, e.g. WAKEUP=2.1 for a stricter limiter: this is Saitoh &
+                  Makino (2009) f=2, which their Table 1 shows conserves energy slightly better than
+                  f=4 (7.6e-4 vs 5.9e-3 on Sedov) at roughly twice the cost. */
 #if (SLOPE_LIMITER_TOLERANCE > 0)
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
+#endif
 #endif
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */

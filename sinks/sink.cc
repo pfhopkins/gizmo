@@ -125,7 +125,12 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
     if(gas_density > 0)
     {
         if((P[j].Get_Particle_Size() > sink_radius*1.396263) && (P[j].Type == 0)) {return 0;} // particle volume should be less than sink volume, enforcing a minimum spatial resolution around the sink
-#if defined(COOLING)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
+        /* this guard must match the sink-formation side in sfr_eff.cc, which caps the effective support speed above the same
+            n_H=1e13 threshold so first-core thermal energy cannot veto formation. Both ask whether the run resolves the
+            opacity limit, and a barotropic EOS answers yes just as COOLING does. Gating on COOLING alone compiled this out
+            for barotropic runs, leaving a newly-formed sink with v_esc set by its own single-cell mass while the surrounding
+            first-core gas carries c_s of several km/s: nothing was accretable, so the sink could never grow out of it. */
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || P[j].Type != 0)) {double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density; vesc = DMAX(sqrt(2*All.G * m_eff / dr_code), vesc);} // assume an isothermal sphere interior, for Shu-type solution, and re-estimate vesc using self-gravity of the gas
 #endif
