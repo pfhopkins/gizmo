@@ -1,7 +1,7 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
 import subprocess
-from os import system, environ, path, chdir, cpu_count, remove
+from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
 from urllib.request import urlretrieve, HTTPError
 from shutil import move, rmtree, copyfile
 from glob import glob
@@ -12,6 +12,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
 
 DEFAULT_TEST_TIMEOUT = None  # opt-in: no timeout by default
+
+# Dropped in a run's output directory when the run did not reach TimeMax. finalize_variant_output
+# moves that directory as-is, so without a marker a killed run is indistinguishable on disk from a
+# complete one, and any cross-variant comparison silently compares different end times.
+TRUNCATED_MARKER = "RUN_TRUNCATED"
+
+# GIZMO prints this on the one path that exits the main loop having reached TimeMax (core/run.cc).
+_GIZMO_FINISHED = "Final time="
 
 
 def _resolve_test_timeout(timeout):
@@ -179,10 +187,81 @@ def download_test_files(test_name: str):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
-def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None):
+def _run_output_dir(test_name: str, paramsfile: str) -> str:
+    """A run's OutputDir, relative to the test directory (i.e. to run_test's cwd)."""
+    try:
+        return parse_params(paramsfile).get("OutputDir", "output")
+    except OSError:
+        return "output"
+
+
+def mark_run_truncated(test_name: str, reason: str, paramsfile: str | None = None):
+    """Record in the run's output directory that it did not reach TimeMax."""
+    d = _run_output_dir(test_name, paramsfile or f"{test_name}.params")
+    try:
+        makedirs(d, exist_ok=True)
+        with open(path.join(d, TRUNCATED_MARKER), "w") as f:
+            f.write(reason + "\n")
+    except OSError:
+        pass  # best-effort: never mask the real failure with a bookkeeping error
+
+
+def run_truncated_reason(test_name: str, extra_config_flags=()) -> str | None:
+    """Why this variant's run did not finish, or None if it did. Call from the repo root."""
+    marker = path.join(variant_output_dir(test_name, extra_config_flags), TRUNCATED_MARKER)
+    if not path.isfile(marker):
+        return None
+    with open(marker) as f:
+        return f.read().strip() or "run did not reach TimeMax"
+
+
+def _log_tail(logfile: str, nbytes: int = 4000) -> str:
+    try:
+        with open(logfile, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - nbytes))
+            return f.read().decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def _log_reached_timemax(logfile: str, nbytes: int = 262144) -> bool:
+    """GIZMO announces reaching TimeMax near the end of stdout; scanning the tail is enough
+    and keeps this cheap on the multi-GB logs that deep timestep hierarchies produce."""
+    return _GIZMO_FINISHED in _log_tail(logfile, nbytes)
+
+
+def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: str, paramsfile: str):
+    """Fail loudly if GIZMO did not run to completion.
+
+    Exit status alone is not enough: GIZMO also returns 0 when it leaves the main loop early on
+    a 'stop' file or its CPU-time limit, and when it gives up in domain decomposition. In those
+    cases the only symptom is a short final snapshot, which a test that does not happen to call
+    assert_final_time will report as a pass."""
+    if returncode != 0:
+        mark_run_truncated(test_name, f"GIZMO exited with status {returncode}", paramsfile)
+        raise RuntimeError(
+            f"GIZMO exited with status {returncode} for test '{test_name}'.\n"
+            f"--- tail of {errfile} ---\n{_log_tail(errfile)}\n"
+            f"--- tail of {outfile} ---\n{_log_tail(outfile)}"
+        )
+    if not _log_reached_timemax(outfile):
+        mark_run_truncated(test_name, "GIZMO exited 0 without reaching TimeMax", paramsfile)
+        raise RuntimeError(
+            f"GIZMO exited 0 for test '{test_name}' but never reported reaching TimeMax, so it "
+            "left the main loop early -- a 'stop' file in the output directory or the "
+            "TimeLimitCPU cutoff both do this and both exit 0.\n"
+            f"--- tail of {outfile} ---\n{_log_tail(outfile)}"
+        )
+
+
+def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None,
+             param_overrides: dict | None = None):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
     via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT.
+    param_overrides replaces parameter values for this run only, via a sibling params file.
+    Raises if GIZMO exits nonzero or stops before TimeMax.
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
@@ -196,6 +275,8 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
     paramsfile = f"{test_name}.params"
+    if param_overrides:
+        paramsfile = write_params_with_overrides(paramsfile, param_overrides)
     if environ.get("SLURM_JOB_ID"):
         cmd = ["srun", "-n", str(num_mpi_ranks), "--cpu-bind=none"]
     else:
@@ -205,11 +286,15 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     cmd += ["./GIZMO", paramsfile, "0"]
 
     effective_timeout = _resolve_test_timeout(timeout)
-    with open(f"test_{test_name}.out", "w") as out, open(f"test_{test_name}.err", "w") as err:
+    outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"
+    with open(outfile, "w") as out, open(errfile, "w") as err:
         try:
-            subprocess.run(cmd, stdout=out, stderr=err, timeout=effective_timeout, check=False)
+            proc = subprocess.run(cmd, stdout=out, stderr=err, timeout=effective_timeout, check=False)
         except subprocess.TimeoutExpired:
-            pytest.skip(f"{test_name} exceeded {effective_timeout}s timeout; GIZMO subprocess killed")
+            reason = f"{test_name} exceeded {effective_timeout}s timeout; GIZMO subprocess killed"
+            mark_run_truncated(test_name, reason, paramsfile)
+            pytest.skip(reason)
+    _check_gizmo_exit(test_name, proc.returncode, outfile, errfile, paramsfile)
 
 
 def get_cooling_tables(test_directory="."):
@@ -228,7 +313,40 @@ def get_cooling_tables(test_directory="."):
         system(f"cp cooling/TREECOOL {test_directory}")
 
 
+def write_params_with_overrides(paramsfile: str, overrides: dict) -> str:
+    """Write a sibling parameter file with overrides applied, and return its name.
+
+    Lets one variant of a test run with e.g. a shorter TimeMax without a duplicate params
+    file drifting out of sync with the original."""
+    out = paramsfile.replace(".params", "_override.params")
+    remaining = dict(overrides)
+    lines = []
+    with open(paramsfile) as f:
+        for line in f:
+            key = line.split("%")[0].split()
+            if key and key[0] in remaining:
+                lines.append(f"{key[0]}    {remaining.pop(key[0])}\n")
+            else:
+                lines.append(line)
+    lines += [f"{k}    {v}\n" for k, v in remaining.items()]
+    with open(out, "w") as f:
+        f.write(f"% generated from {paramsfile}; overrides: {overrides}\n")
+        f.writelines(lines)
+    return out
+
+
 _BASELINE_STASH = "__output_baseline_stash__"
+
+
+def _require_repo_root(test_name: str, caller: str):
+    """The stash/variant moves below are all relative to the repo root. Called from the test
+    directory instead, every path misses, nothing moves, and the baseline is left stashed with
+    the variant's output standing in for it -- so refuse rather than silently do nothing."""
+    if not path.isdir(f"test/{test_name}"):
+        raise RuntimeError(
+            f"{caller}('{test_name}') called from {getcwd()}, where 'test/{test_name}' does not "
+            "exist. Restore the working directory before calling this (see build_and_run_test)."
+        )
 
 
 def stash_baseline_output(test_name: str, extra_config_flags=()):
@@ -236,6 +354,7 @@ def stash_baseline_output(test_name: str, extra_config_flags=()):
     run doesn't clobber it. Returns True if a stash was made."""
     if not variant_suffix(extra_config_flags):
         return False
+    _require_repo_root(test_name, "stash_baseline_output")
     plain = f"test/{test_name}/output"
     stash = f"test/{test_name}/{_BASELINE_STASH}"
     if path.isdir(plain):
@@ -250,6 +369,7 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
     baseline stash (if any). Idempotent and safe to call in a finally block."""
     if not variant_suffix(extra_config_flags):
         return
+    _require_repo_root(test_name, "finalize_variant_output")
     plain = f"test/{test_name}/output"
     stash = f"test/{test_name}/{_BASELINE_STASH}"
     dst = variant_output_dir(test_name, extra_config_flags)
@@ -266,7 +386,8 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
         copyfile(log, path.join(dst, f"test_{test_name}.out"))
 
 
-def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None):
+def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None,
+                       param_overrides: dict | None = None):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -280,13 +401,13 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     stash_baseline_output(test_name, extra_config_flags)
-    from os import getcwd
     cwd = getcwd()
     try:
         chdir(f"test/{test_name}/")
         try:
             download_test_files(test_name)
-            run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout)
+            run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
+                     param_overrides=param_overrides)
         finally:
             chdir(cwd)
     finally:
@@ -308,19 +429,28 @@ def parse_params(params_file: str) -> dict:
 
 
 def get_final_snapshot(test_name: str, extra_config_flags=()) -> str:
-    """Return the path to the last snapshot produced by a test (variant-aware)."""
+    """Return the path to the last snapshot produced by a test (variant-aware).
+
+    Refuses to hand back a snapshot from a run that was killed or stopped short, so that a
+    truncated directory cannot be mistaken for a finished one -- particularly by tests that
+    compare variants against each other and would otherwise report a physics regression."""
     output_dir = variant_output_dir(test_name, extra_config_flags)
+    reason = run_truncated_reason(test_name, extra_config_flags)
+    if reason:
+        raise RuntimeError(f"{output_dir} is from a run that did not finish: {reason}")
     snaps = sorted(glob(f"{output_dir}/snapshot_*.hdf5"))
     if not snaps:
         raise RuntimeError(f"No snapshots found for test {test_name} in {output_dir}")
     return snaps[-1]
 
 
-def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
-    """Assert that the snapshot time matches TimeMax from the test's parameter file."""
-    params_file = f"test/{test_name}/{test_name}.params"
-    params = parse_params(params_file)
-    time_max = float(params["TimeMax"])
+def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6, time_max: float | None = None):
+    """Assert that the snapshot time matches TimeMax from the test's parameter file, or the
+    given time_max when the run overrode it (see run_test's param_overrides)."""
+    if time_max is None:
+        params_file = f"test/{test_name}/{test_name}.params"
+        params = parse_params(params_file)
+        time_max = float(params["TimeMax"])
     with h5py.File(snapshot_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
     assert abs(time - time_max) < rtol * abs(

@@ -336,13 +336,15 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
         R_adiabatic_plot = weaver_radius(L_w, RHO_AMBIENT_CODE, t_plot, ALPHA_ADIABATIC)
         if cooling_flags:
             plt.loglog(t_plot, R_weaver_plot, "r-", linewidth=1.5, label=rf"Weaver 1977 (radiative), $\alpha$={ALPHA_RADIATIVE:.2f}")
-            plt.loglog(t_plot, R_adiabatic_plot, "r:", linewidth=1.0, label="adiabatic (n/a here)")
+            plt.loglog(t_plot, R_adiabatic_plot, "r:", linewidth=1.0,
+                       label=rf"Weaver 1977 (adiabatic), $\alpha$={ALPHA_ADIABATIC:.2f} (n/a here)")
         else:
             plt.loglog(
                 t_plot, R_adiabatic_plot, "r-", linewidth=1.5,
                 label=rf"Weaver 1977 (adiabatic), $\alpha$={ALPHA_ADIABATIC:.2f}",
             )
-            plt.loglog(t_plot, R_weaver_plot, "r:", linewidth=1.0, label="Weaver 1977 (n/a here)")
+            plt.loglog(t_plot, R_weaver_plot, "r:", linewidth=1.0,
+                       label=rf"Weaver 1977 (radiative), $\alpha$={ALPHA_RADIATIVE:.2f} (n/a here)")
         #        plt.loglog(t_plot, A * t_plot**alpha, "b--", label=f"Best fit ($t^{{{alpha:.2f}}}$)")
         plt.xlabel("t (code units)")
         plt.ylabel("R_shell (pc)")

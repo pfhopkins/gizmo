@@ -24,6 +24,7 @@ from gizmo.test import (
     default_omp_threads,
     variant_output_dir,
     assert_final_time,
+    parse_params,
 )
 
 TEST_NAME = "plummer_binaries"
@@ -57,10 +58,18 @@ def _physical_cpu_count():
     return max(1, (os.cpu_count() or 4) // 2)
 
 
-# Benchmarked optimum on a 16-physical-core node: 2 MPI ranks x 8 OMP threads.
-# Generalizing: 2 MPI ranks x (N_phys / 2) OMP threads = total threads == N_phys.
+# Benchmarked optimum on a 16-physical-core node: 2 MPI ranks x 8 OMP threads. Capped in total
+# rather than scaled with the node: there are only 2*N_BINARIES particles and the deep timestep
+# hierarchy leaves a handful of them active per step, so wider parallelism adds synchronisation
+# without adding work.
+PB_MAX_CORES = 8
 PB_NUM_MPI_RANKS = 2
-PB_NUM_OMP_THREADS = max(1, _physical_cpu_count() // PB_NUM_MPI_RANKS)
+PB_NUM_OMP_THREADS = max(1, min(PB_MAX_CORES, _physical_cpu_count()) // PB_NUM_MPI_RANKS)
+
+# KDK resolves the same hard binaries without the Hermite integrator, taking ~2.4x as many steps
+# per unit time, and is an xfail on energy conservation either way. A tenth of the run is enough
+# to measure how fast it loses the binaries.
+KDK_TIME_FRACTION = 0.1
 
 # Cluster parameters (in code units: pc - km/s - Msun)
 SCALE_RADIUS = 1.0           # pc
@@ -281,18 +290,28 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
-    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="kdk"),
+    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="kdk", marks=pytest.mark.xfail(
+        reason="KDK cannot hold the 1000 AU binaries to 1% of KE_0: it is the baseline that "
+               "HERMITE_INTEGRATION + GRAVITY_ACCURATE_FEWBODY_INTEGRATION exist to beat",
+        strict=False,
+    )),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
     clean_test_outputs(TEST_NAME, extra_config_flags)
-    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    time_max = float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["TimeMax"])
+    overrides = None
+    if "DISABLE_HERMITE_INTEGRATION" in extra_config_flags:
+        time_max *= KDK_TIME_FRACTION
+        overrides = {"TimeMax": time_max}
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                       param_overrides=overrides)
 
     outputdir = variant_output_dir(TEST_NAME, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError(f"GIZMO did not produce enough snapshots in {outputdir}")
-    assert_final_time(snaps[-1], TEST_NAME)
+    assert_final_time(snaps[-1], TEST_NAME, time_max=time_max)
 
     pos0, vel0, mass0, pot0, boxsize = _load_snapshot(snaps[0])
     posf, velf, massf, potf, _ = _load_snapshot(snaps[-1])

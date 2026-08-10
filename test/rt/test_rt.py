@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from os import path, chdir
+from os import path, chdir, getcwd
 from urllib.request import urlretrieve
 from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time, default_omp_threads
@@ -25,14 +25,17 @@ def test_rt(num_mpi_ranks, num_omp_threads):
     test_name = "rt"
     clean_test_outputs(test_name)
     build_gizmo_for_test(test_name, num_omp_threads)
-    chdir(f"test/{test_name}/")
+    cwd = getcwd()
+    try:
+        chdir(f"test/{test_name}/")
 
-    # Download ICs (non-standard name on site: rt_ics.hdf5, but params references rt_ics)
-    if not path.isfile("rt_ics.hdf5"):
-        urlretrieve(WEBSITE + "rt_ics.hdf5", "rt_ics.hdf5")
+        # Download ICs (non-standard name on site: rt_ics.hdf5, but params references rt_ics)
+        if not path.isfile("rt_ics.hdf5"):
+            urlretrieve(WEBSITE + "rt_ics.hdf5", "rt_ics.hdf5")
 
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+    finally:
+        chdir(cwd)
 
     outputdir = f"test/{test_name}/output"
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
@@ -49,12 +52,23 @@ def test_rt(num_mpi_ranks, num_omp_threads):
         mass_f = F["PartType0/Masses"][:]
         pos_f = F["PartType0/Coordinates"][:]
 
-    # Plot final density using Meshoid slice interpolation
-    # BoxSize=0.5, BOX_LONG_X=1, BOX_LONG_Y=2 -> box is 0.5 x 1.0
-    M = Meshoid(pos_f, boxsize=0.5)
-    rho_slice = M.Slice(rho_f, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=0)
+    # Plot the final density on a grid covering the whole domain. BoxSize=0.5 with
+    # BOX_LONG_X=1, BOX_LONG_Y=2 makes the box 0.5 x 1.0, so it is neither cubic nor
+    # square: Meshoid.Slice only builds square grids, and its scalar boxsize would be
+    # handed to scipy's KDTree, which rejects the y coordinates that exceed 0.5. Build
+    # the rectangular grid here and reconstruct on it instead. order=0 is a plain
+    # nearest-neighbour lookup, so dropping periodicity only affects the two x edges.
+    LX, LY = 0.5, 1.0
+    RES_Y = 512
+    res_x = int(round(RES_Y * LX / LY))
+    gx = (np.arange(res_x) + 0.5) * LX / res_x
+    gy = (np.arange(RES_Y) + 0.5) * LY / RES_Y
+    gx, gy = np.meshgrid(gx, gy, indexing="ij")
+    grid = np.c_[gx.ravel(), gy.ravel(), np.zeros(gx.size)]  # the run is 2D: z == 0
+    M = Meshoid(pos_f)
+    rho_slice = M.Reconstruct(rho_f, grid, 0).reshape(gx.shape)
     fig, ax = plt.subplots(figsize=(4, 8))
-    im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 0.5, 0, 1.0])
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, LX, 0, LY])
     flush_colorbar(im, ax=ax, label="Density")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
