@@ -66,6 +66,39 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)  # 1..99 % for plot 
 # Re-measure before changing it; do not "fix" a failure by loosening it.
 RH_DRIFT_TOL = 0.025
 
+# --- energy-conservation ceilings, per variant -------------------------------------------
+# |dE/E0| between the first and last snapshot. Per-variant rather than global because the
+# variants legitimately differ by three orders of magnitude: ewald conserves to 5e-6 while
+# tidal sits at 1e-2, so any single number is either vacuous for one end or wrong for the
+# other.
+#
+# Calibrated against starforge_dev measured AT THIS TimeMax (snapshot index 1 of its
+# TimeMax=118 run is t=11.83, so these are measurements, not extrapolations), times a 3x
+# margin. 3x is deliberately snug: the regression this exists to catch is ~12x, and a 10x
+# margin would sail straight past it. Each reference number is a single run, so treat a
+# failure between 1x and 3x as "re-measure", not "bug".
+#
+#   variant            starforge_dev @ t=11.83
+#   baseline                     5.508e-05
+#   ags                          5.625e-03
+#   ewald                        5.391e-06
+#   pmgrid                       2.082e-05
+#   randomize                    3.736e-04
+#   randomize_pmgrid             4.647e-03
+#   tidal                        1.009e-02
+#   tidal_ags                    (no reference run; given tidal's ceiling)
+ENERGY_TOL = {
+    "baseline": 1.7e-4,
+    "ags": 1.7e-2,
+    "ewald": 1.7e-5,
+    "pmgrid": 6.3e-5,
+    "randomize": 1.2e-3,
+    "randomize_pmgrid": 1.4e-2,
+    "tidal": 3.1e-2,
+    "tidal_ags": 3.1e-2,
+}
+ENERGY_TOL_DEFAULT = 5.0e-2  # untabulated variant: loose, since nothing justifies more
+
 # --- known pre-existing defect: periodic-gravity half-mass-radius runaway ---------------
 # NOTE: at TimeMax=11.8 this runaway has not developed yet -- it is a late-time effect, so the
 # xfail below is expected to be inert here and the notes are kept for when the long run is used.
@@ -374,6 +407,18 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
             f"pushed by force errors"
         )
         assert_randomized_drift(TEST_NAME, variant_id, final_drift)
+
+    # --- energy conservation ---
+    # Checked before the r_h block on purpose: the r_h xfail below would otherwise swallow
+    # this assertion for the runaway variants, and energy is the more sensitive quantity of
+    # the two at this TimeMax (it grows as t^0.97, where r_h merely oscillates).
+    e_tol = ENERGY_TOL.get(variant_id, ENERGY_TOL_DEFAULT)
+    e_rel = abs(energies[-1] - energies[0]) / abs(energies[0])
+    assert e_rel < e_tol, (
+        f"[{variant_id}] energy not conserved: |dE/E0| = {e_rel:.4e} exceeds {e_tol:.2e} "
+        f"(E0={energies[0]:.6g}, Ef={energies[-1]:.6g}, over t={times[0]:g}..{times[-1]:g}). "
+        f"Ceiling is 3x the starforge_dev value at this TimeMax; see ENERGY_TOL."
+    )
 
     half_mass_idx = LAGRANGE_FRACTIONS.index(0.5)
     r_h_0 = r_lag_initial[half_mass_idx]
