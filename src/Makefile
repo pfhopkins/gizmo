@@ -524,6 +524,46 @@ HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
+#----------------------------
+# Rusty AMD Genoa -- 96 cores/node. Run: --constraint=genoa.
+# Ported from starforge_dev_integration (1e0d05fc). Differs from "RUSTY" above in ways that
+# matter for this tree: CXX is set (the Kokkos sources are C++ and the generic block leaves it
+# at the make default), FC is set, GSL paths are given explicitly, znver4 replaces -march=native,
+# and OPT_EXTRA is honoured so callers can add e.g. -flto without editing the Makefile.
+ifeq ($(SYSTYPE),"RUSTY_GENOA")
+CC       =   mpicc
+CXX      =   mpicxx -std=c++20
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=znver4 -mtune=znver4 -g -Wall $(OPT_EXTRA)
+## Kokkos OpenMP backend needs -fopenmp regardless of the OPENMP Config flag, because the
+## GPU_OBJS translation units below are Kokkos even in a CPU-only build.
+OPTIMIZE += -fopenmp   # remember --cpu-bind=none on srun when oversubscribing threads
+## Kokkos. There is no kokkos module on Rusty as of 2026-08 -- `module keyword kokkos` returns
+## only trilinos, and trilinos/mpi-16.0.0 ships the Tpetra/Sacado adapter headers
+## (KokkosCompat_*, Kokkos_DynRankView_Fad) WITHOUT Kokkos_Core.hpp or libkokkoscore. So point
+## KOKKOS_PATH at a local build; scripts/build_kokkos_rusty.sh makes one. Override on the make
+## command line or in the environment if you have your own.
+KOKKOS_PATH ?= $(HOME)/opt/kokkos-openmp
+KOKKOS_INCL = -I$(KOKKOS_PATH)/include
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
 
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
