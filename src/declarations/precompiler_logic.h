@@ -514,6 +514,18 @@
 #if ( defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_RT_HEATING) || defined(SINGLE_STAR_FB_SNE) || defined(SINGLE_STAR_FB_RAD) || defined(SINGLE_STAR_FB_LOCAL_RP))
 #define SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION 2 //we are using the protostellar evolution model from ORION
 #endif
+
+/* Which pairs may merge at all, which is what preserves the structure a sustained outflow builds.
+   Keyed on the jet/wind modules rather than on SINK_WIND_SPAWN, because the concern is a long-lived
+   contact discontinuity between outflow and ambient gas: SINGLE_STAR_FB_SNE also spawns cells but is
+   a single impulsive event with no such interface to maintain. */
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(SINK_SPAWN_MERGE_ANY_NEIGHBOR) && !defined(SINK_SPAWN_NO_MERGE) && !defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+#define SINK_SPAWN_MERGE_WHEN_AMBIENT // retire a spawned cell only once its own state has equilibrated with its kernel, kinematically and thermally, rather than as soon as it is subsonic wrt whichever neighbour is picked as target. A contact discontinuity is in pressure equilibrium with no velocity jump, so outflow material sitting at the contact passes every kinematic test while remaining a distinct phase. SINK_SPAWN_MERGE_ANY_NEIGHBOR opts back out; SINK_SPAWN_NO_MERGE supersedes it
+#endif
+
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
+#endif
 #if ( defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) ) //enable diffusion for metals and enable tracers for different feedback channels
 #define STARFORGE_FEEDBACK_TRACERS 3 // 0 for jets, 1 for winds, 2 for SNe
 #define TURB_DIFF_METALS

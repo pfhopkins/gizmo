@@ -327,6 +327,9 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
              * const-prop bug on int gate vars assigned conditionally —
              * "allow_sink_merger" is a named known-vulnerable case). */
             volatile int allow_sink_merger = 1;
+#ifdef DISABLE_SINK_MERGERS
+            allow_sink_merger = 0;
+#endif
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
             if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
