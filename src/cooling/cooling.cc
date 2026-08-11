@@ -1127,6 +1127,11 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         } else {u = All.MinEgySpec;}
     }
 
+    /* Re-evaluate at the converged u so *ne_eval and the other side effects match the answer we
+     * are about to return. The root-find leaves ne_eval at whatever its last trial u produced,
+     * which is not the same thing, and the very next line commits it to the cell. */
+    CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell);
+
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
     cell[target].Ne = *ne_eval;
 #ifdef RT_CHEM_PHOTOION
