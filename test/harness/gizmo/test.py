@@ -369,7 +369,9 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
         move(stash, plain)
 
 
-def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
+def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (),
+                       timeout: float | None = None, param_overrides: dict | None = None,
+                       allow_nonzero_exit: bool = False):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -386,7 +388,8 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     try:
         chdir(f"test/{test_name}/")
         download_test_files(test_name)
-        run_test(test_name, num_mpi_ranks, num_openmp_threads)
+        run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
+                 param_overrides=param_overrides, allow_nonzero_exit=allow_nonzero_exit)
         chdir("../../")
     finally:
         finalize_variant_output(test_name, extra_config_flags)
