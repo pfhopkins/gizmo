@@ -299,11 +299,18 @@ let_build_attempt:
         MPI_Allreduce(&Numnodestree, &flag, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         if(flag == -1)
         {
+            /* Grow the node arena by the same factor the ratchet applies, measured from the
+               current allocation rather than re-derived from All.MaxPart: that keeps the retry
+               on whatever basis this tree was sized from (the domain's local-particle cap for
+               the gravity tree, All.MaxPart for the trees subfind builds over its own particle
+               sets), so the ratcheted factor converges on the size the next build will ask for. */
+            int maxnodes_grown = (int) (1.15 * (double) (MaxNodes - NTopnodes)) + NTopnodes;
+            if(maxnodes_grown <= MaxNodes) {maxnodes_grown = MaxNodes + 1;}   /* integer truncation makes the 1.15x a no-op below 7 nodes; always make progress */
             force_treefree();
             if(ThisTask == 0) {printf("Increasing TreeAllocFactor=%g", All.TreeAllocFactor);}
             All.TreeAllocFactor *= 1.15;
             if(ThisTask == 0) {printf(" new value=%g\n", All.TreeAllocFactor);}
-            force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            force_treeallocate(maxnodes_grown, All.MaxPart);
             /* drain a tree-alloc UVM OOM before force_treebuild_single re-runs on a NULL-based
              * tree. Symmetric: all ranks enter this block together (flag from Allreduce(MIN)). */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
@@ -414,8 +421,9 @@ let_build_attempt:
                        need_max, RuntimeMinLETForeignNodes, let_retry + 1, LET_MAX_RETRY);
             fflush(stdout);
             let_retry++;
+            int maxnodes_same = MaxNodes;   /* only the foreign floor grew; keep the local node sizing */
             force_treefree();
-            force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            force_treeallocate(maxnodes_same, All.MaxPart);
             /* drain a tree-alloc UVM OOM before rebuilding on a NULL-based tree (symmetric) */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
             goto let_build_attempt;   /* rebuild the whole tree with the larger arena */
@@ -2513,7 +2521,13 @@ void force_treeallocate(int maxnodes, int maxpart)
      * for synthesized particle leaves (one entry per particle that is a direct child of an essential
      * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
      * 2 × (All.MaxPart / PartAllocFactor) ≈ 2 × TotNumPart / NTask as headroom covers NTask=2
-     * worst case (both ranks overlap entirely) while staying modest for large NTask.
+     * worst case (both ranks overlap entirely) while staying modest for large NTask.  Both
+     * factors are fixed within a run, which is required: this term sets MaxForeignNodes and so
+     * the pseudo-particle index base, which restart-serialized node pointers are written
+     * against.  Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
+     * Known exception: restarting with an edited PartAllocFactor gives the reader a different
+     * PartAllocFactor than the writer had, hence a different foreign capacity than the
+     * serialized pointers assume; closing that needs the capacity itself to be persisted.
      * Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
      * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
     {

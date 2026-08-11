@@ -308,7 +308,8 @@ typedef enum {
  *  0 at startup; force_treebuild ratchets it up on a retryable overflow so the
  *  arena self-sizes to the run's evolving clustering.  force_treeallocate is the
  *  sole consumer.  NOT a parameter: All.LETAllocFactor is the input floor, this is
- *  the runtime adaptive floor.  Not restart-persisted (recomputed each run). */
+ *  the runtime adaptive floor.  Restart-persisted, since it co-determines the tree
+ *  foreign-arena layout a restart file's serialized node indices were written against. */
 extern long long RuntimeMinLETForeignNodes;
 
 /*! Since-start high-water of Numforeignnodes (the peak foreign nodes actually

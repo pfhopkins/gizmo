@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../domain/domain.h"
+#include "../gravity/let_data.h"
 
 static FILE *fd;
 
@@ -330,6 +331,16 @@ void restart(int modus)
 	  in(&nmulti, modus);
         in(&NTopleaves, modus);
         in(&NTopnodes, modus);
+        /* The tree node arrays are sized from the domain's local-particle cap, which changes
+           with the decomposition, so the node count this tree was built with travels in the
+           restart file: the reader reproduces the writer's node and foreign capacities for an
+           unedited restart, keeping the serialized node, pseudo-particle and Nextnode indices
+           below valid.
+           RuntimeMinLETForeignNodes, the run's ratcheted LET foreign-arena floor, is the second
+           input to the foreign capacity, so it travels with it; the third is the synthetic-leaf
+           overhead, which force_treeallocate derives from quantities fixed for the run. */
+        in(&MaxNodes, modus);
+        byten(&RuntimeMinLETForeignNodes, sizeof(RuntimeMinLETForeignNodes), modus);
 	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
 	    {
 	      if(ThisTask == 0)
@@ -345,7 +356,7 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
-		  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+		  force_treeallocate(MaxNodes, All.MaxPart);
 		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
 		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
 		   * drain at restart's existing all-rank poll. */

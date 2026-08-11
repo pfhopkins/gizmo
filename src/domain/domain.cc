@@ -178,6 +178,24 @@ static void domain_compute_local_caps(int report)
     DomainMaxPartLocal = cap;
 }
 
+/*! Number of tree nodes to allocate for the local gravity tree. The tree holds only the
+ *  particles resident on this rank, so it is sized from the domain's local-particle
+ *  assignment cap rather than All.MaxPart, which additionally covers imported ghosts.
+ *  All.TreeAllocFactor (default 0.45, set in init.cc) is calibrated against a cap that carries the
+ *  PartAllocFactor cushion, while a tree over N particles needs up to ~0.7*N nodes to be
+ *  on the safe side, so the cushion is restored here as a 0.7/0.45 = 1.56 factor on the
+ *  cap; the result is clamped to the historical All.MaxPart sizing so this never
+ *  allocates more than before. Undersizing is not an error (the TreeAllocFactor ratchet
+ *  in force_treebuild recovers) but the ratchet is global and permanent, so the margin is
+ *  set to avoid it rather than to squeeze the last few percent.
+ *  DomainMaxPartLocal is identical on every rank, so MaxNodes stays rank-uniform. */
+static int domain_tree_maxnodes(void)
+{
+    double sizing_cap = (0.7 / 0.45) * (double) DomainMaxPartLocal;   /* 0.45 = the All.TreeAllocFactor default it is calibrated against */
+    if(sizing_cap > (double) All.MaxPart) {sizing_cap = (double) All.MaxPart;}
+    return (int) (All.TreeAllocFactor * sizing_cap) + NTopnodes;
+}
+
 #if (DOMAIN_TIMEBINS == 1)
 /* Per-timebin cost tracking for Gadget-4-style domain decomposition.
    Instead of a single composite cost, we track gravity and hydro costs separately
@@ -477,7 +495,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   TopNodes = (struct topnode_data *) myrealloc(TopNodes, bytes = (NTopnodes * sizeof(struct topnode_data) + NTopnodes * sizeof(int)));
   PRINT_STATUS(" ..freed %g MByte in top-level domain structure", (MaxTopNodes - NTopnodes) * sizeof(struct topnode_data) / (1024.0 * 1024.0));
   DomainTask = (int *) (TopNodes + NTopnodes);
-  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+  force_treeallocate(domain_tree_maxnodes(), All.MaxPart);
   gizmo_exit_bad_stop_if_requested("domain:treeallocate"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
   reconstruct_timebins();
   gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
@@ -703,7 +721,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
-    force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+    force_treeallocate(domain_tree_maxnodes(), All.MaxPart);
     gizmo_exit_bad_stop_if_requested("domain:treeallocate_light"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
     reconstruct_timebins();
     wakeup_sidecar_invalidate();   /* light repartition rearranged + exchanged particles → rebuild WakeupDirty next scan */
