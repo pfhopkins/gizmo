@@ -1201,6 +1201,63 @@ static int gpu_shortrange_tables_acquire(void)
 }
 #endif
 
+/* Fused per-call scratch for the gravity walks.
+ *
+ * Both walks need several per-target arrays for the duration of one call.
+ * Allocated separately, each array costs its own device allocation, free and
+ * page advice on every call; carved from one block they cost a single set.
+ * The lifetime is unchanged: the block is acquired at the top of the walk and
+ * released before it returns.
+ *
+ * This plan is the only place the sizes and offsets are computed, so the
+ * allocation size and the carved pointers cannot drift apart. Each offset is
+ * aligned explicitly for its element type rather than relying on the field
+ * order. `with_potential_and_interactions` selects the primary walk's full
+ * set; the Ewald correction walk needs only the target index, the failure
+ * flag and the acceleration. */
+/* Offset value for a member this plan does not carry. */
+#define GRAV_WALK_SCRATCH_ABSENT ((size_t) -1)
+
+struct grav_walk_scratch_plan
+{
+    size_t bytes;
+    size_t acc, pot, idx, failed, ninter;
+};
+
+static inline size_t grav_walk_scratch_align(size_t offset, size_t alignment)
+{
+    return ((offset + alignment - 1) / alignment) * alignment;
+}
+
+static struct grav_walk_scratch_plan
+grav_walk_scratch_plan_for(int num_targets, int with_potential_and_interactions)
+{
+    struct grav_walk_scratch_plan plan;
+    const size_t n = (size_t) num_targets;
+    size_t offset = 0;
+
+    offset = grav_walk_scratch_align(offset, alignof(Vec3<double>));
+    plan.acc = offset;  offset += n * sizeof(Vec3<double>);
+
+    /* Poison, not 0: zero is the valid offset of `acc`, so an absent member
+     * carved by mistake would alias the acceleration array silently. */
+    plan.pot = plan.ninter = GRAV_WALK_SCRATCH_ABSENT;
+    if(with_potential_and_interactions) {
+        offset = grav_walk_scratch_align(offset, alignof(double));
+        plan.pot = offset;  offset += n * sizeof(double);
+    }
+    offset = grav_walk_scratch_align(offset, alignof(int));
+    plan.idx = offset;  offset += n * sizeof(int);
+    offset = grav_walk_scratch_align(offset, alignof(int));
+    plan.failed = offset;  offset += n * sizeof(int);
+    if(with_potential_and_interactions) {
+        offset = grav_walk_scratch_align(offset, alignof(int));
+        plan.ninter = offset;  offset += n * sizeof(int);
+    }
+    plan.bytes = offset;
+    return plan;
+}
+
 extern "C" int gpu_gravtree_walk_primary(void)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -1399,18 +1456,43 @@ extern "C" int gpu_gravtree_walk_primary(void)
     cr_data_snap.t_max_cr  = t_max_cr;
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 
-    /* Scratch arrays for per-target results */
-    int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
-    int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
-    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(Vec3<double>));
-    int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
-    double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(double));
-    if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot) {
+    /* Release the optional per-call payload buffers. Defined once so the early
+     * returns below and the normal exit path cannot drift apart: endrun() only
+     * requests a controlled stop and returns, so a return that skips these
+     * leaks device memory on every call until the stop is polled -- precisely
+     * when device memory is already short. */
+    auto release_payload_buffers = [&]() {
+#ifdef RT_USE_GRAVTREE
+#ifdef CHIMES_STELLAR_FLUXES
+        if(d_src_lum_ion) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_ion); d_src_lum_ion = NULL;}
+        if(d_src_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_G0);  d_src_lum_G0  = NULL;}
+#endif
+        if(d_src_lum) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum); d_src_lum = NULL;}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(d_bh_angle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_angle); d_bh_angle = NULL;}
+        if(d_bh_lum)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_lum);   d_bh_lum   = NULL;}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        if(d_cr_inject){Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_cr_inject); d_cr_inject = NULL;}
+#endif
+    };
+
+    /* Scratch arrays for per-target results, carved from one allocation */
+    const struct grav_walk_scratch_plan scratch = grav_walk_scratch_plan_for(num_active, 1);
+    char *scratch_block = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", scratch.bytes);
+    if(!scratch_block) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
+        release_payload_buffers();
         myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
         return 1;
     }
+    int          *d_idx    = (int *)          (scratch_block + scratch.idx);
+    int          *d_failed = (int *)          (scratch_block + scratch.failed);
+    Vec3<double> *d_acc    = (Vec3<double> *) (scratch_block + scratch.acc);
+    int          *d_ninter = (int *)          (scratch_block + scratch.ninter);
+    double       *d_pot    = (double *)       (scratch_block + scratch.pot);
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));
 
@@ -1429,7 +1511,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
     double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
     /* shortrange_table is a host global (forcetree.cc); the SharedSpace mirror the
      * kernel reads is seeded once per run, not per call. */
-    if(gpu_shortrange_tables_acquire() != 0) {myfree(idx_host); return 1;}
+    if(gpu_shortrange_tables_acquire() != 0) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
+        release_payload_buffers();
+        myfree(idx_host);
+        return 1;
+    }
 #endif
     /* read-only PM short-range config captured by value into the device walk (empty when
      * !PMGRID; per-target PLACEHIGHRESREGION override happens inside the walk on its copy). */
@@ -1465,6 +1552,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(gpu_ewald_acquire_pot_data(&ewald_pot_snap) != 0) {
         printf("gpu_gravtree_walk_primary: Ewald potential-correction table unavailable; EVALPOTENTIAL periodic build requires it\n");
         endrun(913212);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
+        release_payload_buffers();
         myfree(idx_host);   /* LIFO mymalloc cleanup; do not launch the walk with the term disabled */
         return 1;
     }
@@ -1654,26 +1743,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * stale-Ti_current nodes via gpu_force_drift_nodes (UVM AoS + SoA in one
      * kernel).  No host-side reseed scaffolding remains. */
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ninter);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_failed);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_idx);
-
-#ifdef RT_USE_GRAVTREE
-#ifdef CHIMES_STELLAR_FLUXES
-    if(d_src_lum_ion) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_ion);}
-    if(d_src_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_G0);}
-#endif
-    if(d_src_lum) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum);}
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-    if(d_bh_angle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_angle);}
-    if(d_bh_lum)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_lum);}
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    if(d_cr_inject){Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_cr_inject);}
-#endif
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
+    release_payload_buffers();
     myfree(idx_host);
 
     return nsucceeded;
@@ -1892,10 +1963,12 @@ extern "C" int gpu_ewald_walk_primary(void)
     }
     if(num_active == 0) { myfree(idx_host); return 0; }
 
-    int *d_idx    = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
-    int *d_failed = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(int));
-    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", num_active * sizeof(Vec3<double>));
-    if(!d_idx || !d_failed || !d_acc) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102); myfree(idx_host); return 1;}
+    const struct grav_walk_scratch_plan scratch = grav_walk_scratch_plan_for(num_active, 0);
+    char *scratch_block = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", scratch.bytes);
+    if(!scratch_block) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102); myfree(idx_host); return 1;}
+    int          *d_idx    = (int *)          (scratch_block + scratch.idx);
+    int          *d_failed = (int *)          (scratch_block + scratch.failed);
+    Vec3<double> *d_acc    = (Vec3<double> *) (scratch_block + scratch.acc);
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));
 
@@ -1947,9 +2020,7 @@ extern "C" int gpu_ewald_walk_primary(void)
         }
     }
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_failed);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_idx);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
     myfree(idx_host);
     return nsucceeded;
 #endif /* !PMGRID */
