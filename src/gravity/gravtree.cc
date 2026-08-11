@@ -627,6 +627,9 @@ void subtract_companion_gravity(int i)
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){
+#ifdef HERMITE_INTEGRATION
+    if((1 << P[n].Type) & HERMITE_INTEGRATION) {return 1;} // Hermite-integrated particles must always get a fresh tree force; the lazy-cache path is incompatible with the predictor-corrector sub-stepping
+#endif
     if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
         return 1;
     } else {
