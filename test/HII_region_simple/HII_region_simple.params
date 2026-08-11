@@ -1,5 +1,5 @@
 %---- Relevant files
-InitCondFile  HII_region_ics
+InitCondFile  HII_region_simple_ics
 OutputDir     output
 
 %---- File formats

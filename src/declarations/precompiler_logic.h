@@ -533,6 +533,27 @@
 #define TURB_DIFF_METALS_LOWORDER
 #endif
 #ifdef SINGLE_STAR_FB_RAD
+#define SINGLE_STAR_RT_DEFAULTS
+#define RT_OPTICAL_NIR
+#define RT_NUV
+#define RT_PHOTOELECTRIC
+#ifndef RT_CHEM_PHOTOION
+#define RT_CHEM_PHOTOION 1
+#endif
+#define RT_INFRARED
+#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#define RT_ISRF_BACKGROUND
+#endif
+#if defined(RT_INFRARED)
+#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
+#endif
+#endif
+
+/* RT transport settings shared by the STARFORGE radiative modules, split out of
+   SINGLE_STAR_FB_RAD so a problem can request just the solver defaults without pulling in the
+   full radiative-feedback band set (the HII_region tests do exactly this). SINGLE_STAR_FB_RAD
+   implies it, so behaviour there is unchanged. */
+#ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
 #define RT_COMOVING
 #ifndef OUTPUT_RT_RAD_FLUX
@@ -549,20 +570,7 @@
 #endif
 #define RT_REPROCESS_INJECTED_PHOTONS
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-#define RT_OPTICAL_NIR
-#define RT_NUV
-#define RT_PHOTOELECTRIC
-#ifndef RT_CHEM_PHOTOION
-#define RT_CHEM_PHOTOION 1
-#endif
-#define RT_INFRARED
-#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
-#define RT_ISRF_BACKGROUND
-#endif
-#if defined(RT_INFRARED)
-#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
-#endif
-#endif
+#endif // closes SINGLE_STAR_RT_DEFAULTS settings
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
@@ -1668,4 +1676,16 @@
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
 #define RANDOMIZE_GRAVTREE_PERIODIC /* use the coordinate-translation method */
 #endif
+#endif
+
+
+/* starforge_dev names this INPUT_READ_TEMPERATURE (2c517b56); kokkos already had the same
+   capability as INPUT_READ_EOSTEMP, plus a second use in init.cc that skips the temperature
+   guess when the value came from the ICs. Alias them rather than renaming, so tests and
+   Config.sh files written against either name work and neither existing use changes. */
+#if defined(INPUT_READ_TEMPERATURE) && !defined(INPUT_READ_EOSTEMP)
+#define INPUT_READ_EOSTEMP
+#endif
+#if defined(INPUT_READ_EOSTEMP) && !defined(INPUT_READ_TEMPERATURE)
+#define INPUT_READ_TEMPERATURE
 #endif

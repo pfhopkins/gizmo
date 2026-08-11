@@ -511,6 +511,7 @@
 #OUTPUT_RT_RAD_FLUX             # save flux vector for radiation methods that explictly evolve the flux (e.g. M1)
 #OUTPUT_RT_RAD_OPACITY          # save opacities for the different bands for explicit radiation-hydro methods
 #OUTPUT_UNSPAWNED_SINKMASS      # save the unspawned mass variable used for sink cell-spawning modules
+#INPUT_READ_TEMPERATURE         # force reading the gas Temperature block from gadget-binary ICs (ICFormat 1/2), which are skipped by default because a missing block cannot be detected there and the read would fail with end-of-file. Alias of INPUT_READ_EOSTEMP.
 #INPUT_READ_KERNELRADIUS        # force reading rkern from IC file (instead of re-computing them; in general this is redundant but useful if special guesses needed)
 #INPUT_READ_SINKPROPS           # force reading sink properties including sink radius, zams mass, luminosity, age, etc, from ICs file if it includes sink particles and the IC is designed for use with the single-star modules
 #OUTPUT_TWOPOINT_ENABLED        # allows user to calculate mass 2-point function by enabling and setting restartflag=5
