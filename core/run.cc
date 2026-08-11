@@ -50,6 +50,22 @@ void energy_budget_sync_report(void)
  */
 
 
+/*! Seconds between stop-file checks; 0 checks every step, which is the historical behaviour.
+    The check is a filesystem open on a shared parallel filesystem, and every other rank blocks in
+    the broadcast that follows it until rank 0 is done. Measured at 96 ranks on Ceph, restarted
+    from a STARFORGE M2e3_R3 run: 1.63 ms on rank 0 and 1.76 ms of waiting on the other 95, every
+    step -- 26% of the wall time of a run taking millions of short steps, to open a file that is
+    not there. Harmless at 1e5 steps, pathological at 7e6. Polling on a wall clock rather than a
+    step count bounds the cost when steps are cheap and bounds the response to a stop file when
+    they are expensive. GIZMO_STOPFILE_INTERVAL_SEC overrides the interval. */
+static double stopfile_check_interval(void)
+{
+    static double dt = -1;
+    if(dt < 0) {const char *e = getenv("GIZMO_STOPFILE_INTERVAL_SEC"); dt = e ? atof(e) : 1.0; if(dt < 0) {dt = 0;}}
+    return dt;
+}
+
+
 /*! This routine contains the main simulation loop that iterates over
  * single timesteps. The loop terminates when the cpu-time limit is
  * reached, when a `stop' file is found in the output directory, or
@@ -180,14 +196,21 @@ void run(void)
         int stopflag = 0;
         if(ThisTask == 0)
         {
-            FILE *fd;
-            char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
-            if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+            static double t_last_stopcheck = -1;
+            double t_now = MPI_Wtime();
+            if(t_last_stopcheck < 0) {t_last_stopcheck = t_now;}
+            if(t_now - t_last_stopcheck >= stopfile_check_interval())
             {
-                fclose(fd);
-                stopflag = 1;
-                unlink(stopfname);
+                t_last_stopcheck = t_now;
+                FILE *fd;
+                char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
+                if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+                {
+                    fclose(fd);
+                    stopflag = 1;
+                    unlink(stopfname);
+                }
             }
 
             if(CPUThisRun > 0.85 * All.TimeLimitCPU)	/* are we running out of CPU-time ? If yes, interrupt run. */
