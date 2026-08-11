@@ -295,7 +295,9 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
     /* calculate the viscosity coefficients: use the Braginskii shear tensor formulation expanded to first order */
     cell[i].Eta_ShearViscosity *= ion_frac * pow(u_int, 2.5); cell[i].Zeta_BulkViscosity = 0;
     /* again need to account for possible saturation (when the mean free path of ions is large): estimate whether we're in that limit with the gradients */
-    double ion_free_path = All.ElectronFreePathFactor * u_int * u_int / rho; double dv_magnitude=0, v_magnitude=0;
+    /* v_magnitude seeded nonzero: an IC perfectly at rest leaves both sums exactly zero, and the
+     * 0/0 below makes vel_scale_length NaN, which poisons the timestep. */
+    double ion_free_path = All.ElectronFreePathFactor * u_int * u_int / rho; double dv_magnitude=0, v_magnitude=1.0e-33;
     /* need an estimate of the internal energy gradient scale length, which we get by d(P/rho) = P/rho * (dP/P - drho/rho) */
     for(k=0;k<3;k++) {int k1;
         for(k1=0;k1<3;k1++) {

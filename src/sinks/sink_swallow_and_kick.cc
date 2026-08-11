@@ -555,7 +555,8 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             if(P[i].Sink_Mass <= m_relic) { // last batch to be spawned
                 n_particles_split = SINGLE_STAR_FB_SNE_N_EJECTA; // we are going to spawn a bunch of low mass particles to take the last bit of mass away
                 printf("Spawning last SN ejecta of star %llu with %g mass and %d particles \n",(unsigned long long) P[i].ID,total_mass_in_winds,n_particles_split);
-                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c) if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c)
+                if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} // was lost to the end of the comment above, so the sync never ran
 #ifdef SINK_ALPHADISK_ACCRETION
                 P[i].Sink_Mass_Reservoir = 0; // just to be safe
 #endif
