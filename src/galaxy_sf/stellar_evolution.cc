@@ -1009,9 +1009,10 @@ double single_star_escape_speed(int n){
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 /* Computes the maximum signal velocity of _any_ feedback mechanism emanating from a star (jets, winds, radiation, SNe), as a worst-case for e.g. timestepping stability purposes */
 double single_star_feedback_velocity_fortimestep(int n) {
-#ifdef SELFGRAVITY_OFF
-    return 0; 
-#endif    
+    /* No SELFGRAVITY_OFF early-out: the feedback signal speed still has to bound gas timesteps
+       without self-gravity, and returning 0 here silently disables the whole
+       SINGLE_STAR_FB_TIMESTEPLIMIT chain -- MaxFeedbackVel=0 propagates into the node moments,
+       so Min_Sink_FeedbackTime comes back at ~sqrt(MAX_REAL_NUMBER) and never limits anything. */
     if(P[n].Type != 5) {return 0;}
     double v_fb, force, h, rho, v_shell; v_fb=0; force=0; h=P[n].Get_Particle_Size(); rho=P[n].DensityAroundParticle; v_shell=0;
 #ifdef SINGLE_STAR_FB_WINDS
