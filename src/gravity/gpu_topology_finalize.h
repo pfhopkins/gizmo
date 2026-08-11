@@ -34,7 +34,7 @@ extern "C" {
 /* Father pass.  Writes:
  *   - soa->father[k] for k in [0, n) (n = Numnodestree).  Index k=0 (root)
  *     gets -1.
- *   - Father[i] for i in [0, MaxPart) (UVM-mirrored host array).
+ *   - Father[i] for i in [0, TreeParticleSlots) (UVM-mirrored host array).
  * Pre-condition: soa->suns_backup populated for [0, n).  Returns 0 on
  * success. */
 int gpu_topology_finalize_father(int n);
@@ -51,7 +51,7 @@ int gpu_topology_writeback_d_to_aos(int n);
 /* GPU kernel that resets per-node ephemeral fields (GravCost,
  * Ti_current, dp, Ti_lastkicked, Flag, optional payloads) after topology
  * finalize and before moment_refresh accumulates fresh moments.  Operates
- * on the absolute Nodes[] index range [MaxPart .. MaxPart+n).  On the CPU
+ * on the absolute Nodes[] index range [TreeNodeIndexBase .. TreeNodeIndexBase+n).  On the CPU
  * path FUNR does this work inline; on the GPU path FUNR is retired
  * so this kernel takes its place.  Returns 0 on success. */
 int gpu_node_reset_ephemeral(int n);

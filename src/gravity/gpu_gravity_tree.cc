@@ -141,7 +141,7 @@ static int alloc_arrays_(int n)
         return 0;
     }
     /* Foreign-leaf identity sidecar mirror -- sized MaxForeignNodes (foreign-only), NOT n, and
-     * indexed by foreign_slot = no-(MaxPart+MaxNodes) by both the scatter and the walk.  acquire()
+     * indexed by foreign_slot = no-(TreeNodeIndexBase+MaxNodes) by both the scatter and the walk.  acquire()
      * adds MaxForeignNodes to its capacity request, so this runs with the current MaxForeignNodes. */
     soa_.foreign_leaf_cap = (MaxForeignNodes > 0) ? MaxForeignNodes : 0;
     if(soa_.foreign_leaf_cap > 0) {
@@ -246,7 +246,7 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     /* Extend SoA capacity to cover the LET foreign-node range
      * [MaxNodes, MaxNodes+MaxForeignNodes).  Foreign nodes installed by
      * let_unpack_and_install are scattered into SoA at slot_base + j with
-     * absolute index = MaxPart + MaxNodes + slot, so SoA index =
+     * absolute index = TreeNodeIndexBase + MaxNodes + slot, so SoA index =
      * (MaxNodes + slot).  Non-GPU builds have MaxForeignNodes==0; GPU
      * builds require positive LET headroom. */
     if(MaxForeignNodes > 0) {

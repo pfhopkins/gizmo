@@ -20,7 +20,7 @@
  *           the shipped graph is self-contained (no sender indices in topology).
  *      4. let_exchange_nodes          -- MPI_Alltoall counts + MPI_Alltoallv payloads
  *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the foreign slot
- *           range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes); rebase each
+ *           range [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+Numforeignnodes); rebase each
  *           wire index to slot_base+wire; map LET_WIRE_EXIT to the local topleaf's
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
  *           foreign subtree root.  No sender-index reconstruction on the receiver.
@@ -117,8 +117,8 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
     {
         if(DomainTask[t] != ThisTask) continue;
         int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes)
-            my_tl_lookup[no - All.MaxPart] = t;
+        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes)
+            my_tl_lookup[no - All.TreeNodeIndexBase] = t;
     }
 
     /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
@@ -142,9 +142,9 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
         if(P[i].Mass <= 0) continue;
         int no = Father[i];
         int guard = 0;
-        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
+        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
         {
-            int tl = my_tl_lookup[no - All.MaxPart];
+            int tl = my_tl_lookup[no - All.TreeNodeIndexBase];
             if(tl >= 0)
             {
                 bitmap[tl >> 6] |= (1ULL << (tl & 63));
@@ -279,7 +279,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         if(DomainTask[i] != ThisTask) continue;
         if(active_bitmap && !let_bitmap_test(active_bitmap, i)) continue;
         int no = DomainNodeIndex[i];
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double cx = (double) Nodes[no].center[0];
         double cy = (double) Nodes[no].center[1];
         double cz = (double) Nodes[no].center[2];
@@ -322,7 +322,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     for(int t = 0; t < NTopleaves; t++)
     {
         int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) tl_lookup[no - All.MaxPart] = t;
+        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes) tl_lookup[no - All.TreeNodeIndexBase] = t;
     }
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
     g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
@@ -340,9 +340,9 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
          * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
          * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
         int tl = -1, no = Father[i], guard = 0;
-        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
+        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
         {
-            int cand = tl_lookup[no - All.MaxPart];
+            int cand = tl_lookup[no - All.TreeNodeIndexBase];
             if(cand >= 0) { tl = cand; break; }
             no = Nodes[no].u.d.father;
         }
@@ -577,7 +577,7 @@ static void let_build_cover_tree(int R)
     for(int k = (g_orphan_off ? g_orphan_off[R] : 0); k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
         int t  = g_orphan_all[k].topleaf;
         int no = (t >= 0 && t < NTopleaves) ? DomainNodeIndex[t] : -1;
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double h = 0.5 * (double) Nodes[no].len;
         struct LETCoverLeaf *L = &g_cover_leaves[nleaf++];
         for(int d = 0; d < 3; d++) { L->bmin[d] = (double) Nodes[no].center[d] - h; L->bmax[d] = (double) Nodes[no].center[d] + h; }
@@ -708,7 +708,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     memset(w, 0, sizeof(struct LETNodeWire));
 
     w->remote_id = -1 - p_idx;  /* negative encoding distinguishes synthesized particle leaves
-                                  * from real internal nodes (whose remote_id >= MaxPart).  Unpack
+                                  * from real internal nodes (whose remote_id >= TreeNodeIndexBase).  Unpack
                                   * uses remote_id < 0 to recognize synthesized leaves -- they
                                   * still get a foreign slot and remap entry, but their pointer
                                   * fields are simpler (no inbound references except from parent). */
@@ -939,7 +939,7 @@ static void pack_recurse(int no, int sib_terminator,
                           struct LETNodeWire **buf, int *count, int *capacity)
 {
     /* Bounds: must be a local internal node */
-    if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) return;
+    if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) return;
 
     /* Check essential-for-R BEFORE shipping.  If not essential, the walk will
      * close at the parent; we don't need to ship this node either (parent's
@@ -993,11 +993,11 @@ static void pack_recurse(int no, int sib_terminator,
          * must consume it as a real foreign leaf.  Recover the underlying particle from the
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
-         * synthesized-leaf path.  Hard-check the child is a real particle (p < MaxPart); if not, the
+         * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeNodeIndexBase); if not, the
          * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
          * surfaces it rather than mis-routing a non-particle as a leaf. */
         int p = Nodes[no].u.d.nextnode;
-        if(p >= 0 && p < All.MaxPart)
+        if(p >= 0 && p < All.TreeNodeIndexBase)
         {
             struct particle_data *pa = &P[p];
             w->leaf_tag      = 1;
@@ -1022,10 +1022,10 @@ static void pack_recurse(int no, int sib_terminator,
 
     /* Multi-particle internal node: enumerate children via nextnode/sibling chain.
      * For each child:
-     *   - particle (< MaxPart): synthesize a leaf wire
+     *   - particle (< TreeNodeIndexBase): synthesize a leaf wire
      *   - internal node: recurse
-     *   - pseudo (>= MaxPart+MaxNodes+MaxForeignNodes): skip (R has its own access via S->R LET pack)
-     *   - foreign (in [MaxPart+MaxNodes, +MaxForeignNodes)): shouldn't appear during pack (we run before unpack)
+     *   - pseudo (>= TreeNodeIndexBase+MaxNodes+MaxForeignNodes): skip (R has its own access via S->R LET pack)
+     *   - foreign (in [TreeNodeIndexBase+MaxNodes, +MaxForeignNodes)): shouldn't appear during pack (we run before unpack)
      *
      * After processing all children, link them into a sibling chain in the WIRE buffer
      * by setting our nextnode to first-child wire-idx, and each child's sibling to
@@ -1038,7 +1038,7 @@ static void pack_recurse(int no, int sib_terminator,
         int next_child;
         int child_wire_idx = -1;
 
-        if(child < All.MaxPart)
+        if(child < All.TreeNodeIndexBase)
         {
             /* Particle leaf -- synthesize */
             grow_wire_buf(buf, *count + 1, capacity);
@@ -1047,7 +1047,7 @@ static void pack_recurse(int no, int sib_terminator,
             let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
         }
-        else if(child < All.MaxPart + MaxNodes)
+        else if(child < All.TreeNodeIndexBase + MaxNodes)
         {
             /* Local internal node -- recurse */
             int child_sib = Nodes[child].u.d.sibling;
@@ -1059,7 +1059,7 @@ static void pack_recurse(int no, int sib_terminator,
             if(*count == child_wire_idx) child_wire_idx = -1;  /* nothing added */
             next_child = child_sib;
         }
-        else if(child < All.MaxPart + MaxNodes + MaxForeignNodes)
+        else if(child < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
         {
             /* Foreign node -- shouldn't happen during pack */
             next_child = Nodes[child].u.d.sibling;
@@ -1068,7 +1068,7 @@ static void pack_recurse(int no, int sib_terminator,
         else
         {
             /* Pseudo-particle -- skip */
-            next_child = Nextnode[child - MaxNodes - MaxForeignNodes];
+            next_child = Nextnode[TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             child_wire_idx = -1;
         }
 
@@ -1145,22 +1145,22 @@ static int let_resolve_continuation(int x, int topleaf_term,
         if(hit) return hit->wire;                                     /* shipped -> wire (incl synth leaf) */
         /* x is a non-shipped continuation; classify by EXPLICIT range (this is topology-repair
          * code -- an unclassifiable positive index must abort, never index Nodes[] blindly). */
-        if(x >= 0 && x < All.MaxPart)
+        if(x >= 0 && x < All.TreeNodeIndexBase)
         {
             printf("LET pack FATAL: particle %d referenced as a sibling continuation but not shipped "
                    "and not the subtree terminator (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000072);
             return LET_WIRE_EXIT;
         }
-        else if(x >= All.MaxPart && x < All.MaxPart + MaxNodes)
+        else if(x >= All.TreeNodeIndexBase && x < All.TreeNodeIndexBase + MaxNodes)
         {
             printf("LET pack FATAL: in-subtree internal node %d not shipped but referenced as a "
                    "sibling continuation (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000071);
             return LET_WIRE_EXIT;
         }
-        else if(x >= All.MaxPart + MaxNodes && x < All.MaxPart + MaxNodes + MaxForeignNodes)
+        else if(x >= All.TreeNodeIndexBase + MaxNodes && x < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
             x = Nodes[x].u.d.sibling;                                 /* foreign: skip as the walk does */
-        else if(x >= All.MaxPart + MaxNodes + MaxForeignNodes)
-            x = Nextnode[x - MaxNodes - MaxForeignNodes];             /* pseudo: skip as the walk does */
+        else if(x >= All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
+            x = Nextnode[TreeParticleSlots + (x - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];             /* pseudo: skip as the walk does */
         else
         {
             printf("LET pack FATAL: unclassifiable continuation index %d (rank %d).\n",
@@ -1238,7 +1238,7 @@ extern "C" int let_pack_for_rank(int R,
     {
         if(DomainTask[i] != ThisTask) continue;
         int topleaf_no = DomainNodeIndex[i];
-        if(topleaf_no < All.MaxPart || topleaf_no >= All.MaxPart + MaxNodes) continue;
+        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
 
         int subtree_root = Nodes[topleaf_no].u.d.nextnode;
         if(subtree_root < 0) continue;  /* empty topleaf */
@@ -1261,7 +1261,7 @@ extern "C" int let_pack_for_rank(int R,
         {
             int next_child;
             int child_wire_idx = -1;
-            if(child < All.MaxPart)
+            if(child < All.TreeNodeIndexBase)
             {
                 /* Particle directly under topleaf -- synthesize leaf */
                 grow_wire_buf(out_buf, count + 1, out_capacity);
@@ -1271,7 +1271,7 @@ extern "C" int let_pack_for_rank(int R,
                 count++;
                 next_child = Nextnode[child];
             }
-            else if(child < All.MaxPart + MaxNodes)
+            else if(child < All.TreeNodeIndexBase + MaxNodes)
             {
                 int child_sib = Nodes[child].u.d.sibling;
                 child_wire_idx = count;
@@ -1282,7 +1282,7 @@ extern "C" int let_pack_for_rank(int R,
             }
             else
             {
-                next_child = Nextnode[child - MaxNodes - MaxForeignNodes];
+                next_child = Nextnode[TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             }
             /* Link this child into the top-level sibling chain */
             if(child_wire_idx >= 0)
@@ -1514,7 +1514,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             continue;
         }
 
-        int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
+        int slot_base = All.TreeNodeIndexBase + MaxNodes + Numforeignnodes;
 
         /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
          * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
@@ -1544,9 +1544,9 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
 
             /* Install the foreign-leaf identity sidecar at this slot's foreign_slot
-             * (= no - (MaxPart+MaxNodes), NOT the SoA index no-MaxPart). Non-leaf records carry
+             * (= no - (TreeNodeIndexBase+MaxNodes), NOT the SoA index no-TreeNodeIndexBase). Non-leaf records carry
              * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
-            int foreign_slot = abs_idx - (All.MaxPart + MaxNodes);
+            int foreign_slot = abs_idx - (All.TreeNodeIndexBase + MaxNodes);
             if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < MaxForeignNodes)
             {
                 ForeignLeafTag[foreign_slot]  = recv_buf[node_off + j].leaf_tag;
@@ -1570,7 +1570,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             if(wire_off < 0 || wire_cnt <= 0 || wire_off + wire_cnt > rcount) continue;
 
             int local_topleaf_no = DomainNodeIndex[topleaf_idx];
-            if(local_topleaf_no < All.MaxPart || local_topleaf_no >= All.MaxPart + MaxNodes) continue;
+            if(local_topleaf_no < All.TreeNodeIndexBase || local_topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
 
             int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
             int subtree_root    = slot_base + wire_off;
@@ -1877,7 +1877,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
 {
     if(MaxForeignNodes <= 0) return;   /* non-GPU build: LET inactive */
 
-    const long long pseudo_lo = (long long)All.MaxPart + MaxNodes + MaxForeignNodes;
+    const long long pseudo_lo = (long long)All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes;
     const long long pseudo_hi = pseudo_lo + NTopleaves;
     int n_patched = 0;
 
@@ -1885,11 +1885,11 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
     {
         if(DomainTask[t] == ThisTask) continue;          /* local topleaf */
         int no = DomainNodeIndex[t];
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes)
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes)
         {
             printf("LET finalize FATAL: foreign topleaf t=%d owner=%d has out-of-range "
                    "DomainNodeIndex=%d (local node range [%d,%d)).\n",
-                   t, DomainTask[t], no, All.MaxPart, All.MaxPart + MaxNodes);
+                   t, DomainTask[t], no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + MaxNodes);
             fflush(stdout); endrun(90000063); continue; /* soft bad-stop + skip this topleaf before the Nodes[no] deref; drains at gravtree:after_treebuild before the walk */
         }
         const long long nn = Nodes[no].u.d.nextnode;

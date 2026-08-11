@@ -226,7 +226,7 @@ namespace {
 
 /* Per-internal-node BFS unit. */
 struct BfsItem {
-    int parent_soa;   /* parent's SoA index (= Nodes[] absolute - MaxPart) */
+    int parent_soa;   /* parent's SoA index (= Nodes[] absolute - tree_base) */
     int range_first;  /* particle range [range_first, range_last) in sorted_idx */
     int range_last;
     int parent_depth; /* octree depth of parent (root = 0); split bits read at this level */
@@ -278,7 +278,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     int ntl       = NTopleaves;
     int max_nodes = MaxNodes;
-    int max_part  = All.MaxPart;
+    int tree_base  = All.TreeNodeIndexBase;
 
     /* SharedSpace single-int counters: easy host/device coordination. */
     int *sz_curr = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
@@ -310,7 +310,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         int count = tcnt[t];
         if(count < 1) {return;}
         int parent_abs = dni[t];
-        int parent_soa = parent_abs - max_part;
+        int parent_soa = parent_abs - tree_base;
         if(parent_soa < 0 || parent_soa >= max_nodes) {return;}
 
         /* Topleaf depth = log2(DomainLen / topleaf_len), exact integer. */
@@ -446,11 +446,11 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                     cc[2] = pc[2] + ((k & 4) ? lh : -lh);
                     soa_center[new_soa] = cc;
                     soa_len[new_soa]    = cl;
-                    soa_father[new_soa] = w.parent_soa + max_part;
+                    soa_father[new_soa] = w.parent_soa + tree_base;
                     long sb = (long)new_soa * 8;
                     for(int s = 0; s < 8; s++) {soa_suns[sb + s] = -1;}
 
-                    slot_value = max_part + new_soa;
+                    slot_value = tree_base + new_soa;
 
                     /* Push child BFS entry. */
                     BfsItem nw;

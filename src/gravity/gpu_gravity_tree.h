@@ -39,7 +39,7 @@ extern "C" {
 #endif
 
 /* SoA view exposed to GPU kernels. All pointers live in SharedSpace; indices
- * match the AoS Nodes[] convention (callers index by [no - All.MaxPart] when
+ * match the AoS Nodes[] convention (callers index by [no - All.TreeNodeIndexBase] when
  * using the base array, or by absolute Nodes[] index after applying the
  * NTopnodes offset — the exact indexing convention is not yet finalized). */
 struct gpu_gravity_tree_soa_t {
@@ -63,8 +63,8 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat    *maxsoft;
     long           *N_part;
     /* Foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
-     * MaxForeignNodes and indexed by foreign_slot = no - (MaxPart+MaxNodes) == (node SoA idx) -
-     * MaxNodes -- a DIFFERENT index than every other array above (which use no - MaxPart).  The GPU
+     * MaxForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes) == (node SoA idx) -
+     * MaxNodes -- a DIFFERENT index than every other array above (which use no - TreeNodeIndexBase).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
      * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
     int            *foreign_leaf_tag;   /* 1 = real foreign single-particle leaf; 0 = node */
@@ -74,8 +74,8 @@ struct gpu_gravity_tree_soa_t {
     int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== MaxForeignNodes) */
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
-     * lands on `no < MaxPart`, advance via nextnode_aux[no]. Sized for
-     * MaxPart + NTopnodes so the pseudo-particle region is addressable
+     * lands on `no < TreeNodeIndexBase`, advance via nextnode_aux[no]. Sized for
+     * TreeParticleSlots + NTopnodes so the pseudo-particle region is addressable
      * (though Tier-1 GPU walk aborts on pseudo-particle rather than
      * following it). */
     int            *nextnode_aux;
@@ -215,13 +215,13 @@ void gpu_gravity_soa_mark_drift_certified(integertime time1);
  * device-local scratch and bulk seed of the SharedSpace SoA.
  *
  * After the kernel returns, the SoA is fully populated for nodes
- * [MaxPart, MaxPart+Numnodestree) AND the Nodes[]/Extnodes[] AoS arrays
+ * [TreeNodeIndexBase, TreeNodeIndexBase+Numnodestree) AND the Nodes[]/Extnodes[] AoS arrays
  * are written back so that the CPU pseudo-particle path
  * (force_exchange_pseudodata + force_treeupdate_pseudos) sees identical
  * values to what it would have produced.
  *
  * `active_root_node` reserved for a future subtree-hint optimization. Initial
- * callers pass -1 (= whole tree from MaxPart..MaxPart+Numnodestree).
+ * callers pass -1 (= whole tree from TreeNodeIndexBase..TreeNodeIndexBase+Numnodestree).
  *
  * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
 int gpu_moment_refresh(int active_root_node);
@@ -232,7 +232,7 @@ int gpu_moment_refresh(int active_root_node);
  * pre-finalize release plumbing is a pre-existing cross-subsystem cleanup.) */
 void gpu_moment_refresh_release(void);
 
-/* Bulk write SoA[k=0..n) back into Nodes[MaxPart+k] / Extnodes[MaxPart+k].
+/* Bulk write SoA[k=0..n) back into Nodes[TreeNodeIndexBase+k] / Extnodes[TreeNodeIndexBase+k].
  * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding
  * could call it directly. Caller must have a valid SoA acquired. */
 void gpu_moment_writeback_to_aos(int n);

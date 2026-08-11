@@ -62,6 +62,7 @@ struct global_data_all_processes
 
   int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. */
   int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. */
+  int TreeNodeIndexBase;	/*!< First index of the gravity tree's node range: particle indices are [0,TreeNodeIndexBase), tree nodes / foreign nodes / pseudo-particles all live above it.  Its ONLY contract is "larger than any local particle index any rank ever uses, identical on every rank, constant for the run"; it is a namespace separator, NOT a memory size.  Set once from MaxPart when the ICs are read, carried through restart files with the rest of this struct.  NOTHING may be sized from it -- array sizes follow real counts (see MaxNodes, MaxForeignNodes, TreeParticleSlots). */
   int ICFormat;			/*!< selects different versions of IC file-format */
   int SnapFormat;		/*!< selects different versions of snapshot file-formats */
   int NumFilesPerSnapshot;	/*!< number of files in multi-file snapshot dumps */

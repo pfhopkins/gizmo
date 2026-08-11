@@ -3,7 +3,7 @@
  * GPU implementation of the local-tree moment refresh that mirrors the
  * CPU code in force_refresh_node_moments (gravity/forcetree.cc:3826).
  * The CPU body is a 4-step pass (zero / particle-accumulate / bottom-up
- * propagate / normalize) over Nodes[MaxPart .. MaxPart+Numnodestree).
+ * propagate / normalize) over Nodes[tree_base .. tree_base+Numnodestree).
  *
  * On the GPU we use 5 device kernels with dependency-counter atomics so
  * the bottom-up walk parallelises:
@@ -731,17 +731,17 @@ static void mr_normalize_payloads_(const mr_scratch_t& scr, int k, const Vec3<My
 }
 
 /* Pending-counter init launcher.  For each k in [0..n_iter), atomically
- * increments pending[father(k) - MaxPart] when father falls within
+ * increments pending[father(k) - tree_base] when father falls within
  * [range_lo, range_hi).  The topnode-subtree variant passes a
  * restricted iteration range + filter. */
 static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> pending,
-                                     int *father_soa, int MaxPart,
+                                     int *father_soa, int tree_base,
                                      int n_iter, int range_lo, int range_hi)
 {
     Kokkos::parallel_for("mr_pending_init", n_iter, KOKKOS_LAMBDA(int k) {
         int f = father_soa[k];
         if(f >= range_lo && f < range_hi) {
-            Kokkos::atomic_inc(&pending(f - MaxPart));
+            Kokkos::atomic_inc(&pending(f - tree_base));
         }
     });
 }
@@ -759,7 +759,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int n          = Numnodestree;       /* number of internal nodes [0..n) in SoA */
-    int MaxPart    = All.MaxPart;
+    int tree_base    = All.TreeNodeIndexBase;
     int N          = NumPart;
 
     /* ---------------- 1. arenas / SoA / per-particle precompute -------- */
@@ -810,8 +810,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     /* ---------------- Kernel 2: pending counter init ------------------- */
-    mr_pending_init_launch_(scr.pending, father_soa, MaxPart, n,
-                             MaxPart, MaxPart + n);
+    mr_pending_init_launch_(scr.pending, father_soa, tree_base, n,
+                             tree_base, tree_base + n);
 
     /* ---------------- Kernel 3: particle pass -------------------------- */
     double maxKR = All.MaxKernelRadius;
@@ -831,8 +831,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 #endif
     Kokkos::parallel_for("mr_part_accum", N, KOKKOS_LAMBDA(int i) {
         int f = fmirror[i];
-        if(f < MaxPart || f >= MaxPart + n) {return;}
-        int k = f - MaxPart;
+        if(f < tree_base || f >= tree_base + n) {return;}
+        int k = f - tree_base;
         const struct particle_data *pa = &P_dev[i];
 
         /* Load this leaf's fields + per-particle precomputes into the shared kernel's POD (native
@@ -884,8 +884,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
         int curr = k0;
         while(true) {
             int f = father_soa[curr];
-            if(f < MaxPart || f >= MaxPart + n) {return;}
-            int kp = f - MaxPart;
+            if(f < tree_base || f >= tree_base + n) {return;}
+            int kp = f - tree_base;
             mr_propagate_to_parent_(scr, curr, kp);
             int prev = Kokkos::atomic_fetch_sub(&scr.pending(kp), 1);
             if(prev != 1) {return;}
@@ -1005,10 +1005,10 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
 {
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {return;}
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
 
     for(int k = 0; k < n; k++) {
-        int no = MaxPart + k;
+        int no = tree_base + k;
         Nodes[no].u.d.mass     = (MyFloat) soa->mass[k];
         Nodes[no].u.d.s        = Vec3<MyFloat>{(MyFloat) soa->s[k][0],
                                                 (MyFloat) soa->s[k][1],

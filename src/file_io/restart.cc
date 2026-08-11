@@ -381,7 +381,7 @@ void restart(int modus)
 	      byten(Father, NumPart * sizeof(int), modus);
 
 	      byten(Nextnode, NumPart * sizeof(int), modus);
-	      byten(Nextnode + All.MaxPart, NTopnodes * sizeof(int), modus);
+	      byten(Nextnode + TreeParticleSlots, NTopnodes * sizeof(int), modus);
 
 	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
 	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);

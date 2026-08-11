@@ -40,7 +40,7 @@ extern "C" int gpu_force_flag_localnodes(void)
         return 1;
     }
 
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
     unsigned int *bitflags_soa = soa->bitflags;
     int          *father_soa   = soa->father;
 
@@ -88,12 +88,12 @@ extern "C" int gpu_force_flag_localnodes(void)
 
     /* Pass 1: BITFLAG_TOPLEVEL — walk up from each DomainNodeIndex[i].
      * Mirrors CPU: while(no >= 0) { if(already_set) break; set; no = father; }
-     * father_soa[k] stores the ABSOLUTE parent index (>= MaxPart) or -1 for
-     * the root, so `k_abs < MaxPart` is the termination condition. */
+     * father_soa[k] stores the ABSOLUTE parent index (>= tree_base) or -1 for
+     * the root, so `k_abs < tree_base` is the termination condition. */
     Kokkos::parallel_for("flag_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
         int k_abs = dom_d(i);
-        while(k_abs >= MaxPart) {
-            int k = k_abs - MaxPart;
+        while(k_abs >= tree_base) {
+            int k = k_abs - tree_base;
             unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], TOPLEVEL_BIT);
             if(old & TOPLEVEL_BIT) {break;}   /* all ancestors already set */
             k_abs = father_soa[k];
@@ -108,10 +108,10 @@ extern "C" int gpu_force_flag_localnodes(void)
      * not INTERNAL_TOPLEVEL. */
     Kokkos::parallel_for("flag_internal_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
         int k_abs = dom_d(i);
-        if(k_abs < MaxPart) {return;}
-        k_abs = father_soa[k_abs - MaxPart];   /* start one level above topleaf */
-        while(k_abs >= MaxPart) {
-            int k = k_abs - MaxPart;
+        if(k_abs < tree_base) {return;}
+        k_abs = father_soa[k_abs - tree_base];   /* start one level above topleaf */
+        while(k_abs >= tree_base) {
+            int k = k_abs - tree_base;
             unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], INTERNAL_BIT);
             if(old & INTERNAL_BIT) {break;}
             k_abs = father_soa[k];
@@ -125,8 +125,8 @@ extern "C" int gpu_force_flag_localnodes(void)
     if(n_local > 0) {
         Kokkos::parallel_for("flag_depends_local", n_local, KOKKOS_LAMBDA(int j) {
             int k_abs = local_d(j);
-            while(k_abs >= MaxPart) {
-                int k = k_abs - MaxPart;
+            while(k_abs >= tree_base) {
+                int k = k_abs - tree_base;
                 unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], DEPENDS_BIT);
                 if(old & DEPENDS_BIT) {break;}
                 k_abs = father_soa[k];
@@ -142,7 +142,7 @@ extern "C" int gpu_force_flag_localnodes(void)
      * written by gpu_moment_writeback_to_aos at the end of gpu_moment_refresh;
      * only the topnode range [0, NTopnodes) needs patching here. */
     for(int k = 0; k < NTopnodes; k++) {
-        Nodes[All.MaxPart + k].u.d.bitflags = bitflags_soa[k];
+        Nodes[All.TreeNodeIndexBase + k].u.d.bitflags = bitflags_soa[k];
     }
 
     return 0;
@@ -160,7 +160,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {printf("gpu_scatter_pseudo_to_soa: SoA null\n"); return 1;}
 
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
 
     /* Copy the just-exchanged AoS foreign pseudo moments → SoA for all
      * foreign-rank topleaves.  This is O(NTopleaves) and runs on the host;
@@ -173,7 +173,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
             for(int i = DomainStartList[ta * MULTIPLEDOMAINS + m];
                     i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++) {
                 int no = DomainNodeIndex[i];
-                int k  = no - MaxPart;
+                int k  = no - tree_base;
                 /* Scalar moment fields */
                 soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
                 soa->N_part[k]  = Nodes[no].N_part;
@@ -340,9 +340,9 @@ static moment_node_accum<MyFloat> topnode_child_accum_(const struct gpu_gravity_
  * moments are read directly by the caller and accumulated. */
 static void topnode_resum_node_(int no_abs,
                                 struct gpu_gravity_tree_soa_t *soa,
-                                int MaxPart, int MaxNodes_)
+                                int tree_base, int MaxNodes_)
 {
-    int no_k = no_abs - MaxPart;   /* 0-based SoA index of `no_abs` */
+    int no_k = no_abs - tree_base;   /* 0-based SoA index of `no_abs` */
 
     /* --- accumulate from 8 topnode children ------------------------- */
     MyFloat mass = 0;
@@ -455,12 +455,12 @@ static void topnode_resum_node_(int no_abs,
 
     int p = soa->nextnode[no_k];   /* first child (absolute index) */
     for(int j = 0; j < 8; j++) {
-        if(p < MaxPart || p >= MaxPart + MaxNodes_) {endrun(6767); return;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
-        int pk = p - MaxPart;
+        if(p < tree_base || p >= tree_base + MaxNodes_) {endrun(6767); return;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
+        int pk = p - tree_base;
 
         /* Recurse if this child is also an internal topnode. */
         if(soa->bitflags[pk] & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {
-            topnode_resum_node_(p, soa, MaxPart, MaxNodes_);
+            topnode_resum_node_(p, soa, tree_base, MaxNodes_);
         }
 
         /* Accumulate this (now-finalized) child's re-weighted moments. */
@@ -632,16 +632,16 @@ extern "C" int gpu_topnode_moment_resum(void)
         return 1;
     }
 
-    int MaxPart  = All.MaxPart;
+    int tree_base  = All.TreeNodeIndexBase;
     int MaxNodes_ = MaxNodes;
 
-    /* Start the recursive resum from the tree root (absolute index MaxPart,
+    /* Start the recursive resum from the tree root (absolute index tree_base,
      * SoA index 0).  The root is always INTERNAL_TOPLEVEL when NTask > 1.
      * With NTask == 1 the root is the single topleaf — no resum needed. */
-    int root_abs = All.MaxPart;
+    int root_abs = All.TreeNodeIndexBase;
     int root_k   = 0;
     if(soa->bitflags[root_k] & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {
-        topnode_resum_node_(root_abs, soa, MaxPart, MaxNodes_);
+        topnode_resum_node_(root_abs, soa, tree_base, MaxNodes_);
     }
 
     return 0;
@@ -667,11 +667,11 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {printf("gpu_scatter_foreign_to_soa: SoA null\n"); return 1;}
 
-    int MaxPart_ = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
 
     for(int j = 0; j < count; j++) {
         int no = slot_base_abs + j;
-        int k  = no - MaxPart_;     /* SoA index = (MaxNodes + slot_local) */
+        int k  = no - tree_base;     /* SoA index = (MaxNodes + slot_local) */
 
         /* Geometric */
         soa->center[k] = Nodes[no].center;
@@ -700,10 +700,10 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         soa->father[k]   = Nodes[no].u.d.father;
 
         /* foreign-leaf identity sidecar: mirror the host ForeignLeaf* arrays into the SoA at
-         * foreign_slot (= no-(MaxPart+MaxNodes) = k-MaxNodes), the foreign-only index the walk uses
+         * foreign_slot (= no-(tree_base+MaxNodes) = k-MaxNodes), the foreign-only index the walk uses
          * -- NOT k.  Bounds-checked against both the SoA foreign capacity and the host array size. */
         {
-            int foreign_slot = no - (MaxPart_ + MaxNodes);
+            int foreign_slot = no - (tree_base + MaxNodes);
             if(soa->foreign_leaf_tag && foreign_slot >= 0 && foreign_slot < soa->foreign_leaf_cap
                && ForeignLeafTag && foreign_slot < MaxForeignNodes) {
                 soa->foreign_leaf_tag[foreign_slot]  = ForeignLeafTag[foreign_slot];
@@ -789,7 +789,7 @@ extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)
 {
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || !soa->nextnode) {return 1;}
-    int k = abs_idx - All.MaxPart;
+    int k = abs_idx - All.TreeNodeIndexBase;
     if(k < 0 || k >= gpu_gravity_tree_capacity()) {return 1;}
     soa->nextnode[k] = new_nextnode;
     return 0;
@@ -803,7 +803,7 @@ extern "C" int gpu_set_soa_sibling(int abs_idx, int new_sibling)
 {
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || !soa->sibling) {return 1;}
-    int k = abs_idx - All.MaxPart;
+    int k = abs_idx - All.TreeNodeIndexBase;
     if(k < 0 || k >= gpu_gravity_tree_capacity()) {return 1;}
     soa->sibling[k] = new_sibling;
     return 0;

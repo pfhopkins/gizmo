@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <string.h>
+#include <limits.h>
 
 
 #include "../declarations/allvars.h"
@@ -106,6 +107,35 @@ void read_ic(char *fname)
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
         All.MaxPartGas = All.MaxPart;
 #endif
+
+        /* Fix the gravity tree's node-index base for the whole run.  Particle indices occupy
+         * [0,TreeNodeIndexBase) and every node/foreign-node/pseudo-particle index sits above it, so
+         * the base only has to exceed any local particle index that can ever occur; it is not a
+         * memory size and nothing is allocated from it.  MaxPart is identical on every rank here,
+         * so this is uniform by construction and needs no communication, and it travels with the
+         * rest of All in restart files.  The wide multiplier leaves room for MaxPart to vary per
+         * rank later without disturbing tree indices.
+         * This sets and sanity-checks the base alone.  Whether the FULL index space (base plus the
+         * node, foreign-node and pseudo-particle ranges above it) fits an int depends on capacities
+         * that are not known until a tree is built and that grow during the run, so the
+         * authoritative check lives in force_treeallocate.  A base that leaves no room for the
+         * particle range is unusable, so ask for a stop and leave the base at 0: the tree-readiness
+         * checks then read "no tree" rather than accepting a base that collides with particle
+         * indices.  The stop drains at the poll below, before any of this is used. */
+        {
+            long long tree_base = 16LL * (long long) All.MaxPart;
+            if(tree_base > (long long)(INT_MAX / 4)) {tree_base = (long long)(INT_MAX / 4);}
+            if(tree_base < 2LL * (long long) All.MaxPart)
+            {
+                if(ThisTask == 0) {printf("MaxPart=%d is too large for the tree's integer index space (the largest usable base, %lld, is below the particle range). Use more ranks, or lower PartAllocFactor.\n", All.MaxPart, tree_base); fflush(stdout);}
+                endrun(90001021);
+            }
+            else
+            {
+                All.TreeNodeIndexBase = (int) tree_base;
+                if(ThisTask == 0) {printf("Allocating %d particle slots per rank; tree node indices start at %d.\n", All.MaxPart, All.TreeNodeIndexBase); fflush(stdout);}
+            }
+        }
 
         /* All-rank preflight + allocate. allocate_memory(1) sets a SOFT bad-stop (not an
          * fatal hard-exit) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena

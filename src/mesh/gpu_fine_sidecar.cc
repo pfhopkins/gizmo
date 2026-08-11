@@ -256,9 +256,9 @@ extern "C" int gpu_fine_sidecar_is_valid(const struct gx_fine_sidecar_key_t *wan
     if(!g_sc.valid || want == nullptr) return 0;
     const struct gx_fine_sidecar_key_t *k = &g_sc.key;
     if(k->numpart          != want->numpart)          return 0;
-    if(k->maxpart          != want->maxpart)          return 0;
+    if(k->tree_base          != want->tree_base)          return 0;
     if(k->numnodestree     != want->numnodestree)     return 0;
-    if(k->fb_maxpart       != want->fb_maxpart)       return 0;
+    if(k->fb_tree_base       != want->fb_tree_base)       return 0;
     if(k->fb_nnodes        != want->fb_nnodes)        return 0;
     if(k->num_pool         != want->num_pool)         return 0;
     if(k->eligible_mask    != want->eligible_mask)    return 0;
@@ -302,7 +302,7 @@ extern "C" int gpu_fine_sidecar_walk(
     int search_mode, unsigned int supply_mask,
     const int periodic_flags[3], const double box_sizes[3],
     unsigned int topflag_mask, int fineband_ntypes, int num_ptypes,
-    int maxpart, int maxnodes, int maxforeign, int num_local,
+    int tree_base, int maxnodes, int maxforeign, int num_local,
     int numpart, int nnodes,
     char *matched_out,
     long *pseudo_hits, long *foreign_node_visits, long *bad_index_hits)
@@ -358,7 +358,7 @@ extern "C" int gpu_fine_sidecar_walk(
     const unsigned int  *bits = soa->bitflags;
     const int    pf0 = periodic_flags[0], pf1 = periodic_flags[1], pf2 = periodic_flags[2];
     const double bs0 = box_sizes[0], bs1 = box_sizes[1], bs2 = box_sizes[2];
-    const int    pseudo_start = maxpart + maxnodes + maxforeign;
+    const int    pseudo_start = tree_base + maxnodes + maxforeign;
     const int    oneway = (search_mode == NGB_SEARCH_ONEWAY);
     const int    np_ = num_pool;
 
@@ -380,7 +380,7 @@ extern "C" int gpu_fine_sidecar_walk(
             long steps = 0;
             while(no >= 0) {
                 if(++steps > GX_DEVWALK_STEP_GUARD) { Kokkos::atomic_add(&cnt[2], (long)1); break; }
-                if(no < maxpart) {
+                if(no < tree_base) {
                     if(no < num_local && no < numpart) {
                         const int pool_pos = d_j2p[no];
                         if(pool_pos >= 0 && pool_pos < np_) {
@@ -395,13 +395,13 @@ extern "C" int gpu_fine_sidecar_walk(
                     }
                     if(no < nn_aux_size) no = nxa[no];
                     else { Kokkos::atomic_add(&cnt[2], (long)1); break; }
-                } else if(no < maxpart + maxnodes) {
-                    const int idx = no - maxpart;
+                } else if(no < tree_base + maxnodes) {
+                    const int idx = no - tree_base;
                     if(idx < 0 || idx >= soa_cap) { Kokkos::atomic_add(&cnt[2], (long)1); break; }
                     if(no != start_node && (bits[idx] & topflag_mask) != 0u) { no = sib[idx]; continue; }
                     double R_eff = h_q;
-                    if(!oneway && no < maxpart + nnodes) {
-                        const double *bb = d_band + (long)(no - maxpart) * fineband_ntypes;
+                    if(!oneway && no < tree_base + nnodes) {
+                        const double *bb = d_band + (long)(no - tree_base) * fineband_ntypes;
                         double be = 0;
                         for(int t = 0; t < fineband_ntypes; t++) {
                             if((supply_mask & (1u << (unsigned)t)) == 0u) continue;

@@ -358,7 +358,7 @@ int NextJ;
 int TimerFlag;
 
 struct NODE *Nodes_base,	/*!< points to the actual memory allocated for the nodes */
-*Nodes;			            /*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.MaxPart] gives the first allocated node */
+*Nodes;			            /*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.TreeNodeIndexBase] gives the first allocated node */
 struct extNODE *Extnodes, *Extnodes_base;
 
 
@@ -366,6 +366,7 @@ int MaxNodes;			/*!< maximum allowed number of internal nodes */
 int Numnodestree;		/*!< number of (internal) nodes in each tree */
 int MaxForeignNodes = 0;        /*!< LET: foreign-node capacity; set in force_treeallocate. */
 int Numforeignnodes = 0;        /*!< LET: foreign nodes currently installed; reset on each LET exchange. */
+int TreeParticleSlots = 0;      /*!< particle slots the live tree's Father[]/Nextnode[] were allocated for; set in force_treeallocate. */
 long long RuntimeMinLETForeignNodes = 0;  /*!< adaptive lower bound on MaxForeignNodes; ratcheted up by force_treebuild on a retryable LET overflow. Not a parameter; restart-persisted. */
 long long Numforeignnodes_highwater = 0;  /*!< since-start peak of Numforeignnodes actually installed (diagnostic; memory ledger foreign-used). */
 

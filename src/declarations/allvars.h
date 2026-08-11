@@ -268,8 +268,9 @@ extern int HermiteOnlyFlag;     /*!< flag to only do Hermite integration for app
 
 extern int MaxNodes;        /*!< maximum allowed number of internal nodes */
 extern int Numnodestree;    /*!< number of (internal) nodes in each tree */
-extern int MaxForeignNodes;  /*!< LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [MaxPart+MaxNodes+MaxForeignNodes, ...). */
+extern int MaxForeignNodes;  /*!< LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [TreeNodeIndexBase+MaxNodes+MaxForeignNodes, ...). */
 extern int Numforeignnodes;  /*!< LET: count of foreign nodes currently installed (<= MaxForeignNodes); reset on each LET exchange. */
+extern int TreeParticleSlots; /*!< Number of physical particle slots the live tree's per-particle side arrays were allocated for: Father[] spans [0,TreeParticleSlots) and Nextnode[]'s particle segment does too, with the pseudo-particle segment starting at offset TreeParticleSlots.  This is a COUNT of real storage, distinct from All.TreeNodeIndexBase (where node INDICES start).  Set from the maxpart argument in force_treeallocate; use it, not All.MaxPart, anywhere the extent of an already-allocated tree array is meant. */
 
 extern int *Nextnode;        /*!< gives next node in tree walk  (nodes array) */
 extern int *Father;        /*!< gives parent node in tree (Prenodes array) */
@@ -845,7 +846,7 @@ extern ALIGN(32) struct NODE
 #endif
 }
  *Nodes_base,			/*!< points to the actual memory allocated for the nodes */
- *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.MaxPart] gives the first allocated node */
+ *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.TreeNodeIndexBase] gives the first allocated node */
 
 
 extern struct extNODE

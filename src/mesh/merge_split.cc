@@ -1051,17 +1051,17 @@ static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sib
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
-    no = All.MaxPart;
+    no = All.TreeNodeIndexBase;
 
-    while(no >= 0){ // walk the whole tree, starting from the root node (=All.MaxPart)
-        if(no < All.MaxPart) { // we got a particle
+    while(no >= 0){ // walk the whole tree, starting from the root node (=All.TreeNodeIndexBase)
+        if(no < All.TreeNodeIndexBase) { // we got a particle
             next=Nextnode[no];
             if(no != i && no != j){ // don't mess with Nextnodes if looking at i or j - handle that separately
                 if(next == i) {Nextnode[no] = j; previous_node_i = no;}
                 else if(next == j) { Nextnode[no] = i; previous_node_j = no;}
             }
             no = next;
-        } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (LET)
+        } else if(no < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (LET)
             next = Nodes[no].u.d.nextnode;
             if(next == i) { previous_node_i = no; rearrange_set_node_nextnode(no, j);}
             else if(next == j) { previous_node_j = no; rearrange_set_node_nextnode(no, i);}
@@ -1069,7 +1069,7 @@ void swap_treewalk_pointers(int i, int j){
             else if(Nodes[no].u.d.sibling == j) { rearrange_set_node_sibling(no, i); pre_sibling_j = no;}
             no = next;
         } else { // pseudoparticle (index shifted up by MaxForeignNodes)
-            int pseudo_idx = no - MaxNodes - MaxForeignNodes;
+            int pseudo_idx = TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes);
             next = Nextnode[pseudo_idx];
             if(next==i) {Nextnode[pseudo_idx] = j;}
             else if(next == j) {Nextnode[pseudo_idx] = i;}
@@ -1099,19 +1099,19 @@ void swap_treewalk_pointers(int i, int j){
 */
 void remove_particle_from_treewalk(int i){
     int no, next;
-    long iter = 0, iter_max = (long)All.MaxPart + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
-    no = All.MaxPart;
+    long iter = 0, iter_max = (long)TreeParticleSlots + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
+    no = All.TreeNodeIndexBase;
     while(no >= 0){ // walk the tree to find anything that might point to i and redirect it to i's nextnode
-        if(no < All.MaxPart){
+        if(no < All.TreeNodeIndexBase){
             next = Nextnode[no];
             if(Nextnode[no] == i) {Nextnode[no] = Nextnode[i];}
-        } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (LET; must match swap_treewalk_pointers)
+        } else if (no < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes){ // local or foreign tree node (LET; must match swap_treewalk_pointers)
             next = Nodes[no].u.d.nextnode;
             if(next == i) {rearrange_set_node_nextnode(no, Nextnode[i]);}
             if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, Nextnode[i]);}
         } else { // pseudoparticle (index shifted up by MaxForeignNodes)
-            next = Nextnode[no - MaxNodes - MaxForeignNodes];
-            if(next == i) {Nextnode[no - MaxNodes - MaxForeignNodes] = Nextnode[i];}
+            next = Nextnode[TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
+            if(next == i) {Nextnode[TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)] = Nextnode[i];}
         }
         no = next;
         if(++iter > iter_max){ // corrupt/cyclic chain: stop gracefully instead of hanging forever

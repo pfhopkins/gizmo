@@ -1680,7 +1680,7 @@ static char *compute_matched_walk_export(
     const double walker_j_reach_scale = spec->j_radius_scale * spec->safety_factor;
     /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
      * envelope Alltoallv below / the caller's compare Allreduce). */
-    int ok_local = (All.MaxPart > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
+    int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
     int ok_all = 0;
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return NULL; }
