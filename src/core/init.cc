@@ -1077,10 +1077,25 @@ void init(void)
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        All.MeanGasParticleMass = mpi_mass_tot/( (double)mpi_Ngas );
+        /* A run with no gas at all (pure-sink test problems) makes this 0/0. The NaN
+         * propagates into Sink_Formation_Mass and hence into max_mmerge in the sink-sink
+         * merger test, where every comparison against NaN is false -- silently disabling
+         * the ceiling that stops anything heavier than a few gas cells being merged away,
+         * so arbitrarily massive stars become mergeable. Do not rely on the NaN comparison
+         * to catch this: under -ffast-math (-ffinite-math-only) the compiler may fold it
+         * either way, so the same source blocks or admits depending on the build. */
+        All.MeanGasParticleMass = (mpi_Ngas > 0) ? (mpi_mass_tot / ((double)mpi_Ngas)) : 0;
         if(RestartFlag==0){
             for(i=0; i<NumPart; i++){
-                if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass
+                if(P[i].Type==5){
+                    P[i].Sink_Formation_Mass = All.MeanGasParticleMass; // will behave as if this sink formed from a gas cell with the average mass
+                    /* No gas in the run, so there is no gas-cell mass to inherit. Use a small
+                     * fraction of the sink's own mass: finite and nonzero, so the several places
+                     * that divide by Sink_Formation_Mass stay well-defined, while keeping
+                     * max_mmerge = 10*Sink_Formation_Mass far below the sink mass, which is what
+                     * makes the merger ceiling reject these sinks. */
+                    if(!(P[i].Sink_Formation_Mass > 0)) {P[i].Sink_Formation_Mass = P[i].Mass / 1000.;}
+                }
             }
         }
 #endif
