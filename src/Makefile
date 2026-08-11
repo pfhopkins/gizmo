@@ -231,7 +231,7 @@ KOKKOS_CPPFLAGS = -I$(OLCF_KOKKOS_ROOT)/include
 ## gfx90a:xnack+ (not bare gfx90a): the code uses HIP managed/unified memory
 ## (static __managed__ mirrors + Kokkos SharedSpace=HIPManagedSpace), which is
 ## only host-accessible on MI250X with XNACK. Requires HSA_XNACK=1 at runtime too.
-KOKKOS_CXXFLAGS = --offload-arch=gfx90a:xnack+ -I$(CRAY_MPICH_DIR)/include
+KOKKOS_CXXFLAGS = --offload-arch=gfx90a:xnack+ -march=znver3 -I$(CRAY_MPICH_DIR)/include
 KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib64
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX     = hipcc --std=c++17
