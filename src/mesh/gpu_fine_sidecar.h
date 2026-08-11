@@ -104,7 +104,7 @@ int gpu_fine_sidecar_walk(const double *q_pos, const double *q_h, int nq,
                           int search_mode, unsigned int supply_mask,
                           const int periodic_flags[3], const double box_sizes[3],
                           unsigned int topflag_mask, int fineband_ntypes, int num_ptypes,
-                          int tree_base, int maxnodes, int maxforeign, int num_local,
+                          int tree_base, int tree_particle_slots, int maxnodes, int maxforeign, int num_local,
                           int numpart, int nnodes,
                           char *matched_out,
                           long *pseudo_hits, long *foreign_node_visits, long *bad_index_hits);

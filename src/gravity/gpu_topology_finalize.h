@@ -60,7 +60,7 @@ int gpu_node_reset_ephemeral(int n);
  * kernel can write into it directly and host readers page-fault on touch.
  * These wrappers keep the kokkos_malloc/free out of forcetree.cc (non-GPU TU
  * has no Kokkos include). */
-int  *gpu_father_alloc(int maxpart);   /* returns NULL on failure */
+int  *gpu_father_alloc(int tree_particle_slots);   /* returns NULL on failure */
 void  gpu_father_free(int *p);
 
 /* Extend the same UVM-allocator pattern to Nodes_base, Extnodes_base

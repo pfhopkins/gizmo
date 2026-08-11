@@ -204,6 +204,18 @@ void restart(int modus)
           All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
 #endif
           new_MaxPart = All.MaxPart;
+          /* The tree node index base was fixed when the ICs were read and travels in the restart
+           * file; particle indices must stay below it.  Raising PartAllocFactor far enough breaks
+           * that, so say so here where the cause is obvious rather than at the later tree alloc. */
+          if(All.MaxPart > All.TreeNodeIndexBase)
+            {
+              printf("PartAllocFactor was raised so far that %d particle slots would overlap the tree node index base %d, which was fixed when this run started. Restart with the original value, or start a fresh run at the larger one.\n",
+                     All.MaxPart, All.TreeNodeIndexBase);
+              fflush(stdout);
+              /* Skip this rank's payload: allocate_memory + the reads below would run at the very
+               * MaxPart just rejected.  Drains at the per-turn poll, like the other soft stops here. */
+              endrun(90001023); restart_status = 90001023; goto finish_turn;
+            }
 
 		  save_PartAllocFactor = -1;
 		}
@@ -381,7 +393,7 @@ void restart(int modus)
 	      byten(Father, NumPart * sizeof(int), modus);
 
 	      byten(Nextnode, NumPart * sizeof(int), modus);
-	      byten(Nextnode + TreeParticleSlots, NTopnodes * sizeof(int), modus);
+	      byten(Nextnode + All.TreeParticleSlots, NTopnodes * sizeof(int), modus);
 
 	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
 	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);

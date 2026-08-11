@@ -993,11 +993,11 @@ static void pack_recurse(int no, int sib_terminator,
          * must consume it as a real foreign leaf.  Recover the underlying particle from the
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
-         * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeNodeIndexBase); if not, the
+         * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeParticleSlots); if not, the
          * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
          * surfaces it rather than mis-routing a non-particle as a leaf. */
         int p = Nodes[no].u.d.nextnode;
-        if(p >= 0 && p < All.TreeNodeIndexBase)
+        if(p >= 0 && p < All.TreeParticleSlots)
         {
             struct particle_data *pa = &P[p];
             w->leaf_tag      = 1;
@@ -1022,7 +1022,7 @@ static void pack_recurse(int no, int sib_terminator,
 
     /* Multi-particle internal node: enumerate children via nextnode/sibling chain.
      * For each child:
-     *   - particle (< TreeNodeIndexBase): synthesize a leaf wire
+     *   - particle (< TreeParticleSlots): synthesize a leaf wire
      *   - internal node: recurse
      *   - pseudo (>= TreeNodeIndexBase+MaxNodes+MaxForeignNodes): skip (R has its own access via S->R LET pack)
      *   - foreign (in [TreeNodeIndexBase+MaxNodes, +MaxForeignNodes)): shouldn't appear during pack (we run before unpack)
@@ -1038,7 +1038,7 @@ static void pack_recurse(int no, int sib_terminator,
         int next_child;
         int child_wire_idx = -1;
 
-        if(child < All.TreeNodeIndexBase)
+        if(child < All.TreeParticleSlots)
         {
             /* Particle leaf -- synthesize */
             grow_wire_buf(buf, *count + 1, capacity);
@@ -1046,6 +1046,16 @@ static void pack_recurse(int no, int sib_terminator,
             child_wire_idx = (*count)++;
             let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
+        }
+        else if(child < All.TreeNodeIndexBase)
+        {
+            /* Between the particle slots and the node index base lies no valid object: the tree is
+             * malformed.  Stop before Nodes[child] is read at a negative offset. */
+            printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
+                   child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
+            g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+                                   * the callers already test, so no truncated subtree is shipped */
+            return;
         }
         else if(child < All.TreeNodeIndexBase + MaxNodes)
         {
@@ -1068,7 +1078,7 @@ static void pack_recurse(int no, int sib_terminator,
         else
         {
             /* Pseudo-particle -- skip */
-            next_child = Nextnode[TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
+            next_child = Nextnode[All.TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             child_wire_idx = -1;
         }
 
@@ -1145,7 +1155,7 @@ static int let_resolve_continuation(int x, int topleaf_term,
         if(hit) return hit->wire;                                     /* shipped -> wire (incl synth leaf) */
         /* x is a non-shipped continuation; classify by EXPLICIT range (this is topology-repair
          * code -- an unclassifiable positive index must abort, never index Nodes[] blindly). */
-        if(x >= 0 && x < All.TreeNodeIndexBase)
+        if(x >= 0 && x < All.TreeParticleSlots)
         {
             printf("LET pack FATAL: particle %d referenced as a sibling continuation but not shipped "
                    "and not the subtree terminator (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000072);
@@ -1160,7 +1170,7 @@ static int let_resolve_continuation(int x, int topleaf_term,
         else if(x >= All.TreeNodeIndexBase + MaxNodes && x < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
             x = Nodes[x].u.d.sibling;                                 /* foreign: skip as the walk does */
         else if(x >= All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
-            x = Nextnode[TreeParticleSlots + (x - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];             /* pseudo: skip as the walk does */
+            x = Nextnode[All.TreeParticleSlots + (x - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];             /* pseudo: skip as the walk does */
         else
         {
             printf("LET pack FATAL: unclassifiable continuation index %d (rank %d).\n",
@@ -1261,7 +1271,7 @@ extern "C" int let_pack_for_rank(int R,
         {
             int next_child;
             int child_wire_idx = -1;
-            if(child < All.TreeNodeIndexBase)
+            if(child < All.TreeParticleSlots)
             {
                 /* Particle directly under topleaf -- synthesize leaf */
                 grow_wire_buf(out_buf, count + 1, out_capacity);
@@ -1270,6 +1280,14 @@ extern "C" int let_pack_for_rank(int R,
                 let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
                 count++;
                 next_child = Nextnode[child];
+            }
+            else if(child < All.TreeNodeIndexBase)
+            {
+                /* Malformed: no valid object lives between the particle slots and the node index
+                 * base.  Stop before Nodes[child] is read at a negative offset; ship nothing. */
+                printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
+                       child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
+                goto pack_oom_bail;
             }
             else if(child < All.TreeNodeIndexBase + MaxNodes)
             {
@@ -1282,7 +1300,7 @@ extern "C" int let_pack_for_rank(int R,
             }
             else
             {
-                next_child = Nextnode[TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
+                next_child = Nextnode[All.TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             }
             /* Link this child into the top-level sibling chain */
             if(child_wire_idx >= 0)

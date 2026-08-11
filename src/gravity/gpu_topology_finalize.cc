@@ -30,6 +30,7 @@ extern "C" int gpu_topology_finalize_father(int n)
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int tree_base = All.TreeNodeIndexBase;
+    int tree_slots = All.TreeParticleSlots;
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
@@ -67,7 +68,7 @@ extern "C" int gpu_topology_finalize_father(int n)
         father_soa[k]   = -1;
         bitflags_soa[k] = 0u;
     });
-    Kokkos::parallel_for("topo_father_init_parts", TreeParticleSlots, KOKKOS_LAMBDA(int i) {
+    Kokkos::parallel_for("topo_father_init_parts", tree_slots, KOKKOS_LAMBDA(int i) {
         Father_uvm[i] = -1;
     });
     Kokkos::fence();
@@ -78,7 +79,7 @@ extern "C" int gpu_topology_finalize_father(int n)
      * Internal child  -> father_soa[child - tree_base] = parent_abs.
      * Particle child  -> Father_uvm[child]           = parent_abs.
      * Pseudo-particle children (>= tree_base + MaxNodes) carry no per-particle
-     * Father[] entry (matches FUNR which only sets Father for no < tree_base). */
+     * Father[] entry; Father[] is written only for real particle slots (no < tree_slots). */
     int MaxNodes_ = MaxNodes;
     Kokkos::parallel_for("topo_father_main", n, KOKKOS_LAMBDA(int k) {
         int parent_abs = tree_base + k;
@@ -86,10 +87,10 @@ extern "C" int gpu_topology_finalize_father(int n)
         for(int s = 0; s < 8; s++) {
             int c = suns_backup[base + s];
             if(c < 0) {continue;}
-            if(c < tree_base) {
+            if(c < tree_slots) {
                 /* particle */
                 Father_uvm[c] = parent_abs;
-            } else if(c < tree_base + MaxNodes_) {
+            } else if(c >= tree_base && c < tree_base + MaxNodes_) {
                 /* internal node */
                 father_soa[c - tree_base] = parent_abs;
             }
@@ -231,9 +232,9 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     return 0;
 }
 
-extern "C" int *gpu_father_alloc(int maxpart)
+extern "C" int *gpu_father_alloc(int tree_particle_slots)
 {
-    size_t bytes = (size_t)maxpart * sizeof(int);
+    size_t bytes = (size_t)tree_particle_slots * sizeof(int);
     if(bytes == 0) {return NULL;}
     /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
        controlled-stop path (force_treeallocate) fires instead of a hard terminate. */

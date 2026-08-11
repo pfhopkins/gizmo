@@ -59,7 +59,7 @@ int    force_getcost_single(void);
 int    force_getcost_quadru(void);
 void   force_resetcost(void);
 void   force_setupnonrecursive(int no);
-void   force_treeallocate(int maxnodes, int maxpart);
+void   force_treeallocate(int maxnodes, int tree_particle_slots);
 /* Conservative per-particle radius used to seed Extnodes[no].hmax_per_type[Type]
  * bands. Mode B SYMMETRIC tree-prune reads these bands as an upper bound on
  * any leaf-policy-selectable reach for that type, so the band must dominate

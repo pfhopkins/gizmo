@@ -74,7 +74,7 @@ struct gpu_gravity_tree_soa_t {
     int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== MaxForeignNodes) */
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
-     * lands on `no < TreeNodeIndexBase`, advance via nextnode_aux[no]. Sized for
+     * lands on `no < TreeParticleSlots`, advance via nextnode_aux[no]. Sized for
      * TreeParticleSlots + NTopnodes so the pseudo-particle region is addressable
      * (though Tier-1 GPU walk aborts on pseudo-particle rather than
      * following it). */

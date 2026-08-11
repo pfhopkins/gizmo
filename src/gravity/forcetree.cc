@@ -1389,7 +1389,7 @@ void force_add_element_to_tree(int iparent, int ichild)
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int no, ptype, ninteractions=0, nexp, task, treeBase = All.TreeNodeIndexBase;
+    int no, ptype, ninteractions=0, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* maxForeignNodes shifts pseudo-particle range above the foreign-node range */
     double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
@@ -1550,7 +1550,10 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
 #endif
             
-            if(no < treeBase) /* this is a particle, we will use it */
+            if(no >= treeSlots && no < treeBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+                endrun(90001024); no = -1; continue;}
+            if(no < treeSlots) /* this is a particle, we will use it */
             {
                 /* the index of the node is the index of the particle */
                 if(P[no].Ti_current != ti_Current)
@@ -1703,7 +1706,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
                     DomainNodeIndex[no - (treeBase + maxNodes + maxForeignNodes)];
                     if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
-                    no = Nextnode[TreeParticleSlots + (no - treeBase - maxNodes - maxForeignNodes)];
+                    no = Nextnode[treeSlots + (no - treeBase - maxNodes - maxForeignNodes)];
                     continue;
                 }
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
@@ -2031,7 +2034,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
             
             
             /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
-            if(no < treeBase) {
+            if(no < treeSlots) {
                 if(TakeLevel >= 0) {P[no].GravCost[TakeLevel] += 1.0;} /* node was used */
                 no = Nextnode[no];
             } else {
@@ -2170,7 +2173,10 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
     {
         while(no >= 0)
         {
-            if(no < All.TreeNodeIndexBase)    /* single particle */
+            if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+                endrun(90001024); no = -1; continue;}
+            if(no < All.TreeParticleSlots)    /* single particle */
             {
                 /* the index of the node is the index of the particle */
                 /* observe the sign */
@@ -2234,7 +2240,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                     DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)];
 
                     if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
-                    no = Nextnode[TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
+                    no = Nextnode[All.TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
                     continue;
                 }
 
@@ -2261,7 +2267,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
             }
             GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
 
-            if(no < All.TreeNodeIndexBase)
+            if(no < All.TreeParticleSlots)
             {no = Nextnode[no];}
             else            /* we have an internal node. Need to check opening criterion */
             {
@@ -2416,7 +2422,10 @@ int subfind_force_treeevaluate_potential(int target)
 
     while(no >= 0)
     {
-        if(no < All.TreeNodeIndexBase)    /* single particle: node index is the particle index */
+        if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+            endrun(90001024); no = -1; continue;}
+        if(no < All.TreeParticleSlots)    /* single particle: node index is the particle index */
         {
             dx = P[no].Pos[0] - pos_x;
             dy = P[no].Pos[1] - pos_y;
@@ -2446,7 +2455,7 @@ int subfind_force_treeevaluate_potential(int target)
         }
         GRAVITY_NEAREST_XYZ(dx,dy,dz,-1);
         r2 = dx * dx + dy * dy + dz * dz;
-        if(no < All.TreeNodeIndexBase)
+        if(no < All.TreeParticleSlots)
         {
             no = Nextnode[no];
         }
@@ -2480,10 +2489,10 @@ int subfind_force_treeevaluate_potential(int target)
 
 /*! This function allocates the memory used for storage of the tree and of
  *  auxiliary arrays needed for tree-walk and link-lists.  Usually,
- *  maxnodes approximately equal to 0.7*maxpart is sufficient to store the
- *  tree for up to maxpart particles.
+ *  maxnodes approximately equal to 0.7*tree_particle_slots is sufficient to
+ *  store the tree for up to tree_particle_slots particles.
  */
-void force_treeallocate(int maxnodes, int maxpart)
+void force_treeallocate(int maxnodes, int tree_particle_slots)
 {
     int i;
     size_t bytes;
@@ -2509,8 +2518,29 @@ void force_treeallocate(int maxnodes, int maxpart)
     TopNodeNodeIndex = (int *) mymalloc("TopNodeNodeIndex", bytes = (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
     allbytes_topleaves += bytes;
     for(i = 0; i < NTopnodes; i++) TopNodeNodeIndex[i] = -1;  /* sentinel: post-build validation requires all populated */
+    /* The tree's storage contract, enforced at the single point every caller passes through:
+     *     NumPart  <=  tree_particle_slots  <=  All.TreeNodeIndexBase.
+     * The upper leg keeps particle and node indices from ever overlapping (the base is fixed for
+     * the run); the lower leg keeps every local particle index addressable in Father[] and
+     * Nextnode[], whatever capacity a caller chooses. */
+    if(tree_particle_slots > All.TreeNodeIndexBase)
+    {
+        printf("force_treeallocate: %d particle slots exceed the tree node index base %d, so particle and node indices would overlap.\n",
+               tree_particle_slots, All.TreeNodeIndexBase);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90001023, "force_treeallocate: particle slots exceed the tree node index base (restarting with a much larger PartAllocFactor is the usual cause; restart with the original value, or start a fresh run at the larger one)", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(NumPart > tree_particle_slots)
+    {
+        printf("force_treeallocate: %d local particles exceed the %d particle slots this tree is being allocated for.\n",
+               NumPart, tree_particle_slots);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90001025, "force_treeallocate: local particle count exceeds the tree's particle slots", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    All.TreeParticleSlots = tree_particle_slots;
     MaxNodes = maxnodes;
-    TreeParticleSlots = maxpart;
     /* LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
      * Index map (single source of truth).  Write Base for All.TreeNodeIndexBase:
      *   [0,                              Base)                                      -> particles
@@ -2519,7 +2549,7 @@ void force_treeallocate(int maxnodes, int maxpart)
      *   [Base+MaxNodes+MaxForeignNodes,  Base+MaxNodes+MaxForeignNodes+NTopleaves)  -> pseudo-particles
      * SoA slot for any node index `no` (local OR foreign): idx = no - Base (same formula).
      * These are INDICES.  Storage is separate and follows real counts: Nodes_base/Extnodes_base
-     * hold MaxNodes+MaxForeignNodes+1 entries, and Nextnode[]/Father[] hold TreeParticleSlots
+     * hold MaxNodes+MaxForeignNodes+1 entries, and Nextnode[]/Father[] hold All.TreeParticleSlots
      * particle slots (with Nextnode[] carrying the pseudo segment after them).  Nothing is ever
      * sized from Base.
      * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
@@ -2615,11 +2645,11 @@ void force_treeallocate(int maxnodes, int maxpart)
     Extnodes = Extnodes_base - All.TreeNodeIndexBase;
     /* Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
      * this pointer (no separate buffer, no per-walk memcpy).
-     * Pseudo-particles live at Nextnode[TreeParticleSlots + pseudo ordinal]
+     * Pseudo-particles live at Nextnode[All.TreeParticleSlots + pseudo ordinal]
      * after the foreign range; foreign nodes carry their next-sibling pointers in NODE.u.d
      * directly so they don't consume Nextnode[] slots, but we extend the buffer so the
      * pseudo-particle range stays in bounds after the index shift. */
-    long long nextnode_slots = (long long) maxpart + (long long) NTopnodes + (long long) MaxForeignNodes;
+    long long nextnode_slots = (long long) tree_particle_slots + (long long) NTopnodes + (long long) MaxForeignNodes;
     bytes = (size_t) nextnode_slots * sizeof(int);
     Nextnode = (int *) gpu_tree_alloc_bytes(bytes, "tree_nextnode");
     if(!Nextnode)
@@ -2637,12 +2667,12 @@ void force_treeallocate(int maxnodes, int maxpart)
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
      * mymalloc accounting; the matching gpu_father_free lives in force_treefree. */
-    bytes = (size_t)maxpart * sizeof(int);
-    Father = gpu_father_alloc(maxpart);
+    bytes = (size_t)tree_particle_slots * sizeof(int);
+    Father = gpu_father_alloc(tree_particle_slots);
     if(!Father)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
-               maxpart, bytes / (1024.0 * 1024.0));
+               tree_particle_slots, bytes / (1024.0 * 1024.0));
         /* UVM OOM (per-rank). Controlled-stop request + return BEFORE any Father[i] write/use;
          * Father stays NULL for the caller's check. */
         gizmo_request_controlled_stop(90000085, "force_treeallocate: tree Father UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
@@ -2766,8 +2796,8 @@ void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *
     *local_mb = (double)(((long long) MaxNodes + 1LL) * node_pair) / MB;  /* +1 sentinel slot */
     long long sidecar = 2LL * (long long) sizeof(int) + 2LL * (long long) sizeof(MyFloat);  /* Tag+Type+Zeta+Soft */
     *foreign_cap_mb = (double)((long long) MaxForeignNodes * (node_pair + sidecar)) / MB;
-    long long nextnode_slots = (long long) TreeParticleSlots + (long long) NTopnodes + (long long) MaxForeignNodes;
-    *aux_mb = (double)(((long long) TreeParticleSlots + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
+    long long nextnode_slots = (long long) All.TreeParticleSlots + (long long) NTopnodes + (long long) MaxForeignNodes;
+    *aux_mb = (double)(((long long) All.TreeParticleSlots + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
     *foreign_cap_nodes     = MaxForeignNodes;
     *foreign_used_hw_nodes = Numforeignnodes_highwater;
     *foreign_floor_nodes   = RuntimeMinLETForeignNodes;

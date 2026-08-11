@@ -302,7 +302,7 @@ extern "C" int gpu_fine_sidecar_walk(
     int search_mode, unsigned int supply_mask,
     const int periodic_flags[3], const double box_sizes[3],
     unsigned int topflag_mask, int fineband_ntypes, int num_ptypes,
-    int tree_base, int maxnodes, int maxforeign, int num_local,
+    int tree_base, int tree_particle_slots, int maxnodes, int maxforeign, int num_local,
     int numpart, int nnodes,
     char *matched_out,
     long *pseudo_hits, long *foreign_node_visits, long *bad_index_hits)
@@ -380,7 +380,11 @@ extern "C" int gpu_fine_sidecar_walk(
             long steps = 0;
             while(no >= 0) {
                 if(++steps > GX_DEVWALK_STEP_GUARD) { Kokkos::atomic_add(&cnt[2], (long)1); break; }
-                if(no < tree_base) {
+                if(no >= tree_particle_slots && no < tree_base) {
+                    /* gap between the particle slots and the node index base: malformed input */
+                    Kokkos::atomic_add(&cnt[2], (long)1); break;
+                }
+                if(no < tree_particle_slots) {
                     if(no < num_local && no < numpart) {
                         const int pool_pos = d_j2p[no];
                         if(pool_pos >= 0 && pool_pos < np_) {

@@ -23,7 +23,7 @@
  *         the last child's subtree)
  *
  *   * Apply this successor to E based on E's type:
- *       - particle (E < TreeNodeIndexBase):     Nextnode[E]              = succ
+ *       - particle (E < TreeParticleSlots):     Nextnode[E]              = succ
  *       - pseudo  (E >= TreeNodeIndexBase + MaxNodes + MaxForeignNodes):
  *             Nextnode[TreeParticleSlots + (E - TreeNodeIndexBase - MaxNodes - MaxForeignNodes)] = succ
  *           (Nextnode[] holds TreeParticleSlots particle slots first, then the pseudo segment;
@@ -73,7 +73,7 @@ extern "C" int gpu_nextnode_thread(void)
 
     int n         = Numnodestree;
     int tree_base = All.TreeNodeIndexBase;
-    int part_slots = TreeParticleSlots;
+    int part_slots = All.TreeParticleSlots;
     int MaxNodes_ = MaxNodes;
     int MaxForeignNodes_ = MaxForeignNodes;    /* LET foreign-node range size */
     int NTopnodes_= NTopnodes;
@@ -133,7 +133,7 @@ extern "C" int gpu_nextnode_thread(void)
             int prev_id = suns_backup[base + prev_pos];
             int succ = (next >= 0) ? next : sibling_soa[k];
             /* Write successor for prev_id based on its type. */
-            if(prev_id < tree_base) {
+            if(prev_id < part_slots) {
                 /* particle */
                 aux_soa[prev_id] = succ;
             } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
@@ -145,7 +145,10 @@ extern "C" int gpu_nextnode_thread(void)
             }
             /* Foreign nodes (prev_id in [tree_base+MaxNodes, tree_base+MaxNodes+MaxForeignNodes))
              * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
-             * directly from LET unpack. */
+             * directly from LET unpack.  An id between part_slots and tree_base cannot occur in a
+             * well-formed tree and matches no branch here, so it writes nothing; that is deliberate.
+             * This is a write-side classifier, so dropping such an id is already safe, and the walks
+             * that would DEREFERENCE it stop on it explicitly. */
             /* internal node: skip — its own thread sets nextnode_soa, and
              * its last DFS descendant gets `succ` via the chain of
              * sibling pointers (already set by force_update_node_recursive). */
