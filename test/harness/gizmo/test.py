@@ -418,11 +418,13 @@ def get_final_snapshot(test_name: str, extra_config_flags=()) -> str:
     return snaps[-1]
 
 
-def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
-    """Assert that the snapshot time matches TimeMax from the test's parameter file."""
-    params_file = f"test/{test_name}/{test_name}.params"
-    params = parse_params(params_file)
-    time_max = float(params["TimeMax"])
+def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6, time_max: float | None = None):
+    """Assert that the snapshot time matches TimeMax from the test's parameter file, or the
+    given time_max when the run overrode it (see run_test's param_overrides)."""
+    if time_max is None:
+        params_file = f"test/{test_name}/{test_name}.params"
+        params = parse_params(params_file)
+        time_max = float(params["TimeMax"])
     with h5py.File(snapshot_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
     assert abs(time - time_max) < rtol * abs(
