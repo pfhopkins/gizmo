@@ -499,6 +499,7 @@
 #endif
 #define OUTPUT_SINK_ACCRETION_HIST // save accretion histories
 #define OUTPUT_SINK_FORMATION_PROPS // save at-formation properties of sink particles
+#define INPUT_READ_SINKPROPS // read sink properties (ProtoStellarStage, ZAMS_Mass, ...) back from the IC. Without this a star written as main-sequence restarts as a protostar and has to re-evolve, so anything gated on ProtoStellarStage==5 (winds, wind_mode selection) is silently dead for the first part of the run
 #if ( defined(STARFORGE_GMC_TURBINIT) || defined(STARFORGE_FILAMENT_TURBINIT) ) // these flags should be given numerical values equal to the desired virial parameter
 #define TURB_DRIVING
 #define GRAVITY_ANALYTIC
