@@ -1648,3 +1648,24 @@
 #if defined(SINK_WIND_SPAWN) && !defined(MERGE_SPLIT_DISCARD_ENERGY) && !defined(MERGE_SPLIT_CONSERVE_ENERGY)
 #define MERGE_SPLIT_CONSERVE_ENERGY // merging sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy leaves the budget; discarding it costs ~23% of the injected wind energy in the adiabatic wind_singlestar test, so return it as heat whenever we are spawning. MERGE_SPLIT_DISCARD_ENERGY opts back out
 #endif
+
+
+#ifdef RANDOMIZE_GRAVTREE
+/* the periodic path shifts all coordinates by a random vector mod box, which is only valid
+ * where every periodic dimension is a pure translation symmetry */
+#if defined(BOX_SHEARING)
+#error "RANDOMIZE_GRAVTREE is incompatible with BOX_SHEARING: an x-translation couples into the shear velocity offset (see do_box_wrapping) and corrupts velocities."
+#endif
+#if defined(BOX_PERIODIC) && (defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z))
+#error "RANDOMIZE_GRAVTREE + BOX_PERIODIC is incompatible with reflecting/outflow boundaries: those dimensions are not translation-invariant."
+#endif
+/* Which randomization method applies is decided by whether GRAVITY is periodic, NOT by whether
+ * the box is. Under GRAVITY_NOT_PERIODIC the tree uses bare |dx|, so translating coordinates mod
+ * box is NOT a symmetry: wrapping a particle across the boundary moves it a full box away
+ * gravitationally, which would corrupt the forces. Those runs (STARFORGE-style setups) must
+ * therefore use the non-periodic method -- moving and enlarging the root node -- even though the
+ * box is periodic. The cost is the root-node doubling and the bit of Peano resolution it spends. */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#define RANDOMIZE_GRAVTREE_PERIODIC /* use the coordinate-translation method */
+#endif
+#endif

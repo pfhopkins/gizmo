@@ -21,6 +21,9 @@ void domain_Decomposition_light(int UseAllTimeBins);
 int domain_decompose(void);
 int domain_determineTopTree(void);
 void domain_findExtent(void);
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+void domain_apply_random_shift(void);
+#endif
 void domain_exchange(void);
 void domain_findSplit(int cpustart, int ncpu, int first, int last);
 void domain_findSplit_balanced(int cpustart, int ncpu, int first, int last);
