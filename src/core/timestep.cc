@@ -1560,11 +1560,32 @@ void process_wake_ups(void)
 		   (to correct it back to its new active time) */
 		if(tend < tstart)
 		{
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		    /* Do NOT reverse the kick: re-deriving the increment with reversed bounds does not cancel
+		       the original -- that would need HydroAccel and DtInternalEnergy unchanged since the
+		       original kick, and they are not -- so it injects energy. Saitoh & Makino (2009) eq (3)
+		       exists to detect exactly this case, and sets the new time consistent with the system
+		       time instead, which is what the truncation below does. */
+		    set_predicted_quantities_for_extra_physics(i);
+#else
 		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
 		    set_predicted_quantities_for_extra_physics(i);
+#endif
 		}
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		/* End the step at the current system time, so the interval the applied kick already covered is
+		   not integrated twice and no reversal is needed. dt_step stays authoritative (integertime_step()
+		   returns it under WAKEUP) but is no longer a power-of-two bin length, so it deliberately
+		   disagrees with TimeBin: anything reading a step off TimeBin over-reports it, cf. density.cc. */
+		{
+		    integertime dt_trunc = All.Ti_Current - P[i].Ti_current;
+		    if(dt_trunc > 0) {P[i].Ti_begstep = P[i].Ti_current; P[i].dt_step = dt_trunc;}
+		    else {P[i].Ti_begstep = All.Ti_Current; P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);}
+		}
+#else
 		P[i].Ti_begstep = All.Ti_Current;
 		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+#endif
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
         /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
            position it now holds, as a normal timestep assignment would. This must follow the

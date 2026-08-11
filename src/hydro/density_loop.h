@@ -680,6 +680,15 @@ struct DensitySpec {
                      * NOT density. */
                     short int TimeBin_j = Pj.TimeBin;
                     if (TimeBin_j < 0) { TimeBin_j = -TimeBin_j - 1; }
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+                    /* a truncated step is shorter than its bin, so TimeBin over-reports how long this
+                       neighbour will run, and both users of this field are unsafe when it reads long (a
+                       sink outruns its gas, and unlike gas a sink cannot be woken to recover). floor to a
+                       bin that fits, stopping at 1: bin 0 has zero length, which reads as 'no neighbour'
+                       and would disable the limiter entirely. */
+                    {integertime dt_j = Pj.integertime_step();
+                     if(dt_j > 0) {while(TimeBin_j > 1 && GET_INTEGERTIME_FROM_TIMEBIN(TimeBin_j) > dt_j) {TimeBin_j--;}}}
+#endif
                     if (accum.Sink_TimeBinGasNeighbor > TimeBin_j) {
                         accum.Sink_TimeBinGasNeighbor = TimeBin_j;
                     }

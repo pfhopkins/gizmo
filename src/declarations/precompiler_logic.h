@@ -1634,3 +1634,17 @@
  && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
+
+
+/* Two errors of opposite sign in spawned-cell feedback that were nearly cancelling: the merge
+   discarding the pair's COM-frame kinetic energy (-23% of L*t) and the WAKEUP kick reversal on
+   mid-step demotion (+18%). Fixing either alone unmasks the other, so both are enabled together.
+   Placed at the end of this file deliberately: it must come after every SINK_WIND_SPAWN derivation
+   above, several of which are themselves conditional. */
+#if defined(SINK_WIND_SPAWN) && !defined(WAKEUP_REVERSE_KICK_ON_DEMOTION) && !defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION)
+#define WAKEUP_TRUNCATE_STEP_ON_DEMOTION // the WAKEUP kick reversal injects energy and only fires with spawned cells present, so truncate the step instead whenever we are spawning. WAKEUP_REVERSE_KICK_ON_DEMOTION opts back out
+#endif
+
+#if defined(SINK_WIND_SPAWN) && !defined(MERGE_SPLIT_DISCARD_ENERGY) && !defined(MERGE_SPLIT_CONSERVE_ENERGY)
+#define MERGE_SPLIT_CONSERVE_ENERGY // merging sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy leaves the budget; discarding it costs ~23% of the injected wind energy in the adiabatic wind_singlestar test, so return it as heat whenever we are spawning. MERGE_SPLIT_DISCARD_ENERGY opts back out
+#endif
