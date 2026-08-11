@@ -605,6 +605,7 @@
 #SINK_SPAWN_NO_MERGE            # never merge spawned jet/wind cells, in either direction, holding the spawned population fixed (e.g. to compare merged vs unmerged outflows). Diagnostic: removes retirement entirely, so cell counts grow without bound.
 #DISABLE_SINK_MERGERS           # disable sink-sink mergers entirely.
 #SINK_WIND_SPAWN_SET_BFIELD_POLTOR  # set poloridal and toroidal magnetic field for spawn particles (should work for all particle spawning). Cite Su et al., arXiv:2102.02206, for methods.
+#JET_DIRECTION_FIXED_Z          # TESTING ONLY: pin the spawn basis to global +/-z, skipping angular-momentum reorientation and precession, so the launch axis is known a priori and outflow geometry can be checked without the direction moving underneath the test. Not physical for production: real jets follow the disk/spin axis.
 #SINK_WIND_SPAWN_SET_JET_PRECESSION # manually set precession in parameter file (does not work for cosmological simulations).  Cite Su et al., arXiv:2102.02206, for methods.
 #SINK_SCALE_SPAWNINGMASS_WITH_INITIALMASS # rescale the cell spawning mass criterion to scale with the initial sink mass for any sink and sink feedback model (instead of setting the spawning mass to a fixed universal constant in code units).
 #SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA # modifies SINK_SEED_FROM_LOCALGAS to require that the local acceleration scale (including all mass/gravity sources) exceeds the critical value defined in arXiv:2103.10444. cite that paper for implementation
