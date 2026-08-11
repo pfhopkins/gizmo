@@ -225,12 +225,16 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
 
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0,
-             timeout: float | None = None, param_overrides: dict | None = None):
+             timeout: float | None = None, param_overrides: dict | None = None,
+             allow_nonzero_exit: bool = False):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
     via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT.
     param_overrides replaces parameter values for this run only, via a sibling params file.
-    Raises if GIZMO exits nonzero or stops before TimeMax.
+    Raises if GIZMO exits nonzero or stops before TimeMax, unless allow_nonzero_exit is set --
+    for the rare test whose subject IS a failed run (read_ic_binary's sensitivity arm asserts on
+    the end-of-file signature), where the exit check would otherwise fire before the test's own
+    assertions can run.
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
@@ -268,7 +272,8 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
             reason = f"{test_name} exceeded {effective_timeout}s timeout; GIZMO subprocess killed"
             mark_run_truncated(test_name, reason, paramsfile)
             pytest.skip(reason)
-    _check_gizmo_exit(test_name, proc.returncode, outfile, errfile, paramsfile)
+    if not allow_nonzero_exit:
+        _check_gizmo_exit(test_name, proc.returncode, outfile, errfile, paramsfile)
 
 
 def get_cooling_tables(test_directory="."):

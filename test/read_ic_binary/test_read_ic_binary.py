@@ -65,7 +65,11 @@ def _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags):
         chdir(TEST_DIR)
         try:
             make_binary_ic(f"{TEST_NAME}_ics", ngas=N_GAS)
-            run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
+            # The INPUT_READ_TEMPERATURE arm asserts that the run FAILS with the
+            # end-of-file signature -- that failure is the measurement. Opt out of the
+            # harness exit check so it does not fire before those assertions run.
+            run_test(TEST_NAME, num_mpi_ranks, num_omp_threads,
+                     allow_nonzero_exit="INPUT_READ_TEMPERATURE" in extra_config_flags)
         finally:
             chdir(cwd)
     finally:
