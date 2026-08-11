@@ -254,7 +254,12 @@ void restart(int modus)
 
 	  if(modus)		/* read */
 	    {
-	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}	/* such that tree is still valid */
+	      /* Restore the WRITER's MaxPart for the rest of this read.  The tree's node indices no
+	       * longer depend on it, but the serialized Nextnode payload does: force_treeallocate
+	       * below publishes All.TreeParticleSlots from this value, and the pseudo-particle segment
+	       * is read at that offset, which has to be the offset the writer used.  domain.cc swaps
+	       * in the new value once the tree has been freed.  Do not drop this. */
+	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}
 	    }
 
 
