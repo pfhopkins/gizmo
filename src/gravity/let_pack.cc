@@ -1287,6 +1287,9 @@ extern "C" int let_pack_for_rank(int R,
                  * base.  Stop before Nodes[child] is read at a negative offset; ship nothing. */
                 printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
                        child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
+                g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+                                       * the callers already test, so the empty payload below is not
+                                       * mistaken for a successfully packed LET */
                 goto pack_oom_bail;
             }
             else if(child < All.TreeNodeIndexBase + MaxNodes)
