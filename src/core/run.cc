@@ -270,6 +270,11 @@ void run(void)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
         if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
+        /* Pick up a rebuild raised since the local copy was taken above. The drift/output in between
+           can discard the tree (group finding on a snapshot does), and the reduce below overwrites
+           the flag with that older copy, which would leave the reuse branch updating a tree that is
+           no longer there. */
+        if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
         MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
         MPI_Allreduce(MPI_IN_PLACE, &NeedFullDomainDecomp, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */

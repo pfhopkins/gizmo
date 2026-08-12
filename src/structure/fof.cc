@@ -443,6 +443,22 @@ void fof_fof(int num)
 
     PRINT_STATUS("Comoving linking length: %g : (presently allocated=%g MB) ",LinkL,AllocatedBytes / (1024.0 * 1024.0))
 
+#ifdef SUBFIND
+  /* SUBFIND builds its own trees, and it runs after the allocations below. If the gravity tree from
+     the last domain decomposition is still standing at that point, its DomainNodeIndex and
+     TopNodeNodeIndex sit underneath those allocations: SUBFIND's own force_treeallocate overwrites
+     the pointers to them, so nothing can release them and they strand above the domain blocks, where
+     they block the next domain_free(). Release that tree here instead, before anything is allocated
+     on top of it -- the same state group finding already runs in when it is invoked on a snapshot
+     rather than mid-step. Matched to the call condition below, so a build that skips SUBFIND keeps
+     its tree; force_treefree() does nothing when no tree is allocated, and SUBFIND discards the tree
+     before returning in any case.
+     TreeReconstructFlag says the tree is gone: the timestepper otherwise reuses it, updating it in
+     place with the last step's kicks (run.cc) and skipping construction before the next walk
+     (gravtree.cc), both of which would read storage that no longer exists. */
+  if(num >= 0 && DumpFlag != 2) {force_treefree(); TreeReconstructFlag = 1;}
+#endif
+
   FOF_PList =
     (struct fof_particle_list *) mymalloc("FOF_PList", NumPart *
 					  sizemax(sizeof(struct fof_particle_list), 3 * sizeof(MyIDType)));
