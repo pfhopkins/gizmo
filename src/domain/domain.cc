@@ -325,7 +325,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     /* A restart that edited PartAllocFactor has been running on the writer's MaxPart so the
      * serialized tree payload stayed readable (see restart.cc).  The tree is freed just above, so
      * the new value can take effect now. */
-    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
+    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}   /* restores a capacity the storage
+                                                                       was already allocated with, so it
+                                                                       is not a capacity change */
+
+    /* The one point in a step where the particle capacity may be raised or lowered freely: the tree
+     * is down, no ghosts are imported, and the active list has not been rebuilt. Asking for the
+     * capacity we already have costs one comparison; a capacity to ask for is decided elsewhere. */
+    resize_particle_storage(All.MaxPart);
 
 #ifdef BOX_PERIODIC
     t_tmp = my_second();
@@ -334,7 +341,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #endif
 
     t_tmp = my_second();
-    MPI_Barrier(MPI_COMM_WORLD);
+    /* This poll is itself an all-rank reduction, so it synchronizes exactly like the barrier it
+     * replaces and drains anything the storage resize above (or any earlier phase) asked to stop
+     * for, without adding a collective to the step. */
+    gizmo_exit_bad_stop_if_requested("domain:particle_capacity");
     t_barrier = timediff(t_tmp, my_second());
     const double t_drift_end = my_second();
     double t_drift_total = cpu_minus_children(timediff(t_drift_start, t_drift_end), child0_drift);

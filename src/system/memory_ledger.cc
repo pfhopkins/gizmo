@@ -299,6 +299,10 @@ int gizmo_memory_preflight(void)
                        + (long long) All.MaxPart    * (long long) sizeof(unsigned char)          /* WakeupDirty */
                        + (long long) All.MaxPartGas * (long long) sizeof(struct gas_cell_data)   /* CellP */
                        + 3LL * (long long) All.MaxPart * (long long) sizeof(int)                 /* STL timebin lists */
+                       + (long long) All.MaxPart    * (long long) sizeof(unsigned char)          /* ProcessedFlag (host, outside the Base arena) */
+#ifdef CHIMES
+                       + (long long) All.MaxPartGas * (long long) sizeof(struct gasVariables)    /* ChimesGasVars (host, outside the Base arena) */
+#endif
                        + (long long)(All.TreeAllocFactor * All.MaxPart)
                              * ((long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE)); /* local tree (est.) */
     long long node_persistent = 0;

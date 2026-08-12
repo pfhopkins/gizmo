@@ -162,6 +162,11 @@ float shortrange_table_tidal[NTAB];
 static int first_flag = 0;
 static int tree_allocated_flag = 0;
 
+/*! Whether tree storage is currently held. The flag is the only record of that, so callers who
+ *  must know (the particle-storage resize, which may not release capacity under a standing tree)
+ *  ask here rather than inferring it from MaxNodes or a live pointer. */
+int force_tree_is_allocated(void) {return tree_allocated_flag;}
+
 #ifdef BOX_PERIODIC
 /*! Size of 3D look-up table for Ewald correction force */
 #define EN  64

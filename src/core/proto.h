@@ -578,6 +578,17 @@ void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
 int allocate_memory(int do_collective_preflight);   /* Never holds on OOM: requests a soft controlled-stop and returns nonzero; caller drains at its poll. do_collective_preflight selects the arena preflight's fit-check: =1 all-rank (read_ic, one Allreduce); =0 LOCAL only (restart subset/turn, no MPI). Returns 0 ok / 812 arena-OOM / 1 UVM-STL-OOM. */
+/* Move the persistent particle-storage arrays owned by allocate_memory() to new_maxpart, carrying the
+   live particles over, and publish the new All.MaxPart (All.MaxPartGas follows it). The saved Peano
+   keys are NOT among them -- they reallocate themselves when short and are harmless when oversized,
+   so they are left to the domain code that owns them. Growing is legal with imported ghosts
+   present and a tree standing; releasing capacity requires neither, plus new_maxpart >= NumPart.
+   Requesting the current capacity returns immediately. On failure some arrays are left oversized --
+   never undersized relative to All -- the accounting stays truthful, a controlled stop is requested
+   for the caller to drain, and a nonzero code is returned: 7720 target below the live particle count,
+   7721 allocation failed mid-migration, 7723 illegal context, 7724 target overlaps the tree node
+   index base. This is the ONLY route by which All.MaxPart may change once storage exists. */
+int resize_particle_storage(int new_maxpart);
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);

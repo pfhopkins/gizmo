@@ -89,6 +89,7 @@ int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
+int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
 void   force_update_node(int no, int flag);
 void   force_update_size_of_parent_node(int no);
 
