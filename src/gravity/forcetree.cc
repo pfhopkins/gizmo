@@ -2492,7 +2492,7 @@ int subfind_force_treeevaluate_potential(int target)
  *  maxnodes approximately equal to 0.7*tree_particle_slots is sufficient to
  *  store the tree for up to tree_particle_slots particles.
  */
-void force_treeallocate(int maxnodes, int tree_particle_slots)
+void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact)
 {
     int i;
     size_t bytes;
@@ -2560,11 +2560,21 @@ void force_treeallocate(int maxnodes, int tree_particle_slots)
      * factors are fixed within a run, which is required: this term sets MaxForeignNodes and so
      * the pseudo-particle index base, which restart-serialized node pointers are written
      * against.  Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
-     * Known exception: restarting with an edited PartAllocFactor gives the reader a different
-     * PartAllocFactor than the writer had, hence a different foreign capacity than the
-     * serialized pointers assume; closing that needs the capacity itself to be persisted.
+     * The restart read does not derive at all: it passes the capacity stored in the file
+     * (foreign_node_slots_exact), because inside the read window All.MaxPart is the WRITER's
+     * (restored for the serialized Nextnode layout) while PartAllocFactor may already be a
+     * reader-edited value, so a derivation there would mix provenance and move the pseudo range
+     * out from under pointers that are already written.  Every later tree is built from scratch
+     * and serializes nothing, so it derives normally.
      * Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
      * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
+    if(foreign_node_slots_exact >= 0)
+    {
+        /* Restart read: the CAPACITY the file's node pointers were written against, not an
+         * occupancy -- Numforeignnodes is the current count and is not serialized here. */
+        MaxForeignNodes = foreign_node_slots_exact;
+    }
+    else
     {
         double synth_overhead = 2.0 * (double)All.MaxPart / (double)All.PartAllocFactor;
         long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));

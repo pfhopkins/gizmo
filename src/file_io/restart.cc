@@ -353,11 +353,24 @@ void restart(int modus)
            restart file: the reader reproduces the writer's node and foreign capacities for an
            unedited restart, keeping the serialized node, pseudo-particle and Nextnode indices
            below valid.
-           RuntimeMinLETForeignNodes, the run's ratcheted LET foreign-arena floor, is the second
-           input to the foreign capacity, so it travels with it; the third is the synthetic-leaf
-           overhead, which force_treeallocate derives from quantities fixed for the run. */
+           The LET foreign-node capacity travels too, and is handed to force_treeallocate verbatim
+           below rather than re-derived: the serialized node pointers encode it (pseudo-particles
+           start at TreeNodeIndexBase + MaxNodes + MaxForeignNodes), and one of its inputs,
+           PartAllocFactor, is a value the user may edit on a restart.
+           RuntimeMinLETForeignNodes, the run's ratcheted LET foreign-arena floor, travels so later
+           trees, which derive their own capacity, keep the run's ratchet. */
         in(&MaxNodes, modus);
+        in(&MaxForeignNodes, modus);
         byten(&RuntimeMinLETForeignNodes, sizeof(RuntimeMinLETForeignNodes), modus);
+        if(modus && MaxForeignNodes < 0)
+          {
+            printf("Restart file on task=%d carries a negative LET foreign-node capacity (%d), so the tree layout it describes cannot be reproduced.\n",
+                   ThisTask, MaxForeignNodes);
+            fflush(stdout);
+            /* soft: allocating and deserializing against an unusable layout would corrupt the tree.
+             * Skip this rank's payload, drain at the per-turn poll. */
+            endrun(90001026); restart_status = 90001026; goto finish_turn;
+          }
 	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
 	    {
 	      if(ThisTask == 0)
@@ -373,7 +386,7 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
-		  force_treeallocate(MaxNodes, All.MaxPart);
+		  force_treeallocate(MaxNodes, All.MaxPart, MaxForeignNodes);
 		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
 		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
 		   * drain at restart's existing all-rank poll. */

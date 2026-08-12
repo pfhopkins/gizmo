@@ -59,7 +59,11 @@ int    force_getcost_single(void);
 int    force_getcost_quadru(void);
 void   force_resetcost(void);
 void   force_setupnonrecursive(int no);
-void   force_treeallocate(int maxnodes, int tree_particle_slots);
+/* foreign_node_slots_exact: LET foreign-node CAPACITY to allocate verbatim; negative derives it,
+ * which is what every normal caller wants.  Only the restart read passes a value: the node pointers
+ * it is about to deserialize encode the writer's capacity (pseudo-particles start at
+ * TreeNodeIndexBase + MaxNodes + MaxForeignNodes), so the reader has to reproduce it exactly. */
+void   force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact = -1);
 /* Conservative per-particle radius used to seed Extnodes[no].hmax_per_type[Type]
  * bands. Mode B SYMMETRIC tree-prune reads these bands as an upper bound on
  * any leaf-policy-selectable reach for that type, so the band must dominate

@@ -268,7 +268,7 @@ extern int HermiteOnlyFlag;     /*!< flag to only do Hermite integration for app
 
 extern int MaxNodes;        /*!< maximum allowed number of internal nodes */
 extern int Numnodestree;    /*!< number of (internal) nodes in each tree */
-extern int MaxForeignNodes;  /*!< LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [TreeNodeIndexBase+MaxNodes+MaxForeignNodes, ...). */
+extern int MaxForeignNodes;  /*!< LET: foreign-node capacity, published by force_treeallocate -- derived there for a fresh tree, or restored verbatim from the restart file for a serialized one, whose node pointers encode the capacity the writer used.  0 on non-GPU builds.  Index map: foreign nodes occupy [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [TreeNodeIndexBase+MaxNodes+MaxForeignNodes, ...). */
 extern int Numforeignnodes;  /*!< LET: count of foreign nodes currently installed (<= MaxForeignNodes); reset on each LET exchange. */
 
 extern int *Nextnode;        /*!< gives next node in tree walk  (nodes array) */
