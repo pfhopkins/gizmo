@@ -336,6 +336,14 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
 
+        /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
+         * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
+         * targets of this tree's walk, so they take no part in the receiver cover -- including them
+         * would over-import on their behalf. Trees built over a particle subset (the halo finder's
+         * group and candidate trees) are what produces them; a full tree holds every local particle,
+         * so nothing is skipped there. */
+        if(Father[i] < 0) continue;
+
         /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
          * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
          * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
