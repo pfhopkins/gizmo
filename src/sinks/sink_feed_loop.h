@@ -372,12 +372,21 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                 if(vrel < vesc) {
                     SwallowID_j = local.ID;
                     /* mirrors the legacy CPU print; r/max_rmerge included because a merger
-                     * firing outside the sink radius is otherwise invisible in the log */
+                     * firing outside the sink radius is otherwise invisible in the log.
+                     * max_rmerge and Min_Distance_to_Sink only exist under
+                     * SINGLE_STAR_SINK_DYNAMICS, but this block compiles either way. */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
                     printf(" ..Sink-Sink Merger: ID=%llu to be swallowed by id=%llu"
                            " (r=%g, max_rmerge=%g, heff_j=%g, min_dist=%g, vrel=%g, vesc=%g)\n",
                            (unsigned long long)neighbor_particle.ID,
                            (unsigned long long)local.ID, r, max_rmerge, heff_j,
                            (double)neighbor_particle.Min_Distance_to_Sink, vrel, vesc);
+#else
+                    printf(" ..Sink-Sink Merger: ID=%llu to be swallowed by id=%llu"
+                           " (r=%g, heff_j=%g, vrel=%g, vesc=%g)\n",
+                           (unsigned long long)neighbor_particle.ID,
+                           (unsigned long long)local.ID, r, heff_j, vrel, vesc);
+#endif
                 }
             }
         }
