@@ -552,9 +552,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
     printf("Task %d wants to create %g mass in wind with %d new particles each of mass %g \n .. splitting sink %d using hydro element %d\n", ThisTask,total_mass_in_winds, n_particles_split, mass_of_new_particle, i, dummy_cell_i_to_clone);
 
-    if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart)
+    /* the spawned wind elements are gas, taking a slot in both P[] and CellP[] at the same index, so
+       both capacities have to hold them */
+    if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart ||
+       NumPart + num_already_spawned + n_particles_split >= All.MaxPartGas)
     {
-        printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart);
+        printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d, All.MaxPartGas=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart, All.MaxPartGas);
         fflush(stdout); endrun(8888);
         return 0;   /* no space left: honor the no-split contract (return 0) instead of spawning past MaxPart */
     }

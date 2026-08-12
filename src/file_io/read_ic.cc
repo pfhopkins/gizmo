@@ -96,17 +96,14 @@ void read_ic(char *fname)
         }
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        gizmo_set_gas_capacity_from_maxpart();
         if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
             printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
             printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");
             printf("  Raising PartAllocFactor adds ghost slots but also inflates P/CellP/tree storage and\n");
             printf("  may not fix overlarge imports; consider more ranks/nodes or reducing ghost-import demand.\n");
         }
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-        All.MaxPartGas = All.MaxPart;
-#endif
 
         /* Fix the gravity tree's node-index base for the whole run.  Particle indices occupy
          * [0,TreeNodeIndexBase) and every node/foreign-node/pseudo-particle index sits above it, so

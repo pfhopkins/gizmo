@@ -199,10 +199,7 @@ void restart(int modus)
 
 		  All.PartAllocFactor = save_PartAllocFactor;
 		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-		  All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-          All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
-#endif
+		  gizmo_set_gas_capacity_from_maxpart();
           new_MaxPart = All.MaxPart;
           /* The tree node index base was fixed when the ICs were read and travels in the restart
            * file; particle indices must stay below it.  Raising PartAllocFactor far enough breaks

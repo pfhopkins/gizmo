@@ -144,6 +144,17 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
 }
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
+/* SSOT for the gas-cell capacity: CellP[] is indexed by the PARTICLE index, so it must
+   span the same index range as P[] whenever any gas exists. Imported ghosts are appended
+   into that shared index space above the local particles and a gas ghost can land at any
+   index in the imported range, so a gas record is reachable at any index P[] can reach.
+   A run with no gas anywhere allocates no CellP[] at all. Call this after every change to
+   All.MaxPart; never assign All.MaxPartGas directly. */
+static inline void gizmo_set_gas_capacity_from_maxpart(void)
+{
+    All.MaxPartGas = (All.TotN_gas > 0) ? All.MaxPart : 0;
+}
+
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
 #endif

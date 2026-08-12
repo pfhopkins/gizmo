@@ -761,11 +761,18 @@ static inline double ghost_tile_effective_radius(int j, unsigned int supply_mask
 }
 
 /* Pure particle-slot fit predicate: do `required` total (local+ghost) particles
- * fit P[]/CellP[] (All.MaxPart)? Policy (what to do on a miss) lives in the
- * caller, NOT here — keep this free of multi-space/budget logic. */
+ * fit P[] and CellP[]? Policy (what to do on a miss) lives in the caller, NOT
+ * here — keep this free of multi-space/budget logic.
+ * Both capacities are tested because an imported ghost occupies P[j] and, when
+ * the run has gas, CellP[j] at the same index: the received range is written to
+ * CellP[NumPart..] whatever the ghost types are. The two capacities are equal by
+ * construction (gizmo_set_gas_capacity_from_maxpart), so the gas test is
+ * redundant today and states the requirement rather than assuming it. */
 static inline int ghost_particle_slots_fit(long long required)
 {
-    return (required <= (long long)All.MaxPart) ? 1 : 0;
+    if(required > (long long)All.MaxPart) {return 0;}
+    if(All.TotN_gas > 0 && required > (long long)All.MaxPartGas) {return 0;}
+    return 1;
 }
 
 /* SSOT for "what a send slot contains": one exported particle's P (+ gas CellP,

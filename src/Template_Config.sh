@@ -629,7 +629,7 @@
 #DISABLE_ALIGNED_ALLOC              # disable calls to 'aligned_alloc', needed for older C99-only versions of GCC compilers [everything C11+ -should- be compatible and not need this]
 # --------------------
 # ----- Load-Balancing
-#ALLOW_IMBALANCED_GASPARTICLELOAD   # increases All.MaxPartGas to All.MaxPart: can allow better load-balancing in some cases, but uses more memory. But use me if you run into errors where it can't fit the domain (where you would increase PartAllocFac, but can't for some reason)
+# (ALLOW_IMBALANCED_GASPARTICLELOAD is retired and has no effect: the gas-cell capacity always follows the particle capacity, so the load-balancing freedom it used to enable is unconditional. A run with no gas allocates no gas-cell storage at all.)
 ####################################################################################################
 
 
