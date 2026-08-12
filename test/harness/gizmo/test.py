@@ -110,21 +110,39 @@ def download_test_files(test_name: str):
     website_path = "http://www.tapir.caltech.edu/~phopkins/sims/"
     website_path2 = f"https://users.flatironinstitute.org/~mgrudic/gizmo_tests/{test_name}/"
 
-    # Note: we are assuming a convention for the test ICs, params, and exact values
+    # The IC to fetch is whatever the parameter file asks for, which is NOT always
+    # <test_name>_ics.hdf5: some tests use a different name (shocktube and aneos_shocktube
+    # both want shocktube_ics_emass) and some borrow another test's (gravtree uses
+    # ../evrard/evrard_ics). Keying the download off the test name alone silently skipped
+    # those, and the test then failed for want of a file that was upstream all along.
+    # Fall back to the convention when there is no params file or no InitCondFile in it.
     icfile = f"{test_name}_ics.hdf5"
+    try:
+        ic_param = parse_params(f"{test_name}.params").get("InitCondFile")
+        if ic_param:
+            icfile = ic_param if path.splitext(ic_param)[1] else ic_param + ".hdf5"
+    except OSError:
+        pass
+
     exactfile = f"{test_name}_exact.txt"  # exact solution (might not exist!)
     exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
 
     for f in icfile, exactfile, exactfile2:
         if path.isfile(f):
             continue
+        # Both stores are flat, so request the basename even when the local destination
+        # sits in another test's directory.
+        remote = path.basename(f)
+        dest_dir = path.dirname(f)
+        if dest_dir:
+            makedirs(dest_dir, exist_ok=True)
         try:
-            urlretrieve(website_path + f, f)
+            urlretrieve(website_path + remote, f)
         except HTTPError as err:
             try:
-                urlretrieve(website_path2 + f, f)
+                urlretrieve(website_path2 + remote, f)
             except HTTPError as err:
-                print(f"Could not find {f} at {website_path} or {website_path2}")
+                print(f"Could not find {remote} at {website_path} or {website_path2}")
 
     if not path.isfile(icfile):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
