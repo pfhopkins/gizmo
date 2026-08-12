@@ -2,9 +2,13 @@
 # Acceptance tests for the starforge_dev_integration -> gpu_kokkos_unified port.
 #
 #   cd /mnt/home/mgrudic/code/gizmo_starforge_kokkos_merge
-#   sbatch run_merge_tests_genoa.sh              # full set
+#   sbatch run_merge_tests_genoa.sh              # the curated acceptance subset (DEFAULT_K)
 #   sbatch run_merge_tests_genoa.sh -k "hernquist or shu_M120"   # subset
 #   sbatch run_merge_tests_genoa.sh -b           # build only, no tests
+#   sbatch --time=24:00:00 run_merge_tests_genoa.sh -A -t 7200   # EVERY test, no -k filter
+#
+# -A exists because the default is a curated slice: init.cc / forcetree.cc sit in every
+# test's path, so a subset cannot show collateral damage from changes there.
 #
 # Runs against THIS working tree, uncommitted changes included.
 #SBATCH --job-name=gizmo_kokkos_merge
@@ -19,13 +23,15 @@ set -euo pipefail
 
 KEXPR=""
 BUILD_ONLY=0
+RUN_ALL=0
 TIMEOUT="${GIZMO_TEST_TIMEOUT:-3600}"
-while getopts "k:t:b" opt; do
+while getopts "k:t:bA" opt; do
     case $opt in
         k) KEXPR="$OPTARG" ;;
         t) TIMEOUT="$OPTARG" ;;
         b) BUILD_ONLY=1 ;;
-        *) echo "usage: sbatch $0 [-k EXPR] [-t TIMEOUT] [-b]"; exit 1 ;;
+        A) RUN_ALL=1 ;;
+        *) echo "usage: sbatch $0 [-k EXPR] [-t TIMEOUT] [-b] [-A]"; exit 1 ;;
     esac
 done
 
@@ -85,10 +91,20 @@ fi
 #   gmc_cooling    -> cooling chain incl. the bounded h2 partition loop
 #   evrard, sedov, soundwave -> baseline hydro/gravity, should be untouched
 DEFAULT_K="hernquist or shu_M120 or wind_singlestar or gmc_cooling or evrard or sedov or soundwave"
-[ -z "$KEXPR" ] && KEXPR="$DEFAULT_K"
-echo "=== pytest -k '${KEXPR}'"
+if [ "$RUN_ALL" = "1" ]; then
+    KEXPR=""
+    echo "=== pytest over the WHOLE suite (no -k filter)"
+else
+    [ -z "$KEXPR" ] && KEXPR="$DEFAULT_K"
+    echo "=== pytest -k '${KEXPR}'"
+fi
 
 PY=/mnt/home/mgrudic/python_work/bin/python
 # -u: stdout is the Slurm output file, not a tty, so Python block-buffers by default and
 # results would appear in multi-KB bursts. -v prints one line per test as it finishes.
-"$PY" -u -m pytest test/ -k "$KEXPR" -ra -s -v
+# --continue-on-collection-errors: one unimportable test module must not abort a 279-case run.
+if [ "$RUN_ALL" = "1" ]; then
+    "$PY" -u -m pytest test/ -ra -s -v --continue-on-collection-errors
+else
+    "$PY" -u -m pytest test/ -k "$KEXPR" -ra -s -v
+fi
