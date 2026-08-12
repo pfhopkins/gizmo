@@ -82,6 +82,8 @@ static int *toGo, *toGoGas;
 static int *toGet, *toGetGas;
 static int *list_NumPart;
 static int *list_N_gas;
+static int *list_MaxPart;      /*!< every rank's particle capacity, gathered when the exchange has to be reworked */
+static int *list_MaxPartGas;   /*!< every rank's gas-cell capacity, gathered alongside it */
 static int *list_load;
 static int *list_loadgas;
 static double *list_work;
@@ -390,6 +392,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       all_bytes += bytes;
       list_N_gas = (int *) mymalloc("list_N_gas", bytes = (sizeof(int) * NTask));
       all_bytes += bytes;
+      list_MaxPart = (int *) mymalloc("list_MaxPart", bytes = (sizeof(int) * NTask));
+      all_bytes += bytes;
+      list_MaxPartGas = (int *) mymalloc("list_MaxPartGas", bytes = (sizeof(int) * NTask));
+      all_bytes += bytes;
       list_load = (int *) mymalloc("list_load", bytes = (sizeof(int) * NTask));
       all_bytes += bytes;
       list_loadgas = (int *) mymalloc("list_loadgas", bytes = (sizeof(int) * NTask));
@@ -438,6 +444,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       myfree(list_work);
       myfree(list_loadgas);
       myfree(list_load);
+      myfree(list_MaxPartGas);
+      myfree(list_MaxPart);
       myfree(list_N_gas);
       myfree(list_NumPart);
       myfree(toGetGas);
@@ -646,6 +654,8 @@ void domain_Decomposition_light(int UseAllTimeBins)
     toGetGas = (int *) mymalloc("toGetGas", NTask * sizeof(int));
     list_NumPart = (int *) mymalloc("list_NumPart", NTask * sizeof(int));
     list_N_gas = (int *) mymalloc("list_N_gas", NTask * sizeof(int));
+    list_MaxPart = (int *) mymalloc("list_MaxPart", NTask * sizeof(int));
+    list_MaxPartGas = (int *) mymalloc("list_MaxPartGas", NTask * sizeof(int));
     list_load = (int *) mymalloc("list_load", NTask * sizeof(int));
     list_loadgas = (int *) mymalloc("list_loadgas", NTask * sizeof(int));
     list_work = (double *) mymalloc("list_work", NTask * sizeof(double));
@@ -714,6 +724,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     /* free everything in LIFO order */
     myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
+    myfree(list_MaxPartGas); myfree(list_MaxPart);
     myfree(list_N_gas); myfree(list_NumPart);
     myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
     myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
@@ -2055,6 +2066,13 @@ int domain_countToGo(size_t nlimit)
         
         MPI_Allgather(&NumPart, 1, MPI_INT, list_NumPart, 1, MPI_INT, MPI_COMM_WORLD);
         MPI_Allgather(&N_gas, 1, MPI_INT, list_N_gas, 1, MPI_INT, MPI_COMM_WORLD);
+        /* Capacities are per-rank, so the question "can task ta receive this many?" has to be asked of
+           ta's own capacity. Every other input to the overflow test below is already synchronized --
+           the counts by Bcast from ta, the loads by the two gathers above -- so reading the LOCAL
+           capacity instead would be the one term that differs between ranks, and it feeds both the
+           iteration count of the Bcast loops and the outer convergence flag. */
+        MPI_Allgather(&All.MaxPart, 1, MPI_INT, list_MaxPart, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Allgather(&All.MaxPartGas, 1, MPI_INT, list_MaxPartGas, 1, MPI_INT, MPI_COMM_WORLD);
         int flag, flagsum, ntoomany, ta, i, target;
         int count_togo, count_toget, count_togo_gas, count_toget_gas;
         
@@ -2084,7 +2102,7 @@ int domain_countToGo(size_t nlimit)
                     MPI_Bcast(&count_toget_gas, 1, MPI_INT, ta, MPI_COMM_WORLD);
                     
                     int ifntoomany;
-                    ntoomany = list_N_gas[ta] + count_toget_gas - count_togo_gas - All.MaxPartGas;
+                    ntoomany = list_N_gas[ta] + count_toget_gas - count_togo_gas - list_MaxPartGas[ta];
                     ifntoomany = (ntoomany > 0);
                     if(ifntoomany)
                     {
@@ -2093,7 +2111,7 @@ int domain_countToGo(size_t nlimit)
                             if(flagsum < 25) {PRINT_STATUS(" ..domain exchange must be modified - cannot receive %d gas elements on task=%d (iter=%d)", ntoomany, ta, flagsum+1);}
                             else {
                                 printf(" ..domain exchange must be modified - cannot receive %d gas elements on task=%d (iter=%d)\n", ntoomany, ta, flagsum+1);
-                                printf(" ..list_N_gas[ta=%d]=%d  count_toget_gas=%d count_togo_gas=%d MaxPartGas=%d NTask=%d flagsum=%d\n", ta, list_N_gas[ta], count_toget_gas, count_togo_gas,All.MaxPartGas,NTask,flagsum); fflush(stdout);
+                                printf(" ..list_N_gas[ta=%d]=%d  count_toget_gas=%d count_togo_gas=%d MaxPartGas=%d NTask=%d flagsum=%d\n", ta, list_N_gas[ta], count_toget_gas, count_togo_gas,list_MaxPartGas[ta],NTask,flagsum); fflush(stdout);
                             }
                         }
                         flag = 1;
@@ -2122,14 +2140,14 @@ int domain_countToGo(size_t nlimit)
                         }
                     }
                     
-                    ntoomany = list_NumPart[ta] + count_toget - count_togo - All.MaxPart;
+                    ntoomany = list_NumPart[ta] + count_toget - count_togo - list_MaxPart[ta];
                     ifntoomany = (ntoomany > 0);
                     if(ifntoomany) {
                         if(ntoomany > 0 && ThisTask==0) {
                             if(flagsum < 25) {PRINT_STATUS(" ..domain exchange must be modified - cannot receive %d elements on task=%d (iter=%d)", ntoomany, ta, flagsum+1);}
                             else {
                                 printf(" ..domain exchange must be modified - cannot receive %d elements on task=%d (iter=%d)\n", ntoomany, ta, flagsum+1);
-                                printf(" ..list_NumPart[ta=%d]=%d count_toget=%d count_togo=%d MaxPart=%d NTask=%d flagsum=%d \n", ta, list_NumPart[ta], count_toget, count_togo, All.MaxPart, NTask, flagsum); fflush(stdout);
+                                printf(" ..list_NumPart[ta=%d]=%d count_toget=%d count_togo=%d MaxPart=%d NTask=%d flagsum=%d \n", ta, list_NumPart[ta], count_toget, count_togo, list_MaxPart[ta], NTask, flagsum); fflush(stdout);
                             }
                         }
                     
