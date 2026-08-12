@@ -108,11 +108,16 @@ double CPU_Step[CPU_PARTS];
 char CPU_Symbol[CPU_PARTS] = {
     '-', '*', '=', ';', '<', '[', '^', ':', '.', '~', '|', '+', '"', '/',  '`', ',', '>', '@', '#', '&',
     '$', ']', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
-    'Y', 'X', 'U', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',  'n', 'o'};//, 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y, 'z',
+/* Slots 48 (sidx refresh) and 51 (tree update) use 'q' and '!': every other
+ * character in this array is also present in CPU_SymbolImbalance below, and a
+ * balance.txt reader cannot tell the two apart from the character alone. Both
+ * slots were unwritten until these buckets were charged, so the ambiguity was
+ * latent; keep any future addition unique across BOTH arrays. */
+    'Y', 'X', 'U', 'a', 'b', 'c', 'd', 'e', 'q', 'g', 'h', '!', 'j', 'k', 'l', 'm',  'n', 'o'};//, 'p', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y, 'z',
 char CPU_SymbolImbalance[CPU_PARTS] = {
     'a', 't', 'u', 'v', 'b', 'w', 'd', 'r', 'h', 'm', 'n', 'l', 'o', 'p',  's', 'f', 'i', 'g', 'c', 'e', // 20 columns here
     'x', 'y', 'z', 'A', 'I', 'W', 'T', 'V', 'B', 'C', 'D', 'E', 'F', 'G', 'H',  'I', 'J', 'K', 'L', 'Q',
-    'R', 'S', 'T', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',  'N', 'O'};//, 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'};
+    'R', 'S', 'T', 'A', 'B', 'C', 'D', 'E', 'P', 'G', 'H', '\'', 'J', 'K', 'L', 'M',  'N', 'O'};//, 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'};
 char CPU_String[CPU_STRING_LEN + 1];
 double WallclockTime;		/*!< This holds the last wallclock time measurement for timings measurements */
 double CPU_ChildCharged;

@@ -884,6 +884,8 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Pair kernel    = '%c' / '%c'\n", CPU_Symbol[CPU_PAIR_KERNEL],        CPU_SymbolImbalance[CPU_PAIR_KERNEL]);
     fprintf(FdBalance, "Sink env       = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_ENV],          CPU_SymbolImbalance[CPU_SINK_ENV]);
     fprintf(FdBalance, "Sink feed/swk  = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_FEEDSWK],      CPU_SymbolImbalance[CPU_SINK_FEEDSWK]);
+    fprintf(FdBalance, "Sidx refresh   = '%c' / '%c'\n", CPU_Symbol[CPU_SIDX_REFRESH],      CPU_SymbolImbalance[CPU_SIDX_REFRESH]);
+    fprintf(FdBalance, "Tree update    = '%c' / '%c'\n", CPU_Symbol[CPU_FORCE_UPDATE_TREE], CPU_SymbolImbalance[CPU_FORCE_UPDATE_TREE]);
     fprintf(FdBalance, "\n");
 #endif
 

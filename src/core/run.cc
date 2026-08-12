@@ -248,11 +248,23 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
-        gpu_step_sidx_invalidate(); /* drift-time refresh: incremental tile-bbox + BVH
-                                     * update, no SFC re-sort (gas SIDX persists across
-                                     * drifts; alltypes SIDX is full-freed since it's
-                                     * less hot). domain_decomp boundary below triggers
-                                     * the full rebuild via gpu_step_sidx_invalidate_full(). */
+        {   /* drift-time refresh: incremental tile-bbox + BVH update, no SFC
+             * re-sort (gas SIDX persists across drifts; alltypes SIDX is
+             * full-freed since it's less hot). domain_decomp boundary below
+             * triggers the full rebuild via gpu_step_sidx_invalidate_full().
+             *
+             * Charged to its own bucket rather than left inside the enclosing
+             * residual interval: its cost keys on the particle count, not on
+             * how many particles are active, so a residual bucket hides it
+             * exactly where it matters most. The span contains no
+             * measure_time() chain call, so charging it as a child is
+             * sufficient -- the enclosing chain call deducts it automatically. */
+            const double t_sidx_start = my_second();
+            const double child0_sidx = CPU_ChildCharged;
+            gpu_step_sidx_invalidate();
+            cpu_charge_child(CPU_SIDX_REFRESH,
+                             cpu_minus_children(timediff(t_sidx_start, my_second()), child0_sidx));
+        }
         ghost_exchange_local_tree_invalidate_drift(); /* Bucket 3: drop the
                                      * persistent local-tree cache used by request-driven
                                      * ghost_exchange. Drift may have moved pool positions,
@@ -292,7 +304,19 @@ void run(void)
         else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
         else
         {
-            force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
+            /* update tree dynamically with kicks of last step so that it can be
+             * reused. Charged to its own bucket: the node drift inside it is
+             * O(tree nodes) and independent of how many particles are active,
+             * and it only runs on reused-tree steps, so a residual bucket both
+             * hides it and mixes it with unrelated per-step work. Same
+             * child-charge argument as the spatial-index refresh above. */
+            {
+                const double t_tree_update_start = my_second();
+                const double child0_tree_update = CPU_ChildCharged;
+                force_update_tree();
+                cpu_charge_child(CPU_FORCE_UPDATE_TREE,
+                                 cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
+            }
             make_list_of_active_particles();	/* now we can set the new chain list of active particles */
         }
 
@@ -1226,6 +1250,8 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+          "sidx refresh  %10.2f  %5.1f%%\n"
+          "tree update   %10.2f  %5.1f%%\n"
           "misc          %10.2f  %5.1f%%\n",
 
     All.CPU_Sum[CPU_ALL], 100.0,
@@ -1303,6 +1329,8 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
+    All.CPU_Sum[CPU_SIDX_REFRESH], (All.CPU_Sum[CPU_SIDX_REFRESH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_FORCE_UPDATE_TREE], (All.CPU_Sum[CPU_FORCE_UPDATE_TREE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
 
     fprintf(FdCPU, "\n");
