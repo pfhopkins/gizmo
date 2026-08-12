@@ -5,11 +5,37 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HARNESS_DIR = REPO_ROOT / "test" / "harness"
 
 if str(HARNESS_DIR) not in sys.path:
     sys.path.insert(0, str(HARNESS_DIR))
+
+
+@pytest.fixture(autouse=True)
+def _restore_cwd():
+    """Put the working directory back after every test.
+
+    Most tests address data as repo-root-relative paths ("test/<name>/<name>_ics.hdf5"),
+    and ~25 of them chdir into their own directory with the pattern
+
+        chdir(f"test/{name}/")   ...body...   chdir("../../")
+
+    whose restore is skipped when the body raises. One failure then leaves the process
+    inside that directory and every later test resolving a relative path dies with a
+    confusing FileNotFoundError instead of its real assertion. In the first whole-suite
+    run this turned a single early failure (c_shock, 2nd of 279) into ~100 downstream
+    ones. Guarding it centrally fixes all of them without touching each test, and keeps
+    working if someone adds another chdir.
+    """
+    saved = os.getcwd()
+    try:
+        yield
+    finally:
+        if os.getcwd() != saved:
+            os.chdir(saved)
 
 
 # ---------------------------------------------------------------------------
