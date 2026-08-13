@@ -115,3 +115,8 @@ HANDOFF_*.md
 MEMORY.md
 *_design.md
 *_handoff.md
+# Slurm job logs from run_merge_tests_genoa.sh
+merge_tests-*.out
+merge_tests-*.err
+merger_control-*.out
+merger_control-*.err
