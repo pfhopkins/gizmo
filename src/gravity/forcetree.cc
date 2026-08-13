@@ -439,8 +439,12 @@ let_build_attempt:
      * uncounted when they occupy a subtree alone, since internal nodes only propagate N_part when
      * mass > 0, so they are allowed for. Warn rather than abort: a false positive must not kill a long
      * run, and a warning is enough to stop this being silent. Root N_part is live on both paths --
-     * gpu_moment_refresh mirrors it for NTask==1, gpu_topnode_moment_resum for NTask>1. */
-    if(mp == NULL)
+     * gpu_moment_refresh mirrors it for NTask==1, gpu_topnode_moment_resum for NTask>1.
+     * npart == NumPart as well as mp == NULL: SUBFIND's collective path calls
+     * force_treebuild(NumPartGroup, NULL) -- a subset build with no unbind_data -- so the
+     * mp test alone is not enough, and comparing a group-sized tree against the global
+     * TotNumPart reported a spurious deficit (seen in test/fof_subfind: 216 vs 264). */
+    if(mp == NULL && npart == NumPart)
     {
         long long n_zero_loc = 0, n_zero_tot = 0;
         for(int i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
