@@ -98,6 +98,10 @@ void read_ic(char *fname)
 
         All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
         gizmo_set_gas_capacity_from_maxpart();
+        All.MaxPartAssignable = All.MaxPart;   /* how many LOCAL particles a rank may be assigned, as
+                                                  opposed to how much storage it has.  The two start
+                                                  equal and the same expression on every rank makes the
+                                                  assignment cap uniform without communication. */
         if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
             printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
             printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");

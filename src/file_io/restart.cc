@@ -201,6 +201,14 @@ void restart(int modus)
 		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
 		  gizmo_set_gas_capacity_from_maxpart();
           new_MaxPart = All.MaxPart;
+          /* The assignment cap follows the value the USER asked for and keeps it for the rest of the
+           * run.  All.MaxPart, in contrast, goes back to the writer's value a few lines below so the
+           * serialized tree payload stays readable, and only reaches the requested value at the
+           * domain boundary.  The two are therefore deliberately unequal for the duration of this
+           * read: do not "tidy" them into agreement, and do not assert storage >= assignment cap
+           * globally -- that assertion is the business of resize_particle_storage, whose first call
+           * comes after the domain boundary has swapped the requested capacity in. */
+          All.MaxPartAssignable = All.MaxPart;
           /* The tree node index base was fixed when the ICs were read and travels in the restart
            * file; particle indices must stay below it.  Raising PartAllocFactor far enough breaks
            * that, so say so here where the cause is obvious rather than at the later tree alloc. */

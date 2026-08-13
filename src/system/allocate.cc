@@ -267,6 +267,16 @@ int resize_particle_storage(int new_maxpart)
       gizmo_request_controlled_stop(7724, "resize_particle_storage: requested particle capacity would overlap the tree node index base fixed at startup", __FILE__, __LINE__, __FUNCTION__);
       return 7724;
     }
+  /* Storage may exceed the number of local particles the domain may assign -- that surplus is what
+   * holds imported ghosts -- but it may never fall below it, or a decomposition every rank agreed
+   * was legal would have nowhere to put the particles it just assigned here. Lowering what the
+   * domain may assign is a collective decision and belongs to whoever makes it; by the time this
+   * runs the cap is settled, so a request under it is a caller error rather than a tight fit. */
+  if(new_maxpart < All.MaxPartAssignable)
+    {
+      gizmo_request_controlled_stop(7725, "resize_particle_storage: requested particle capacity is below the local particles the domain decomposition may assign to this rank", __FILE__, __LINE__, __FUNCTION__);
+      return 7725;
+    }
 #ifdef SUBFIND
   if(subfind_loctree_is_allocated())
     {

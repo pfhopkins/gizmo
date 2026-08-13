@@ -144,7 +144,7 @@ static float *domainWorkGas;	/*!< a table that gives the total "work" due to the
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
 static int *domainCountGas;	/*!< a table that gives the total number of gas cells held by each processor */
 static int domain_allocated_flag = 0;
-static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): MaxPart*REDUC_FAC, then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below MaxPart/2 */
+static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): All.MaxPartAssignable*REDUC_FAC, the all-type one then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below half.  Rank-identical, and every consumer depends on that: domain_assign_load_or_work_balanced runs on every rank over globally-reduced inputs and would otherwise build DIFFERENT DomainTask[] maps on different ranks. */
 static double totgravcost, gravcost, totgascost, gascost;
 static long long totpartcount;
 static int UseAllParticles;
@@ -154,23 +154,32 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
 /*! Compute the domain local-particle assignment caps into DomainMaxPartLocal /
- *  DomainMaxGasLocal. Base cap = MaxPart*REDUC_FAC; the all-type cap is then reduced
+ *  DomainMaxGasLocal. Base cap = MaxPartAssignable*REDUC_FAC; the all-type cap is then reduced
  *  by the predicted ghost headroom (MPI-MAX of the previous-epoch ghost count * 1.3)
- *  so boundary ranks keep room for imported ghosts, never below MaxPart/2. The gas cap
+ *  so boundary ranks keep room for imported ghosts, never below half the cap. The gas cap
  *  is not ghost-reduced. report=1 prints the reduction on rank 0 (the historical
  *  full-decomposition message); the lightweight-repartition caller passes 0 (silent,
- *  as before). Single source of truth for both callers. */
+ *  as before). Single source of truth for both callers.
+ *
+ *  EVERY term here comes from All.MaxPartAssignable, never from this rank's All.MaxPart:
+ *  the caps decide how work is DISTRIBUTED, and both callers feed them to comparisons whose
+ *  outcome selects a collective path (domain_check_memory_bound gates a collective re-split
+ *  on an already-reduced load, so the cap is the only term that could differ between ranks).
+ *  Deriving any one of them from per-rank storage would let ranks disagree there.  The gas
+ *  cap keys on whether gas STORAGE exists, not on All.TotN_gas, which falls as gas turns
+ *  into stars; the two capacities are one quantity (see gizmo_set_gas_capacity_from_maxpart),
+ *  so the gas cap is the same number whenever any gas exists. */
 static void domain_compute_local_caps(int report)
 {
-    DomainMaxGasLocal = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    int cap = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+    DomainMaxGasLocal = (All.MaxPartGas > 0) ? (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN) : 0;
+    int cap = (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
     int prev_ghost_local = ghost_get_previous_count();
     int prev_ghost_max;
     MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(prev_ghost_max > 0) {
         int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
-        int cap_new = All.MaxPart - ghost_headroom;
-        if(cap_new < All.MaxPart / 2) {cap_new = All.MaxPart / 2;} /* never reserve more than half */
+        int cap_new = All.MaxPartAssignable - ghost_headroom;
+        if(cap_new < All.MaxPartAssignable / 2) {cap_new = All.MaxPartAssignable / 2;} /* never reserve more than half */
         if(cap_new < cap) {
             if(report && ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
                                                        ghost_headroom, prev_ghost_max, cap, cap_new);}
@@ -186,15 +195,18 @@ static void domain_compute_local_caps(int report)
  *  All.TreeAllocFactor (default 0.45, set in init.cc) is calibrated against a cap that carries the
  *  PartAllocFactor cushion, while a tree over N particles needs up to ~0.7*N nodes to be
  *  on the safe side, so the cushion is restored here as a 0.7/0.45 = 1.56 factor on the
- *  cap; the result is clamped to the historical All.MaxPart sizing so this never
- *  allocates more than before. Undersizing is not an error (the TreeAllocFactor ratchet
+ *  cap; the result is clamped to the assignment cap the storage was originally sized from,
+ *  so this never allocates more than before. Undersizing is not an error (the TreeAllocFactor ratchet
  *  in force_treebuild recovers) but the ratchet is global and permanent, so the margin is
  *  set to avoid it rather than to squeeze the last few percent.
- *  DomainMaxPartLocal is identical on every rank, so MaxNodes stays rank-uniform. */
+ *  Both inputs are rank-independent -- DomainMaxPartLocal and the clamp derive from
+ *  All.MaxPartAssignable, and the ratchet moves All.TreeAllocFactor off a collective in
+ *  force_treebuild -- so MaxNodes stays rank-uniform.  Clamping against this rank's own
+ *  All.MaxPart instead would break that on its own, since storage may grow on one rank alone. */
 static int domain_tree_maxnodes(void)
 {
     double sizing_cap = (0.7 / 0.45) * (double) DomainMaxPartLocal;   /* 0.45 = the All.TreeAllocFactor default it is calibrated against */
-    if(sizing_cap > (double) All.MaxPart) {sizing_cap = (double) All.MaxPart;}
+    if(sizing_cap > (double) All.MaxPartAssignable) {sizing_cap = (double) All.MaxPartAssignable;}
     return (int) (All.TreeAllocFactor * sizing_cap) + NTopnodes;
 }
 
@@ -759,7 +771,12 @@ void domain_allocate(void)
 {
   size_t bytes, all_bytes = 0;
 
-  MaxTopNodes = (int) (All.TopNodeAllocFactor * All.MaxPart + 1);
+  /* Sized from the assignment cap, not this rank's storage: the top tree is refined by a computation
+   * every rank runs over the same globally-shared counts, and this bound decides where that
+   * refinement stops (domain_insertnode and the tree-import/merge paths all test against it).  A
+   * rank-dependent bound would let ranks build DIFFERENT top trees, and every particle's destination
+   * is read off that tree. */
+  MaxTopNodes = (int) (All.TopNodeAllocFactor * All.MaxPartAssignable + 1);
 
   DomainStartList = (int *) mymalloc("DomainStartList", bytes = (NTask * MULTIPLEDOMAINS * sizeof(int)));
   all_bytes += bytes;
