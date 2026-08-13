@@ -15,7 +15,7 @@ Each variant writes its profile + Lagrange radii to an .npz; once any variant
 runs, the overlay plot (final density profile + Lagrange radii) is rebuilt
 from whatever .npz files are present.
 
-Code units: G = M = a = 1, dynamical time ~ 1, run to TimeMax = 5.
+Code units: G = M = a = 1, dynamical time ~ 1, run to TimeMax = 118 (~10 crossings).
 """
 
 from os import path
@@ -58,88 +58,62 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)  # 1..99 % for plot 
 
 
 # --- half-mass-radius drift tolerance ---------------------------------------------------
-# TimeMax was cut 118 -> 11.8 (~10 crossings -> ~1) for suite wall time, so this tolerance is
-# NOT the historical 0.10 scaled by 10. r_h drift does not follow a power law: measured on the
-# baseline variant it oscillates (9.1e-3 at t=11.8, 1.0e-3 at t=35.5, 7.6e-4 at t=71, 2.5e-2 at
-# t=118), because at one crossing time we are watching the IC settle, not the secular drift.
-# Scaling 0.10 by 10 would put the ceiling at 0.010 against a measured 9.1e-3 -- a 1.1x margin
-# on a quantity that swings 10x between snapshots, which flaps rather than gates.
-# 0.025 keeps ~2.7x margin over the measured value while still being 4x tighter than before.
-# Re-measure before changing it; do not "fix" a failure by loosening it.
-RH_DRIFT_TOL = 0.025
+# At TimeMax=118 every flag-OFF periodic variant inflates r_h to right about 0.10, so this
+# tolerance sits where the known runaway crosses it (see PERIODIC_RH_RUNAWAY_VARIANTS below,
+# which xfails exactly those). Do not "fix" a failure by loosening it; re-measure.
+RH_DRIFT_TOL = 0.10
 
 # --- energy-conservation ceilings, per variant -------------------------------------------
 # |dE/E0| between the first and last snapshot. Per-variant rather than global because the
-# variants legitimately differ by three orders of magnitude: ewald conserves to 5e-6 while
-# tidal sits at 1e-2, so any single number is either vacuous for one end or wrong for the
-# other.
+# variants legitimately differ by three orders of magnitude -- ewald conserves to 2e-4 while
+# tidal sits at 1e-1 even upstream -- so any single number is vacuous for one end or wrong
+# for the other.
 #
-# Calibrated against starforge_dev measured AT THIS TimeMax (snapshot index 1 of its
-# TimeMax=118 run is t=11.83, so these are measurements, not extrapolations), times a 3x
-# margin. 3x is deliberately snug: the regression this exists to catch is ~12x, and a 10x
-# margin would sail straight past it. Each reference number is a single run, so treat a
-# failure between 1x and 3x as "re-measure", not "bug".
+# KNOWN WEAKNESS, read before trusting a verdict. |dE/E0| is the residual of a near-total
+# KE/PE cancellation (about one part in 430 on the baseline), so it partly reports how well
+# the snapshot's Potential field agrees with the forces the integrator actually used, and it
+# oscillates rather than growing monotonically. Each ceiling is ONE sample off such a curve.
 #
-# KNOWN WEAKNESS, read before trusting a verdict here. |dE/E0| is not a clean measure of
-# integration quality at this TimeMax: it is the residual of a near-total cancellation. Over
-# t=0..11.83 the baseline KE rises 2.04e-3 and PE falls 2.04e-3, and what is left is 4.7e-6 --
-# one part in 430. So this number reports how well the snapshot's Potential field agrees with
-# the forces the integrator actually used, as much as it reports energy conservation.
+# Ceilings are 3x starforge_dev's own |dE/E0| at the END of its TimeMax=118 reference run,
+# i.e. both sides sampled at a MATCHED time. Two earlier attempts are recorded so they are not
+# retried: a secular-drift-RATE gate (reverted -- fitting a slope over a fraction of one
+# oscillation is phase-dominated, and the reference's own fitted rate moves by 9x depending on
+# fit window), and calibrating at t=11.83 while running only that far (reverted with the
+# TimeMax cut -- see hernquist.params; the defects this test targets need t > 40, and the 21x
+# cusp regression scores 1.0x at 11.8, i.e. invisible).
 #
-# Consequently it oscillates rather than growing: starforge_dev's baseline wanders over
-# 3.6e-5..3.6e-4 across its 10 outputs, a 10x spread with no trend. The ceilings above are
-# each ONE sample off such a curve, and t=11.83 happens to sit near the bottom of the swing.
-# Had it been sampled at t=118's phase the baseline ceiling would be ~1.1e-3 instead of 1.7e-4
-# and would admit 4x more error. Calibrating the margins honestly needs repeat runs at fixed
-# t (rank count, thread count), which do not exist yet -- 3x is a placeholder, not a measurement.
+#   variant            starforge_dev |dE/E0| @ t=118
+#   baseline                     3.643e-04
+#   ags                          8.857e-02
+#   ewald                        1.849e-04
+#   pmgrid                       1.778e-03
+#   randomize                    2.461e-04
+#   randomize_pmgrid             6.260e-03
+#   tidal                        1.122e-01
+#   tidal_ags                    5.006e-02   (reference run stops at t=82.8, not 118)
 #
-# ewald is the least trustworthy entry: its cancellation is one part in 4000, and it is only
-# "good" at t=11.83. At 7 of 10 output times it is WORSE than baseline (up to 11x), scaling as
-# t^1.42 against baseline's t^0.68. Do not read its small ceiling as Ewald summation being
-# accurate; nothing about the method predicts that, and over the run it is not.
-#
-# Ceilings are 3x starforge_dev's own |dE/E0| at t=11.83, its second output -- the one sample
-# it has inside our TimeMax. Comparing at a MATCHED time is the point: a secular-drift-rate
-# statistic was tried instead and had to be reverted, because fitting a slope over our 11.8
-# (a fraction of one oscillation, so phase-dominated) against a reference slope fitted over
-# its 118 (ten oscillations, averaged out) compares two different quantities. The reference's
-# own fitted rate varies 5.0e-7..4.6e-6 with fit window -- a factor of 9, wider than the 3x
-# margin -- so that gate indicted variants whose endpoint matches the reference exactly.
-#
-#   variant            starforge_dev @ t=11.83
-#   baseline                     5.508e-05
-#   ags                          5.625e-03
-#   ewald                        5.391e-06
-#   pmgrid                       2.082e-05
-#   randomize                    3.736e-04
-#   randomize_pmgrid             4.647e-03
-#   tidal                        1.009e-02
-#   tidal_ags                    (no reference run; given tidal's ceiling)
-#
-# What this check CANNOT see: the 21x cusp/tree-cadence regression, which is secular and was
-# measured at the full TimeMax=118 (kokkos 5.035e-5 vs 2.376e-6, confirmed by
-# TreeDomainUpdateFrequency=0 cutting it 25x). At 10% of the runtime it has not developed --
-# kokkos baseline scores 1.0x the reference here. Detecting it needs the long run; this gate
-# guards against gross breakage at the length we actually run.
+# The 3x margin is a placeholder, not a measurement: calibrating it honestly needs repeat runs
+# at fixed rank/thread count, which do not exist. Treat a failure between 1x and 3x as
+# "re-measure", not "bug". ewald is the least trustworthy entry -- its cancellation is one part
+# in 4000, so do not read its tight ceiling as Ewald summation being especially accurate.
 ENERGY_TOL = {
-    "baseline": 1.7e-4,
-    "ags": 1.7e-2,
-    "ewald": 1.7e-5,
-    "pmgrid": 6.3e-5,
-    "randomize": 1.2e-3,
-    "randomize_pmgrid": 1.4e-2,
-    "tidal": 3.1e-2,
-    "tidal_ags": 3.1e-2,
+    "baseline": 1.1e-3,
+    "ags": 2.7e-1,
+    "ewald": 5.5e-4,
+    "pmgrid": 5.3e-3,
+    "randomize": 7.4e-4,
+    "randomize_pmgrid": 1.9e-2,
+    "tidal": 3.4e-1,
+    "tidal_ags": 1.5e-1,  # vs a reference that only reached t=82.8; ours runs to 118
 }
-ENERGY_TOL_DEFAULT = 5.0e-2  # untabulated variant: loose, since nothing justifies more
+ENERGY_TOL_DEFAULT = 2.5e-1  # untabulated variant: loose, since nothing justifies more
 
-# Backstop for a gross blow-up, so an untabulated variant riding the loose default still gets
-# caught. The per-variant ceilings above are the discriminating test.
-ENERGY_ABS_CEILING = 0.25
+# Backstop so an untabulated variant riding the loose default still gets caught. Above the
+# largest per-variant ceiling (tidal, 3.4e-1), which is itself what the reference genuinely
+# does over 10 crossings -- the adaptive variants drift hard even upstream.
+ENERGY_ABS_CEILING = 0.5
 
 # --- known pre-existing defect: periodic-gravity half-mass-radius runaway ---------------
-# NOTE: at TimeMax=11.8 this runaway has not developed yet -- it is a late-time effect, so the
-# xfail below is expected to be inert here and the notes are kept for when the long run is used.
 # Every flag-OFF periodic variant secularly inflates r_h to ~10% by TimeMax=118, right on the
 # 0.10 tolerance, so the assertion flips run to run (ewald 0.1076, pmgrid 0.0984/0.1005 on
 # repeats; a since-retired PMGRID=256 probe gave 0.1019). It comes with ~4x the COM momentum drift of the non-periodic
@@ -489,7 +463,7 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     )
 
     e_tol = ENERGY_TOL.get(variant_id, ENERGY_TOL_DEFAULT)
-    calibrated = "starforge_dev @ t=11.83" if variant_id in ENERGY_TOL else "default (uncalibrated)"
+    calibrated = "starforge_dev @ t=118" if variant_id in ENERGY_TOL else "default (uncalibrated)"
     rate = _secular_energy_rate(times, energies)  # reported only; see ENERGY_TOL for why not gated
     assert e_rel < e_tol, (
         f"[{variant_id}] energy not conserved: |dE/E0| = {e_rel:.4e} exceeds {e_tol:.2e} "
