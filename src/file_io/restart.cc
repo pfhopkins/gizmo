@@ -259,11 +259,15 @@ void restart(int modus)
 
 	  if(modus)		/* read */
 	    {
-	      /* Restore the WRITER's MaxPart for the rest of this read.  The tree's node indices no
-	       * longer depend on it, but the serialized Nextnode payload does: force_treeallocate
-	       * below publishes All.TreeParticleSlots from this value, and the pseudo-particle segment
-	       * is read at that offset, which has to be the offset the writer used.  domain.cc swaps
-	       * in the new value once the tree has been freed.  Do not drop this. */
+	      /* Restore the WRITER's MaxPart for the rest of this read.  What this used to be FOR was
+	       * the tree: force_treeallocate published the particle-slot count from it, so the writer's
+	       * value had to be in place for the serialized Nextnode pseudo segment to land at the
+	       * offset the writer used.  That reason is gone -- the slot count now comes from the file
+	       * explicitly (below) -- and no remaining read of All.MaxPart was found between here and
+	       * the domain boundary, which allocates from MaxPartAssignable and then swaps the
+	       * requested capacity in.  It is kept because removing it is a decision in its own right,
+	       * not a side effect of changing what the tree reads.  Storage here was allocated at the
+	       * REQUESTED capacity, and the NumPart guard above ran against that same value. */
 	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}
 	    }
 
@@ -391,7 +395,14 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
-		  force_treeallocate(MaxNodes, All.MaxPart, MaxForeignNodes);
+		  /* The reader must rebuild the layout the WRITER serialized, so the slot count comes
+		   * from the file, not from this rank's current capacity. The two are equal only while
+		   * the capacity never moves; once it can grow mid-step the writer's tree side arrays
+		   * were allocated with the smaller count, and its pseudo-particle segment sits at that
+		   * smaller offset in Nextnode[]. Allocating at the grown capacity would deserialize the
+		   * pseudo segment from the wrong offset -- the same physical-layout reason MaxNodes and
+		   * MaxForeignNodes are read from the file rather than re-derived. */
+		  force_treeallocate(MaxNodes, All.TreeParticleSlots, MaxForeignNodes);
 		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
 		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
 		   * drain at restart's existing all-rank poll. */

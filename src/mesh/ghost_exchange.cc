@@ -2431,10 +2431,30 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int total_send = count_range_ok ? (int)total_send_ll : 0;
     int total_recv = count_range_ok ? (int)total_recv_ll : 0;
 
+    /* Ghosts cannot be refused: this is the last-resort Mode-A discovery and there is nothing
+     * further to fall back to, so an import that does not fit the current capacity raises it.
+     * The capacity is the size of one memory block, and growing it is legal here with the gravity
+     * tree standing and no ghost yet written -- that is what makes it movable mid-step. The need is
+     * EXACT, since request-driven discovery already counted it, so nothing is added on top: a
+     * capacity only ever rises, and a margin would raise the run's footprint permanently on the
+     * strength of one crowded step. Whether the memory exists is the allocator's answer rather than
+     * a prediction of it; on failure the resize requests a controlled stop and leaves every array at
+     * a capacity the advertised one is backed by. Purely local -- no communication, and nothing on
+     * the common path but one comparison. Runs BEFORE the pack so the capacity is settled before
+     * anything is written at &P[NumPart]; the guard below still decides whether the append happens. */
+    {
+        const long long required = (long long) NumPart + total_recv_ll;
+        if(count_range_ok && required > (long long) All.MaxPart && required <= (long long) INT_MAX) {
+            (void) resize_particle_storage((int) required);
+        }
+    }
+
     /* Check space (mirrors legacy guard).  Request-driven is the last-resort
      * Mode-A discovery — there is NO further fallback — so a count/displacement
      * overflow of the int MPI transport range, or ghosts that would not fit
-     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below. */
+     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below.
+     * This stays the ONE predicate that decides whether the append may happen: if
+     * the growth above was refused or failed, it is this guard that stops the run. */
     if(!count_range_ok) {
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);

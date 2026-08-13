@@ -98,8 +98,10 @@ int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
  *  being available in P[] does not mean the live tree can index it: inserting there would write past
  *  Father[]/Nextnode[], and every later pass that reads a particle's parent would read past them too.
  *  Creation sites ask this in addition to their existing capacity checks, and decline the way they
- *  already decline when storage is short.  With no tree standing there is nothing to outgrow -- the
- *  next build sizes these arrays from the capacity then in force. */
+ *  already decline when storage is short.  With no tree standing the answer is yes, because there is
+ *  nothing to outgrow: the next build sizes these arrays from the capacity in force then.  That is
+ *  not a licence to insert into a tree that is not there -- force_add_element_to_tree refuses that
+ *  case on its own. */
 static inline int gizmo_particle_index_fits_live_tree(int index)
 {
     return (!force_tree_is_allocated()) || (index < All.TreeParticleSlots);
