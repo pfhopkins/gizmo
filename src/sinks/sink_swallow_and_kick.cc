@@ -554,6 +554,15 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
     /* the spawned wind elements are gas, taking a slot in both P[] and CellP[] at the same index, so
        both capacities have to hold them */
+    if(!gizmo_particle_index_fits_live_tree(NumPart + num_already_spawned + n_particles_split))
+    {
+        /* Storage has room; the tree standing right now does not reach these slots, and spawned wind
+         * elements are inserted into it.  Decline this spawn the way the routine already declines
+         * when it is out of room -- the wind is spawned after the next rebuild instead. */
+        printf("On Task=%d we skip spawning %d wind elements from sink %d: the standing tree has only %d particle slots. They can spawn after the next tree rebuild.\n", ThisTask, n_particles_split, i, All.TreeParticleSlots);
+        fflush(stdout);
+        return 0;
+    }
     if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart ||
        NumPart + num_already_spawned + n_particles_split >= All.MaxPartGas)
     {

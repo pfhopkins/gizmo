@@ -251,8 +251,14 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
     }
     /* Step 2: leaf seed — Father[i] only (per-particle to its immediate
-     * parent), conservative across every leaf-policy-selectable source. */
-    for(int i = 0; i < NumPart; i++) {
+     * parent), conservative across every leaf-policy-selectable source.
+     * Stops at the tree's own particle slots rather than at NumPart: this also runs as a refresh on
+     * a tree that is already standing, and by then P[] can reach further than Father[] does, since
+     * the particle capacity may be raised mid-step.  Imported ghosts, which also sit above the local
+     * particles, are skipped by the test just below instead: every slot the tree does not contain
+     * carries -1, which is what a ghost's slot holds. */
+    const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    for(int i = 0; i < nseed; i++) {
         int no = Father[i];
         if(no < 0) continue;
         struct particle_data *pa = &P[i];
@@ -1327,6 +1333,18 @@ void force_flag_localnodes(void)
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
+    /* Both indices are written into the tree's particle-side arrays below, so both must be inside
+     * them.  Creation sites already decline to make a particle the standing tree cannot carry, so
+     * reaching this is a caller that skipped that test, not a tight fit -- stop rather than write
+     * past Father[]/Nextnode[]. */
+    if(!force_tree_is_allocated() || ichild >= All.TreeParticleSlots || iparent >= All.TreeParticleSlots)
+    {
+        printf("force_add_element_to_tree: task=%d asked to insert particle %d under %d, but the tree %s (particle slots=%d).\n",
+               ThisTask, ichild, iparent, force_tree_is_allocated() ? "does not reach that far" : "is not standing", All.TreeParticleSlots);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90000101, "force_add_element_to_tree: particle index outside the live tree's particle slots", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     int father = Father[iparent];
     int no = Nextnode[iparent];
     Nextnode[iparent] = ichild; // insert new particle into linked list

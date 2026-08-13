@@ -283,7 +283,15 @@ static int *father_mirror_ensure_(int N)
         if(!fmirror_persist_) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); fmirror_cap_ = 0; return NULL;}
         fmirror_cap_ = N;
     }
-    for(int i = 0; i < N; i++) {fmirror_persist_[i] = Father[i];}
+    /* Father[] only has All.TreeParticleSlots entries, while N counts every particle P[] holds, and
+     * that can be the larger of the two once the particle capacity is raised mid-step.  Slots beyond
+     * the tree's own are filled with the value the tree already uses for a particle it does not
+     * contain, so consumers treat them as absent instead of reading past the array.  Imported ghosts
+     * need no special handling here: their slots were not in the tree at its last build, so they
+     * already carry that same value. */
+    const int ncopy = (N < All.TreeParticleSlots) ? N : All.TreeParticleSlots;
+    for(int i = 0; i < ncopy; i++) {fmirror_persist_[i] = Father[i];}
+    for(int i = ncopy; i < N; i++) {fmirror_persist_[i] = -1;}
     return fmirror_persist_;
 }
 

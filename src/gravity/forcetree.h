@@ -90,6 +90,20 @@ int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
 int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
+
+/*! Can a particle created at this index be carried by the tree that is standing right now?
+ *  Father[] and Nextnode[]'s particle segment were allocated with All.TreeParticleSlots entries and
+ *  are NOT resized between rebuilds, while P[] may hold more than that -- imported ghosts live above
+ *  the local particles, and the particle capacity can be raised while a step is running.  So a slot
+ *  being available in P[] does not mean the live tree can index it: inserting there would write past
+ *  Father[]/Nextnode[], and every later pass that reads a particle's parent would read past them too.
+ *  Creation sites ask this in addition to their existing capacity checks, and decline the way they
+ *  already decline when storage is short.  With no tree standing there is nothing to outgrow -- the
+ *  next build sizes these arrays from the capacity then in force. */
+static inline int gizmo_particle_index_fits_live_tree(int index)
+{
+    return (!force_tree_is_allocated()) || (index < All.TreeParticleSlots);
+}
 void   force_update_node(int no, int flag);
 void   force_update_size_of_parent_node(int no);
 

@@ -518,6 +518,16 @@ void star_formation_parent_routine(void)
                     } else {
                         /* here we spawn a new star particle, so have to do some extra work to note that the total number of particles in the code is modified, and create the new particle */
                         i_star = NumPart + stars_spawned;
+                        if(!gizmo_particle_index_fits_live_tree(i_star))
+                        {
+                            /* Storage has room, but the tree standing right now cannot index this
+                             * slot, and a star has to be inserted into it.  Skip this one and let it
+                             * form after the next rebuild -- the same deferral the code already takes
+                             * when it declines to spawn. */
+                            PRINT_WARNING("On Task=%d we skip spawning a star at index %d: the standing tree has only %d particle slots. It can form after the next tree rebuild.",ThisTask, i_star, All.TreeParticleSlots);
+                            fflush(stdout);
+                            continue;
+                        }
                         if(i_star >= All.MaxPart)
                         {
                             PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);

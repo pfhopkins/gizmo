@@ -477,7 +477,8 @@ void merge_and_split_particles(void)
 int split_particle_i(int i, int n_particles_split, int i_nearest)
 {
     double mass_of_new_particle;
-    if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
+    if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart))
+        || !gizmo_particle_index_fits_live_tree(NumPart + n_particles_split + 1) )   /* splitting runs before the tree is torn down, and the rearrange that follows reads each particle's parent */
     {
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
         return 0;
