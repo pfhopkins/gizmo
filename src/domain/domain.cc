@@ -3060,7 +3060,11 @@ int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_dat
 	      NTopnodes += 8;
 	    }
 	  else
-	    {endrun(90000022); return 1;} /* out of TopNodes: soft bad-stop + status-return (skips the Daughter<0 deref below); folds into caller errflag -> TopNodeAllocFactor retry */
+	    {return 1;} /* out of TopNodes: report it and let the caller retry with a larger
+			   TopNodeAllocFactor, exactly as the other sites that run out do.  Asking
+			   for a stop here as well would end the run on the first overflow, which is
+			   the case the retry exists to absorb; a retry that cannot grow the top tree
+			   enough still stops, at the factor's own limit in domain_Decomposition. */
 	}
 
       sub = treeA[noA].Daughter + (treeB[noB].StartKey - treeA[noA].StartKey) / (treeA[noA].Size >> 3);
