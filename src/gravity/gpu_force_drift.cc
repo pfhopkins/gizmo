@@ -99,6 +99,18 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
     if(Numnodestree <= 0) {return 0;}
 
+    /* This sweep skips any node already at time1 and therefore also skips writing that
+     * node's SoA mirror. A host lazy drift advances Nodes[].Ti_current without touching
+     * the mirror, so if the host has already drifted to time1 the sweep would leave the
+     * walk reading pre-drift geometry. The routing keeps the two apart -- a step whose
+     * tree update runs on the host also walks on the host -- and this is the check that
+     * the two never disagree. The caller treats a nonzero return as a controlled stop
+     * taken by every rank at the next poll, so no rank exits a collective alone. */
+    if(force_host_lazy_drift_ti() == time1) {
+        printf("gpu_force_drift_nodes: task %d already drifted nodes on the host at this time; the device node mirror cannot be brought up to date by a sweep that skips them\n", ThisTask);
+        return 1;
+    }
+
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || !soa->len || !soa->s || !soa->node_vs || !soa->bitflags
             || !soa->hmax || !soa->vmax) {

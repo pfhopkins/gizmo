@@ -1286,11 +1286,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
     move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
     /* SoA must exist before the drift kernel — it writes mirror fields. */
     gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
-    if(gpu_force_drift_nodes(ti_curr_host) != 0) {
-        endrun(929702);
-        return 1;   /* soft bad-stop: skip walk on un-drifted nodes (idx_host not yet alloc'd); drains at next poll */
-    }
 
+    /* Select the particles this walk will actually cover BEFORE drifting any node: the
+     * node drift below exists only to serve this walk, so a step that turns out to walk
+     * nothing, or that is small enough to be cheaper on the host, must not pay for it.
+     * The selection reads only particle state (ActiveParticleList, ProcessedFlag and the
+     * candidacy predicate), all of which move_particles above has already brought to
+     * ti_curr_host, so it is independent of the node drift that now follows it. */
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
     for(int a = 0; a < num_active_total; a++) {
@@ -1305,6 +1307,17 @@ extern "C" int gpu_gravtree_walk_primary(void)
         idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
+
+    /* Few enough candidates that the host walk, which drifts nodes only as it opens
+     * them, beats this walk plus the all-node drift it requires. Returning with
+     * ProcessedFlag untouched leaves every candidate to the host loop in gravtree.cc. */
+    if(gravity_walk_route_to_host(num_active)) {myfree(idx_host); return 0;}
+
+    if(gpu_force_drift_nodes(ti_curr_host) != 0) {
+        myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
+        endrun(929702);
+        return 1;   /* soft bad-stop: skip walk on un-drifted nodes; drains at next poll */
+    }
 
     /* Acquire the arena (P_dev + CellP_dev in SharedSpace) */
     gpu_particles_arena_set_site("gpu_gravtree_walk_primary");
@@ -1935,6 +1948,24 @@ extern "C" int gpu_ewald_walk_primary(void)
 #else
     int num_active_total = (int) ActiveParticleList.size();
     if(num_active_total <= 0) {return 0;}
+
+    /* This walk consumes the node mirror (len, center, the node threading) but never
+     * refreshes it -- it relies on the primary walk having swept the nodes earlier in
+     * the same evaluation. When the primary walk ran on the host instead, no sweep
+     * happened and the mirror still holds geometry from an earlier time, so walking it
+     * here would write Ewald corrections from stale node extents and mark the particles
+     * processed, leaving the host correction loop nothing to fix. Decline instead: with
+     * ProcessedFlag untouched, that loop takes every particle and drifts nodes as it
+     * opens them.
+     *
+     * Both halves of the test are needed. The certification records that a sweep ran at
+     * this time; it does not survive a host lazy drift that happens afterwards at the
+     * same time, which refreshes a node in the AoS while leaving its mirror behind. The
+     * second clause covers exactly that ordering. */
+    if(!gpu_gravity_soa_drift_certified(gizmo_host_ti_current())
+            || force_host_lazy_drift_ti() == gizmo_host_ti_current()) {
+        return 0;
+    }
 
     /* Particles have already been drifted by the primary walk (Ewald_iter==0);
      * the tree SoA mirror is still valid. Just re-acquire (cache-hit).

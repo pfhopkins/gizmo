@@ -1652,6 +1652,10 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.NeighborLoopModeBThresholdMax;
         id[nt++] = INT;
 
+        strcpy(tag[nt], "GravityHostWalkBelowActive");
+        addr[nt] = &All.GravityHostWalkBelowActive;
+        id[nt++] = INT;
+
 
 #ifdef SUBFIND
       strcpy(tag[nt], "DesLinkNgb");
@@ -2645,6 +2649,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the interaction kernel. Trying to set a reasonable guess of =%g based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.DesNumNgb); continue;}
                 if(strcmp("NeighborLoopModeBThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_sum */
                 if(strcmp("NeighborLoopModeBThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_max */
+                if(strcmp("GravityHostWalkBelowActive",tag[i])==0) {*((int *)addr[i])=10000; printf("Tag %s (%s) not set in parameter file: defaulting to run the gravity walk and the dynamic tree update on the host below %d RANK-LOCAL active candidates per step (0 would disable this and always use the device path). \n",tag[i],alternate_tag[i],All.GravityHostWalkBelowActive); continue;}
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
                 if(strcmp("AGS_DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the adaptive-gravity (non-fluid) interaction kernel. Trying to set a reasonable guess (=%g) based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.AGS_DesNumNgb); continue;}
 #endif
@@ -3060,6 +3065,10 @@ void read_parameter_file(char *fname)
     if(All.NeighborLoopModeBThresholdMax < -1)
     {
         if(ThisTask==0) {printf("NeighborLoopModeBThresholdMax must be >= -1 (-1 = unset/use per-loop defaults, 0 = disable Mode B on adaptive paths, positive = threshold)\n");} endrun(1);
+    }
+    if(All.GravityHostWalkBelowActive < 0)
+    {
+        if(ThisTask==0) {printf("GravityHostWalkBelowActive must be >= 0 (0 = no count-based host routing, positive = rank-local active-candidate count below which the host walk is used)\n");} endrun(1);
     }
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {

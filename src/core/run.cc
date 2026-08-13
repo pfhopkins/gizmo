@@ -35,6 +35,7 @@
 extern "C" void gizmo_cpu_log_request_force_print(void);
 extern "C" int  gizmo_cpu_log_consume_force_print(void);
 
+
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
 static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
@@ -150,6 +151,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * reached, when a `stop' file is found in the output directory, or
  * when the simulation ends because we arrived at TimeMax.
  */
+
 void run(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
@@ -809,6 +811,11 @@ void find_next_sync_point_and_drift(void)
       else
 	TimeBinActive[n] = 0;
     }
+
+  /* Snapshot the count the coming step will actually integrate, before star formation,
+   * sink swallows or merges can add to the live counter. Routing decisions that run
+   * before make_list_of_active_particles rebuilds the list read this, not NumForceUpdate. */
+  NumForceUpdateAtSyncPoint = NumForceUpdate;
 
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;

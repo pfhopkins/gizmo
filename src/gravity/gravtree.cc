@@ -14,6 +14,28 @@
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
+/*! Host-vs-device routing for the gravity walk and the dynamic tree update, keyed on the
+ *  RANK-LOCAL count of active gravity candidates. The device path must drift every node
+ *  in the tree before its parallel walk can be race-free, so its floor is set by the tree
+ *  size rather than by the active set; the host walk drifts each node only when it opens
+ *  it. Below the threshold the sweep costs more than the walk it enables.
+ *
+ *  The threshold is conservative against a crossover measured near 6e4 rank-local
+ *  candidates on 16-rank FIRE, where routing the whole tree walk to the host cut the
+ *  cost of steps with fewer than 1e4 global active elements by a third. Above it the
+ *  device path wins and the host walk's serial node drift becomes the bottleneck. */
+int gravity_walk_route_to_host(long long n_local_active)
+{
+    /* Once any node has been drifted lazily at this time, the host owns the rest of the
+     * time step: the device sweep skips nodes already at its target time, so it can no
+     * longer bring their mirror up to date, and a second gravity evaluation at the same
+     * time (a Hermite correction pass, a repeated walk for the opening criterion) would
+     * otherwise read that stale geometry. */
+    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+
+    return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
+}
+
 /*! \file gravtree.c
  *  \brief main driver routines for gravitational (short-range) force computation
  *
@@ -263,6 +285,7 @@ void gravity_tree(void)
         }
         while(ndone < NTask);
     } /* Ewald_iter */
+
     myfree(DataNodeList); myfree(DataIndexTable);
 
     /* assign node cost to particles */

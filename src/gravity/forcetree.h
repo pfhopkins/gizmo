@@ -38,6 +38,27 @@ void *gravity_primary_loop(void *p);
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex);
 int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
+
+/*! Single home for the host-vs-device routing decision of the gravity walk and the
+ *  dynamic tree update. Two independent reasons to answer yes, and BOTH are part of the
+ *  contract:
+ *    - this rank has fewer than All.GravityHostWalkBelowActive active candidates, so the
+ *      host walk (which drifts nodes lazily as it opens them) is cheaper than the device
+ *      walk plus the all-node drift it requires;
+ *    - a host lazy drift has ALREADY happened at the current time, in which case the host
+ *      keeps ownership for the rest of the time step whatever the count says. The device
+ *      sweep skips nodes already at its target time and so cannot refresh their mirror,
+ *      so once any node is drifted lazily, no device walk may run at that time again.
+ *  The second clause is what keeps a repeated same-time evaluation (a Hermite correction
+ *  pass, the opening-criterion re-walk) from reading stale node geometry. */
+int gravity_walk_route_to_host(long long n_local_active);
+
+/*! Time at which a host lazy node drift was last actually performed on this rank
+ *  (-1 = never). The device node-drift sweep skips nodes already at its target time, so
+ *  it must never run at a time the host has already drifted to: it would leave those
+ *  nodes' SoA mirror holding pre-drift geometry. Read by gpu_force_drift_nodes as an
+ *  invariant check, not as a control input. */
+integertime force_host_lazy_drift_ti(void);
 void force_tree_discardpartials(void);
 void force_treeupdate_pseudos(int);
 void force_update_pseudoparticles(void);

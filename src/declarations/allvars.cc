@@ -41,6 +41,7 @@ int PTask;			/*!< note: NTask = 2^PTask */
 double CPUThisRun;		/*!< Sums CPU time of current process */
 
 int NumForceUpdate;		/*!< number of active particles on local processor in current timestep  */
+int NumForceUpdateAtSyncPoint;	/*!< see allvars.h: sync-point snapshot of NumForceUpdate for pre-rollover routing */
 long long GlobNumForceUpdate;
 int NumGasUpdate;		/*!< number of active gas cells on local processor in current timestep  */
 
