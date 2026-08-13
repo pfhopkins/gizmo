@@ -258,6 +258,11 @@ long long report_comittable_memory(long long *MemTotal,
   FILE *fd;
   char buf[1024];
 
+  /* Every value is reported in kB, and every one starts at zero: on a platform with no
+   * /proc/meminfo nothing below is read, and a caller must be able to tell "not available" from a
+   * real figure rather than inherit whatever its variables happened to hold. */
+  *MemTotal = 0; *Committed_AS = 0; *SwapTotal = 0; *SwapFree = 0;
+
   if((fd = fopen("/proc/meminfo", "r")))
     {
       while(1)
