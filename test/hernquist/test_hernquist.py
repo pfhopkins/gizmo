@@ -98,47 +98,43 @@ RH_DRIFT_TOL = 0.025
 # t^1.42 against baseline's t^0.68. Do not read its small ceiling as Ewald summation being
 # accurate; nothing about the method predicts that, and over the run it is not.
 #
-# So the endpoint is NOT what is gated. What distinguishes a healthy run from a sick one is
-# the SHAPE: starforge_dev oscillates within a bound (what a symplectic KDK leapfrog should
-# do), while kokkos grows monotonically 6.55e-4 -> 5.90e-3 and exceeds the reference at every
-# output time by 10-113x. The gate below fits that trend instead of sampling it.
+# Ceilings are 3x starforge_dev's own |dE/E0| at t=11.83, its second output -- the one sample
+# it has inside our TimeMax. Comparing at a MATCHED time is the point: a secular-drift-rate
+# statistic was tried instead and had to be reverted, because fitting a slope over our 11.8
+# (a fraction of one oscillation, so phase-dominated) against a reference slope fitted over
+# its 118 (ten oscillations, averaged out) compares two different quantities. The reference's
+# own fitted rate varies 5.0e-7..4.6e-6 with fit window -- a factor of 9, wider than the 3x
+# margin -- so that gate indicted variants whose endpoint matches the reference exactly.
 #
-# Statistic: least-squares slope of the SIGNED relative energy error against time, i.e. the
-# secular drift rate per unit time. Two properties earn it its place:
+#   variant            starforge_dev @ t=11.83
+#   baseline                     5.508e-05
+#   ags                          5.625e-03
+#   ewald                        5.391e-06
+#   pmgrid                       2.082e-05
+#   randomize                    3.736e-04
+#   randomize_pmgrid             4.647e-03
+#   tidal                        1.009e-02
+#   tidal_ags                    (no reference run; given tidal's ceiling)
 #
-#   - A fit over all snapshots is immune to which phase of the oscillation the last one lands
-#     in, which is the whole defect of the endpoint test described above.
-#   - It is a RATE, so the ceiling and the measurement scale with run length together and T
-#     cancels: this gate does not need recalibrating when TimeMax changes. That matters here,
-#     where no reference trajectory exists at the shortened TimeMax to calibrate against.
-#
-# Per-variant, because secular drift is not by itself a defect -- ags and tidal genuinely
-# drift on starforge_dev too (rates 7.8e-4 and 9.5e-4, hundreds of times baseline's). A single
-# global threshold would either indict them or excuse everything. A shape statistic normalized
-# by its own scatter does not fix this: measured, ref/tidal scores 116x and ref/ags 57x on
-# secular-slope-over-scatter, ABOVE kokkos/baseline's 39x, so it ranks the healthy reference
-# as sicker than the actual regression.
-#
-# Rates are starforge_dev's, fitted over its full TimeMax=118 trajectory, times a 3x margin.
-# Reading the fit as window-independent assumes the drift is close to linear in t; that holds
-# for the secular variants and is conservative for the oscillating ones, whose fitted slope is
-# small by construction.
-ENERGY_SECULAR_RATE = {
-    "baseline": 2.376e-06,
-    "ags": 7.751e-04,
-    "ewald": 3.351e-06,
-    "pmgrid": 1.577e-05,
-    "randomize": 8.065e-07,
-    "randomize_pmgrid": 2.653e-05,
-    "tidal": 9.508e-04,
-    "tidal_ags": 9.508e-04,  # no reference run; given tidal's rate
+# What this check CANNOT see: the 21x cusp/tree-cadence regression, which is secular and was
+# measured at the full TimeMax=118 (kokkos 5.035e-5 vs 2.376e-6, confirmed by
+# TreeDomainUpdateFrequency=0 cutting it 25x). At 10% of the runtime it has not developed --
+# kokkos baseline scores 1.0x the reference here. Detecting it needs the long run; this gate
+# guards against gross breakage at the length we actually run.
+ENERGY_TOL = {
+    "baseline": 1.7e-4,
+    "ags": 1.7e-2,
+    "ewald": 1.7e-5,
+    "pmgrid": 6.3e-5,
+    "randomize": 1.2e-3,
+    "randomize_pmgrid": 1.4e-2,
+    "tidal": 3.1e-2,
+    "tidal_ags": 3.1e-2,
 }
-ENERGY_SECULAR_RATE_DEFAULT = 1.0e-2  # untabulated: loose, nothing measured justifies more
-ENERGY_SECULAR_MARGIN = 3.0
+ENERGY_TOL_DEFAULT = 5.0e-2  # untabulated variant: loose, since nothing justifies more
 
-# Backstop for a blow-up that a slope fit would happily accommodate (a run that loses a
-# quarter of its energy is broken no matter how tidily it does so). Deliberately loose: the
-# secular rate above is the discriminating test, this only catches catastrophe.
+# Backstop for a gross blow-up, so an untabulated variant riding the loose default still gets
+# caught. The per-variant ceilings above are the discriminating test.
 ENERGY_ABS_CEILING = 0.25
 
 # --- known pre-existing defect: periodic-gravity half-mass-radius runaway ---------------
@@ -492,17 +488,13 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"{ENERGY_ABS_CEILING:g} (E0={energies[0]:.6g}, Ef={energies[-1]:.6g})"
     )
 
-    rate = _secular_energy_rate(times, energies)
-    rate_ref = ENERGY_SECULAR_RATE.get(variant_id, ENERGY_SECULAR_RATE_DEFAULT)
-    rate_max = ENERGY_SECULAR_MARGIN * rate_ref
-    calibrated = "starforge_dev" if variant_id in ENERGY_SECULAR_RATE else "default (uncalibrated)"
-    assert rate < rate_max, (
-        f"[{variant_id}] energy drifts secularly at {rate:.3e} per unit time, exceeding "
-        f"{rate_max:.3e} ({ENERGY_SECULAR_MARGIN:g}x the {calibrated} rate {rate_ref:.3e}). "
-        f"Endpoint |dE/E0| = {e_rel:.3e} over t={times[0]:g}..{times[-1]:g}. A symplectic "
-        f"integrator should oscillate within a bound, not trend; a fitted trend this far above "
-        f"reference means energy is being lost or gained systematically. See "
-        f"ENERGY_SECULAR_RATE for why this is a rate and not an endpoint threshold."
+    e_tol = ENERGY_TOL.get(variant_id, ENERGY_TOL_DEFAULT)
+    calibrated = "starforge_dev @ t=11.83" if variant_id in ENERGY_TOL else "default (uncalibrated)"
+    rate = _secular_energy_rate(times, energies)  # reported only; see ENERGY_TOL for why not gated
+    assert e_rel < e_tol, (
+        f"[{variant_id}] energy not conserved: |dE/E0| = {e_rel:.4e} exceeds {e_tol:.2e} "
+        f"(3x the {calibrated} value). E0={energies[0]:.6g}, Ef={energies[-1]:.6g}, over "
+        f"t={times[0]:g}..{times[-1]:g}; fitted secular rate {rate:.3e}/t for reference."
     )
 
     half_mass_idx = LAGRANGE_FRACTIONS.index(0.5)
