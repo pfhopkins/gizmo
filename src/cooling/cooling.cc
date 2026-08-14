@@ -375,8 +375,8 @@ void cooling_parent_routine(void)
         if(diag_n > 0) {
             gpu_rt_diag_count++;
             /* Make a fresh copy of the saved inputs for CPU re-run */
-            struct particle_data *cpu_P = (struct particle_data *) malloc(diag_n * sizeof(struct particle_data));
-            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) malloc(diag_n * sizeof(struct gas_cell_data));
+            struct particle_data *cpu_P = (struct particle_data *) mymalloc("cool_diag_P", diag_n * sizeof(struct particle_data));
+            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) mymalloc("cool_diag_Cell", diag_n * sizeof(struct gas_cell_data));
             memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
             memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
             for(int dd = 0; dd < diag_n; dd++) {
@@ -408,7 +408,7 @@ void cooling_parent_routine(void)
                 }
 #endif
             }
-            free(cpu_P); free(cpu_Cell);
+            myfree(cpu_Cell); myfree(cpu_P);
             fflush(stdout);
         }
 #endif /* GIZMO_DEBUG_RT_COOLING */
@@ -447,8 +447,8 @@ void cooling_parent_routine(void)
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
         /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
          * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
-        struct particle_data *oracle_P_scratch = (struct particle_data *) malloc(batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) malloc(batch_n * sizeof(struct gas_cell_data));
+        struct particle_data *oracle_P_scratch = (struct particle_data *) mymalloc("cool_oracle_P", batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) mymalloc("cool_oracle_Cell", batch_n * sizeof(struct gas_cell_data));
         memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
         memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
 #endif
@@ -582,7 +582,7 @@ void cooling_parent_routine(void)
             #undef POSTCOOL_ORACLE_CMP_ARR
             #undef POSTCOOL_ORACLE_CMP
         }
-        free(oracle_P_scratch); free(oracle_Cell_scratch);
+        myfree(oracle_Cell_scratch); myfree(oracle_P_scratch);
         oracle_n_compared += batch_n;
 #endif
 
