@@ -35,11 +35,6 @@ struct MechFBCallScalars;
  * values are read through the same scalars struct instead of bare All.*.
  * Defined in galaxy_sf/mechfb_loop.cc. */
 void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars);
-/* Zero the gas-only portion of a SharedSpace LocalGasMechFBInfoTemp buffer.
- * Implemented in the GPU TU (mechfb_loop.cc) via Kokkos parallel_for so the
- * non-GPU mechanical_fb.cc TU doesn't take a backend dependency on whether
- * SharedSpace is host-readable bytewise. */
-void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas);
 /* Persistent grow-only gas-delta buffer replacing per-step alloc + O(N_gas) zero
  * + free; mechfb_reset_one_gas_delta re-zeros one drained cell (SSOT). */
 struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas);
