@@ -89,7 +89,10 @@ static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
 #if defined(SINGLE_STAR_FB_LOCAL_RP)
     loc->mom_budget = (MyFloat)((double)loc->Luminosity * (double)loc->Dt / C_LIGHT_CODE);
 #else
-    loc->mom_budget = (MyFloat)(sink_lum_bol((double)loc->Mdot, (double)loc->Sink_Mass, -1)
+    /* The particle index is required, not optional: with a protostellar-evolution
+     * model the luminosity is a cached per-star quantity read from the particle,
+     * and the accretion rate and mass arguments are not used at all. */
+    loc->mom_budget = (MyFloat)(sink_lum_bol((double)loc->Mdot, (double)loc->Sink_Mass, i)
                                  * (double)loc->Dt / C_LIGHT_CODE);
 #endif
 #endif

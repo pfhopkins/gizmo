@@ -117,7 +117,7 @@ struct SinkFeedLocalIn {
     Vec3<MyFloat> Jgas_in_Kernel;
 #endif
 #ifdef SINK_THERMALFEEDBACK
-    MyFloat thermal_energy;     /* precomputed: sink_lum_bol(Mdot, Sink_Mass, -1) * Dt */
+    MyFloat thermal_energy;     /* precomputed: sink_lum_bol(Mdot, Sink_Mass, i) * Dt */
 #endif
 };
 

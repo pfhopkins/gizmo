@@ -78,8 +78,11 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
     loc->Sink_AccretionDeficit = P[i].Sink_AccretionDeficit;
 #endif
 #ifdef SINK_THERMALFEEDBACK
+    /* The particle index is required, not optional: with a protostellar-evolution
+     * model the luminosity is a cached per-star quantity read from the particle,
+     * and the accretion rate and mass arguments are not used at all. */
     loc->thermal_energy = (MyFloat)(sink_lum_bol((double)P[i].Sink_Mdot,
-                                                  (double)P[i].Sink_Mass, -1)
+                                                  (double)P[i].Sink_Mass, i)
                                     * (double)loc->Dt);
 #endif
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
