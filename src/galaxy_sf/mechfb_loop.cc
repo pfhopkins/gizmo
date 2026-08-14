@@ -706,16 +706,6 @@ void MechFBSpec::reset_per_iter_device_context(
  * Toplevel helpers — entry points for mechanical_fb.cc (non-GPU TU).
  * ========================================================================== */
 
-struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas) {
-    const int n = (n_gas > 0) ? n_gas : 1;
-    return (struct MechFBGasDelta *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(struct MechFBGasDelta));
-}
-
-void mechfb_free_local_gas_delta(struct MechFBGasDelta *p) {
-    if (p) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);
-}
-
 /* Persistent capacity-managed gas-delta buffer (grow-only). Replaces the per-step
  * alloc + O(N_gas) zero + free. Invariant (upheld by the caller): the buffer is
  * all-zero between mechfb steps -- verify_and_assign_local_mechfb_integrals

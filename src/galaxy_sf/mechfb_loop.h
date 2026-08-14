@@ -504,8 +504,8 @@ void mechfb_repack_per_active_local(const neighbor_loop_args& args,
 
 #endif /* GALSF_FB_MECHANICAL */
 
-/* NOTE: toplevel helpers callable from non-GPU TUs (mechfb_alloc_local_gas_delta,
- * mechfb_free_local_gas_delta, mechfb_run_iterative) are declared in
+/* NOTE: the toplevel helpers callable from non-GPU TUs (mechfb_run_iterative,
+ * mechfb_get_persistent_gas_delta, mechfb_reset_one_gas_delta) are declared in
  * galaxy_sf/galsf_gpu_decls.h — keep this header GPU-TU-only because it
  * includes mechanical_fb_functions.h whose inline pair_kernel body uses
  * Kokkos:: symbols. */

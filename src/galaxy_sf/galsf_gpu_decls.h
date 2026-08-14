@@ -27,8 +27,6 @@
  * so this header (and mechanical_fb.cc, compiled non-GPU) does not need Kokkos.
  * The legacy mechanical_fb_evaluate_gpu evaluator was retired together with
  * galaxy_sf/mechanical_fb_gpu.cc. ---- */
-struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas);
-void                   mechfb_free_local_gas_delta(struct MechFBGasDelta *p);
 struct MechFBCallScalars;
 /* Host-side builder for MechFBCallScalars.  Used by
  * MechFBSpec::populate_call_scalars so cosmology / unit-factor / CR-rigidity
