@@ -78,12 +78,30 @@ extern "C" void gpu_force_update_tree(void)
     GlobFlag++;
     DomainNumChanged = 0;
 
-    /* Allocate UVM buffers for DomainList and its atomic count. */
+    /* One shared-space allocation carved into every buffer this call needs, rather
+     * than one allocation per buffer: on a unified-memory device each allocation
+     * carries page-registration cost, so the count matters more than the size.
+     * Sized from the active list before the drift, since the drift only ever
+     * shrinks how much of it is used. The widest type is placed first so the
+     * following integer regions stay naturally aligned. */
     const int ntop = (NTopleaves > 0) ? NTopleaves : 1;
-    int *domain_list_dev = (int *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                ntop * sizeof(int));
-    int *domain_count_dev = (int *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                sizeof(int));
+    const int n_active_cap = (int) ActiveParticleList.size();
+    const int n_active_alloc = (n_active_cap > 0) ? n_active_cap : 1;
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    const size_t rt_bytes = (size_t) n_active_alloc * 3 * sizeof(MyDouble);
+#else
+    const size_t rt_bytes = 0;
+#endif
+    const size_t int_bytes = ((size_t) ntop + 1 + (size_t) n_active_alloc) * sizeof(int);
+    char *scratch_dev = (char *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
+                                "force_update_scratch", rt_bytes + int_bytes);
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    MyDouble *rt_lum_dp_dev = (MyDouble *) scratch_dev;
+#endif
+    int *domain_list_dev  = (int *) (scratch_dev + rt_bytes);
+    int *domain_count_dev = domain_list_dev + ntop;
+    int *active_dev       = domain_count_dev + 1;
+
     domain_count_dev[0] = 0;
     DomainList = domain_list_dev;   /* redirect global ptr to UVM buffer */
 
@@ -105,16 +123,15 @@ extern "C" void gpu_force_update_tree(void)
     if(!drift_ok) { endrun(929703); }
     double t_fut_drift_nodes = my_second();
 
-    const int num_active = drift_ok ? (int)ActiveParticleList.size() : 0;
+    /* same count the scratch was sized from, not a second read of the list */
+    const int num_active = drift_ok ? n_active_cap : 0;
     if(num_active <= 0) {
         DomainNumChanged = 0;
         goto finish_mpi;
     }
 
     {
-        /* Copy active-particle index list to a UVM buffer. */
-        int *active_dev = (int *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                    num_active * sizeof(int));
+        /* Copy active-particle index list into its slice of the scratch buffer. */
         memcpy(active_dev, ActiveParticleList.data(), num_active * sizeof(int));
 
         struct particle_data *Pp   = gpu_particles_arena_P();
@@ -128,8 +145,6 @@ extern "C" void gpu_force_update_tree(void)
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         /* Pre-compute rt_source_lum_dp per active particle on CPU (not GPU-callable). */
-        MyDouble *rt_lum_dp_dev = (MyDouble *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                       num_active * 3 * sizeof(MyDouble));
         for(int idx = 0; idx < num_active; idx++) {
             int i = ActiveParticleList[idx];
             double lum[N_RT_FREQ_BINS];
@@ -211,12 +226,18 @@ extern "C" void gpu_force_update_tree(void)
             P[ActiveParticleList[idx]].dp = {};
         }
 
+        /* The kernel clamps its writes to the DomainList slice, so a count past
+         * that slice would hand the exchange indices it never wrote. One claim
+         * per distinct top-level node makes this unreachable; say so loudly
+         * rather than pass on a count the buffer does not back. */
         DomainNumChanged = domain_count_dev[0];
-
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active_dev);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rt_lum_dp_dev);
-#endif
+        if(DomainNumChanged > ntop) {
+            printf("Task=%d gpu_force_update_tree: %d changed top-level nodes exceeds the %d-entry list\n",
+                   ThisTask, DomainNumChanged, ntop);
+            fflush(stdout);
+            DomainNumChanged = ntop;
+            endrun(929704);
+        }
     }
 
 finish_mpi:
@@ -225,10 +246,9 @@ finish_mpi:
      * writes to Extnodes/Nodes (UVM) — all coherent after Kokkos::fence() above. */
     force_finish_kick_nodes();
 
-    /* Restore global DomainList to NULL and free UVM buffers. */
+    /* Restore global DomainList to NULL and release the one scratch allocation. */
     DomainList = NULL;
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(domain_count_dev);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(domain_list_dev);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_dev);
 
     PRINT_STATUS(" ..Tree has been updated dynamically (GPU)");
 
