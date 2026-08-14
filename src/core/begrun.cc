@@ -842,6 +842,9 @@ void open_outputfiles(void)
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "balance.txt");
     if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
     fprintf(FdBalance, "\n");
+    /* Each bucket below paints two characters into the map: work share / imbalance share.
+       Buckets with no charge site are never painted and are marked with the sentinel. */
+    fprintf(FdBalance, "unused slot    = '_' (no writer; never appears in the map)\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
     fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
     fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1], CPU_SymbolImbalance[CPU_TREEWAIT1]);
