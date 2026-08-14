@@ -572,7 +572,6 @@ void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end);
 #ifdef __cplusplus
 }
 #endif
-int ghost_get_previous_count(void);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);

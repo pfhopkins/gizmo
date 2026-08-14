@@ -154,12 +154,19 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
 /*! Compute the domain local-particle assignment caps into DomainMaxPartLocal /
- *  DomainMaxGasLocal. Base cap = MaxPartAssignable*REDUC_FAC; the all-type cap is then reduced
- *  by the predicted ghost headroom (MPI-MAX of the previous-epoch ghost count * 1.3)
- *  so boundary ranks keep room for imported ghosts, never below half the cap. The gas cap
- *  is not ghost-reduced. report=1 prints the reduction on rank 0 (the historical
- *  full-decomposition message); the lightweight-repartition caller passes 0 (silent,
- *  as before). Single source of truth for both callers.
+ *  DomainMaxGasLocal, both MaxPartAssignable*REDUC_FAC.  report is retained for the
+ *  caller's benefit and prints nothing now that the caps are a plain fraction of the
+ *  assignment ceiling.  Single source of truth for both callers.
+ *
+ *  These caps do NOT reserve room for imported ghosts.  They once did, subtracting the
+ *  previous exchange's ghost count from the assignment ceiling, because ghosts and local
+ *  particles were drawn from a single capacity and anything given away to one was taken
+ *  from the other.  They are separate quantities now -- MaxPartAssignable bounds what the
+ *  decomposition may assign, All.MaxPart is this rank's storage and covers the ghosts on
+ *  top of it -- so subtracting the ghost count here charged for the same slots twice.  At
+ *  a large import that double charge exceeded the whole assignment ceiling and drove the
+ *  cap to its floor, and no decomposition could satisfy it: the ceiling had to be set
+ *  several times larger than the run needed simply to survive its own reservation.
  *
  *  EVERY term here comes from All.MaxPartAssignable, never from this rank's All.MaxPart:
  *  the caps decide how work is DISTRIBUTED, and both callers feed them to comparisons whose
@@ -171,22 +178,9 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
  *  so the gas cap is the same number whenever any gas exists. */
 static void domain_compute_local_caps(int report)
 {
-    DomainMaxGasLocal = (All.MaxPartGas > 0) ? (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN) : 0;
-    int cap = (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    int prev_ghost_local = ghost_get_previous_count();
-    int prev_ghost_max;
-    MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(prev_ghost_max > 0) {
-        int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
-        int cap_new = All.MaxPartAssignable - ghost_headroom;
-        if(cap_new < All.MaxPartAssignable / 2) {cap_new = All.MaxPartAssignable / 2;} /* never reserve more than half */
-        if(cap_new < cap) {
-            if(report && ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
-                                                       ghost_headroom, prev_ghost_max, cap, cap_new);}
-            cap = cap_new;
-        }
-    }
-    DomainMaxPartLocal = cap;
+    (void) report;
+    DomainMaxGasLocal  = (All.MaxPartGas > 0) ? (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN) : 0;
+    DomainMaxPartLocal = (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
 }
 
 /*! Number of tree nodes to allocate for the local gravity tree. The tree holds only the
