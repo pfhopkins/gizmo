@@ -76,8 +76,18 @@ integertime force_host_lazy_drift_ti(void)
  *  Host only when both are small; anything else stays on the device path. */
 void force_update_tree(void)
 {
+    /* The update tolerates a larger active count on the host than the walk does,
+     * so its own term is tested against a multiple of the same threshold rather
+     * than a separate control: the two are one judgement about where work
+     * belongs, and a second knob would imply they can drift apart. What the
+     * device buys here is avoiding the all-node drift sweep, whose cost does not
+     * depend on how many elements are active, so the host walk has to grow much
+     * further before it costs as much as the walk's own crossover. The second
+     * term is deliberately NOT scaled: it is what guarantees that a host-lazy
+     * drift is never followed by a device walk reading the mirror it staled. */
+    const long long TREE_UPDATE_HOST_ACTIVE_FACTOR = 20;
     const long long n_kick = (long long) ActiveParticleList.size();
-    const int to_host = (gravity_walk_route_to_host(n_kick)
+    const int to_host = (gravity_walk_route_to_host(n_kick / TREE_UPDATE_HOST_ACTIVE_FACTOR)
                          && gravity_walk_route_to_host(NumForceUpdateAtSyncPoint));
 
     if(!to_host) {gpu_force_update_tree();}
