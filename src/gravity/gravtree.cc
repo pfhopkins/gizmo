@@ -513,7 +513,11 @@ void gravity_tree(void)
     {
         for(i = 0; i < NumPart; i++) {costtotal_new += P[i].GravCost[TakeLevel];}
         MPI_Reduce(&costtotal_new, &sum_costtotal_new, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);} /* can be non-zero if THREAD_SAFE_COSTS is not used (and due to round-off errors). */
+        /* Both walks accumulate the same per-target interaction count into GravCost and
+         * into Costtotal, so the two totals describe the same quantity and this should be
+         * at round-off whichever path each target took. A non-negligible value means the
+         * two are no longer measuring the same thing. */
+        if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
@@ -571,6 +575,13 @@ void *gravity_primary_loop(void *p)
             {
                 ret = force_treeevaluate(i, exportflag, exportnodecount, exportindex);
                 if(ret < 0) {buffer_full = 1; break;}
+                /* Work weight for the next domain decomposition: the count of
+                 * interactions this target performed. The device walk records the
+                 * same quantity (gpu_gravtree.cc), so a step whose walks are split
+                 * between the two paths feeds one consistent measure to
+                 * domain_particle_costfactor(). Each thread writes only its own
+                 * target, so no synchronization is needed. */
+                if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = ret;}
 #ifdef _OPENMP
 #pragma omp atomic
 #endif
