@@ -824,13 +824,24 @@ void sink_final_operations(void)
         if(dm_wind > P[n].Sink_Mass) {dm_wind = P[n].Sink_Mass;}
         P[n].Sink_Mass -= dm_wind;
 #endif
+#ifdef SINGLE_STAR_FB_JETS
+        /* accretion-tied jet mass always banks in its own reservoir (bullet: "mass from accretion always
+           gets diverted into the jet reservoir"), regardless of whether jets are currently the dominant/
+           discrete-spawn channel. If jets are not dominant, this mass simply waits here -- there is no
+           continuous-injection fallback for jets, unlike winds below. Zero dm_wind so the generic add at
+           the bottom (used for the no-jets fallback and for SNe ejecta, which overwrites dm_wind below)
+           does not also double-count this into unspawned_wind_mass. */
+        P[n].unspawned_jet_mass += dm_wind; dm_wind = 0;
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_WINDS)
        if(P[n].ProtoStellarStage == 5) {
-           if(P[n].wind_mode == 1) {
-                dm_wind = single_star_wind_mdot(n,0) * dt;
-                P[n].Sink_Mass -= dm_wind;
-            }
+           if(P[n].wind_mode == 1) { // winds are the dominant/discrete-spawn channel: compute and bank the physical MS wind mass-loss here
+                double dm_wind_star = single_star_wind_mdot(n,0) * dt;
+                P[n].Sink_Mass -= dm_wind_star;
+                P[n].unspawned_wind_mass += dm_wind_star;
+                dm_wind = 0; // discard the generic/jet-formula value computed above (already accounted for -- banked into unspawned_jet_mass if SINGLE_STAR_FB_JETS is defined, otherwise irrelevant here) so the unconditional add at the bottom does not also add it on top of dm_wind_star
+            } // else: jets are dominant, so wind mass loss is handled entirely by the continuous mechanical_fb injection (mechanical_fb_calculate_eventrates_Winds/particle2in_addFB_winds, which independently compute the same rate and debit Sink_Mass there) -- doing nothing here avoids debiting Sink_Mass twice for the same mass loss
         } // wind loss rate previously calculated in stellar_evolution at the end of the previous timestep: remove mass lost via winds
 #endif
 #if defined(SINGLE_STAR_FB_SNE)
@@ -854,12 +865,19 @@ void sink_final_operations(void)
                 TreeMomentsStaleFlag = 1; /* sink mass changed: refresh moments, tree structure maintained by MAINTAIN_TREE_IN_REARRANGE */
                 Max_Unspawned_MassUnits_fromSink = DMAX(2, Max_Unspawned_MassUnits_fromSink); // a high enough number to ensure that we do spawn winds
             }
+#ifdef SINGLE_STAR_FB_JETS
+            P[n].unspawned_wind_mass += P[n].unspawned_jet_mass; P[n].unspawned_jet_mass = 0; // stars past the MS jets/winds competition: fold any mass still waiting in the jet reservoir into the (now solely SNe-ejecta) wind reservoir so it isn't stranded
+#endif
         }
 #endif
 #endif
         P[n].unspawned_wind_mass += dm_wind;
         double n_unspawned = P[n].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
         if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
+#ifdef SINGLE_STAR_FB_JETS
+        double n_unspawned_jet = P[n].unspawned_jet_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // same tracking for the separate jet reservoir
+        if(n_unspawned_jet > Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned_jet;}
+#endif
 #endif
 
 #ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION

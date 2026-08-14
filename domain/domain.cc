@@ -332,7 +332,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       report_memory_usage(&HighMark_domain, "DOMAIN");
 
       ret = domain_decompose();
-        
       /* copy what we need for the topnodes */
       for(i = 0; i < NTopnodes; i++)
       {
@@ -2804,7 +2803,18 @@ void domain_apply_random_shift(void)
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 256)
 #endif
-    for(i = 0; i < NumPart; i++) {int k; for(k = 0; k < 3; k++) {P[i].Pos[k] += delta[k];}}
+    for(i = 0; i < NumPart; i++)
+    {
+        int k; for(k = 0; k < 3; k++) {P[i].Pos[k] += delta[k];}
+#ifdef HERMITE_INTEGRATION
+        /* OldPos is the reference position do_hermite_prediction() rebuilds Pos from every step
+           (P[i].Pos = P[i].OldPos + ...); if a random-frame shift lands between a particle's Hermite
+           seed and its next prediction without also shifting OldPos, that prediction silently snaps
+           Pos back to the pre-shift frame -- correct for every non-Hermite particle (which integrate
+           Pos forward from Vel, not from a saved reference point), but wrong for sinks/stars. */
+        if((1 << P[i].Type) & HERMITE_INTEGRATION) {for(k = 0; k < 3; k++) {P[i].OldPos[k] += delta[k];}}
+#endif
+    }
 
     /* accumulate the frame offset, kept in [0,box) so it cannot drift off over a long run
      * (positions are only defined mod box, and the output un-shift is followed by a wrap) */

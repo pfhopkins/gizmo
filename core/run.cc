@@ -103,7 +103,6 @@ void run(void)
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
         }
-
         find_timesteps();		/* find-timesteps */
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION

@@ -8,7 +8,7 @@ only dynamics are wind injection and hydro.
 - 64^3 gas cells, 50000 Msun box at n_H = 100 cm^-3, periodic
 - `SINGLE_STAR_FB_WINDS=2` with Mdot = 1e-4 Msun/yr, v_w = 3000 km/s
 - Wind injection mode 1 (spawn discrete cells) or 2 (local mechanical injection)
-- Adiabatic or `COOLING`
+- Adiabatic, `COOLING`, or `COOLING` + `SINGLE_STAR_FB_RAD` (the star's own radiative feedback)
 
 ## What is tested
 
