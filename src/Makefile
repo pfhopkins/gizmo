@@ -220,7 +220,7 @@ ifeq ($(SYSTYPE),"Frontier")
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
-OPTIMIZE = -O2
+OPTIMIZE = -O2 -g   # -g does not change codegen at -O2; without it a Frontier core file has no line numbers
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp
 endif
