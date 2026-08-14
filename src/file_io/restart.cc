@@ -209,13 +209,16 @@ void restart(int modus)
            * globally -- that assertion is the business of resize_particle_storage, whose first call
            * comes after the domain boundary has swapped the requested capacity in. */
           All.MaxPartAssignable = All.MaxPart;
-          /* The tree node index base was fixed when the ICs were read and travels in the restart
-           * file; particle indices must stay below it.  Raising PartAllocFactor far enough breaks
-           * that, so say so here where the cause is obvious rather than at the later tree alloc. */
-          if(All.MaxPart > All.TreeNodeIndexBase)
+          /* The run's capacity ceiling was fixed when the ICs were read and travels in the restart
+           * file; it also bounds the tree's node index base and its per-particle side arrays.
+           * Raising PartAllocFactor past it breaks that, so say so here where the cause is obvious
+           * rather than at the later tree alloc.  A restart onto more memory does not move the
+           * ceiling -- it was sized generously enough at the start that ordinary raises fit under
+           * it, and a run that genuinely needs more starts fresh. */
+          if(All.MaxPart > All.MaxPartExpandable)
             {
-              printf("PartAllocFactor was raised so far that %d particle slots would overlap the tree node index base %d, which was fixed when this run started. Restart with the original value, or start a fresh run at the larger one.\n",
-                     All.MaxPart, All.TreeNodeIndexBase);
+              printf("PartAllocFactor was raised so far that %d particle slots would exceed this run's ceiling of %d, which was fixed when it started. Restart with the original value, or start a fresh run at the larger one.\n",
+                     All.MaxPart, All.MaxPartExpandable);
               fflush(stdout);
               /* Skip this rank's payload: allocate_memory + the reads below would run at the very
                * MaxPart just rejected.  Drains at the per-turn poll, like the other soft stops here. */

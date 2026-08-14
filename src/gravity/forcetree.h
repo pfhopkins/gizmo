@@ -92,16 +92,18 @@ void   force_treefree(void);
 int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
 
 /*! Can a particle created at this index be carried by the tree that is standing right now?
- *  Father[] and Nextnode[]'s particle segment were allocated with All.TreeParticleSlots entries and
- *  are NOT resized between rebuilds, while P[] may hold more than that -- imported ghosts live above
- *  the local particles, and the particle capacity can be raised while a step is running.  So a slot
- *  being available in P[] does not mean the live tree can index it: inserting there would write past
- *  Father[]/Nextnode[], and every later pass that reads a particle's parent would read past them too.
- *  Creation sites ask this in addition to their existing capacity checks, and decline the way they
- *  already decline when storage is short.  With no tree standing the answer is yes, because there is
- *  nothing to outgrow: the next build sizes these arrays from the capacity in force then.  That is
- *  not a licence to insert into a tree that is not there -- force_add_element_to_tree refuses that
- *  case on its own. */
+ *  Father[] and Nextnode[]'s particle segment span All.TreeParticleSlots entries and are NOT resized
+ *  between rebuilds, so a slot being available in P[] does not by itself mean the live tree can index
+ *  it: inserting past those arrays would write out of bounds, and every later pass that reads a
+ *  particle's parent would read out of bounds too.  Creation sites ask this in addition to their
+ *  existing capacity checks, and decline the way they already decline when storage is short.
+ *  A tree built by force_treeallocate sizes these arrays from All.MaxPartExpandable, the run's
+ *  ceiling on the particle capacity, so the answer is currently yes for every index P[] can hold and
+ *  this costs one comparison.  It is kept rather than deleted because it states the requirement at
+ *  the sites that depend on it: if the ceiling ever became something a capacity could reach, these
+ *  are exactly the places that must decline.  With no tree standing the answer is also yes, because
+ *  there is nothing to outgrow -- not a licence to insert into a tree that is not there, which
+ *  force_add_element_to_tree refuses on its own. */
 static inline int gizmo_particle_index_fits_live_tree(int index)
 {
     return (!force_tree_is_allocated()) || (index < All.TreeParticleSlots);

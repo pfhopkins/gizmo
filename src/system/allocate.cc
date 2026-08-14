@@ -262,6 +262,16 @@ int resize_particle_storage(int new_maxpart)
    * stars, so a run that converted its last gas cell would silently lose CellP[] here. */
   const int new_maxpartgas = (old_maxpartgas > 0) ? new_maxpart : 0;
 
+  /* The run-long ceiling, fixed when the ICs were read.  It also bounds the tree's per-particle
+   * side arrays, so a capacity above it would produce particle indices those arrays cannot hold. */
+  if(new_maxpart > All.MaxPartExpandable)
+    {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "resize_particle_storage: %d particle slots exceeds the run's ceiling of %d (raise the memory available per rank -- fewer ranks per node, or more nodes -- and start a fresh run)",
+               new_maxpart, All.MaxPartExpandable);
+      gizmo_request_controlled_stop(7727, msg, __FILE__, __LINE__, __FUNCTION__);
+      return 7727;
+    }
   if(new_maxpart > All.TreeNodeIndexBase)
     {
       gizmo_request_controlled_stop(7724, "resize_particle_storage: requested particle capacity would overlap the tree node index base fixed at startup", __FILE__, __LINE__, __FUNCTION__);

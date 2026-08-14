@@ -321,7 +321,7 @@ let_build_attempt:
             if(ThisTask == 0) {printf("Increasing TreeAllocFactor=%g", All.TreeAllocFactor);}
             All.TreeAllocFactor *= 1.15;
             if(ThisTask == 0) {printf(" new value=%g\n", All.TreeAllocFactor);}
-            force_treeallocate(maxnodes_grown, All.MaxPart);
+            force_treeallocate(maxnodes_grown, All.MaxPartExpandable);
             /* drain a tree-alloc UVM OOM before force_treebuild_single re-runs on a NULL-based
              * tree. Symmetric: all ranks enter this block together (flag from Allreduce(MIN)). */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
@@ -434,7 +434,7 @@ let_build_attempt:
             let_retry++;
             int maxnodes_same = MaxNodes;   /* only the foreign floor grew; keep the local node sizing */
             force_treefree();
-            force_treeallocate(maxnodes_same, All.MaxPart);
+            force_treeallocate(maxnodes_same, All.MaxPartExpandable);
             /* drain a tree-alloc UVM OOM before rebuilding on a NULL-based tree (symmetric) */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
             goto let_build_attempt;   /* rebuild the whole tree with the larger arena */

@@ -92,7 +92,7 @@ void subfind(int num)
 	{
 	  //if(j == 5) {countall[j] = 0;}	/* this will prevent that the sink particles are treated separately */
 
-	  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+	  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPartExpandable);
 
 	  if(countall[j] > All.DesLinkNgb)
 	    {
@@ -155,7 +155,7 @@ void subfind(int num)
     {
       if((1 << j) & (FOF_DENSITY_SPLIT_TYPES))
 	{
-	  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+	  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPartExpandable);
 
 	  /* build index list of particles of selectes species */
 	  d = (struct unbind_data *) mymalloc("	  d", count[j] * sizeof(struct unbind_data));
@@ -217,7 +217,7 @@ void subfind(int num)
 
     }
 #else
-  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPartExpandable);
 
   t0 = my_second();
   if(ThisTask == 0)
