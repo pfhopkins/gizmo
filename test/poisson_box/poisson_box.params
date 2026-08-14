@@ -131,24 +131,24 @@ CosmicRay_SNeFraction       0.1
 InterstellarRadiationFieldStrength  1.0
 
 %---- Black holes (needed if BH module compiled in via STARFORGE defaults)
-SeedBlackHoleMass            0.5
-SeedAlphaDiskMass            0.0
-SeedBlackHoleMinRedshift     2.0
-SeedBlackHoleMassSigma       0.5
+SeedSinkMass                 0.5
+SeedReservoirMass            0.0
+SeedSinkMinRedshift          2.0
+SeedSinkMassSigma            0.5
 MinFoFMassForNewSeed         10.0
 TimeBetOnTheFlyFoF           1.01
-BlackHoleAccretionFactor     1.0
-BlackHoleEddingtonFactor     1e100
-BlackHoleNgbFactor           1.0
-BlackHoleMaxAccretionRadius  100.0
-BlackHoleRadiativeEfficiency 5e-7
-BlackHoleFeedbackFactor      1.0
-BH_FluxMomentumFactor        0.0
-BAL_f_accretion              0.7
-BAL_v_outflow                100.0
-BAL_internal_temperature     1.0e3
-BAL_wind_particle_mass       0.1
-BAL_wind_particle_mass_MS    0.01
+SinkAccretionFactor          1.0
+SinkEddingtonFactor          1e100
+SinkNgbFactor                1.0
+SinkMaxAccretionRadius       100.0
+SinkRadiativeEfficiency      5e-7
+SinkFeedbackFactor           1.0
+Sink_FluxMomentumFactor      0.0
+Sink_accreted_fraction       0.7
+Sink_outflow_velocity        100.0
+Sink_outflow_temperature     1.0e3
+Sink_outflow_particlemass    0.1
+Sink_outflow_particlemass_MS 0.01
 
 %---- Grackle (if COOL_GRACKLE compiled)
 GrackleDataFile              CloudyData_UVB=HM2012.h5

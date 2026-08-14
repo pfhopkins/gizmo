@@ -22,7 +22,7 @@ Max_Memory_Per_MPI_Task_in_MB     5000
 TreeRebuild_ActiveFraction        1.e-2
 Initial_Metallicity               0.35
 MPI_Buffersize_in_MB              100
-BlackHoleMaxAccretionRadius       100
+SinkMaxAccretionRadius            100
 Effective_Kernel_NeighborNumber   32
 Output_Directory                  output
 MaxSimulationWallTime_in_Seconds  1.72e9

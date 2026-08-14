@@ -33,7 +33,7 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0
-TimeMax     0.15
+TimeMax     0.05
 
 %---- Maximum and minimum timesteps allowed
 MaxSizeTimestep         0.1
@@ -131,25 +131,23 @@ CosmicRay_SNeFraction       0.1
 
 InterstellarRadiationFieldStrength  1.0
 
-%---- Black Hole accretion & formation
-SeedBlackHoleMass            5.00e-01
-SeedAlphaDiskMass            0.0
-SeedBlackHoleMinRedshift     2.0
-SeedBlackHoleMassSigma       0.5
+%---- Sink particle accretion, formation & feedback
+SeedSinkMass                 5.00e-01
+SeedReservoirMass            0.0
+SeedSinkMinRedshift          2.0
+SeedSinkMassSigma            0.5
 MinFoFMassForNewSeed         10.
 TimeBetOnTheFlyFoF           1.01
-BlackHoleAccretionFactor     1.0
-BlackHoleEddingtonFactor     1e100
-BlackHoleNgbFactor           1.0
-BlackHoleMaxAccretionRadius  1.00e+02
-BlackHoleRadiativeEfficiency 5e-7
-BlackHoleFeedbackFactor      1.0
-BH_FluxMomentumFactor        0.0
-BAL_f_accretion              0.7
-BAL_v_outflow                100.
-BAL_internal_temperature     1.0e3
-BAL_wind_particle_mass       1.00e-01
-BAL_wind_particle_mass_MS    1.00e-02
+SinkAccretionFactor          1.0
+SinkEddingtonFactor          1e100
+SinkNgbFactor                1.0
+SinkMaxAccretionRadius       1.00e+02
+SinkRadiativeEfficiency      5e-7
+SinkFeedbackFactor           1.0
+Sink_FluxMomentumFactor      0.0
+Sink_accreted_fraction       0.7
+Sink_outflow_velocity        100.
+Sink_outflow_temperature     1.0e3
 
 %---- Grackle cooling module
 GrackleDataFile              CloudyData_UVB=HM2012.h5
@@ -173,7 +171,7 @@ TabulatedCosmologyFile    CosmoTbl
 ErrTolTheta                  0.5
 ErrTolForceAcc               0.0025
 ErrTolIntAccuracy        0.01
-CourantFac               0.2
+CourantFac               0.1
 MaxRMSDisplacementFac    0.125
 MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10
