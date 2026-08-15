@@ -685,7 +685,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif /* host-only branch for HYDRO_GENERATE_TARGET_MESH */
 
 #ifdef EOS_GENERAL
-    if(soundspeed == 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / cell[i].density_for_energy());} else {cell[i].SoundSpeed = soundspeed;}
+    if(soundspeed == 0) {double rho_for_soundspeed = cell[i].density_for_energy(); /* every pressure term assembled above scales with the density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */
+        if(rho_for_soundspeed > 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / rho_for_soundspeed);} else {cell[i].SoundSpeed = sqrt(gamma_eos_index * (gamma_eos_index-1.) * cell[i].InternalEnergyPred);}
+    } else {cell[i].SoundSpeed = soundspeed;}
 #endif
 
     cell[i].Pressure = press;
