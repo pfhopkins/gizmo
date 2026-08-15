@@ -445,6 +445,23 @@ void gravity_tree(void)
     /* Arena mirror-update is a no-op under UVM-canonical (arena_P
      * aliases host P[]); the post-loop above already wrote canonical state. */
 
+#else /* SELFGRAVITY_OFF, and none of the exceptions above apply: the tree walk that would normally
+         zero-then-accumulate GravAccel/GravJerk/Potential never runs, so without this, those fields
+         are left holding whatever was in that mymalloc slot before this particle claimed it -- not a
+         computed zero, arbitrary leftover bytes. "No gravity" should mean zero force, not undefined
+         force: consumers such as HERMITE_INTEGRATION's do_the_kick() unconditionally copy GravAccel/
+         GravJerk into Hermite_OldAcc/OldJerk every step regardless of whether gravity is compiled in. */
+    for(int i : ActiveParticleList)
+    {
+        P[i].GravAccel = {};
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+        P[i].GravJerk = {};
+#endif
+#ifdef EVALPOTENTIAL
+        P[i].Potential = 0;
+#endif
+    }
+
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 

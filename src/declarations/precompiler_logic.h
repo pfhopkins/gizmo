@@ -485,9 +485,11 @@
 #endif
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
-#ifndef RANDOMIZE_GRAVTREE
-#define RANDOMIZE_GRAVTREE /* decorrelate tree-force errors between rebuilds (4a868f62) */
-#endif
+/* RANDOMIZE_GRAVTREE is deliberately NOT a default here. It was made one by 4a868f62 and
+   un-made by 25043743; measured on plummer_binaries it made the energy error 6-20x worse and
+   the run 1.7x slower, because randomisation trades systematic force error for stochastic
+   error -- a win for COM drift (18-63x better on hernquist/plummer) but a loss for a
+   collisional Hermite integrator. Enable it per-Config where the decorrelation is wanted. */
 #define SINGLE_STAR_TIMESTEPPING 0
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
