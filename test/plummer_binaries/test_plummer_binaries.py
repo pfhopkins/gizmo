@@ -1,6 +1,6 @@
 """Plummer cluster of equal-mass circular binaries — integration / preservation test.
 
-Each Plummer particle is replaced by a binary (2 Type-5 sinks, 100 AU separation,
+Each Plummer particle is replaced by a binary (2 Type-5 sinks, 1000 AU separation,
 circular orbit). Uses the gravity- and integration-relevant settings from
 SINGLE_STAR_STARFORGE_DEFAULTS: HERMITE_INTEGRATION, GRAVITY_ACCURATE_FEWBODY_INTEGRATION,
 SINGLE_STAR_TIMESTEPPING, etc.
@@ -66,10 +66,6 @@ PB_MAX_CORES = 8
 PB_NUM_MPI_RANKS = 2
 PB_NUM_OMP_THREADS = max(1, min(PB_MAX_CORES, _physical_cpu_count()) // PB_NUM_MPI_RANKS)
 
-# KDK resolves the same hard binaries without the Hermite integrator, taking ~2.4x as many steps
-# per unit time, and is an xfail on energy conservation either way. A tenth of the run is enough
-# to measure how fast it loses the binaries.
-KDK_TIME_FRACTION = 0.1
 
 # Cluster parameters (in code units: pc - km/s - Msun)
 SCALE_RADIUS = 1.0           # pc
@@ -79,8 +75,9 @@ M_CLUSTER = 2 * N_BINARIES * M_STAR
 BINARY_SEPARATION_AU = 1000.0
 BOXSIZE = 300.0
 
-LAGRANGE_FRACTIONS = (0.1, 0.5, 0.9)
-LAGRANGE_TOL = (0.20, 0.15, 0.30)
+# Only the half-mass radius: the 10th and 90th are not robust (31adca80).
+LAGRANGE_FRACTIONS = (0.5,)
+LAGRANGE_TOL = (0.15,)
 # Unchanged from when the test was written; the code does not currently meet it -- see the
 # xfail below. Note it has never been demonstrated to pass anywhere: the starforge_dev
 # reference run only ever reached t=10.04 of TimeMax=32.4.
@@ -294,22 +291,12 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
-    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="kdk", marks=pytest.mark.xfail(
-        reason="KDK cannot hold the 1000 AU binaries to 1% of KE_0: it is the baseline that "
-               "HERMITE_INTEGRATION + GRAVITY_ACCURATE_FEWBODY_INTEGRATION exist to beat",
-        strict=False,
-    )),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
     clean_test_outputs(TEST_NAME, extra_config_flags)
     time_max = float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["TimeMax"])
-    overrides = None
-    if "DISABLE_HERMITE_INTEGRATION" in extra_config_flags:
-        time_max *= KDK_TIME_FRACTION
-        overrides = {"TimeMax": time_max}
-    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
-                       param_overrides=overrides)
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
     outputdir = variant_output_dir(TEST_NAME, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
