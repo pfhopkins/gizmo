@@ -27,6 +27,7 @@ from gizmo.test import (
     default_omp_threads,
     flush_colorbar,
     assert_final_time,
+    get_cooling_tables,
     get_final_snapshot,
     variant_output_dir,
 )
@@ -263,6 +264,8 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
     extra_config_flags = wind_flags + (f"WIND_TEST_NRES={res}",) + cooling_flags
 
     generate_ics(res=res)
+    if "COOLING" in cooling_flags:
+        get_cooling_tables(str(TEST_DIR))
 
     # Set Sink_outflow_particlemass = 1e-2 * gas mass resolution
     m_gas = 50000.0 / res**3

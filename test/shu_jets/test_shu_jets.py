@@ -22,6 +22,7 @@ from gizmo.test import (
     build_and_run_test,
     flush_colorbar,
     assert_final_time,
+    get_cooling_tables,
     get_final_snapshot,
     default_omp_threads,
     default_mpi_ranks,
@@ -327,6 +328,8 @@ def assert_sink_mass(extra_config_flags):
 def test_shu_jets(num_mpi_ranks, num_omp_threads, eos_flags, merge_flags):
     extra_config_flags = merge_flags + eos_flags
     generate_ics()
+    if "COOLING" in extra_config_flags:
+        get_cooling_tables(str(TEST_DIR))
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags=extra_config_flags)
 
     final_snap = get_final_snapshot(TEST_NAME, extra_config_flags)

@@ -26,6 +26,7 @@ from gizmo.test import (
     default_omp_threads,
     flush_colorbar,
     assert_final_time,
+    get_cooling_tables,
     get_final_snapshot,
     variant_output_dir,
 )
@@ -123,6 +124,8 @@ def plot_density_slice(coords, rho, box_center, output_dir=".", suffix=""):
 )
 def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     generate_ics()
+    if "COOLING" in extra_config_flags:
+        get_cooling_tables(str(TEST_DIR))
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
     final_snap = get_final_snapshot(TEST_NAME, extra_config_flags)
