@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <string.h>
+#include <limits.h>
 
 
 #include "../declarations/allvars.h"
@@ -95,17 +96,94 @@ void read_ic(char *fname)
         }
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
-        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
-            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
-            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");
-            printf("  Raising PartAllocFactor adds ghost slots but also inflates P/CellP/tree storage and\n");
-            printf("  may not fix overlarge imports; consider more ranks/nodes or reducing ghost-import demand.\n");
+        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        gizmo_set_gas_capacity_from_maxpart();
+        All.MaxPartAssignable = All.MaxPart;   /* how many LOCAL particles a rank may be assigned, as
+                                                  opposed to how much storage it has.  The two start
+                                                  equal and the same expression on every rank makes the
+                                                  assignment cap uniform without communication. */
+        /* Fix, for the whole run, the largest particle capacity a rank may ever be raised to, and
+         * with it the gravity tree's node-index base.  Particle indices occupy
+         * [0,TreeNodeIndexBase) and every node/foreign-node/pseudo-particle index sits above it, so
+         * the base only has to exceed any local particle index that can ever occur; it is not a
+         * memory size and nothing is allocated from it.
+         *
+         * The ceiling divides the node's memory among the ranks sharing it and spends the whole
+         * share on particle slots.  That is a deliberate over-estimate -- the tree, transport
+         * buffers and the arena need room too -- because erring high costs almost nothing here
+         * while erring low would refuse a capacity the machine could have supplied.  Whether the
+         * memory is really there remains the allocator's answer at the moment it is asked.
+         * The second term keeps the tree's per-particle side arrays, which are sized from this
+         * ceiling, to a small share of the node: they cost a couple of dozen bytes per slot
+         * against a couple of thousand for the particle arrays, so on a run with substantial
+         * per-particle physics the memory term binds and this one never does; it only takes over
+         * for configurations whose particles are small enough that the ratio stops being tiny.
+         * Where the node's memory cannot be read, a multiple of the balanced particle count stands
+         * in -- it needs only to be comfortably above any capacity such a run would reach.
+         * A MAXIMUM across ranks keeps the value identical everywhere, which is what lets the node
+         * index base be a shared constant; on the homogeneous nodes these runs use, every rank
+         * computes the same number anyway.
+         *
+         * Whether the FULL index space (base plus the node, foreign-node and pseudo-particle
+         * ranges above it) fits an int depends on capacities that are not known until a tree is
+         * built, so the authoritative check lives in force_treeallocate.  A ceiling that leaves no
+         * room for the particle range is unusable, so ask for a stop and leave the base at 0: the
+         * tree-readiness checks then read "no tree" rather than accepting a base that collides with
+         * particle indices.  The stop drains at the poll below, before any of this is used. */
+        {
+            long long bytes_per_slot = (long long) sizeof(struct particle_data)
+                                     + 2 + 3 * (long long) sizeof(int);
+            if(All.TotN_gas > 0) {bytes_per_slot += (long long) sizeof(struct gas_cell_data);}
+            const long long tree_aux_bytes_per_slot = 2 * (long long) sizeof(int);   /* Father + Nextnode's particle segment */
+            const double    tree_aux_share_of_node  = 0.05;
+
+            /* Take the memory of the least generous node and the crowding of the most
+             * crowded one, so the share below is the smallest any rank actually has.  The
+             * result is the same number everywhere without a second reduction over it: a
+             * maximum over per-rank shares would instead let a partly-filled node -- one
+             * rank where its peers hold eight -- hand every other rank a share eight times
+             * what it owns, and the tree side arrays are allocated from this, not merely
+             * bounded by it. */
+            long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
+            (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
+            gizmo_node_comm_init();
+            long long ranks_per_node = (GizmoRanksThisNode > 0) ? (long long) GizmoRanksThisNode : 1;
+            if(mem_total_kb <= 0) {mem_total_kb = LLONG_MAX;}   /* unreadable here; let a peer that can read it decide */
+            MPI_Allreduce(MPI_IN_PLACE, &mem_total_kb,   1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+            MPI_Allreduce(MPI_IN_PLACE, &ranks_per_node, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+
+            /* Also stay within reach of what this run could plausibly need.  The memory
+             * terms alone say nothing about the problem size, so a small run on a large
+             * machine would size the tree side arrays for hundreds of millions of slots it
+             * will never hold -- and they are written in full at every tree build.  The
+             * starting capacity already carries the user's imbalance allowance, so a wide
+             * multiple of it is far above anything a run reaches while still being finite. */
+            long long cap = 16LL * (long long) All.MaxPart;
+            if(mem_total_kb > 0 && mem_total_kb != LLONG_MAX)
+            {
+                const long long share = mem_total_kb * 1024 / ranks_per_node;
+                const long long cap_mem = share / bytes_per_slot;
+                const long long cap_aux = (long long)(tree_aux_share_of_node * (double) share)
+                                          / tree_aux_bytes_per_slot;
+                if(cap_mem < cap) {cap = cap_mem;}
+                if(cap_aux < cap) {cap = cap_aux;}
+            }
+            if(cap < (long long) All.MaxPart) {cap = (long long) All.MaxPart;}   /* never below what is already allocated */
+            if(cap > (long long)(INT_MAX / 4)) {cap = (long long)(INT_MAX / 4);}
+            const long long cap_uniform = cap;   /* every rank computed this from the same reduced inputs */
+
+            if(cap_uniform < (long long) All.MaxPart)
+            {
+                if(ThisTask == 0) {printf("MaxPart=%d is too large for the tree's integer index space (the largest usable ceiling, %lld, is below the particle range). Use more ranks, or lower PartAllocFactor.\n", All.MaxPart, cap_uniform); fflush(stdout);}
+                endrun(90001021);
+            }
+            else
+            {
+                All.MaxPartExpandable = (int) cap_uniform;
+                All.TreeNodeIndexBase = All.MaxPartExpandable;
+                if(ThisTask == 0) {printf("Allocating %d particle slots per rank; capacity may rise to %d; tree node indices start at %d.\n", All.MaxPart, All.MaxPartExpandable, All.TreeNodeIndexBase); fflush(stdout);}
+            }
         }
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-        All.MaxPartGas = All.MaxPart;
-#endif
 
         /* All-rank preflight + allocate. allocate_memory(1) sets a SOFT bad-stop (not an
          * fatal hard-exit) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena

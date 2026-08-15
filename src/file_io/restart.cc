@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../domain/domain.h"
+#include "../gravity/let_data.h"
 
 static FILE *fd;
 
@@ -198,11 +199,31 @@ void restart(int modus)
 
 		  All.PartAllocFactor = save_PartAllocFactor;
 		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-		  All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-          All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
-#endif
+		  gizmo_set_gas_capacity_from_maxpart();
           new_MaxPart = All.MaxPart;
+          /* The assignment cap follows the value the USER asked for and keeps it for the rest of the
+           * run.  All.MaxPart, in contrast, goes back to the writer's value a few lines below so the
+           * serialized tree payload stays readable, and only reaches the requested value at the
+           * domain boundary.  The two are therefore deliberately unequal for the duration of this
+           * read: do not "tidy" them into agreement, and do not assert storage >= assignment cap
+           * globally -- that assertion is the business of resize_particle_storage, whose first call
+           * comes after the domain boundary has swapped the requested capacity in. */
+          All.MaxPartAssignable = All.MaxPart;
+          /* The run's capacity ceiling was fixed when the ICs were read and travels in the restart
+           * file; it also bounds the tree's node index base and its per-particle side arrays.
+           * Raising PartAllocFactor past it breaks that, so say so here where the cause is obvious
+           * rather than at the later tree alloc.  A restart onto more memory does not move the
+           * ceiling -- it was sized generously enough at the start that ordinary raises fit under
+           * it, and a run that genuinely needs more starts fresh. */
+          if(All.MaxPart > All.MaxPartExpandable)
+            {
+              printf("PartAllocFactor was raised so far that %d particle slots would exceed this run's ceiling of %d, which was fixed when it started. Restart with the original value, or start a fresh run at the larger one.\n",
+                     All.MaxPart, All.MaxPartExpandable);
+              fflush(stdout);
+              /* Skip this rank's payload: allocate_memory + the reads below would run at the very
+               * MaxPart just rejected.  Drains at the per-turn poll, like the other soft stops here. */
+              endrun(90001023); restart_status = 90001023; goto finish_turn;
+            }
 
 		  save_PartAllocFactor = -1;
 		}
@@ -241,7 +262,16 @@ void restart(int modus)
 
 	  if(modus)		/* read */
 	    {
-	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}	/* such that tree is still valid */
+	      /* Restore the WRITER's MaxPart for the rest of this read.  What this used to be FOR was
+	       * the tree: force_treeallocate published the particle-slot count from it, so the writer's
+	       * value had to be in place for the serialized Nextnode pseudo segment to land at the
+	       * offset the writer used.  That reason is gone -- the slot count now comes from the file
+	       * explicitly (below) -- and no remaining read of All.MaxPart was found between here and
+	       * the domain boundary, which allocates from MaxPartAssignable and then swaps the
+	       * requested capacity in.  It is kept because removing it is a decision in its own right,
+	       * not a side effect of changing what the tree reads.  Storage here was allocated at the
+	       * REQUESTED capacity, and the NumPart guard above ran against that same value. */
+	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}
 	    }
 
 
@@ -330,6 +360,29 @@ void restart(int modus)
 	  in(&nmulti, modus);
         in(&NTopleaves, modus);
         in(&NTopnodes, modus);
+        /* The tree node arrays are sized from the domain's local-particle cap, which changes
+           with the decomposition, so the node count this tree was built with travels in the
+           restart file: the reader reproduces the writer's node and foreign capacities for an
+           unedited restart, keeping the serialized node, pseudo-particle and Nextnode indices
+           below valid.
+           The LET foreign-node capacity travels too, and is handed to force_treeallocate verbatim
+           below rather than re-derived: the serialized node pointers encode it (pseudo-particles
+           start at TreeNodeIndexBase + MaxNodes + MaxForeignNodes), and one of its inputs,
+           PartAllocFactor, is a value the user may edit on a restart.
+           RuntimeMinLETForeignNodes, the run's ratcheted LET foreign-arena floor, travels so later
+           trees, which derive their own capacity, keep the run's ratchet. */
+        in(&MaxNodes, modus);
+        in(&MaxForeignNodes, modus);
+        byten(&RuntimeMinLETForeignNodes, sizeof(RuntimeMinLETForeignNodes), modus);
+        if(modus && MaxForeignNodes < 0)
+          {
+            printf("Restart file on task=%d carries a negative LET foreign-node capacity (%d), so the tree layout it describes cannot be reproduced.\n",
+                   ThisTask, MaxForeignNodes);
+            fflush(stdout);
+            /* soft: allocating and deserializing against an unusable layout would corrupt the tree.
+             * Skip this rank's payload, drain at the per-turn poll. */
+            endrun(90001026); restart_status = 90001026; goto finish_turn;
+          }
 	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
 	    {
 	      if(ThisTask == 0)
@@ -345,7 +398,14 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
-		  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+		  /* The reader must rebuild the layout the WRITER serialized, so the slot count comes
+		   * from the file, not from this rank's current capacity. The two are equal only while
+		   * the capacity never moves; once it can grow mid-step the writer's tree side arrays
+		   * were allocated with the smaller count, and its pseudo-particle segment sits at that
+		   * smaller offset in Nextnode[]. Allocating at the grown capacity would deserialize the
+		   * pseudo segment from the wrong offset -- the same physical-layout reason MaxNodes and
+		   * MaxForeignNodes are read from the file rather than re-derived. */
+		  force_treeallocate(MaxNodes, All.TreeParticleSlots, MaxForeignNodes);
 		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
 		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
 		   * drain at restart's existing all-rank poll. */
@@ -370,7 +430,7 @@ void restart(int modus)
 	      byten(Father, NumPart * sizeof(int), modus);
 
 	      byten(Nextnode, NumPart * sizeof(int), modus);
-	      byten(Nextnode + All.MaxPart, NTopnodes * sizeof(int), modus);
+	      byten(Nextnode + All.TreeParticleSlots, NTopnodes * sizeof(int), modus);
 
 	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
 	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);

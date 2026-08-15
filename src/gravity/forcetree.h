@@ -80,7 +80,11 @@ int    force_getcost_single(void);
 int    force_getcost_quadru(void);
 void   force_resetcost(void);
 void   force_setupnonrecursive(int no);
-void   force_treeallocate(int maxnodes, int maxpart);
+/* foreign_node_slots_exact: LET foreign-node CAPACITY to allocate verbatim; negative derives it,
+ * which is what every normal caller wants.  Only the restart read passes a value: the node pointers
+ * it is about to deserialize encode the writer's capacity (pseudo-particles start at
+ * TreeNodeIndexBase + MaxNodes + MaxForeignNodes), so the reader has to reproduce it exactly. */
+void   force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact = -1);
 /* Conservative per-particle radius used to seed Extnodes[no].hmax_per_type[Type]
  * bands. Mode B SYMMETRIC tree-prune reads these bands as an upper bound on
  * any leaf-policy-selectable reach for that type, so the band must dominate
@@ -106,6 +110,25 @@ int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
+int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
+
+/*! Can a particle created at this index be carried by the tree that is standing right now?
+ *  Father[] and Nextnode[]'s particle segment span All.TreeParticleSlots entries and are NOT resized
+ *  between rebuilds, so a slot being available in P[] does not by itself mean the live tree can index
+ *  it: inserting past those arrays would write out of bounds, and every later pass that reads a
+ *  particle's parent would read out of bounds too.  Creation sites ask this in addition to their
+ *  existing capacity checks, and decline the way they already decline when storage is short.
+ *  A tree built by force_treeallocate sizes these arrays from All.MaxPartExpandable, the run's
+ *  ceiling on the particle capacity, so the answer is currently yes for every index P[] can hold and
+ *  this costs one comparison.  It is kept rather than deleted because it states the requirement at
+ *  the sites that depend on it: if the ceiling ever became something a capacity could reach, these
+ *  are exactly the places that must decline.  With no tree standing the answer is also yes, because
+ *  there is nothing to outgrow -- not a licence to insert into a tree that is not there, which
+ *  force_add_element_to_tree refuses on its own. */
+static inline int gizmo_particle_index_fits_live_tree(int index)
+{
+    return (!force_tree_is_allocated()) || (index < All.TreeParticleSlots);
+}
 void   force_update_node(int no, int flag);
 void   force_update_size_of_parent_node(int no);
 

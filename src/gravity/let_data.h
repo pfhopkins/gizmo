@@ -197,8 +197,8 @@ static_assert(sizeof(struct LETNodeWire) % 8 == 0,
  * The receiver walk reads node fields from Nodes_base[] (CPU) / the GPU SoA, neither of which can
  * carry per-foreign-leaf particle identity (NODE is shared with the local tree and must not be
  * fattened).  These three parallel arrays hold the installed leaf identity for the foreign-node
- * range, sized MaxForeignNodes and indexed by foreign_slot = no - (MaxPart + MaxNodes) -- NOT the
- * ordinary node SoA index no - MaxPart.  Allocated/freed with the foreign-node arena in
+ * range, sized MaxForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase + MaxNodes) -- NOT the
+ * ordinary node SoA index no - TreeNodeIndexBase.  Allocated/freed with the foreign-node arena in
  * force_treeallocate/force_treefree; memset-0 reset on each LET exchange (let_run_exchange).  The GPU
  * mirror lives in the tree SoA (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
  * ---------------------------------------------------------------------- */
@@ -308,7 +308,8 @@ typedef enum {
  *  0 at startup; force_treebuild ratchets it up on a retryable overflow so the
  *  arena self-sizes to the run's evolving clustering.  force_treeallocate is the
  *  sole consumer.  NOT a parameter: All.LETAllocFactor is the input floor, this is
- *  the runtime adaptive floor.  Not restart-persisted (recomputed each run). */
+ *  the runtime adaptive floor.  Restart-persisted, since it co-determines the tree
+ *  foreign-arena layout a restart file's serialized node indices were written against. */
 extern long long RuntimeMinLETForeignNodes;
 
 /*! Since-start high-water of Numforeignnodes (the peak foreign nodes actually
@@ -333,7 +334,7 @@ let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         long long *foreign_needed_out);
 
 /*! Install received foreign nodes into Nodes_base[] / Extnodes_base[] /
- *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes): rebase each
+ *  SoA at slots [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+Numforeignnodes): rebase each
  *  wire-local sibling/nextnode to slot_base+wire, map LET_WIRE_EXIT to the owning
  *  topleaf's continuation, redirect each affected local topleaf's u.d.nextnode to
  *  the corresponding foreign subtree root.  Returns LET_OK on success.

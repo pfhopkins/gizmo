@@ -213,13 +213,13 @@ struct DomainKickPacked
  * alone does not bound the offset. */
 inline int top_level_node_in_range(int no)
 {
-  return (no >= All.MaxPart) && (no - All.MaxPart < NTopnodes);
+  return (no >= All.TreeNodeIndexBase) && (no - All.TreeNodeIndexBase < NTopnodes);
 }
 
 inline void report_node_out_of_top_level_range(int no)
 {
   printf("Task=%d force_finish_kick_nodes: node %d outside the top-level range [%d,%d)\n",
-         ThisTask, no, All.MaxPart, All.MaxPart + NTopnodes);
+         ThisTask, no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + NTopnodes);
   fflush(stdout);
   endrun(91562);
 }
@@ -229,7 +229,7 @@ inline int marked_top_level_slot(const int *node_slot, int no)
 {
   if(!top_level_node_in_range(no)) {return -1;}
   if(Extnodes[no].Flag != GlobFlag) {return -1;}
-  return node_slot[no - All.MaxPart];
+  return node_slot[no - All.TreeNodeIndexBase];
 }
 }  /* anonymous namespace */
 
@@ -309,8 +309,8 @@ void force_finish_kick_nodes(void)
      * the root, which repeats the shared upper part of the chain once per
      * record. Every node reached here is top-level (force_flag_localnodes marks
      * the entire ancestor chain of each top leaf), and the top-level tree is
-     * built parent-first from All.MaxPart, so descending node index orders
-     * children before their parents. */
+     * built parent-first from the tree's node index base, so descending node
+     * index orders children before their parents. */
     int *uniq = (int *) mymalloc("fut_uniq", (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
     /* Slot of a node in uniq[], indexed by the node's offset within the
      * top-level tree. Entries for nodes this call did not reach are never read
@@ -348,7 +348,7 @@ void force_finish_kick_nodes(void)
 
     struct TopNodeKick *acc = (struct TopNodeKick *)
         mymalloc("fut_acc", (nuniq > 0 ? nuniq : 1) * sizeof(struct TopNodeKick));
-    for(int k = 0; k < nuniq; k++) {node_slot[uniq[k] - All.MaxPart] = k; acc[k] = {};}
+    for(int k = 0; k < nuniq; k++) {node_slot[uniq[k] - All.TreeNodeIndexBase] = k; acc[k] = {};}
 
     for(i = 0; i < totDomainNumChanged; i++)
       {

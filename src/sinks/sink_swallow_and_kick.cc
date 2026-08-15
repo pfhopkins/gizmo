@@ -89,7 +89,10 @@ static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
 #if defined(SINGLE_STAR_FB_LOCAL_RP)
     loc->mom_budget = (MyFloat)((double)loc->Luminosity * (double)loc->Dt / C_LIGHT_CODE);
 #else
-    loc->mom_budget = (MyFloat)(sink_lum_bol((double)loc->Mdot, (double)loc->Sink_Mass, -1)
+    /* The particle index is required, not optional: with a protostellar-evolution
+     * model the luminosity is a cached per-star quantity read from the particle,
+     * and the accretion rate and mass arguments are not used at all. */
+    loc->mom_budget = (MyFloat)(sink_lum_bol((double)loc->Mdot, (double)loc->Sink_Mass, i)
                                  * (double)loc->Dt / C_LIGHT_CODE);
 #endif
 #endif
@@ -552,9 +555,21 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
     printf("Task %d wants to create %g mass in wind with %d new particles each of mass %g \n .. splitting sink %d using hydro element %d\n", ThisTask,total_mass_in_winds, n_particles_split, mass_of_new_particle, i, dummy_cell_i_to_clone);
 
-    if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart)
+    /* the spawned wind elements are gas, taking a slot in both P[] and CellP[] at the same index, so
+       both capacities have to hold them */
+    if(!gizmo_particle_index_fits_live_tree(NumPart + num_already_spawned + n_particles_split))
     {
-        printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart);
+        /* Storage has room; the tree standing right now does not reach these slots, and spawned wind
+         * elements are inserted into it.  Decline this spawn the way the routine already declines
+         * when it is out of room -- the wind is spawned after the next rebuild instead. */
+        printf("On Task=%d we skip spawning %d wind elements from sink %d: the standing tree has only %d particle slots. They can spawn after the next tree rebuild.\n", ThisTask, n_particles_split, i, All.TreeParticleSlots);
+        fflush(stdout);
+        return 0;
+    }
+    if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart ||
+       NumPart + num_already_spawned + n_particles_split >= All.MaxPartGas)
+    {
+        printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d, All.MaxPartGas=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart, All.MaxPartGas);
         fflush(stdout); endrun(8888);
         return 0;   /* no space left: honor the no-split contract (return 0) instead of spawning past MaxPart */
     }

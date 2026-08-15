@@ -84,7 +84,16 @@ bool gizmo_nlr_phase0_diag_enabled(void);
 static int NumPart_before_ghost = -1;
 static int N_gas_before_ghost = -1;
 static int NumGhostParticles = 0;
-static int PreviousGhostCount = 0; /* ghost count from the most recent completed exchange, for domain headroom */
+/* The largest ghost import this rank has completed, over the epoch running now and the one before
+ * it.  The capacity a rank needs is set by its worst import, not its most recent one, and ghost
+ * demand is strongly uneven between ranks, so this is kept per rank and is the measured term the
+ * epoch sizing asks for.  Two epochs rather than one because a single quiet epoch would otherwise
+ * be enough to justify releasing storage that the next one immediately asks for again, and paying
+ * two migrations to save memory for one epoch is a poor trade.  Neither value is carried across a
+ * restart: a restored capacity is already whatever the run had grown to, and the sizing refuses to
+ * lower it until it has observed an import. */
+static int GhostEpochHighWater = 0;
+static int GhostPreviousEpochHighWater = 0;
 
 /* Ghost provenance map: for each ghost particle, the home MPI rank and index.
    Used by ghost_writeback to reverse-communicate j-particle modifications.
@@ -759,11 +768,18 @@ static inline double ghost_tile_effective_radius(int j, unsigned int supply_mask
 }
 
 /* Pure particle-slot fit predicate: do `required` total (local+ghost) particles
- * fit P[]/CellP[] (All.MaxPart)? Policy (what to do on a miss) lives in the
- * caller, NOT here — keep this free of multi-space/budget logic. */
+ * fit P[] and CellP[]? Policy (what to do on a miss) lives in the caller, NOT
+ * here — keep this free of multi-space/budget logic.
+ * Both capacities are tested because an imported ghost occupies P[j] and, when
+ * the run has gas, CellP[j] at the same index: the received range is written to
+ * CellP[NumPart..] whatever the ghost types are. The two capacities are equal by
+ * construction (gizmo_set_gas_capacity_from_maxpart), so the gas test is
+ * redundant today and states the requirement rather than assuming it. */
 static inline int ghost_particle_slots_fit(long long required)
 {
-    return (required <= (long long)All.MaxPart) ? 1 : 0;
+    if(required > (long long)All.MaxPart) {return 0;}
+    if(All.TotN_gas > 0 && required > (long long)All.MaxPartGas) {return 0;}
+    return 1;
 }
 
 /* SSOT for "what a send slot contains": one exported particle's P (+ gas CellP,
@@ -1178,7 +1194,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * later packing allocs are freed explicitly by the normal path). It does NOT
      * touch NumGhostParticles: on normal completion that field already holds the
      * materialised ghost count and MUST survive (ghost-writeback / cleanup /
-     * PreviousGhostCount read it); the fallback bail resets it explicitly. */
+     * cleanup reads it); the fallback bail resets it explicitly. */
     auto tile_preflight_cleanup = [&]() {
         myfree(send_disp); myfree(recv_disp);
         myfree(send_count); myfree(recv_count);
@@ -1331,13 +1347,22 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
     }
-    /* Warn if ghost particles used >80% of available headroom */
-    if(NumPart > 0.8 * All.MaxPart) {
-        double usage_frac = (double)NumPart / (double)All.MaxPart;
-        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). PartAllocFactor (currently %.2f) "
-                      "adds ghost slots but also inflates P/CellP/tree storage and may not fix overlarge "
-                      "imports; consider more ranks/nodes or reducing ghost-import demand.",
-                      100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
+    /* Report a rank that is approaching the largest capacity this run may ever reach.  The test is
+     * against that ceiling and not against the current capacity: the current one is raised whenever
+     * an import does not fit, so running close to it is the intended state and saying so every time
+     * would be noise on every rank of every exchange.  Approaching the ceiling is the condition that
+     * actually ends a run, and it is reported once, because it is a property of the run rather than
+     * of the exchange that happened to notice it. */
+    if(All.MaxPartExpandable > 0 && NumPart > 0.8 * All.MaxPartExpandable) {
+        static int reported_near_ceiling = 0;
+        if(!reported_near_ceiling) {
+            reported_near_ceiling = 1;
+            PRINT_WARNING("Ghost exchange: task %d holds %d particles, %.0f%% of the %d it can ever hold. "
+                          "Local particles plus imported ghosts are approaching the ceiling fixed at startup; "
+                          "more ranks/nodes, or a smaller ghost-import demand, would relieve it.",
+                          ThisTask, NumPart, 100.0 * (double)NumPart / (double)All.MaxPartExpandable,
+                          All.MaxPartExpandable);
+        }
     }
 
     /* Cleanup: later packing allocs (mymalloc LIFO + malloc), then the shared
@@ -1678,7 +1703,7 @@ static char *compute_matched_walk_export(
     const double walker_j_reach_scale = spec->j_radius_scale * spec->safety_factor;
     /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
      * envelope Alltoallv below / the caller's compare Allreduce). */
-    int ok_local = (All.MaxPart > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
+    int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
     int ok_all = 0;
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return NULL; }
@@ -2422,17 +2447,37 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int total_send = count_range_ok ? (int)total_send_ll : 0;
     int total_recv = count_range_ok ? (int)total_recv_ll : 0;
 
+    /* Ghosts cannot be refused: this is the last-resort Mode-A discovery and there is nothing
+     * further to fall back to, so an import that does not fit the current capacity raises it.
+     * The capacity is the size of one memory block, and growing it is legal here with the gravity
+     * tree standing and no ghost yet written -- that is what makes it movable mid-step. The need is
+     * EXACT, since request-driven discovery already counted it, so nothing is added on top: a
+     * capacity only ever rises, and a margin would raise the run's footprint permanently on the
+     * strength of one crowded step. Whether the memory exists is the allocator's answer rather than
+     * a prediction of it; on failure the resize requests a controlled stop and leaves every array at
+     * a capacity the advertised one is backed by. Purely local -- no communication, and nothing on
+     * the common path but one comparison. Runs BEFORE the pack so the capacity is settled before
+     * anything is written at &P[NumPart]; the guard below still decides whether the append happens. */
+    {
+        const long long required = (long long) NumPart + total_recv_ll;
+        if(count_range_ok && required > (long long) All.MaxPart && required <= (long long) INT_MAX) {
+            (void) resize_particle_storage((int) required);
+        }
+    }
+
     /* Check space (mirrors legacy guard).  Request-driven is the last-resort
      * Mode-A discovery — there is NO further fallback — so a count/displacement
      * overflow of the int MPI transport range, or ghosts that would not fit
-     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below. */
+     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below.
+     * This stays the ONE predicate that decides whether the append may happen: if
+     * the growth above was refused or failed, it is this guard that stops the run. */
     if(!count_range_ok) {
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
-        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor, add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed the particle capacity and the capacity could not be raised to hold it (add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
     }
     /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
      * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
@@ -2624,7 +2669,7 @@ void ghost_exchange_cleanup(void)
      * NumGhostParticles>0 — a cleanup from the no-ghost-imported state is
      * a valid signal that bumps the epoch. */
     gpu_sidx_notify_ghost_cleanup();
-    PreviousGhostCount = NumGhostParticles; /* save for domain decomposition headroom */
+    if(NumGhostParticles > GhostEpochHighWater) {GhostEpochHighWater = NumGhostParticles;}
     NumPart = NumPart_before_ghost;
     N_gas = N_gas_before_ghost;
     NumGhostParticles = 0;
@@ -2709,7 +2754,16 @@ unsigned long long ghost_provenance_epoch(void) { return g_ghost_provenance_epoc
    for external-CSR consumers (see neighbor_loop_runner.h). */
 int ghost_pool_is_live(void) { return (NumPart_before_ghost >= 0) ? 1 : 0; }
 int ghost_get_num_ghosts(void) { return NumGhostParticles; }
-int ghost_get_previous_count(void) { return PreviousGhostCount; }
+int ghost_get_epoch_high_water(void)
+{
+    return (GhostPreviousEpochHighWater > GhostEpochHighWater) ? GhostPreviousEpochHighWater
+                                                               : GhostEpochHighWater;
+}
+void ghost_reset_epoch_high_water(void)
+{
+    GhostPreviousEpochHighWater = GhostEpochHighWater;
+    GhostEpochHighWater = 0;
+}
 int ghost_get_num_local(void)  { return (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart; }
 int *ghost_get_home_rank(void)  { return ghost_home_rank_map; }
 int *ghost_get_home_index(void) { return ghost_home_index_map; }

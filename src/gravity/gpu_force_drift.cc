@@ -123,7 +123,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * by a runtime restart. */
     if(drift_table_refresh_() != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch on NULL drift table */
 
-    int      MaxPart        = All.MaxPart;
+    int      tree_base        = All.TreeNodeIndexBase;
     int      n_local_nodes  = Numnodestree;
     int      n_foreign_nodes = Numforeignnodes;
     int      maxNodes_snap  = MaxNodes;               /* foreign-range base */
@@ -140,8 +140,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #pragma omp parallel for schedule(static)
     for(int kk = 0; kk < n_nodes; kk++) {
         int no_kk;
-        if(kk < n_local_nodes) no_kk = MaxPart + kk;
-        else                   no_kk = MaxPart + maxNodes_snap + (kk - n_local_nodes);
+        if(kk < n_local_nodes) no_kk = tree_base + kk;
+        else                   no_kk = tree_base + maxNodes_snap + (kk - n_local_nodes);
         dilation_dev[kk] = return_node_timestep_dilation_factor(no_kk);
     }
 #endif
@@ -154,8 +154,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     double   logTMax        = drift_table_logTimeMax_;
     const double *dt_table  = drift_table_dev_;
 
-    /* Use the SHIFTED pointers (Nodes = Nodes_base - MaxPart, Extnodes = Extnodes_base - MaxPart)
-     * so that Nodes_uvm[MaxPart + k] == Nodes_base[k] for all k in [0, Numnodestree). */
+    /* Use the SHIFTED pointers (Nodes = Nodes_base - tree_base, Extnodes = Extnodes_base - tree_base)
+     * so that Nodes_uvm[tree_base + k] == Nodes_base[k] for all k in [0, Numnodestree). */
     struct NODE     *Nodes_uvm    = Nodes;
     struct extNODE  *Extnodes_uvm = Extnodes;
 
@@ -179,17 +179,17 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
          * [n_local_nodes, n_local_nodes + n_foreign_nodes) drives foreign
          * nodes installed by LET unpack (slot index in [0, Numforeignnodes)).
          * SoA index `k` differs from iteration index for foreign nodes:
-         *   local:    k_soa = kk          ; no = MaxPart + kk
+         *   local:    k_soa = kk          ; no = tree_base + kk
          *   foreign:  k_soa = maxNodes_snap + (kk - n_local_nodes)
-         *             no    = MaxPart + maxNodes_snap + (kk - n_local_nodes) */
+         *             no    = tree_base + maxNodes_snap + (kk - n_local_nodes) */
         int k, no;
         if(kk < n_local_nodes) {
             k  = kk;
-            no = MaxPart + kk;
+            no = tree_base + kk;
         } else {
             int slot = kk - n_local_nodes;
             k  = maxNodes_snap + slot;
-            no = MaxPart + maxNodes_snap + slot;
+            no = tree_base + maxNodes_snap + slot;
         }
         if(Nodes_uvm[no].Ti_current == ti_target) {return;}
 

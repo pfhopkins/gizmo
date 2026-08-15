@@ -171,17 +171,17 @@ static inline double mode_b_node_symmetric_radius(int no,
  * are stable between tree builds; per-call rebuild avoids any staleness). */
 void ModeBTopleafMap::build(void)
 {
-    const int max_part = All.MaxPart;
+    const int tree_base = All.TreeNodeIndexBase;
     int max_off = -1;
     for(int i = 0; i < NTopleaves; i++) {
-        const int off = DomainNodeIndex[i] - max_part;
+        const int off = DomainNodeIndex[i] - tree_base;
         if(off < 0) { topnode_map_size = 0; return; }   /* malformed map: disable topleaf detection (walk still exports via pseudo branch) */
         if(off > max_off) max_off = off;
     }
     topnode_map_size = max_off + 1;
     leaf_of_topnode.assign(topnode_map_size, -1);
     for(int i = 0; i < NTopleaves; i++) {
-        leaf_of_topnode[DomainNodeIndex[i] - max_part] = i;
+        leaf_of_topnode[DomainNodeIndex[i] - tree_base] = i;
     }
 }
 
@@ -214,16 +214,19 @@ static void mode_b_walk_impl(const double pos[3],
                              ModeBExportSink* export_out,
                              ModeBDriftCounters* drift_ctr)
 {
-    if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
+    if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
-    const int max_part  = All.MaxPart;
-    const int pseudo_start = max_part + MaxNodes + MaxForeignNodes;
+    const int tree_base  = All.TreeNodeIndexBase;
+    const int pseudo_start = tree_base + MaxNodes + MaxForeignNodes;
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
     int no = start_no;
 
     while(no >= 0) {
-        if(no < max_part) {
+        if(no >= All.TreeParticleSlots && no < tree_base) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+            endrun(90001024); no = -1; continue;}
+        if(no < All.TreeParticleSlots) {
             /* Particle leaf. Only return domain-owned local particles (not a
              * ghost import). cand_out==nullptr on a pure export-discovery walk. */
             if(cand_out && no < num_local &&
@@ -276,7 +279,7 @@ static void mode_b_walk_impl(const double pos[3],
              * that opened it (traversal reach == export reach) and skip to the
              * sibling REGARDLESS (no owned-local candidates below a remote topleaf). */
             if(do_open && export_out) {
-                const int leaf = topleaf_map->topleaf_of(no, max_part);
+                const int leaf = topleaf_map->topleaf_of(no, tree_base);
                 if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
                     export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
                     no = nop->u.d.sibling;
@@ -286,7 +289,7 @@ static void mode_b_walk_impl(const double pos[3],
             if(do_open) {
                 const int child = nop->u.d.nextnode;
                 /* Legacy foreign-subtree skip (ALL walk modes): an imported
-                 * foreign subtree (post-LET rewire; nodes in [MaxPart+MaxNodes,
+                 * foreign subtree (post-LET rewire; nodes in [TreeNodeIndexBase+MaxNodes,
                  * pseudo_start)) holds NO owned-local P[] candidates and NO
                  * pseudo-nodes (probe-verified), so no walk mode can gain
                  * anything by descending it — legacy never descends remote
@@ -294,7 +297,7 @@ static void mode_b_walk_impl(const double pos[3],
                  * capable walks (the topleaf branch above skips first); it
                  * covers the malformed-topleaf-map fallback and the plain
                  * local-candidate walk. */
-                if(child >= max_part + MaxNodes && child < pseudo_start) {
+                if(child >= tree_base + MaxNodes && child < pseudo_start) {
                     no = nop->u.d.sibling;
                 } else {
                     no = child;
@@ -318,7 +321,7 @@ static void mode_b_walk_impl(const double pos[3],
                     int do_export = 1;
                     if(!oneway) {   /* re-test at the topleaf's OWN box + per-type reach */
                         const int tl_node = DomainNodeIndex[leaf];
-                        if(tl_node >= max_part && tl_node < pseudo_start) {
+                        if(tl_node >= tree_base && tl_node < pseudo_start) {
                             const double node_h = mode_b_node_symmetric_radius(tl_node, type_mask, j_reach_scale);
                             const double R_exp_tl = (node_h > h_q) ? node_h : h_q;
                             do_export = sphere_aabb_overlap(pos, &Nodes[tl_node], R_exp_tl);
@@ -327,7 +330,7 @@ static void mode_b_walk_impl(const double pos[3],
                     if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
                 }
             }
-            no = Nextnode[no - MaxNodes - MaxForeignNodes];
+            no = Nextnode[All.TreeParticleSlots + (no - tree_base - MaxNodes - MaxForeignNodes)];
         }
     }
 }
@@ -345,7 +348,7 @@ void mode_b_local_neighbor_walk(const double pos[3],
                                 ModeBDriftCounters* drift_ctr)
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
-                     /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
+                     /*start_no=*/All.TreeNodeIndexBase, /*stop_at_toplevel=*/false,
                      &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr, drift_ctr);
 }
 
@@ -367,7 +370,7 @@ void mode_b_walk_and_export(const double pos[3],
                             ModeBDriftCounters* drift_ctr)
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
-                     /*start_no=*/All.MaxPart, /*stop_at_toplevel=*/false,
+                     /*start_no=*/All.TreeNodeIndexBase, /*stop_at_toplevel=*/false,
                      cand_out, &topleaf_map, &sink, drift_ctr);
 }
 
@@ -385,15 +388,15 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   double j_reach_scale,
                                   ModeBDriftCounters* drift_ctr)
 {
-    if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
-    const int max_part      = All.MaxPart;
-    const int pseudo_start  = max_part + MaxNodes + MaxForeignNodes;
+    if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
+    const int tree_base      = All.TreeNodeIndexBase;
+    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
     for(int k = 0; k < n_nodes; k++) {
         const int nl = node_list[k];
         if(nl < 0) break;   /* -1 terminator (legacy NodeList convention) */
         /* Defensive: a start-node arrives over MPI; it must be an internal
          * node index. Skip a corrupt entry rather than dereference OOB. */
-        if(nl < max_part || nl >= pseudo_start) continue;
+        if(nl < tree_base || nl >= pseudo_start) continue;
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
         mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                          start, /*stop_at_toplevel=*/true,

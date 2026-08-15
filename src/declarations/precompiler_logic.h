@@ -1200,10 +1200,14 @@
 
 #if defined(GALSF) || defined(SINK_PARTICLES) || defined(RADTRANSFER) || defined(OUTPUT_DENS_AROUND_NONGAS) || defined(CHIMES) || defined(RT_REPROCESS_INJECTED_PHOTONS)
 #define DO_DENSITY_AROUND_NONGAS_PARTICLES
-#if !defined(ALLOW_IMBALANCED_GASPARTICLELOAD)
-#define ALLOW_IMBALANCED_GASPARTICLELOAD
 #endif
-#endif
+
+/* ALLOW_IMBALANCED_GASPARTICLELOAD is retired: the gas-cell capacity now always follows the
+   particle capacity (see gizmo_set_gas_capacity_from_maxpart), so what the flag used to request
+   is unconditional. Imported ghosts share the particle index space and a gas ghost can land at
+   any index in that range, so a smaller CellP[] cannot be made safe. A run with no gas anywhere
+   still allocates no CellP[]. A config that still sets the flag builds and runs unchanged: it asks
+   for the behaviour that is now unconditional. */
 
 #if defined(SINK_SWALLOWGAS)
 #define SINK_FOLLOW_ACCRETED_COM

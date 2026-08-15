@@ -1548,8 +1548,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args);
  * ========================================================================== */
 template <typename Spec>
 struct NlrIterDriver {
-    /* Driver-owned for whole call. */
-    const neighbor_loop_args_iterative& args;
+    /* THE call's live argument view, owned by run_neighbor_loop_iterative and shared with
+     * it by reference: the runner's local copy and this member are two names for ONE object.
+     * A ghost import can move P[]/CellP[] mid-call (the particle capacity may be raised to
+     * fit an import), so the cached base pointers and count are refreshed HERE, in place,
+     * at the two points they can change.  There is deliberately no second, unrefreshed copy:
+     * a hook that reads a stale P[] reads freed storage, which is a machine-dependent crash
+     * on one path and a silent wrong answer on another.
+     * (Binding by reference makes the driver non-assignable, which it already is -- it is
+     * constructed once per call and never copied.) */
+    neighbor_loop_args_iterative& args;
     typename Spec::CallScalars          cs;          /* value-owned, NOT a reference */
 
     int iter_index;                                  /* 0-based; shared across all subgroups */
@@ -1628,14 +1636,6 @@ struct NlrIterDriver {
     std::vector<bool>                 mode_a_csr_valid;              /* [num_subgroups] */
 
 
-    /* effective_args: writable copy of the base
-     * neighbor_loop_args slice. Mode A iter mutates num_total/P/CellP after
-     * ghost import to reflect the imported-ghost pool (mirrors non-iter
-     * effective_args refresh at runner.cc:2046-2051). Mode B leaves it
-     * equal to the original base args (lazy-drift contract — Mode B reads
-     * owner-local args.P[j] directly). All per-iter dispatch helpers read
-     * effective_args.num_total / P / CellP, NOT args.num_total / P / CellP. */
-    neighbor_loop_args                effective_args;
 
     /* Constructor (runner-private; only invoked inside run_neighbor_loop_iterative<Spec>):
      *   - Resizes per-subgroup vectors to args.num_subgroups.
@@ -1646,7 +1646,7 @@ struct NlrIterDriver {
      *   - AccumData NOT zeroed here — runner zeros via Spec::zero_accum at the start of each iter.
      *   - DOES NOT touch ctx (path-dependent init via initialize_device_context_*).
      * Definition in mesh/neighbor_loop_runner.cc. */
-    explicit NlrIterDriver(const neighbor_loop_args_iterative& a,
+    explicit NlrIterDriver(neighbor_loop_args_iterative& a,
                            const typename Spec::CallScalars& s);
 
     /* Destructor frees all UVM allocations + cleans DeviceContext IF
@@ -1721,6 +1721,25 @@ struct AfterIterContext {
     const typename Spec::CallScalars& scalars;       /* driver-owned; whole-call lifetime */
     typename Spec::IterScratch&       scratch;       /* mutable; PERSISTS across iters (allocated/zeroed once at iter 0) */
 };
+
+/*! The argument view a loop is about to hand to a Spec hook or to a device context must
+ *  describe the storage that exists NOW.  A ghost import can raise the particle capacity
+ *  and move P[]/CellP[] part way through a call, and a view captured before that points at
+ *  released memory: reading it faults where the old pages were returned to the system and
+ *  quietly returns pre-import values where they were not, so the same defect shows up as a
+ *  crash on one machine and a wrong answer on another.  This is one comparison at a loop
+ *  boundary, never per particle.  CellP is absent by design in a run with no gas, and a
+ *  count above the live one is legal only after the ghost pool is released, so this belongs
+ *  before that point.
+ *  Reads the particle globals, so it relies on the caller's TU having pulled in
+ *  declarations/allvars.h -- the same dependency this header already carries. */
+static inline int nlr_args_view_is_live(const neighbor_loop_args& a)
+{
+    if(a.P != P) {return 0;}
+    if(a.num_total != NumPart) {return 0;}
+    if(a.CellP != nullptr && a.CellP != CellP) {return 0;}
+    return 1;
+}
 
 /* ============================================================================
  * SFINAE detectors for iterative Spec hooks.

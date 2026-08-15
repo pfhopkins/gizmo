@@ -29,7 +29,8 @@ extern "C" int gpu_topology_finalize_father(int n)
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
+    int tree_slots = All.TreeParticleSlots;
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
@@ -67,31 +68,31 @@ extern "C" int gpu_topology_finalize_father(int n)
         father_soa[k]   = -1;
         bitflags_soa[k] = 0u;
     });
-    Kokkos::parallel_for("topo_father_init_parts", MaxPart, KOKKOS_LAMBDA(int i) {
+    Kokkos::parallel_for("topo_father_init_parts", tree_slots, KOKKOS_LAMBDA(int i) {
         Father_uvm[i] = -1;
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_father_init", n);
 
     /* Main pass: one thread per internal node.  For each occupied child slot,
-     * write that child's father back to this node (absolute index = MaxPart + k).
-     * Internal child  -> father_soa[child - MaxPart] = parent_abs.
+     * write that child's father back to this node (absolute index = tree_base + k).
+     * Internal child  -> father_soa[child - tree_base] = parent_abs.
      * Particle child  -> Father_uvm[child]           = parent_abs.
-     * Pseudo-particle children (>= MaxPart + MaxNodes) carry no per-particle
-     * Father[] entry (matches FUNR which only sets Father for no < MaxPart). */
+     * Pseudo-particle children (>= tree_base + MaxNodes) carry no per-particle
+     * Father[] entry; Father[] is written only for real particle slots (no < tree_slots). */
     int MaxNodes_ = MaxNodes;
     Kokkos::parallel_for("topo_father_main", n, KOKKOS_LAMBDA(int k) {
-        int parent_abs = MaxPart + k;
+        int parent_abs = tree_base + k;
         long base = (long)k * 8;
         for(int s = 0; s < 8; s++) {
             int c = suns_backup[base + s];
             if(c < 0) {continue;}
-            if(c < MaxPart) {
+            if(c < tree_slots) {
                 /* particle */
                 Father_uvm[c] = parent_abs;
-            } else if(c < MaxPart + MaxNodes_) {
+            } else if(c >= tree_base && c < tree_base + MaxNodes_) {
                 /* internal node */
-                father_soa[c - MaxPart] = parent_abs;
+                father_soa[c - tree_base] = parent_abs;
             }
             /* else: pseudo-particle — no Father[] entry */
         }
@@ -107,7 +108,7 @@ extern "C" int gpu_topology_finalize_sibling(int n)
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
@@ -121,25 +122,25 @@ extern "C" int gpu_topology_finalize_sibling(int n)
     int *father_soa  = soa->father;
     int *sibling_soa = soa->sibling;
 
-    /* One thread per internal node k (absolute id = MaxPart + k).
+    /* One thread per internal node k (absolute id = tree_base + k).
      * Walk up via father chain until we find a parent slot whose later
      * positions contain an occupied entry — that's the sibling.  Reaching
-     * a parent_abs < MaxPart (i.e. -1 for root) means no sibling -> -1.
+     * a parent_abs < tree_base (i.e. -1 for root) means no sibling -> -1.
      *
      * Cost is O(depth * 8) per thread.  For Phil's clustered FIRE/STARFORGE
      * runs depth maxes around 30-50; per-thread work is bounded and uniform
      * enough for good GPU occupancy.  All reads are from suns_backup and
      * father_soa, both SharedSpace UVM. */
     Kokkos::parallel_for("topo_sibling_walk", n, KOKKOS_LAMBDA(int k) {
-        int cur_abs = MaxPart + k;
+        int cur_abs = tree_base + k;
         int found = -1;
         for(int safety = 0; safety < 64; safety++) {
-            int parent_abs = father_soa[cur_abs - MaxPart];
-            if(parent_abs < MaxPart) {
+            int parent_abs = father_soa[cur_abs - tree_base];
+            if(parent_abs < tree_base) {
                 /* Reached root or hit an unset father (defensive). */
                 break;
             }
-            long pb = (long)(parent_abs - MaxPart) * 8;
+            long pb = (long)(parent_abs - tree_base) * 8;
             /* Locate cur_abs in parent's suns. */
             int slot = -1;
             for(int s = 0; s < 8; s++) {
@@ -204,7 +205,6 @@ extern "C" int gpu_node_reset_ephemeral(int n)
      * All_dev here and can be stale). Capture once to locals so the
      * Kokkos lambda [=] captures the correct host values. */
     const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
-    int MaxPart = host_all->MaxPart;
     integertime ti_current = host_all->Ti_Current;
     int         glob_flag  = GlobFlag;
 
@@ -212,9 +212,9 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     struct extNODE *Extnodes_uvm = Extnodes_base;
 
     Kokkos::parallel_for("node_reset_ephemeral", n, KOKKOS_LAMBDA(int k) {
-        /* k is the SoA index; absolute Nodes[] index is MaxPart + k.
+        /* k is the SoA index; absolute Nodes[] index is All.TreeNodeIndexBase + k.
          * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
-         * Nodes_base - MaxPart), so we index directly with k. */
+         * Nodes_base - All.TreeNodeIndexBase), so we index directly with k. */
         Nodes_uvm[k].GravCost          = 0;
         Nodes_uvm[k].Ti_current        = ti_current;
         Extnodes_uvm[k].dp             = {};
@@ -232,9 +232,9 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     return 0;
 }
 
-extern "C" int *gpu_father_alloc(int maxpart)
+extern "C" int *gpu_father_alloc(int tree_particle_slots)
 {
-    size_t bytes = (size_t)maxpart * sizeof(int);
+    size_t bytes = (size_t)tree_particle_slots * sizeof(int);
     if(bytes == 0) {return NULL;}
     /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
        controlled-stop path (force_treeallocate) fires instead of a hard terminate. */

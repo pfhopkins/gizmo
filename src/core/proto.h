@@ -144,6 +144,17 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
 }
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
+/* SSOT for the gas-cell capacity: CellP[] is indexed by the PARTICLE index, so it must
+   span the same index range as P[] whenever any gas exists. Imported ghosts are appended
+   into that shared index space above the local particles and a gas ghost can land at any
+   index in the imported range, so a gas record is reachable at any index P[] can reach.
+   A run with no gas anywhere allocates no CellP[] at all. Call this after every change to
+   All.MaxPart; never assign All.MaxPartGas directly. */
+static inline void gizmo_set_gas_capacity_from_maxpart(void)
+{
+    All.MaxPartGas = (All.TotN_gas > 0) ? All.MaxPart : 0;
+}
+
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
 #endif
@@ -514,6 +525,10 @@ void ghost_exchange_cleanup(void);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
 int ghost_pool_is_live(void);
+/* Largest ghost import this rank has completed over the current and previous domain epoch, and
+ * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
+int ghost_get_epoch_high_water(void);
+void ghost_reset_epoch_high_water(void);
 /* Value-only in-place refresh of the CURRENT ghost pool along the provenance
  * recorded at the last import: owners re-pack their current P/CellP for exactly
  * the already-exported particles; receivers overwrite the existing ghost slots
@@ -561,12 +576,22 @@ void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end);
 #ifdef __cplusplus
 }
 #endif
-int ghost_get_previous_count(void);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
 int allocate_memory(int do_collective_preflight);   /* Never holds on OOM: requests a soft controlled-stop and returns nonzero; caller drains at its poll. do_collective_preflight selects the arena preflight's fit-check: =1 all-rank (read_ic, one Allreduce); =0 LOCAL only (restart subset/turn, no MPI). Returns 0 ok / 812 arena-OOM / 1 UVM-STL-OOM. */
+/* Move the persistent particle-storage arrays owned by allocate_memory() to new_maxpart, carrying the
+   live particles over, and publish the new All.MaxPart (All.MaxPartGas follows it). The saved Peano
+   keys are NOT among them -- they reallocate themselves when short and are harmless when oversized,
+   so they are left to the domain code that owns them. Growing is legal with imported ghosts
+   present and a tree standing; releasing capacity requires neither, plus new_maxpart >= NumPart.
+   Requesting the current capacity returns immediately. On failure some arrays are left oversized --
+   never undersized relative to All -- the accounting stays truthful, a controlled stop is requested
+   for the caller to drain, and a nonzero code is returned: 7720 target below the live particle count,
+   7721 allocation failed mid-migration, 7723 illegal context, 7724 target overlaps the tree node
+   index base. This is the ONLY route by which All.MaxPart may change once storage exists. */
+int resize_particle_storage(int new_maxpart);
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);

@@ -162,6 +162,11 @@ float shortrange_table_tidal[NTAB];
 static int first_flag = 0;
 static int tree_allocated_flag = 0;
 
+/*! Whether tree storage is currently held. The flag is the only record of that, so callers who
+ *  must know (the particle-storage resize, which may not release capacity under a standing tree)
+ *  ask here rather than inferring it from MaxNodes or a live pointer. */
+int force_tree_is_allocated(void) {return tree_allocated_flag;}
+
 #ifdef BOX_PERIODIC
 /*! Size of 3D look-up table for Ewald correction force */
 #define EN  64
@@ -242,12 +247,18 @@ double force_hmax_per_type_particle_radius(int i)
 static void force_refresh_hmax_per_type_host(int Numnodestree)
 {
     /* Step 1: zero per-type bands in all internal nodes. */
-    for(int no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
+    for(int no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
         for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
     }
     /* Step 2: leaf seed — Father[i] only (per-particle to its immediate
-     * parent), conservative across every leaf-policy-selectable source. */
-    for(int i = 0; i < NumPart; i++) {
+     * parent), conservative across every leaf-policy-selectable source.
+     * Stops at the tree's own particle slots rather than at NumPart: this also runs as a refresh on
+     * a tree that is already standing, and by then P[] can reach further than Father[] does, since
+     * the particle capacity may be raised mid-step.  Imported ghosts, which also sit above the local
+     * particles, are skipped by the test just below instead: every slot the tree does not contain
+     * carries -1, which is what a ghost's slot holds. */
+    const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    for(int i = 0; i < nseed; i++) {
         int no = Father[i];
         if(no < 0) continue;
         struct particle_data *pa = &P[i];
@@ -259,9 +270,9 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives
      * children-before-parent order without an explicit DAG sort. */
-    for(int no = All.MaxPart + Numnodestree - 1; no >= All.MaxPart; no--) {
+    for(int no = All.TreeNodeIndexBase + Numnodestree - 1; no >= All.TreeNodeIndexBase; no--) {
         int father = Nodes[no].u.d.father;
-        if(father < All.MaxPart || father >= All.MaxPart + Numnodestree) continue;
+        if(father < All.TreeNodeIndexBase || father >= All.TreeNodeIndexBase + Numnodestree) continue;
         for(int t = 0; t < 6; t++) {
             if(Extnodes[no].hmax_per_type[t] > Extnodes[father].hmax_per_type[t]) {
                 Extnodes[father].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
@@ -299,11 +310,18 @@ let_build_attempt:
         MPI_Allreduce(&Numnodestree, &flag, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         if(flag == -1)
         {
+            /* Grow the node arena by the same factor the ratchet applies, measured from the
+               current allocation rather than re-derived from All.MaxPart: that keeps the retry
+               on whatever basis this tree was sized from (the domain's local-particle cap for
+               the gravity tree, All.MaxPart for the trees subfind builds over its own particle
+               sets), so the ratcheted factor converges on the size the next build will ask for. */
+            int maxnodes_grown = (int) (1.15 * (double) (MaxNodes - NTopnodes)) + NTopnodes;
+            if(maxnodes_grown <= MaxNodes) {maxnodes_grown = MaxNodes + 1;}   /* integer truncation makes the 1.15x a no-op below 7 nodes; always make progress */
             force_treefree();
             if(ThisTask == 0) {printf("Increasing TreeAllocFactor=%g", All.TreeAllocFactor);}
             All.TreeAllocFactor *= 1.15;
             if(ThisTask == 0) {printf(" new value=%g\n", All.TreeAllocFactor);}
-            force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            force_treeallocate(maxnodes_grown, All.MaxPartExpandable);
             /* drain a tree-alloc UVM OOM before force_treebuild_single re-runs on a NULL-based
              * tree. Symmetric: all ranks enter this block together (flag from Allreduce(MIN)). */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
@@ -414,8 +432,9 @@ let_build_attempt:
                        need_max, RuntimeMinLETForeignNodes, let_retry + 1, LET_MAX_RETRY);
             fflush(stdout);
             let_retry++;
+            int maxnodes_same = MaxNodes;   /* only the foreign floor grew; keep the local node sizing */
             force_treefree();
-            force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+            force_treeallocate(maxnodes_same, All.MaxPartExpandable);
             /* drain a tree-alloc UVM OOM before rebuilding on a NULL-based tree (symmetric) */
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
             goto let_build_attempt;   /* rebuild the whole tree with the larger arena */
@@ -440,10 +459,10 @@ let_build_attempt:
  *
  *  The index convention for accessing tree nodes is the following: the
  *  indices 0...NumPart-1 reference single particles, the indices
- *  All.MaxPart.... All.MaxPart+nodes-1 reference tree nodes. `Nodes_base'
+ *  All.TreeNodeIndexBase.... All.TreeNodeIndexBase+nodes-1 reference tree nodes. `Nodes_base'
  *  points to the first tree node, while `nodes' is shifted such that
- *  nodes[All.MaxPart] gives the first tree node. Finally, node indices
- *  with values 'All.MaxPart + MaxNodes + MaxForeignNodes' and larger indicate "pseudo
+ *  nodes[All.TreeNodeIndexBase] gives the first tree node. Finally, node indices
+ *  with values 'All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes' and larger indicate "pseudo
  *  particles", i.e. multipole moments of top-level nodes that lie on
  *  different CPUs. If such a node needs to be opened, the corresponding
  *  particle must be exported to that CPU. The 'Extnodes' structure
@@ -461,7 +480,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     peanokey key, morton, th_key, *morton_list;
     
     /* create an empty root node  */
-    nfree = All.MaxPart;        /* index of first free node */
+    nfree = All.TreeNodeIndexBase;        /* index of first free node */
     nfreep = &Nodes[nfree];    /* select first node */
     nfreep->len = DomainLen;
     nfreep->center = {(MyFloat)DomainCenter[0], (MyFloat)DomainCenter[1], (MyFloat)DomainCenter[2]};
@@ -473,19 +492,19 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* create a set of empty nodes corresponding to the top-level domain grid. We need to generate these nodes first to make sure that we have a
      * complete top-level tree which allows the easy insertion of the pseudo-particles at the right place */
     
-    /* Root topnode 0 maps to the root tree node All.MaxPart; children are mapped
+    /* Root topnode 0 maps to the root tree node All.TreeNodeIndexBase; children are mapped
      * inside the recursion (top-leaf router geometry SSOT, H0). */
-    TopNodeNodeIndex[0] = All.MaxPart;
+    TopNodeNodeIndex[0] = All.TreeNodeIndexBase;
     if(TopNodes[0].Daughter < 0) {
         /* Degenerate root-is-leaf (single top-cell): the recursion below sets no
          * children, so set the leaf's DomainNodeIndex explicitly to keep both maps
          * complete + consistent. */
-        DomainNodeIndex[TopNodes[0].Leaf] = All.MaxPart;
+        DomainNodeIndex[TopNodes[0].Leaf] = All.TreeNodeIndexBase;
     }
-    if(force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
+    if(force_create_empty_nodes(All.TreeNodeIndexBase, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
     /* H0 post-build validation: every topnode must map to a valid Nodes[] slot. */
     {
-        const int node_lo = All.MaxPart, node_hi = All.MaxPart + MaxNodes;
+        const int node_lo = All.TreeNodeIndexBase, node_hi = All.TreeNodeIndexBase + MaxNodes;
         for(int tnchk = 0; tnchk < NTopnodes; tnchk++) {
             if(TopNodeNodeIndex[tnchk] < node_lo || TopNodeNodeIndex[tnchk] >= node_hi) {
                 printf("force_treebuild: TopNodeNodeIndex[%d]=%d out of range [%d,%d) (NTopnodes=%d) — top-leaf router map incomplete\n",
@@ -675,7 +694,7 @@ void force_insert_pseudo_particles(void)
         index = DomainNodeIndex[i];
         
         if(DomainTask[i] != ThisTask)
-            Nodes[index].u.suns[0] = All.MaxPart + MaxNodes + MaxForeignNodes + i;    /* pseudo-particles live above the foreign-node range */
+            Nodes[index].u.suns[0] = All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes + i;    /* pseudo-particles live above the foreign-node range */
     }
 }
 
@@ -1042,7 +1061,7 @@ void force_treeupdate_pseudos(int no)
     
     for(j = 0; j < 8; j++)    /* since we are dealing with top-level nodes, we now that there are 8 consecutive daughter nodes */
     {
-        if(p >= All.MaxPart && p < All.MaxPart + MaxNodes)    /* internal node */
+        if(p >= All.TreeNodeIndexBase && p < All.TreeNodeIndexBase + MaxNodes)    /* internal node */
         {
             if(Nodes[p].u.d.bitflags & (1 << BITFLAG_INTERNAL_TOPLEVEL)) {force_treeupdate_pseudos(p);}
             
@@ -1314,6 +1333,18 @@ void force_flag_localnodes(void)
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
+    /* Both indices are written into the tree's particle-side arrays below, so both must be inside
+     * them.  Creation sites already decline to make a particle the standing tree cannot carry, so
+     * reaching this is a caller that skipped that test, not a tight fit -- stop rather than write
+     * past Father[]/Nextnode[]. */
+    if(!force_tree_is_allocated() || ichild >= All.TreeParticleSlots || iparent >= All.TreeParticleSlots)
+    {
+        printf("force_add_element_to_tree: task=%d asked to insert particle %d under %d, but the tree %s (particle slots=%d).\n",
+               ThisTask, ichild, iparent, force_tree_is_allocated() ? "does not reach that far" : "is not standing", All.TreeParticleSlots);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90000101, "force_add_element_to_tree: particle index outside the live tree's particle slots", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     int father = Father[iparent];
     int no = Nextnode[iparent];
     Nextnode[iparent] = ichild; // insert new particle into linked list
@@ -1340,11 +1371,11 @@ void force_add_element_to_tree(int iparent, int ichild)
      * change above.  hmax and vmax are read by the walk's opening criteria
      * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
      * Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
-     * SoA slot k = father - All.MaxPart for both local nodes (k < MaxNodes) and
+     * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
      * foreign nodes (MaxNodes <= k < MaxNodes + MaxForeignNodes). */
     {
         struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-        int k_soa = father - All.MaxPart;
+        int k_soa = father - All.TreeNodeIndexBase;
         if(soa && k_soa >= 0 && k_soa < MaxNodes + MaxForeignNodes) {
             if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
             if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
@@ -1381,7 +1412,7 @@ void force_add_element_to_tree(int iparent, int ichild)
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int no, ptype, ninteractions=0, nexp, task, maxPart = All.MaxPart;
+    int no, ptype, ninteractions=0, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* maxForeignNodes shifts pseudo-particle range above the foreign-node range */
     double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
@@ -1527,7 +1558,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
     
     
-    no = maxPart;        /* root node */
+    no = treeBase;        /* root node */
 
     while(no >= 0)   /* outer loop runs once: the mode-1 imported-NodeList iteration is retired */
     {
@@ -1542,7 +1573,10 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
 #endif
             
-            if(no < maxPart) /* this is a particle, we will use it */
+            if(no >= treeSlots && no < treeBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+                endrun(90001024); no = -1; continue;}
+            if(no < treeSlots) /* this is a particle, we will use it */
             {
                 /* the index of the node is the index of the particle */
                 if(P[no].Ti_current != ti_Current)
@@ -1654,14 +1688,14 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
             }
             else /* we have an  internal node */
             {
-                if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
+                if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
                 {
                     /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
                      * retired). Reaching a non-empty pseudo means this target's gravity is not
                      * covered by the local LET; record it so Nexport>0 and gravity_tree() can
                      * raise a graceful controlled-stop ("raise LETAllocFactor"). The
                      * DataIndexTable/DataNodeList entries are never shipped -- they only count. */
-                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes + maxForeignNodes)]] != target)
+                    if(exportflag[task = DomainTask[no - (treeBase + maxNodes + maxForeignNodes)]] != target)
                     {
                         exportflag[task] = target;
                         exportnodecount[task] = NODELISTLENGTH;
@@ -1693,26 +1727,26 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         DataIndexTable[nexp].IndexGet = nexp;
                     }
                     DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (maxPart + maxNodes + maxForeignNodes)];
+                    DomainNodeIndex[no - (treeBase + maxNodes + maxForeignNodes)];
                     if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
-                    no = Nextnode[no - maxNodes - maxForeignNodes];
+                    no = Nextnode[treeSlots + (no - treeBase - maxNodes - maxForeignNodes)];
                     continue;
                 }
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
                 nop = &Nodes[no];
-                int in_foreign = (no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes);
+                int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
                 /* LET guard: if a foreign node has nextnode < 0 (unreplaced -1 sentinel from
                  * unpack, meaning this is the last topleaf with no sibling), opening the node
                  * would immediately exit the while(no >= 0) walk and skip its force contribution.
                  * Force multipole treatment instead so the node's contribution is accumulated. */
                 int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
 
-                /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(maxPart+maxNodes),
-                 * EXPLICIT and bounds-checked -- not the node index no-maxPart). */
+                /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
+                 * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
                 int    fl_tag = 0, fl_type = -1;
                 double fl_zeta = 0.0, fl_soft = 0.0;
                 if(in_foreign && ForeignLeafTag) {
-                    int fs = no - (maxPart + maxNodes);
+                    int fs = no - (treeBase + maxNodes);
                     if(fs >= 0 && fs < MaxForeignNodes) {
                         fl_tag  = ForeignLeafTag[fs];
                         fl_type = ForeignLeafType[fs];
@@ -2023,7 +2057,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
             
             
             /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
-            if(no < maxPart) {
+            if(no < treeSlots) {
                 no = Nextnode[no];
             } else {
                 no = nop->u.d.sibling;
@@ -2154,13 +2188,16 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
     pos = P[target].Pos;
     aold = All.ErrTolForceAcc * P[target].OldAcc;
 
-    no = All.MaxPart;        /* root node */
+    no = All.TreeNodeIndexBase;        /* root node */
 
     while(no >= 0)   /* outer loop runs once: the mode-1 imported-NodeList iteration is retired */
     {
         while(no >= 0)
         {
-            if(no < All.MaxPart)    /* single particle */
+            if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+                endrun(90001024); no = -1; continue;}
+            if(no < All.TreeParticleSlots)    /* single particle */
             {
                 /* the index of the node is the index of the particle */
                 /* observe the sign */
@@ -2182,12 +2219,12 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
             }
             else            /* we have an  internal node */
             {
-                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (foreign-node range below pseudos) */
+                if(no >= All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)    /* pseudo particle (foreign-node range below pseudos) */
                 {
                     /* LET-incompleteness DETECTOR (the MPI export round-trip is retired): reaching a
                      * non-empty pseudo means this target's Ewald correction is not covered by the local
                      * LET; record it so Nexport>0 triggers gravity_tree()'s graceful controlled-stop. */
-                    if(exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
+                    if(exportflag[task = DomainTask[no - (All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)]] != target)
                     {
                         exportflag[task] = target;
                         exportnodecount[task] = NODELISTLENGTH;
@@ -2221,10 +2258,10 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                         DataIndexTable[nexp].IndexGet = nexp;
                     }
 
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
+                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)];
 
                     if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
-                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
+                    no = Nextnode[All.TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
                     continue;
                 }
 
@@ -2251,7 +2288,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
             }
             GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
 
-            if(no < All.MaxPart)
+            if(no < All.TreeParticleSlots)
             {no = Nextnode[no];}
             else            /* we have an internal node. Need to check opening criterion */
             {
@@ -2396,7 +2433,7 @@ int subfind_force_treeevaluate_potential(int target)
 {
     struct NODE *nop = 0;
     MyDouble pot = 0;
-    int no = All.MaxPart;    /* root node */
+    int no = All.TreeNodeIndexBase;    /* root node */
     double r2, dx, dy, dz, mass, r, u, h, h_inv, pos_x, pos_y, pos_z;
 
     pos_x = P[target].Pos[0];
@@ -2406,7 +2443,10 @@ int subfind_force_treeevaluate_potential(int target)
 
     while(no >= 0)
     {
-        if(no < All.MaxPart)    /* single particle: node index is the particle index */
+        if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+            endrun(90001024); no = -1; continue;}
+        if(no < All.TreeParticleSlots)    /* single particle: node index is the particle index */
         {
             dx = P[no].Pos[0] - pos_x;
             dy = P[no].Pos[1] - pos_y;
@@ -2415,7 +2455,7 @@ int subfind_force_treeevaluate_potential(int target)
         }
         else
         {
-            if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle */
+            if(no >= All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)    /* pseudo particle */
             {
                 /* LET supplies complete foreign coverage in all allowed builds; the
                  * export fallback is retired. A pseudo here means the LET is incomplete. */
@@ -2436,7 +2476,7 @@ int subfind_force_treeevaluate_potential(int target)
         }
         GRAVITY_NEAREST_XYZ(dx,dy,dz,-1);
         r2 = dx * dx + dy * dy + dz * dz;
-        if(no < All.MaxPart)
+        if(no < All.TreeParticleSlots)
         {
             no = Nextnode[no];
         }
@@ -2470,10 +2510,10 @@ int subfind_force_treeevaluate_potential(int target)
 
 /*! This function allocates the memory used for storage of the tree and of
  *  auxiliary arrays needed for tree-walk and link-lists.  Usually,
- *  maxnodes approximately equal to 0.7*maxpart is sufficient to store the
- *  tree for up to maxpart particles.
+ *  maxnodes approximately equal to 0.7*tree_particle_slots is sufficient to
+ *  store the tree for up to tree_particle_slots particles.
  */
-void force_treeallocate(int maxnodes, int maxpart)
+void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact)
 {
     int i;
     size_t bytes;
@@ -2499,23 +2539,70 @@ void force_treeallocate(int maxnodes, int maxpart)
     TopNodeNodeIndex = (int *) mymalloc("TopNodeNodeIndex", bytes = (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
     allbytes_topleaves += bytes;
     for(i = 0; i < NTopnodes; i++) TopNodeNodeIndex[i] = -1;  /* sentinel: post-build validation requires all populated */
+    /* The tree's storage contract, enforced at the single point every caller passes through:
+     *     NumPart  <=  tree_particle_slots  <=  All.TreeNodeIndexBase.
+     * The upper leg keeps particle and node indices from ever overlapping (the base is fixed for
+     * the run); the lower leg keeps every local particle index addressable in Father[] and
+     * Nextnode[], whatever capacity a caller chooses. */
+    if(tree_particle_slots > All.TreeNodeIndexBase)
+    {
+        printf("force_treeallocate: %d particle slots exceed the tree node index base %d, so particle and node indices would overlap.\n",
+               tree_particle_slots, All.TreeNodeIndexBase);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90001023, "force_treeallocate: particle slots exceed the tree node index base (restarting with a much larger PartAllocFactor is the usual cause; restart with the original value, or start a fresh run at the larger one)", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    if(NumPart > tree_particle_slots)
+    {
+        printf("force_treeallocate: %d local particles exceed the %d particle slots this tree is being allocated for.\n",
+               NumPart, tree_particle_slots);
+        fflush(stdout);
+        gizmo_request_controlled_stop(90001025, "force_treeallocate: local particle count exceeds the tree's particle slots", __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    All.TreeParticleSlots = tree_particle_slots;
     MaxNodes = maxnodes;
     /* LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
-     * Index map (single source of truth):
-     *   [0,                                     MaxPart)                                  -> particles
-     *   [MaxPart,                               MaxPart+MaxNodes)                         -> local tree nodes
-     *   [MaxPart+MaxNodes,                      MaxPart+MaxNodes+MaxForeignNodes)         -> foreign tree nodes (LET unpack)
-     *   [MaxPart+MaxNodes+MaxForeignNodes,      MaxPart+MaxNodes+MaxForeignNodes+NTopleaves) -> pseudo-particles
-     * SoA slot for any node index `no` (local OR foreign): idx = no - MaxPart (same formula).
+     * Index map (single source of truth).  Write Base for All.TreeNodeIndexBase:
+     *   [0,                              Base)                                      -> particles
+     *   [Base,                           Base+MaxNodes)                             -> local tree nodes
+     *   [Base+MaxNodes,                  Base+MaxNodes+MaxForeignNodes)             -> foreign tree nodes (LET unpack)
+     *   [Base+MaxNodes+MaxForeignNodes,  Base+MaxNodes+MaxForeignNodes+NTopleaves)  -> pseudo-particles
+     * SoA slot for any node index `no` (local OR foreign): idx = no - Base (same formula).
+     * These are INDICES.  Storage is separate and follows real counts: Nodes_base/Extnodes_base
+     * hold MaxNodes+MaxForeignNodes+1 entries, and Nextnode[]/Father[] hold All.TreeParticleSlots
+     * particle slots (with Nextnode[] carrying the pseudo segment after them).  Nothing is ever
+     * sized from Base.
      * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
      * for synthesized particle leaves (one entry per particle that is a direct child of an essential
      * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
-     * 2 × (All.MaxPart / PartAllocFactor) ≈ 2 × TotNumPart / NTask as headroom covers NTask=2
-     * worst case (both ranks overlap entirely) while staying modest for large NTask.
+     * 2 × (All.MaxPartAssignable / PartAllocFactor) = 2 × TotNumPart / NTask as headroom covers NTask=2
+     * worst case (both ranks overlap entirely) while staying modest for large NTask.  Both
+     * factors are fixed within a run, which is required: this term sets MaxForeignNodes and so
+     * the pseudo-particle index base, which restart-serialized node pointers are written
+     * against.  That is why the ASSIGNMENT cap appears here and not the storage capacity:
+     * storage may be raised to hold an unusually large ghost import, on one rank and not
+     * another, so deriving from it would make the index base differ between ranks and move
+     * during a run.  The assignment cap is the same number everywhere and does not change after
+     * startup, so the ratio is exactly the balanced particle count.
+     * Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
+     * The restart read does not derive at all: it passes the capacity stored in the file
+     * (foreign_node_slots_exact), because inside the read window All.MaxPart is the WRITER's
+     * (restored for the serialized Nextnode layout) while PartAllocFactor may already be a
+     * reader-edited value, so a derivation there would mix provenance and move the pseudo range
+     * out from under pointers that are already written.  Every later tree is built from scratch
+     * and serializes nothing, so it derives normally.
      * Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
      * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
+    if(foreign_node_slots_exact >= 0)
     {
-        double synth_overhead = 2.0 * (double)All.MaxPart / (double)All.PartAllocFactor;
+        /* Restart read: the CAPACITY the file's node pointers were written against, not an
+         * occupancy -- Numforeignnodes is the current count and is not serialized here. */
+        MaxForeignNodes = foreign_node_slots_exact;
+    }
+    else
+    {
+        double synth_overhead = 2.0 * (double)All.MaxPartAssignable / (double)All.PartAllocFactor;
         long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
         /* Take the larger of the parameter-derived floor and the runtime adaptive
          * floor (ratcheted by force_treebuild on a retryable LET overflow). This is
@@ -2534,14 +2621,30 @@ void force_treeallocate(int maxnodes, int maxpart)
         MaxForeignNodes = (int) want;
     }
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
+    {
+        long long index_space_top = (long long) All.TreeNodeIndexBase + (long long) MaxNodes
+                                  + (long long) MaxForeignNodes + (long long) NTopleaves;
+        if(index_space_top >= (long long) INT_MAX)
+        {
+            printf("force_treeallocate: tree index space %lld exceeds the int range (base=%d, MaxNodes=%d, MaxForeignNodes=%d, NTopleaves=%d).\n",
+                   index_space_top, All.TreeNodeIndexBase, MaxNodes, MaxForeignNodes, NTopleaves);
+            fflush(stdout);
+            /* Return before allocating anything, the same shape the UVM-OOM paths below use: the
+             * node pointers stay NULL from force_treefree, so every caller either polls the stop
+             * or NULL-checks and skips its payload before touching the tree.  The base is fixed
+             * for the run, so unlike the LET foreign arena this cannot be retried smaller. */
+            gizmo_request_controlled_stop(90001022, "force_treeallocate: tree node index space exceeds the int range (add ranks/nodes, or lower PartAllocFactor so the tree index base is smaller)", __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
+    }
     Numforeignnodes = 0;
     /* FOF/SUBFIND/twopoint pseudo-particle threshold uses
-     * `MaxPart+MaxNodes+MaxForeignNodes` (matches the
-     * forcetree.cc/let_pack.cc convention).  FOF/SUBFIND build their own local
-     * trees and never call `let_run_exchange()`, so during their walks
-     * Numforeignnodes==0 and the foreign range is empty; the threshold update
-     * is correct in both regimes (LET-active gravity walks and LET-inactive
-     * halo-finding walks). */
+     * `TreeNodeIndexBase+MaxNodes+MaxForeignNodes` (matches the
+     * forcetree.cc/let_pack.cc convention).  Halo finding uses two different trees:
+     * subfind_loctree builds a private one with no pseudo-particles and no LET, while
+     * the group-subset walks go through force_treebuild, which does run
+     * let_run_exchange().  The threshold is a capacity, not a count, so it is right in
+     * both regimes whatever Numforeignnodes happens to be. */
     long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
     /* Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
      * kernels can read/write them directly.  Same pattern as Father[] and
@@ -2553,7 +2656,7 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Nodes = Nodes_base - MaxPart`
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Nodes = Nodes_base - TreeNodeIndexBase`
          * so the wild alias is never formed; Nodes_base stays NULL for the caller's check.
          * DomainNodeIndex + tree_allocated_flag are already set (partial allocation) -- safe
          * not because nothing was allocated, but because the caller immediately polls (all-rank
@@ -2568,21 +2671,21 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
                MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
-        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Extnodes = Extnodes_base - MaxPart`
+        /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Extnodes = Extnodes_base - TreeNodeIndexBase`
          * so the wild alias is never formed; Extnodes_base stays NULL for the caller's check. */
         gizmo_request_controlled_stop(90000083, "force_treeallocate: tree Extnodes UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Extnodes_base */
-    Nodes = Nodes_base - All.MaxPart;
-    Extnodes = Extnodes_base - All.MaxPart;
+    Nodes = Nodes_base - All.TreeNodeIndexBase;
+    Extnodes = Extnodes_base - All.TreeNodeIndexBase;
     /* Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
      * this pointer (no separate buffer, no per-walk memcpy).
-     * Indexed via Nextnode[no - MaxNodes - MaxForeignNodes] for pseudo-particles
+     * Pseudo-particles live at Nextnode[All.TreeParticleSlots + pseudo ordinal]
      * after the foreign range; foreign nodes carry their next-sibling pointers in NODE.u.d
      * directly so they don't consume Nextnode[] slots, but we extend the buffer so the
      * pseudo-particle range stays in bounds after the index shift. */
-    long long nextnode_slots = (long long) maxpart + (long long) NTopnodes + (long long) MaxForeignNodes;
+    long long nextnode_slots = (long long) tree_particle_slots + (long long) NTopnodes + (long long) MaxForeignNodes;
     bytes = (size_t) nextnode_slots * sizeof(int);
     Nextnode = (int *) gpu_tree_alloc_bytes(bytes, "tree_nextnode");
     if(!Nextnode)
@@ -2600,12 +2703,12 @@ void force_treeallocate(int maxnodes, int maxpart)
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
      * mymalloc accounting; the matching gpu_father_free lives in force_treefree. */
-    bytes = (size_t)maxpart * sizeof(int);
-    Father = gpu_father_alloc(maxpart);
+    bytes = (size_t)tree_particle_slots * sizeof(int);
+    Father = gpu_father_alloc(tree_particle_slots);
     if(!Father)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
-               maxpart, bytes / (1024.0 * 1024.0));
+               tree_particle_slots, bytes / (1024.0 * 1024.0));
         /* UVM OOM (per-rank). Controlled-stop request + return BEFORE any Father[i] write/use;
          * Father stays NULL for the caller's check. */
         gizmo_request_controlled_stop(90000085, "force_treeallocate: tree Father UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
@@ -2615,7 +2718,7 @@ void force_treeallocate(int maxnodes, int maxpart)
     /* Foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
      * allocator (gpu_tree_alloc_bytes), the SAME discipline as Nodes_base/Extnodes_base/Nextnode --
      * freed in force_treefree, re-allocated on every force_treebuild retry.  Sized MaxForeignNodes,
-     * indexed by foreign_slot = no - (MaxPart+MaxNodes).  Zero-initialized so every slot defaults to
+     * indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes).  Zero-initialized so every slot defaults to
      * leaf_tag=0 (node) before any LET exchange installs real foreign leaves. */
     if(MaxForeignNodes > 0)
     {
@@ -2729,8 +2832,8 @@ void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *
     *local_mb = (double)(((long long) MaxNodes + 1LL) * node_pair) / MB;  /* +1 sentinel slot */
     long long sidecar = 2LL * (long long) sizeof(int) + 2LL * (long long) sizeof(MyFloat);  /* Tag+Type+Zeta+Soft */
     *foreign_cap_mb = (double)((long long) MaxForeignNodes * (node_pair + sidecar)) / MB;
-    long long nextnode_slots = (long long) All.MaxPart + (long long) NTopnodes + (long long) MaxForeignNodes;
-    *aux_mb = (double)(((long long) All.MaxPart + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
+    long long nextnode_slots = (long long) All.TreeParticleSlots + (long long) NTopnodes + (long long) MaxForeignNodes;
+    *aux_mb = (double)(((long long) All.TreeParticleSlots + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
     *foreign_cap_nodes     = MaxForeignNodes;
     *foreign_used_hw_nodes = Numforeignnodes_highwater;
     *foreign_floor_nodes   = RuntimeMinLETForeignNodes;
@@ -3019,7 +3122,7 @@ void force_refresh_node_moments(void)
         /* Reset GravCost/Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
          * fields that the GPU kernel does not own. These mirror the
          * non-moment lines in CPU step 1 (forcetree.cc:3837..3848). */
-        for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
+        for(no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
             Nodes[no].GravCost = 0;
             Nodes[no].Ti_current = All.Ti_Current;
             Extnodes[no].dp = {};

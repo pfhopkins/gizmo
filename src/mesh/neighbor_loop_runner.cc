@@ -2318,8 +2318,14 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
  * ========================================================================== */
 
 template <typename Spec>
-void run_neighbor_loop(const neighbor_loop_args& args)
+void run_neighbor_loop(const neighbor_loop_args& args_in)
 {
+    /* The one live argument view for this call.  A ghost import can raise the particle
+     * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
+     * object below; every later reader sees the current values.  There is deliberately no
+     * second, unrefreshed copy in scope -- reading a stale P[] reads freed storage. */
+    neighbor_loop_args args = args_in;
+
     /* ---- Compile-time spec consistency ---- */
 
     /* WritePattern ↔ AccumData/ScatterData consistency. */
@@ -2479,8 +2485,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const uint64_t s_arena0 = g_gpu_arena_acquire_counter;
     const int      s_np0    = NumPart;
 
-    /* ---- Working copy of args; refreshed after path-conditional prep ---- */
-    neighbor_loop_args effective_args = args;
 
     /* ---- Path-conditional prep on imported-ghost paths ---- */
     /* Mode A's substrate today satisfies its freshness + neighbor-pool
@@ -2539,9 +2543,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
             /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
              * the runner's data view; only paths that imported ghosts read this
              * extended view (Mode B paths use the original args via copy). */
-            effective_args.num_total = NumPart;
-            effective_args.P         = P;
-            effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+            args.num_total = NumPart;
+            args.P         = P;
+            args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
         }
     }
 
@@ -2561,25 +2565,25 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * Each dispatch helper checks both the Spec's `uses_*` trait AND the
      * path-imports-ghosts predicate; on Mode B paths the predicate is
      * false and all four hook calls compile to no-ops. */
-    nlr_dispatch_ghost_write_detector_begin<Spec>(effective_args, plan);
-    nlr_dispatch_ghost_writeback_begin<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_write_detector_begin<Spec>(args, plan);
+    nlr_dispatch_ghost_writeback_begin<Spec>(args, plan);
 
     /* ---- Path dispatch ---- */
     switch(plan.path) {
         case NeighborLoopPlan::Path::ModeA_GpuNgl:
-            run_mode_a<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_a<Spec>(args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Local:
-            run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_local<Spec>(args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Remote:
-            run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_remote<Spec>(args, radii.data(), tim_ptr);
             break;
     }
 
     /* ---- Spec lifecycle hooks (end, reverse order) ---- */
-    nlr_dispatch_ghost_writeback_end<Spec>(effective_args, plan);
-    nlr_dispatch_ghost_write_detector_end<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_writeback_end<Spec>(args, plan);
+    nlr_dispatch_ghost_write_detector_end<Spec>(args, plan);
 
     /* ---- Imported-ghost cleanup ---- */
     /* Caller-owned pools (external_csr) outlive this call — the caller tears
@@ -2672,7 +2676,7 @@ struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups
  * NlrIterDriver<Spec> — constructor + destructor.
  * ========================================================================== */
 template <typename Spec>
-NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
+NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
                                    const typename Spec::CallScalars& s)
     : args(a), cs(s), iter_index(0),
       local_active_total(0), global_active_total(-1),
@@ -2688,9 +2692,7 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
       mode_a_cached_gnl       (a.num_subgroups, gpu_neighbor_list_t{}),
       mode_a_csr_offset_lookup(a.num_subgroups, nullptr),
       mode_a_csr_buffered_h   (a.num_subgroups, nullptr),
-      mode_a_csr_valid        (a.num_subgroups, false),
-      /* effective_args: copy of base slice; refreshed on Mode A ghost import. */
-      effective_args(static_cast<const neighbor_loop_args&>(a))
+      mode_a_csr_valid        (a.num_subgroups, false)
 {
     using IterScratch = typename Spec::IterScratch;
     using AccumData   = typename Spec::AccumData;
@@ -2893,15 +2895,28 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
     }
 
     /* Bind to arena-resident P_gpu / CellP_gpu. Use the driver's
-     * effective_args: if ghost import ran above, these
+     * args: if ghost import ran above, these
      * point at the refreshed POST-IMPORT global P/CellP/NumPart; otherwise
      * they equal the original base args. CellP=NULL is legitimate (gas-free). */
+    if (!nlr_args_view_is_live(args)) {
+        if (ThisTask == 0) {
+            fprintf(stderr,
+                "[NlrIterDriver<%s>::initialize_device_context_mode_a_after_arena] FATAL: the "
+                "argument view no longer describes the live particle storage (P=%p vs %p, "
+                "num_total=%d vs %d). Binding a device context to it would read released memory.\n",
+                Spec::loop_name, (void *) args.P, (void *) P, args.num_total, NumPart);
+            fflush(stderr);
+        }
+        /* Soft bad-stop + return WITHOUT binding ctx: same shape as the two lifecycle
+         * violations above, drained at the runner's next poll before any dispatch. */
+        endrun(81215); return;
+    }
     ctx.P         = gpu_particles_arena_P();
-    ctx.CellP     = (effective_args.CellP != nullptr) ? gpu_particles_arena_CellP() : nullptr;
-    ctx.num_total = effective_args.num_total;
+    ctx.CellP     = (args.CellP != nullptr) ? gpu_particles_arena_CellP() : nullptr;
+    ctx.num_total = args.num_total;
 
     if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-        Spec::populate_device_context(effective_args, ctx);
+        Spec::populate_device_context(args, ctx);
     }
     ctx_initialized = true;
 }
@@ -2963,18 +2978,18 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                                                    nlr_spec_supply_band_dominated<Spec>());
         ghost_import_done = true;
 
-        /* Refresh effective_args from globals (ghost import grew NumPart and
+        /* Refresh args from globals (ghost import grew NumPart and
          * may have realloc'd P/CellP). Matches non-iter line 2049-2051. */
-        effective_args.num_total = NumPart;
-        effective_args.P         = P;
-        effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+        args.num_total = NumPart;
+        args.P         = P;
+        args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
     }
 
     /* === (2) Arena acquire ONCE per call, with refreshed args === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
-    gpu_particles_arena_acquire(effective_args.num_total,
-                                 effective_args.P, effective_args.CellP);
+    gpu_particles_arena_acquire(args.num_total,
+                                 args.P, args.CellP);
     arena_acquired = true;
 
     /* === (3) Bind ctx to arena-resident pointers + populate extended DeviceContext === */
@@ -3073,7 +3088,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     /* === (1) cleanup_device_context for extended Specs === */
     if (ctx_initialized) {
         if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
-            Spec::cleanup_device_context(effective_args, ctx);
+            Spec::cleanup_device_context(args, ctx);
         }
         ctx_initialized = false;
     }
@@ -3107,16 +3122,16 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
         ghost_import_done = true;
     }
 
-    /* === (5) Refresh effective_args from post-import globals === */
-    effective_args.num_total = NumPart;
-    effective_args.P         = P;
-    effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+    /* === (5) Refresh args from post-import globals === */
+    args.num_total = NumPart;
+    args.P         = P;
+    args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
 
     /* === (6) Fresh arena view of new pool === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
-    gpu_particles_arena_acquire(effective_args.num_total,
-                                 effective_args.P, effective_args.CellP);
+    gpu_particles_arena_acquire(args.num_total,
+                                 args.P, args.CellP);
     arena_acquired = true;
 
     /* === (7) Rebind ctx + (8) populate extended ctx for NEW pool === */
@@ -3277,7 +3292,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     NeighborLoopPlan plan;
     plan.path              = NeighborLoopPlan::Path::ModeA_GpuNgl;
     plan.num_active_global = drv.global_active_total;
-    neighbor_loop_args sub = drv.effective_args;
+    neighbor_loop_args sub = drv.args;
     sub.active_list = (n_compacted > 0) ? active_particle_indices_iter.data() : nullptr;
     sub.num_active  = n_compacted;
 
@@ -3365,7 +3380,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
      * uses_ghost_writeback Specs, INCLUDING empty-actives ranks, to keep
      * MPI reverse-comm collectives in lockstep with non-empty ranks.
      * Plan.path == ModeA_GpuNgl gates the dispatch hooks via
-     * nlr_path_uses_imported_ghosts; uses effective_args (post-import). */
+     * nlr_path_uses_imported_ghosts; uses args (post-import). */
     nlr_dispatch_ghost_write_detector_begin<Spec>(sub, plan);
     nlr_dispatch_ghost_writeback_begin<Spec>(sub, plan);
 
@@ -3522,8 +3537,13 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
  * run_neighbor_loop_iterative<Spec> — body (step 2b).
  * ========================================================================== */
 template <typename Spec>
-void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
+void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 {
+    /* The one live argument view for this call.  A ghost import can raise the particle
+     * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
+     * object as they change; the driver holds a reference to it, so the runner and every
+     * hook read the same, current values.  The caller's own copy is left untouched. */
+    neighbor_loop_args_iterative args = args_in;
 
     /* ===== Compile-time spec consistency ===== */
     static_assert(std::is_same_v<typename Spec::IterControl, Iterative>,
@@ -3758,6 +3778,20 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     }
 
     for (drv.iter_index = 0; drv.iter_index < Spec::max_iters; drv.iter_index++) {
+        if(!nlr_args_view_is_live(args)) {
+            if(ThisTask == 0) {
+                fprintf(stderr, "[run_neighbor_loop_iterative<%s>] FATAL: the argument view no longer "
+                        "describes the live particle storage at iter=%d (P=%p vs %p, num_total=%d vs %d). "
+                        "A capacity change during the call was not reflected here.\n",
+                        Spec::loop_name, drv.iter_index, (void *) args.P, (void *) P,
+                        args.num_total, NumPart);
+                fflush(stderr);
+            }
+            /* Request the stop and stay in lockstep: this loop body holds MPI collectives,
+             * so breaking out on one rank alone would hang its peers.  The stop drains at
+             * the next phase boundary. */
+            endrun(81214);
+        }
 
         /* mode_a_rebuild_csr_every_iter correctness
          * fallback. When the Spec sets
@@ -4025,11 +4059,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         const NlrSubgroup& sgr = args.subgroups[sg];
         const int n_total = sgr.num_active_local;
         if (n_total <= 0) continue;
-        /* Use effective_args: Mode A iterative refreshed
+        /* Use args: Mode A iterative refreshed
          * P/CellP/num_total after ghost import; apply_active_writeback hooks
-         * may read these for correctness. Mode B leaves effective_args ==
+         * may read these for correctness. Mode B leaves args ==
          * base args. */
-        neighbor_loop_args sub = drv.effective_args;
+        neighbor_loop_args sub = drv.args;
         sub.active_list = sgr.active_indices;
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {

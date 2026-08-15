@@ -101,6 +101,10 @@ void gpu_particles_arena_release(void);
  * <Kokkos_Core.hpp> directly. */
 void *gpu_particles_uvm_alloc(size_t nbytes, const char *label);
 
+/* Release a buffer from gpu_particles_uvm_alloc. Paired with it so a capacity change can hold
+ * the old and the new buffer at once and roll back cleanly. NULL is a no-op. */
+void gpu_particles_uvm_free(void *ptr);
+
 /* Accessors. Return NULL / 0 when arena is not currently held. */
 struct particle_data *gpu_particles_arena_P(void);
 struct gas_cell_data *gpu_particles_arena_CellP(void);

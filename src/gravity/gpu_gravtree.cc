@@ -318,7 +318,7 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * ---------------------------------------------------------------------- */
 static KOKKOS_INLINE_FUNCTION int
 gpu_gravtree_walk_one(int target,
-                      int maxPart, int maxNodes, int maxForeignNodes,    /* foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
+                      int treeBase, int treeParticleSlots, int maxNodes, int maxForeignNodes,    /* foreign-node range size; pseudos start at treeBase+maxNodes+maxForeignNodes */
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
                       const struct gpu_gravity_tree_soa_t *tree_soa,
@@ -508,7 +508,7 @@ gpu_gravtree_walk_one(int target,
     int ninter = 0;
     double pot = 0.0;
 
-    int no = maxPart;   /* root */
+    int no = treeBase;   /* root */
 
     while(no >= 0)
     {
@@ -527,7 +527,8 @@ gpu_gravtree_walk_one(int target,
         double gasmass = 0.0;
 #endif
 
-        if(no < maxPart) /* particle leaf */
+        if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU walk's guard stops loudly */
+        if(no < treeParticleSlots) /* particle leaf */
         {
             dr = P_dev[no].Pos - pos;
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
@@ -537,7 +538,7 @@ gpu_gravtree_walk_one(int target,
             /* Lazy source payload for this local leaf: evaluate the SSOT helper on-device
              * (identical gates/formula to the eager prefill) instead of reading the dense
              * arrays. Computed once here; consumed by the RT/sink/CR blocks below. Only for
-             * local particle leaves (no<maxPart) -- foreign leaves and nodes stay
+             * local particle leaves (no<treeBase) -- foreign leaves and nodes stay
              * moment-backed and never reach this branch. */
             struct gravtree_source_inputs_t lazy_src;
             if(use_lazy_source) { gravtree_fill_particle_source_inputs(no, P_dev, CellP_dev, &lazy_src); }
@@ -657,13 +658,13 @@ gpu_gravtree_walk_one(int target,
             }
 #endif /* SINK_CALC_DISTANCES */
         }
-        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — remote (foreign-node range below pseudos; foreign nodes treated as internal in the else branch below) */
+        else if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo-particle — remote (foreign-node range below pseudos; foreign nodes treated as internal in the else branch below) */
         {
             return 0; /* host runs CPU walk for this target */
         }
         else /* tree node */
         {
-            int idx = no - maxPart;
+            int idx = no - treeBase;
             Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)tree_soa->s[idx][0], (MyFloat)tree_soa->s[idx][1], (MyFloat)tree_soa->s[idx][2]};
             MyFloat len_node = tree_soa->len[idx];
             MyFloat msoft_node = tree_soa->maxsoft[idx];
@@ -680,12 +681,12 @@ gpu_gravtree_walk_one(int target,
              * (unreplaced -1 sentinel from unpack), opening it would immediately exit
              * the while(no >= 0) walk, skipping this node's force contribution.
              * Force multipole treatment instead. */
-            int in_foreign_n = (no >= maxPart + maxNodes);
+            int in_foreign_n = (no >= treeBase + maxNodes);
             int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
-            /* Foreign-leaf identity lookup.  foreign_slot = no-(MaxPart+MaxNodes) = idx-maxNodes
+            /* Foreign-leaf identity lookup.  foreign_slot = no-(treeBase+MaxNodes) = idx-maxNodes
              * -- the foreign-only sidecar index, EXPLICIT and bounds-checked so it can never be
-             * confused with the per-node SoA index idx (= no-MaxPart). */
+             * confused with the per-node SoA index idx (= no-treeBase). */
             int    fl_tag = 0, fl_type = -1;
             double fl_zeta = 0.0, fl_soft = 0.0;
             if(in_foreign_n && tree_soa->foreign_leaf_tag) {
@@ -1043,10 +1044,10 @@ gpu_gravtree_walk_one(int target,
 
         } /* if((r2>0)&&(mass>0)) */
 
-        if(no < maxPart) {
+        if(no < treeParticleSlots) {
             no = tree_soa->nextnode_aux[no];
         } else {
-            no = tree_soa->sibling[no - maxPart];
+            no = tree_soa->sibling[no - treeBase];
         }
     } /* while(no >= 0) */
 
@@ -1509,7 +1510,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     memcpy(d_idx, idx_host, num_active * sizeof(int));
     memset(d_failed, 0, num_active * sizeof(int));
 
-    int maxPart = All.MaxPart;
+    int treeBase = All.TreeNodeIndexBase;
+    int treeParticleSlots_snap = All.TreeParticleSlots;
     int maxNodes_snap = MaxNodes;
     int maxForeignNodes_snap = MaxForeignNodes;    /* LET */
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
@@ -1581,7 +1583,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         Vec3<double> acc;
         int ninter;
         double pot;
-        int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_snap,
+        int ok = gpu_gravtree_walk_one(target, treeBase, treeParticleSlots_snap, maxNodes_snap, maxForeignNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                                         is_first_step_snap,
@@ -1830,7 +1832,7 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out)
  * written), 0 if a pseudo-particle was encountered (defer to CPU). */
 static KOKKOS_INLINE_FUNCTION int
 gpu_ewald_walk_one(int target,
-                   int maxPart, int maxNodes, int maxForeignNodes,    /* LET */
+                   int treeBase, int treeParticleSlots, int maxNodes, int maxForeignNodes,    /* LET */
                    struct particle_data *P_dev,
                    const struct gpu_gravity_tree_soa_t *tree_soa,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
@@ -1845,14 +1847,15 @@ gpu_ewald_walk_one(int target,
     double aold = errtolforceacc * P_dev[target].OldAcc;
     Vec3<double> acc = {0.0, 0.0, 0.0};
 
-    int no = maxPart; /* root node */
+    int no = treeBase; /* root node */
     while(no >= 0)
     {
         double mass = 0.0;
         Vec3<double> dr = {0.0, 0.0, 0.0};
         int is_leaf = 0;
         int idx = 0;
-        if(no < maxPart) /* particle leaf */
+        if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU Ewald walk's guard stops loudly */
+        if(no < treeParticleSlots) /* particle leaf */
         {
             dr[0] = P_dev[no].Pos[0] - pos[0];
             dr[1] = P_dev[no].Pos[1] - pos[1];
@@ -1860,13 +1863,13 @@ gpu_ewald_walk_one(int target,
             mass  = P_dev[no].Mass;
             is_leaf = 1;
         }
-        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — defer to CPU (foreign-node range below) */
+        else if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo-particle — defer to CPU (foreign-node range below) */
         {
             return 0;
         }
         else /* internal node */
         {
-            idx = no - maxPart;
+            idx = no - treeBase;
             /* skip single-particle node (open it to its daughter chain) */
             if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
                 no = tree_soa->nextnode[idx];
@@ -2004,7 +2007,8 @@ extern "C" int gpu_ewald_walk_primary(void)
     memset(d_failed, 0, num_active * sizeof(int));
 
     /* snapshot scalars */
-    const int maxPart            = All.MaxPart;
+    const int treeBase            = All.TreeNodeIndexBase;
+    const int treeParticleSlots_snap = All.TreeParticleSlots;
     const int maxNodes_snap      = MaxNodes;
     const int maxForeignNodes_sn = MaxForeignNodes;    /* LET */
     const double boxsize     = All.BoxSize;
@@ -2024,7 +2028,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
-        int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_sn,
+        int ok = gpu_ewald_walk_one(target, treeBase, treeParticleSlots_snap, maxNodes_snap, maxForeignNodes_sn,
                                      P_dev, &soa_snap,
 #ifdef GRAVITY_HYBRID_OPENING_CRIT
                                      is_first_step_snap,
