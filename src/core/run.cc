@@ -326,6 +326,12 @@ void run(void)
             gizmo_cpu_log_request_force_print();
         }
 
+        /* Every rank arrives here together: the branch above is chosen from a globally summed
+           active count and an all-reduced rebuild flag. A tree that could not be updated or
+           rebuilt has already asked to stop, and walking it would hang rather than return, so
+           drain the request here instead of carrying a broken tree into the force computation. */
+        gizmo_exit_bad_stop_if_requested("run:after_tree_update");
+
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
 #ifdef DM_DISPERSION_LOOP_ACTIVE
