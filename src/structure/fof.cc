@@ -1529,6 +1529,9 @@ void fof_make_sink_particles(void)
 #endif
 #ifdef SINK_WIND_SPAWN
         P[import_indices[n]].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+        P[import_indices[n]].unspawned_jet_mass = 0; /* slots are reused, so zero-at-alloc is not enough */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
         P[import_indices[n]].Sink_CountProgs = 1;

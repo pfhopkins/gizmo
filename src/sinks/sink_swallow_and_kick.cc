@@ -256,7 +256,7 @@ void spawn_sink_wind_feedback(void)
         if((NumPart+n_particles_split+(int)(2.*(SINK_WIND_SPAWN+0.1)) < nmax) && (ptype_can_spawn==1)) // basic condition: particle is a 'spawner' (sink), and code can handle the event safely without crashing.
         {
             int sink_eligible_to_spawn = 0; // flag to check eligibility for spawning
-            if(P[i].unspawned_wind_mass >= (SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)) {sink_eligible_to_spawn=1;} // have 'enough' mass to spawn
+            if(*active_unspawned_mass_ptr(i) >= (SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)) {sink_eligible_to_spawn=1;} // have 'enough' mass to spawn, in whichever reservoir (jet or wind) currently holds the discrete-spawn channel
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
             if(P[i].Type==5) {if((P[i].Mass <= 3.5*P[i].Sink_Formation_Mass) || (P[i].Sink_Mass*UNIT_MASS_IN_SOLAR < 0.01)) {sink_eligible_to_spawn=0;}}  // spawning causes problems in these modules for low-mass sinks, so arbitrarily restrict to this, since it's roughly a criterion on the minimum particle mass. and for <0.01 Msun, in pre-collapse phase, no jets
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
@@ -542,7 +542,8 @@ void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>
 
 int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_already_spawned )
 {
-    double total_mass_in_winds = P[i].unspawned_wind_mass;
+    double *unspawned_mass_ptr = active_unspawned_mass_ptr(i); // whichever reservoir (jet or wind) currently holds the discrete-spawn channel for this particle
+    double total_mass_in_winds = *unspawned_mass_ptr;
 
     int n_particles_split   = (int) floor( total_mass_in_winds / target_mass_for_wind_spawning(i) ); /* if we set SINK_WIND_SPAWN we presumably wanted to do this in an exactly-conservative manner, which means we want to have an even number here. */
     int k=0, j;   /* j is a particle index bounded by NumPart (int); was 'long' here pre-port — mismatched gizmo_mark_kernel_radius_dirty_indices(const int*) signature, masked by the sink_env1 #error until that was lifted. */
@@ -805,7 +806,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
         P[i].dp -= P[j].Mass * P[i].Vel; /* track momentum change from mass loss for tree node update */
         P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */ if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
-        P[i].unspawned_wind_mass -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass */
+        *unspawned_mass_ptr -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass (jet or wind reservoir, whichever is active) */
 
 #if defined(METALS) && (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) || defined(SNE_NONSINK_SPAWN) || (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
         double yields[NUM_METAL_SPECIES]={0}; get_jet_yields(yields,i); // default to jet-type
@@ -904,7 +905,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
         force_add_element_to_tree(i0, j);// (buggy) /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
     }
-    if(P[i].unspawned_wind_mass < 0) {P[i].unspawned_wind_mass=0;}
+    if(*unspawned_mass_ptr < 0) {*unspawned_mass_ptr=0;}
     return n_particles_split;
 }
 #endif
@@ -965,6 +966,25 @@ void special_rt_feedback_injection(void)
 #endif
 
 
+/* returns a pointer to whichever discrete-spawn reservoir is currently 'active' for particle i, mirroring
+   the same jets-vs-winds routing decision used in target_mass_for_wind_spawning below: SNe ejecta always
+   uses unspawned_wind_mass; at MS, winds use unspawned_wind_mass only while they hold the discrete-spawn
+   channel (wind_mode==1); everything else (pre-MS, or MS with jets dominant) uses unspawned_jet_mass. If
+   jets aren't compiled in at all there is only ever the one shared reservoir. */
+double* active_unspawned_mass_ptr(int i)
+{
+#ifdef SINGLE_STAR_FB_JETS
+    if(P[i].Type==5) {
+#if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+        if(P[i].ProtoStellarStage == 6) {return &P[i].unspawned_wind_mass;}
+        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode == 1)) {return &P[i].unspawned_wind_mass;}
+#endif
+        return &P[i].unspawned_jet_mass; // jets are the only (or currently dominant) discrete-spawn channel
+    }
+#endif
+    return &P[i].unspawned_wind_mass;
+}
+
 /* simple routine that evaluates the target cell mass for the spawning subroutine */
 double target_mass_for_wind_spawning(int i)
 {
@@ -987,7 +1007,7 @@ double target_mass_for_wind_spawning(int i)
         if((All.Cell_Spawn_Mass_ratio_MS>0.0)&&(P[i].ProtoStellarStage == 5)&&(P[i].wind_mode==1)) {return All.Cell_Spawn_Mass_ratio_MS * P[i].Sink_Formation_Mass;} //use different (probably lower) mass for winds than for jets (will also reduce it for MS jets, but that should be fine)
         else {return All.Sink_outflow_particlemass * P[i].Sink_Formation_Mass;}
 #else // we specify the absolute value
-        if(P[i].ProtoStellarStage == 5) {return (All.Cell_Spawn_Mass_ratio_MS > 0) ? All.Cell_Spawn_Mass_ratio_MS : All.Sink_outflow_particlemass;} // specified absolute mass resolution for stellar winds; fall back to Sink_outflow_particlemass if not set
+        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode == 1)) {return (All.Cell_Spawn_Mass_ratio_MS > 0) ? All.Cell_Spawn_Mass_ratio_MS : All.Sink_outflow_particlemass;} // winds hold the discrete-spawn channel: specified absolute mass resolution for stellar winds; fall back to Sink_outflow_particlemass if not set. If jets hold the channel instead (wind_mode!=1), even at MS, fall through below to the jet mass.
         else if(P[i].ProtoStellarStage == 6) {return P[i].Sink_Formation_Mass;} // If supernova, use the nominal "average" mass resolution
 #endif
     }

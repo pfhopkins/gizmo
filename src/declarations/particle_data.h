@@ -184,6 +184,9 @@ extern ALIGN(32) struct particle_data
     int IndexMapToTempStruc;   /*!< allows for mapping to SinkTempInfo struc */
 #ifdef SINK_WIND_SPAWN
     MyFloat unspawned_wind_mass;    /*!< tabulates the wind mass which has not yet been spawned */
+#ifdef SINGLE_STAR_FB_JETS
+    MyFloat unspawned_jet_mass;    /*!< separate reservoir for jet (accretion) mass not yet spawned; jets and MS winds bank into their own reservoirs and only whichever currently dominates (P.wind_mode) actually drains via discrete spawning, see sink.cc */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
     int Sink_CountProgs;
