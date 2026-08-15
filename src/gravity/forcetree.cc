@@ -2578,11 +2578,16 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
      * for synthesized particle leaves (one entry per particle that is a direct child of an essential
      * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
-     * 2 × (All.MaxPart / PartAllocFactor) ≈ 2 × TotNumPart / NTask as headroom covers NTask=2
+     * 2 × (All.MaxPartAssignable / PartAllocFactor) = 2 × TotNumPart / NTask as headroom covers NTask=2
      * worst case (both ranks overlap entirely) while staying modest for large NTask.  Both
      * factors are fixed within a run, which is required: this term sets MaxForeignNodes and so
      * the pseudo-particle index base, which restart-serialized node pointers are written
-     * against.  Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
+     * against.  That is why the ASSIGNMENT cap appears here and not the storage capacity:
+     * storage may be raised to hold an unusually large ghost import, on one rank and not
+     * another, so deriving from it would make the index base differ between ranks and move
+     * during a run.  The assignment cap is the same number everywhere and does not change after
+     * startup, so the ratio is exactly the balanced particle count.
+     * Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
      * The restart read does not derive at all: it passes the capacity stored in the file
      * (foreign_node_slots_exact), because inside the read window All.MaxPart is the WRITER's
      * (restored for the serialized Nextnode layout) while PartAllocFactor may already be a
@@ -2599,7 +2604,7 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     }
     else
     {
-        double synth_overhead = 2.0 * (double)All.MaxPart / (double)All.PartAllocFactor;
+        double synth_overhead = 2.0 * (double)All.MaxPartAssignable / (double)All.PartAllocFactor;
         long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
         /* Take the larger of the parameter-derived floor and the runtime adaptive
          * floor (ratcheted by force_treebuild on a retryable LET overflow). This is
