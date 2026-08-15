@@ -217,16 +217,17 @@ static void mode_b_walk_impl(const double pos[3],
     if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
     const int tree_base  = All.TreeNodeIndexBase;
+    const int tree_slots = All.TreeParticleSlots;
     const int pseudo_start = tree_base + MaxNodes + MaxForeignNodes;
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
     int no = start_no;
 
     while(no >= 0) {
-        if(no >= All.TreeParticleSlots && no < tree_base) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+        if(no >= tree_slots && no < tree_base) {/* An index between the particle slots and the node base belongs to neither, so the tree is
              * malformed; stop rather than read a side array or Nodes[] out of bounds. */
             endrun(90001024); no = -1; continue;}
-        if(no < All.TreeParticleSlots) {
+        if(no < tree_slots) {
             /* Particle leaf. Only return domain-owned local particles (not a
              * ghost import). cand_out==nullptr on a pure export-discovery walk. */
             if(cand_out && no < num_local &&
@@ -330,7 +331,7 @@ static void mode_b_walk_impl(const double pos[3],
                     if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
                 }
             }
-            no = Nextnode[All.TreeParticleSlots + (no - tree_base - MaxNodes - MaxForeignNodes)];
+            no = Nextnode[tree_slots + (no - tree_base - MaxNodes - MaxForeignNodes)];
         }
     }
 }
