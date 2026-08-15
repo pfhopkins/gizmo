@@ -170,6 +170,21 @@ void run(void)
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }
+    else
+    {
+        /* The restart files carry the authoritative state -- particles, domains, the integer
+         * timeline -- but not the tree the gravity walk actually reads: its GPU node mirror and
+         * its installed foreign nodes are derived from that state and are rebuilt, never stored.
+         * Build them once here, from what was just restored, so the first step can reuse a tree
+         * the same way any other step does. Particle order and the domain assignment are left
+         * exactly as they were read. The full drift is the standard precondition for a tree
+         * build: a restart file written on the periodic timer can hold particles that were never
+         * drifted to the sync point. */
+        set_softenings();
+        gizmo_full_drift_to(All.Ti_Current);
+        force_treebuild(NumPart, NULL);
+        gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
+    }
 
     while(1)			/* main timestep iteration loop */
     {
@@ -336,6 +351,12 @@ void run(void)
              * a per-decomp summary is the most informative cheap-cadence sample. */
             gizmo_cpu_log_request_force_print();
         }
+
+        /* Every rank arrives here together: the branch above is chosen from a globally summed
+           active count and an all-reduced rebuild flag. A tree that could not be updated or
+           rebuilt has already asked to stop, and walking it would hang rather than return, so
+           drain the request here instead of carrying a broken tree into the force computation. */
+        gizmo_exit_bad_stop_if_requested("run:after_tree_update");
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 

@@ -849,6 +849,20 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         gizmo_mark_kernel_radius_dirty_indices(&j, 1);
 #endif
 #endif
+        /* The density above is only a guess for the single timestep before this cell's first density
+           pass, but it has to be positive and finite: a zero seed -- which is what the spawning sink
+           hands over whenever no gas lies inside its own kernel, so its density estimator is empty --
+           gives zero pressure, a 0/0 sound speed, zero conduction and viscosity timesteps, and an
+           infinite cell volume in the magnetic field seed below. Fall back to, and keep a loose floor
+           well below, the density the density loop itself assigns an element with no neighbors in its
+           kernel. The floor is deliberately far under that value because the seeded kernel radius can
+           badly under-estimate the converged one, which would over-estimate the density. */
+        double rho_alone_in_kernel = 0;
+        if((P[j].KernelRadius > 0) && isfinite(P[j].KernelRadius)) {rho_alone_in_kernel = P[j].Mass / (VOLUME_NORM_COEFF_FOR_NDIMS * pow((double)P[j].KernelRadius, (double)NUMDIMS));}
+        if(!(rho_alone_in_kernel > 0) || !isfinite(rho_alone_in_kernel)) {rho_alone_in_kernel = CellP[dummy_cell_i_to_clone].Density;} /* the cloned element always has positive density */
+        if(!(CellP[j].Density > 0) || !isfinite(CellP[j].Density)) {CellP[j].Density = rho_alone_in_kernel;}
+        CellP[j].Density = DMAX(CellP[j].Density , 0.01 * rho_alone_in_kernel);
+
         /* note, if you want to use this routine to inject magnetic flux or cosmic rays, do this below */
 #if defined(SINK_WIND_SPAWN_SET_BFIELD_POLTOR)
         CellP[j].IniDen = -1. * CellP[j].Density; /* this is essentially acting like a bitflag, to signal to the code that the density needs to be recalculated because a spawn event just occurred */
