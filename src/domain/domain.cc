@@ -153,6 +153,57 @@ static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
+/*! How much particle storage this rank should hold for the coming epoch.
+ *
+ *  Storage covers three things that are measured, not guessed: the local particles the
+ *  decomposition is allowed to assign (world-uniform, so the assignment decisions stay uniform),
+ *  the particles that may be created between decompositions, and the imported ghosts, which are
+ *  the only strongly rank-dependent term and are taken from what this rank actually imported.
+ *  The last term is a cushion for the amount by which the next epoch's worst import may exceed
+ *  the one just observed; it scales with the particles per rank, since that is what sets the
+ *  scale of the error, and not with how much memory the machine happens to have.
+ *
+ *  Growing is unconditional: too little storage stops the run, and the reactive growth at the
+ *  ghost boundary can only rescue what it sees coming.  Releasing storage is deliberately
+ *  reluctant -- it only happens when the saving is worth a migration by both a proportion and an
+ *  absolute count, and never before an import has actually been observed, which is what keeps a
+ *  fresh start and a restart from immediately discarding capacity they are about to want back. */
+static int domain_target_particle_capacity(void)
+{
+    const double balanced      = (NTask > 0) ? ((double) All.TotNumPart / (double) NTask) : 0.0;
+    const double append_margin = (1.0 - REDUC_FAC_FOR_MEMORY_IN_DOMAIN) * (double) All.MaxPartAssignable;
+    const double safety        = DOMAIN_CAPACITY_SAFETY_FRACTION * balanced;
+
+    /* What the coming epoch is expected to need, and what to hold if the capacity has to move.
+     * The cushion belongs to the second and not the first, so it is headroom rather than an
+     * offset: capacity is left alone while the need still fits inside it, and a need that has
+     * grown past it is met with room to spare.  Making the capacity track the need exactly would
+     * migrate every particle array each time the measured ghost import ticked up by one slot. */
+    const double need_f   = (double) All.MaxPartAssignable + append_margin
+                            + (double) ghost_get_epoch_high_water();
+    const double target_f = need_f + safety;
+
+    int need   = (int) need_f;
+    int target = (target_f >= (double) All.MaxPartExpandable) ? All.MaxPartExpandable : (int) target_f;
+    if(target < All.MaxPartAssignable) {target = All.MaxPartAssignable;}   /* invariant I5 */
+    if(need   > target)                {need   = target;}                  /* at the run's ceiling */
+    /* Never ask for less storage than the particles already present.  Creation between
+     * decompositions is bounded by the storage capacity rather than by the assignment cap, so a
+     * burst of splits can leave more particles here than the cap alone would suggest. */
+    if(target < NumPart)               {target = NumPart;}
+
+    if(All.MaxPart < need) {return target;}
+
+    /* Release only a worthwhile amount, and only once an import has actually been measured -- which
+     * is also what stops a fresh start, or a restart holding a capacity the run already grew into,
+     * from discarding storage it is about to want back. */
+    if(ghost_get_epoch_high_water() <= 0) {return All.MaxPart;}
+    const int slack = All.MaxPart - target;
+    if(slack < (int) (DOMAIN_CAPACITY_SHRINK_FRACTION * (double) All.MaxPart)) {return All.MaxPart;}
+    if(slack < (int) (DOMAIN_CAPACITY_SHRINK_MIN_FRAC * balanced))            {return All.MaxPart;}
+    return target;
+}
+
 /*! Compute the domain local-particle assignment caps into DomainMaxPartLocal /
  *  DomainMaxGasLocal, both MaxPartAssignable*REDUC_FAC.  report is retained for the
  *  caller's benefit and prints nothing now that the caps are a plain fraction of the
@@ -338,9 +389,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
                                                                        is not a capacity change */
 
     /* The one point in a step where the particle capacity may be raised or lowered freely: the tree
-     * is down, no ghosts are imported, and the active list has not been rebuilt. Asking for the
-     * capacity we already have costs one comparison; a capacity to ask for is decided elsewhere. */
-    resize_particle_storage(All.MaxPart);
+     * is down, no ghosts are imported, and the active list has not been rebuilt. */
+    if(resize_particle_storage(domain_target_particle_capacity()) == 0) {
+        ghost_reset_epoch_high_water();   /* the window this decision consumed ends here */
+    }
 
 #ifdef BOX_PERIODIC
     t_tmp = my_second();

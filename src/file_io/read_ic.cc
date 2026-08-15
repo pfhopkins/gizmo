@@ -102,13 +102,6 @@ void read_ic(char *fname)
                                                   opposed to how much storage it has.  The two start
                                                   equal and the same expression on every rank makes the
                                                   assignment cap uniform without communication. */
-        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
-            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
-            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");
-            printf("  Raising PartAllocFactor adds ghost slots but also inflates P/CellP/tree storage and\n");
-            printf("  may not fix overlarge imports; consider more ranks/nodes or reducing ghost-import demand.\n");
-        }
-
         /* Fix, for the whole run, the largest particle capacity a rank may ever be raised to, and
          * with it the gravity tree's node-index base.  Particle indices occupy
          * [0,TreeNodeIndexBase) and every node/foreign-node/pseudo-particle index sits above it, so

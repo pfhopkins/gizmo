@@ -525,6 +525,10 @@ void ghost_exchange_cleanup(void);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
 int ghost_pool_is_live(void);
+/* Largest ghost import this rank has completed over the current and previous domain epoch, and
+ * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
+int ghost_get_epoch_high_water(void);
+void ghost_reset_epoch_high_water(void);
 /* Value-only in-place refresh of the CURRENT ghost pool along the provenance
  * recorded at the last import: owners re-pack their current P/CellP for exactly
  * the already-exported particles; receivers overwrite the existing ghost slots

@@ -2672,7 +2672,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("CBECollisionCrossSection",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 = collisions disabled (=%g) \n",tag[i],alternate_tag[i],All.CBECollisionCrossSection); continue;}
 #endif
                 if(strcmp("TimeLimitCPU",tag[i])==0) {*((double *)addr[i])=8.6e4; printf("Tag %s (%s) not set in parameter file: defaulting to 24-hours before auto-shutdown (=%g) \n",tag[i],alternate_tag[i],All.TimeLimitCPU); continue;}
-                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=10.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (needed for ghost particle headroom in multi-rank runs) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
+                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=2.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (the largest local particle imbalance the decomposition may produce; room for imported ghosts is measured and added separately) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
 #if !(defined(BOX_PERIODIC) || defined(BOX_SHEARING) || defined(BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE) || defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z))
                 if(strcmp("BoxSize",tag[i])==0) {*((double *)addr[i])=0; continue;} /* can ignore box size */
 #endif
