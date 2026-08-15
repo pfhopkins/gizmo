@@ -2024,10 +2024,8 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
             
             /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
             if(no < maxPart) {
-                if(TakeLevel >= 0) {P[no].GravCost[TakeLevel] += 1.0;} /* node was used */
                 no = Nextnode[no];
             } else {
-                if(TakeLevel >= 0) {nop->GravCost += 1.0;}
                 no = nop->u.d.sibling;
             }
             

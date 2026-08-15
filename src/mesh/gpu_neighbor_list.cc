@@ -361,10 +361,18 @@ static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
     sidx_rebuild_bvh_inplace(idx);
     sidx_stage_to_device(idx);
     sidx_refresh_compact_positions_device(idx);
+    idx->positions_stale_after_drift = 0;
 }
 
 void gpu_step_sidx_invalidate(void)
 {
+    /* No All-mirror belt here. Since the position refresh moved to the point of
+     * reuse, no path in this function launches a device kernel: the common path
+     * only sets a flag, and the rest free buffers. The kernels this file owns
+     * are reached through gpu_spatial_index_build and gpu_ngb_list_build, which
+     * carry their own belts, and the refresh now runs inside the
+     * latter. The leading fence the belt also provided before frees now lives
+     * inside gpu_spatial_index_free, with the release it protects. */
     struct particle_data *P_shared = gpu_particles_arena_P();
     if(!P_shared) {
         /* No arena -> no canonical particle storage; fall back to full free. */
@@ -386,7 +394,15 @@ void gpu_step_sidx_invalidate(void)
             gpu_spatial_index_free(idx);
             gpu_compact_xyzh_mark_h_dirty_all();
         } else {
-            sidx_refresh_after_drift(idx, P_shared);
+            /* Mark the positions stale rather than refreshing them here. The
+             * refresh happens at the point of reuse, in gpu_ngb_list_build, so
+             * a consumer that invalidates the index on count or epoch — and so
+             * rebuilds from current positions regardless — never pays for a
+             * refresh whose result it discards. Correctness is unchanged: the
+             * only paths that walk this index go through that build, which
+             * refreshes first and hard-aborts if it ever sees a stale one.
+             * The h component was already handled exactly this way. */
+            idx->positions_stale_after_drift = 1;
             /* h-dirty state intentionally left intact. drift_particle DOES
              * change KernelRadius (predict.cc:160,229) — those h updates are
              * marked into the per-cache dirty tracker (gpu_dirty_tracker) by
@@ -414,6 +430,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              const char *caller_label,
                              mode_b_radius_policy_t radius_policy)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Capture periodicity parameters */
     idx->periodic_flags[0] = TILE_PERIODIC_X;
     idx->periodic_flags[1] = TILE_PERIODIC_Y;
@@ -551,6 +569,9 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->ghost_epoch_when_built = g_sidx_ghost_epoch;
     idx->pool_epoch_when_built  = g_sidx_pool_epoch;
     idx->valid = 1;
+    /* Built from current positions, so no refresh is outstanding for this index.
+     * Explicit because the struct may be a cached one being rebuilt in place. */
+    idx->positions_stale_after_drift = 0;
     /* Register this cache with the dirty tracker over [0, num_total). The
      * compact_xyzh build above wrote every row's h from the live P[] under this
      * cache's radius policy, and nothing between there and here can mutate it,
@@ -563,6 +584,16 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
 void gpu_spatial_index_free(gpu_spatial_index_t *idx)
 {
+    /* Ordering, not cleanup. kokkos_free does not synchronize, so releasing a
+     * device allocation while a kernel may still be reading it is a
+     * use-after-free. The fence lives HERE, with the release, so that no caller
+     * can omit it -- this function is reached from the step loop, the
+     * decomposition boundary and the cached-index staleness guard, and putting
+     * the rule in any one of those leaves the next caller free to reintroduce
+     * the hazard. Skipped when there is nothing device-side to release. */
+    if(idx->d_compact_xyzh || idx->d_pool || idx->d_bvh || idx->d_tiles || idx->d_pos_buf) {
+        Kokkos::fence();
+    }
     if(idx->d_compact_xyzh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_compact_xyzh); idx->d_compact_xyzh = NULL;}
     if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pool); idx->d_pool = NULL;}
     if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
@@ -587,6 +618,7 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     idx->cache_tbm = -1;
     idx->cache_radius_policy = MODE_B_RADIUS_DEFAULT;
     idx->valid = 0;
+    idx->positions_stale_after_drift = 0;  /* nothing left to refresh */
     if(idx->dirty_handle >= 0) {
         gpu_dirty_tracker_unregister(idx->dirty_handle);
         idx->dirty_handle = -1;
@@ -646,6 +678,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         double j_kernel_radius_scale,
                         mode_b_radius_policy_t radius_policy)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
     const double cpu_rows_child0 = CPU_ChildCharged;
@@ -802,6 +836,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gpu_spatial_index_free(cached_idx);
     }
     if(cached_idx && cached_idx->valid) {
+        /* Reuse: settle the outstanding position refresh BEFORE the index becomes
+         * consumer-visible below. This is the only path on which a drift-time
+         * refresh is actually needed, which is why it waits until here. */
+        if(cached_idx->positions_stale_after_drift) {
+            /* Charged to the refresh bucket even though it runs here, so the
+             * bucket keeps naming the work it holds rather than the place the
+             * work happens; the enclosing list-build charge deducts it as a
+             * child. Without this a refresh running here would silently inflate the
+             * list-build row instead. */
+            const double t_refresh_start = my_second();
+            const double child0_refresh = CPU_ChildCharged;
+            sidx_refresh_after_drift(cached_idx, P_shared);
+            cpu_charge_child(CPU_SIDX_REFRESH,
+                             cpu_minus_children(timediff(t_refresh_start, my_second()), child0_refresh));
+        }
         idx = cached_idx;
     } else if(cached_idx) {
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label, radius_policy);
@@ -809,6 +858,24 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     } else {
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
         idx = &local_idx;
+    }
+
+    /* Coordinate-staleness invariant, same class as the cache_tbm and
+     * radius_policy guards above: a walk over an index whose tile bboxes, BVH
+     * and compact positions predate the last drift silently misses neighbours.
+     * Every path reaching here has either rebuilt the index from current
+     * positions or refreshed it, so this can only fire if a future caller
+     * introduces a third path. Fail loudly at the right layer. */
+    if(idx->positions_stale_after_drift) {
+        fprintf(stderr,
+            "gpu_ngb_list_build FATAL: caller='%s' is about to walk a spatial index "
+            "whose positions predate the last drift. The tile bounding boxes, BVH and "
+            "compact positions describe where particles WERE, so the walk would miss "
+            "genuine neighbours without any error. Every consumer must either rebuild "
+            "the index or refresh it before use; a path that does neither has been "
+            "added.\n", caller_label ? caller_label : "?");
+        fflush(stderr);
+        endrun(913007);
     }
 
     /* Copy spatial index pointers to gnl for use by free */

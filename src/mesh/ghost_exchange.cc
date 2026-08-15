@@ -40,8 +40,6 @@
 #include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
-#include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
-#include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
 #include "mode_b_local_walker.h"
 #ifdef _OPENMP
 #include <omp.h>                 /* threaded sender export + receiver walk below */
@@ -2677,8 +2675,11 @@ int ghost_refresh_values(void)
     if(send_tot != (long long)ghost_send_home_count)        return GHOST_REFRESH_FAIL_POOL_MUTATED;
 
     int ns = ghost_send_home_count;
-    struct particle_data *send_P = (struct particle_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct particle_data));
-    struct gas_cell_data *send_CellP = (struct gas_cell_data *) malloc((ns > 0 ? ns : 1) * sizeof(struct gas_cell_data));
+    /* new[], not malloc: particle_data is over-aligned (32 bytes), and the C
+     * allocator has no type information so it cannot honour that. new[] selects
+     * the aligned form automatically for an over-aligned type. */
+    struct particle_data *send_P = new struct particle_data[(ns > 0 ? ns : 1)];
+    struct gas_cell_data *send_CellP = new struct gas_cell_data[(ns > 0 ? ns : 1)];
     /* Re-pack current owner values via the SAME slot helper import uses, in the
        SAME send order (ghost_send_home_idx) that produced this pool. */
     for(int k = 0; k < ns; k++) {
@@ -2690,7 +2691,7 @@ int ghost_refresh_values(void)
     gx_forward_particle_exchange(send_P, send_CellP, ghost_wb_send_count, ghost_wb_send_disp,
                                  &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
                                  ghost_wb_recv_count, ghost_wb_recv_disp);
-    free(send_P); free(send_CellP);
+    delete[] send_P; delete[] send_CellP;
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;
 }

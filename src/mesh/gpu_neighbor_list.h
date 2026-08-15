@@ -120,6 +120,18 @@ struct gpu_spatial_index_t {
      * requires both epochs to match as well as num_total. */
     uint64_t ghost_epoch_when_built = 0;
     uint64_t pool_epoch_when_built  = 0;
+    /* Coordinate staleness, which is a SEPARATE axis from the epochs above:
+     * those record MEMBERSHIP identity, this records that a drift moved the
+     * positions the cached tile bboxes, BVH and compact_xyzh[i*4+0..2] were
+     * built from. Set when the step's drift completes, cleared by a refresh or
+     * a fresh build. The refresh runs at the point of REUSE rather than at
+     * drift time: a consumer that invalidates on count or epoch
+     * rebuilds from current positions anyway, so refreshing eagerly does work
+     * that is then discarded. This mirrors how the h component of the same
+     * array is already handled (marked dirty, refreshed on next build).
+     * INVARIANT: no walk may consume an index with this set — enforced by a
+     * hard abort in gpu_ngb_list_build. */
+    int positions_stale_after_drift = 0;
 };
 
 
@@ -184,7 +196,7 @@ void gpu_step_sidx_invalidate_full(void);
  * * (1+SIDX_H_SLACK) — the CONSERVATIVE lazy-drift candidate margin, NOT the
  * bare KernelRadius. It must track arena[j]'s current reach for every j that
  * any cached neighbor search reads as a candidate (BVH-walk reads compact for
- * pruning + the leaf check_tile_particles reads compact[j*4+3] for h_j in
+ * pruning + the leaf check_tile_particles_gpu reads compact[j*4+3] for h_j in
  * SYMMETRIC mode).  Whenever code mutates arena[j].KernelRadius (or imports
  * a ghost slot that overwrites it), it must register j as dirty so the next
  * cached gpu_ngb_list_build's compact_h_refresh covers it.

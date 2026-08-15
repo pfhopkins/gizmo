@@ -229,7 +229,7 @@ KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double 
 KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
+KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z, int target);
 KOKKOS_FUNCTION double GetLambdaSpecies(long kspecies, long NCOOLTAB_LOCAL, long ki, long kip, long kj, double dki, double dkj, double tmin, double tdiff);
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 
@@ -375,8 +375,8 @@ void cooling_parent_routine(void)
         if(diag_n > 0) {
             gpu_rt_diag_count++;
             /* Make a fresh copy of the saved inputs for CPU re-run */
-            struct particle_data *cpu_P = (struct particle_data *) malloc(diag_n * sizeof(struct particle_data));
-            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) malloc(diag_n * sizeof(struct gas_cell_data));
+            struct particle_data *cpu_P = (struct particle_data *) mymalloc("cool_diag_P", diag_n * sizeof(struct particle_data));
+            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) mymalloc("cool_diag_Cell", diag_n * sizeof(struct gas_cell_data));
             memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
             memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
             for(int dd = 0; dd < diag_n; dd++) {
@@ -408,7 +408,7 @@ void cooling_parent_routine(void)
                 }
 #endif
             }
-            free(cpu_P); free(cpu_Cell);
+            myfree(cpu_Cell); myfree(cpu_P);
             fflush(stdout);
         }
 #endif /* GIZMO_DEBUG_RT_COOLING */
@@ -447,8 +447,8 @@ void cooling_parent_routine(void)
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
         /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
          * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
-        struct particle_data *oracle_P_scratch = (struct particle_data *) malloc(batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) malloc(batch_n * sizeof(struct gas_cell_data));
+        struct particle_data *oracle_P_scratch = (struct particle_data *) mymalloc("cool_oracle_P", batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) mymalloc("cool_oracle_Cell", batch_n * sizeof(struct gas_cell_data));
         memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
         memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
 #endif
@@ -582,7 +582,7 @@ void cooling_parent_routine(void)
             #undef POSTCOOL_ORACLE_CMP_ARR
             #undef POSTCOOL_ORACLE_CMP
         }
-        free(oracle_P_scratch); free(oracle_Cell_scratch);
+        myfree(oracle_Cell_scratch); myfree(oracle_P_scratch);
         oracle_n_compared += batch_n;
 #endif
 
@@ -618,8 +618,16 @@ void cooling_parent_routine(void)
   } else
 #endif
   { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
-    struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+    /* Allocate these from the arena, not with malloc. The cooling chain is
+     * compiled against the alignment the arena gives P[] and CellP[], and the
+     * compiler vectorizes parts of it into 32-byte aligned loads on hosts with
+     * AVX. malloc only promises 16 bytes on x86-64, so a step that takes this
+     * fallback path faults inside the cooling kernel on the first such load,
+     * with a fault address of zero and nothing wrong with the index. The arena
+     * also reports exhaustion rather than handing back a null that nothing here
+     * checks. */
+    struct particle_data *compact_P    = (struct particle_data *) mymalloc("cool_compact_P", N_active * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("cool_compact_Cell", N_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
@@ -646,8 +654,8 @@ void cooling_parent_routine(void)
         if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
 #endif
     }
-    free(compact_Cell);
-    free(compact_P);
+    myfree(compact_Cell);
+    myfree(compact_P);
   } /* end CPU/GPU path selection */
 
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
@@ -1327,7 +1335,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
         {
             /* cooling rates tabulated for each species from Wiersma, Schaye, & Smith tables (2008) */
-            LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z); //* nHcgs*nHcgs;
+            LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z, target); //* nHcgs*nHcgs;
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
@@ -2077,7 +2085,7 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
 /* Metal-line table lookup — KOKKOS_FUNCTION so device kernels can call it */
 KOKKOS_FUNCTION
-double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
+double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z, int target)
 {
     double ne_over_nh_tbl=1, Lambda=0;
     int k, N_species_active = (int)NUM_LIVE_SPECIES_FOR_COOLTABLES;
@@ -2089,12 +2097,29 @@ double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
     long i_T=iymax+1, inHT=i_T*(ixmax+1);
     if(All.ComovingIntegrationOn && All.SpeciesTableInUse<48) {dz=log10(1/All.Time)*48; dz=dz-(int)dz; mdz=1-dz;} else {dz=0; mdz=1;}
 
+    /* A density that is not positive and finite, or a non-finite temperature,
+     * cannot index these tables, and it means the cell reached cooling with
+     * invalid state -- the real error is wherever that state was produced.
+     * Report the values, which are the evidence for finding it, and stop.
+     * Catching it here is not optional: log10 of a negative density is a NaN,
+     * every comparison against a NaN is false, so a NaN would pass BOTH bounds
+     * below and convert to a large negative table index. */
+    if(!((nHcgs > 0) && isfinite(nHcgs) && isfinite(logT)))
+    {
+        printf("GetCoolingRateWSpecies: cell=%d reached the metal-line tables with unusable state "
+               "nHcgs=%g logT=%g -- invalid upstream, stopping\n", target, nHcgs, logT);
+        endrun(90001019);
+        return 0;
+    }
+
     dx = (log10(nHcgs)-(-8.0))/(0.0-(-8.0))*ixmax;
     dy = (logT-2.0)/(9.0-2.0)*iymax;
-    if(dx<0) {dx=0;} else {if(dx>ixmax) {dx=ixmax;}}
+    /* written so that a NaN, if one ever reaches here, lands on 0 rather than
+     * passing through: !(x>=0) is true for a NaN where x<0 is false */
+    if(!(dx>=0)) {dx=0;} else {if(dx>ixmax) {dx=ixmax;}}
     ix0=(int)dx; ix1=ix0+1; if(ix1>ixmax) {ix1=ixmax;}
     dx=dx-ix0;
-    if(dy<0) {dy=0;} else {if(dy>iymax) {dy=iymax;}}
+    if(!(dy>=0)) {dy=0;} else {if(dy>iymax) {dy=iymax;}}
     iy0=(int)dy; iy1=iy0+1; if(iy1>iymax) {iy1=iymax;}
     dy=dy-iy0;
     long index_x0y0=iy0+ix0*i_T, index_x0y1=iy1+ix0*i_T, index_x1y0=iy0+ix1*i_T, index_x1y1=iy1+ix1*i_T;

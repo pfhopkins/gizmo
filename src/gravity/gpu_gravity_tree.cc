@@ -25,11 +25,11 @@ static struct gpu_gravity_tree_soa_t soa_ = {0};
 static int soa_capacity_ = 0;
 static int soa_valid_    = 0;
 
-/* SoA node-geometry drift-freshness stamp (L4 S2b-1).  The SoA node centers/len
- * are drift-refreshed to a given Ti by gpu_force_drift_nodes; this stamp records
- * WHEN that last succeeded so a consumer (the bounded fine-tree receiver walk) can
- * certify the device geometry is current WITHOUT relying on "the gravity walk
- * probably ran earlier".  Keyed on both the target Ti and the treebuild generation
+/* SoA node-geometry drift-freshness stamp.  The SoA node centers/len are
+ * drift-refreshed to a given Ti by gpu_force_drift_nodes; this stamp records
+ * WHEN that last succeeded, so a consumer can certify the device geometry is
+ * current WITHOUT relying on "the gravity walk probably ran earlier".
+ * Keyed on both the target Ti and the treebuild generation
  * (a rebuild repopulates node geometry even at unchanged capacity).  -1 = not
  * certified.  Invalidated on realloc/free/rebuild. */
 static integertime g_soa_drift_ti  = -1;
@@ -276,32 +276,9 @@ extern "C" void gpu_gravity_tree_release(void)
     gpu_moment_refresh_release();
 }
 
-/* L4 S2b-1: certify the SoA node geometry is drifted to `ti`, drifting if needed.
- * Returns 1 (certified) or 0 (UNAVAILABLE — SoA absent/unusable/undriftable; caller
- * falls back to authoritative broadcast, NEVER builds an alternate tree).  Lives
- * with the SoA owner so it is independent of whether the gravity FORCE walk ran
- * (works for SELFGRAVITY_OFF too, iff force_treebuild populated a usable SoA).
- * The stamp fast-path (matching ti + treebuild generation) avoids re-launching the
- * drift kernel when geometry is already certified current. */
-extern "C" int gpu_gravity_soa_ensure_drifted(integertime ti)
-{
-    if(!soa_valid_ || soa_.center == NULL) return 0;   /* SoA absent/unusable */
-    long gen = force_treebuild_generation();
-    if(g_soa_drift_ti == ti && g_soa_drift_gen == gen) return 1;   /* already certified */
-    if(gpu_force_drift_nodes(ti) != 0) {               /* drift failed (mirrors not ready / soft bad-stop) */
-        gpu_gravity_soa_invalidate_drift_stamp_();
-        return 0;
-    }
-    /* gpu_force_drift_nodes already recorded the stamp on success; this re-set is
-     * redundant-but-identical (same ti + gen). Kept for locality. */
-    g_soa_drift_ti  = ti;
-    g_soa_drift_gen = gen;
-    return 1;
-}
-
 /* Record node geometry drifted to `ti` (snapshot current treebuild gen). Set by
- * the drift sweep's success path; read by ensure_drifted's fast-path and the
- * read-only certification query below. */
+ * the drift sweep's success path; read by the read-only certification query
+ * below, which is its only consumer. */
 extern "C" void gpu_gravity_soa_mark_drift_certified(integertime ti)
 {
     g_soa_drift_ti  = ti;
@@ -336,6 +313,8 @@ extern "C" int gpu_gravity_tree_valid(void)                          {return soa
 extern "C" void gpu_nextnode_backup_suns(int n)
 {
     if(n <= 0) {return;}
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Allocate at MaxNodes+1 (full-tree capacity), not just n (=Numnodestree).
      * If we only allocated at n, the subsequent gpu_gravity_tree_acquire(MaxNodes+1)
      * inside gpu_nextnode_thread would see soa_capacity_ < MaxNodes+1, call

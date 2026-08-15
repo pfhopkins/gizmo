@@ -327,8 +327,12 @@ void rt_update_chemistry(void)
 
     } else if(N_active > 0)
     { /* CPU path: OpenMP-parallel dispatch (fallback for small N on GPU builds) */
-        struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+        /* From the arena, not malloc: this fallback hands the compact copies to a
+         * kernel compiled against the alignment the arena gives P[] and CellP[],
+         * which a host vectorizer may turn into 32-byte aligned loads. malloc
+         * promises only 16 on x86-64. Same reason as the cooling fallback. */
+        struct particle_data *compact_P    = (struct particle_data *) mymalloc("rtchem_compact_P", N_active * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("rtchem_compact_Cell", N_active * sizeof(struct gas_cell_data));
         for(int j = 0; j < N_active; j++)
         {
             compact_P[j]    = P[chem_indices[j]];
@@ -347,8 +351,8 @@ void rt_update_chemistry(void)
             CellP[ii] = compact_Cell[j];
             P[ii]     = compact_P[j];
         }
-        free(compact_Cell);
-        free(compact_P);
+        myfree(compact_Cell);
+        myfree(compact_P);
     } /* end CPU/GPU path selection */
 
     free(chem_indices);

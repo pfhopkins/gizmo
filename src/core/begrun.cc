@@ -842,6 +842,9 @@ void open_outputfiles(void)
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "balance.txt");
     if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
     fprintf(FdBalance, "\n");
+    /* Each bucket below paints two characters into the map: work share / imbalance share.
+       Buckets with no charge site are never painted and are marked with the sentinel. */
+    fprintf(FdBalance, "unused slot    = '_' (no writer; never appears in the map)\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
     fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
     fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1], CPU_SymbolImbalance[CPU_TREEWAIT1]);
@@ -884,6 +887,8 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Pair kernel    = '%c' / '%c'\n", CPU_Symbol[CPU_PAIR_KERNEL],        CPU_SymbolImbalance[CPU_PAIR_KERNEL]);
     fprintf(FdBalance, "Sink env       = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_ENV],          CPU_SymbolImbalance[CPU_SINK_ENV]);
     fprintf(FdBalance, "Sink feed/swk  = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_FEEDSWK],      CPU_SymbolImbalance[CPU_SINK_FEEDSWK]);
+    fprintf(FdBalance, "Sidx refresh   = '%c' / '%c'\n", CPU_Symbol[CPU_SIDX_REFRESH],      CPU_SymbolImbalance[CPU_SIDX_REFRESH]);
+    fprintf(FdBalance, "Tree update    = '%c' / '%c'\n", CPU_Symbol[CPU_FORCE_UPDATE_TREE], CPU_SymbolImbalance[CPU_FORCE_UPDATE_TREE]);
     fprintf(FdBalance, "\n");
 #endif
 
@@ -1648,6 +1653,10 @@ void read_parameter_file(char *fname)
 
         strcpy(tag[nt], "NeighborLoopModeBThresholdMax");
         addr[nt] = &All.NeighborLoopModeBThresholdMax;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GravityHostWalkBelowActive");
+        addr[nt] = &All.GravityHostWalkBelowActive;
         id[nt++] = INT;
 
 
@@ -2643,6 +2652,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the interaction kernel. Trying to set a reasonable guess of =%g based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.DesNumNgb); continue;}
                 if(strcmp("NeighborLoopModeBThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_sum */
                 if(strcmp("NeighborLoopModeBThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_max */
+                if(strcmp("GravityHostWalkBelowActive",tag[i])==0) {*((int *)addr[i])=10000; printf("Tag %s (%s) not set in parameter file: defaulting to run the gravity walk and the dynamic tree update on the host below %d RANK-LOCAL active candidates per step (0 would disable this and always use the device path). \n",tag[i],alternate_tag[i],All.GravityHostWalkBelowActive); continue;}
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
                 if(strcmp("AGS_DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the adaptive-gravity (non-fluid) interaction kernel. Trying to set a reasonable guess (=%g) based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.AGS_DesNumNgb); continue;}
 #endif
@@ -3058,6 +3068,10 @@ void read_parameter_file(char *fname)
     if(All.NeighborLoopModeBThresholdMax < -1)
     {
         if(ThisTask==0) {printf("NeighborLoopModeBThresholdMax must be >= -1 (-1 = unset/use per-loop defaults, 0 = disable Mode B on adaptive paths, positive = threshold)\n");} endrun(1);
+    }
+    if(All.GravityHostWalkBelowActive < 0)
+    {
+        if(ThisTask==0) {printf("GravityHostWalkBelowActive must be >= 0 (0 = no count-based host routing, positive = rank-local active-candidate count below which the host walk is used)\n");} endrun(1);
     }
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {

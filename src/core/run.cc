@@ -35,6 +35,7 @@
 extern "C" void gizmo_cpu_log_request_force_print(void);
 extern "C" int  gizmo_cpu_log_consume_force_print(void);
 
+
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
 static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
@@ -150,6 +151,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * reached, when a `stop' file is found in the output directory, or
  * when the simulation ends because we arrived at TimeMax.
  */
+
 void run(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
@@ -248,11 +250,23 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
-        gpu_step_sidx_invalidate(); /* drift-time refresh: incremental tile-bbox + BVH
-                                     * update, no SFC re-sort (gas SIDX persists across
-                                     * drifts; alltypes SIDX is full-freed since it's
-                                     * less hot). domain_decomp boundary below triggers
-                                     * the full rebuild via gpu_step_sidx_invalidate_full(). */
+        {   /* drift-time refresh: incremental tile-bbox + BVH update, no SFC
+             * re-sort (gas SIDX persists across drifts; alltypes SIDX is
+             * full-freed since it's less hot). domain_decomp boundary below
+             * triggers the full rebuild via gpu_step_sidx_invalidate_full().
+             *
+             * Charged to its own bucket rather than left inside the enclosing
+             * residual interval: its cost keys on the particle count, not on
+             * how many particles are active, so a residual bucket hides it
+             * exactly where it matters most. The span contains no
+             * measure_time() chain call, so charging it as a child is
+             * sufficient -- the enclosing chain call deducts it automatically. */
+            const double t_sidx_start = my_second();
+            const double child0_sidx = CPU_ChildCharged;
+            gpu_step_sidx_invalidate();
+            cpu_charge_child(CPU_SIDX_REFRESH,
+                             cpu_minus_children(timediff(t_sidx_start, my_second()), child0_sidx));
+        }
         ghost_exchange_local_tree_invalidate_drift(); /* Bucket 3: drop the
                                      * persistent local-tree cache used by request-driven
                                      * ghost_exchange. Drift may have moved pool positions,
@@ -292,7 +306,19 @@ void run(void)
         else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
         else
         {
-            force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
+            /* update tree dynamically with kicks of last step so that it can be
+             * reused. Charged to its own bucket: the node drift inside it is
+             * O(tree nodes) and independent of how many particles are active,
+             * and it only runs on reused-tree steps, so a residual bucket both
+             * hides it and mixes it with unrelated per-step work. Same
+             * child-charge argument as the spatial-index refresh above. */
+            {
+                const double t_tree_update_start = my_second();
+                const double child0_tree_update = CPU_ChildCharged;
+                force_update_tree();
+                cpu_charge_child(CPU_FORCE_UPDATE_TREE,
+                                 cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
+            }
             make_list_of_active_particles();	/* now we can set the new chain list of active particles */
         }
 
@@ -786,6 +812,11 @@ void find_next_sync_point_and_drift(void)
 	TimeBinActive[n] = 0;
     }
 
+  /* Snapshot the count the coming step will actually integrate, before star formation,
+   * sink swallows or merges can add to the live counter. Routing decisions that run
+   * before make_list_of_active_particles rebuilds the list read this, not NumForceUpdate. */
+  NumForceUpdateAtSyncPoint = NumForceUpdate;
+
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;
   MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -1226,6 +1257,8 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+          "sidx refresh  %10.2f  %5.1f%%\n"
+          "tree update   %10.2f  %5.1f%%\n"
           "misc          %10.2f  %5.1f%%\n",
 
     All.CPU_Sum[CPU_ALL], 100.0,
@@ -1303,6 +1336,8 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
+    All.CPU_Sum[CPU_SIDX_REFRESH], (All.CPU_Sum[CPU_SIDX_REFRESH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_FORCE_UPDATE_TREE], (All.CPU_Sum[CPU_FORCE_UPDATE_TREE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
 
     fprintf(FdCPU, "\n");

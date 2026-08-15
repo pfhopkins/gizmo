@@ -706,34 +706,6 @@ void MechFBSpec::reset_per_iter_device_context(
  * Toplevel helpers — entry points for mechanical_fb.cc (non-GPU TU).
  * ========================================================================== */
 
-struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas) {
-    const int n = (n_gas > 0) ? n_gas : 1;
-    return (struct MechFBGasDelta *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(struct MechFBGasDelta));
-}
-
-void mechfb_free_local_gas_delta(struct MechFBGasDelta *p) {
-    if (p) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);
-}
-
-/* mechfb_zero_local_gas_delta — zero the gas-only portion of the SharedSpace
- * buffer (avoid std::memset on SharedSpace from a non-GPU TU; route through
- * Kokkos so the backend semantic is explicit).
- *
- * Mirrors the legacy zero loop in mechanical_fb.cc:275 — only entries where
- * P[j].Type == 0 are zeroed; non-gas entries are left untouched (saves work
- * on tiny-N steps). Runs on the host because the loop reads global P[]
- * (Type filter), which is not device-resident here. SharedSpace is
- * host-readable so a direct write is correct. */
-void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas) {
-    if (!p || n_gas <= 0) return;
-    Kokkos::fence();  /* ensure any prior device writes are visible */
-    for (int j = 0; j < n_gas; ++j) {
-        if (P[j].Type == 0) std::memset(&p[j], 0, sizeof(struct MechFBGasDelta));
-    }
-    Kokkos::fence();  /* ensure host zero is visible to the next device launch */
-}
-
 /* Persistent capacity-managed gas-delta buffer (grow-only). Replaces the per-step
  * alloc + O(N_gas) zero + free. Invariant (upheld by the caller): the buffer is
  * all-zero between mechfb steps -- verify_and_assign_local_mechfb_integrals
@@ -777,6 +749,8 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                           int n_gas) {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
      * global_num_active == 0 case. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's

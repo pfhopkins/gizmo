@@ -229,6 +229,9 @@ struct global_data_all_processes
   int MaxMemSize;		/*!< Per-MPI-task size in MB of the legacy Base/mymalloc arena. NOT a total memory budget: particle SoA, tree UVM, Kokkos scratch, LET wire buffers, and MPI/ghost buffers are accounted separately, outside this arena. */
   int NeighborLoopModeBThresholdSum;	/*!< optional Mode-A/B dispatch threshold on the summed active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_sum) */
   int NeighborLoopModeBThresholdMax;	/*!< optional Mode-A/B dispatch threshold on the max-rank active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_max) */
+  int GravityHostWalkBelowActive;	/*!< below this many RANK-LOCAL active gravity candidates, the tree walk and the dynamic tree update run on the host, which drifts nodes lazily as it
+					   touches them instead of sweeping every node up front. 0 disables the count-based routing; the host still owns the rest of any time step in which a node has already been drifted lazily, since the device sweep
+					   cannot refresh those nodes' mirror. Default 1e4, conservative against a measured crossover near 6e4 rank-local candidates on 16-rank FIRE. */
   double CourantFac;		/*!< Courant factor */
 #ifdef CBE_INTEGRATOR
   double CBEMassEffFloor;	/*!< CBE timestep m_eff floor fraction: m_eff = max(m_b, CBEMassEffFloor*m_cell) in the per-basis mass-depletion + moment-accel timestep criteria, so near-empty placeholder/free-slot bases cannot force an absurdly small step. Timestep-only (does not touch flux/update). Default 0.1. */

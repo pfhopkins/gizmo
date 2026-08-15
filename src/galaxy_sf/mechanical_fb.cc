@@ -96,12 +96,16 @@ void determine_where_SNe_occur(void)
         dtmean += dt;
     } // for (int i : ActiveParticleList) //
 
-    MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ptotal, &mpi_ptotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&nhosttotal, &mpi_nhosttotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ntotal, &mpi_ntotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&npossible, &mpi_npossible, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    /* The six log-file diagnostics are independent sums to rank 0, so they ride
+     * one six-element reduction rather than six single-value ones: same values,
+     * one collective latency instead of six. This routine runs on every step
+     * that has any feedback-eligible particle, so the five saved collectives
+     * are five fewer places for rank skew to be absorbed. */
+    const double loc_fb_diag[6] = {dtmean, rmean, ptotal, nhosttotal, ntotal, npossible};
+    double glob_fb_diag[6] = {0,0,0,0,0,0};
+    MPI_Reduce(loc_fb_diag, glob_fb_diag, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    mpi_dtmean = glob_fb_diag[0]; mpi_rmean = glob_fb_diag[1]; mpi_ptotal = glob_fb_diag[2];
+    mpi_nhosttotal = glob_fb_diag[3]; mpi_ntotal = glob_fb_diag[4]; mpi_npossible = glob_fb_diag[5];
 
     if(ThisTask == 0)
     {

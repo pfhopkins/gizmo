@@ -41,6 +41,7 @@ int PTask;			/*!< note: NTask = 2^PTask */
 double CPUThisRun;		/*!< Sums CPU time of current process */
 
 int NumForceUpdate;		/*!< number of active particles on local processor in current timestep  */
+int NumForceUpdateAtSyncPoint;	/*!< see allvars.h: sync-point snapshot of NumForceUpdate for pre-rollover routing */
 long long GlobNumForceUpdate;
 int NumGasUpdate;		/*!< number of active gas cells on local processor in current timestep  */
 
@@ -105,14 +106,28 @@ size_t AllocatedBytes;
 size_t HighMarkBytes;
 size_t FreeBytes;
 double CPU_Step[CPU_PARTS];
+/* Characters painted into the balance.txt work/imbalance map, one pair per
+ * CPU_Step bucket. write_cpu_log() lays both shares of every bucket into a
+ * single flat string, so a character must identify exactly one bucket AND one
+ * of the two shares: any character appearing twice — within either array or
+ * across the two — makes that column unreadable. '#' (head marker) and '-'
+ * (unaccounted tail) are painted literally by the writer and are reserved.
+ *
+ * Only the 43 buckets that have a charge site can ever be painted (the writer
+ * skips any bucket with zero time), and 43 pairs plus the two reserved
+ * characters is the most that fits in printable ASCII. Buckets with no writer
+ * therefore carry the sentinel '_' rather than a plausible character that a
+ * reader would hunt for and never find; balance.txt names the sentinel in its
+ * legend. Charging one of those buckets means giving it a real character here,
+ * in BOTH arrays, checked unique against every other entry in both. */
 char CPU_Symbol[CPU_PARTS] = {
-    '-', '*', '=', ';', '<', '[', '^', ':', '.', '~', '|', '+', '"', '/',  '`', ',', '>', '@', '#', '&',
-    '$', ']', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
-    'Y', 'X', 'U', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',  'n', 'o'};//, 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y, 'z',
+    '_', '*', '=', ';', '<', '[', '^', ':', '.', '~', '|', '+', '"', '_',  '`', ',', '_', '_', '_', '&',
+    '$', '_', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
+    '_', '_', '_', 'a', '_', '_', 'd', 'e', 'q', '_', '_', '!', 'j', 'k', 'l', 'm',  '_', '_'};
 char CPU_SymbolImbalance[CPU_PARTS] = {
-    'a', 't', 'u', 'v', 'b', 'w', 'd', 'r', 'h', 'm', 'n', 'l', 'o', 'p',  's', 'f', 'i', 'g', 'c', 'e', // 20 columns here
-    'x', 'y', 'z', 'A', 'I', 'W', 'T', 'V', 'B', 'C', 'D', 'E', 'F', 'G', 'H',  'I', 'J', 'K', 'L', 'Q',
-    'R', 'S', 'T', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',  'N', 'O'};//, 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'};
+    '_', 't', 'u', 'v', 'b', 'w', 'A', 'r', 'h', 'B', 'n', 'C', 'o', '_',  's', 'f', '_', '_', '_', 'D', // 20 columns here
+    'x', '_', 'z', 'E', 'I', 'W', 'T', 'V', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N',  'O', 'P', 'Q', 'R',
+    '_', '_', '_', 'S', '_', '_', 'U', 'X', 'Y', '_', '_', 'y', 'c', 'g', 'i', 'p',  '_', '_'};
 char CPU_String[CPU_STRING_LEN + 1];
 double WallclockTime;		/*!< This holds the last wallclock time measurement for timings measurements */
 double CPU_ChildCharged;

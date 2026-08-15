@@ -182,6 +182,7 @@ extern int NTask;		/*!< number of processors */
 extern int PTask;		/*!< note: NTask = 2^PTask */
 extern double CPUThisRun;	/*!< Sums CPU time of current process */
 extern int NumForceUpdate;	/*!< number of active particles on local processor in current timestep  */
+extern int NumForceUpdateAtSyncPoint;	/*!< NumForceUpdate as fixed at the sync point, before the physics of the step can add to it (star formation, sink swallows). Routing decisions taken before the active list is rebuilt must use this rather than the live counter, which several later call sites mutate. */
 extern long long GlobNumForceUpdate;
 extern int NumGasUpdate;	/*!< number of active gas cells on local processor in current timestep  */
 extern int MaxTopNodes;	        /*!< Maximum number of nodes in the top-level tree used for domain decomposition */
