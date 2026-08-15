@@ -1196,3 +1196,11 @@ void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
 void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 void gizmo_gpu_sync_all(void);
+
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. */
+void energy_budget_sync_report(void);
+#define EB_SYNC_REPORT() energy_budget_sync_report()
+#else
+#define EB_SYNC_REPORT()
+#endif
