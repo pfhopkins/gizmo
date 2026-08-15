@@ -273,6 +273,16 @@ void begrun(void)
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
       All.BufferSize = all.BufferSize;
+      /* mymalloc_init() already sized the Base arena from the parameter file, above, before the
+       * restart file was read. Keep the value here in step with the arena that actually exists,
+       * or every consumer of it -- the memory ledger above all -- reports the previous run's
+       * number while a differently-sized arena is reserved. */
+      All.MaxMemSize = all.MaxMemSize;
+      /* The remedy printed when the LET foreign-node arena overflows is to raise this and restart,
+       * so the restarted run has to see the new value. The restart read itself is unaffected: it
+       * allocates the foreign arena at the exact capacity stored in the file rather than deriving
+       * it, so the new value first takes effect at the next tree rebuild. */
+      All.LETAllocFactor = all.LETAllocFactor;
       All.TimeLimitCPU = all.TimeLimitCPU;
       All.ResubmitOn = all.ResubmitOn;
       All.SnapFormat = all.SnapFormat;
