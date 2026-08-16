@@ -902,21 +902,6 @@ int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
 
-/* One destination's payload can be larger than a whole round's budget on its own.  It still has to
- * go, so it ships as a round by itself; the fit test in let_exchange_nodes decides whether the
- * arena can actually hold it.  Reported once per run, since it says something about the run's
- * shape rather than about one exchange. */
-static void let_note_oversized_peer(int to, long long bytes, long long budget)
-{
-    static int reported = 0;   /* per rank: the condition is this rank's, so this rank reports it */
-    if(reported) return;
-    reported = 1;
-    printf("LET exchange: on rank %d the payload for one destination (rank %d, %g MB) is larger than "
-           "a round's budget (%g MB), so it ships in a round of its own.\n",
-           ThisTask, to, (double) bytes / (1024.0 * 1024.0), (double) budget / (1024.0 * 1024.0));
-    fflush(stdout);
-}
-
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
 {
     if(needed <= *capacity) return;
@@ -1440,17 +1425,57 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     }
 
     /* The flattened buffers live in the Base arena, a fixed reservation this exchange cannot grow,
-     * so on a large run the whole exchange does not fit at once and has to go out in rounds.  Each
-     * rank picks its own batch against its OWN remaining arena and nothing is agreed between ranks:
-     * a global schedule would tie every rank to the tightest one anywhere, and computing it from
-     * rank-local quantities is what makes a rank able to leave a collective the others are still
-     * in.  Only the loop's TERMINATION is collective, exactly as the neighbour-loop peer rounds and
-     * the legacy export loop do it.  Budget the send batch at a third of what is free, because the
-     * matching receive buffers -- whose size this rank does not choose -- have to fit beside it. */
+     * so on a large run the whole exchange does not fit at once and has to go out in rounds.
+     *
+     * Rounds are groups of consecutive steps of the exchange pattern already used elsewhere in the
+     * code (pm_periodic, pm_nonperiodic): at step g a rank trades with the rank whose index differs
+     * from its own in exactly the bits of g.  Two properties make that the right pattern here.  It
+     * is SYMMETRIC -- at each step a rank sends to and receives from the SAME partner -- so a round's
+     * receive volume is as predictable to a rank as its send volume, from counts it already has; a
+     * rank can therefore size a round against BOTH sides before anything is exchanged.  And it pairs
+     * every two ranks exactly once, so walking every step ships everything.
+     *
+     * A round covers a range of steps that is the SAME on every rank.  How many steps fit differs
+     * per rank and differs with position in the walk, so the count is reduced to the smallest any
+     * rank can take, each round, and every rank then takes that many.  Partners with nothing to
+     * trade contribute zero counts and no copy, but must NOT be stepped over: skipping a step on one
+     * rank and not on another would leave the two disagreeing about which partners a round covers.
+     *
+     * With room the whole walk is one round, which is one exchange over every partner -- what this
+     * did before rounds existed.  Under pressure the rounds shorten, in the limit to a single pair,
+     * whose cost is one partner's traffic no matter how large the run's total. */
     const size_t node_sz = sizeof(struct LETNodeWire);
     const size_t hdr_sz  = sizeof(struct LETSubtreeHeader);
-    long long send_budget = (long long) FreeBytes / 3;
-    if(send_budget < 1) send_budget = 1;
+
+    int pattern_bits = 0;
+    while((1 << pattern_bits) < NTask) pattern_bits++;
+    const int n_steps = (1 << pattern_bits);   /* steps 1..n_steps-1 cover every pair once */
+
+    /* Spend at most half of what is free on one round, so the round buffers cannot crowd out the
+     * scratch the install path still needs while they are held. */
+    long long round_budget = (long long) FreeBytes / 2;
+    if(round_budget < 1) round_budget = 1;
+
+    /* Bytes this rank trades at one step, both directions, nodes and headers. */
+    auto step_bytes = [&](int step) -> long long {
+        int peer = ThisTask ^ step;
+        if(peer >= NTask || peer == ThisTask) return 0;
+        return (long long) send_counts_int[peer] * (long long) node_sz
+             + (long long) recv_counts_int[peer] * (long long) node_sz
+             + (long long) send_hdr_counts[peer] * (long long) hdr_sz
+             + (long long) recv_hdr_counts[peer] * (long long) hdr_sz;
+    };
+
+    /* The heaviest single pair, over the WHOLE walk rather than however far the rounds got.  It is
+     * the floor on how short a round can be made, so it is what says whether pairing can still keep
+     * this inside the arena -- and it is wanted most precisely in the run that stops early, which is
+     * exactly the run that would not have scanned every step. */
+    long long largest_pair_bytes = 0;
+    for(int s = 1; s < n_steps; s++)
+    {
+        long long b = step_bytes(s);
+        if(b > largest_pair_bytes) largest_pair_bytes = b;
+    }
 
     /* Allocate offsets for both exchanges (in units of struct elements, NOT
      * bytes), then flat_send / flat_recv for both data streams. All
@@ -1475,52 +1500,52 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     int *round_recv_hdr_counts = (int *) mymalloc("LET_round_recv_hdr_counts", NTask * sizeof(int));
 
     let_exchange_status_t unpack_status = LET_OK;
-    int cursor = 0;   /* next destination this rank has still to ship to */
-    int ndone  = 0;
-    /* Every rank runs the same number of rounds, because the loop leaves collectively, so one
-     * rank's count is the run's count and reporting it needs no reduction. */
+    int step = 1;   /* next step of the exchange pattern; the same on every rank */
     int rounds_done = 0;
     long long largest_round_bytes = 0;
 
-    do
+    while(step < n_steps)
     {
+        /* How many further steps THIS rank could take within its budget.  At least one, always:
+         * a step that does not fit on its own is reported by the check below rather than skipped,
+         * and the walk has to keep moving or it would never finish. */
+        int steps_here = 0;
+        long long acc = 0;
+        for(int s = step; s < n_steps; s++)
+        {
+            long long add = step_bytes(s);
+            if(steps_here > 0 && acc + add > round_budget) break;
+            acc += add;
+            steps_here++;
+        }
+        if(steps_here < 1) steps_here = 1;
+
+        /* Every rank has to cover the same steps this round, so the round is as short as the
+         * shortest any rank can manage.  Reducing it costs one small collective that replaces the
+         * two count exchanges a round needed when the receive side was not predictable. */
+        int steps_this_round = 0;
+        MPI_Allreduce(&steps_here, &steps_this_round, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(steps_this_round < 1) steps_this_round = 1;
+        if(step + steps_this_round > n_steps) steps_this_round = n_steps - step;
+
         for(int r = 0; r < NTask; r++)
         {
             round_send_counts[r]     = 0; round_recv_counts[r]     = 0;
             round_send_hdr_counts[r] = 0; round_recv_hdr_counts[r] = 0;
         }
-
-        /* Take destinations off this rank's own cursor until the batch would outgrow the budget.
-         * A rank that has already shipped everything simply contributes an empty batch and keeps
-         * taking part, which is what lets a drained rank stay in step with the others.
-         *
-         * Each rank starts from ITSELF and walks forward, so at step k rank i is shipping to
-         * i+k while rank j ships to j+k: the destinations chosen in a round are spread across
-         * the communicator instead of every rank piling onto the low-numbered ranks first.
-         * Walking 0,1,2,... on every rank would leave rank 0 receiving its entire payload in the
-         * first round, which bounds the sending side while leaving the receiving side exactly as
-         * large as it was before -- the buffers here are one send and one receive at a time, so a
-         * bound on only one of them is no bound at all. */
-        long long batch_bytes = 0;
-        while(cursor < NTask)
+        /* Both directions of a step are the same partner, so this rank already knows what it will
+         * receive as well as what it will send -- no exchange is needed to find out.  A step whose
+         * partner does not exist, or has nothing to trade, simply contributes nothing. */
+        for(int s = step; s < step + steps_this_round; s++)
         {
-            int to = (ThisTask + cursor) % NTask;
-            if(to == ThisTask) { cursor++; continue; }
-            long long add = (long long) send_counts_int[to] * (long long) node_sz
-                          + (long long) send_hdr_counts[to] * (long long) hdr_sz;
-            if(batch_bytes > 0 && batch_bytes + add > send_budget) break;
-            if(batch_bytes == 0 && add > send_budget) { let_note_oversized_peer(to, add, send_budget); }
-            round_send_counts[to]     = send_counts_int[to];
-            round_send_hdr_counts[to] = send_hdr_counts[to];
-            batch_bytes += add;
-            cursor++;
+            int peer = ThisTask ^ s;
+            if(peer >= NTask || peer == ThisTask) continue;
+            round_send_counts[peer]     = send_counts_int[peer];
+            round_send_hdr_counts[peer] = send_hdr_counts[peer];
+            round_recv_counts[peer]     = recv_counts_int[peer];
+            round_recv_hdr_counts[peer] = recv_hdr_counts[peer];
         }
-
-        /* Tell every rank what is coming to it this round.  What a rank RECEIVES is chosen by its
-         * senders, not by itself, so the receive side is only known here -- which is why the fit
-         * test below covers both directions. */
-        MPI_Alltoall(round_send_counts,     1, MPI_INT, round_recv_counts,     1, MPI_INT, MPI_COMM_WORLD);
-        MPI_Alltoall(round_send_hdr_counts, 1, MPI_INT, round_recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
+        step += steps_this_round;
 
         int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
         for(int r = 0; r < NTask; r++)
@@ -1552,18 +1577,35 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         long long arena_room  = (long long) FreeBytes;
         rounds_done++;
         if(round_bytes > largest_round_bytes) largest_round_bytes = round_bytes;
-        int short_local = (round_bytes > arena_room) ? 1 : 0;
+        /* Ask the allocator itself, so the four blocks are tested for the block table as well as
+         * for bytes: a request can fit by size and still exhaust the table, which lands on the same
+         * hard floor this check exists to keep the run away from. */
+        int short_local = gizmo_alloc_fits_this_rank((size_t) round_bytes, 4) ? 0 : 1;
         int short_any   = 0;
         MPI_Allreduce(&short_local, &short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(short_any)
         {
             if(short_local)
             {
-                printf("LET exchange: rank %d needs %g MB for one round of transport buffers but has "
-                       "%g MB of arena left. Raise Max_Memory_Per_MPI_Task_in_MB, or spread the run "
-                       "over more ranks. Stopping.\n",
-                       ThisTask, (double) round_bytes / (1024.0 * 1024.0),
-                       (double) arena_room / (1024.0 * 1024.0));
+                /* Two different shortages reach here: not enough bytes free, or no room left in the
+                 * arena's fixed table of live blocks.  Say which, because raising the arena size
+                 * answers the first and does nothing at all for the second. */
+                if(round_bytes > arena_room)
+                {
+                    printf("LET exchange: rank %d needs %g MB for one round of transport buffers but has "
+                           "%g MB of arena left. Raise Max_Memory_Per_MPI_Task_in_MB, or spread the run "
+                           "over more ranks. Stopping.\n",
+                           ThisTask, (double) round_bytes / (1024.0 * 1024.0),
+                           (double) arena_room / (1024.0 * 1024.0));
+                }
+                else
+                {
+                    printf("LET exchange: rank %d cannot take the 4 transport buffers for one round: the "
+                           "arena has %g MB free, so this is not a shortage of memory but of its table of "
+                           "live blocks. Something above is holding an unusual number of allocations. "
+                           "Stopping.\n",
+                           ThisTask, (double) arena_room / (1024.0 * 1024.0));
+                }
                 fflush(stdout);
             }
             unpack_status = LET_ARENA_SHORT;
@@ -1613,26 +1655,40 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         myfree(flat_hdr_send);
         myfree(flat_recv);
         myfree(flat_send);
+    }
 
-        /* Keep going until EVERY rank has shipped everything, not just this one.  A rank that
-         * finished early stays in the loop contributing empty rounds, so the collectives above
-         * always have the same participants. */
-        int ndone_flag = (cursor >= NTask) ? 1 : 0;
-        MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    } while(ndone < NTask);
-
-    /* Report how the exchange was split, once per distinct round count, so the shape of the
-     * exchange is visible in a run's own log instead of only when it fails. */
-    if(ThisTask == 0)
+    /* Report how the exchange was split, once per distinct round count.  The figures are reduced
+     * over ranks because the interesting ones belong to whichever rank is under most pressure, and
+     * that is never reliably rank 0: on one run rank 0's largest round was a quarter of the rank
+     * that ran out, on another it was two thirds. The largest single pair is the figure that says
+     * whether pairing can keep bounding this at all -- once one pair alone approaches the arena,
+     * rounds cannot get any shorter. */
     {
-        static int last_rounds_reported = -1;
-        if(rounds_done != last_rounds_reported)
+        long long local[3]  = {largest_round_bytes, largest_pair_bytes, (long long) FreeBytes};
+        long long global[3] = {0, 0, 0};
+        MPI_Reduce(local, global, 2, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local[2], &global[2], 1, MPI_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
         {
-            last_rounds_reported = rounds_done;
-            printf("LET exchange: %d round(s), budget %g MB, largest round on this rank %g MB\n",
-                   rounds_done, (double) send_budget / (1024.0 * 1024.0),
-                   (double) largest_round_bytes / (1024.0 * 1024.0));
-            fflush(stdout);
+            /* Report a changed round count, and also whenever the largest round has grown by a
+             * quarter since the last report -- the same growth gating the memory ledger uses.  A run
+             * that fits in one round the whole way would otherwise say this once, at its smallest,
+             * and never show the exchange growing toward the limit it eventually stops at. */
+            static int last_rounds_reported = -1;
+            static long long last_largest_reported = 0;
+            if(rounds_done != last_rounds_reported ||
+               global[0] > last_largest_reported + last_largest_reported / 4)
+            {
+                last_rounds_reported  = rounds_done;
+                last_largest_reported = global[0];
+                printf("LET exchange: %d round(s) over %d step(s); largest round %g MB, largest single "
+                       "pair %g MB, arena free on the tightest rank %g MB\n",
+                       rounds_done, n_steps - 1,
+                       (double) global[0] / (1024.0 * 1024.0),
+                       (double) global[1] / (1024.0 * 1024.0),
+                       (double) global[2] / (1024.0 * 1024.0));
+                fflush(stdout);
+            }
         }
     }
 
