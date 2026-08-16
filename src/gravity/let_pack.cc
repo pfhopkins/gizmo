@@ -902,6 +902,21 @@ int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
 
+/* One destination's payload can be larger than a whole round's budget on its own.  It still has to
+ * go, so it ships as a round by itself; the fit test in let_exchange_nodes decides whether the
+ * arena can actually hold it.  Reported once per run, since it says something about the run's
+ * shape rather than about one exchange. */
+static void let_note_oversized_peer(int to, long long bytes, long long budget)
+{
+    static int reported = 0;   /* per rank: the condition is this rank's, so this rank reports it */
+    if(reported) return;
+    reported = 1;
+    printf("LET exchange: on rank %d the payload for one destination (rank %d, %g MB) is larger than "
+           "a round's budget (%g MB), so it ships in a round of its own.\n",
+           ThisTask, to, (double) bytes / (1024.0 * 1024.0), (double) budget / (1024.0 * 1024.0));
+    fflush(stdout);
+}
+
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
 {
     if(needed <= *capacity) return;
@@ -1390,12 +1405,52 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     MPI_Alltoall(send_counts_int, 1, MPI_INT, recv_counts_int, 1, MPI_INT, MPI_COMM_WORLD);
     MPI_Alltoall(send_hdr_counts, 1, MPI_INT, recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
-    int total_send = 0, total_recv = 0;
-    int total_hdr_send = 0, total_hdr_recv = 0;
-    for(int r = 0; r < NTask; r++) {
-        total_send += send_counts_int[r]; total_recv += recv_counts_int[r];
-        total_hdr_send += send_hdr_counts[r]; total_hdr_recv += recv_hdr_counts[r];
+    /* Only the receive total is needed here, to settle capacity before any window installs.
+     * Each window computes its own send and header totals from its windowed counts. */
+    int total_recv = 0;
+    for(int r = 0; r < NTask; r++) { total_recv += recv_counts_int[r]; }
+
+    /* Foreign-arena capacity is settled once, from the complete receive vector, before anything is
+     * installed -- the rounds below share that arena, so a round must never be what discovers it is
+     * too small.  Whether it fits is a RANK-LOCAL question, so the answer is reduced before any rank
+     * returns: a rank that left on its own would strand the others in a later collective.  This is
+     * the retryable case and only this one -- force_treebuild ratchets the foreign arena and rebuilds,
+     * which genuinely fixes it. */
+    long long foreign_needed = (long long) Numforeignnodes + (long long) total_recv;
+    if(foreign_needed_out) *foreign_needed_out = foreign_needed;
+    int foreign_short_local = (foreign_needed > (long long) MaxForeignNodes) ? 1 : 0;
+    int foreign_short_any   = 0;
+    MPI_Allreduce(&foreign_short_local, &foreign_short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(foreign_short_any)
+    {
+        myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_counts_int); myfree(send_counts_int);
+        return LET_OVERFLOW_RETRYABLE;
     }
+
+    /* Where a sender's nodes land is a prefix sum over the receive counts, so each sender's slots
+     * follow from the counts alone rather than from how many senders have been installed already.
+     * Senders can therefore arrive in any order -- including the round order below -- and every
+     * foreign node still occupies the same slot, which keeps the walk order, and so the order the
+     * gravity sum is accumulated in, exactly as it is without rounds. */
+    int *slot_prefix = (int *) mymalloc("LET_slot_prefix", NTask * sizeof(int));
+    {
+        int acc = Numforeignnodes;
+        for(int r = 0; r < NTask; r++) { slot_prefix[r] = acc; acc += recv_counts_int[r]; }
+    }
+
+    /* The flattened buffers live in the Base arena, a fixed reservation this exchange cannot grow,
+     * so on a large run the whole exchange does not fit at once and has to go out in rounds.  Each
+     * rank picks its own batch against its OWN remaining arena and nothing is agreed between ranks:
+     * a global schedule would tie every rank to the tightest one anywhere, and computing it from
+     * rank-local quantities is what makes a rank able to leave a collective the others are still
+     * in.  Only the loop's TERMINATION is collective, exactly as the neighbour-loop peer rounds and
+     * the legacy export loop do it.  Budget the send batch at a third of what is free, because the
+     * matching receive buffers -- whose size this rank does not choose -- have to fit beside it. */
+    const size_t node_sz = sizeof(struct LETNodeWire);
+    const size_t hdr_sz  = sizeof(struct LETSubtreeHeader);
+    long long send_budget = (long long) FreeBytes / 3;
+    if(send_budget < 1) send_budget = 1;
 
     /* Allocate offsets for both exchanges (in units of struct elements, NOT
      * bytes), then flat_send / flat_recv for both data streams. All
@@ -1414,71 +1469,162 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     int *recv_offsets     = (int *) mymalloc("LET_recv_offsets",     NTask * sizeof(int));
     int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
     int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
+    int *round_send_counts     = (int *) mymalloc("LET_round_send_counts",     NTask * sizeof(int));
+    int *round_recv_counts     = (int *) mymalloc("LET_round_recv_counts",     NTask * sizeof(int));
+    int *round_send_hdr_counts = (int *) mymalloc("LET_round_send_hdr_counts", NTask * sizeof(int));
+    int *round_recv_hdr_counts = (int *) mymalloc("LET_round_recv_hdr_counts", NTask * sizeof(int));
 
-    int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
-    for(int r = 0; r < NTask; r++)
+    let_exchange_status_t unpack_status = LET_OK;
+    int cursor = 0;   /* next destination this rank has still to ship to */
+    int ndone  = 0;
+
+    do
     {
-        send_offsets[r]     = s_off;
-        recv_offsets[r]     = r_off;
-        send_hdr_offsets[r] = hs_off;
-        recv_hdr_offsets[r] = hr_off;
-        s_off  += send_counts_int[r];
-        r_off  += recv_counts_int[r];
-        hs_off += send_hdr_counts[r];
-        hr_off += recv_hdr_counts[r];
-    }
-
-    struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
-        (size_t)total_send * sizeof(struct LETNodeWire) + 1);
-    struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
-        (size_t)total_recv * sizeof(struct LETNodeWire) + 1);
-    struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
-        (size_t)total_hdr_send * sizeof(struct LETSubtreeHeader) + 1);
-    struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
-        (size_t)total_hdr_recv * sizeof(struct LETSubtreeHeader) + 1);
-
-    /* Concatenate per-rank send buffers */
-    int s_pos = 0, hs_pos = 0;
-    for(int r = 0; r < NTask; r++)
-    {
-        if(send_counts_int[r] > 0 && send_buf_per_rank[r])
+        for(int r = 0; r < NTask; r++)
         {
-            memcpy(flat_send + s_pos, send_buf_per_rank[r],
-                   (size_t)send_counts_int[r] * sizeof(struct LETNodeWire));
+            round_send_counts[r]     = 0; round_recv_counts[r]     = 0;
+            round_send_hdr_counts[r] = 0; round_recv_hdr_counts[r] = 0;
         }
-        if(send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
+
+        /* Take destinations off this rank's own cursor until the batch would outgrow the budget.
+         * A rank that has already shipped everything simply contributes an empty batch and keeps
+         * taking part, which is what lets a drained rank stay in step with the others.
+         *
+         * Each rank starts from ITSELF and walks forward, so at step k rank i is shipping to
+         * i+k while rank j ships to j+k: the destinations chosen in a round are spread across
+         * the communicator instead of every rank piling onto the low-numbered ranks first.
+         * Walking 0,1,2,... on every rank would leave rank 0 receiving its entire payload in the
+         * first round, which bounds the sending side while leaving the receiving side exactly as
+         * large as it was before -- the buffers here are one send and one receive at a time, so a
+         * bound on only one of them is no bound at all. */
+        long long batch_bytes = 0;
+        while(cursor < NTask)
         {
-            memcpy(flat_hdr_send + hs_pos, send_hdr_per_rank[r],
-                   (size_t)send_hdr_counts[r] * sizeof(struct LETSubtreeHeader));
+            int to = (ThisTask + cursor) % NTask;
+            if(to == ThisTask) { cursor++; continue; }
+            long long add = (long long) send_counts_int[to] * (long long) node_sz
+                          + (long long) send_hdr_counts[to] * (long long) hdr_sz;
+            if(batch_bytes > 0 && batch_bytes + add > send_budget) break;
+            if(batch_bytes == 0 && add > send_budget) { let_note_oversized_peer(to, add, send_budget); }
+            round_send_counts[to]     = send_counts_int[to];
+            round_send_hdr_counts[to] = send_hdr_counts[to];
+            batch_bytes += add;
+            cursor++;
         }
-        s_pos  += send_counts_int[r];
-        hs_pos += send_hdr_counts[r];
-    }
 
-    /* MPI exchanges (parallel for nodes + headers). Counts and displacements
-     * are in element units, not bytes — see system/mpi_alltoallv_typed.h. */
-    gizmo_mpi_alltoallv_typed(flat_send,     send_counts_int, send_offsets,
-                              flat_recv,     recv_counts_int, recv_offsets,
-                              sizeof(struct LETNodeWire), MPI_COMM_WORLD);
-    gizmo_mpi_alltoallv_typed(flat_hdr_send, send_hdr_counts, send_hdr_offsets,
-                              flat_hdr_recv, recv_hdr_counts, recv_hdr_offsets,
-                              sizeof(struct LETSubtreeHeader), MPI_COMM_WORLD);
+        /* Tell every rank what is coming to it this round.  What a rank RECEIVES is chosen by its
+         * senders, not by itself, so the receive side is only known here -- which is why the fit
+         * test below covers both directions. */
+        MPI_Alltoall(round_send_counts,     1, MPI_INT, round_recv_counts,     1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Alltoall(round_send_hdr_counts, 1, MPI_INT, round_recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
-    /* Install foreign tree contents while flat_recv / flat_hdr_recv are
-     * still alive on the mymalloc stack. Capture the status so an unpack
-     * overflow propagates up to let_run_exchange. */
-    let_exchange_status_t unpack_status = let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
-                            flat_hdr_recv, recv_hdr_counts, total_hdr_recv, foreign_needed_out);
+        int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
+        for(int r = 0; r < NTask; r++)
+        {
+            send_offsets[r]     = s_off;
+            recv_offsets[r]     = r_off;
+            send_hdr_offsets[r] = hs_off;
+            recv_hdr_offsets[r] = hr_off;
+            s_off  += round_send_counts[r];
+            r_off  += round_recv_counts[r];
+            hs_off += round_send_hdr_counts[r];
+            hr_off += round_recv_hdr_counts[r];
+        }
+
+        /* Both directions have to fit in this rank's remaining arena, and a rank cannot answer that
+         * for itself alone: if any rank is short, they all stop together, here, before a byte is
+         * allocated.  Going ahead would hit the allocator's hard out-of-memory floor instead, which
+         * is not a stop this run could report or recover from.  This is NOT the retryable case --
+         * ratcheting the foreign arena neither shrinks these buffers nor enlarges the Base arena,
+         * so retrying would simply arrive back here. */
+        /* Ask the same question the allocator will ask, in the same units: the four buffers are
+         * taken one after another, so what has to hold is that their rounded sizes sum to no more
+         * than what is free.  Testing against anything stricter would refuse rounds the arena can
+         * actually serve, and turn runs that work today into stops. */
+        long long round_bytes = (long long) gizmo_mymalloc_rounded_size((size_t) s_off  * node_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) r_off  * node_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) hs_off * hdr_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) hr_off * hdr_sz + 1);
+        long long arena_room  = (long long) FreeBytes;
+        int short_local = (round_bytes > arena_room) ? 1 : 0;
+        int short_any   = 0;
+        MPI_Allreduce(&short_local, &short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(short_any)
+        {
+            if(short_local)
+            {
+                printf("LET exchange: rank %d needs %g MB for one round of transport buffers but has "
+                       "%g MB of arena left. Raise Max_Memory_Per_MPI_Task_in_MB, or spread the run "
+                       "over more ranks. Stopping.\n",
+                       ThisTask, (double) round_bytes / (1024.0 * 1024.0),
+                       (double) arena_room / (1024.0 * 1024.0));
+                fflush(stdout);
+            }
+            unpack_status = LET_ARENA_SHORT;
+            break;
+        }
+
+        struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
+            (size_t) s_off * node_sz + 1);
+        struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
+            (size_t) r_off * node_sz + 1);
+        struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
+            (size_t) hs_off * hdr_sz + 1);
+        struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
+            (size_t) hr_off * hdr_sz + 1);
+
+        /* Concatenate this window's per-rank send buffers */
+        for(int r = 0; r < NTask; r++)
+        {
+            if(round_send_counts[r] > 0 && send_buf_per_rank[r])
+            {
+                memcpy(flat_send + send_offsets[r], send_buf_per_rank[r],
+                       (size_t) round_send_counts[r] * node_sz);
+            }
+            if(round_send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
+            {
+                memcpy(flat_hdr_send + send_hdr_offsets[r], send_hdr_per_rank[r],
+                       (size_t) round_send_hdr_counts[r] * hdr_sz);
+            }
+        }
+
+        /* MPI exchanges (parallel for nodes + headers). Counts and displacements
+         * are in element units, not bytes -- see system/mpi_alltoallv_typed.h. */
+        gizmo_mpi_alltoallv_typed(flat_send,     round_send_counts,     send_offsets,
+                                  flat_recv,     round_recv_counts,     recv_offsets,
+                                  node_sz, MPI_COMM_WORLD);
+        gizmo_mpi_alltoallv_typed(flat_hdr_send, round_send_hdr_counts, send_hdr_offsets,
+                                  flat_hdr_recv, round_recv_hdr_counts, recv_hdr_offsets,
+                                  hdr_sz, MPI_COMM_WORLD);
+
+        /* Install this window's senders while their buffers are still alive on the mymalloc stack.
+         * Each lands at its prefix slot, so the result does not depend on which window carried it. */
+        let_exchange_status_t st = let_unpack_and_install(flat_recv, round_recv_counts, r_off,
+                                flat_hdr_recv, round_recv_hdr_counts, hr_off, slot_prefix);
+        if(st != LET_OK) unpack_status = st;
+
+        myfree(flat_hdr_recv);
+        myfree(flat_hdr_send);
+        myfree(flat_recv);
+        myfree(flat_send);
+
+        /* Keep going until EVERY rank has shipped everything, not just this one.  A rank that
+         * finished early stays in the loop contributing empty rounds, so the collectives above
+         * always have the same participants. */
+        int ndone_flag = (cursor >= NTask) ? 1 : 0;
+        MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    } while(ndone < NTask);
 
     /* Free everything in strict reverse-alloc order */
-    myfree(flat_hdr_recv);
-    myfree(flat_hdr_send);
-    myfree(flat_recv);
-    myfree(flat_send);
+    myfree(round_recv_hdr_counts);
+    myfree(round_send_hdr_counts);
+    myfree(round_recv_counts);
+    myfree(round_send_counts);
     myfree(recv_hdr_offsets);
     myfree(send_hdr_offsets);
     myfree(recv_offsets);
     myfree(send_offsets);
+    myfree(slot_prefix);
     myfree(recv_hdr_counts);
     myfree(send_hdr_counts);
     myfree(recv_counts_int);
@@ -1511,23 +1657,9 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
                                        const struct LETSubtreeHeader *recv_hdr_buf,
                                        const int *recv_hdr_count_per_rank,
                                        int recv_hdr_count_total,
-                                       long long *foreign_needed_out)
+                                       const int *foreign_slot_prefix)
 {
-    if(foreign_needed_out) *foreign_needed_out = 0;
     if(recv_count_total == 0) return LET_OK;
-
-    /* Capacity check (long long: capacity-bound, avoid int overflow on the sum).
-     * Report the full needed capacity (Numforeignnodes + recv_count_total -- the
-     * "+Numforeignnodes" is for a future per-sender/incremental install; today it
-     * is 0 at entry) and, on overflow, return a RETRYABLE status WITHOUT installing
-     * or aborting. force_treebuild ratchets RuntimeMinLETForeignNodes, rebuilds with
-     * a larger arena, and retries; all overflow messaging is owned by that loop. */
-    long long foreign_needed = (long long)Numforeignnodes + (long long)recv_count_total;
-    if(foreign_needed_out) *foreign_needed_out = foreign_needed;
-    if(foreign_needed > (long long)MaxForeignNodes)
-    {
-        return LET_OVERFLOW_RETRYABLE;
-    }
 
     int node_off = 0;     /* running offset into recv_buf (per-sender) */
     int hdr_off  = 0;     /* running offset into recv_hdr_buf (per-sender) */
@@ -1543,7 +1675,15 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             continue;
         }
 
-        int slot_base = All.TreeNodeIndexBase + MaxNodes + Numforeignnodes;
+        /* This sender's slots come from the prefix over the receive counts, not from how many
+         * senders happen to have been installed already, so a sender occupies the same slots no
+         * matter which exchange round carried it.  Capacity was settled against the complete
+         * receive vector before the first round; this bound is the backstop for that. */
+        if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) MaxForeignNodes)
+        {
+            return LET_OVERFLOW_RETRYABLE;
+        }
+        int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
 
         /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
          * The wire graph is self-contained -- pack RELABEL resolved every terminator to a

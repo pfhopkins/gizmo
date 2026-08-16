@@ -301,6 +301,11 @@ typedef enum {
     LET_OK = 0,
     LET_OVERFLOW_RETRYABLE,   /* receiver foreign arena too small; rebuild larger */
     LET_PACK_OOM,             /* send-buffer realloc failed; not retryable */
+    LET_ARENA_SHORT,          /* a round of transport buffers does not fit the Base arena; not
+                                 retryable, and decided collectively, so every rank carries it.
+                                 Separate from PACK_OOM because that one is a single rank's failed
+                                 realloc: the two want different reporting, and only the rank that
+                                 is actually short has anything to say about this one. */
     LET_UNPACK_INTERNAL       /* malformed exchange; not retryable */
 } let_exchange_status_t;
 
@@ -326,7 +331,13 @@ extern long long Numforeignnodes_highwater;
  *  scratch in strict LIFO order.  Inlining the install keeps mymalloc
  *  stack discipline correct -- earlier draft returned flat_recv /
  *  flat_hdr_recv to the caller, leaving them mid-stack and triggering
- *  "not the last allocated block" aborts when intermediates were freed. */
+ *  "not the last allocated block" aborts when intermediates were freed.
+ *
+ *  Phase 2 runs in windows over the peer offsets rather than as one exchange of
+ *  everything, because the flattened send and receive buffers live in the Base
+ *  arena, which is a fixed reservation and on a large run cannot hold a whole
+ *  exchange at once.  Each window is sized from the arena's own remaining space,
+ *  so a run with room still exchanges in a single window. */
 let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         const int *send_count_per_rank,
                         struct LETSubtreeHeader **send_hdr_per_rank,
@@ -339,17 +350,22 @@ let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  *  topleaf's continuation, redirect each affected local topleaf's u.d.nextnode to
  *  the corresponding foreign subtree root.  Returns LET_OK on success.
  *
- *  CRITICAL: if Numforeignnodes would exceed MaxForeignNodes after install,
- *  endrun() with the LETAllocFactor restart message.  Future option (b) --
- *  graceful shrink + revert to legacy export -- not implemented unless
- *  practical memory limits demand it. */
+ *  foreign_slot_prefix[r] is where sender r's nodes start, as a prefix sum over the
+ *  whole receive vector.  A sender therefore occupies the same slots whichever
+ *  exchange window carried it, which is what lets the walk -- and so the order the
+ *  gravity sum accumulates in -- stay independent of the exchange schedule.
+ *
+ *  Capacity is checked against the complete receive vector by the caller, before
+ *  the first window installs anything; the per-sender bound in here is the
+ *  backstop.  On overflow the return is RETRYABLE and force_treebuild ratchets the
+ *  arena and rebuilds -- all overflow messaging is owned by that loop. */
 let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                             const int *recv_count_per_rank,
                             int recv_count_total,
                             const struct LETSubtreeHeader *recv_hdr_buf,
                             const int *recv_hdr_count_per_rank,
                             int recv_hdr_count_total,
-                            long long *foreign_needed_out);
+                            const int *foreign_slot_prefix);
 
 /*! Top-level LET exchange.  Called from gravity_tree() after the local tree
  *  is built and force_exchange_pseudodata() has run.  Composes the four

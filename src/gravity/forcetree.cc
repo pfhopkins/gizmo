@@ -389,7 +389,7 @@ let_build_attempt:
      * Deciding globally keeps every rank on the same path (downstream + retry are
      * collective). */
     int overflow_local = (let_status == LET_OVERFLOW_RETRYABLE);
-    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
+    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_ARENA_SHORT) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
     int overflow_any = 0, hardfail_any = 0;
     long long need_max = 0;
     MPI_Allreduce(&overflow_local, &overflow_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -409,7 +409,11 @@ let_build_attempt:
                    ThisTask);
             fflush(stdout);
         }
-        if(let_status == LET_PACK_OOM || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
+        /* LET_ARENA_SHORT already reported itself, from the rank that is actually short and with the
+         * sizes involved, at the point the round was measured. Every rank carries that status because
+         * the decision is collective, so anything printed here would print NTask times and say
+         * nothing the short rank has not already said more precisely. */
+        if(let_status == LET_PACK_OOM || let_status == LET_ARENA_SHORT || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
     }
     else if(overflow_any)
     {
