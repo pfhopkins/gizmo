@@ -293,6 +293,14 @@ void begrun(void)
       All.ErrTolIntAccuracy = all.ErrTolIntAccuracy;
       All.MinGasKernelRadiusFractional = all.MinGasKernelRadiusFractional;
       All.MinGasTemp = all.MinGasTemp;
+      /* Which neighbour-loop and gravity-walk paths a step takes is a choice about how to compute,
+       * not part of the state being resumed, so a restart is free to be given different values.
+       * Without these the restart quietly kept whichever values the chain was first started with,
+       * while the startup echo reported the ones in the parameter file -- so a run could be walking
+       * a different path than its own log said, with nothing to show for it. */
+      All.NeighborLoopModeBThresholdSum = all.NeighborLoopModeBThresholdSum;
+      All.NeighborLoopModeBThresholdMax = all.NeighborLoopModeBThresholdMax;
+      All.GravityHostWalkBelowActive = all.GravityHostWalkBelowActive;
 #ifdef CHIMES
       All.ChimesThermEvolOn = all.ChimesThermEvolOn;
 #endif
