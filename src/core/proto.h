@@ -259,7 +259,9 @@ enum {
   GIZMO_KOKBUCKET_FINE_SIDECAR,         /* label fine_sidecar (device fine sidecar) */
   GIZMO_KOKBUCKET_TREESCRATCH_BUILD,    /* label prefix treescratch_build_  (topology/Peano/Morton) */
   GIZMO_KOKBUCKET_TREESCRATCH_MOMENT,   /* label prefix treescratch_moment_ (moment-refresh pools)  */
-  GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_           */
+  GIZMO_KOKBUCKET_NGL_SIDX,             /* label prefix ngl_sidx_  (tile/BVH/pool/compact-position spatial index) */
+  GIZMO_KOKBUCKET_NGL_PAIRS,            /* label prefix ngl_pairs_ (per-dispatch active list, CSR offsets/neighbours, search scratch) */
+  GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_ (remaining neighbour-list memory: build/refresh scratch) */
   GIZMO_KOKBUCKET_UNCLASSIFIED,
   GIZMO_KOKBUCKET_COUNT
 };

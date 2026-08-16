@@ -247,11 +247,12 @@ static void report_memory_ledger_impl(const char *when, int always)
                     bkt_mb[b] += mb; spc_mb[s] += mb;
                 }
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Kokkos buckets (node current MB): SoA %.1f | tree-AoS %.1f | tree-SoA %.1f | gravity-walk %.1f | modea-runner %.1f | fine-sidecar %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl %.1f | unclassified %.1f\n",
+                          "  Kokkos buckets (node current MB): SoA %.1f | tree-AoS %.1f | tree-SoA %.1f | gravity-walk %.1f | modea-runner %.1f | fine-sidecar %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl-sidx %.1f | ngl-pairs %.1f | ngl-other %.1f | unclassified %.1f\n",
                           bkt_mb[GIZMO_KOKBUCKET_PARTICLE_SOA], bkt_mb[GIZMO_KOKBUCKET_TREE_ARRAYS],
                           bkt_mb[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA], bkt_mb[GIZMO_KOKBUCKET_GRAVITY_WALK],
                           bkt_mb[GIZMO_KOKBUCKET_MODEA_RUNNER], bkt_mb[GIZMO_KOKBUCKET_FINE_SIDECAR],
                           bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_BUILD], bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_MOMENT],
+                          bkt_mb[GIZMO_KOKBUCKET_NGL_SIDX], bkt_mb[GIZMO_KOKBUCKET_NGL_PAIRS],
                           bkt_mb[GIZMO_KOKBUCKET_NGL], bkt_mb[GIZMO_KOKBUCKET_UNCLASSIFIED]);
             /* Space split only when more than one space class is nonzero (on a CPU/OpenMP
                backend everything is host/shared, so this line is suppressed). */
