@@ -1477,6 +1477,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     let_exchange_status_t unpack_status = LET_OK;
     int cursor = 0;   /* next destination this rank has still to ship to */
     int ndone  = 0;
+    /* Every rank runs the same number of rounds, because the loop leaves collectively, so one
+     * rank's count is the run's count and reporting it needs no reduction. */
+    int rounds_done = 0;
+    long long largest_round_bytes = 0;
 
     do
     {
@@ -1546,6 +1550,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
                               + (long long) gizmo_mymalloc_rounded_size((size_t) hs_off * hdr_sz + 1)
                               + (long long) gizmo_mymalloc_rounded_size((size_t) hr_off * hdr_sz + 1);
         long long arena_room  = (long long) FreeBytes;
+        rounds_done++;
+        if(round_bytes > largest_round_bytes) largest_round_bytes = round_bytes;
         int short_local = (round_bytes > arena_room) ? 1 : 0;
         int short_any   = 0;
         MPI_Allreduce(&short_local, &short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -1614,6 +1620,21 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         int ndone_flag = (cursor >= NTask) ? 1 : 0;
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     } while(ndone < NTask);
+
+    /* Report how the exchange was split, once per distinct round count, so the shape of the
+     * exchange is visible in a run's own log instead of only when it fails. */
+    if(ThisTask == 0)
+    {
+        static int last_rounds_reported = -1;
+        if(rounds_done != last_rounds_reported)
+        {
+            last_rounds_reported = rounds_done;
+            printf("LET exchange: %d round(s), budget %g MB, largest round on this rank %g MB\n",
+                   rounds_done, (double) send_budget / (1024.0 * 1024.0),
+                   (double) largest_round_bytes / (1024.0 * 1024.0));
+            fflush(stdout);
+        }
+    }
 
     /* Free everything in strict reverse-alloc order */
     myfree(round_recv_hdr_counts);
