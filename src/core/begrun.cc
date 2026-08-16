@@ -39,6 +39,8 @@
 
 
 
+void report_parameters_a_restart_cannot_change(const void *from_file);
+
 void begrun(void)
 {
   struct global_data_all_processes all;
@@ -301,6 +303,49 @@ void begrun(void)
       All.NeighborLoopModeBThresholdSum = all.NeighborLoopModeBThresholdSum;
       All.NeighborLoopModeBThresholdMax = all.NeighborLoopModeBThresholdMax;
       All.GravityHostWalkBelowActive = all.GravityHostWalkBelowActive;
+      /* The rest of this block is the same kind of thing: how accurately or how often something is
+       * computed, rather than what is being computed.  A physical coefficient is deliberately not
+       * here -- changing one mid-run either changes the problem or, worse, changes what the data
+       * already in the restart file means. */
+#ifdef DEVELOPER_MODE
+      All.ErrTolTheta = all.ErrTolTheta;
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+      All.TurbDynamicDiffFac = all.TurbDynamicDiffFac;
+      All.TurbDynamicDiffIterations = all.TurbDynamicDiffIterations;
+      All.TurbDynamicDiffMax = all.TurbDynamicDiffMax;
+      All.TurbDynamicDiffSmoothing = all.TurbDynamicDiffSmoothing;
+#endif
+#ifdef NUCLEAR_NETWORK
+      All.NuclearBurningFloor_T = all.NuclearBurningFloor_T;
+      All.NuclearBurningFloor_rho = all.NuclearBurningFloor_rho;
+      All.NuclearNSE_T_threshold = all.NuclearNSE_T_threshold;
+#endif
+#ifdef TURB_DRIVING
+      All.TurbDriving_Global_DtTurbUpdates = all.TurbDriving_Global_DtTurbUpdates;
+#endif
+#if defined(TURB_DRIVING_SPECTRUMGRID)
+      All.TimeBetTurbSpectrum = all.TimeBetTurbSpectrum;
+#endif
+#if (defined(SINK_PARTICLES) || defined(GALSF_SUBGRID_WINDS)) && defined(FOF)
+      All.TimeBetOnTheFlyFoF = all.TimeBetOnTheFlyFoF;
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+      All.WindFreeTravelDensFac = all.WindFreeTravelDensFac;
+#endif
+#ifdef SINGLE_STAR_FB_WINDS
+      All.Cell_Spawn_Mass_ratio_MS = all.Cell_Spawn_Mass_ratio_MS;
+#endif
+#ifdef SINK_WIND_SPAWN_SET_BFIELD_POLTOR
+      All.Sink_spawn_injectionradius = all.Sink_spawn_injectionradius;
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+      All.GrainPromotion_DustGasRatioThresh = all.GrainPromotion_DustGasRatioThresh;
+      All.GrainPromotion_MassThresh_cgs = all.GrainPromotion_MassThresh_cgs;
+#endif
+#ifdef CBE_INTEGRATOR
+      All.CBEMassEffFloor = all.CBEMassEffFloor;
+#endif
 #ifdef CHIMES
       All.ChimesThermEvolOn = all.ChimesThermEvolOn;
 #endif
@@ -504,6 +549,11 @@ void begrun(void)
 #endif
 
       if(All.TimeMax != all.TimeMax) {readjust_timebase(All.TimeMax, all.TimeMax);}
+
+      /* Everything a restart is allowed to take from the parameter file has now been taken.  Say
+       * which of the rest the file asked for and did not get, since they were read and echoed on
+       * the way in and would otherwise look as though they had been applied. */
+      report_parameters_a_restart_cannot_change(&all);
     }
 
 #ifdef GALSF_EFFECTIVE_EQS
@@ -1040,6 +1090,72 @@ void open_outputfiles(void)
 
 
 
+
+/* What the parameter file actually set, recorded as it is read.  Resuming from a restart file takes
+ * most of All from that file, so a parameter that is not one of the few copied back above is read,
+ * echoed, and then quietly replaced -- which reads exactly like it took effect.  Keeping the field's
+ * position rather than its name lets one loop report every such parameter without a line of code per
+ * parameter.  Only fields inside All are kept: a handful of parameters point elsewhere, and those
+ * are not what a restart file overwrites. */
+#define PARAMETERS_FROM_FILE_MAX 300
+static struct { char name[64]; size_t offset; int kind; } ParametersFromFile[PARAMETERS_FROM_FILE_MAX];
+static int NParametersFromFile = 0;   /* kind: 0 floating point, 1 integer, 2 text */
+
+static void note_parameter_from_file(const char *name, void *address, int kind)
+{
+    if(NParametersFromFile >= PARAMETERS_FROM_FILE_MAX) {return;}
+    char *base = (char *) &All, *end = base + sizeof(All), *p = (char *) address;
+    if(p < base || p >= end) {return;}
+    snprintf(ParametersFromFile[NParametersFromFile].name, sizeof(ParametersFromFile[0].name), "%s", name);
+    ParametersFromFile[NParametersFromFile].offset = (size_t) (p - base);
+    ParametersFromFile[NParametersFromFile].kind = kind;
+    NParametersFromFile++;
+}
+
+/*! Report the parameters this run was given but cannot use, because resuming from a restart file
+ *  takes them from the file instead.  Called once, after the restart state has been read and the
+ *  handful of parameters a restart may change have been copied back, with `from_file` being All as
+ *  the parameter file left it. */
+void report_parameters_a_restart_cannot_change(const void *from_file)
+{
+    if(ThisTask != 0) {return;}
+    int reported = 0;
+    for(int p = 0; p < NParametersFromFile; p++)
+    {
+        const char *in_use = (const char *) &All + ParametersFromFile[p].offset;
+        const char *wanted = (const char *) from_file + ParametersFromFile[p].offset;
+        char shown_use[64], shown_want[64];
+        int differs = 0;
+        switch(ParametersFromFile[p].kind)
+        {
+            case 0:
+                differs = (*(const double *) in_use != *(const double *) wanted);
+                snprintf(shown_use, sizeof(shown_use), "%g", *(const double *) in_use);
+                snprintf(shown_want, sizeof(shown_want), "%g", *(const double *) wanted);
+                break;
+            case 1:
+                differs = (*(const int *) in_use != *(const int *) wanted);
+                snprintf(shown_use, sizeof(shown_use), "%d", *(const int *) in_use);
+                snprintf(shown_want, sizeof(shown_want), "%d", *(const int *) wanted);
+                break;
+            default:
+                differs = (strcmp(in_use, wanted) != 0);
+                snprintf(shown_use, sizeof(shown_use), "%.60s", in_use);
+                snprintf(shown_want, sizeof(shown_want), "%.60s", wanted);
+                break;
+        }
+        if(!differs) {continue;}
+        if(!reported)
+        {
+            printf("\nResuming from a restart file, so the following cannot be taken from the parameter\n"
+                   "file: each keeps the value the run was started with. Begin from an initial condition\n"
+                   "or a snapshot to change them.\n");
+        }
+        reported++;
+        printf("   %-46s parameter file: %-16s in use: %s\n", ParametersFromFile[p].name, shown_want, shown_use);
+    }
+    if(reported) {printf("\n"); fflush(stdout);}
+}
 
 /*! This function parses the parameterfile in a simple way.  Each paramater is
  *  defined by a keyword (`tag'), and can be either of type douple, int, or
@@ -2562,6 +2678,9 @@ void read_parameter_file(char *fname)
 
                     if(j >= 0)
                     {
+                        /* Remember that the file set this one, so a restart can report the ones it
+                         * is about to override rather than echoing them as though they took. */
+                        note_parameter_from_file(buf1, addr[j], (id[j] == REAL) ? 0 : ((id[j] == INT) ? 1 : 2));
                         switch (id[j])
                         {
                             case REAL:
