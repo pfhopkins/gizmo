@@ -666,6 +666,48 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
 }
 
 
+/* kokkos_malloc THROWS on exhaustion, so a NULL check after it is dead code and the
+ * run aborts with no cleanup instead of stopping cleanly. These return NULL instead,
+ * matching gpu_tree_alloc_bytes and the runner's own staging allocator. Nothing is
+ * caught when the allocation succeeds. */
+static void *ngl_alloc_shared(size_t bytes, const char *label)
+{
+    if(bytes == 0) {return NULL;}
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, bytes); }
+    catch(const std::exception &) { return NULL; }
+}
+static void *ngl_alloc_device(size_t bytes, const char *label)
+{
+    if(bytes == 0) {return NULL;}
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, bytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+/* The per-active and per-pair arrays are the largest transients this loop asks for --
+ * the walk scratchpad alone is 512 int slots per active particle. When one cannot be
+ * had, the node is out of memory at the size this loop needs. Release the transients,
+ * leave a VALID EMPTY list (every active with zero neighbours) so that whatever runs
+ * between here and the stop draining walks nothing rather than reading a half-built
+ * list, and name the buffer that could not be had. */
+static void ngl_build_leave_empty(gpu_neighbor_list_t *gnl, int num_active,
+                                  double *d_radii, double *d_source_pos,
+                                  int *d_scratch, int *d_counts,
+                                  const char *what, size_t bytes)
+{
+    if(d_counts)     {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);}
+    if(d_scratch)    {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);}
+    if(d_source_pos) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);}
+    if(d_radii)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);}
+    if(gnl->offsets) {for(int aa = 0; aa <= num_active; aa++) {gnl->offsets[aa] = 0;}}
+    gnl->total_pairs = 0;
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "gpu_ngb_list_build: could not allocate %s (%.1f MB) for %d active particles; "
+             "neighbour list left empty",
+             what, (double) bytes / (1024.0 * 1024.0), num_active);
+    gizmo_request_controlled_stop(7711, msg, __FILE__, __LINE__, __FUNCTION__);
+}
+
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
@@ -954,14 +996,18 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
 
     /* Active indices: always re-uploaded (changes per call) */
-    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_active", ((num_active > 0) ? num_active : 1) * sizeof(int));
+    size_t active_bytes = (size_t)((num_active > 0) ? num_active : 1) * sizeof(int);
+    gnl->d_active = (int *) ngl_alloc_shared(active_bytes, "ngl_pairs_active");
+    if(!gnl->d_active) {ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the active-index list", active_bytes); return;}
     memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
 
     /* Optional explicit per-active search radii (for loops with a different kernel
        than P[i].KernelRadius, e.g. KernelRadiusDM or AGS_Hsml). NULL → use P[i].KernelRadius. */
     double *d_radii = NULL;
     if(search_radii_host) {
-        d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_radii", ((num_active > 0) ? num_active : 1) * sizeof(double));
+        size_t radii_bytes = (size_t)((num_active > 0) ? num_active : 1) * sizeof(double);
+        d_radii = (double *) ngl_alloc_shared(radii_bytes, "ngl_pairs_radii");
+        if(!d_radii) {ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the per-active search radii", radii_bytes); return;}
         memcpy(d_radii, search_radii_host, num_active * sizeof(double));
     }
 
@@ -970,12 +1016,16 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
        Layout in caller's array: source_positions_host[aa*3 + k] for axis k. */
     double *d_source_pos = NULL;
     if(source_positions_host) {
-        d_source_pos = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_source_pos", ((num_active > 0) ? num_active : 1) * 3 * sizeof(double));
+        size_t srcpos_bytes = (size_t)((num_active > 0) ? num_active : 1) * 3 * sizeof(double);
+        d_source_pos = (double *) ngl_alloc_shared(srcpos_bytes, "ngl_pairs_source_pos");
+        if(!d_source_pos) {ngl_build_leave_empty(gnl, num_active, d_radii, NULL, NULL, NULL, "the per-active source positions", srcpos_bytes); return;}
         memcpy(d_source_pos, source_positions_host, num_active * 3 * sizeof(double));
     }
 
     /* Allocate CSR offsets (64-bit row pointers) */
-    gnl->offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_offsets", (size_t)(num_active + 1) * sizeof(int64_t));
+    size_t offsets_bytes = (size_t)(num_active + 1) * sizeof(int64_t);
+    gnl->offsets = (int64_t *) ngl_alloc_shared(offsets_bytes, "ngl_pairs_offsets");
+    if(!gnl->offsets) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, NULL, NULL, "the CSR row offsets", offsets_bytes); return;}
 
     /* Per-particle scratchpad for fused single-pass build. Each active particle
      * gets a fixed stride (NGL_SCRATCH_STRIDE) of int slots in d_scratch; the BVH
@@ -986,8 +1036,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
-    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_pairs_scratch", na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
-    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_pairs_counts", na_safe * sizeof(int));
+    size_t scratch_bytes = na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int);
+    int *d_scratch = (int *) ngl_alloc_device(scratch_bytes, "ngl_pairs_scratch");
+    if(!d_scratch) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, NULL, NULL, "the neighbour-walk scratchpad", scratch_bytes); return;}
+    size_t counts_bytes = na_safe * sizeof(int);
+    int *d_counts  = (int *) ngl_alloc_device(counts_bytes, "ngl_pairs_counts");
+    if(!d_counts) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, d_scratch, NULL, "the per-active neighbour counts", counts_bytes); return;}
 
     /* Drain any prior async GPU work before the passes below. */
     Kokkos::fence();
@@ -1206,7 +1260,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->total_pairs = total;
 
     /* Allocate CSR neighbors array (length is 64-bit; element type stays int) */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_pairs_neighbors", (size_t)((total > 0) ? total : 1) * sizeof(int));
+    size_t neighbors_bytes = (size_t)((total > 0) ? total : 1) * sizeof(int);
+    gnl->neighbors = (int *) ngl_alloc_device(neighbors_bytes, "ngl_pairs_neighbors");
+    if(!gnl->neighbors) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, d_scratch, d_counts, "the CSR neighbour list", neighbors_bytes); return;}
 
     /* Compact: copy from per-particle scratchpad into dense CSR neighbors[]. */
     {
