@@ -104,21 +104,25 @@ PY=/mnt/home/mgrudic/python_work/bin/python
 # results would appear in multi-KB bursts. -v prints one line per test as it finishes.
 # --continue-on-collection-errors: one unimportable test module must not abort a 279-case run.
 #
-# -A runs one pytest per test directory rather than a single pass over test/. pytest only
-# prints tracebacks in its end-of-run FAILURES section, so a single pass that gets killed by
-# the wall clock yields PASSED/FAILED verdicts and no reasons at all -- which is exactly what
-# job 6883048 produced after timing out at 24h with 42 failures and zero diagnosis. Per
-# directory, a timeout loses only the directory in flight. Costs one pytest startup per
-# directory (~1s) and gives up cross-directory ordering, neither of which matters here.
-if [ "$RUN_ALL" = "1" ]; then
-    rc_any=0
-    for d in test/*/; do
-        # only directories holding a test module; skip harness/, __pycache__/, data dirs
-        compgen -G "${d}test_*.py" > /dev/null || continue
+# BOTH paths run one pytest per test directory rather than a single pass over test/. pytest
+# only prints tracebacks in its end-of-run FAILURES section, so a single pass killed by the
+# wall clock yields PASSED/FAILED verdicts and no reasons at all -- job 6883048 timed out at
+# 24h with 42 failures and zero diagnosis, and 6892638 came within two hours of losing a
+# targeted subset the same way. Per directory, a timeout loses only the directory in flight.
+# Costs one pytest startup per directory (~1s) and gives up cross-directory ordering.
+rc_any=0
+for d in test/*/; do
+    # only directories holding a test module; skip harness/, __pycache__/, data dirs
+    compgen -G "${d}test_*.py" > /dev/null || continue
+    if [ "$RUN_ALL" = "1" ]; then
         echo "=== pytest ${d}"
         "$PY" -u -m pytest "$d" -ra -s -v --continue-on-collection-errors --tb=short || rc_any=1
-    done
-    exit $rc_any
-else
-    "$PY" -u -m pytest test/ -k "$KEXPR" -ra -s -v --tb=short
-fi
+    else
+        # exit 5 is "no test matched -k in this directory", which is the normal case for most
+        # of them under a subset filter -- not a failure. Anything else nonzero is.
+        rc=0
+        "$PY" -u -m pytest "$d" -k "$KEXPR" -ra -s -v --continue-on-collection-errors --tb=short || rc=$?
+        [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ] || rc_any=1
+    fi
+done
+exit $rc_any
