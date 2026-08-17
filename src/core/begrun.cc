@@ -310,7 +310,7 @@ void begrun(void)
 #ifdef DEVELOPER_MODE
       All.ErrTolTheta = all.ErrTolTheta;
 #endif
-#ifdef TURB_DIFF_DYNAMIC
+#if defined(TURB_DIFFUSION) && defined(TURB_DIFF_DYNAMIC)
       All.TurbDynamicDiffFac = all.TurbDynamicDiffFac;
       All.TurbDynamicDiffIterations = all.TurbDynamicDiffIterations;
       All.TurbDynamicDiffMax = all.TurbDynamicDiffMax;
@@ -324,16 +324,16 @@ void begrun(void)
 #ifdef TURB_DRIVING
       All.TurbDriving_Global_DtTurbUpdates = all.TurbDriving_Global_DtTurbUpdates;
 #endif
-#if defined(TURB_DRIVING_SPECTRUMGRID)
+#if defined(TURB_DRIVING) && defined(TURB_DRIVING_SPECTRUMGRID)
       All.TimeBetTurbSpectrum = all.TimeBetTurbSpectrum;
 #endif
 #if (defined(SINK_PARTICLES) || defined(GALSF_SUBGRID_WINDS)) && defined(FOF)
       All.TimeBetOnTheFlyFoF = all.TimeBetOnTheFlyFoF;
 #endif
-#ifdef GALSF_SUBGRID_WINDS
+#if defined(GALSF) && defined(GALSF_SUBGRID_WINDS)
       All.WindFreeTravelDensFac = all.WindFreeTravelDensFac;
 #endif
-#ifdef SINGLE_STAR_FB_WINDS
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_WINDS)
       All.Cell_Spawn_Mass_ratio_MS = all.Cell_Spawn_Mass_ratio_MS;
 #endif
 #ifdef SINK_WIND_SPAWN_SET_BFIELD_POLTOR
@@ -405,10 +405,10 @@ void begrun(void)
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
         All.ArtCondConstant = all.ArtCondConstant;
 #endif
-#if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
+#if defined(MAGNETIC) && defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         All.ArtMagDispConst = all.ArtMagDispConst;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
         All.FastestWaveSpeed = 0.0;
@@ -452,20 +452,20 @@ void begrun(void)
         All.Sink_Rad_MomentumFactor = all.Sink_Rad_MomentumFactor;
 #endif
 #endif // sinks
-#ifdef GALSF_FB_FIRE_RT_LOCALRP
+#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_LOCALRP)
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
         All.HIIRegion_fLum_Coupled = all.HIIRegion_fLum_Coupled;
 #endif
 #ifdef RT_LEBRON
         All.PhotonMomentum_Coupled_Fraction = all.PhotonMomentum_Coupled_Fraction;
 #endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+#if defined(RT_LEBRON) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         All.PhotonMomentum_fUV = all.PhotonMomentum_fUV;
         All.PhotonMomentum_fOPT = all.PhotonMomentum_fOPT;
 #endif
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
         All.SNe_Energy_Renormalization = all.SNe_Energy_Renormalization;
         All.StellarMassLoss_Rate_Renormalization = all.StellarMassLoss_Rate_Renormalization;
         All.StellarMassLoss_Energy_Renormalization = all.StellarMassLoss_Energy_Renormalization;
@@ -473,7 +473,7 @@ void begrun(void)
 #ifdef COSMIC_RAY_FLUID
       All.CosmicRayDiffusionCoeff = all.CosmicRayDiffusionCoeff;
 #endif
-#ifdef GALSF_FB_FIRE_AGE_TRACERS
+#if defined(GALSF) && defined(GALSF_FB_FIRE_AGE_TRACERS)
       All.AgeTracerRateNormalization = all.AgeTracerRateNormalization;
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
       strcpy(All.AgeTracerListFilename, all.AgeTracerListFilename);
@@ -482,7 +482,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#ifdef CR_DYNAMICAL_INJECTION_IN_SNE
+#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
