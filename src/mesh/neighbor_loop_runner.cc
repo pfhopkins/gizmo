@@ -1874,6 +1874,32 @@ static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
     catch(const std::exception &) { return NULL; }
 }
 
+/* The staged i-side ActiveData array is written by the staging kernel and read
+ * by the pair kernel, both on the device; no host code reads it. Keeping it in
+ * device memory therefore costs nothing in reachability and keeps the staging
+ * kernel's writes off the migratable shared path, which on a discrete-memory
+ * device is where that kernel's cost lives.
+ *
+ * The accumulator array is NOT eligible and must stay shared: the host reads it
+ * directly, in apply_active_writeback on the single-pass path and in the scatter
+ * back into the driver's per-slot accumulators on the iterative path.
+ *
+ * On a host-only backend the two spaces are the same type, so this is a no-op
+ * there by construction -- a local run can show that nothing regressed, it
+ * cannot exercise the separation. Same non-throwing contract as above. */
+static void *nlr_active_stage_alloc_bytes(size_t bytes, const char *label)
+{
+    if(bytes == 0) { return NULL; }
+    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, bytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+static void nlr_active_stage_free(void *p)
+{
+    if(p == NULL) { return; }
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);
+}
+
 template <typename Spec>
 static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                        RunnerStageTimer *tim = nullptr)
@@ -2012,25 +2038,30 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         if(k < (size_t)N) { K = (int)k; }
     }
 
-    /* UVM-allocate chunk-sized ActiveData[] and AccumData[] arrays via the
-     * non-throwing SharedSpace allocator. These are the largest per-active
-     * transients (the demonstrated FIF OOM site); an allocation failure here
-     * means a genuinely full node (K is byte-capped), so controlled-stop with
-     * the buffer named in the ledger rather than a hard terminate. run_mode_a
-     * issues no MPI, so the request drains collectively at the caller's next
-     * phase poll (same as the external-CSR contract-violation path above). */
-    ActiveData *d_actives = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
+    /* Allocate chunk-sized ActiveData[] and AccumData[] arrays, both through
+     * non-throwing allocators. They live in DIFFERENT spaces: the staged
+     * actives are device-only (see nlr_active_stage_alloc_bytes), the
+     * accumulators must stay host-readable for the writeback below. These are
+     * the largest per-active transients (the demonstrated FIF OOM site); an
+     * allocation failure here means the corresponding pool is genuinely full
+     * (K is byte-capped), so controlled-stop with the buffer named in the
+     * ledger rather than a hard terminate. run_mode_a issues no MPI, so the
+     * request drains collectively at the caller's next phase poll (same as the
+     * external-CSR contract-violation path above). */
+    ActiveData *d_actives = (ActiveData *) nlr_active_stage_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
     AccumData  *d_accums  = (AccumData  *) nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData),  "modea_accum_data");
     if(d_actives == NULL || d_accums == NULL) {
         if(d_accums)  { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
-        if(d_actives) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives); }
+        nlr_active_stage_free(d_actives);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
         if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
         else { gpu_ngb_list_free(&gnl, sidx); }
         gpu_particles_arena_release();
         gizmo_request_controlled_stop(7710,
-            "run_mode_a: Mode-A per-active staging (modea_active_data/modea_accum_data) SharedSpace OOM "
-            "-- add ranks/nodes or reduce the active set", __FILE__, __LINE__, __FUNCTION__);
+            "run_mode_a: Mode-A per-active staging out of memory (modea_active_data is device-resident, "
+            "modea_accum_data is host-visible) -- reduce the active set; note that adding ranks per node "
+            "does NOT relieve device memory, since the ranks on a node share it",
+            __FILE__, __LINE__, __FUNCTION__);
         return;
     }
 
@@ -2107,7 +2138,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
      * sink_environment_gpu.cc:261 idiom). External-CSR path frees only what
      * we staged (gnl offsets/neighbors/d_active); caller owns host CSR. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives);
+    nlr_active_stage_free(d_actives);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
     if(args.external_csr != nullptr) {
         nlr_free_external_csr_gnl(&gnl);
@@ -3393,11 +3424,28 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *   h    = radii_uvm[slot]            (current radius — kernel filter)
          * CSR build uses drv.ctx.num_total (= post-import effective num_total).
          * Walk gnl.offsets[row]..offsets[row+1]. */
-        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data",
-            n_compacted * sizeof(ActiveData));
-        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data",
-            n_compacted * sizeof(AccumData));
-        {
+        /* Non-throwing on both, matching run_mode_a. The staged actives are
+         * device-resident, and device memory is exhausted PER RANK rather than
+         * node-wide, so a throw here would escape a single rank while its peers
+         * sat in the reverse-comm collectives below -- a hang instead of a
+         * reported stop. Failure is handled like a subgroup with nothing left to
+         * do: the work below is skipped, the stop is requested, and control falls
+         * through to the UNCONDITIONAL writeback_end, so every rank still enters
+         * the collectives the same number of times. */
+        ActiveData *d_actives = (ActiveData *) nlr_active_stage_alloc_bytes(
+            (size_t)n_compacted * sizeof(ActiveData), "modea_active_data");
+        AccumData *d_accums = (AccumData *) nlr_shared_alloc_bytes(
+            (size_t)n_compacted * sizeof(AccumData), "modea_accum_data");
+        if (d_actives == NULL || d_accums == NULL) {
+            if (d_accums) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
+            nlr_active_stage_free(d_actives);
+            gizmo_request_controlled_stop(7711,
+                "nlr_iter_dispatch_subgroup_mode_a: per-active staging out of memory "
+                "(modea_active_data is device-resident, modea_accum_data is host-visible) "
+                "-- reduce the active set; note that adding ranks per node does NOT relieve "
+                "device memory, since the ranks on a node share it",
+                __FILE__, __LINE__, __FUNCTION__);
+        } else {
             auto cs_ref = drv.cs;
             const typename Spec::DeviceContext dctx_local = drv.ctx;
             int    *active_set_arr = drv.active_set_uvm[sg];
@@ -3431,16 +3479,16 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                 }
             });
             cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
-        }
 
-        /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */
-        for (int k = 0; k < n_compacted; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            drv.accum_uvm[sg][slot] = d_accums[k];
-        }
+            /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */
+            for (int k = 0; k < n_compacted; k++) {
+                int slot = drv.active_set_uvm[sg][k];
+                drv.accum_uvm[sg][slot] = d_accums[k];
+            }
 
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
+            nlr_active_stage_free(d_actives);
+        }
     }
 
     /* ===== (5) Ghost writeback end + detector end (unconditional) ===== */

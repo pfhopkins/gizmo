@@ -44,9 +44,16 @@
  *       Reads ctx.P[i] / ctx.CellP[i] (UVM-resident, post-arena/drift)
  *       and combines with the host-staged h_search and CallScalars.
  *       Runner launches a tiny Kokkos parallel_for that fills
- *       ActiveData[num_active] in UVM. Mode A's pair-kernel launch reads
- *       this array; the Mode B walker calls the SAME function host-side
- *       per query. Same KOKKOS_INLINE_FUNCTION on both paths.
+ *       ActiveData[num_active]. Mode A's pair-kernel launch reads this
+ *       array; the Mode B walker calls the SAME function host-side per
+ *       query. Same KOKKOS_INLINE_FUNCTION on both paths.
+ *       ⚠ In Mode A that array is DEVICE-RESIDENT, not host-readable: it is
+ *       written by the staging kernel and read by the pair kernel, both on
+ *       the device. A Spec must not add host reads of it (a finite check, a
+ *       debug dump) -- those compile everywhere and work on a host-only
+ *       backend, where the device and shared spaces are the same type, then
+ *       fault on CUDA/HIP. Host-visible per-active state belongs in
+ *       AccumData, which stays host-readable for the writeback.
  *
  *   NeighborData is DEVICE-CALLABLE (and host-callable in Mode B):
  *     KOKKOS_INLINE_FUNCTION
