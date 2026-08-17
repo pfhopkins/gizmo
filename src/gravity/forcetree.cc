@@ -2917,6 +2917,12 @@ void force_treefree(void)
          * the residual mymalloc'd DomainNodeIndex). */
         if(Father)        {gpu_father_free(Father); Father = NULL;}
         gpu_gravity_tree_alias_nextnode(NULL, 0);  /* clear SoA alias before free */
+        /* Freeing the tree invalidates every GPU representation derived from it: the
+         * node mirror the device walk reads, and the drift and moment-refresh state
+         * keyed to that mirror. They are released here so the two representations share
+         * one lifetime; the build that follows reacquires them. The mirror and its pools
+         * are therefore reallocated once per tree epoch rather than held for the run. */
+        gpu_gravity_tree_release();
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}

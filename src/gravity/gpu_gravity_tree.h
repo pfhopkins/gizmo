@@ -167,9 +167,12 @@ void gpu_gravity_tree_acquire(int min_nodes,
  * clear the alias before the underlying buffer is freed. */
 void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n);
 
-/* Free SharedSpace storage. Called at shutdown (and from force_treefree if
- * the tree is being torn down without a follow-up rebuild — but typically
- * force_treefree just invalidates and lets the next acquire reuse). */
+/* Free SharedSpace storage, plus the drift and moment-refresh pools keyed to it.
+ * Called from force_treefree(), so the mirror lives exactly as long as the AoS tree
+ * it derives from: it is reallocated once per tree epoch, not held for the run.
+ * Nothing may read the mirror between a release and the next build — acquire() marks
+ * the arrays valid without seeding them, so a read there sees uninitialized topology
+ * rather than the NULL a stale-pointer check would catch. */
 void gpu_gravity_tree_release(void);
 
 /* Accessors. Returns NULL pointers / 0 capacity when not held or stale. */
@@ -219,9 +222,9 @@ void gpu_gravity_soa_mark_drift_certified(integertime time1);
 int gpu_moment_refresh(int active_root_node);
 
 /* Free the persistent gpu_moment_refresh scratch pools (source-input buffers +
- * Father mirror).  Attached to the existing gpu_gravity_tree_release() teardown
- * API.  (That API is not yet invoked before Kokkos::finalize; the GPU-pool
- * pre-finalize release plumbing is a pre-existing cross-subsystem cleanup.) */
+ * Father mirror).  Reached through gpu_gravity_tree_release(), so these pools
+ * follow the tree epoch: dropped when the tree is freed, regrown by the next
+ * refresh. */
 void gpu_moment_refresh_release(void);
 
 /* Bulk write SoA[k=0..n) back into Nodes[TreeNodeIndexBase+k] / Extnodes[TreeNodeIndexBase+k].

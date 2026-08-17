@@ -154,7 +154,7 @@ struct precomputed_t {
 
 /* Persistent grow-and-keep pool for the per-particle source-input buffers,
  * mirroring the gpu_gravity_tree.cc SoA idiom: reused across refreshes,
- * reallocated only when NumPart grows, freed at GPU gravity teardown
+ * reallocated only when NumPart grows, freed when the tree is freed
  * (gpu_moment_refresh_release).  Removes per-refresh allocator churn. */
 static precomputed_t pre_persist_ = {};
 static int           pre_cap_     = 0;   /* current capacity in particles */
@@ -269,8 +269,8 @@ static void precompute_free_(precomputed_t& pre)
 /* ------------------------------------------------------------------ */
 /* Father[i] mirror in SharedSpace.  Persistent grow-and-keep pool      */
 /* (same idiom as the source-input pool above): grown only when NumPart */
-/* grows, refilled from Father[] every refresh, freed at GPU gravity     */
-/* teardown (gpu_moment_refresh_release).                                */
+/* grows, refilled from Father[] every refresh, freed when the tree is  */
+/* freed (gpu_moment_refresh_release).                                   */
 /* ------------------------------------------------------------------ */
 static int *fmirror_persist_ = NULL;
 static int  fmirror_cap_     = 0;   /* current capacity in particles */
@@ -979,7 +979,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 
     /* ---------------- cleanup ----------------------------------------- */
     /* The source-input + Father-mirror pools are persistent (grow-and-keep);
-     * they are reused next refresh and freed only at GPU gravity teardown
+     * they are reused next refresh and freed when the tree is freed
      * (gpu_moment_refresh_release).  No per-call free here. */
     (void) fmirror;
 
@@ -987,11 +987,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 }
 
 /* =================================================================== */
-/* Free the persistent gpu_moment_refresh scratch pools.  Attached to    */
-/* the existing gpu_gravity_tree_release() teardown API (alongside the    */
-/* SoA + force-drift pools).  Note: that release API is not yet invoked   */
-/* before Kokkos::finalize -- the pre-finalize release plumbing for the   */
-/* GPU persistent pools is a pre-existing cross-subsystem cleanup item.   */
+/* Free the persistent gpu_moment_refresh scratch pools.  Reached through */
+/* gpu_gravity_tree_release() (alongside the SoA + force-drift pools),    */
+/* which force_treefree() calls, so these pools are dropped and regrown   */
+/* once per tree epoch rather than held for the whole run.                */
 /* =================================================================== */
 extern "C" void gpu_moment_refresh_release(void)
 {
