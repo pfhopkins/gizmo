@@ -1313,6 +1313,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         ghost_write_detector_resnapshot_after_lazy_drift();
     }
 
+    /* An index built for this call alone is rebuilt from scratch on the next one, so
+     * once the list holds its four device arrays nothing reads the rest of it again:
+     * the host tile/pool/BVH mirrors only stage the build, and the position buffers
+     * only ever serve the drift refresh of a CACHED index. Hand those four to the list
+     * by clearing them here, then release the remainder through the index's own free,
+     * so a buffer added to the index later is covered without anyone recalling this
+     * site. Without this the host mirrors and position buffers outlive every caller
+     * that passes no cached index, which is what made the neighbour-list pool climb
+     * without bound across a long run. */
+    if(idx == &local_idx) {
+        local_idx.d_tiles = NULL; local_idx.d_bvh = NULL;
+        local_idx.d_pool  = NULL; local_idx.d_compact_xyzh = NULL;
+        gpu_spatial_index_free(&local_idx);
+    }
+
     /* Charge list-build wall, less any kernel time already charged inside it,
      * so the two rows never overlap. */
     cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
@@ -1327,8 +1342,9 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
     /* Only free tiles/BVH/pool/compact_xyzh if they were NOT from the cached index.
      * Pointers may also be NULL (early-out path with no cache); guard each.
      * d_compact_xyzh in particular was previously leaked here for every
-     * non-cached call (~199 MB for an all-types pool, ~73 MB for gas-only),
-     * accumulating with each mech_fb/radfb_g/sink call that passes cached_idx=NULL. */
+     * non-cached call (~199 MB for an all-types pool, ~73 MB for gas-only).
+     * The callers that pass no cached index are merge_and_split_particles, the
+     * turbulent power spectra and the two-point correlation. */
     if(!cached_idx || !cached_idx->valid ||
        gnl->d_tiles != cached_idx->d_tiles) {
         if(gnl->d_compact_xyzh) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_compact_xyzh);
