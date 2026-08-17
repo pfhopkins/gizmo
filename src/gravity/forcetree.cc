@@ -420,8 +420,11 @@ let_build_attempt:
         if(let_retry >= LET_MAX_RETRY)
         {
             /* Should not happen: one rebuild per ratchet suffices (fixed in-call domain
-             * + 1.5x headroom). Each overflowing rank reports its own need, then stop. */
-            if(overflow_local)
+             * + 1.5x headroom). Each overflowing rank reports its own need, then stop.
+             * Which rank is short is asked of the capacity itself: the exchange answers
+             * whether ANY rank overflowed, so its status is the same on every rank and
+             * cannot say who. */
+            if(foreign_needed > (long long) MaxForeignNodes)
                 printf("LET foreign-arena overflow persists after %d retries on rank=%d: needed %lld nodes > MaxForeignNodes=%d (MaxNodes=%d). Stopping.\n",
                        LET_MAX_RETRY, ThisTask, foreign_needed, MaxForeignNodes, MaxNodes);
             fflush(stdout);
