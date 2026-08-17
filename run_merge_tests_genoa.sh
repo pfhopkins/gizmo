@@ -103,8 +103,22 @@ PY=/mnt/home/mgrudic/python_work/bin/python
 # -u: stdout is the Slurm output file, not a tty, so Python block-buffers by default and
 # results would appear in multi-KB bursts. -v prints one line per test as it finishes.
 # --continue-on-collection-errors: one unimportable test module must not abort a 279-case run.
+#
+# -A runs one pytest per test directory rather than a single pass over test/. pytest only
+# prints tracebacks in its end-of-run FAILURES section, so a single pass that gets killed by
+# the wall clock yields PASSED/FAILED verdicts and no reasons at all -- which is exactly what
+# job 6883048 produced after timing out at 24h with 42 failures and zero diagnosis. Per
+# directory, a timeout loses only the directory in flight. Costs one pytest startup per
+# directory (~1s) and gives up cross-directory ordering, neither of which matters here.
 if [ "$RUN_ALL" = "1" ]; then
-    "$PY" -u -m pytest test/ -ra -s -v --continue-on-collection-errors
+    rc_any=0
+    for d in test/*/; do
+        # only directories holding a test module; skip harness/, __pycache__/, data dirs
+        compgen -G "${d}test_*.py" > /dev/null || continue
+        echo "=== pytest ${d}"
+        "$PY" -u -m pytest "$d" -ra -s -v --continue-on-collection-errors --tb=short || rc_any=1
+    done
+    exit $rc_any
 else
-    "$PY" -u -m pytest test/ -k "$KEXPR" -ra -s -v
+    "$PY" -u -m pytest test/ -k "$KEXPR" -ra -s -v --tb=short
 fi
