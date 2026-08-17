@@ -290,6 +290,42 @@ long force_treebuild_generation(void)        { return g_force_treebuild_generati
 long force_hmax_refresh_generation(void)      { return g_force_hmax_refresh_generation; }
 void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation++; }
 
+/* How much the adaptive foreign-node floor is padded above measured demand when it grows.
+ * The fraction is what the pad wants to be; the memory share is what the node can spare
+ * for it, as a share of currently uncommitted node memory; the minimum keeps a slightly
+ * larger rebuild from ratcheting on every build. */
+static const double LET_FOREIGN_PAD_FRACTION     = 0.5;
+static const double LET_FOREIGN_PAD_FRACTION_MIN = 0.05;
+static const double LET_FOREIGN_PAD_MEMORY_SHARE = 0.05;
+
+/* What one more foreign node costs this rank, across both representations that size from
+ * the foreign capacity: the node arrays plus its slot in the GPU node mirror. Both terms
+ * are read back from what is actually allocated rather than re-derived from the field
+ * lists, which are config-gated and would drift from a second copy of the arithmetic.
+ * Returns 0 when there is nothing yet to measure; the caller then falls back to the
+ * plain fraction. */
+static long long let_foreign_bytes_per_node(void)
+{
+    double local_mb = 0.0, foreign_mb = 0.0, aux_mb = 0.0;
+    long long cap_nodes = 0, used_hw_nodes = 0, floor_nodes = 0;
+    gizmo_tree_mem_breakdown(&local_mb, &foreign_mb, &aux_mb, &cap_nodes, &used_hw_nodes, &floor_nodes);
+    if(cap_nodes <= 0) {return 0;}
+    long long node_arrays = (long long)(foreign_mb * 1024.0 * 1024.0 / (double) cap_nodes);
+
+    long long mirror = 0;
+    int mirror_nodes = gpu_gravity_tree_capacity();
+    if(mirror_nodes > 0)
+    {
+        long long cur[GIZMO_KOKCELL_COUNT], hw[GIZMO_KOKCELL_COUNT];
+        gizmo_kokkos_mem_buckets(cur, hw);
+        long long mirror_bytes = 0;
+        for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++)
+            {mirror_bytes += cur[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA * GIZMO_KOKSPACE_COUNT + s];}
+        mirror = mirror_bytes / (long long) mirror_nodes;
+    }
+    return node_arrays + mirror;
+}
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
@@ -298,7 +334,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * we grow the adaptive floor and rebuild the whole tree from scratch -- the foreign
      * arena is contiguous inside Nodes_base, so growing it means reallocating + rebuilding.
      * One rebuild per ratchet event suffices (the in-call domain is fixed, so the rebuilt
-     * LET needs the same capacity and the 1.5x headroom covers it); the bound is a backstop. */
+     * LET needs the same capacity and the pad covers it); the bound is a backstop. */
     int let_retry = 0;
     const int LET_MAX_RETRY = 3;
 let_build_attempt:
@@ -432,7 +468,30 @@ let_build_attempt:
         }
         else
         {
-            long long want = (long long) ceil(1.5 * (double) need_max);
+            /* Grow to the demand plus a pad, so that one rebuild settles the retry instead
+             * of ratcheting again on the next slightly larger step. Half the demand is a
+             * sensible pad while the demand is modest and a ruinous one once it is millions
+             * of nodes: each foreign node costs a slot in the node arrays AND in the GPU
+             * node mirror, so on a large ask that pad reserves memory the run then cannot
+             * spend on anything else -- and this floor is monotone and restart-persisted,
+             * so it is paid for the rest of the campaign. Pad by the usual fraction, but
+             * never by more memory than the node can spare, and never by less than a small
+             * fraction, or a rebuild that grows slightly would ratchet every time. */
+            long long pad = (long long) ceil(LET_FOREIGN_PAD_FRACTION * (double) need_max);
+            long long bytes_per_node = let_foreign_bytes_per_node();
+            long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
+            (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
+            if(mem_total_kb > 0 && bytes_per_node > 0 && GizmoRanksThisNode > 0)
+            {
+                double spare_bytes = (double)(mem_total_kb - committed_kb) * 1024.0;
+                if(spare_bytes < 0.0) {spare_bytes = 0.0;}
+                long long pad_affordable = (long long)((LET_FOREIGN_PAD_MEMORY_SHARE * spare_bytes)
+                                                       / ((double) bytes_per_node * (double) GizmoRanksThisNode));
+                if(pad_affordable < pad) {pad = pad_affordable;}
+            }
+            long long pad_min = (long long) ceil(LET_FOREIGN_PAD_FRACTION_MIN * (double) need_max);
+            if(pad < pad_min) {pad = pad_min;}
+            long long want = need_max + pad;
             if(want > RuntimeMinLETForeignNodes) {RuntimeMinLETForeignNodes = want;}
             if(ThisTask == 0)
                 printf("LET foreign arena too small (needed up to %lld nodes); growing adaptive floor to %lld and rebuilding the tree (retry %d/%d).\n",
