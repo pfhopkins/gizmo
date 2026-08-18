@@ -599,6 +599,16 @@ constexpr ModeAPairAssignment nlr_mode_a_pair_policy() {
 #define NLR_TEAM_WIDTH_FAT_ACCUM     16
 #define NLR_TEAM_FAT_ACCUM_BYTES    512
 
+/* Below three dimensions a row is a handful of neighbours, not a hundred: the
+ * neighbour count a kernel radius encloses falls with the dimensionality, so
+ * the widths above -- fitted to three-dimensional censuses -- would be wider
+ * than the rows they divide. One narrow width covers both cases, with no
+ * one-way/symmetric split, because at these lengths the distinction between 32
+ * and 64 lanes is meaningless. Reduced geometries are test-problem shapes
+ * rather than the large-N production target, so there is nothing to win here
+ * and no reason to run a team wider than the work. */
+#define NLR_TEAM_WIDTH_LOWDIM         2
+
 /* Human-readable tier label for the GX_MODEB_EXPORT eval-threading audit field.
  * A resolved SerialOnly prints "(explicit)" vs "(missing_trait)" so justified
  * serial rows are distinguishable from unaudited specs that forgot the trait. */

@@ -1980,9 +1980,21 @@ struct NlrModeATeamPairKernel {
         const ActiveData& a = d_actives[i];
         const int64_t start = offsets[row], end = offsets[row + 1];
 
+        /* An empty or malformed row must produce the zero accumulator and
+         * nothing else. The serial walk got this for free -- `for(nn = start;
+         * nn < end; ...)` simply runs zero times when end <= start -- but a
+         * team range takes a COUNT, and a non-positive one is not something to
+         * hand it. Restoring the property explicitly keeps the two assignments
+         * equivalent on degenerate rows as well as ordinary ones. */
+        const int row_len = (end > start) ? (int)(end - start) : 0;
+        if(row_len == 0) {
+            Kokkos::single(Kokkos::PerTeam(team), [&]() { Spec::zero_accum(d_accums[i]); });
+            return;
+        }
+
         AccumData row_accum;
         Kokkos::parallel_reduce(
-            Kokkos::TeamThreadRange(team, (int)(end - start)),
+            Kokkos::TeamThreadRange(team, row_len),
             [&](int nn, AccumData& lane_accum) {
                 ScatterData     s{};
                 IdentitySidecar id{};
@@ -2022,10 +2034,15 @@ static int nlr_mode_a_team_width(const Functor& f)
          * query behind it is not worth repeating, and the answer cannot change
          * within a run. */
         static const int resolved = [&]() {
-            int target = (Spec::search_mode == MODE_B_SEARCH_ONEWAY)
+            int target;
+            if(NUMDIMS < 3) {
+                target = NLR_TEAM_WIDTH_LOWDIM;
+            } else {
+                target = (Spec::search_mode == MODE_B_SEARCH_ONEWAY)
                          ? NLR_TEAM_WIDTH_ONEWAY : NLR_TEAM_WIDTH_SYMMETRIC;
-            if(sizeof(typename Spec::AccumData) > NLR_TEAM_FAT_ACCUM_BYTES) {
-                target = NLR_TEAM_WIDTH_FAT_ACCUM;
+                if(sizeof(typename Spec::AccumData) > NLR_TEAM_FAT_ACCUM_BYTES) {
+                    target = NLR_TEAM_WIDTH_FAT_ACCUM;
+                }
             }
             /* A non-positive answer means the backend reports NO launchable
              * team size for this functor, not "no limit" -- fall back to the
