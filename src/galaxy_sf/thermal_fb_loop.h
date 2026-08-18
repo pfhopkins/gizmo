@@ -327,7 +327,13 @@ struct ThermalFBSpec {
                                         const AccumData& accum);
 
     /* Per-field merge — manifest in thermal_fb_loop.cc. */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
+        ACCUM_ADD(M_coupled)
+#undef ACCUM_ADD
+    }
 
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "thermalfb"). */

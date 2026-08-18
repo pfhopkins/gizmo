@@ -263,7 +263,17 @@ struct SinkEnv2Spec {
                                         int active_slot, int i,
                                         const AccumData& accum);
 
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* Per-field merge (Mode B remote). sink_env2 has only two additive fields. */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
+
+        ACCUM_ADD(MgasBulge_in_Kernel)
+        ACCUM_ADD(MstarBulge_in_Kernel)
+
+#undef ACCUM_ADD
+    }
 
     /* ====================================================================
      * ENGINE APPARATUS

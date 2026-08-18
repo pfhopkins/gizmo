@@ -113,7 +113,10 @@ struct GrainBackrxSpec {
     static void        apply_active_writeback(const neighbor_loop_args& args,
                                               int active_slot, int i,
                                               const AccumData& accum);
-    static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& /*local_accum*/,
+                            const AccumData& /*peer_accum*/)
+    {}
     static void        ghost_writeback_begin(const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
     static void        ghost_writeback_end  (const neighbor_loop_args& args,
@@ -268,7 +271,20 @@ struct GrainRTGasSpec {
     static void        apply_active_writeback(const neighbor_loop_args& args,
                                               int active_slot, int i,
                                               const AccumData& accum);
-    static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+        local_accum.InterpolatedGeometricDustCrossSection +=
+            peer_accum.InterpolatedGeometricDustCrossSection;
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+            local_accum.Interpolated_Opacity[k] += peer_accum.Interpolated_Opacity[k];
+        }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+        for(int k = 0; k < 3; k++) {
+            local_accum.J_dust_contribution[k] += peer_accum.J_dust_contribution[k];
+        }
+#endif
+    }
 
     /* Device hooks — header-inline. */
 
@@ -393,7 +409,14 @@ struct GrainRTGrainSpec {
     static void        apply_active_writeback(const neighbor_loop_args& args,
                                               int active_slot, int i,
                                               const AccumData& accum);
-    static void        merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+        for(int k = 0; k < 3; k++) {
+            local_accum.Interpolated_Radiation_Acceleration[k] +=
+                peer_accum.Interpolated_Radiation_Acceleration[k];
+        }
+    }
 
     /* Device hooks — header-inline. */
 

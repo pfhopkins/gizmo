@@ -53,16 +53,6 @@ void SinkEnv2Spec::apply_active_writeback(const neighbor_loop_args& args,
     aux->per_active_accum[active_slot] = accum;
 }
 
-/* Per-field merge (Mode B remote). sink_env2 has only two additive fields. */
-void SinkEnv2Spec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
-
-    ACCUM_ADD(MgasBulge_in_Kernel)
-    ACCUM_ADD(MstarBulge_in_Kernel)
-
-#undef ACCUM_ADD
-}
 
 /* ============================================================================
  * DEVICE CONTEXT LIFECYCLE

@@ -510,6 +510,95 @@ constexpr ModeBEvalOMP nlr_spec_modeb_eval_omp() {
     }
 }
 
+/* ============================================================================
+ * ModeAPairAssignment — how a Mode-A pair kernel divides one CSR row.
+ *
+ *   RowSerial      — one work item per active particle; that single work item
+ *                    walks the whole row. The original assignment.
+ *   TeamRowReduce  — one team per active particle; the team's lanes stride the
+ *                    row in parallel and combine their partial accumulators
+ *                    through Spec::merge_accum.
+ *
+ * The default is derived from ModeBEvalOMP, because both ask the same question
+ * of the pair kernel: can two workers evaluate different neighbors of the same
+ * active particle concurrently? SerialOnly -> RowSerial; BitwiseReadonly and
+ * EpsilonAtomic -> TeamRowReduce.
+ *
+ * The mapping is conservative in the right direction. modeb_eval_omp audits
+ * ACROSS-row threading while this is WITHIN-row lane parallelism, and a CSR row
+ * contains each neighbor exactly once, so two lanes of one team can never
+ * contend on the same j -- whereas cross-row contention already occurs today.
+ * SerialOnly -> RowSerial is therefore stricter than parity.
+ *
+ * A Spec may override with `static constexpr ModeAPairAssignment
+ * mode_a_pair_assignment`; an override MUST carry a comment naming the
+ * structural reason, matching the convention modeb_eval_omp declarations follow.
+ *
+ * The reduction invokes Spec::merge_accum WHOLESALE on the accumulator. It must
+ * never be decomposed field-wise: SinkFeedSpec merges a coupled
+ * min-with-payload (it takes the peer's position only when the peer's potential
+ * is lower), and a field-wise reducer would silently decouple value from
+ * payload.
+ * ========================================================================== */
+
+enum class ModeAPairAssignment : int {
+    RowSerial     = 0,
+    TeamRowReduce = 1,
+};
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_mode_a_pair_assignment : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_mode_a_pair_assignment<
+    Spec, std::void_t<decltype(Spec::mode_a_pair_assignment)>> : std::true_type {};
+
+template <typename Spec>
+constexpr ModeAPairAssignment nlr_mode_a_pair_policy() {
+    if constexpr (nlr_spec_has_mode_a_pair_assignment<Spec>::value) {
+        return Spec::mode_a_pair_assignment;
+    } else if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::SerialOnly) {
+        return ModeAPairAssignment::RowSerial;
+    } else {
+        return ModeAPairAssignment::TeamRowReduce;
+    }
+}
+
+/* Team widths for TeamRowReduce, in lanes per row.
+ *
+ * The two targets are properties of the neighbor-count physics, not of any
+ * device: a measured row-length census over FIRE, FIF and evrard put the
+ * symmetric corridor at a median of 102-144 neighbors per row with under 1% of
+ * rows below 64, and put 92.8% (FIRE) / 99.5% (FIF) of one-way density pair work
+ * in rows of at least 32.
+ *
+ * The fat-accumulator cap is a different kind of number and is deliberately not
+ * dressed up as anything else: it is a SPILL HEURISTIC, and a blunt one. A lane
+ * holds a private copy of AccumData for the duration of its strided walk, so a
+ * kilobyte-scale accumulator puts hundreds of registers per lane under pressure
+ * and spills to local memory.
+ *
+ * Be precise about what narrowing the team does and does not buy, because the
+ * obvious reading is wrong in two ways. Per-lane register footprint is
+ * sizeof(AccumData) whatever the width, so a narrower team does not reduce it.
+ * The team reduction's shared memory is four slots of sizeof(AccumData) -- it
+ * scales with the accumulator but NOT with the team size, so a narrower team
+ * does not reduce that either. What the cap actually bounds is the number of
+ * simultaneously-live private copies per team, and with it the whole-struct
+ * shuffle traffic the reduction performs. team_size_max cannot substitute for
+ * any of this: it is a launch-legality bound that does not move with
+ * sizeof(AccumData) at all.
+ *
+ * 16 lanes still cuts a 102-neighbor row from 102 sequential steps to 7.
+ *
+ * All four are internal compile-time constants. None is a physics knob, a
+ * parameterfile parameter, or an environment variable; changing one means
+ * editing this line and re-measuring. */
+#define NLR_TEAM_WIDTH_ONEWAY        32
+#define NLR_TEAM_WIDTH_SYMMETRIC     64
+#define NLR_TEAM_WIDTH_FAT_ACCUM     16
+#define NLR_TEAM_FAT_ACCUM_BYTES    512
+
 /* Human-readable tier label for the GX_MODEB_EXPORT eval-threading audit field.
  * A resolved SerialOnly prints "(explicit)" vs "(missing_trait)" so justified
  * serial rows are distinguishable from unaudited specs that forgot the trait. */

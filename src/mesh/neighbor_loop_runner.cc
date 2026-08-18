@@ -1900,6 +1900,147 @@ static void nlr_active_stage_free(void *p)
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);
 }
 
+/* ============================================================================
+ * TeamRowReduce support: combining lanes' partial accumulators.
+ *
+ * A Kokkos reducer over Spec::AccumData. Its join IS Spec::merge_accum and its
+ * init IS Spec::zero_accum, so the lane combination and the cross-rank Mode-B
+ * reply merge are the same algebra by construction rather than by agreement --
+ * there is no second copy of the merge rules to drift.
+ *
+ * This rests on zero_accum being the identity element of merge_accum, which is
+ * already required and already holds: Mode-B starts each peer's accumulator from
+ * zero_accum before merging, so the pair is a monoid tree-wide. The two cases
+ * that could have failed both check out -- DensitySpec::zero_accum sets its
+ * sink fields to explicit MIN-reduction sentinels rather than zero, and
+ * GradientsSpec byte-zeroes where 0 is a true identity because its Maxima and
+ * Minima range over signed deltas, a set that contains the self-delta.
+ *
+ * join takes the whole accumulator. Decomposing it field-wise would be wrong,
+ * not merely slower: SinkFeedSpec merges a coupled minimum-with-payload, taking
+ * the peer's position only when the peer's potential is lower, and independent
+ * per-field reduction would pair a winning value with a losing payload.
+ * ========================================================================== */
+template <typename Spec>
+struct NlrAccumReducer {
+    using reducer          = NlrAccumReducer<Spec>;
+    using value_type       = typename Spec::AccumData;
+    using result_view_type = Kokkos::View<value_type, Kokkos::AnonymousSpace,
+                                          Kokkos::MemoryUnmanaged>;
+
+    KOKKOS_INLINE_FUNCTION explicit NlrAccumReducer(value_type& v) : m_value(v) {}
+
+    KOKKOS_INLINE_FUNCTION void join(value_type& dst, const value_type& src) const {
+        Spec::merge_accum(dst, src);
+    }
+    KOKKOS_INLINE_FUNCTION void init(value_type& v) const { Spec::zero_accum(v); }
+    KOKKOS_INLINE_FUNCTION value_type&       reference()         const { return m_value; }
+    KOKKOS_INLINE_FUNCTION result_view_type  view()              const { return result_view_type(&m_value); }
+    KOKKOS_INLINE_FUNCTION bool              references_scalar() const { return true; }
+
+private:
+    value_type& m_value;
+};
+
+/* The TeamRowReduce pair kernel, shared by both Mode-A dispatch sites.
+ *
+ * A named functor rather than a lambda for two reasons. It can be instantiated
+ * once up front to size the team and again per chunk to run, which keeps the
+ * occupancy query out of the chunk loop; and nvcc forbids defining an extended
+ * device lambda inside another lambda, which a per-chunk lambda factory would
+ * require.
+ *
+ * The two sites differ only in how a work item reaches its CSR row. The
+ * single-pass site walks the active list directly, so row = chunk_base + i. The
+ * iterative site walks a compacted active set into a build-time row index, so
+ * row = csr_lookup[active_set[i]]. Passing active_set == nullptr selects the
+ * former. Both index the staged actives and accumulators by i.
+ */
+template <typename Spec, typename DeviceCtx>
+struct NlrModeATeamPairKernel {
+    using ActiveData   = typename Spec::ActiveData;
+    using AccumData    = typename Spec::AccumData;
+    using ScatterData  = typename Spec::ScatterData;
+    using NeighborData = typename Spec::NeighborData;
+    using TeamMember   = typename Kokkos::TeamPolicy<>::member_type;
+
+    DeviceCtx      ctx;
+    ActiveData    *d_actives;
+    AccumData     *d_accums;
+    const int64_t *offsets;
+    const int     *neighbors;
+    const int     *active_set;   /* nullptr on the single-pass site */
+    const int     *csr_lookup;   /* used only when active_set != nullptr */
+    int            chunk_base;   /* used only when active_set == nullptr */
+
+    KOKKOS_INLINE_FUNCTION void operator()(const TeamMember& team) const {
+        const int i   = team.league_rank();
+        const int row = (active_set != nullptr) ? csr_lookup[active_set[i]]
+                                                : chunk_base + i;
+        const ActiveData& a = d_actives[i];
+        const int64_t start = offsets[row], end = offsets[row + 1];
+
+        AccumData row_accum;
+        Kokkos::parallel_reduce(
+            Kokkos::TeamThreadRange(team, (int)(end - start)),
+            [&](int nn, AccumData& lane_accum) {
+                ScatterData     s{};
+                IdentitySidecar id{};
+                NeighborData    nb = Spec::load_neighbor(ctx, neighbors[start + nn], id, a);
+                Spec::pair_kernel(a, nb, lane_accum, s);
+            },
+            NlrAccumReducer<Spec>(row_accum));
+
+        /* Every lane leaves the reduction holding the combined value; one
+         * publishes it. */
+        Kokkos::single(Kokkos::PerTeam(team), [&]() { d_accums[i] = row_accum; });
+    }
+};
+
+/* Lanes per row for a TeamRowReduce Spec, or 1 to select the flat kernel.
+ *
+ * Keyed only on structural properties -- execution space, the Spec's assignment
+ * policy, its search_mode, and sizeof(AccumData). No caller name appears here,
+ * so every ONEWAY loop gets the one-way width and every SYMMETRIC loop the
+ * symmetric one with no per-loop work, which is the whole point of resolving it
+ * in one place.
+ *
+ * The Kokkos bound is applied last and is a LEGALITY clamp: it reports the
+ * largest team the backend can launch for this functor, and does not shrink as
+ * the reduction value grows. The accumulator size is handled separately, and
+ * deliberately bluntly, by the fat-accumulator cap. */
+template <typename Spec, typename Functor>
+static int nlr_mode_a_team_width(const Functor& f)
+{
+    if constexpr (gizmo_gpu_default_space_is_host()) {
+        return 1;
+    } else if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::RowSerial) {
+        return 1;
+    } else {
+        /* Every input is fixed by the Spec and the kernel type, so this resolves
+         * once per (Spec, kernel) rather than once per dispatch: the occupancy
+         * query behind it is not worth repeating, and the answer cannot change
+         * within a run. */
+        static const int resolved = [&]() {
+            int target = (Spec::search_mode == MODE_B_SEARCH_ONEWAY)
+                         ? NLR_TEAM_WIDTH_ONEWAY : NLR_TEAM_WIDTH_SYMMETRIC;
+            if(sizeof(typename Spec::AccumData) > NLR_TEAM_FAT_ACCUM_BYTES) {
+                target = NLR_TEAM_WIDTH_FAT_ACCUM;
+            }
+            /* A non-positive answer means the backend reports NO launchable
+             * team size for this functor, not "no limit" -- fall back to the
+             * flat kernel rather than launching at the full target. */
+            const int hw = gizmo_gpu_team_size_max(f);
+            if(hw <= 0)       { return 1; }
+            if(hw < target)   { target = hw; }
+            int w = 1;
+            while((w << 1) <= target) { w <<= 1; }
+            return w;
+        }();
+        return resolved;
+    }
+}
+
 template <typename Spec>
 static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                        RunnerStageTimer *tim = nullptr)
@@ -2076,6 +2217,10 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                   "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
     static_assert(std::is_trivially_copyable<DeviceCtx>::value,
                   "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
+                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
+                  "within-row lane division its pair kernel has never been checked for");
     if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
         Spec::populate_device_context(args, ctx);
     }
@@ -2091,6 +2236,17 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     int     *d_active_idx = gnl.d_active;
     int64_t *offsets      = gnl.offsets;
     int     *neighbors    = gnl.neighbors;
+
+    /* Team width is a property of the Spec and the kernel type, not of a chunk,
+     * so it is resolved once here rather than per chunk -- the occupancy query
+     * behind it is not something to repeat inside the loop. */
+    using TeamKernel = NlrModeATeamPairKernel<Spec, DeviceCtx>;
+    int team_width = 1;
+    if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+        TeamKernel probe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0};
+        team_width = nlr_mode_a_team_width<Spec>(probe);
+    }
+
     for(int c0 = 0; c0 < N; c0 += K) {
         const int n = (N - c0 < K) ? (N - c0) : K;
 
@@ -2101,11 +2257,21 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                                               radii_uvm[aa], cs);
         });
 
-        /* pair-kernel over [c0, c0+n) — generic over Spec. */
+        /* pair-kernel over [c0, c0+n) — generic over Spec.
+         *
+         * Two assignments of the same physics. The flat form gives one work item
+         * per active particle, which then walks its whole CSR row in sequence.
+         * The team form gives one team per active particle whose lanes stride
+         * the row together and combine through Spec::merge_accum. Which one runs
+         * is decided by nlr_mode_a_team_width from structural properties only;
+         * width 1 selects the flat form, and does so through if constexpr, so a
+         * width-1 Spec compiles to exactly the kernel it compiled to before
+         * teams existed rather than to a one-lane imitation of a team. */
         {
             StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             const double t_pair_kernel_start = my_second();
-            gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+
+            auto flat_kernel = KOKKOS_LAMBDA(int kk) {
                 const int aa = c0 + kk;
                 Spec::zero_accum(d_accums[kk]);
                 const ActiveData& a = d_actives[kk];
@@ -2117,7 +2283,18 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                     NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[kk], s);
                 }
-            });
+            };
+
+            if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+                if(team_width > 1) {
+                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0};
+                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
+                } else {
+                    gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
+                }
+            } else {
+                gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
+            }
             cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
         }
         /* Launches fenced internally by gizmo_gpu_kernel_launch. UVM coherent ->
@@ -3307,6 +3484,11 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     using ScatterData  = typename Spec::ScatterData;
     using NeighborData = typename Spec::NeighborData;
 
+    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
+                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
+                  "within-row lane division its pair kernel has never been checked for");
+
     const NlrSubgroup& sgr = drv.args.subgroups[sg];
     const int n_compacted  = drv.active_set_size[sg];
 
@@ -3464,7 +3646,11 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             });
 
             const double t_pair_kernel_start = my_second();
-            gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, KOKKOS_LAMBDA(int k) {
+
+            /* Same two assignments as the single-pass site; see the commentary
+             * there. The only difference is the extra indirection from the
+             * compacted active set to the build-time CSR row. */
+            auto flat_kernel = KOKKOS_LAMBDA(int k) {
                 int slot = active_set_arr[k];
                 int row  = csr_lookup[slot];
                 Spec::zero_accum(d_accums[k]);
@@ -3477,7 +3663,21 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                     NeighborData nb = Spec::load_neighbor(dctx_local, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[k], s);
                 }
-            });
+            };
+
+            if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+                using TeamKernel = NlrModeATeamPairKernel<Spec, typename Spec::DeviceContext>;
+                TeamKernel fn{dctx_local, d_actives, d_accums, offsets, neighbors,
+                              active_set_arr, csr_lookup, 0};
+                const int team_width = nlr_mode_a_team_width<Spec>(fn);
+                if (team_width > 1) {
+                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n_compacted, team_width, fn);
+                } else {
+                    gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, flat_kernel);
+                }
+            } else {
+                gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, flat_kernel);
+            }
             cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
 
             /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */

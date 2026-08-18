@@ -313,13 +313,6 @@ void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * jet_momentum_used : additive across peer accumulators (iter-1 reduce).
  * ========================================================================== */
 
-void RadFBRPSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
-    ACCUM_ADD(wt_sum)
-    ACCUM_ADD(jet_momentum_used)
-#undef ACCUM_ADD
-}
 
 /* ============================================================================
  * HOST STOCHASTIC GATE (SSOT) — toplevel calls this per active source pre-

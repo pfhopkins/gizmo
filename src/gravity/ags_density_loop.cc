@@ -176,39 +176,6 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     /* Intentionally empty — see banner. */
 }
 
-/* ============================================================================
- * MERGE_ACCUM — Mode B remote peer accumulator merge.
- *
- * Manifest pattern matching sink_feed_loop.cc::merge_accum. Per-field op
- * MUST match what pair_kernel writes (field parity was validated by the
- * retired two-binary route).
- *
- * AGS_vsig_max is MAX-merged (legacy ASSIGN_MAX in scatter); everything
- * else is ADD-merged. AGS_FACE NV_T fields are ADD-merged (each peer
- * contributes neighbor wk * dpos pairs that sum cleanly).
- * ========================================================================== */
-void AgsDensitySpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field) local_accum.field += peer_accum.field;
-#define ACCUM_MAX(field) if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
-
-    ACCUM_ADD(Ngb)
-    ACCUM_ADD(DrkernNgb)
-    ACCUM_ADD(AGS_zeta)
-    ACCUM_ADD(Particle_DivVel)
-    ACCUM_MAX(AGS_vsig_max)
-#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    ACCUM_ADD(NV_T_00)
-    ACCUM_ADD(NV_T_01)
-    ACCUM_ADD(NV_T_02)
-    ACCUM_ADD(NV_T_11)
-    ACCUM_ADD(NV_T_12)
-    ACCUM_ADD(NV_T_22)
-#endif
-
-#undef ACCUM_ADD
-#undef ACCUM_MAX
-}
 
 /* ============================================================================
  * AFTER_ITER — per-active per-iter post-process + convergence test.

@@ -140,14 +140,6 @@ void RtSrcInjectionSpec::apply_active_writeback(const neighbor_loop_args& /*args
     /* intentionally empty */
 }
 
-/* ============================================================================
- * MERGE — nothing to merge; AccumData is empty for this Spec (see its
- * definition in rt_source_injection_loop.h). Declared because the Spec
- * contract requires it.
- * ========================================================================== */
-void RtSrcInjectionSpec::merge_accum(AccumData& /*local_accum*/, const AccumData& /*peer_accum*/)
-{
-}
 
 /* ============================================================================
  * HOST-FILL HELPER (SSOT)

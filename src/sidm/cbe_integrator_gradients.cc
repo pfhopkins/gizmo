@@ -201,25 +201,6 @@ void CBEGradSpec::apply_active_writeback(const neighbor_loop_args& args,
     }
 }
 
-/* merge_accum — additive for M + B; min-merge for phi (NaN -> 0). Unused-pass
- * fields are at their neutral elements (0 for sum, 1 for min) so this single
- * implementation is correct for both passes. */
-void CBEGradSpec::merge_accum(AccumData& local, const AccumData& peer)
-{
-    for(int a = 0; a < 3; a++)
-        for(int b = 0; b < 3; b++)
-            local.M[a][b] += peer.M[a][b];
-    for(int m = 0; m < CBE_INTEGRATOR_NBASIS; m++) {
-        for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
-            for(int d = 0; d < 3; d++)
-                local.B[m][k][d] += peer.B[m][k][d];
-            const double p = peer.phi[m][k];
-            double      &L = local.phi[m][k];
-            if(!isfinite(p)) { L = 0.0; continue; }
-            if(p < L) L = p;
-        }
-    }
-}
 
 /* ============================================================================
  * CBEGrad_gradient_calc — toplevel. Two passes through the runner, separated
