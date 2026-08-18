@@ -112,6 +112,13 @@ int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
 int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
 
+/*! Give the foreign-node range storage for the `foreign_needed` nodes this rank is about to
+ *  receive, once the LET exchange has counted them.  force_treeallocate leaves that storage
+ *  at zero because the count is not knowable when the tree is allocated.  Call once per tree
+ *  build, before the first foreign node is installed; a rank importing nothing passes 0 and
+ *  does nothing.  Leaves the tree untouched and returns nonzero if the memory is not there. */
+int    force_tree_grow_foreign_storage(long long foreign_needed);
+
 /*! Can a particle created at this index be carried by the tree that is standing right now?
  *  Father[] and Nextnode[]'s particle segment span All.TreeParticleSlots entries and are NOT resized
  *  between rebuilds, so a slot being available in P[] does not by itself mean the live tree can index

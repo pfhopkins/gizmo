@@ -25,9 +25,9 @@
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
  *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
- *  Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
- *  endrun() with the LETAllocFactor restart message.  A graceful-shrink
- *  fallback to the legacy export path is not implemented; add it only if
+ *  Buffer-overflow policy: if the import would exceed the foreign-node index
+ *  ceiling MaxForeignNodes, endrun() with the LETAllocFactor restart message.
+ *  A graceful-shrink fallback to the legacy export path is not implemented; add it only if
  *  practical memory limits ever require it.
  */
 
@@ -48,6 +48,7 @@
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
+#include "forcetree.h"          /* force_tree_grow_foreign_storage */
 
 
 /* Temporary EMIT-time encoding for a "last child of a level" sibling whose continuation index
@@ -895,8 +896,9 @@ static int let_realloc_fail_should_print(void)
     return 0;
 }
 
-/* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated/freed with the
- * foreign-node arena in force_treeallocate/force_treefree; memset-0 reset in let_run_exchange. */
+/* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated and zeroed with the
+ * foreign-node storage in force_tree_grow_foreign_storage, once the import has been counted, and
+ * freed in force_treefree.  NULL whenever no import has been sized yet. */
 int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
@@ -1395,12 +1397,15 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     int total_recv = 0;
     for(int r = 0; r < NTask; r++) { total_recv += recv_counts_int[r]; }
 
-    /* Foreign-arena capacity is settled once, from the complete receive vector, before anything is
-     * installed -- the rounds below share that arena, so a round must never be what discovers it is
-     * too small.  Whether it fits is a RANK-LOCAL question, so the answer is reduced before any rank
-     * returns: a rank that left on its own would strand the others in a later collective.  This is
-     * the retryable case and only this one -- force_treebuild ratchets the foreign arena and rebuilds,
-     * which genuinely fixes it. */
+    /* The complete receive vector is in hand, so this rank now knows EXACTLY how many foreign
+     * nodes it is about to install -- and it knows it before a single one has been installed.
+     * That is what makes the foreign arena affordable: it is sized here, to this rank's own
+     * import, rather than at tree-allocation time to an index ceiling every rank shares.
+     *
+     * Two separate questions, in order.  First, does the import fit the INDEX range?  That is the
+     * retryable case and only this one: force_treebuild raises the ceiling and rebuilds, which
+     * genuinely fixes it.  It is a rank-local question whose answer is reduced before any rank
+     * returns, since a rank that left on its own would strand the others in a later collective. */
     long long foreign_needed = (long long) Numforeignnodes + (long long) total_recv;
     if(foreign_needed_out) *foreign_needed_out = foreign_needed;
     int foreign_short_local = (foreign_needed > (long long) MaxForeignNodes) ? 1 : 0;
@@ -1411,6 +1416,21 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         myfree(recv_hdr_counts); myfree(send_hdr_counts);
         myfree(recv_counts_int); myfree(send_counts_int);
         return LET_OVERFLOW_RETRYABLE;
+    }
+
+    /* Second, is the memory there?  Every rank asks -- one importing nothing asks for nothing --
+     * and the answers are reduced, because what follows is collective and because a rank whose
+     * tree cannot hold the import must not begin installing into it.  Unlike the ceiling this is
+     * not retryable: the ceiling can be raised, node memory cannot, so it joins the hard-failure
+     * statuses the caller already drains. */
+    int grow_failed_local = (force_tree_grow_foreign_storage(foreign_needed) != 0) ? 1 : 0;
+    int grow_failed_any   = 0;
+    MPI_Allreduce(&grow_failed_local, &grow_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(grow_failed_any)
+    {
+        myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_counts_int); myfree(send_counts_int);
+        return LET_FOREIGN_STORAGE_SHORT;
     }
 
     /* Where a sender's nodes land is a prefix sum over the receive counts, so each sender's slots
@@ -1724,9 +1744,9 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
  *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
  *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
  *
- * Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
- * return LET_OVERFLOW_RETRYABLE without installing; the force_treebuild loop
- * ratchets the arena and retries.
+ * Buffer-overflow policy: if a sender's slots would run past the foreign storage
+ * allocated for this import, return LET_OVERFLOW_RETRYABLE without installing; the
+ * force_treebuild loop raises the index ceiling and retries.
  * ---------------------------------------------------------------------- */
 extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
@@ -1754,11 +1774,16 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 
         /* This sender's slots come from the prefix over the receive counts, not from how many
          * senders happen to have been installed already, so a sender occupies the same slots no
-         * matter which exchange round carried it.  Capacity was settled against the complete
-         * receive vector before the first round; this bound is the backstop for that. */
-        if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) MaxForeignNodes)
+         * matter which exchange round carried it.  The storage was sized from that same complete
+         * receive vector, so the last sender's slots end exactly where the storage does and this
+         * can only fail if the two disagree -- an internal inconsistency, not a shortfall a larger
+         * tree would fix.  Say so and stop, rather than rebuilding three times to the same size. */
+        if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) AllocatedForeignNodes)
         {
-            return LET_OVERFLOW_RETRYABLE;
+            printf("LET install FATAL: sender %d needs foreign slots up to %lld but only %d are allocated (rank %d).\n",
+                   r, (long long) foreign_slot_prefix[r] + (long long) rcount, AllocatedForeignNodes, ThisTask);
+            fflush(stdout);
+            return LET_UNPACK_INTERNAL;
         }
         int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
 
@@ -1793,7 +1818,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
              * (= no - (TreeNodeIndexBase+MaxNodes), NOT the SoA index no-TreeNodeIndexBase). Non-leaf records carry
              * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
             int foreign_slot = abs_idx - (All.TreeNodeIndexBase + MaxNodes);
-            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < MaxForeignNodes)
+            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < AllocatedForeignNodes)
             {
                 ForeignLeafTag[foreign_slot]  = recv_buf[node_off + j].leaf_tag;
                 ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
@@ -1884,15 +1909,11 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
-    /* Reset the foreign-leaf identity sidecar for the fresh exchange.  These host arrays are
-     * read only by host code (the CPU walk and gpu_scatter_foreign_to_soa); the GPU mirror lives in
-     * the tree SoA and is fully rewritten by the scatter after install.  let_run_exchange runs at
-     * tree-build time, after the previous step's gravity walk has fenced and returned, so no GPU
-     * walk is in flight against the old sidecar -- a device fence is not required for this host memset. */
-    if(ForeignLeafTag)  memset(ForeignLeafTag,  0, (size_t)MaxForeignNodes * sizeof(int));
-    if(ForeignLeafType) memset(ForeignLeafType, 0, (size_t)MaxForeignNodes * sizeof(int));
-    if(ForeignLeafZeta) memset(ForeignLeafZeta, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
-    if(ForeignLeafSoft) memset(ForeignLeafSoft, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
+    /* The foreign-leaf identity sidecar needs no reset here: this exchange's sidecar is allocated
+     * and zeroed by force_tree_grow_foreign_storage below, once the import has been counted, and
+     * it is allocated to exactly that count -- so every slot in it is written by the install.
+     * Clearing a previous exchange's arrays would in any case be clearing arrays that are about to
+     * be replaced. */
 
     /* All-local receiver cover (WHICH particles): the payload worst-case scalars
      * (min_OldAcc/soft/sink) still cover ALL of R's particles, not just active ones,

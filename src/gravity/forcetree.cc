@@ -290,41 +290,11 @@ long force_treebuild_generation(void)        { return g_force_treebuild_generati
 long force_hmax_refresh_generation(void)      { return g_force_hmax_refresh_generation; }
 void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation++; }
 
-/* How much the adaptive foreign-node floor is padded above measured demand when it grows.
- * The fraction is what the pad wants to be; the memory share is what the node can spare
- * for it, as a share of currently uncommitted node memory; the minimum keeps a slightly
- * larger rebuild from ratcheting on every build. */
-static const double LET_FOREIGN_PAD_FRACTION     = 0.5;
-static const double LET_FOREIGN_PAD_FRACTION_MIN = 0.05;
-static const double LET_FOREIGN_PAD_MEMORY_SHARE = 0.05;
-
-/* What one more foreign node costs this rank, across both representations that size from
- * the foreign capacity: the node arrays plus its slot in the GPU node mirror. Both terms
- * are read back from what is actually allocated rather than re-derived from the field
- * lists, which are config-gated and would drift from a second copy of the arithmetic.
- * Returns 0 when there is nothing yet to measure; the caller then falls back to the
- * plain fraction. */
-static long long let_foreign_bytes_per_node(void)
-{
-    double local_mb = 0.0, foreign_mb = 0.0, aux_mb = 0.0;
-    long long cap_nodes = 0, used_hw_nodes = 0, floor_nodes = 0;
-    gizmo_tree_mem_breakdown(&local_mb, &foreign_mb, &aux_mb, &cap_nodes, &used_hw_nodes, &floor_nodes);
-    if(cap_nodes <= 0) {return 0;}
-    long long node_arrays = (long long)(foreign_mb * 1024.0 * 1024.0 / (double) cap_nodes);
-
-    long long mirror = 0;
-    int mirror_nodes = gpu_gravity_tree_capacity();
-    if(mirror_nodes > 0)
-    {
-        long long cur[GIZMO_KOKCELL_COUNT], hw[GIZMO_KOKCELL_COUNT];
-        gizmo_kokkos_mem_buckets(cur, hw);
-        long long mirror_bytes = 0;
-        for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++)
-            {mirror_bytes += cur[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA * GIZMO_KOKSPACE_COUNT + s];}
-        mirror = mirror_bytes / (long long) mirror_nodes;
-    }
-    return node_arrays + mirror;
-}
+/* How much the foreign-node index ceiling is padded above measured demand when it grows.  It is
+ * a large fraction because the ceiling is cheap: it buys index range and its Nextnode ints, not
+ * the nodes, which are allocated to the exact import.  The pad is what stops a build that grows
+ * slightly from forcing another full rebuild. */
+static const double LET_FOREIGN_PAD_FRACTION = 0.5;
 
 int force_treebuild(int npart, struct unbind_data *mp)
 {
@@ -425,7 +395,7 @@ let_build_attempt:
      * Deciding globally keeps every rank on the same path (downstream + retry are
      * collective). */
     int overflow_local = (let_status == LET_OVERFLOW_RETRYABLE);
-    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_ARENA_SHORT) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
+    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_ARENA_SHORT) || (let_status == LET_FOREIGN_STORAGE_SHORT) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
     int overflow_any = 0, hardfail_any = 0;
     long long need_max = 0;
     MPI_Allreduce(&overflow_local, &overflow_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -445,11 +415,12 @@ let_build_attempt:
                    ThisTask);
             fflush(stdout);
         }
-        /* LET_ARENA_SHORT already reported itself, from the rank that is actually short and with the
-         * sizes involved, at the point the round was measured. Every rank carries that status because
-         * the decision is collective, so anything printed here would print NTask times and say
-         * nothing the short rank has not already said more precisely. */
-        if(let_status == LET_PACK_OOM || let_status == LET_ARENA_SHORT || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
+        /* LET_ARENA_SHORT and LET_FOREIGN_STORAGE_SHORT already reported themselves, from the rank
+         * that is actually short and with the sizes involved, at the point the shortfall was found.
+         * Every rank carries those statuses because the decision is collective, so anything printed
+         * here would print NTask times and say nothing the short rank has not said more precisely. */
+        if(let_status == LET_PACK_OOM || let_status == LET_ARENA_SHORT
+           || let_status == LET_FOREIGN_STORAGE_SHORT || let_status == LET_UNPACK_INTERNAL) {endrun(90000072);}
     }
     else if(overflow_any)
     {
@@ -468,33 +439,17 @@ let_build_attempt:
         }
         else
         {
-            /* Grow to the demand plus a pad, so that one rebuild settles the retry instead
-             * of ratcheting again on the next slightly larger step. Half the demand is a
-             * sensible pad while the demand is modest and a ruinous one once it is millions
-             * of nodes: each foreign node costs a slot in the node arrays AND in the GPU
-             * node mirror, so on a large ask that pad reserves memory the run then cannot
-             * spend on anything else -- and this floor is monotone and restart-persisted,
-             * so it is paid for the rest of the campaign. Pad by the usual fraction, but
-             * never by more memory than the node can spare, and never by less than a small
-             * fraction, or a rebuild that grows slightly would ratchet every time. */
-            long long pad = (long long) ceil(LET_FOREIGN_PAD_FRACTION * (double) need_max);
-            long long bytes_per_node = let_foreign_bytes_per_node();
-            long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
-            (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
-            if(mem_total_kb > 0 && bytes_per_node > 0 && GizmoRanksThisNode > 0)
-            {
-                double spare_bytes = (double)(mem_total_kb - committed_kb) * 1024.0;
-                if(spare_bytes < 0.0) {spare_bytes = 0.0;}
-                long long pad_affordable = (long long)((LET_FOREIGN_PAD_MEMORY_SHARE * spare_bytes)
-                                                       / ((double) bytes_per_node * (double) GizmoRanksThisNode));
-                if(pad_affordable < pad) {pad = pad_affordable;}
-            }
-            long long pad_min = (long long) ceil(LET_FOREIGN_PAD_FRACTION_MIN * (double) need_max);
-            if(pad < pad_min) {pad = pad_min;}
-            long long want = need_max + pad;
+            /* Raise the index ceiling to the demand plus a pad, so one rebuild settles the retry
+             * instead of ratcheting again on the next slightly larger step.  The pad is generous
+             * on purpose: what it buys is four bytes per slot in Nextnode[], since the nodes
+             * themselves are no longer sized from this ceiling but from the exact import
+             * (force_tree_grow_foreign_storage).  A rebuild is far more expensive than the ints,
+             * so the ceiling is the one place here worth being loose about.  The floor is monotone
+             * and restart-persisted, which is now equally cheap for the same reason. */
+            long long want = need_max + (long long) ceil(LET_FOREIGN_PAD_FRACTION * (double) need_max);
             if(want > RuntimeMinLETForeignNodes) {RuntimeMinLETForeignNodes = want;}
             if(ThisTask == 0)
-                printf("LET foreign arena too small (needed up to %lld nodes); growing adaptive floor to %lld and rebuilding the tree (retry %d/%d).\n",
+                printf("LET foreign-node index range too small (needed up to %lld nodes); raising the ceiling to %lld and rebuilding the tree (retry %d/%d).\n",
                        need_max, RuntimeMinLETForeignNodes, let_retry + 1, LET_MAX_RETRY);
             fflush(stdout);
             let_retry++;
@@ -1438,11 +1393,12 @@ void force_add_element_to_tree(int iparent, int ichild)
      * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
      * Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
      * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
-     * foreign nodes (MaxNodes <= k < MaxNodes + MaxForeignNodes). */
+     * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
+     * that exists, not by the index range it sits in. */
     {
         struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
         int k_soa = father - All.TreeNodeIndexBase;
-        if(soa && k_soa >= 0 && k_soa < MaxNodes + MaxForeignNodes) {
+        if(soa && k_soa >= 0 && k_soa < MaxNodes + AllocatedForeignNodes) {
             if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
             if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
         }
@@ -1813,7 +1769,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 double fl_zeta = 0.0, fl_soft = 0.0;
                 if(in_foreign && ForeignLeafTag) {
                     int fs = no - (treeBase + maxNodes);
-                    if(fs >= 0 && fs < MaxForeignNodes) {
+                    if(fs >= 0 && fs < AllocatedForeignNodes) {
                         fl_tag  = ForeignLeafTag[fs];
                         fl_type = ForeignLeafType[fs];
                         fl_zeta = (double) ForeignLeafZeta[fs];
@@ -2635,10 +2591,20 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      *   [Base+MaxNodes,                  Base+MaxNodes+MaxForeignNodes)             -> foreign tree nodes (LET unpack)
      *   [Base+MaxNodes+MaxForeignNodes,  Base+MaxNodes+MaxForeignNodes+NTopleaves)  -> pseudo-particles
      * SoA slot for any node index `no` (local OR foreign): idx = no - Base (same formula).
-     * These are INDICES.  Storage is separate and follows real counts: Nodes_base/Extnodes_base
-     * hold MaxNodes+MaxForeignNodes+1 entries, and Nextnode[]/Father[] hold All.TreeParticleSlots
-     * particle slots (with Nextnode[] carrying the pseudo segment after them).  Nothing is ever
-     * sized from Base.
+     * These are INDICES.  Storage is separate and follows real counts: Nextnode[]/Father[] hold
+     * All.TreeParticleSlots particle slots (with Nextnode[] carrying the pseudo segment after them).
+     * Nothing is ever sized from Base.
+     * The foreign range is where index and storage part company, and the distinction is the whole
+     * reason the arena is affordable.  MaxForeignNodes is a CEILING on the index range: it fixes
+     * where the pseudo-particles start, so it must be identical on every rank, stable for the whole
+     * tree epoch, and reproducible from a restart file.  What it costs to raise is arithmetic plus
+     * four bytes per slot in Nextnode[] -- so it is set generously and left alone.  The NODES
+     * themselves are the expensive part, and how many of them a rank receives is known only after
+     * the import counts have been exchanged, long after this function runs.  So Nodes_base and
+     * Extnodes_base are allocated here for the local tree ALONE, and the foreign extent (with the
+     * foreign-leaf sidecars and the GPU node mirror) is added by force_tree_grow_foreign_storage
+     * once the exact count is in hand -- see AllocatedForeignNodes.  Sizing storage from the ceiling
+     * instead would reserve every rank the worst rank's import, for the whole run.
      * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
      * for synthesized particle leaves (one entry per particle that is a direct child of an essential
      * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
@@ -2658,12 +2624,14 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * reader-edited value, so a derivation there would mix provenance and move the pseudo range
      * out from under pointers that are already written.  Every later tree is built from scratch
      * and serializes nothing, so it derives normally.
-     * Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
-     * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
+     * Numforeignnodes (current count, <= AllocatedForeignNodes <= MaxForeignNodes) is reset on each
+     * LET exchange.  On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy
+     * export path is used. */
     if(foreign_node_slots_exact >= 0)
     {
-        /* Restart read: the CAPACITY the file's node pointers were written against, not an
-         * occupancy -- Numforeignnodes is the current count and is not serialized here. */
+        /* Restart read: the index ceiling the file's node pointers were written against, not an
+         * occupancy -- Numforeignnodes is the current count and is not serialized here, and neither
+         * are the foreign nodes themselves, which the first tree build after the restart re-imports. */
         MaxForeignNodes = foreign_node_slots_exact;
     }
     else
@@ -2671,7 +2639,7 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
         double synth_overhead = 2.0 * (double)All.MaxPartAssignable / (double)All.PartAllocFactor;
         long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
         /* Take the larger of the parameter-derived floor and the runtime adaptive
-         * floor (ratcheted by force_treebuild on a retryable LET overflow). This is
+         * floor (raised by force_treebuild when an import does not fit the index range). This is
          * the SOLE place MaxForeignNodes is derived. */
         long long want = (base > RuntimeMinLETForeignNodes) ? base : RuntimeMinLETForeignNodes;
         if(want < 0) want = 0;
@@ -2704,24 +2672,25 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
         }
     }
     Numforeignnodes = 0;
+    AllocatedForeignNodes = 0;   /* no foreign storage until the import count is known */
     /* FOF/SUBFIND/twopoint pseudo-particle threshold uses
      * `TreeNodeIndexBase+MaxNodes+MaxForeignNodes` (matches the
      * forcetree.cc/let_pack.cc convention).  Halo finding uses two different trees:
      * subfind_loctree builds a private one with no pseudo-particles and no LET, while
      * the group-subset walks go through force_treebuild, which does run
-     * let_run_exchange().  The threshold is a capacity, not a count, so it is right in
+     * let_run_exchange().  The threshold is an index ceiling, not a count, so it is right in
      * both regimes whatever Numforeignnodes happens to be. */
-    long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
+    long long total_node_slots = (long long) MaxNodes + 1LL;   /* local tree only; the foreign extent is added later */
     /* Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
      * kernels can read/write them directly.  Same pattern as Father[] and
      * Nextnode[] below.  Skip mymalloc accounting; kokkos_malloc has its
-     * own.  Extended by MaxForeignNodes for foreign-tree storage. */
+     * own. */
     bytes = (size_t) total_node_slots * sizeof(struct NODE);
     Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes, "tree_nodes");
     if(!Nodes_base)
     {
-        printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
-               MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
+        printf("failed to allocate %d tree-nodes (%g MB) in SharedSpace.\n",
+               MaxNodes, bytes / (1024.0 * 1024.0));
         /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Nodes = Nodes_base - TreeNodeIndexBase`
          * so the wild alias is never formed; Nodes_base stays NULL for the caller's check.
          * DomainNodeIndex + tree_allocated_flag are already set (partial allocation) -- safe
@@ -2735,8 +2704,8 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes, "tree_extnodes");
     if(!Extnodes_base)
     {
-        printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
-               MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
+        printf("failed to allocate %d tree-extnodes (%g MB) in SharedSpace.\n",
+               MaxNodes, bytes / (1024.0 * 1024.0));
         /* UVM OOM (per-rank). Controlled-stop request + return BEFORE `Extnodes = Extnodes_base - TreeNodeIndexBase`
          * so the wild alias is never formed; Extnodes_base stays NULL for the caller's check. */
         gizmo_request_controlled_stop(90000083, "force_treeallocate: tree Extnodes UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
@@ -2781,36 +2750,11 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
         return;
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Father */
-    /* Foreign-leaf identity sidecar.  Allocated in SharedSpace via the foreign-node arena
-     * allocator (gpu_tree_alloc_bytes), the SAME discipline as Nodes_base/Extnodes_base/Nextnode --
-     * freed in force_treefree, re-allocated on every force_treebuild retry.  Sized MaxForeignNodes,
-     * indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes).  Zero-initialized so every slot defaults to
-     * leaf_tag=0 (node) before any LET exchange installs real foreign leaves. */
-    if(MaxForeignNodes > 0)
-    {
-        /* Account each sidecar the moment it succeeds, not after all four: a partial
-           failure (e.g. Tag succeeds, Type fails) still leaves the successful arrays
-           live, and the ledger must show them. */
-        ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int), "tree_foreign_tag");
-        if(ForeignLeafTag)  gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
-        ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(int), "tree_foreign_type");
-        if(ForeignLeafType) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(int));
-        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat), "tree_foreign_zeta");
-        if(ForeignLeafZeta) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
-        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat), "tree_foreign_soft");
-        if(ForeignLeafSoft) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
-        if(!ForeignLeafTag || !ForeignLeafType || !ForeignLeafZeta || !ForeignLeafSoft)
-        {
-            printf("Failed to allocate %d foreign-leaf sidecar slots.\n", MaxForeignNodes);
-            gizmo_request_controlled_stop(90000086, "force_treeallocate: tree foreign-leaf sidecar UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
-            return;
-        }
-        memset(ForeignLeafTag,  0, (size_t) MaxForeignNodes * sizeof(int));
-        memset(ForeignLeafType, 0, (size_t) MaxForeignNodes * sizeof(int));
-        memset(ForeignLeafZeta, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
-        memset(ForeignLeafSoft, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
-    }
-    else { ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL; }
+    /* The foreign-leaf identity sidecar follows the foreign node storage, so like it there is
+     * nothing to allocate yet: force_tree_grow_foreign_storage creates both together, once the
+     * import count is known.  Until then the pointers are NULL, which every reader of them
+     * already tests for. */
+    ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL;
 
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)
@@ -2875,34 +2819,156 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
 }
 
 
+/*! Give the foreign-node range the storage it needs, now that the LET exchange has counted
+ *  exactly how many nodes this rank is about to receive.
+ *
+ *  force_treeallocate cannot do this: the count depends on the tree that has yet to be built,
+ *  and on what every other rank decides to send.  Sizing from the index ceiling instead would
+ *  hand every rank the worst rank's import for the whole run, which is what this exists to
+ *  stop -- the demand is strongly uneven between ranks, and which rank is the busy one changes
+ *  from one build to the next, so no fixed or remembered figure fits it.  Waiting costs one
+ *  copy of the local tree, which is a small fraction of the arena being sized.
+ *
+ *  Called once per tree build, before the first foreign node is installed, on every rank
+ *  (a rank importing nothing passes 0 and does nothing).  Growth is one-way within a build:
+ *  the count is exact, so there is never a second ask.
+ *
+ *  Each array is replaced only once its successor is allocated and filled, so a failure here
+ *  leaves the tree exactly as it was, with a status for the caller to reduce and report.
+ *  Returns 0 on success, nonzero on failure. */
+int force_tree_grow_foreign_storage(long long foreign_needed)
+{
+    if(foreign_needed <= (long long) AllocatedForeignNodes) {return 0;}   /* nothing to add */
+    if(foreign_needed > (long long) MaxForeignNodes)
+    {
+        /* The caller checks this against the ceiling first and retries the whole build with a
+         * larger one, so reaching here means the two disagree.  Refuse rather than allocate
+         * storage for indices the pseudo-particle range already occupies. */
+        printf("force_tree_grow_foreign_storage: asked for %lld foreign nodes on rank %d, above the index ceiling %d.\n",
+               foreign_needed, ThisTask, MaxForeignNodes);
+        fflush(stdout);
+        return 1;
+    }
+    const int n_foreign = (int) foreign_needed;
+    const long long local_slots = (long long) MaxNodes + 1LL;   /* the +1 sentinel travels with the local tree */
+    const long long new_slots   = local_slots + (long long) n_foreign;
+    const int old_foreign = AllocatedForeignNodes;
+
+    /* Every allocation is made, and the built tree carried across, BEFORE anything the rest of
+     * the code can see changes.  So a shortfall anywhere below leaves the tree exactly as it
+     * was, still complete and still usable, and the only consequence is the status returned. */
+    struct NODE    *new_nodes    = NULL;
+    struct extNODE *new_extnodes = NULL;
+    int     *new_tag  = NULL;
+    int     *new_type = NULL;
+    MyFloat *new_zeta = NULL;
+    MyFloat *new_soft = NULL;
+
+    /* Carry across everything the old arrays held -- the local tree, and any foreign nodes a
+     * previous call already made room for.  Today the exchange sizes once per build so the
+     * foreign part is empty, but copying it costs nothing and makes this correct on its own
+     * terms rather than by the caller's discipline. */
+    const long long keep_slots = local_slots + (long long) old_foreign;
+    new_nodes = (struct NODE *) gpu_tree_alloc_bytes((size_t) new_slots * sizeof(struct NODE), "tree_nodes");
+    if(new_nodes) {memcpy(new_nodes, Nodes_base, (size_t) keep_slots * sizeof(struct NODE));}
+    new_extnodes = (struct extNODE *) gpu_tree_alloc_bytes((size_t) new_slots * sizeof(struct extNODE), "tree_extnodes");
+    if(new_extnodes) {memcpy(new_extnodes, Extnodes_base, (size_t) keep_slots * sizeof(struct extNODE));}
+
+    /* Foreign-leaf identity sidecar: one entry per foreign slot, describing THIS import, so
+     * there is nothing to carry over -- allocate fresh and zero, which leaves every slot at the
+     * leaf_tag=0 (plain node) default until the install writes it. */
+    new_tag  = (int *)     gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_tag");
+    new_type = (int *)     gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_type");
+    new_zeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_zeta");
+    new_soft = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_soft");
+
+    /* The mirror sizes its own copy of the sidecar from AllocatedForeignNodes, so that has to
+     * read as the new count while it allocates -- and go back if it cannot. */
+    int mirror_grown = 0;
+    if(new_nodes && new_extnodes && new_tag && new_type && new_zeta && new_soft)
+    {
+        AllocatedForeignNodes = n_foreign;
+        mirror_grown = gpu_gravity_tree_grow_foreign((int) new_slots);
+        if(!mirror_grown) {AllocatedForeignNodes = old_foreign;}
+    }
+    if(!mirror_grown)
+    {
+        printf("force_tree_grow_foreign_storage: rank %d could not find room for %d foreign nodes. "
+               "Their node arrays alone are %g MB; the foreign-leaf sidecars and this rank's slice of "
+               "the GPU node mirror are on top of that, and the mirror is usually the larger of the two. "
+               "The ghost import this step does not fit in node memory; feasible: fewer ranks/node, or "
+               "lower resolution.\n",
+               ThisTask, n_foreign,
+               (double)((size_t) n_foreign * (sizeof(struct NODE) + sizeof(struct extNODE))) / (1024.0 * 1024.0));
+        fflush(stdout);
+        if(new_soft)     {gpu_tree_free_bytes(new_soft);}
+        if(new_zeta)     {gpu_tree_free_bytes(new_zeta);}
+        if(new_type)     {gpu_tree_free_bytes(new_type);}
+        if(new_tag)      {gpu_tree_free_bytes(new_tag);}
+        if(new_extnodes) {gpu_tree_free_bytes(new_extnodes);}
+        if(new_nodes)    {gpu_tree_free_bytes(new_nodes);}
+        return 1;
+    }
+    memset(new_tag,  0, (size_t) n_foreign * sizeof(int));
+    memset(new_type, 0, (size_t) n_foreign * sizeof(int));
+    memset(new_zeta, 0, (size_t) n_foreign * sizeof(MyFloat));
+    memset(new_soft, 0, (size_t) n_foreign * sizeof(MyFloat));
+
+    /* Everything is in hand: swap, then release what was superseded. */
+    gpu_tree_free_bytes(Nodes_base);
+    gpu_tree_free_bytes(Extnodes_base);
+    if(ForeignLeafTag)  {gpu_tree_free_bytes(ForeignLeafTag);}
+    if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType);}
+    if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta);}
+    if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft);}
+    Nodes_base    = new_nodes;
+    Extnodes_base = new_extnodes;
+    Nodes    = Nodes_base    - All.TreeNodeIndexBase;
+    Extnodes = Extnodes_base - All.TreeNodeIndexBase;
+    ForeignLeafTag = new_tag; ForeignLeafType = new_type;
+    ForeignLeafZeta = new_zeta; ForeignLeafSoft = new_soft;
+
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES,
+                          (long long)((long long)(n_foreign - old_foreign)
+                                      * (long long)(sizeof(struct NODE) + sizeof(struct extNODE)
+                                                    + 2 * sizeof(int) + 2 * sizeof(MyFloat))));
+    return 0;
+}
+
+
 /*! Memory-ledger provider (diagnostic): the CAPACITY / REQUESTED byte breakdown of
  *  the tree Kokkos allocations -- local node arrays vs foreign-LET node arrays (incl.
  *  foreign-leaf sidecars) vs Father/Nextnode aux -- plus foreign capacity, since-start
- *  used high-water, and the adaptive floor. This reports DEMAND from MaxNodes/
- *  MaxForeignNodes, not the live allocation: `tree_allocated_flag` is set at the TOP of
- *  force_treeallocate, so on a partial-allocation controlled-stop this reports the
- *  requested capacity that could not be met (which is exactly what we want at a stop).
- *  Returns zeros when no tree is allocated. Called at ledger print time (host). Byte
- *  model mirrors force_treeallocate: Nodes_base/Extnodes_base span
- *  total_node_slots = MaxNodes + MaxForeignNodes + 1 (the +1 sentinel folded into local);
- *  DomainNodeIndex/TopNodeNodeIndex are mymalloc (Base family) and excluded here. */
+ *  used high-water, and the adaptive floor.
+ *  The foreign figure is the storage that EXISTS (AllocatedForeignNodes), which is what the
+ *  node is actually paying and what the ledger's totals have to add up to.  It is reported
+ *  beside the index ceiling MaxForeignNodes, which costs only the Nextnode ints counted in the
+ *  aux term: without both, a reader cannot tell a rank with a small import from a rank whose
+ *  ceiling happens to be small.  The local term is DEMAND from MaxNodes, since
+ *  `tree_allocated_flag` is set at the TOP of force_treeallocate, so on a partial-allocation
+ *  controlled-stop this reports the capacity that could not be met -- exactly what is wanted
+ *  at a stop.  Returns zeros when no tree is allocated. Called at ledger print time (host).
+ *  Byte model mirrors force_treeallocate plus force_tree_grow_foreign_storage:
+ *  Nodes_base/Extnodes_base span MaxNodes + AllocatedForeignNodes + 1 (the +1 sentinel folded
+ *  into local); DomainNodeIndex/TopNodeNodeIndex are mymalloc (Base family), excluded here. */
 void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
-                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
-                              long long *foreign_floor_nodes)
+                              long long *foreign_alloc_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes, long long *foreign_ceiling_nodes)
 {
     *local_mb = *foreign_cap_mb = *aux_mb = 0.0;
-    *foreign_cap_nodes = *foreign_used_hw_nodes = *foreign_floor_nodes = 0;
+    *foreign_alloc_nodes = *foreign_used_hw_nodes = *foreign_floor_nodes = *foreign_ceiling_nodes = 0;
     if(!tree_allocated_flag) {return;}
     const double MB = 1024.0 * 1024.0;
     long long node_pair = (long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE);
     *local_mb = (double)(((long long) MaxNodes + 1LL) * node_pair) / MB;  /* +1 sentinel slot */
     long long sidecar = 2LL * (long long) sizeof(int) + 2LL * (long long) sizeof(MyFloat);  /* Tag+Type+Zeta+Soft */
-    *foreign_cap_mb = (double)((long long) MaxForeignNodes * (node_pair + sidecar)) / MB;
+    *foreign_cap_mb = (double)((long long) AllocatedForeignNodes * (node_pair + sidecar)) / MB;
     long long nextnode_slots = (long long) All.TreeParticleSlots + (long long) NTopnodes + (long long) MaxForeignNodes;
     *aux_mb = (double)(((long long) All.TreeParticleSlots + nextnode_slots) * (long long) sizeof(int)) / MB;  /* Father + Nextnode */
-    *foreign_cap_nodes     = MaxForeignNodes;
+    *foreign_alloc_nodes   = AllocatedForeignNodes;
     *foreign_used_hw_nodes = Numforeignnodes_highwater;
     *foreign_floor_nodes   = RuntimeMinLETForeignNodes;
+    *foreign_ceiling_nodes = MaxForeignNodes;
 }
 
 /*! This function frees the memory allocated for the tree, i.e. it frees
@@ -2934,6 +3000,7 @@ void force_treefree(void)
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
+        AllocatedForeignNodes = 0;   /* the foreign storage went with the arrays above */
         tree_allocated_flag = 0;
     }
 }

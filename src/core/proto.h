@@ -277,10 +277,12 @@ extern "C" void        gizmo_kokkos_mem_buckets(long long *cur, long long *hw);
 extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unrecognized space seen, or NULL */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
-   (current-at-print is misleading: force_treeallocate resets it before a stop ledger). */
+   (current-at-print is misleading: force_treeallocate resets it before a stop ledger).
+   "alloc" is the foreign storage that exists; "ceiling" is the index range it sits in, which
+   costs only its Nextnode ints (counted in the aux term) -- the two are far apart by design. */
 void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
-                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
-                              long long *foreign_floor_nodes);
+                              long long *foreign_alloc_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes, long long *foreign_ceiling_nodes);
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);

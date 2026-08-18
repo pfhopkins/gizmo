@@ -256,7 +256,7 @@ void gravity_tree(void)
              * retry, no new collective).
              * ============================================================ */
             if(Nexport > 0) {
-                printf("LET incomplete: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
+                printf("LET incomplete: rank %d has Nexport=%ld particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
                 fflush(stdout);
                 /* Graceful soft-stop: the export round-trip is retired, so we cannot service
                  * these particles -- but the same loop iteration reaches the all-rank

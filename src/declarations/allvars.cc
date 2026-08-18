@@ -379,7 +379,8 @@ struct extNODE *Extnodes, *Extnodes_base;
 
 int MaxNodes;			/*!< maximum allowed number of internal nodes */
 int Numnodestree;		/*!< number of (internal) nodes in each tree */
-int MaxForeignNodes = 0;        /*!< LET: foreign-node capacity; set in force_treeallocate. */
+int MaxForeignNodes = 0;        /*!< LET: ceiling of the foreign-node index range; set in force_treeallocate. */
+int AllocatedForeignNodes = 0;  /*!< LET: foreign-node slots that actually have storage; raised once per tree build to this rank's exact import. */
 int Numforeignnodes = 0;        /*!< LET: foreign nodes currently installed; reset on each LET exchange. */
 long long RuntimeMinLETForeignNodes = 0;  /*!< adaptive lower bound on MaxForeignNodes; ratcheted up by force_treebuild on a retryable LET overflow. Not a parameter; restart-persisted. */
 long long Numforeignnodes_highwater = 0;  /*!< since-start peak of Numforeignnodes actually installed (diagnostic; memory ledger foreign-used). */

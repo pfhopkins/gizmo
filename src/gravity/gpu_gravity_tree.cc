@@ -140,10 +140,10 @@ static int alloc_arrays_(int n)
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
     }
-    /* Foreign-leaf identity sidecar mirror -- sized MaxForeignNodes (foreign-only), NOT n, and
-     * indexed by foreign_slot = no-(TreeNodeIndexBase+MaxNodes) by both the scatter and the walk.  acquire()
-     * adds MaxForeignNodes to its capacity request, so this runs with the current MaxForeignNodes. */
-    soa_.foreign_leaf_cap = (MaxForeignNodes > 0) ? MaxForeignNodes : 0;
+    /* Foreign-leaf identity sidecar mirror -- sized by the foreign storage that exists, NOT n, and
+     * indexed by foreign_slot = no-(TreeNodeIndexBase+MaxNodes) by both the scatter and the walk.  The
+     * capacity requests below add the same count, so this runs with the current one. */
+    soa_.foreign_leaf_cap = (AllocatedForeignNodes > 0) ? AllocatedForeignNodes : 0;
     if(soa_.foreign_leaf_cap > 0) {
         soa_.foreign_leaf_tag  = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(int));
         soa_.foreign_leaf_type = (int     *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", (size_t)soa_.foreign_leaf_cap * sizeof(int));
@@ -243,14 +243,16 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
 {
     if(min_nodes <= 0) {min_nodes = 1;}
 
-    /* Extend SoA capacity to cover the LET foreign-node range
-     * [MaxNodes, MaxNodes+MaxForeignNodes).  Foreign nodes installed by
+    /* Extend SoA capacity to cover the foreign-node storage that currently exists,
+     * [MaxNodes, MaxNodes+AllocatedForeignNodes).  Foreign nodes installed by
      * let_unpack_and_install are scattered into SoA at slot_base + j with
      * absolute index = TreeNodeIndexBase + MaxNodes + slot, so SoA index =
-     * (MaxNodes + slot).  Non-GPU builds have MaxForeignNodes==0; GPU
-     * builds require positive LET headroom. */
-    if(MaxForeignNodes > 0) {
-        min_nodes += MaxForeignNodes;
+     * (MaxNodes + slot).  This is zero until the exchange has counted this rank's
+     * import and gpu_gravity_tree_grow_foreign has extended the mirror -- deliberately
+     * NOT the index ceiling MaxForeignNodes, which every rank shares and which would
+     * reserve the whole run the worst rank's import. */
+    if(AllocatedForeignNodes > 0) {
+        min_nodes += AllocatedForeignNodes;
     }
 
     if(soa_capacity_ >= min_nodes && soa_.center) {
@@ -265,6 +267,138 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     if(!alloc_arrays_(min_nodes)) {endrun(913101); soa_capacity_ = 0; soa_valid_ = 0; return;}  /* soft bad-stop: leave SoA invalid (soa() returns NULL; callers NULL-check); drains at next poll */
     soa_capacity_ = min_nodes;
     soa_valid_    = 1;
+}
+
+/* Extend the mirror to `min_nodes` slots WITHOUT losing what it already holds.
+ *
+ * acquire() above may throw the mirror away and reallocate, because it only ever runs before
+ * the build kernels repopulate it.  This one runs after them: the local tree is finished and
+ * lives in these arrays, and all that is being added is room for the foreign nodes about to be
+ * installed.  So the existing contents are copied across.
+ *
+ * Transactional: the live arrays are replaced only once the new set is fully allocated and
+ * copied.  If allocation fails the old set is still installed and intact, and the caller gets a
+ * failure to report -- never a half-swapped mirror or a freed pointer.
+ *
+ * The field list below mirrors alloc_arrays_ entry for entry, including the #ifdef guards; the
+ * two are kept adjacent so they can be read side by side.  Only the prefix already in use is
+ * copied -- the foreign range is written by gpu_scatter_foreign_to_soa right after this returns.
+ * Returns 1 on success, 0 on failure. */
+extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
+{
+    /* Enough node slots is not enough on its own: the sidecar mirror is sized separately, from
+     * AllocatedForeignNodes, so it has to be checked on its own terms or a grow that only widened
+     * the foreign range would leave the scatter silently dropping leaf identities. */
+    if(min_nodes <= soa_capacity_ && soa_.center
+       && soa_.foreign_leaf_cap >= AllocatedForeignNodes) {return 1;}   /* already large enough */
+    if(!soa_.center)
+    {
+        /* Nothing has been allocated yet, so there is nothing to preserve and this is simply the
+         * first allocation.  Reached when the build pipeline had no nodes to seed. */
+        if(!alloc_arrays_(min_nodes)) {return 0;}
+        soa_capacity_ = min_nodes;
+        soa_valid_    = 1;
+        return 1;
+    }
+
+    const struct gpu_gravity_tree_soa_t old_soa = soa_;
+    const int n_old = (soa_capacity_ < min_nodes) ? soa_capacity_ : min_nodes;
+
+    /* Hand alloc_arrays_ a BLANK set to fill.  It returns at the first field it cannot allocate,
+     * leaving every later field as it found it -- so if it were given the live set, the rollback
+     * below would free the arrays the tree is still using and then reinstall those freed pointers.
+     * Starting blank means the rollback can only ever free what this call itself allocated.
+     * The Nextnode alias is not owned here and is carried across untouched. */
+    {
+        struct gpu_gravity_tree_soa_t blank = {0};
+        blank.nextnode_aux      = soa_.nextnode_aux;
+        blank.nextnode_aux_size = soa_.nextnode_aux_size;
+        soa_ = blank;
+    }
+    if(!alloc_arrays_(min_nodes))
+    {
+        free_arrays_();        /* drop the partially-allocated new set, and only that */
+        soa_ = old_soa;        /* the tree's mirror is untouched and still current */
+        return 0;
+    }
+    const struct gpu_gravity_tree_soa_t new_soa = soa_;
+
+#define GIZMO_SOA_COPY(field, count) \
+    do { if(new_soa.field && old_soa.field) {memcpy(new_soa.field, old_soa.field, (size_t)(count) * sizeof(*new_soa.field));} } while(0)
+    GIZMO_SOA_COPY(center,   n_old);
+    GIZMO_SOA_COPY(len,      n_old);
+    GIZMO_SOA_COPY(s,        n_old);
+    GIZMO_SOA_COPY(mass,     n_old);
+    GIZMO_SOA_COPY(sibling,  n_old);
+    GIZMO_SOA_COPY(nextnode, n_old);
+    GIZMO_SOA_COPY(father,   n_old);
+    GIZMO_SOA_COPY(bitflags, n_old);
+    GIZMO_SOA_COPY(maxsoft,  n_old);
+    GIZMO_SOA_COPY(N_part,   n_old);
+    GIZMO_SOA_COPY(suns_backup, (long) n_old * 8);
+    /* foreign_leaf_* are deliberately NOT copied: they describe the previous import, which the
+     * scatter overwrites for every slot it installs. */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    GIZMO_SOA_COPY(gasmass, n_old);
+#endif
+#ifdef RT_USE_GRAVTREE
+    GIZMO_SOA_COPY(stellar_lum, (long) n_old * N_RT_FREQ_BINS);
+#ifdef CHIMES_STELLAR_FLUXES
+    GIZMO_SOA_COPY(chimes_stellar_lum_G0,  (long) n_old * CHIMES_LOCAL_UV_NBINS);
+    GIZMO_SOA_COPY(chimes_stellar_lum_ion, (long) n_old * CHIMES_LOCAL_UV_NBINS);
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    GIZMO_SOA_COPY(rt_source_lum_s,  n_old);
+    GIZMO_SOA_COPY(rt_source_lum_vs, n_old);
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    GIZMO_SOA_COPY(sink_lum,      n_old);
+    GIZMO_SOA_COPY(sink_lum_grad, n_old);
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    GIZMO_SOA_COPY(cr_injection, n_old);
+#endif
+#ifdef SINK_CALC_DISTANCES
+    GIZMO_SOA_COPY(sink_mass, n_old);
+    GIZMO_SOA_COPY(sink_pos,  n_old);
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    GIZMO_SOA_COPY(sink_vel, n_old);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    GIZMO_SOA_COPY(sink_acc, n_old);
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    GIZMO_SOA_COPY(N_SINK, n_old);
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    GIZMO_SOA_COPY(MaxFeedbackVel, n_old);
+#endif
+#endif
+    GIZMO_SOA_COPY(node_vs, n_old);
+    GIZMO_SOA_COPY(hmax,    n_old);
+    GIZMO_SOA_COPY(vmax,    n_old);
+    GIZMO_SOA_COPY(divVmax, n_old);
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    GIZMO_SOA_COPY(tidal_tensorps, (long) n_old * 6);
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    GIZMO_SOA_COPY(mass_dm, n_old);
+    GIZMO_SOA_COPY(s_dm,    n_old);
+    GIZMO_SOA_COPY(vs_dm,   n_old);
+#endif
+#undef GIZMO_SOA_COPY
+
+    /* The copies above are host stores into SharedSpace that device kernels will read; fence
+     * before the old buffers go away, for the same reason the scatter path fences. */
+    Kokkos::fence();
+
+    soa_ = old_soa;    /* release the superseded set through the one function that knows it */
+    free_arrays_();
+    soa_ = new_soa;
+    soa_capacity_ = min_nodes;
+    soa_valid_    = 1;
+    return 1;
 }
 
 extern "C" void gpu_gravity_tree_release(void)
@@ -321,8 +455,9 @@ extern "C" void gpu_nextnode_backup_suns(int n)
      * free_arrays_(), and destroy the suns_backup we store below — corrupting
      * the nextnode kernel's input on the first treebuild. */
     int cap = (MaxNodes > 0) ? MaxNodes + 1 : n;
-    /* Include LET foreign-node range. */
-    if(MaxForeignNodes > 0) {cap += MaxForeignNodes;}
+    /* Include whatever foreign-node storage exists.  At build time that is normally none:
+     * the import is counted, and the mirror extended to fit it, only once the tree is built. */
+    if(AllocatedForeignNodes > 0) {cap += AllocatedForeignNodes;}
     if(soa_capacity_ < cap || !soa_.suns_backup) {
         free_arrays_();
         if(!alloc_arrays_(cap)) {endrun(913401); soa_capacity_ = 0; soa_valid_ = 0; return;}  /* soft bad-stop: leave SoA invalid before the suns_backup seed reads NULL; drains at next poll */

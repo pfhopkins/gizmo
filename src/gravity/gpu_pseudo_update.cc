@@ -705,7 +705,7 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         {
             int foreign_slot = no - (tree_base + MaxNodes);
             if(soa->foreign_leaf_tag && foreign_slot >= 0 && foreign_slot < soa->foreign_leaf_cap
-               && ForeignLeafTag && foreign_slot < MaxForeignNodes) {
+               && ForeignLeafTag && foreign_slot < AllocatedForeignNodes) {
                 soa->foreign_leaf_tag[foreign_slot]  = ForeignLeafTag[foreign_slot];
                 soa->foreign_leaf_type[foreign_slot] = ForeignLeafType[foreign_slot];
                 soa->foreign_leaf_zeta[foreign_slot] = ForeignLeafZeta[foreign_slot];

@@ -197,10 +197,11 @@ static_assert(sizeof(struct LETNodeWire) % 8 == 0,
  * The receiver walk reads node fields from Nodes_base[] (CPU) / the GPU SoA, neither of which can
  * carry per-foreign-leaf particle identity (NODE is shared with the local tree and must not be
  * fattened).  These three parallel arrays hold the installed leaf identity for the foreign-node
- * range, sized MaxForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase + MaxNodes) -- NOT the
- * ordinary node SoA index no - TreeNodeIndexBase.  Allocated/freed with the foreign-node arena in
- * force_treeallocate/force_treefree; memset-0 reset on each LET exchange (let_run_exchange).  The GPU
- * mirror lives in the tree SoA (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
+ * range, sized AllocatedForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase + MaxNodes) --
+ * NOT the ordinary node SoA index no - TreeNodeIndexBase.  Allocated with the foreign-node storage in
+ * force_tree_grow_foreign_storage, zeroed there, and freed in force_treefree; because they are sized to
+ * the exact import, the install writes every slot.  The GPU mirror lives in the tree SoA
+ * (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
  * ---------------------------------------------------------------------- */
 extern int     *ForeignLeafTag;   /* 1 = real foreign single-particle leaf; 0 = node/multipole */
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
@@ -306,15 +307,22 @@ typedef enum {
                                  Separate from PACK_OOM because that one is a single rank's failed
                                  realloc: the two want different reporting, and only the rank that
                                  is actually short has anything to say about this one. */
+    LET_FOREIGN_STORAGE_SHORT,/* no node memory to hold the foreign nodes this rank counted; decided
+                                 collectively, so every rank carries it.  Distinct from
+                                 OVERFLOW_RETRYABLE, which means the import does not fit the INDEX
+                                 range and IS fixed by rebuilding with a larger ceiling: this one is
+                                 the memory itself running out, which a rebuild cannot change. */
     LET_UNPACK_INTERNAL       /* malformed exchange; not retryable */
 } let_exchange_status_t;
 
-/*! Adaptive lower bound (in nodes) on the LET foreign-node arena MaxForeignNodes.
- *  0 at startup; force_treebuild ratchets it up on a retryable overflow so the
- *  arena self-sizes to the run's evolving clustering.  force_treeallocate is the
+/*! Adaptive lower bound (in nodes) on the foreign-node INDEX ceiling MaxForeignNodes.
+ *  0 at startup; force_treebuild ratchets it up when an import does not fit the index
+ *  range, so the range follows the run's evolving clustering.  force_treeallocate is the
  *  sole consumer.  NOT a parameter: All.LETAllocFactor is the input floor, this is
- *  the runtime adaptive floor.  Restart-persisted, since it co-determines the tree
- *  foreign-arena layout a restart file's serialized node indices were written against. */
+ *  the runtime adaptive floor.  Restart-persisted, since it co-determines the index
+ *  layout a restart file's serialized node indices were written against.
+ *  It does NOT hold node memory: the nodes are allocated to the exact import
+ *  (AllocatedForeignNodes), so a generous ceiling costs only its Nextnode ints. */
 extern long long RuntimeMinLETForeignNodes;
 
 /*! Since-start high-water of Numforeignnodes (the peak foreign nodes actually

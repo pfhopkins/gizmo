@@ -133,18 +133,18 @@ static void report_memory_ledger_impl(const char *when, int always)
        MB totals sum over the node; the node-count fields take the per-rank MAX (the
        biggest single rank -- the one that trips force_treeallocate first). */
     double tb_local = 0, tb_foreign = 0, tb_aux = 0;
-    long long tb_fcap = 0, tb_fused = 0, tb_ffloor = 0;
-    gizmo_tree_mem_breakdown(&tb_local, &tb_foreign, &tb_aux, &tb_fcap, &tb_fused, &tb_ffloor);
+    long long tb_falloc = 0, tb_fused = 0, tb_ffloor = 0, tb_fceil = 0;
+    gizmo_tree_mem_breakdown(&tb_local, &tb_foreign, &tb_aux, &tb_falloc, &tb_fused, &tb_ffloor, &tb_fceil);
     double tb_mb_in[3] = {tb_local, tb_foreign, tb_aux}, node_tb_mb[3] = {0, 0, 0};
-    long long tb_n_in[3] = {tb_fcap, tb_fused, tb_ffloor}, node_tb_n[3] = {0, 0, 0};
+    long long tb_n_in[4] = {tb_falloc, tb_fused, tb_ffloor, tb_fceil}, node_tb_n[4] = {0, 0, 0, 0};
     MPI_Reduce(tb_mb_in, node_tb_mb, 3, MPI_DOUBLE,   MPI_SUM, 0, GizmoNodeComm);
-    MPI_Reduce(tb_n_in,  node_tb_n,  3, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
+    MPI_Reduce(tb_n_in,  node_tb_n,  4, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
     /* Rank-PAIRED foreign-LET stat: find the node-comm rank with the peak foreign
        used high-water, then read THAT rank's capacity+floor -- so slack is a single
        coherent rank, not node-max-capacity vs node-max-used mixed across ranks. */
     struct { double val; int rank; } fu_in = {(double) tb_fused, GizmoNodeRankOfTask}, fu_out = {0, 0};
     MPI_Allreduce(&fu_in, &fu_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, GizmoNodeComm);
-    long long wf_mask[2] = { (GizmoNodeRankOfTask == fu_out.rank) ? tb_fcap : -1LL,
+    long long wf_mask[2] = { (GizmoNodeRankOfTask == fu_out.rank) ? tb_falloc : -1LL,
                              (GizmoNodeRankOfTask == fu_out.rank) ? tb_ffloor : -1LL };
     long long wf_pair[2] = {0, 0};
     MPI_Reduce(wf_mask, wf_pair, 2, MPI_LONG_LONG, MPI_MAX, 0, GizmoNodeComm);
@@ -210,16 +210,19 @@ static void report_memory_ledger_impl(const char *when, int always)
                       node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
                       node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0));
         /* Tree-node breakdown: split the "Tree nodes" total into local vs foreign-LET vs
-           Father/Nextnode aux, and report foreign capacity vs since-start used high-water
-           (rank-max). "used" is NOT current-at-print: force_treeallocate resets
-           Numforeignnodes=0 before a controlled-stop ledger, so current would read 0. */
+           Father/Nextnode aux, and report the foreign storage that exists vs the since-start
+           used high-water (rank-max). "used" is NOT current-at-print: force_treeallocate resets
+           Numforeignnodes=0 before a controlled-stop ledger, so current would read 0.
+           "index ceiling" is the range the storage sits in, not memory: it buys only its
+           Nextnode ints, already inside the aux term. Allocated far below it is the design
+           working, not a shortfall. */
         n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                       "    tree split: local node arrays node %.1f MB | foreign-LET arrays node %.1f MB | aux (Father+Nextnode) node %.1f MB\n"
-                      "    foreign-LET nodes (rank-max): capacity %lld | used high-water %lld (since start) | adaptive floor %lld\n",
-                      node_tb_mb[0], node_tb_mb[1], node_tb_mb[2], node_tb_n[0], node_tb_n[1], node_tb_n[2]);
+                      "    foreign-LET nodes (rank-max): allocated %lld | used high-water %lld (since start) | adaptive floor %lld | index ceiling %lld\n",
+                      node_tb_mb[0], node_tb_mb[1], node_tb_mb[2], node_tb_n[0], node_tb_n[1], node_tb_n[2], node_tb_n[3]);
         if(wf_used > 0)
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "    foreign-LET peak-used rank (paired): capacity %lld | used %lld | slack %lld | cap/used %.2f\n",
+                          "    foreign-LET peak-used rank (paired): allocated %lld | used %lld | slack %lld | alloc/used %.2f\n",
                           wf_pair[0], wf_used, wf_pair[0] - wf_used, (double) wf_pair[0] / (double) wf_used);
         /* Byte categories: the family lines above are LOGICAL requested bytes; these are
            the commit vs physical categories (the Base reserved-vs-used gap lives here). */

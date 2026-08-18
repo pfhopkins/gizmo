@@ -63,7 +63,7 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat    *maxsoft;
     long           *N_part;
     /* Foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
-     * MaxForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes) == (node SoA idx) -
+     * AllocatedForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes) == (node SoA idx) -
      * MaxNodes -- a DIFFERENT index than every other array above (which use no - TreeNodeIndexBase).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
      * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
@@ -71,7 +71,7 @@ struct gpu_gravity_tree_soa_t {
     int            *foreign_leaf_type;  /* source particle Type   -> ptype_sec */
     MyFloat        *foreign_leaf_zeta;  /* source particle AGS_zeta -> zeta_sec (double; preserves reciprocity) */
     MyFloat        *foreign_leaf_soft;  /* source particle ForceSoftening -> h_p (pure, NOT node maxsoft) */
-    int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== MaxForeignNodes) */
+    int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== AllocatedForeignNodes) */
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
      * lands on `no < TreeParticleSlots`, advance via nextnode_aux[no]. Sized for
@@ -160,6 +160,14 @@ struct gpu_gravity_tree_soa_t {
 void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
+
+/* Grow the mirror to min_nodes slots while PRESERVING what it holds -- the counterpart to
+ * acquire() for the one point that runs after the build kernels: the LET exchange, which learns
+ * how many foreign nodes this rank receives only once the counts have been exchanged, and must
+ * add room for them without disturbing the local tree already in the mirror.  Transactional:
+ * on failure the previous arrays are still installed and valid.  Returns 1 on success, 0 on
+ * failure.  Callers: force_tree_grow_foreign_storage only. */
+int gpu_gravity_tree_grow_foreign(int min_nodes);
 
 /* Nextnode[] is allocated in SharedSpace by force_treeallocate
  * (forcetree.cc).  This setter aliases soa->nextnode_aux to that pointer; no
