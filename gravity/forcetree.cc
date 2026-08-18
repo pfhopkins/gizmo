@@ -537,7 +537,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass=0; Vec3<MyFloat> sink_pos_times_mass = {};   /* position of each sink particle in the node times its mass; divide by total mass at the end to get COM */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Vec3<MyFloat> sink_mom = {}, sink_force = {}; int N_SINK = 0;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         MyFloat max_feedback_vel=0;
@@ -617,7 +617,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef SINK_CALC_DISTANCES
                         sink_mass += Nodes[p].sink_mass;
                         sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                         sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
                         sink_force += Nodes[p].sink_mass * Nodes[p].sink_acc;
@@ -712,10 +712,10 @@ void force_update_node_recursive(int no, int sib, int father)
                     {
                         sink_mass += pa->Mass;    /* actual value is not used for distances */
                         sink_pos_times_mass += pa->Mass * pa->Pos;  /* positition times mass; divide by total mass later */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                         N_SINK += 1;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                         sink_mom += pa->Mass * pa->Vel;
 #ifdef SPECIAL_POINT_MOTION
                         sink_force += pa->Mass * pa->Acc_Total_PrevStep;
@@ -837,13 +837,13 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef SINK_CALC_DISTANCES
         Nodes[no].sink_mass = sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].N_SINK = N_SINK;
 #endif
         if(sink_mass > 0)
         {
             Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;  /* weighted position is sum(pos*mass)/sum(mass) */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             Nodes[no].sink_vel = sink_mom / sink_mass;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -940,7 +940,7 @@ void force_exchange_pseudodata(void)
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
         Vec3<MyFloat> sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         int N_SINK;
         Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -1012,7 +1012,7 @@ void force_exchange_pseudodata(void)
 #ifdef SINK_CALC_DISTANCES
             DomainMoment[i].sink_mass = Nodes[no].sink_mass;
             DomainMoment[i].sink_pos = Nodes[no].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             DomainMoment[i].sink_vel = Nodes[no].sink_vel;
             DomainMoment[i].N_SINK = Nodes[no].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -1096,7 +1096,7 @@ void force_exchange_pseudodata(void)
 #ifdef SINK_CALC_DISTANCES
                     Nodes[no].sink_mass = DomainMoment[i].sink_mass;
                     Nodes[no].sink_pos = DomainMoment[i].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                     Nodes[no].sink_vel = DomainMoment[i].sink_vel;
                     Nodes[no].N_SINK = DomainMoment[i].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -1162,7 +1162,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
     Vec3<MyFloat> sink_pos_times_mass = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Vec3<MyFloat> sink_mom = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
@@ -1226,7 +1226,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
             sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             N_SINK += Nodes[p].N_SINK;
             sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -1336,13 +1336,13 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_CALC_DISTANCES
     Nodes[no].sink_mass = sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Nodes[no].N_SINK = N_SINK;
 #endif
     if(sink_mass > 0)
     {
         Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].sink_vel = sink_mom / sink_mass;
 #if defined(SPECIAL_POINT_MOTION)
         Nodes[no].sink_acc = sink_force / sink_mass;
@@ -1671,6 +1671,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             
             if(no < maxPart) /* this is a particle, we will use it */
             {
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+                   here as well would double every such force */
+                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#endif
                 /* the index of the node is the index of the particle */
                 if(P[no].Ti_current != ti_Current)
                 {
@@ -1886,6 +1891,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     no = nop->u.d.sibling;
                     continue;
                 }
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
+                   supplies every star-star pair exactly. This tree carries monopoles only (u.d.mass at
+                   u.d.s; there are no quadrupole moments in struct NODE), so removing the sinks is exact
+                   rather than an approximation: drop their mass, and shift the node's center of mass to
+                   the center of mass of what is left. Both terms are on the same clock -- SINK_NODE_MOTION_TRACKED
+                   drifts sink_pos with sink_vel exactly as u.d.s is drifted with vs, and kicks sink_vel
+                   from the sinks' own momentum -- so the difference below really is the non-sink COM.
+                   Nodes made entirely of stars vanish and are skipped; everything else stays usable at
+                   monopole level, so a star target keeps the tree's O(log N) walk instead of having to
+                   open every node that happens to contain a star. */
+                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;} /* pure-star node: nothing here for us. Checked before the drift below so we never bother drifting a node we discard; the COM shift itself has to wait until after it. */
+#endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
@@ -1905,7 +1923,28 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                 }
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* Remove the sinks from this node for a star target: star-star pairs come exactly from
+                   star_direct_gravity_compute(), so taking them here too would double them. The tree
+                   carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
+                   so this subtraction is exact rather than approximate: drop the sink mass and move the
+                   center of mass to that of what remains. Both terms are on the same clock, since
+                   SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted with vs
+                   -- which is also why this sits after force_drift_node above. Doing it this way means a
+                   star target keeps the ordinary O(log N) walk; the alternative, opening every node that
+                   contains a star, costs an extra O(N_star log N) node visits per star target.
+                   Note mass is reduced here, before the opening criteria below, so they judge the node on
+                   the mass actually being used. */
+                if((ptype == 5) && (nop->sink_mass > 0))
+                {
+                    double mass_nosink = mass - nop->sink_mass;
+                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                    mass = mass_nosink;
+                }
+                else {dr = nop->u.d.s - pos;}
+#else
                 dr = nop->u.d.s - pos;
+#endif
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
 #ifdef PMGRID
@@ -3853,7 +3892,7 @@ void force_refresh_node_moments(void)
 #ifdef SINK_CALC_DISTANCES
         Nodes[no].sink_mass = 0;
         Nodes[no].sink_pos = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].sink_vel = {};
         Nodes[no].N_SINK = 0;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -3949,10 +3988,10 @@ void force_refresh_node_moments(void)
         if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
             Nodes[no].sink_mass += pa->Mass;
             Nodes[no].sink_pos += pa->Mass * pa->Pos; /* store as mass-weighted sum, normalize later */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             Nodes[no].N_SINK += 1;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             Nodes[no].sink_vel += pa->Mass * pa->Vel; /* mass-weighted, normalize later */
 #endif
 #ifdef SPECIAL_POINT_MOTION
@@ -4010,7 +4049,7 @@ void force_refresh_node_moments(void)
 #ifdef SINK_CALC_DISTANCES
         Nodes[father].sink_mass += Nodes[no].sink_mass;
         Nodes[father].sink_pos += Nodes[no].sink_pos; /* propagate mass-weighted sum */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[father].N_SINK += Nodes[no].N_SINK;
         Nodes[father].sink_vel += Nodes[no].sink_vel;
 #endif
@@ -4054,7 +4093,7 @@ void force_refresh_node_moments(void)
 #ifdef SINK_CALC_DISTANCES
         if(Nodes[no].sink_mass > 0) {
             Nodes[no].sink_pos /= Nodes[no].sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             Nodes[no].sink_vel /= Nodes[no].sink_mass;
 #endif
 #ifdef SPECIAL_POINT_MOTION

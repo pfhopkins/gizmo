@@ -7,6 +7,10 @@ SINGLE_STAR_TIMESTEPPING, etc.
 
 The Lagrange-radii / density-profile preservation is measured on the raw stars
 (consecutive ParticleID pairs 2k-1, 2k define binary k in the IC).
+
+Two variants: the default tree gravity, and SINGLE_STAR_DIRECT_GRAVITY, which replaces every
+star-star pair with an exact brute-force sum. With no gas in this problem the second is a pure
+direct N-body integration, so the two together measure what the tree approximation costs here.
 """
 
 from os import path
@@ -146,8 +150,20 @@ def _total_energy(vel, mass, pot):
     return ke + pe, ke, pe
 
 
-def _energy_trajectory(snap_paths):
-    times, energies, ke0 = [], [], None
+def _conservation_trajectories(snap_paths):
+    """Energy and total-momentum histories over a run's snapshots.
+
+    Momentum is here because it is the one conserved quantity that resolves the difference between
+    tree and direct star-star gravity. Total momentum is conserved iff the pairwise forces are
+    antisymmetric, which direct summation makes exact and the tree only approximates -- measured on
+    these ICs as sum(m*a) of 6.5e-17 vs 2.1e-6 relative at t=0. Energy cannot see it: both variants
+    sit on the same floor (median |dE|/KE0 of 4.8e-4 vs 4.4e-4), set by the integrator and by
+    snapshot velocities being half-kicked, not by the force error.
+
+    Returned as a drift in the cluster's bulk velocity, |P(t) - P(0)| / M_total, so it carries units
+    of velocity (km/s here) and reads as "spurious bulk motion the cluster acquired".
+    """
+    times, energies, momenta, ke0 = [], [], [], None
     for s in snap_paths:
         with h5py.File(s, "r") as F:
             t = float(F["Header"].attrs["Time"])
@@ -157,9 +173,13 @@ def _energy_trajectory(snap_paths):
         e, ke, _ = _total_energy(vel, mass, pot)
         times.append(t)
         energies.append(e)
+        momenta.append(np.sum(mass[:, None] * vel, axis=0))
         if ke0 is None:
             ke0 = ke
-    return np.array(times), np.array(energies), ke0
+            m_total = mass.sum()
+    momenta = np.array(momenta)
+    com_vel_drift = np.linalg.norm(momenta - momenta[0], axis=1) / m_total
+    return np.array(times), np.array(energies), ke0, com_vel_drift
 
 
 def _radial_density_profile(r, mass, rbins):
@@ -217,9 +237,11 @@ def _plot_summary():
     files = sorted(glob.glob(f"{TEST_DIR}/summary_*.npz"))
     if not files:
         return
-    fig, (ax_rho, ax_lag, ax_e) = plt.subplots(3, 1, figsize=(7, 12))
+    fig, (ax_rho, ax_lag, ax_e, ax_p) = plt.subplots(4, 1, figsize=(7, 16))
     init_done = False
     init_lag_dense = None
+    # com_vel_drift is deliberately absent from 'required': summaries written before it existed
+    # should still contribute to the other three panels rather than being dropped entirely.
     required = {"variant_id", "rc", "rho_initial", "rho_final",
                 "r_lag_initial_dense", "r_lag_final_dense",
                 "times", "energies", "ke0"}
@@ -242,6 +264,11 @@ def _plot_summary():
         ke0 = float(data["ke0"])
         rel_e = (energies - energies[0]) / abs(ke0)
         _plot_signed_log(ax_e, times, rel_e, color=line.get_color(), label=vid)
+        if "com_vel_drift" in data.files:
+            dP = data["com_vel_drift"]
+            good = (times > 0) & (dP > 0)
+            if good.any():
+                ax_p.loglog(times[good], dP[good], "-", color=line.get_color(), label=vid)
     ax_rho.set_xlabel("r [pc]")
     ax_rho.set_ylabel(r"$\rho(r)$ [Msun/pc$^3$]")
     ax_rho.set_title(f"{TEST_NAME}: final density profile (initial in black)")
@@ -257,6 +284,16 @@ def _plot_summary():
     ax_e.set_xlabel("t [code time units]")
     ax_e.set_ylabel(r"$|E(t) - E(0)| / |KE_0|$  (solid: $>0$, dashed: $<0$)")
     ax_e.legend(fontsize=8)
+
+    # Momentum is conserved iff the pairwise forces are antisymmetric, so this panel -- unlike the
+    # energy one above, where both variants sit on the same integrator/IO floor -- is where exact
+    # star-star summation separates from the tree.
+    ax_p.set_xscale("log")
+    ax_p.set_yscale("log")
+    ax_p.set_xlabel("t [code time units]")
+    ax_p.set_ylabel(r"$|P(t) - P(0)| / M_{\rm tot}$  [km/s]")
+    ax_p.set_title("spurious bulk velocity (force antisymmetry)", fontsize=9)
+    ax_p.legend(fontsize=8)
 
     plt.tight_layout()
     plt.savefig(f"{TEST_DIR}/{TEST_NAME}_summary.png", dpi=120)
@@ -290,6 +327,14 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
+    # Every particle here is a star, so this variant routes 100% of the gravity through the
+    # brute-force pass and none through the tree -- the tree's opening error is removed entirely
+    # rather than reduced. That makes it the sharpest available check on SINGLE_STAR_DIRECT_GRAVITY,
+    # and the pair with starforge_defaults isolates what the tree approximation costs a cluster of
+    # hard binaries. Compatible only because SINGLE_STAR_STARFORGE_DEFAULTS sets
+    # SINGLE_STAR_TIMESTEPPING=0, which leaves SINGLE_STAR_FIND_BINARIES off; the two are a
+    # compile-time #error together (see precompiler_logic.h).
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
@@ -321,7 +366,7 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
     dense_fracs = LAGRANGE_PERCENTILES_DENSE / 100.0
     r_lag_initial_dense = _lagrange_radii(r0, mass0, fractions=dense_fracs)
     r_lag_final_dense = _lagrange_radii(rf, massf, fractions=dense_fracs)
-    times, energies, ke0_traj = _energy_trajectory(snaps)
+    times, energies, ke0_traj, com_vel_drift = _conservation_trajectories(snaps)
 
     variant_id = request.node.callspec.id.split("-")[0]
     np.savez(
@@ -339,6 +384,7 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
         times=times,
         energies=energies,
         ke0=ke0_traj,
+        com_vel_drift=com_vel_drift,
     )
     _plot_summary()
 

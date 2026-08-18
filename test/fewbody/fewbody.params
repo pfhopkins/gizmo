@@ -1,0 +1,79 @@
+%----  fewbody: suite of cold-collapse 3-10 body problems.
+%
+% Deliberately identical to plummer_binaries.params except for the four values below the
+% initial condition forces: the two tests are meant to differ only in their IC, so that a
+% disagreement between them is attributable to the dynamics and not to a run setting.
+%
+% ErrTolIntAccuracy is 0.01, the value a production STARFORGE run actually integrates at:
+% begrun.cc defaults it to 0.02, and GRAVITY_ACCURATE_FEWBODY_INTEGRATION (which
+% SINGLE_STAR_STARFORGE_DEFAULTS turns on) then clamps it to 0.01. So this measures what the
+% science runs deliver, not a tuned-down best case. The acceleration timestep goes as
+% sqrt(ErrTolIntAccuracy) (timestep.cc: dt = sqrt(2 eta h / |a|)), so each 4x cut in the
+% tolerance halves the step. Read from this file only because DEVELOPER_MODE is set in
+% Config.sh; without it GIZMO ignores the line and applies the same 0.02-clamped-to-0.01.
+% Earlier scan points are kept under archive/ (5e-3, 1.25e-3).
+%
+% PartAllocFactor is enormous (200) on purpose: these problems have 3-10 particles, so the
+% allocation is a few hundred slots either way, and the default 2.5 truncates to a size for
+% which GIZMO can find no legal domain decomposition on 2 ranks ('No domain decomposition that
+% stays within memory bounds is possible').
+%
+% TimeMax = 0.1 is ~19 free-fall times of the median system (t_ff ranges 2.3e-3 to 1.2e-2
+% across the suite), long enough for every system to collapse, form a hard binary and eject
+% members. MaxSizeTimestep is scaled from plummer_binaries by the same TimeMax ratio.
+% Plummer cluster of equal-mass circular binaries (Type 5 stars).
+% Units: pc - km/s - Msun, so G = 4.302e-3 in code units.
+% N=256 binaries, M_star=1 Msun, M_cluster=512 Msun, a_cluster=1 pc.
+% Half-mass crossing time t_cross ~ 3.24 code time units (~ 3.17 Myr).
+% TimeMax = 32.4 covers ~10 cluster crossings; binary period (1000 AU, 2 Msun)
+% is ~0.023 code units, so ~1400 binary orbits over the run.
+% TimeBetSnapshot = t_cross / 10 -> 100 snapshots over the test.
+% Plummer-equivalent softening = 6.43 AU = 3.117e-5 pc (= 18 AU / 2.8), so the
+% actual cubic-spline kernel radius is the desired 18 AU.
+%
+InitCondFile                       fewbody_ics
+OutputDir                          output
+TimeMax                            0.1
+BoxSize                            300
+TimeBetSnapshot                    0.002
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  0.002
+MaxSizeTimestep                    1e-4
+MinSizeTimestep                    1e-12
+ErrTolIntAccuracy                  0.01
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    200
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+Softening_Type0                    3.117e-5
+Softening_Type1                    3.117e-5
+Softening_Type2                    3.117e-5
+Softening_Type3                    3.117e-5
+Softening_Type4                    3.117e-5
+Softening_Type5                    3.117e-5
+Softening_Type0_MaxPhysLimit       3.117e-5
+Softening_Type1_MaxPhysLimit       3.117e-5
+Softening_Type2_MaxPhysLimit       3.117e-5
+Softening_Type3_MaxPhysLimit       3.117e-5
+Softening_Type4_MaxPhysLimit       3.117e-5
+Softening_Type5_MaxPhysLimit       3.117e-5
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+% Cap sink accretion-search at the softening kernel radius (18 AU = 8.726e-5 pc).
+% With no gas in this test the default 5 pc search radius wastes huge amounts of
+% tree-walking; shrinking it to the softening scale eliminates that overhead.
+SinkMaxAccretionRadius             8.726e-5
