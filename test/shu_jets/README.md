@@ -40,15 +40,18 @@ protostellar radius, following Federrath et al. (2014).
 
 Compile-time flags. `Config.sh` carries only `SINGLE_STAR_STARFORGE_DEFAULTS`; the test appends
 `SINGLE_STAR_FB_JETS`, `JET_DIRECTION_FIXED_Z`, `COOLING`, `OUTPUT_COOLRATE_DETAIL`, plus
-`SINK_SPAWN_NO_MERGE` for the second run. `SINK_SPAWN_MERGE_WHEN_AMBIENT` and
-`MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION` are auto-enabled by `SINGLE_STAR_FB_JETS`.
+`SINK_SPAWN_NO_MERGE` for the nomerge runs and `SINGLE_STAR_FB_RAD` for the rad runs.
+`SINK_SPAWN_MERGE_WHEN_AMBIENT` and `MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION` are auto-enabled by
+`SINGLE_STAR_FB_JETS`.
 
 ## What is tested
 
-Two runs, both with cooling: the **default merge criteria** against **no spawned-cell merging**.
-Cooling rather than isothermal because `EOS_ENFORCE_ADIABAT` pins the specific internal energy,
-which makes the thermal half of the retirement criterion inert (measured: 0 of 474 cells blocked,
-all in the lowest `|dln u|` bin); with cooling it discriminates (207 of 1190).
+Four runs, crossing two merge treatments with two thermodynamics: the **default merge criteria**
+against **no spawned-cell merging**, each with **cooling** and with **cooling + SINGLE_STAR_FB_RAD**
+(the protostar's own radiative feedback). Cooling rather than isothermal because
+`EOS_ENFORCE_ADIABAT` pins the specific internal energy, which makes the thermal half of the
+retirement criterion inert (measured: 0 of 474 cells blocked, all in the lowest `|dln u|` bin);
+with cooling it discriminates (207 of 1190).
 
 Per run:
 

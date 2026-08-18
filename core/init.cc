@@ -277,6 +277,17 @@ void init(void)
             P[i].GradRho[1]=0;
             P[i].GradRho[2]=1;
 #endif
+#ifdef SINK_WIND_SPAWN
+            /* spawn reservoirs for sinks read from an IC/snapshot rather than formed in-run, which would
+               otherwise hold whatever was in the malloc slot. read_ic() has already run, so only zero what
+               it cannot have assigned. */
+#ifndef OUTPUT_UNSPAWNED_SINKMASS
+            P[i].unspawned_wind_mass = 0; // IO_UNSPMASS is only read back when that flag is set, so this cannot clobber a restored value
+#endif
+#ifdef SINGLE_STAR_FB_JETS
+            P[i].unspawned_jet_mass = 0; // never written to snapshots, so always safe to zero
+#endif
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_SNE)
             P[i].Mass_final = P[i].Mass; // best guess, only matters if we restart in the middle of spawning an SN

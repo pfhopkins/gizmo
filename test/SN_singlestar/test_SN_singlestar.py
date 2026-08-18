@@ -3,11 +3,13 @@
 A 10 Msun, 50 Myr-old star at the center of a 50000 Msun, n_H = 100 cm^-3 box goes
 supernova on the first timestep, depositing 1e51 erg into the surrounding gas.
 
-Two variants are tested:
+Three variants are tested:
   1. Adiabatic (no cooling): verifies the shock radius and density jump match the
      analytic Sedov solution at early time (t ~ 0.015 code units).
   2. With COOLING: verifies the blast still produces a recognizable shell at the
      Sedov radius (before the radiative phase sets in).
+  3. With COOLING + SINGLE_STAR_FB_RAD: same shell check, with the star's own radiative
+     feedback also active. RAD needs COOLING to mean anything, so it is not tested alone.
 """
 
 import pytest
@@ -115,8 +117,9 @@ def plot_density_slice(coords, rho, box_center, output_dir=".", suffix=""):
     [
         (),
         ("COOLING",),
+        ("COOLING", "SINGLE_STAR_FB_RAD"),
     ],
-    ids=["adiabatic", "cooling"],
+    ids=["adiabatic", "cooling", "rad"],
 )
 def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     generate_ics()
@@ -175,7 +178,7 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
         f"(relative error {rel_err:.3f})"
     )
 
-    # Every variant but 'cooling' is adiabatic, so these hold for all of them -- and checking each rather
+    # Only the 'adiabatic' variant has no COOLING, so these hold only for it -- and checking it rather
     # than just the bare run is what catches a regression on whichever wakeup path is not the default.
     if "COOLING" not in extra_config_flags:
         # Adiabatic: strong-shock density jump should be ~ 4x ambient

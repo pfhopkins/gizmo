@@ -4,7 +4,7 @@ Same box setup as SN_singlestar (50000 Msun, n_H = 100 cm^-3) but the star is
 100 Msun at zero age with SINGLE_STAR_FB_WINDS=2.
 
 Parametrized over:
-  - Cooling variant (adiabatic vs COOLING)
+  - Cooling variant (adiabatic vs COOLING vs COOLING+SINGLE_STAR_FB_RAD)
   - Wind injection mode (local mechanical injection vs particle spawning)
 
 Fixed at 64^3 resolution. Both check Weaver+ 1977 R2, using the coefficient for the
@@ -229,8 +229,8 @@ def get_snapshots(test_name, extra_config_flags=()):
 @pytest.mark.parametrize("wind_mode", [1, 2], ids=["spawn", "local"])
 @pytest.mark.parametrize(
     "cooling_flags",
-    [(), ("COOLING",)],
-    ids=["adiabatic", "cooling"],
+    [(), ("COOLING",), ("COOLING", "SINGLE_STAR_FB_RAD")],
+    ids=["adiabatic", "cooling", "rad"],
 )
 def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode,
                          cooling_flags):

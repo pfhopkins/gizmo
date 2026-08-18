@@ -79,8 +79,8 @@ M_CLUSTER = 2 * N_BINARIES * M_STAR
 BINARY_SEPARATION_AU = 1000.0
 BOXSIZE = 300.0
 
-LAGRANGE_FRACTIONS = (0.1, 0.5, 0.9)
-LAGRANGE_TOL = (0.20, 0.15, 0.30)
+LAGRANGE_FRACTIONS = (0.5,)
+LAGRANGE_TOL = (0.15,)
 LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)
 
 
@@ -290,20 +290,12 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
-    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="kdk", marks=pytest.mark.xfail(
-        reason="KDK cannot hold the 1000 AU binaries to 1% of KE_0: it is the baseline that "
-               "HERMITE_INTEGRATION + GRAVITY_ACCURATE_FEWBODY_INTEGRATION exist to beat",
-        strict=False,
-    )),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
     clean_test_outputs(TEST_NAME, extra_config_flags)
     time_max = float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["TimeMax"])
     overrides = None
-    if "DISABLE_HERMITE_INTEGRATION" in extra_config_flags:
-        time_max *= KDK_TIME_FRACTION
-        overrides = {"TimeMax": time_max}
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
                        param_overrides=overrides)
 

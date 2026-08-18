@@ -1559,6 +1559,9 @@ extern struct extNODE
   Vec3<MyDouble> dp_dm;
   Vec3<MyFloat> vs_dm;
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  Vec3<MyDouble> sink_dp;   /*!< momentum change of the sinks in this node, applied to sink_vel on the next drift (mirrors dp/dp_dm) */
+#endif
   Vec3<MyFloat> vs;
   MyFloat vmax;
   MyFloat hmax;			/*!< maximum gas kernel length in node. Only used for gas particles */

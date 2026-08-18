@@ -633,6 +633,7 @@ void update_stellarnumber_and_timedistribofstarformation(void);
 
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
+double single_star_jet_mdot(int n);
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 double single_star_feedback_velocity_fortimestep(int n);

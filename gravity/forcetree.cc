@@ -871,7 +871,10 @@ void force_update_node_recursive(int no, int sib, int father)
         Extnodes[no].vmax = vmax;
         Extnodes[no].divVmax = divVmax;
         Extnodes[no].dp = {};
-        
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp = {}; /* sink_pos/sink_vel are set fresh here, so there is no pending kick to carry */
+#endif
+
         Nodes[no].N_part = count_particles; /* save this value */
         if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);} else {multiple_flag = 0;} /* this flags that the node represents more than one particle */
         Nodes[no].u.d.bitflags = multiple_flag;
@@ -3821,6 +3824,9 @@ void force_refresh_node_moments(void)
         Extnodes[no].vmax = 0;
         Extnodes[no].divVmax = 0;
         Extnodes[no].dp = {};
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp = {};
+#endif
         Extnodes[no].Ti_lastkicked = All.Ti_Current;
         Extnodes[no].Flag = GlobFlag;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
