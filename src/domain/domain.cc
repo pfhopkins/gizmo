@@ -145,6 +145,11 @@ static int *domainCount;	/*!< a table that gives the total number of particles h
 static int *domainCountGas;	/*!< a table that gives the total number of gas cells held by each processor */
 static int domain_allocated_flag = 0;
 static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): All.MaxPartAssignable*REDUC_FAC, the all-type one then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below half.  Rank-identical, and every consumer depends on that: domain_assign_load_or_work_balanced runs on every rank over globally-reduced inputs and would otherwise build DIFFERENT DomainTask[] maps on different ranks. */
+/* What the most recent bound check found short, so the caller that gives up can explain itself.
+ * The check reads counts that domain_sumCost has already reduced across all ranks, so these end up
+ * holding the same values everywhere -- the agreement comes from those inputs, not from anything the
+ * check itself does. */
+static int domain_bound_needed = 0, domain_bound_limit = 0;
 static double totgravcost, gravcost, totgascost, gascost;
 static long long totpartcount;
 static int UseAllParticles;
@@ -1051,8 +1056,39 @@ int domain_decompose(void)
 
       if(status != 0)
       {
-          if(ThisTask == 0) {printf("No domain decomposition that stays within memory bounds is possible.\n");}
-          endrun(0);
+          /* The per-rank cap is PartAllocFactor times the average particle count per rank AT THE TIME THE
+           * CAP WAS SET -- when the initial conditions were read, or when PartAllocFactor was last changed
+           * on a restart.  A run whose particle number grows spends that headroom, so say so with the
+           * numbers rather than leaving the user to work out why a limit they never chose was reached. */
+          if(ThisTask == 0)
+          {
+              const double avg_now = (NTask > 0) ? ((double) All.TotNumPart / (double) NTask) : 0.0;
+              const double avg_when_capped = (All.PartAllocFactor > 0) ? ((double) All.MaxPartAssignable / All.PartAllocFactor) : 0.0;
+              printf("No domain decomposition fits within the per-rank limit on particles.\n");
+              printf("  particles now:  %lld total, %.0f per rank on average\n", (long long) All.TotNumPart, avg_now);
+              printf("  when cap set:   %.0f per rank on average", avg_when_capped);
+              if(avg_when_capped > 0) {printf("  (growth since: %.2fx)", avg_now / avg_when_capped);}
+              printf("\n");
+              printf("  per-rank cap:   %d = %g x PartAllocFactor %g x that average\n",
+                     domain_bound_limit, (double) REDUC_FAC_FOR_MEMORY_IN_DOMAIN, All.PartAllocFactor);
+              printf("  best attempt:   %d per rank, over the cap by %d\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
+              /* Changing PartAllocFactor on a restart re-derives the cap from the CURRENT particle count,
+               * so what is needed is a factor over the CURRENT average -- NOT the old factor scaled by
+               * how much the run has grown, which would reserve that much again and exhaust the node. */
+              if(avg_now > 0)
+                  printf("Restart with PartAllocFactor of about %.2f, or treat the present state as the\n"
+                         "initial conditions for a new run.  Changing it re-derives the cap from the current\n"
+                         "particle count, so it need only cover the imbalance above -- raising it in\n"
+                         "proportion to how much the run has grown would reserve far more memory than that.\n",
+                         1.1 * (double) domain_bound_needed / (REDUC_FAC_FOR_MEMORY_IN_DOMAIN * avg_now));
+              fflush(stdout);
+          }
+          /* All ranks arrive here together, because the bound check tests counts that domain_sumCost has
+           * already reduced across all of them, so the stop can be requested and drained on the spot
+           * rather than continuing into the exchange with an assignment that does not fit.  Anything
+           * rank-local added to that check would break this and hang the poll below. */
+          endrun(90000022);
+          gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
     }
 
@@ -1201,12 +1237,14 @@ int domain_check_memory_bound(int multipledomains)
 
     if(max_load > DomainMaxPartLocal)
     {
+      domain_bound_needed = max_load; domain_bound_limit = DomainMaxPartLocal;
       if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
       return 1;
     }
 
     if(max_gasload > DomainMaxGasLocal)
     {
+      domain_bound_needed = max_gasload; domain_bound_limit = DomainMaxGasLocal;
       if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
       return 1;
     }
