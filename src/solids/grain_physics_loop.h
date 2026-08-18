@@ -60,7 +60,10 @@ struct GrainBackrxActiveState {
 
 /* AccumData: empty — GrainBackrxSpec does no per-source reduction. */
 struct GrainBackrxAccum {
-    char _unused;
+    /* Placeholder: this loop scatters to neighbours and reduces nothing on the
+     * source side. Sized to a whole int so it satisfies the shuffle-width rule
+     * the device lane reduction asserts (see NlrAccumReducer). */
+    char _unused[4];
 };
 
 /* DeviceContext: extends base.

@@ -1928,6 +1928,26 @@ struct NlrAccumReducer {
     using result_view_type = Kokkos::View<value_type, Kokkos::AnonymousSpace,
                                           Kokkos::MemoryUnmanaged>;
 
+    /* The lane combination moves an accumulator between threads with a shuffle,
+     * and a shuffle of anything larger than one machine word is performed as a
+     * whole number of INT-SIZED PIECES: the backends compute that count as
+     * sizeof(T) / sizeof(int), truncating. An accumulator whose size is not a
+     * whole number of those pieces therefore loses its trailing bytes in the
+     * reduction -- silently, with no diagnostic, and only on the device, where
+     * whichever field happens to sit last would come back holding whatever the
+     * receiving lane had there before.
+     *
+     * That is a bad failure to leave discoverable only by a wrong answer, so it
+     * is a build error instead. If a new accumulator trips this, pad it to a
+     * multiple of sizeof(int) rather than reordering its fields to hide the
+     * tail -- the next field added would put it back. An accumulator with no
+     * members at all is exempt because it carries nothing to lose. */
+    static_assert(std::is_empty<value_type>::value ||
+                  (sizeof(value_type) % sizeof(int)) == 0,
+                  "Spec::AccumData must be a whole number of int-sized pieces: the device lane "
+                  "reduction shuffles it as sizeof(AccumData)/sizeof(int) words and would drop "
+                  "the remainder. Pad the struct to a multiple of sizeof(int).");
+
     KOKKOS_INLINE_FUNCTION explicit NlrAccumReducer(value_type& v) : m_value(v) {}
 
     KOKKOS_INLINE_FUNCTION void join(value_type& dst, const value_type& src) const {
