@@ -470,6 +470,17 @@ void gravity_tree(void)
     } /* Ewald_iter */
     myfree(DataNodeList); myfree(DataIndexTable);
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+    /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
+       the tree's own contributions are complete (imports included) but not yet multiplied by All.G,
+       and the direct sum is in those same G-free units. */
+    CPU_Step[CPU_TREEMISC] += measure_time();
+    star_direct_gravity_build_table();
+    star_direct_gravity_compute();
+    star_direct_gravity_free_table();
+    CPU_Step[CPU_TREEWALK1] += measure_time();
+#endif
+
     /* assign node cost to particles */
     if(TakeLevel >= 0) {
         sum_top_level_node_costfactors();

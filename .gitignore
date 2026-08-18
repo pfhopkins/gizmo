@@ -9,6 +9,13 @@ test/*/output/
 test/*/output_*/
 test/*/GIZMO
 test/*/*_ics.hdf5
+# suites that generate one IC and one params file per problem keep them in subdirectories, which the
+# patterns above miss
+test/*/ics/
+test/*/params/
+# per-variant result dumps and archived tolerance-scan points: hundreds of MB of JSON
+test/*/results_*.json
+test/*/archive/
 test/*/spcool_tables/
 test/*/spcool_tables.tgz
 test/*/TREECOOL
@@ -20,3 +27,9 @@ test/*/test_*.err
 test/*/__pycache__/
 test/*/*.png
 python_src/gizmo.egg-info/
+
+# Slurm/pytest output from the in-tree test runners, which write to the repo root
+/__pycache__/
+pytest_wt_slurm-*.out
+pytest_wt_slurm-*.err
+pytest_results-*.txt
