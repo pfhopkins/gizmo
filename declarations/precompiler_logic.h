@@ -657,6 +657,13 @@
 #endif
 
 
+/* drift and kick the sink node moments between tree rebuilds, as the main moments already are. Requires
+   sink_vel to exist to drift with, hence the condition below. */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION))
+#define SINK_NODE_MOTION_TRACKED
+#endif
+
+
 #if defined(COOL_MOLECFRAC)
 #if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)

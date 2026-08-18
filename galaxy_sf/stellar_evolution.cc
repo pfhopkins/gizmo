@@ -372,8 +372,8 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt)
         double fire_wind_rel_mass_res = 1e-4; /* relative mass resolution of winds, essentially the wind will get spawned in packets of fire_wind_rel_mass_res*(gas_mass_resolution) mass */
         D_RETURN_FRAC = (fire_wind_rel_mass_res * P[i].Sink_Formation_Mass) / P[i].Mass;
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION /* for 'fancy' multi-stage modules, have a separate subroutine to compute this */
-        if(P[i].wind_mode == 1) {return;} /* winds hold the discrete-spawn channel already (see single_star_wind_mdot); nothing to inject continuously here. Jets do NOT get a continuous-injection fallback -- while winds dominate, jet (accretion) mass just banks in its own reservoir (unspawned_jet_mass, sink.cc) and waits, it is not spawned or injected until jets dominate again. */
-        p = single_star_wind_mdot(i,0) * dt / P[i].Mass; /* jets hold the discrete-spawn channel, so wind mass loss instead comes out here as continuous injection; actual mdot from its own subroutine, given in code units */
+        if(P[i].wind_mode == 1) {return;} /* winds already spawn discretely, so nothing to inject continuously. Jets get no such fallback: their mass waits in its reservoir instead */
+        p = single_star_wind_mdot(i,0) * dt / P[i].Mass; /* jets hold the discrete-spawn channel, so wind mass loss comes out here instead */
 #else /* otherwise use standard scaling from e.g. Castor, Abbot, & Klein */
         double m_sol=P[i].Mass*UNIT_MASS_IN_SOLAR, l_sol=sink_lum_bol(0,P[i].Mass,i)*UNIT_LUM_IN_SOLAR; /* luminosity in solar */
         double gam=DMIN(0.5,3.2e-5*l_sol/m_sol), alpha=0.5+0.4/(1.+16./m_sol), q0=(1.-alpha)*gam/(1.-gam), k0=1./30.; // Eddington factor (~L/Ledd for winds), capped at 1/2 for sanity reasons, approximate scaling for alpha factor with stellar type (weak effect)
@@ -765,15 +765,18 @@ double single_star_jet_velocity(int n)
 #endif
 }
 
-/* accretion-tied jet mass-loss rate (code units/time): the rate at which mass is diverted from accretion
-   into the jet channel. Mirrors the zero-gate applied inline in sink.cc's SINK_WIND_SPAWN block (same
-   physical reasoning: no reliable jet direction until the sink has grown enough), so the two always agree
-   on when jets are 'on'. */
+/* rate at which accretion is diverted into the jet channel, in code units. The single definition of it:
+   sink.cc banks this*dt, and single_star_wind_mdot() weighs it against the wind rate to pick the spawning
+   channel. Unclamped -- the caller applies any mass-availability limits. */
 double single_star_jet_mdot(int n)
 {
     if(P[n].Type != 5) {return 0;}
-    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;}
+    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;} // no jets below 0.01 msun, or before we have accreted enough for a reliable jet direction
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.); // mass loss rate from the alpha disk
+#else
     return (1.-All.Sink_accreted_fraction) / All.Sink_accreted_fraction * P[n].Sink_Mdot;
+#endif
 }
 #endif
 

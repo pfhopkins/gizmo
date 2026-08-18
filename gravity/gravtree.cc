@@ -642,12 +642,12 @@ void gravity_tree(void)
     } /* end of loop over active particles*/
 
 
-#else /* SELFGRAVITY_OFF, and none of the exceptions above apply: the tree walk that would normally
-         zero-then-accumulate GravAccel/GravJerk/Potential never runs, so without this, those fields
-         are left holding whatever was in that mymalloc slot before this particle claimed it -- not a
-         computed zero, arbitrary leftover bytes. "No gravity" should mean zero force, not undefined
-         force: consumers such as HERMITE_INTEGRATION's do_the_kick() unconditionally copy GravAccel/
-         GravJerk into Hermite_OldAcc/OldJerk every step regardless of whether gravity is compiled in. */
+#else /* the tree walk that would normally zero-then-accumulate these never runs here, so they would
+         otherwise hold whatever was in the malloc slot -- and consumers read them regardless of whether
+         gravity is compiled in (HERMITE_INTEGRATION's do_the_kick() copies GravAccel/GravJerk into
+         Hermite_OldAcc/OldJerk every step). GravAccel is zeroed again shortly after this, inside
+         add_analytic_gravitational_forces(); that is deliberate redundancy, so this block does not
+         depend on what that routine happens to do. */
     for (int i : ActiveParticleList) {
         P[i].GravAccel = {};
 #ifdef COMPUTE_JERK_IN_GRAVTREE
