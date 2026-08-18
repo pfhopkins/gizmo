@@ -1310,12 +1310,16 @@ void process_wake_ups(void)
     bin = 0; for(n = 0; n < TIMEBINS; n++) {if(TimeBinCount[n] > 0) {bin = n; break;}}
     n = 0;
 
-    MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
+    /* No gating flag: every rank scans its own particles every step. The scan is local and cheap,
+       while the Allreduce it replaces was a global sync on the per-step critical path. The flag was
+       also rank-local while the requests are per-particle, so it could be stale for a particle that
+       migrated after being flagged -- the case its own comment worked around -- and being process
+       memory it was silently lost across a restart, stranding woken cells in a coarse bin. */
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
 
-    if(NeedToWakeupParticles){
+    {
 	for(i = 0; i < NumPart; i++)
 	{
 	    if(!P[i].wakeup) {continue;}

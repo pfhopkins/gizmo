@@ -583,6 +583,9 @@ extern struct global_data_all_processes
 
   /* frequency of tree reconstruction/domain decomposition */
   double TreeDomainUpdateFrequency;	/*!< controls frequency of domain decompositions  */
+  double DomainFacWork;     /*!< adaptive load-balance weights: moving averages over the decomposition */
+  double DomainFacWorkGas;  /*!<   history, kept in All so they survive a restart (resetting them shifts */
+  double DomainFacLoad;     /*!<   the next domain split) */
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
