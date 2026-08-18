@@ -364,8 +364,17 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
         }
         if(ThisTask == maxtask[2])
         {
-            printf("Task with the maximum commited memory");
-            system("echo $HOST");
+            /* One complete line, written through the same stream as everything
+             * else. Reporting the host by handing stdout to a shell put the
+             * hostname on the file descriptor directly while this text stayed
+             * in the buffer, so the two arrived out of order and an abnormal
+             * stop left the sentence dangling with nothing after it. The shell
+             * also had to be right about $HOST, which it is not under a plain
+             * sh. */
+            char hostname[256];
+            if(gethostname(hostname, sizeof(hostname)) != 0) {snprintf(hostname, sizeof(hostname), "unknown");}
+            hostname[sizeof(hostname) - 1] = '\0';
+            printf("Task with the maximum commited memory: task=%d on %s\n", maxtask[2], hostname);
         }
         fflush(stdout);
     }
