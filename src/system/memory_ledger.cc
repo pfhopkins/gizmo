@@ -200,7 +200,17 @@ static void report_memory_ledger_impl(const char *when, int always)
        also carries that node's resident total back, so nothing else has to be gathered -- the node
        COUNT is already cached by gizmo_node_comm_init, and whether to report at all is decided by
        the chosen node from its own history (every lead updates that history on every call, so
-       whichever one wins holds a current one). Non-leads sit it out with a sentinel. */
+       whichever one wins holds a current one). Non-leads sit it out with a sentinel.
+
+       A consequence worth knowing: growth on a node that is NOT the busiest passes unreported, since
+       the busiest node's own history is what decides. That is deliberate -- the busiest node is the
+       one that decides whether the run fits -- but if a reason ever appears to want "report whenever
+       ANY node grows, showing the busiest one that did", it costs nothing and needs no extra reduce:
+       have a lead enter the selection only when it has something to say,
+           sel_in.val = (GizmoNodeRankOfTask == 0 && (always || grew_local)) ? node_resident_mb : -1.0;
+       and then report on a winner that actually entered,
+           if(ThisTask == sel_out.rank && sel_out.val >= 0.0)
+       so that a round where nobody grew elects nobody. */
     struct { double val; int rank; } sel_in, sel_out;
     sel_in.val  = (GizmoNodeRankOfTask == 0) ? node_resident_mb : -1.0;
     sel_in.rank = ThisTask;
