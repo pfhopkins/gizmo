@@ -89,13 +89,29 @@ static void read_self_vm_kb(long long *vmsize_kb, long long *vmrss_kb)
     fclose(fd);
 }
 
-/* Shared body. The node-scoped reduces are collective and ALWAYS run on every rank
-   (safe only at symmetric all-rank call points); when `always` is 0 the node lead
-   prints only if the node memory footprint has grown since the last print, so a
-   per-domain-decomposition call does not spam. Growth is decided AFTER the reduce, by
-   the node lead alone -- never gate the collective itself. */
+/* Shared body. This is an extra-run-info diagnostic: without OUTPUT_ADDITIONAL_RUNINFO it does
+   nothing at all -- no collectives, no output, no cost -- so a production run never pays for it
+   and never has its stdout diluted by it.
+
+   With the flag on, the node-scoped reduces are collective and ALWAYS run on every rank (safe
+   only at symmetric all-rank call points); when `always` is 0 the report is emitted only if some
+   node's memory footprint has grown since the last one, so a per-domain-decomposition call does
+   not spam. Growth is decided AFTER the reduce -- never gate the collective itself.
+
+   ONE report is emitted per call, describing the node using the most memory, because node memory
+   is the binding pool and the worst node is the one that decides whether the run fits. Every node
+   lead still tracks its own history so the growth test stays per-node; the spread across nodes
+   rides the header rather than costing a block each.
+
+   Reading the figures: every high-water is the SUM of per-rank peaks, so it is a conservative
+   upper bound rather than a time-coincident node peak. The pool figures are logical requested
+   bytes; "commit" is what the OS sees. "kokkos" is a SUPERSET of the pools -- never add it to
+   them; its residual against them is neighbour/ghost/scratch plus Kokkos internal caching. */
 static void report_memory_ledger_impl(const char *when, int always)
 {
+#ifndef OUTPUT_ADDITIONAL_RUNINFO
+    (void) when; (void) always;
+#else
     gizmo_node_comm_init();
 
     /* Base arena: size reserved per task vs. the central allocator's high-water use. */
@@ -157,14 +173,14 @@ static void report_memory_ledger_impl(const char *when, int always)
     long long vm_in[2] = {self_vmsize_kb, self_vmrss_kb}, node_vm[2] = {0, 0};
     MPI_Reduce(vm_in, node_vm, 2, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
 
+    /* Growth test, evaluated by every node lead on its OWN node so the history stays continuous
+       whichever node ends up being the one reported. Each DISTINCT pool is tracked separately and
+       any >10% rise counts: a single summed metric would hide growth in a small pool (the
+       transient LET-wire buffers) behind a large one (Base arena / Kokkos). */
+    int grew_local = 0;
+    double node_resident_mb = 0.0;
     if(GizmoNodeRankOfTask == 0)
     {
-        /* Growth gate for non-"always" call points. Track each DISTINCT pool separately
-           and print when ANY grows >10%: a single summed metric would hide growth in a
-           small pool (e.g. the transient LET-wire buffers) behind a large one (Base
-           arena / Kokkos). Pools: Base high-water (libc), Kokkos-observed high-water
-           (all UVM/device; or the persistent-family total where telemetry is off), and
-           the transient LET-wire high-water (libc, neither Base nor Kokkos). */
         static double last_base = -1.0, last_mid = -1.0, last_let = -1.0;
         double base_m = node_base_highwater_mb;
         double mid_m  = (gizmo_kokkos_mem_available()
@@ -173,12 +189,25 @@ static void report_memory_ledger_impl(const char *when, int always)
                                     + node_family_bytes[GIZMO_MEM_TREE_NODES]
                                     + node_family_bytes[GIZMO_MEM_STL_TIMEBIN]) / (1024.0 * 1024.0));
         double let_m  = node_let[0] / (1024.0 * 1024.0);
-        int grew = (last_base < 0.0)
-                   || (base_m > 1.1 * last_base)
-                   || (mid_m  > 1.1 * last_mid)
-                   || (let_m  > 1.1 * last_let);
-        if(!always && !grew) {return;}   /* nothing grew: skip the print (the collective reduce already ran on all ranks) */
+        grew_local = (last_base < 0.0) || (base_m > 1.1 * last_base)
+                     || (mid_m > 1.1 * last_mid) || (let_m > 1.1 * last_let);
         last_base = base_m; last_mid = mid_m; last_let = let_m;
+        node_resident_mb = node_vm[1] / 1024.0;
+    }
+
+    /* Pick the node to report: the one holding the most resident memory, since node memory is the
+       binding pool and the worst node decides whether the run fits. ONE all-rank reduce, which
+       also carries that node's resident total back, so nothing else has to be gathered -- the node
+       COUNT is already cached by gizmo_node_comm_init, and whether to report at all is decided by
+       the chosen node from its own history (every lead updates that history on every call, so
+       whichever one wins holds a current one). Non-leads sit it out with a sentinel. */
+    struct { double val; int rank; } sel_in, sel_out;
+    sel_in.val  = (GizmoNodeRankOfTask == 0) ? node_resident_mb : -1.0;
+    sel_in.rank = ThisTask;
+    MPI_Allreduce(&sel_in, &sel_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+
+    if(ThisTask == sel_out.rank && (always || grew_local))
+    {
 
         /* Node physical memory from /proc/meminfo. Absent on platforms without it
            (e.g. macOS); report "unavailable" rather than a misleading 0. */
@@ -192,19 +221,17 @@ static void report_memory_ledger_impl(const char *when, int always)
            on every rank, so the node total is simply the per-rank size times the count. */
         double node_base_reserved_mb = base_reserved_mb * GizmoRanksThisNode;
 
-        /* Build the whole block into one buffer and emit it with a single write, so the
-           blocks printed concurrently by each node's lead task do not interleave. */
+        /* Build the whole report into one buffer and emit it with a single write so it cannot
+           interleave with other output. Figures are node totals in MB unless labelled otherwise.
+           What each pool IS belongs in this file's comments, not in prose reprinted every time. */
         char buf[4096];
         int n = 0;
         n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                      "MEMORY LEDGER [%s] task=%d: %d ranks/node, node physical %s\n"
-                      "  Base arena: reserved %.1f MB/rank (node %.1f MB), high-water %.1f MB/rank (node %.1f MB)\n"
-                      "  Particle SoA (P/CellP/WakeupDirty): node %.1f MB\n"
-                      "  Tree nodes (local+foreign, UVM): node %.1f MB\n"
-                      "  Timebin lists (ActiveParticleList/Next/Prev, STL): node %.1f MB\n"
-                      "  LET wire buffers (transient, libc): node high-water %.1f MB (current %.1f MB, failed %.1f MB)\n",
-                      when, ThisTask, GizmoRanksThisNode, node_phys,
-                      base_reserved_mb, node_base_reserved_mb, base_highwater_mb, node_base_highwater_mb,
+                      "MEMORY LEDGER [%s] busiest of %d nodes (task=%d, %d ranks/node, physical %s)\n"
+                      "  pools: base %.0f res / %.0f hw | SoA %.0f | tree %.0f | timebin %.0f |"
+                      " LET-wire hw %.0f (cur %.0f, fail %.0f)\n",
+                      when, GizmoNodeCount, ThisTask, GizmoRanksThisNode, node_phys,
+                      node_base_reserved_mb, node_base_highwater_mb,
                       node_family_bytes[GIZMO_MEM_PARTICLE_SOA] / (1024.0 * 1024.0),
                       node_family_bytes[GIZMO_MEM_TREE_NODES] / (1024.0 * 1024.0),
                       node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
@@ -216,30 +243,31 @@ static void report_memory_ledger_impl(const char *when, int always)
            "index ceiling" is the range the storage sits in, not memory: it buys only its
            Nextnode ints, already inside the aux term. Allocated far below it is the design
            working, not a shortfall. */
+        /* Tree detail: the node MB split, then the per-rank-max foreign-node counts. The counts are
+           what force_treeallocate and the LET grow act on; "used" is the since-start high-water,
+           because force_treeallocate resets the live count before a controlled-stop report. The
+           index ceiling is range, not memory (it buys only its Nextnode ints, already in aux), so
+           allocated sitting far below it is the sizing working rather than a shortfall. */
         n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                      "    tree split: local node arrays node %.1f MB | foreign-LET arrays node %.1f MB | aux (Father+Nextnode) node %.1f MB\n"
-                      "    foreign-LET nodes (rank-max): allocated %lld | used high-water %lld (since start) | adaptive floor %lld | index ceiling %lld\n",
+                      "  tree: local %.0f | foreign-LET %.0f | aux %.0f;  foreign nodes rank-max:"
+                      " alloc %lld used-hw %lld floor %lld ceiling %lld",
                       node_tb_mb[0], node_tb_mb[1], node_tb_mb[2], node_tb_n[0], node_tb_n[1], node_tb_n[2], node_tb_n[3]);
         if(wf_used > 0)
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "    foreign-LET peak-used rank (paired): allocated %lld | used %lld | slack %lld | alloc/used %.2f\n",
-                          wf_pair[0], wf_used, wf_pair[0] - wf_used, (double) wf_pair[0] / (double) wf_used);
-        /* Byte categories: the family lines above are LOGICAL requested bytes; these are
-           the commit vs physical categories (the Base reserved-vs-used gap lives here). */
+                          "  [peak-used rank: alloc %lld used %lld, alloc/used %.2f]",
+                          wf_pair[0], wf_used, (double) wf_pair[0] / (double) wf_used);
+        n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0, "\n");
+        /* The pool figures above are LOGICAL requested bytes; these are what the OS sees, which is
+           where the reserved-vs-touched gap shows up. */
         if(node_vm[0] > 0 || node_vm[1] > 0)
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Byte categories (node): GIZMO virtual-commit %.1f MB, resident %.1f MB"
-                          " (node Committed_AS %.1f MB of %.1f MB physical)\n",
+                          "  commit: virtual %.0f | resident %.0f | Committed_AS %.0f of %.0f physical\n",
                           node_vm[0] / 1024.0, node_vm[1] / 1024.0, committed_kb / 1024.0, mem_total_kb / 1024.0);
-        if(gizmo_kokkos_mem_available())
+        /* Kokkos observed is a SUPERSET of the pools above and is never summed with them; the
+           residual against them is neighbour/ghost/scratch plus Kokkos internal caching. */
+        if(!gizmo_kokkos_mem_available())
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Kokkos allocations observed: current node %.1f MB, high-water node %.1f MB\n"
-                          "    (includes Particle SoA and Tree nodes above; NOT summed with family totals;\n"
-                          "     residual vs explicit families is neighbour/ghost/scratch + Kokkos internal/caching + unclassified)\n",
-                          node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0));
-        else
-            n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Kokkos allocations observed: unavailable (callback API not compiled on this backend)\n");
+                          "  kokkos: unavailable (callback API not compiled on this backend)\n");
         if(gizmo_kokkos_mem_available()) {
             /* Per-bucket totals (sum over space class) and per-space totals (sum over
                buckets) from the classified node array. */
@@ -250,7 +278,9 @@ static void report_memory_ledger_impl(const char *when, int always)
                     bkt_mb[b] += mb; spc_mb[s] += mb;
                 }
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                          "  Kokkos buckets (node current MB): SoA %.1f | tree-AoS %.1f | tree-SoA %.1f | gravity-walk %.1f | modea-runner %.1f | fine-sidecar %.1f | treescratch-build %.1f | treescratch-moment %.1f | ngl-sidx %.1f | ngl-pairs %.1f | ngl-other %.1f | unclassified %.1f\n",
+                          "  kokkos %.0f cur / %.0f hw: SoA %.0f tree-AoS %.0f tree-SoA %.0f walk %.0f runner %.0f sidecar %.0f"
+                          " tscratch-b %.0f tscratch-m %.0f ngl-sidx %.0f ngl-pairs %.0f ngl-other %.0f unclass %.0f\n",
+                          node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0),
                           bkt_mb[GIZMO_KOKBUCKET_PARTICLE_SOA], bkt_mb[GIZMO_KOKBUCKET_TREE_ARRAYS],
                           bkt_mb[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA], bkt_mb[GIZMO_KOKBUCKET_GRAVITY_WALK],
                           bkt_mb[GIZMO_KOKBUCKET_MODEA_RUNNER], bkt_mb[GIZMO_KOKBUCKET_FINE_SIDECAR],
@@ -263,19 +293,18 @@ static void report_memory_ledger_impl(const char *when, int always)
             for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++) if(spc_mb[s] > 0.0) nspace_nz++;
             if(nspace_nz > 1)
                 n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                              "    by space (node MB): host %.1f | shared/UVM %.1f | device %.1f | unknown %.1f\n",
+                              "  by space: host %.0f | shared/UVM %.0f | device %.0f | unknown %.0f\n",
                               spc_mb[GIZMO_KOKSPACE_HOST], spc_mb[GIZMO_KOKSPACE_SHARED],
                               spc_mb[GIZMO_KOKSPACE_DEVICE], spc_mb[GIZMO_KOKSPACE_UNKNOWN]);
             const char *unk = gizmo_kokkos_mem_unknown_space_name();
             if(unk)
-                n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                              "    (unrecognized Kokkos space name seen: '%s' -> bucketed as unknown)\n", unk);
+                (void) snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
+                                "  unrecognized Kokkos space '%s' -> counted as unknown\n", unk);
         }
-        (void) snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
-                        "  (node high-water values are the SUM of per-rank peaks -- a conservative upper bound, not a time-coincident node peak)\n");
         fputs(buf, stdout);
         fflush(stdout);
     }
+#endif
 }
 
 /* Always print (sparse, high-value call points: startup, controlled stop). */
