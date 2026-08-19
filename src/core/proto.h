@@ -283,6 +283,7 @@ extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unre
 void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
                               long long *foreign_alloc_nodes, long long *foreign_used_hw_nodes,
                               long long *foreign_floor_nodes, long long *foreign_ceiling_nodes);
+extern "C" size_t gpu_gravity_tree_bytes_per_node(void);   /* per-node size of the GPU node mirror, counting only the always-present fields, for the startup projection (which runs before a tree exists) */
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);

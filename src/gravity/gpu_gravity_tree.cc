@@ -239,6 +239,26 @@ static int alloc_arrays_(int n)
     return 1;
 }
 
+/* Bytes this mirror needs per tree node, for the startup memory projection, which has to run
+ * before any tree exists.  Only the fields present in EVERY build are counted, so the answer is
+ * a deliberate under-estimate and the projection it feeds reports trouble only when the run
+ * cannot fit whatever a configuration adds on top of them.  Kept next to alloc_arrays_ so the
+ * two are read and edited together. */
+extern "C" size_t gpu_gravity_tree_bytes_per_node(void)
+{
+    return sizeof(Vec3<MyFloat>)                 /* center   */
+         + sizeof(MyFloat)                       /* len      */
+         + sizeof(Vec3<MyGravFloat>)             /* s        */
+         + sizeof(MyGravFloat)                   /* mass     */
+         + 3 * sizeof(int)                       /* sibling, nextnode, father */
+         + sizeof(unsigned int)                  /* bitflags */
+         + sizeof(MyGravFloat)                   /* maxsoft  */
+         + sizeof(long)                          /* N_part   */
+         + 8 * sizeof(int)                       /* suns_backup */
+         + sizeof(Vec3<MyGravFloat>)             /* node_vs  */
+         + 3 * sizeof(MyGravFloat);              /* hmax, vmax, divVmax */
+}
+
 /* seed_node_ / seed_dirty_ / dirty_[] / mark_dirty / dirty_count_
  * are all gone.  The GPU build pipeline (gpu_nextnode_backup_suns ->
  * gpu_topology_emit_bfs -> gpu_topology_finalize_father ->

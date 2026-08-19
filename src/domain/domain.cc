@@ -255,7 +255,7 @@ static void domain_compute_local_caps(int report)
  *  All.MaxPart instead would break that on its own, since storage may grow on one rank alone. */
 static int domain_tree_maxnodes(void)
 {
-    double sizing_cap = (0.7 / 0.45) * (double) DomainMaxPartLocal;   /* 0.45 = the All.TreeAllocFactor default it is calibrated against */
+    double sizing_cap = (0.7 / TREE_ALLOC_FACTOR_START) * (double) DomainMaxPartLocal;   /* calibrated against the tree factor a run starts from */
     if(sizing_cap > (double) All.MaxPartAssignable) {sizing_cap = (double) All.MaxPartAssignable;}
     return (int) (All.TreeAllocFactor * sizing_cap) + NTopnodes;
 }
@@ -1074,13 +1074,27 @@ int domain_decompose(void)
               printf("  best attempt:   %d per rank, over the cap by %d\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
               /* Changing PartAllocFactor on a restart re-derives the cap from the CURRENT particle count,
                * so what is needed is a factor over the CURRENT average -- NOT the old factor scaled by
-               * how much the run has grown, which would reserve that much again and exhaust the node. */
+               * how much the run has grown, which would reserve that much again and exhaust the node.
+               * There is also a limit to what a restart will take: the run's capacity ceiling was fixed
+               * when it started, and a restart refuses a factor that would put the per-rank slot count
+               * above it (restart.cc).  A factor that would be refused is not worth suggesting, so when
+               * the ceiling is what binds, say that and point at the one route that does work. */
               if(avg_now > 0)
-                  printf("Restart with PartAllocFactor of about %.2f, or treat the present state as the\n"
-                         "initial conditions for a new run.  Changing it re-derives the cap from the current\n"
-                         "particle count, so it need only cover the imbalance above -- raising it in\n"
-                         "proportion to how much the run has grown would reserve far more memory than that.\n",
-                         1.1 * (double) domain_bound_needed / (REDUC_FAC_FOR_MEMORY_IN_DOMAIN * avg_now));
+              {
+                  const double factor_needed  = 1.1 * (double) domain_bound_needed / (REDUC_FAC_FOR_MEMORY_IN_DOMAIN * avg_now);
+                  const double factor_ceiling = (double) All.MaxPartExpandable / avg_now;
+                  if(factor_needed <= factor_ceiling)
+                      printf("Restart with PartAllocFactor of about %.2f, or treat the present state as the\n"
+                             "initial conditions for a new run.  Changing it re-derives the cap from the current\n"
+                             "particle count, so it need only cover the imbalance above -- raising it in\n"
+                             "proportion to how much the run has grown would reserve far more memory than that.\n",
+                             factor_needed);
+                  else
+                      printf("A restart cannot fix this: it would need PartAllocFactor of about %.2f, and this run\n"
+                             "cannot go above %.2f, its ceiling of %d particle slots per rank having been fixed when\n"
+                             "it started.  Treat the present state as the initial conditions for a new run.\n",
+                             factor_needed, factor_ceiling, All.MaxPartExpandable);
+              }
               fflush(stdout);
           }
           /* All ranks arrive here together, because the bound check tests counts that domain_sumCost has

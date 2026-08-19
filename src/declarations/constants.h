@@ -26,6 +26,8 @@
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
+#define TREE_ALLOC_FACTOR_START             0.45 /* tree nodes allocated per particle at startup, before the run ratchets it upward to fit the particle distribution.  Named here because the startup memory projection has to use it before init() assigns it */
+
 /* Cushion on the particle storage a rank holds for the coming epoch, as a fraction of the particles
  * per rank.  It covers the amount by which the next epoch's worst ghost import may exceed the one
  * just measured; on a galaxy-scale zoom that overshoot is a few percent of the per-rank count at the

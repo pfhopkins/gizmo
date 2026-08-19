@@ -324,21 +324,27 @@ void report_memory_ledger(const char *when) {report_memory_ledger_impl(when, 1);
    decomposition) where an unconditional print would be too chatty. */
 void report_memory_ledger_on_growth(const char *when) {report_memory_ledger_impl(when, 0);}
 
-/* Startup persistent-memory preflight -- a user-info aid, run before the big
-   allocations. Projects the deterministic per-node persistent reserve (Base arena +
-   P/CellP/WakeupDirty + STL timebin + a conservative tree estimate) and compares it to
-   detected node physical memory. If the projection PROVABLY exceeds node memory the run
-   cannot load, so it requests a graceful controlled-stop with actionable advice (a clean
-   stop instead of a part-allocated crash); if it is merely tight it only warns; if node
-   memory is unknown (no /proc/meminfo) or there is headroom it is silent. The tree term
-   is deliberately a conservative under-estimate so the hard-stop fires only when the run
-   is infeasible beyond doubt. Collective on GizmoNodeComm -- call only on the all-rank
-   allocation path. Returns nonzero iff a stop was requested. */
+/* Startup persistent-memory preflight -- a user-info aid, run before the big allocations.
+   Projects the per-node reserve that is fixed once the run starts -- the Base arena, the
+   particle and cell storage, and the gravity tree with the node mirror the walk reads -- and
+   compares it to detected node memory. If the projection PROVABLY exceeds node memory the run
+   cannot load, so it requests a graceful controlled-stop and prints what would fit instead (a
+   clean stop rather than a part-allocated crash); if it is merely tight it only warns; if node
+   memory is unknown (no /proc/meminfo) or there is headroom it is silent. Every term is a
+   conservative under-estimate -- the tree factor is the pre-ratchet one, the mirror counts only
+   its always-present fields, and memory a run needs only while running is left out entirely --
+   so the stop fires only when the run is infeasible beyond doubt. Collective on GizmoNodeComm --
+   call only on the all-rank allocation path. Returns nonzero iff a stop was requested. */
 int gizmo_memory_preflight(void)
 {
     gizmo_node_comm_init();
-    long long per_rank = (long long) All.MaxMemSize * 1024 * 1024                      /* Base arena reserve */
-                       + (long long) All.MaxPart    * (long long) sizeof(struct particle_data)   /* P */
+
+    /* The reserve a rank makes regardless of how many particles it holds. */
+    long long arena_per_rank = (long long) All.MaxMemSize * 1024 * 1024;
+
+    /* Storage for the particles and cells a rank may be given. */
+    long long particles_per_rank =
+                         (long long) All.MaxPart    * (long long) sizeof(struct particle_data)   /* P */
                        + (long long) All.MaxPart    * (long long) sizeof(unsigned char)          /* WakeupDirty */
                        + (long long) All.MaxPartGas * (long long) sizeof(struct gas_cell_data)   /* CellP */
                        + 3LL * (long long) All.MaxPart * (long long) sizeof(int)                 /* STL timebin lists */
@@ -346,8 +352,20 @@ int gizmo_memory_preflight(void)
 #ifdef CHIMES
                        + (long long) All.MaxPartGas * (long long) sizeof(struct gasVariables)    /* ChimesGasVars (host, outside the Base arena) */
 #endif
-                       + (long long)(All.TreeAllocFactor * All.MaxPart)
-                             * ((long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE)); /* local tree (est.) */
+                       ;
+    /* The gravity tree built over them: the node arrays, and the mirror of those nodes the
+     * gravity walk reads. Both are sized from the same node count. The foreign nodes imported
+     * from other ranks are deliberately absent: that storage is sized to each rank's actual
+     * import when the import arrives, so nothing is reserved for it here.
+     * The node count uses the startup tree factor rather than All.TreeAllocFactor, which init()
+     * does not assign until after the read this runs inside; reading it here would multiply the
+     * whole term by zero. It is the value the run is about to start from, and the run ratchets
+     * it upward from there, so this stays an under-estimate. */
+    long long tree_per_rank = (long long)(TREE_ALLOC_FACTOR_START * All.MaxPart)
+                            * ((long long) sizeof(struct NODE) + (long long) sizeof(struct extNODE)
+                               + (long long) gpu_gravity_tree_bytes_per_node());
+
+    long long per_rank = arena_per_rank + particles_per_rank + tree_per_rank;
     long long node_persistent = 0;
     MPI_Allreduce(&per_rank, &node_persistent, 1, MPI_LONG_LONG, MPI_SUM, GizmoNodeComm);
 
@@ -356,25 +374,81 @@ int gizmo_memory_preflight(void)
     long long node_phys = mem_total_kb * 1024;
     if(node_phys <= 0) {return 0;}   /* node memory unknown (e.g. no /proc/meminfo) -- no preflight */
 
+    /* How much of a node this projection may fill before the run is in trouble. It is well below
+     * all of it because the projection covers only what is reserved up front: a run also needs
+     * memory while it is running -- imported neighbours, tree nodes from other ranks, message
+     * buffers -- and none of that is counted here. Both the advice and the warning use it, so a
+     * configuration this reports as fitting is not one it would immediately warn about. */
+    const double safe_fraction = 0.85;
+    const long long node_safe = (long long)(safe_fraction * (double) node_phys);
+
     if(node_persistent > node_phys)
     {
         if(GizmoNodeRankOfTask == 0) {
-            printf("MEMORY PREFLIGHT: projected persistent reserve %.1f GB exceeds node physical %.1f GB "
-                   "(%d ranks/node) -- cannot load. Stopping cleanly. Feasible: fewer ranks/node, "
-                   "lower PartAllocFactor, or more nodes.\n",
-                   node_persistent / 1.0e9, node_phys / 1.0e9, GizmoRanksThisNode);
+            /* Say what would fit, computed from the same figures rather than offered as a guess.
+             *
+             * THE RULE FOR EVERY OPTION BELOW, and for any option added later: a value is offered
+             * only if it would survive every OTHER limit the code applies to it, not merely the
+             * memory arithmetic here. Fitting node memory is one constraint among several, and a
+             * suggestion that satisfies this one while failing another just moves the user from
+             * this stop to the next. Each option therefore carries the test for the limit it
+             * would meet next: the settings are offered only BELOW the value in use (raising
+             * either would not be a fix); a particle factor must stay above what the domain
+             * decomposition can accept at all, since its own margin means a factor near one can
+             * never hold even a perfectly balanced share; and a workspace size must still hold
+             * the communication buffer, which is drawn from that same workspace as the run
+             * starts. Printed values round the way that keeps them satisfying the test they were
+             * chosen for. */
+            char options[320]; int no = 0;
+            const int olen = (int) sizeof(options);
+            const int maxopt = 4;                  /* one slot per option offered below */
+            char optbuf[maxopt][64]; int nopt = 0;
+            long long ranks_that_fit = (per_rank > 0) ? node_safe / per_rank : 0;
+            long long share = node_safe / (GizmoRanksThisNode > 0 ? GizmoRanksThisNode : 1);
+            if(ranks_that_fit >= 1 && nopt + 1 < maxopt)
+            {
+                snprintf(optbuf[nopt], sizeof(optbuf[0]), "%lld rank%s/node", ranks_that_fit,
+                         (ranks_that_fit == 1) ? "" : "s"); nopt++;
+                long long nodes_that_fit = (NTask + ranks_that_fit - 1) / ranks_that_fit;
+                snprintf(optbuf[nopt], sizeof(optbuf[0]), "%lld node%s", nodes_that_fit,
+                         (nodes_that_fit == 1) ? "" : "s"); nopt++;
+            }
+            if(All.PartAllocFactor > 0 && share > arena_per_rank && nopt < maxopt)
+            {
+                double per_unit = (double)(particles_per_rank + tree_per_rank) / All.PartAllocFactor;
+                double fits = (per_unit > 0) ? (double)(share - arena_per_rank) / per_unit : 0;
+                fits = (double)(long long)(fits * 100.0) / 100.0;   /* print no more than what was shown to fit */
+                if(fits > 1.0 / REDUC_FAC_FOR_MEMORY_IN_DOMAIN && fits < All.PartAllocFactor)
+                    {snprintf(optbuf[nopt], sizeof(optbuf[0]), "PartAllocFactor %.2f", fits); nopt++;}
+            }
+            if(share > particles_per_rank + tree_per_rank && nopt < maxopt)
+            {
+                long long fits_mb = (share - particles_per_rank - tree_per_rank) / (1024 * 1024);
+                if(fits_mb > (long long) All.BufferSize && fits_mb < All.MaxMemSize)
+                    {snprintf(optbuf[nopt], sizeof(optbuf[0]), "MaxMemSize %lld", fits_mb); nopt++;}
+            }
+            for(int k = 0; k < nopt; k++)
+                no += snprintf(options + no, (no < olen) ? olen - no : 0, "%s%s",
+                               (k == 0) ? "" : ((k == nopt - 1) ? ", or " : ", "), optbuf[k]);
+
+            printf("MEMORY PREFLIGHT: this run cannot load. Node memory %.1f GB; %d ranks/node need %.1f GB\n"
+                   "  (per rank: %.2f GB particles and cells, %.2f GB workspace, %.2f GB gravity tree).\n",
+                   node_phys / 1.0e9, GizmoRanksThisNode, node_persistent / 1.0e9,
+                   particles_per_rank / 1.0e9, arena_per_rank / 1.0e9, tree_per_rank / 1.0e9);
+            if(no > 0) {printf("  It would fit with any of: %s.\n", options);}
+            else       {printf("  One rank alone does not fit this node; use nodes with more memory.\n");}
             fflush(stdout);
         }
         gizmo_request_controlled_stop(830, "memory preflight: projected persistent reserve exceeds node physical memory",
                                       __FILE__, __LINE__, __FUNCTION__);
         return 830;
     }
-    if((double) node_persistent > 0.85 * (double) node_phys && GizmoNodeRankOfTask == 0)
+    if(node_persistent > node_safe && GizmoNodeRankOfTask == 0)
     {
-        printf("MEMORY PREFLIGHT WARNING: projected persistent reserve %.1f GB is %.0f%% of node physical %.1f GB "
-               "(%d ranks/node) -- little headroom left for transient/ghost memory.\n",
-               node_persistent / 1.0e9, 100.0 * (double) node_persistent / (double) node_phys,
-               node_phys / 1.0e9, GizmoRanksThisNode);
+        printf("MEMORY PREFLIGHT: %d ranks/node need %.1f GB of %.1f GB node memory (%.0f%%), leaving little\n"
+               "  room for the memory a run needs while running. Consider fewer ranks/node or more nodes.\n",
+               GizmoRanksThisNode, node_persistent / 1.0e9, node_phys / 1.0e9,
+               100.0 * (double) node_persistent / (double) node_phys);
         fflush(stdout);
     }
     return 0;
