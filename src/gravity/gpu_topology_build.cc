@@ -60,7 +60,7 @@ static int  g_slot_map_active     = 0;     /* 1 iff this build is a non-identity
 static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *label) {
     if(old_cap >= new_cap) {return buf;}
     if(buf) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(buf);}
-    buf = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, (long)new_cap * sizeof(int));
+    buf = (int *) gizmo_gpu_alloc_shared((long)new_cap * sizeof(int), label);
     if(!buf) {
         printf("gpu_topology_build: %s alloc failed (n=%d)\n", label, new_cap);
     }
@@ -281,10 +281,10 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     int tree_base  = All.TreeNodeIndexBase;
 
     /* SharedSpace single-int counters: easy host/device coordination. */
-    int *sz_curr = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *sz_next = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *ncount  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *fail    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
+    int *sz_curr = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *sz_next = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *ncount  = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *fail    = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
     if(!sz_curr || !sz_next || !ncount || !fail) {
         printf("gpu_topology_emit_bfs: counter alloc failed\n");
         if(sz_curr) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);

@@ -1179,8 +1179,8 @@ static int gpu_shortrange_tables_acquire(void)
 {
     if(g_shortrange_tables_ready) return 0;
     const size_t sz = GIZMO_GPU_GRAVTREE_NTAB * sizeof(float);
-    g_d_shortrange_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
-    g_d_shortrange_pot_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_shortrange_tab = (float *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
+    g_d_shortrange_pot_tab = (float *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
     if(!g_d_shortrange_tab || !g_d_shortrange_pot_tab) {
         printf("gpu_shortrange_tables_acquire: shortrange table alloc failed\n");
         endrun(913205);
@@ -1189,7 +1189,7 @@ static int gpu_shortrange_tables_acquire(void)
     memcpy(g_d_shortrange_tab,     shortrange_table,           sz);
     memcpy(g_d_shortrange_pot_tab, shortrange_table_potential, sz);
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    g_d_shortrange_tidal_tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_shortrange_tidal_tab = (float *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
     if(!g_d_shortrange_tidal_tab) {
         printf("gpu_shortrange_tables_acquire: shortrange tidal table alloc failed\n");
         endrun(913206);
@@ -1371,13 +1371,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     if(!use_lazy_source) {
         long sz = (long)NumPart * N_RT_FREQ_BINS * sizeof(MyFloat);
-        d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+        d_src_lum = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
         if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202); myfree(idx_host); return 1;}
         memset(d_src_lum, 0, sz);
 #ifdef CHIMES_STELLAR_FLUXES
         long szc = (long)NumPart * CHIMES_LOCAL_UV_NBINS * sizeof(double);
-        d_src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szc);
-        d_src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szc);
+        d_src_lum_G0  = (double *) gizmo_gpu_alloc_shared(szc, "gravity_walk");
+        d_src_lum_ion = (double *) gizmo_gpu_alloc_shared(szc, "gravity_walk");
         if(!d_src_lum_G0 || !d_src_lum_ion) {printf("gpu_gravtree_walk_primary: CHIMES lum alloc failed\n"); endrun(913203); myfree(idx_host); return 1;}
         memset(d_src_lum_G0,  0, szc);
         memset(d_src_lum_ion, 0, szc);
@@ -1391,8 +1391,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(!use_lazy_source) {
         long sz_lum  = (long)NumPart * sizeof(MyFloat);
         long sz_ang  = (long)NumPart * sizeof(Vec3<MyFloat>);
-        d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz_lum);
-        d_bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz_ang);
+        d_bh_lum   = (MyFloat *)       gizmo_gpu_alloc_shared(sz_lum, "gravity_walk");
+        d_bh_angle = (Vec3<MyFloat> *) gizmo_gpu_alloc_shared(sz_ang, "gravity_walk");
         if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210); myfree(idx_host); return 1;}
         memset(d_bh_lum,   0, sz_lum);
         memset(d_bh_angle, 0, sz_ang);
@@ -1412,7 +1412,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
     if(!use_lazy_source) {
         long sz = (long)NumPart * sizeof(MyFloat);
-        d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+        d_cr_inject = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
         if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211); myfree(idx_host); return 1;}
         memset(d_cr_inject, 0, sz);
     }
@@ -1494,7 +1494,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     /* Scratch arrays for per-target results, carved from one allocation */
     const struct grav_walk_scratch_plan scratch = grav_walk_scratch_plan_for(num_active, 1);
-    char *scratch_block = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", scratch.bytes);
+    char *scratch_block = (char *) gizmo_gpu_alloc_shared(scratch.bytes, "gravity_walk");
     if(!scratch_block) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
@@ -1798,10 +1798,10 @@ static int gpu_ewald_tables_acquire(void)
     gizmo_get_ewald_tables(&fx, &fy, &fz, &fp, &fi);
     long n  = (long)(GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1);
     long sz = n * sizeof(MyFloat);
-    g_d_fcorrx  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
-    g_d_fcorry  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
-    g_d_fcorrz  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
-    g_d_potcorr = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", sz);
+    g_d_fcorrx  = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
+    g_d_fcorry  = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
+    g_d_fcorrz  = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
+    g_d_potcorr = (MyFloat *) gizmo_gpu_alloc_shared(sz, "gravity_walk");
     if(!g_d_fcorrx || !g_d_fcorry || !g_d_fcorrz || !g_d_potcorr) {
         printf("gpu_ewald_tables_acquire: kokkos_malloc failed\n");
         endrun(914101);
@@ -1998,7 +1998,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     if(num_active == 0) { myfree(idx_host); return 0; }
 
     const struct grav_walk_scratch_plan scratch = grav_walk_scratch_plan_for(num_active, 0);
-    char *scratch_block = (char *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", scratch.bytes);
+    char *scratch_block = (char *) gizmo_gpu_alloc_shared(scratch.bytes, "gravity_walk");
     if(!scratch_block) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102); myfree(idx_host); return 1;}
     int          *d_idx    = (int *)          (scratch_block + scratch.idx);
     int          *d_failed = (int *)          (scratch_block + scratch.failed);

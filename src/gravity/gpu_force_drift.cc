@@ -52,8 +52,7 @@ static double  drift_table_logTimeMax_   = 0.0;
 static int drift_table_refresh_(void)
 {
     if(!drift_table_dev_) {
-        drift_table_dev_ = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                DRIFT_TABLE_LENGTH * sizeof(double));
+        drift_table_dev_ = (double *) gizmo_gpu_alloc_shared(DRIFT_TABLE_LENGTH * sizeof(double), NULL);
         if(!drift_table_dev_) {
             printf("gpu_force_drift: drift_table_dev_ alloc failed\n");
             endrun(929701);
@@ -134,8 +133,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * with one All.SpecialParticle_Position_ForRefinement comparison per node
      * for SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM). The GPU kernel then just reads
      * dilation_dev[kk] -- no GPU-side host-only field access required. */
-    double *dilation_dev = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                (size_t)n_nodes * sizeof(double));
+    double *dilation_dev = (double *) gizmo_gpu_alloc_shared((size_t)n_nodes * sizeof(double), NULL);
     if(!dilation_dev) {printf("gpu_force_drift_nodes: dilation_dev alloc failed\n"); endrun(929702); return 1;}   /* soft bad-stop: skip the dilation omp loop on NULL; drains at next poll */
 #pragma omp parallel for schedule(static)
     for(int kk = 0; kk < n_nodes; kk++) {

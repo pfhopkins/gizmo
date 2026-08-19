@@ -275,6 +275,19 @@ enum { GIZMO_KOKCELL_COUNT = (int)GIZMO_KOKBUCKET_COUNT * (int)GIZMO_KOKSPACE_CO
 /* Fill caller arrays [GIZMO_KOKCELL_COUNT], row-major bucket x space. */
 extern "C" void        gizmo_kokkos_mem_buckets(long long *cur, long long *hw);
 extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unrecognized space seen, or NULL */
+
+/* Allocation that reports exhaustion by RETURNING NULL rather than throwing.  Kokkos::kokkos_malloc
+   throws, and an exception leaving a dispatcher kills the rank where it stands: the run never reaches
+   the phase boundary that drains a controlled stop, so instead of every rank finalizing cleanly one
+   dies and the rest wait on it.  A caller that checks the result can request the stop and return, and
+   the run ends the way every other failure ends.  `label` is passed through unchanged because the
+   memory ledger classifies allocations by it; pass NULL where the call site has none, so an unlabeled
+   allocation stays unlabeled and keeps landing where it did.  Declared without any Kokkos type so
+   host-compiled TUs including this header gain no dependency on <Kokkos_Core.hpp>; the space each one
+   names is fixed by which function is called.  Zero cost when the allocation succeeds. */
+extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label);   /* SharedSpace/UVM: host- and device-readable */
+extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label);   /* device-only memory */
+extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* host memory obtained through Kokkos */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
    (current-at-print is misleading: force_treeallocate resets it before a stop ledger).

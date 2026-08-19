@@ -51,7 +51,7 @@ extern "C" int gpu_peano_walk_acquire(void)
             g_topnodes_dev = NULL;
         }
         long bytes = (long)NTopnodes * (long)sizeof(struct topnode_data);
-        g_topnodes_dev = (struct topnode_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_topnodes", bytes);
+        g_topnodes_dev = (struct topnode_data *) gizmo_gpu_alloc_shared(bytes, "treescratch_build_topnodes");
         if(!g_topnodes_dev) {
             printf("gpu_peano_walk: TopNodes mirror alloc failed (NTopnodes=%d, %ld B)\n",
                    NTopnodes, bytes);
@@ -68,7 +68,7 @@ extern "C" int gpu_peano_walk_acquire(void)
             g_domain_idx_dev = NULL;
         }
         long bytes = (long)NTopleaves * (long)sizeof(int);
-        g_domain_idx_dev = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_domainidx", bytes);
+        g_domain_idx_dev = (int *) gizmo_gpu_alloc_shared(bytes, "treescratch_build_domainidx");
         if(!g_domain_idx_dev) {
             printf("gpu_peano_walk: DomainNodeIndex mirror alloc failed (NTopleaves=%d, %ld B)\n",
                    NTopleaves, bytes);
