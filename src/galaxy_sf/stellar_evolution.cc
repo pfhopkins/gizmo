@@ -660,15 +660,18 @@ double single_star_jet_velocity(int n)
 }
 
 
-/* accretion-tied jet mass-loss rate (code units/time): the rate at which mass is diverted from accretion
-   into the jet channel. Mirrors the zero-gate applied inline in sink.cc's SINK_WIND_SPAWN block (same
-   physical reasoning: no reliable jet direction until the sink has grown enough), so the two always agree
-   on when jets are 'on'. */
+/* rate at which accretion is diverted into the jet channel, in code units. The single definition of it:
+   sink.cc banks this*dt, and single_star_wind_mdot() weighs it against the wind rate to pick the spawning
+   channel. Unclamped -- the caller applies any mass-availability limits. */
 double single_star_jet_mdot(int n)
 {
     if(P[n].Type != 5) {return 0;}
-    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;}
+    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;} // no jets below 0.01 msun, or before we have accreted enough for a reliable jet direction
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.); // mass loss rate from the alpha disk
+#else
     return (1.-All.Sink_accreted_fraction) / All.Sink_accreted_fraction * P[n].Sink_Mdot;
+#endif
 }
 #endif
 

@@ -966,11 +966,11 @@ void special_rt_feedback_injection(void)
 #endif
 
 
-/* returns a pointer to whichever discrete-spawn reservoir is currently 'active' for particle i, mirroring
-   the same jets-vs-winds routing decision used in target_mass_for_wind_spawning below: SNe ejecta always
-   uses unspawned_wind_mass; at MS, winds use unspawned_wind_mass only while they hold the discrete-spawn
-   channel (wind_mode==1); everything else (pre-MS, or MS with jets dominant) uses unspawned_jet_mass. If
-   jets aren't compiled in at all there is only ever the one shared reservoir. */
+#ifdef SINK_WIND_SPAWN
+/* which reservoir currently feeds discrete spawning. Must agree with the channel that
+   target_mass_for_wind_spawning() below prices cells for, or mass banks at one resolution and spawns at
+   another. SNe ejecta always uses unspawned_wind_mass; at MS, winds use it only while they hold the
+   channel (wind_mode==1); everything else (pre-MS, or MS with jets dominant) uses unspawned_jet_mass. */
 double* active_unspawned_mass_ptr(int i)
 {
 #ifdef SINGLE_STAR_FB_JETS
@@ -984,6 +984,7 @@ double* active_unspawned_mass_ptr(int i)
 #endif
     return &P[i].unspawned_wind_mass;
 }
+#endif
 
 /* simple routine that evaluates the target cell mass for the spawning subroutine */
 double target_mass_for_wind_spawning(int i)

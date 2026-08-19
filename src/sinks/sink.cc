@@ -811,7 +811,7 @@ void sink_final_operations(void)
         dm_wind = DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.) * dt; /* wind mass loss rate from the alpha disk */
 #endif
 #ifdef SINGLE_STAR_FB_JETS
-        if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || P[n].Mass < 3.5*P[n].Sink_Formation_Mass) {dm_wind = 0;} // no jets launched yet if <0.01 msun or if we haven't accreted enough to get a reliable jet direction
+        dm_wind = single_star_jet_mdot(n) * dt; // same rate the wind_mode momentum comparison uses, so the two cannot disagree
 #endif
         if(dm_wind > P[n].Mass) {dm_wind = P[n].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION)
@@ -869,12 +869,10 @@ void sink_final_operations(void)
 #endif
 #endif
         P[n].unspawned_wind_mass += dm_wind;
-        double n_unspawned = P[n].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
+        /* same pair of calls the eligibility test in spawn_sink_wind_feedback() makes, so the two cannot
+           disagree; pairing one reservoir with the other channel's cell mass overstates this by the mass ratio */
+        double n_unspawned = *active_unspawned_mass_ptr(n) / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
         if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
-#ifdef SINGLE_STAR_FB_JETS
-        double n_unspawned_jet = P[n].unspawned_jet_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // same tracking for the separate jet reservoir
-        if(n_unspawned_jet > Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned_jet;}
-#endif
 #endif
 
 #ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
