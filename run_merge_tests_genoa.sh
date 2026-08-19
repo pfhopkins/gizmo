@@ -116,7 +116,9 @@ for d in test/*/; do
     compgen -G "${d}test_*.py" > /dev/null || continue
     if [ "$RUN_ALL" = "1" ]; then
         echo "=== pytest ${d}"
-        "$PY" -u -m pytest "$d" -ra -s -v --continue-on-collection-errors --tb=short || rc_any=1
+        # -m 'not slow' drops test/fewbody, which is ~192 GIZMO runs on its own. Run it directly
+        # (`pytest test/fewbody`) when you want it; -k selects it explicitly on the other path.
+        "$PY" -u -m pytest "$d" -ra -s -v --continue-on-collection-errors --tb=short -m 'not slow' || rc_any=1
     else
         # exit 5 is "no test matched -k in this directory", which is the normal case for most
         # of them under a subset filter -- not a failure. Anything else nonzero is.

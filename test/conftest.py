@@ -71,6 +71,10 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
+    # Tests too expensive for a routine full sweep. Run them with `pytest test/fewbody`, or
+    # exclude them from a sweep with `-m 'not slow'`.
+    config.addinivalue_line("markers", "slow: excluded from routine full-suite runs")
+
     global _FIGURE_FORMAT
     _FIGURE_FORMAT = config.getoption("--figure-format").lower()
     if _FIGURE_FORMAT == "png":

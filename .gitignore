@@ -115,6 +115,14 @@ HANDOFF_*.md
 MEMORY.md
 *_design.md
 *_handoff.md
+# suites that generate one IC and one params file per problem keep them in subdirectories, which the
+# patterns above miss
+test/*/ics/
+test/*/params/
+# per-variant result dumps: hundreds of MB of JSON
+test/*/results_*.json
+test/*/archive/
+
 # Slurm job logs from run_merge_tests_genoa.sh
 merge_tests-*.out
 merge_tests-*.err
