@@ -9,9 +9,12 @@
  * On GPU: the Kokkos kernel includes this with KOKKOS_INLINE_FUNCTION as
  *   __device__ __host__ inline, making these callable from parallel_for.
  *
- * The functions take explicit pointers to tiles/BVH/pool arrays (no globals)
- * and explicit periodicity parameters, making them pure functions suitable
- * for GPU execution.
+ * The functions take explicit pointers to tiles/BVH/pool arrays.  Box wrapping
+ * is NOT passed in: it belongs to the canonical macro family
+ * (NEAREST_XYZ / NGB_PERIODIC_BOX_LONG_*), which these call through the shared
+ * predicates in ghost_exchange_functions.h.  A per-axis periodicity argument
+ * cannot express a shearing box and is why this path once silently
+ * under-included neighbours there.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -20,36 +23,32 @@
 #define SFC_TILES_FUNCTIONS_H
 
 #include "sfc_tiles.h"
+#include "ghost_exchange_functions.h"  /* gx_extended_overlap_wrap_and_test: the canonical-wrap SSOT */
 
 /* Check if a search sphere overlaps an axis-aligned bounding box (with periodic wrapping).
  * Returns 1 if overlap, 0 otherwise.
  * Uses center+halfwidth approach for correct periodic distance to AABB.
- * periodic_flags[k]: 1 if axis k is periodic, 0 otherwise.
- * box_sizes[k]: box size along axis k (only used if periodic). */
+ * Wrapping is the canonical macro family's job (ghost_exchange_functions.h);
+ * this takes no box-geometry arguments. */
 KOKKOS_INLINE_FUNCTION
 int bbox_overlaps_sphere_gpu(const double box_lo[3], const double box_hi[3],
-                             const double pos[3], double search_r, double search_r2,
-                             const int periodic_flags[3], const double box_sizes[3])
+                             const double pos[3], double search_r, double search_r2)
 {
-    double dist2 = 0;
+    (void)search_r2;   /* the shared predicate squares the radius itself */
+    /* Wrap through the canonical macro family, then test — see
+     * ghost_exchange_functions.h.  A per-axis wrap here silently under-included
+     * neighbours in shearing boxes, because wrapping in x forces a shift in y
+     * that no axis-independent test can represent.  Half-width rounded UP so
+     * the conversion from lo/hi stays conservative under FP. */
+    double c[3], hw[3];
     for(int k = 0; k < 3; k++)
     {
-        double bsize = box_sizes[k];
-
-        /* Distance from pos to center of bbox, with periodic wrapping */
-        double center = 0.5 * (box_lo[k] + box_hi[k]);
-        double halfwidth = 0.5 * (box_hi[k] - box_lo[k]);
-        double dx = fabs(pos[k] - center);
-        if(periodic_flags[k] && dx > 0.5 * bsize) dx = bsize - dx;
-
-        /* Gap = distance from pos to nearest edge of bbox */
-        double gap = dx - halfwidth;
-        if(gap <= 0) continue; /* pos is inside bbox on this axis */
-
-        if(gap > search_r) return 0; /* early rejection */
-        dist2 += gap * gap;
+        c[k]  = 0.5 * (box_lo[k] + box_hi[k]);
+        double up = box_hi[k] - c[k], dn = c[k] - box_lo[k];
+        hw[k] = (up > dn) ? up : dn;
     }
-    return (dist2 < search_r2);
+    return gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2],
+                                             hw[0], hw[1], hw[2], search_r);
 }
 
 
@@ -84,8 +83,6 @@ int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], 
                              double j_radius_scale,
                              sfc_tile_t *tile, int *pool, int search_mode,
                              int *store_neighbors, int count, int max_store,
-                             const double box_sizes[3], const double box_halves[3],
-                             const int periodic_flags[3],
                              /* Optional per-active counters; pass nullptr for fast-path. Compiler
                               * eliminates the null-checks via constant prop when null literal is passed. */
                              int *cnt_candidates_tested = nullptr,
@@ -98,9 +95,6 @@ int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], 
                              const struct particle_data *P_gpu = nullptr,
                              unsigned int supply_mask = ((1u << 6) - 1u))
 {
-    (void)box_sizes;
-    (void)box_halves;
-    (void)periodic_flags;
     MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
     for(int s = 0; s < tile->count; s++)
     {
@@ -160,9 +154,6 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
                              int *pool, int search_mode,
                              tile_bvh_node_t *bvh, int bvh_root,
                              int *store_neighbors, int max_store,
-                             const int periodic_flags[3],
-                             const double box_sizes[3],
-                             const double box_halves[3],
                              /* Optional per-active counters for diagnostics. Pass nullptr (default) for
                               * fast path. Compiler eliminates null-checks via constant prop. */
                              int *cnt_nodes_visited = nullptr,
@@ -213,8 +204,7 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
         double search_r2 = search_r * search_r;
 
         /* Check if node's bbox (expanded by search_r) overlaps particle i */
-        if(!bbox_overlaps_sphere_gpu(node->lo, node->hi, pos_i, search_r, search_r2,
-                                     periodic_flags, box_sizes)) continue;
+        if(!bbox_overlaps_sphere_gpu(node->lo, node->hi, pos_i, search_r, search_r2)) continue;
 
         /* Check if leaf */
         if(node->left < 0)
@@ -224,7 +214,6 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
             if(cnt_tiles_visited) (*cnt_tiles_visited)++;
             count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, j_radius_scale, &tiles[tile_idx], pool, search_mode,
                                              store_neighbors, count, max_store,
-                                             box_sizes, box_halves, periodic_flags,
                                              cnt_candidates_tested, cnt_candidates_accepted,
                                              P_gpu, supply_mask);
         }

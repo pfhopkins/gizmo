@@ -39,10 +39,6 @@ struct gpu_neighbor_list_t {
     int ntiles;
     int bvh_root;
 
-    /* Periodicity parameters (copied to avoid global access in kernels) */
-    int periodic_flags[3];
-    double box_sizes[3];
-    double box_halves[3];
 
     /* Compact position+h array for BVH traversal cache efficiency (points into
        spatial index memory; do NOT free from gnl — owned by gpu_spatial_index_t).
@@ -61,9 +57,6 @@ struct gpu_spatial_index_t {
     int *d_pool;
     int ntiles;
     int bvh_root;
-    int periodic_flags[3];
-    double box_sizes[3];
-    double box_halves[3];
     /* Compact position+h array: d_compact_xyzh[i*4+0..3] = x,y,z,h for particle i.
        DOUBLE (positions x,y,z; h reach in slot 3): float absolute positions are
        invalid for GIZMO's dynamic range (see §37/§38). ~64MB for 2M particles vs

@@ -1748,9 +1748,8 @@ static void run_mode_b_remote(const neighbor_loop_args& args, const double *radi
  * matching helper below) differ between the two paths.
  *
  * The spatial-index fields of gnl (d_tiles / d_bvh / d_pool / ntiles /
- * bvh_root / periodic_flags / box_sizes / box_halves) stay zero/null
- * because the pair_kernel does not read them (it uses nearest_xyz which
- * reads All.BoxSize_* via the AllDeviceMirror).
+ * bvh_root) stay zero/null because the pair_kernel does not read them (it
+ * uses nearest_xyz, which reads All.BoxSize_* via the AllDeviceMirror).
  *
  * The runner OWNS the SharedSpace/DeviceSpace allocations made here and
  * frees them in nlr_free_external_csr_gnl(). It does NOT free the caller's

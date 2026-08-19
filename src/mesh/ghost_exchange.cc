@@ -37,7 +37,7 @@
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
-#include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
+#include "ghost_exchange_functions.h" /* gx_pair_accept_wrap_and_test: shared accept, wraps via the canonical macros */
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
 #include "mode_b_local_walker.h"
@@ -613,7 +613,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
  * knows exactly, so routing needs nothing from the supply side.  The traversal AND
  * export opener are both R_open = h_q (mode_b_local_walker.cc, the R_open branch
  * and the topleaf export re-test), and the accept ignores h_j entirely
- * (ghost_exchange_functions.h gx_pair_accept, ONEWAY branch).  Query h already
+ * (ghost_exchange_functions.h gx_pair_accept_wrap_and_test, ONEWAY branch).  Query h already
  * carries the spec safety factor, so a widened query cannot outgrow the opener.
  * KEEP THOSE THREE IN STEP: if ONEWAY accept ever gains an h_j term, or the opener
  * stops using h_q, this eligibility no longer holds and must be re-derived.
@@ -1027,38 +1027,11 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     int *send_to = (int *) calloc(local_ntiles * NTask, sizeof(int));
     int my_tile_start = tile_disp[ThisTask];
 
-    /* Per-axis min-AABB-AABB squared distance under periodic wrap. Returns
-     * negative gap on this axis if the AABBs overlap. Inlined for hot loop. */
-    auto axis_gap = [&](double c_a, double hw_a, double c_b, double hw_b, int kk) -> double {
-#if defined(BOX_PERIODIC)
-        int is_periodic = 1;
-        double bsize = (kk==0) ? boxSize_X : ((kk==1) ? boxSize_Y : boxSize_Z);
-#if defined(BOX_REFLECT_X)
-        if(kk==0) is_periodic = 0;
-#endif
-#if defined(BOX_REFLECT_Y)
-        if(kk==1) is_periodic = 0;
-#endif
-#if defined(BOX_REFLECT_Z)
-        if(kk==2) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_X)
-        if(kk==0) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_Y)
-        if(kk==1) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_Z)
-        if(kk==2) is_periodic = 0;
-#endif
-#else
-        int is_periodic = 0;
-        double bsize = 0;
-#endif
-        double dx = fabs(c_a - c_b);
-        if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
-        return dx - hw_a - hw_b;
-    };
+    /* Tile-pair overlap is a point against the Minkowski sum of the two boxes.
+     * The box wrap belongs to the canonical macro family (the former per-axis
+     * form here could not represent a shearing box's x-y coupling), so it lives
+     * in gx_boxpair_overlap_wrap_and_test; the exact clamped-gap acceptance
+     * this pass relies on is unchanged. */
 
     /* Pass 1: need_from[rt] — driven by OUR active tiles. Outer loop over
      * local tiles with active_count > 0 only (tiny-N: just a handful). */
@@ -1094,17 +1067,16 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                                     : DMAX(lm->active_hmax, rm->hmax) * safety_factor;
                 if(search_r <= 0) continue;
                 double search_r2 = search_r * search_r;
-                double dist2 = 0;
-                int overlaps = 1;
+                double dc[3], hw_sum[3];
                 for(k = 0; k < 3; k++) {
-                    double c_r = 0.5 * (rm->lo[k] + rm->hi[k]);
-                    double hw_r = 0.5 * (rm->hi[k] - rm->lo[k]);
-                    double gap = axis_gap(c_lo[k], c_hw[k], c_r, hw_r, k);
-                    if(gap <= 0) continue;
-                    if(gap > search_r) { overlaps = 0; break; }
-                    dist2 += gap * gap;
+                    const double c_r  = 0.5 * (rm->lo[k] + rm->hi[k]);
+                    const double hw_r = 0.5 * (rm->hi[k] - rm->lo[k]);
+                    dc[k]     = c_lo[k] - c_r;
+                    hw_sum[k] = c_hw[k] + hw_r;
                 }
-                if(overlaps && dist2 < search_r2) need_from[rt] = 1;
+                if(gx_boxpair_overlap_wrap_and_test(dc[0], dc[1], dc[2],
+                                                    hw_sum[0], hw_sum[1], hw_sum[2],
+                                                    search_r, search_r2)) need_from[rt] = 1;
             }
         }
     }
@@ -1434,33 +1406,22 @@ struct gx_export_envelope_t {
  * gap between sphere center and bbox; if any gap exceeds search_r, prune.
  * Otherwise sum-of-squares vs search_r2 for the final accept. */
 static inline int gx_bbox_overlaps_sphere(const double bbox_lo[3], const double bbox_hi[3],
-                                          const double pos[3], double search_r, double search_r2,
-                                          const int periodic_flags[3], const double box_sizes[3])
+                                          const double pos[3], double search_r, double search_r2)
 {
-    double dist2 = 0;
+    (void)search_r2;   /* the shared predicate squares the radius itself */
+    /* The box wrap is the canonical macro family's job, and it needs a centre
+     * separation rather than a lo/hi interval, so convert here.  Rounding the
+     * half-width UP (the larger of the two sides) keeps the test conservative
+     * under FP, which is what the direct point-to-interval form used to buy;
+     * over-opening costs a leaf test, under-opening drops a real neighbour. */
+    double c[3], hw[3];
     for(int k = 0; k < 3; k++) {
-        /* Direct point-to-interval gap from lo/hi (a true lower bound on the
-         * point-to-contained-particle distance).  This avoids the center/half-width
-         * decomposition (0.5*(lo+hi), 0.5*(hi-lo)) whose rounding could make the gap
-         * marginally NON-conservative at the search boundary and prune a reachable
-         * particle.  Periodic axes: test the nearest images (tile width < box) and
-         * take the minimum, so the gap is the true min-image distance — at least as
-         * conservative as the prior center/min-image form. */
-        double lo = bbox_lo[k], hi = bbox_hi[k], p = pos[k];
-        double gap = (p < lo) ? (lo - p) : ((p > hi) ? (p - hi) : 0.0);
-        if(periodic_flags[k] && gap > 0.0) {
-            double L = box_sizes[k];
-            double pm = p - L, pp = p + L;
-            double gm = (pm < lo) ? (lo - pm) : ((pm > hi) ? (pm - hi) : 0.0);
-            double gp = (pp < lo) ? (lo - pp) : ((pp > hi) ? (pp - hi) : 0.0);
-            if(gm < gap) gap = gm;
-            if(gp < gap) gap = gp;
-        }
-        if(gap <= 0.0) continue;          /* this axis overlaps */
-        if(gap > search_r) return 0;      /* prune fast */
-        dist2 += gap * gap;
+        c[k]  = 0.5 * (bbox_lo[k] + bbox_hi[k]);
+        double up = bbox_hi[k] - c[k], dn = c[k] - bbox_lo[k];
+        hw[k] = (up > dn) ? up : dn;
     }
-    return (dist2 < search_r2) ? 1 : 0;
+    return gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2],
+                                             hw[0], hw[1], hw[2], search_r);
 }
 
 /* Host-only BVH walk for the request-driven path. Mirrors
@@ -1488,7 +1449,6 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                               unsigned int supply_mask,
                               const tile_bvh_node_t *bvh, int bvh_root,
                               const double pos_q[3], double h_q, int search_mode,
-                              const int periodic_flags[3], const double box_sizes[3],
                               char *match_bitmask /* size num_pool */,
                               long *n_exact_hits /* optional (NULL in production): count EXACT matches
                                                   * this call would produce, computing r2 even for
@@ -1512,8 +1472,7 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                             : ((h_q > node_hmax_eff) ? h_q : node_hmax_eff);
         if(search_r <= 0) continue;
         double search_r2 = search_r * search_r;
-        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2,
-                                    periodic_flags, box_sizes)) continue;
+        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2)) continue;
         if(node->left < 0) {
             /* Leaf: per-particle accept against EXACT predicate. */
             int tile_idx = -(node->left + 1);
@@ -1554,9 +1513,10 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                 double hj_dbl = gx_policy_scaled_h(j_neighbor, g_glt_cache.radius_policy_when_built,
                                                    g_glt_cache.j_radius_scale_when_built,
                                                    g_glt_cache.safety_factor_when_built);
-                if(gx_pair_accept(pos_q, h_q,
-                                  P[j_neighbor].Pos[0], P[j_neighbor].Pos[1], P[j_neighbor].Pos[2],
-                                  hj_dbl, search_mode, periodic_flags, box_sizes)) {
+                if(gx_pair_accept_wrap_and_test(pos_q[0] - (double)P[j_neighbor].Pos[0],
+                                                pos_q[1] - (double)P[j_neighbor].Pos[1],
+                                                pos_q[2] - (double)P[j_neighbor].Pos[2],
+                                                h_q, hj_dbl, search_mode)) {
                     if(n_exact_hits) (*n_exact_hits)++;
                     if(!already) match_bitmask[pool_pos] = 1;
                 }
@@ -1567,18 +1527,6 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
             stack[sp++] = node->right;
         }
     }
-}
-
-/* Conservative sphere-vs-node-cube overlap — trivial pass-through to the shared
- * scalar predicate gx_node_sphere_overlap_center_len (ghost_exchange_functions.h),
- * the SSOT the device fine-tree walk also uses.  Extracts Nodes[] center/len here so
- * the shared helper stays geometry-only (no NODE/globals). */
-static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NODE *nop, double R,
-                                         const int periodic_flags[3], const double box_sizes[3])
-{
-    return gx_node_sphere_overlap_center_len(pos_q, (double)nop->center[0], (double)nop->center[1],
-                                             (double)nop->center[2], (double)nop->len, R,
-                                             periodic_flags, box_sizes);
 }
 
 
@@ -1594,8 +1542,7 @@ static char *compute_matched_broadcast(
     const struct gx_query_t *all_queries, const int *q_disps, const int *all_q_counts,
     const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
     const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
-    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
-    const int periodic_flags[3], const double box_sizes[3])
+    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode)
 {
     /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
     char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
@@ -1613,7 +1560,6 @@ static char *compute_matched_broadcast(
                               h_pool_types, supply_mask,
                               h_bvh, bvh_root,
                               q->pos, q->h, search_mode,
-                              periodic_flags, box_sizes,
                               match_for_t, NULL);
         }
     }
@@ -1656,7 +1602,7 @@ static void ensure_broadcast_queries(int *available,
 /* Walk-export routed producer — the discovery path for every spec that passes
  * gx_walk_export_eligible().  Sender: per local query mode_b_walk_and_export -> per-peer
  * NodeList -> fixed-size envelopes -> Alltoallv.  Receiver: mode_b_walk_from_start_nodes
- * (resume from the exported NodeList) -> gx_pair_accept (the ghost-exchange SSOT predicate)
+ * (resume from the exported NodeList) -> gx_pair_accept_wrap_and_test (the ghost-exchange SSOT predicate)
  * -> matched[t*num_pool+p] bitmap, the same layout the shared Steps 4-6 install consume.
  * MODE-GENERIC (search_mode is passed through): this is the install target for both search
  * modes, so ONEWAY and SYMMETRIC discover on ONE substrate rather than two.
@@ -1689,7 +1635,6 @@ static char *compute_matched_walk_export(
     const struct ghost_exchange_spec_t *spec,
     const struct gx_query_t *local_queries, int n_local_queries,
     int num_pool, unsigned int supply_mask, int search_mode,
-    const int periodic_flags[3], const double box_sizes[3],
     struct gx_walk_export_result *res)
 {
     if(res) memset(res, 0, sizeof(*res));
@@ -1879,8 +1824,10 @@ static char *compute_matched_walk_export(
                     double hj_dbl = gx_policy_scaled_h(j, spec->radius_policy,
                                                        spec->j_radius_scale,
                                                        spec->safety_factor);
-                    if(gx_pair_accept(e->pos, e->h, P[j].Pos[0], P[j].Pos[1], P[j].Pos[2],
-                                      hj_dbl, search_mode, periodic_flags, box_sizes)) {
+                    if(gx_pair_accept_wrap_and_test(e->pos[0] - (double)P[j].Pos[0],
+                                                    e->pos[1] - (double)P[j].Pos[1],
+                                                    e->pos[2] - (double)P[j].Pos[2],
+                                                    e->h, hj_dbl, search_mode)) {
                         mf[pp] = 1;   /* idempotent: set semantics, duplicates are a no-op */
                     }
                 }
@@ -2302,8 +2249,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     (void)bvh_nnodes;
 
     /* Periodic flags / box sizes for the BVH walker. */
-    int periodic_flags[3] = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
-    double box_sizes[3]   = { boxSize_X, boxSize_Y, boxSize_Z };
 
 
     /* Matched producer selection: for ONEWAY callers the routed top-leaf
@@ -2336,7 +2281,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                             h_compact_xyzh, h_tiles, ntiles,
                                             h_pool, num_pool, h_pool_types, supply_mask,
-                                            h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+                                            h_bvh, bvh_root, search_mode);
         /* Broadcast is the safety path — its alloc failing is terminal.  Drain
          * COLLECTIVELY here, BEFORE Step 4 dereferences matched: a per-rank NULL
          * must become an all-rank controlled stop, never a NULL walk/segfault. */
@@ -2362,14 +2307,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Walk-export discovery: produce the routed set (sender export + bounded receiver
      * walk, collective-safe) and INSTALL it for an eligible spec via the shared
      * ownership-transfer.  Placed here so it reads the SAME g_glt_cache snapshot as the
-     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept), so the
+     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept_wrap_and_test), so the
      * only way this set can differ from a full walk is routing COVERAGE, which is what
      * the per-spec supply-band domination proof establishes. */
     const int walk_export_install = gx_walk_export_eligible(spec);
     if(walk_export_install && NTask > 1) {
         matched_walk_export = compute_matched_walk_export(spec, local_queries, n_local_queries,
                                                   num_pool, supply_mask, search_mode,
-                                                  periodic_flags, box_sizes, &walk_export_res);
+                                                  &walk_export_res);
         /* Install via the shared ownership-transfer, so Steps 4-6 are reached by exactly
          * one path whichever producer supplied the set. */
         if(matched_walk_export && walk_export_res.status == GX_WALK_EXPORT_OK) {

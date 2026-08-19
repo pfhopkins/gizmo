@@ -432,27 +432,32 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    /* Capture periodicity parameters */
-    idx->periodic_flags[0] = TILE_PERIODIC_X;
-    idx->periodic_flags[1] = TILE_PERIODIC_Y;
-    idx->periodic_flags[2] = TILE_PERIODIC_Z;
-    idx->box_sizes[0] = boxSize_X; idx->box_sizes[1] = boxSize_Y; idx->box_sizes[2] = boxSize_Z;
-    idx->box_halves[0] = boxHalf_X; idx->box_halves[1] = boxHalf_Y; idx->box_halves[2] = boxHalf_Z;
-    /* Hard guard: bbox_overlaps_sphere_gpu's periodic-wrap math goes pathological
-     * (every node "overlaps" every query, BVH degenerates to exhaustive scan)
-     * if box_sizes[k] is 0 while periodic_flags[k] is on. Fail loud at the
-     * call site so any regression in the per-TU AllDeviceMirror sync can never
-     * silently corrupt performance again. */
-    for(int k = 0; k < 3; k++) {
-        if(idx->periodic_flags[k] && !(idx->box_sizes[k] > 0.0)) {
-            printf("gpu_spatial_index_build: periodic_flags[%d]=1 but box_sizes[%d]=%g (caller='%s'). "
-                   "Likely cause: this TU's AllDeviceMirror not synced from host All. "
-                   "Confirm gizmo_gpu_sync_all() has run for this timestep.\n",
-                   k, k, idx->box_sizes[k], caller_label ? caller_label : "?");
-            fflush(stdout);
-            endrun(913004);
+#if defined(BOX_PERIODIC)
+    /* Hard guard on the box lengths the wrap depends on.  The device predicates
+     * image through the canonical macros, which read the boxSize_ and boxHalf_
+     * lengths from
+     * this TU's AllDeviceMirror; if that mirror is unsynced they read zero,
+     * every wrapped separation collapses, the per-axis prunes go dead and the
+     * BVH silently degenerates into an exhaustive scan.  Fail loud at the call
+     * site so a regression in the mirror sync can never quietly cost the index.
+     * (Previously this checked the per-axis flags/box_sizes copies; those are
+     * gone with that API, but the failure mode belongs to the globals and is
+     * unchanged, so the guard now reads them directly.) */
+    {
+        const double box_len[3] = { boxSize_X, boxSize_Y, boxSize_Z };
+        const int    wraps[3]   = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
+        for(int k = 0; k < 3; k++) {
+            if(wraps[k] && !(box_len[k] > 0.0)) {
+                printf("gpu_spatial_index_build: axis %d is periodic but its box length is %g "
+                       "(caller='%s'). Likely cause: this TU's AllDeviceMirror not synced from "
+                       "host All. Confirm gizmo_gpu_sync_all() has run for this timestep.\n",
+                       k, box_len[k], caller_label ? caller_label : "?");
+                fflush(stdout);
+                endrun(913004);
+            }
         }
     }
+#endif
 
     /* Build SFC tiles + BVH on CPU */
     sfc_tile_t *h_tiles;
@@ -795,15 +800,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             gnl->d_compact_xyzh = idx_for_stubs->d_compact_xyzh;
             gnl->ntiles   = idx_for_stubs->ntiles;
             gnl->bvh_root = idx_for_stubs->bvh_root;
-            memcpy(gnl->periodic_flags, idx_for_stubs->periodic_flags, 3 * sizeof(int));
-            memcpy(gnl->box_sizes,      idx_for_stubs->box_sizes,      3 * sizeof(double));
-            memcpy(gnl->box_halves,     idx_for_stubs->box_halves,     3 * sizeof(double));
         } else {
             gnl->d_tiles = NULL; gnl->d_bvh = NULL; gnl->d_pool = NULL; gnl->d_compact_xyzh = NULL;
             gnl->ntiles = 0; gnl->bvh_root = 0;
-            memset(gnl->periodic_flags, 0, 3*sizeof(int));
-            memset(gnl->box_sizes,      0, 3*sizeof(double));
-            memset(gnl->box_halves,     0, 3*sizeof(double));
         }
         gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_active_stub", sizeof(int));
         gnl->offsets   = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_offsets_stub", sizeof(int64_t));
@@ -885,9 +884,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->d_compact_xyzh = idx->d_compact_xyzh;
     gnl->ntiles = idx->ntiles;
     gnl->bvh_root = idx->bvh_root;
-    memcpy(gnl->periodic_flags, idx->periodic_flags, 3 * sizeof(int));
-    memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
-    memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
     /* Refresh the h component of the compact array. Two modes (driven by the
      * per-cache gpu_dirty_tracker):
@@ -1002,9 +998,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
-        int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
-        double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
-        double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
         double sr_fac = search_radius_factor;
         double j_rad_scale = j_kernel_radius_scale;
@@ -1012,9 +1005,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *src_pos = d_source_pos;
         const double *compact_xyzh = gnl->d_compact_xyzh;
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
-            int pf[3] = {pf0, pf1, pf2};
-            double bs[3] = {bs0, bs1, bs2};
-            double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
             double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
             double pos_i[3];
@@ -1024,8 +1014,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root,
                                                &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
-                                               NGL_SCRATCH_STRIDE,
-                                               pf, bs, bh);
+                                               NGL_SCRATCH_STRIDE);
             counts[aa] = cnt;
         });
         Kokkos::fence();
@@ -1221,9 +1210,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
-        int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
-        double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
-        double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
         double sr_fac = search_radius_factor;
         double j_rad_scale = j_kernel_radius_scale;
         const double *radii = d_radii;
@@ -1237,9 +1223,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 for(int k = 0; k < n; k++) neighbors[dst + k] = scratch[src + k];
             } else {
                 /* Overflow path: re-walk BVH writing directly into neighbors[] */
-                int pf[3] = {pf0, pf1, pf2};
-                double bs[3] = {bs0, bs1, bs2};
-                double bh[3] = {bh0, bh1, bh2};
                 int i = active[aa];
                 double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
                 double pos_i[3];
@@ -1248,8 +1231,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i, j_rad_scale,
                                          tiles, ntiles, pool, smode,
                                          bvh, bvh_root,
-                                         &neighbors[dst], 0x7fffffff,
-                                         pf, bs, bh);
+                                         &neighbors[dst], 0x7fffffff);
             }
         });
         Kokkos::fence();
