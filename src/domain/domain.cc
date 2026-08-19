@@ -92,9 +92,12 @@ extern int old_MaxPart, new_MaxPart;
 /* Adaptive domain balance weights: these are updated after each decomposition based
    on measured imbalance, following the GADGET-4 approach of dynamically adjusting
    the relative importance of work vs memory balance. */
-static double domain_fac_work = 0.5;    /* weight for gravity work */
-static double domain_fac_workgas = 0.0; /* weight for hydro work (set >0 when gas is present) */
-static double domain_fac_load = 0.5;    /* weight for particle count (memory) */
+/* Exponential moving averages over the decomposition history (domain_update_adaptive_weights),
+   so they must survive a restart: reset to their seeds, the next split lands on different topnode
+   boundaries and every rank gets a different particle set. In All so restart() serializes them. */
+#define domain_fac_work    All.DomainFacWork
+#define domain_fac_workgas All.DomainFacWorkGas
+#define domain_fac_load    All.DomainFacLoad
 
 static struct local_topnode_data
 {

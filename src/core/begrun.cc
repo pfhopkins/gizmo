@@ -348,8 +348,10 @@ void begrun(void)
 #ifdef DIVBCLEANING_DEDNER
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
-        All.FastestWaveSpeed = 0.0;
-        All.FastestWaveDecay = 0.0;
+        /* derived state, not parameters: recomputed only on global timesteps. Zeroing on restart
+           forces a recompute at the resume step, which off a global sync gives a different value
+           than the resumed run carried, perturbing the Dedner damping rate. restart() restores them. */
+        if(RestartFlag != 1) {All.FastestWaveSpeed = 0.0; All.FastestWaveDecay = 0.0;}
 #endif
 #ifdef SINK_PARTICLES
         All.SinkEddingtonFactor = all.SinkEddingtonFactor;

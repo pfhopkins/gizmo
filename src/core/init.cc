@@ -119,6 +119,7 @@ void init(void)
     set_softenings();
 
     All.NumCurrentTiStep = 0;	/* setup some counters */
+    All.DomainFacWork = 0.5; All.DomainFacLoad = 0.5; All.DomainFacWorkGas = 0.0; /* seed adaptive load-balance weights (restarts restore them from All) */
     All.SnapshotFileCount = 0;
     if(RestartFlag == 2)
     {
