@@ -23,6 +23,7 @@
 #define NEIGHBOR_LIST_H
 
 #include <stdint.h>
+#include "../declarations/constants.h"   /* NODELISTLENGTH */
 
 /* CSR-format neighbor list.
  * offsets / total_pairs are 64-bit: a large symmetric search (e.g. m11i +
@@ -39,6 +40,23 @@ struct neighbor_list_t {
 /* Search modes */
 #define NGB_SEARCH_ONEWAY   0  /* r_ij < h_i only (density) */
 #define NGB_SEARCH_SYMMETRIC 1 /* r_ij < max(h_i, h_j) (gradients, hydro) */
+
+/* Fixed-size export envelope carried from a requesting rank to a supply rank:
+ * one query plus the start nodes the sender's walk reached on that peer.  A
+ * (query,peer) needing more than NODELISTLENGTH nodes SPLITS into multiple
+ * envelopes; the receiver walks each independently and dedups through the
+ * matched bitmap, so a split costs an extra envelope and nothing else.
+ *
+ * Lives here rather than beside the host exchange code because both the host
+ * receiver walk and the device receiver traversal consume it, and the device
+ * one compiles in a different translation unit. */
+struct gx_export_envelope_t {
+    double pos[3];
+    double h;
+    int    n_nodes;
+    int    nodes[NODELISTLENGTH];
+    int    _pad;
+};
 
 /* Build a CSR neighbor list for the given active particles.
  *

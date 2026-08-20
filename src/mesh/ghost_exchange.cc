@@ -1388,18 +1388,9 @@ struct gx_query_t {
     int    _pad;
 };
 
-/* Fixed-size export envelope carried from sender to supply rank: one query plus
- * the start nodes its sender walk reached on that peer.  A (query,peer) needing
- * more than NODELISTLENGTH nodes SPLITS into multiple envelopes (the Mode-B
- * export convention); the receiver walks each independently and dedups through
- * the matched bitmap, so a split costs an extra envelope and nothing else. */
-struct gx_export_envelope_t {
-    double pos[3];
-    double h;
-    int    n_nodes;
-    int    nodes[NODELISTLENGTH];
-    int    _pad;
-};
+/* gx_export_envelope_t (the sender->supply wire record) is declared in
+ * mesh/neighbor_list.h: the device receiver traversal compiles in another
+ * translation unit and consumes the same records. */
 
 /* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
  * (mesh/sfc_tiles_functions.h). For each axis, take the periodic-shortened
@@ -1785,11 +1776,34 @@ static char *compute_matched_walk_export(
                     if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
 
     /* (e) RECEIVER: bounded resume-walk from the exported NodeList -> SSOT accept -> bitmap.
-     * HOST-THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized per-envelope
-     * cand slot — each thread writes ONLY its own index (no shared write), walker race-safe.  The
-     * ACCEPT + bitmap set run SERIALLY afterward (cheap): this keeps the matched_walk_export bitmap race-free
-     * AND the installed set order-independent (a bit is set or not), so the set is deterministic. */
-    {
+     * Two interchangeable backends produce the SAME bitmap; the set is
+     * order-independent (a bit is set or it is not), so which one ran is not
+     * observable downstream.
+     *
+     * The device traversal is tried first and answers whenever the tree mirror
+     * is current.  It declines rank-locally otherwise, and this window holds no
+     * collectives, so a rank that declines simply does the work itself and no
+     * other rank needs to agree.  Declining is for an unusable device tree state
+     * or an allocation failure -- never for a disagreement, which would be a bug
+     * to fix rather than to route around. */
+    int receiver_done_on_device = 0;
+    if(tot_r > 0) {
+        std::vector<int> envelope_peer((size_t)tot_r, -1);
+        for(int t = 0; t < NTask; t++) {
+            for(int r = 0; r < rc[t]; r++) {envelope_peer[(size_t)rd[t] + r] = t;}
+        }
+        receiver_done_on_device =
+            (gx_device_receiver_walk(recv, tot_r, envelope_peer.data(),
+                                     supply_mask, search_mode,
+                                     spec->radius_policy, walker_j_reach_scale,
+                                     g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
+                                     num_pool, matched_walk_export) == 0);
+    }
+    /* Host backend.  THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized
+     * per-envelope cand slot — each thread writes ONLY its own index (no shared write), walker
+     * race-safe.  The ACCEPT + bitmap set run SERIALLY afterward (cheap), which keeps the
+     * matched_walk_export bitmap race-free. */
+    if(!receiver_done_on_device) {
         std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 16)

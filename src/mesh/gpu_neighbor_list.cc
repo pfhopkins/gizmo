@@ -30,7 +30,10 @@
 #include "gpu_neighbor_list.h"
 #include "gpu_dirty_tracker.h"
 #include "neighbor_list.h"
-#include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift */
+#include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift, ghost_get_num_local */
+#include "ghost_exchange_functions.h"   /* the shared accept predicates (canonical box wrap) */
+#include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, force_host_lazy_drift_ti */
+#include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
@@ -1442,6 +1445,529 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
     /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
     gpu_ngb_list_free(&gpu_nl, NULL);
 }
+
+
+/* ===================================================================== */
+/* Device receiver traversal for request-driven ghost discovery.          */
+/* ===================================================================== */
+/* The supply-rank half: each received envelope carries a peer's query plus the
+ * start nodes that peer's walk reached in THIS rank's tree, and the answer is
+ * the set of local particles the query admits.  The host does the same work in
+ * mode_b_walk_from_start_nodes + the accept loop that follows it; this is the
+ * device form of exactly that, and the two are required to produce the same set.
+ *
+ * Node geometry comes from the SoA mirror, never the managed Nodes[]/Extnodes[]
+ * arrays: streaming those from a kernel is memory-bound to the point of erasing
+ * the win.  Leaf fields are staged into a compact array first, for the same
+ * reason and because the walk-export path does not build the tile geometry that
+ * other device searches read.
+ *
+ * The device walk cannot drift a stale node the way the host walk does (that
+ * needs a lock).  It does not have to: it only runs when the node sweep has
+ * certified the whole tree current at this time AND no host lazy drift has
+ * happened since, which is the same pair of conditions the device gravity walk
+ * uses.  The certification is checked immediately before launch, because the
+ * discovery walks themselves arm the lazy-drift latch — a sender walk earlier in
+ * the same exchange can withdraw device legality.  Ordering violations therefore
+ * make the test fail and route to the host, never corrupt a result. */
+
+/* Per-leaf staged record.  `type` folds in the host's Mass > 0 test (negative =
+ * the host would have rejected this particle) and `pool` folds in both the
+ * NumPart-when-built bound and the pool-membership lookup (negative = not a
+ * supply candidate), so the kernel tests two integers where the host tests four
+ * conditions across two arrays. */
+struct gx_recv_leaf_t {
+    double pos[3];
+    int    type;
+    int    pool;
+};
+
+/* One envelope's traversal.  Returns the number of accepted pool slots, writing
+ * the first `cap` of them to `out` (the caller re-runs with the true count when
+ * a row overflows its scratch slot).  Mirrors mode_b_walk_impl's three index
+ * classes exactly; see mesh/mode_b_local_walker.cc for the host original.
+ *
+ * `anomaly` reports the one state the host treats as fatal: an index in the gap
+ * between the particle slots and the node base, which belongs to neither and
+ * means the tree is malformed.  The host stops the run there, so the device
+ * cannot simply stop walking -- that would silently truncate an envelope.  It
+ * records the state and the caller reproduces the host's stop. */
+KOKKOS_INLINE_FUNCTION
+static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
+                            unsigned int supply_mask,
+                            const Vec3<MyFloat> *node_center,
+                            const MyFloat *node_len,
+                            const int *node_sibling,
+                            const int *node_nextnode,
+                            const unsigned int *node_bitflags,
+                            const int *nextnode_aux,
+                            const struct gx_recv_leaf_t *leaves,
+                            int tree_base, int tree_slots, int node_capacity,
+                            int foreign_base, int pseudo_start, int num_local,
+                            int *anomaly, int *out, int cap)
+{
+    const double px = env.pos[0], py = env.pos[1], pz = env.pos[2];
+    const double h_q = env.h;
+    int n_found = 0;
+
+    for(int k = 0; k < env.n_nodes; k++) {
+        const int nl = env.nodes[k];
+        if(nl < 0) {break;}                                  /* -1 terminates the list */
+        if(nl < tree_base || nl >= pseudo_start) {continue;}  /* arrived over MPI: validate */
+        if(nl - tree_base >= node_capacity) {   /* precondition leaves this unreachable */
+            Kokkos::atomic_store(anomaly, 1);
+            break;
+        }
+        int no = node_nextnode[nl - tree_base];               /* open the exported node */
+
+        while(no >= 0) {
+            if(no >= tree_slots && no < tree_base) {
+                Kokkos::atomic_store(anomaly, 1);   /* malformed tree; caller stops the run */
+                break;
+            }
+            if(no < tree_slots) {
+                if(no < num_local) {
+                    /* The host filters a leaf twice -- once while walking, with
+                     * NEAREST_XYZ, and again in the accept pass, with
+                     * NGB_PERIODIC_BOX_LONG_*.  The two macro families differ only
+                     * in that the first keeps the sign of the wrapped separation
+                     * and the second takes its magnitude, so for any separation
+                     * the search can actually admit they give the same squared
+                     * distance and the accept form alone reproduces the pair.
+                     * The equivalence gate is what establishes that, per pair:
+                     * it expects the candidate sets to match exactly, and any
+                     * disagreement has to be shown to be a boundary case rather
+                     * than assumed to be one. */
+                    const struct gx_recv_leaf_t &lf = leaves[no];
+                    if(lf.type >= 0 && lf.pool >= 0 && (supply_mask & (1u << lf.type))) {
+                        if(gx_pair_accept_wrap_and_test(px - lf.pos[0], py - lf.pos[1], pz - lf.pos[2],
+                                                        h_q, 0.0, NGB_SEARCH_ONEWAY)) {
+                            if(n_found < cap) {out[n_found] = lf.pool;}
+                            n_found++;
+                        }
+                    }
+                }
+                no = nextnode_aux[no];
+            } else if(no < pseudo_start) {
+                const int kn = no - tree_base;
+                if(kn < 0 || kn >= node_capacity) {
+                    Kokkos::atomic_store(anomaly, 1);
+                    break;
+                }
+                /* Re-entering the top-level tree means this exported branch is
+                 * exhausted (the sender owns everything above it). */
+                if(node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
+                const double hw = 0.5 * (double)node_len[kn];
+                const int do_open =
+                    gx_extended_overlap_wrap_and_test((double)node_center[kn][0] - px,
+                                                      (double)node_center[kn][1] - py,
+                                                      (double)node_center[kn][2] - pz,
+                                                      hw, hw, hw, h_q);
+                if(do_open) {
+                    const int child = node_nextnode[kn];
+                    /* An imported foreign subtree holds no locally-owned
+                     * particles, so there is nothing below it to find. */
+                    no = (child >= foreign_base && child < pseudo_start)
+                             ? node_sibling[kn] : child;
+                } else {
+                    no = node_sibling[kn];
+                }
+            } else {
+                /* Pseudo-particle: another rank's subtree root, nothing local
+                 * below it.  Step past exactly as the host walk does. */
+                no = nextnode_aux[tree_slots + (no - pseudo_start)];
+            }
+        }
+    }
+    return n_found;
+}
+
+/* Envelopes are processed in fixed-size batches, and each batch's accepted pairs
+ * are emitted through one buffer of a fixed size, so neither the scratch nor the
+ * output footprint is set by however many envelopes arrived or how many pairs
+ * they admit.  Rows are independent and the answer is a set, so splitting
+ * changes nothing about the result. */
+static const long GX_RECV_BATCH  = 4096;   /* envelopes per walk launch */
+static const int  GX_RECV_STRIDE = 512;    /* per-row scratch slots before a re-walk */
+/* One budget serves the scratch and the emission buffer; a batch whose pairs do
+ * not fit is emitted in several passes rather than abandoned, because declining
+ * on a dense batch would send exactly the large-N case this exists to serve back
+ * to the host. */
+static const long GX_RECV_PAIR_FLOOR = GX_RECV_BATCH * (long)GX_RECV_STRIDE;
+
+/* kokkos_malloc THROWS on OOM; catch -> NULL so the caller's NULL check decides
+   what to do.  Same pattern as system/gpu_particles_arena.cc and
+   gravity/gpu_topology_finalize.cc. */
+template <class T>
+static T *gx_recv_alloc(const char *label, size_t count)
+{
+    try {
+        return (T *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, count * sizeof(T));
+    } catch(const std::exception &) {
+        return NULL;
+    }
+}
+
+
+int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
+                            const int *envelope_peer,
+                            unsigned int supply_mask, int search_mode,
+                            mode_b_radius_policy_t radius_policy, double j_reach_scale,
+                            const int *j_to_pool, int npart_bound,
+                            int num_pool, char *matched)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    (void)radius_policy; (void)j_reach_scale;
+
+    /* Symmetric search needs the per-type node bands, which are not mirrored to
+     * the device yet; that is the next stage of this work.  Until then the host
+     * walk answers those callers. */
+    if(search_mode != NGB_SEARCH_ONEWAY) {return 1;}
+    if(n_env <= 0 || num_pool <= 0 || !matched) {return 1;}
+
+    const int num_local = ghost_get_num_local();
+    if(num_local <= 0) {return 1;}
+
+    /* DISPATCH FLOOR.  Staging the local leaves costs O(num_local) whatever the
+     * envelopes ask for, while the traversal it enables scales with the envelope
+     * count -- so on a step with little to answer the staging is pure overhead,
+     * and the corridor already loses the small and middle bins to fixed per-call
+     * costs of exactly this kind.  Requiring each envelope to cover a fixed
+     * number of staged particles keeps the device path out of that regime.
+     * Structural and rank-local: no caller identity, no tuning knob.
+     * The ratio is provisional and is what the pricing arm sets. */
+    const long GX_RECV_LEAVES_PER_ENVELOPE = 32;
+    if(n_env * GX_RECV_LEAVES_PER_ENVELOPE < (long)num_local) {return 1;}
+
+    /* A tree mirror is required, and it exists whenever a tree does: the build
+     * pipeline that fills it runs inside force_treebuild, which every
+     * configuration performs because neighbour search needs the tree. */
+    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->center || !soa->len || !soa->sibling || !soa->nextnode ||
+       !soa->bitflags || !soa->nextnode_aux ||
+       All.TreeNodeIndexBase <= 0 || Numnodestree <= 0) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("gx_device_receiver_walk: task %d has node geometry certified current but no usable tree mirror; answering on the host\n",
+                   ThisTask);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    const int tree_base     = All.TreeNodeIndexBase;
+    const int tree_slots    = All.TreeParticleSlots;
+    const int node_capacity = gpu_gravity_tree_capacity();
+    const int foreign_base  = tree_base + MaxNodes;
+    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
+    /* The walk may legally reach any index below the pseudo-particle region, which
+     * includes the foreign range, so the mirror has to cover all of it.  A short
+     * mirror is a precondition failure, not a malformed tree: decline, and the
+     * host answers -- but say so, because a run that quietly answered everything
+     * on the host would otherwise look exactly like a run where the device did
+     * the work.  This says nothing about whether the geometry is current; that
+     * is established below. */
+    if(node_capacity < MaxNodes + MaxForeignNodes ||
+       soa->nextnode_aux_size < tree_slots + NTopleaves) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("gx_device_receiver_walk: task %d tree mirror covers %d nodes and %d particle links, short of the %d nodes and %d links the walk can reach; answering on the host\n",
+                   ThisTask, node_capacity, soa->nextnode_aux_size,
+                   MaxNodes + MaxForeignNodes, tree_slots + NTopleaves);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    /* The traversal reads node geometry, which drifts, so the nodes have to be
+     * current before it runs -- the host walk achieves that by drifting each
+     * stale node as it reaches it, under a lock, which a kernel cannot do.
+     *
+     * Requiring some earlier caller to have swept them is not enough: the sweep
+     * lives on the gravity path, so with self-gravity disabled nothing would
+     * ever perform it and this traversal could never run at all, on problems
+     * whose tree and mirror are perfectly valid.  Perform the sweep here when
+     * nothing else has.  It is the same work the host walk would do node by
+     * node, done once for the whole tree, and it is rank-local.
+     *
+     * The one case it cannot repair is a host lazy drift that has already
+     * advanced nodes to this time: the sweep skips nodes that are already
+     * current and so would leave their mirrors behind. Then, and only then, the
+     * host answers. */
+    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+    if(!gpu_gravity_soa_drift_certified(All.Ti_Current)) {
+#ifdef SELFGRAVITY_OFF
+        /* No gravity walk exists to sweep the nodes in this build, so without
+         * this the traversal could never run at all, however valid the tree and
+         * its mirror are. */
+        if(gpu_force_drift_nodes(All.Ti_Current) != 0) {return 1;}
+#else
+        /* Gravity owns the sweep. Sweeping here instead would drift the whole
+         * tree eagerly where the walks drift only what they touch, so leave the
+         * geometry alone and let the host answer. */
+        return 1;
+#endif
+    }
+
+    using DevSp = GIZMO_KOKKOS_DEVICE_SPACE;
+
+    /* One envelope's accepted pairs are distinct local particles, so a row can
+     * never exceed num_local.  Sizing the emission buffer to at least that lets
+     * every row fit whole, so no batch is ever abandoned for being dense and the
+     * decline paths all sit before anything is written. */
+    const long pair_cap = (GX_RECV_PAIR_FLOOR > (long)num_local) ? GX_RECV_PAIR_FLOOR : (long)num_local;
+
+    /* Device buffers.  Allocated once for the whole call and reused across every
+     * batch.  A failure here is reported as a decline, not an abort: the caller
+     * runs the host walk, and this window holds no collectives so no other rank
+     * needs to agree. */
+    /* Host buffers first: std::vector throws rather than returning null, and a
+     * throw escaping this function would take the rank down between the envelope
+     * exchange and the caller's reduction.  Reserving them here turns that into
+     * the same decline every other resource failure produces. */
+    std::vector<struct gx_recv_leaf_t>     leaf_h;
+    std::vector<struct gx_export_envelope_t> env_h;
+    std::vector<int>     counts_h;
+    std::vector<int64_t> offsets_h;
+    std::vector<int>     pairs_h;
+    try {
+        leaf_h.resize((size_t)num_local);
+        env_h.resize((size_t)GX_RECV_BATCH);
+        counts_h.resize((size_t)GX_RECV_BATCH);
+        offsets_h.resize((size_t)GX_RECV_BATCH);
+        pairs_h.resize((size_t)pair_cap);
+    } catch(const std::bad_alloc &) {
+        printf("gx_device_receiver_walk: task %d could not reserve host staging for %d local leaves; answering on the host\n",
+               ThisTask, num_local);
+        fflush(stdout);
+        return 1;
+    }
+
+    struct gx_recv_leaf_t *leaf_d = gx_recv_alloc<struct gx_recv_leaf_t>("gx_recv_leaf", (size_t)num_local);
+    struct gx_export_envelope_t *env_d = gx_recv_alloc<struct gx_export_envelope_t>("gx_recv_env", (size_t)GX_RECV_BATCH);
+    int     *scratch_d = gx_recv_alloc<int>("gx_recv_scratch", (size_t)GX_RECV_BATCH * GX_RECV_STRIDE);
+    int     *counts_d  = gx_recv_alloc<int>("gx_recv_counts",  (size_t)GX_RECV_BATCH);
+    int64_t *offsets_d = gx_recv_alloc<int64_t>("gx_recv_offsets", (size_t)GX_RECV_BATCH);
+    int     *pairs_d   = gx_recv_alloc<int>("gx_recv_pairs",   (size_t)pair_cap);
+    int     *anomaly_d = gx_recv_alloc<int>("gx_recv_anomaly", 1);
+
+    if(!leaf_d || !env_d || !scratch_d || !counts_d || !offsets_d || !pairs_d || !anomaly_d) {
+        printf("gx_device_receiver_walk: task %d could not reserve device buffers for %d local leaves; answering on the host\n",
+               ThisTask, num_local);
+        fflush(stdout);
+        if(leaf_d)    {Kokkos::kokkos_free<DevSp>(leaf_d);}
+        if(env_d)     {Kokkos::kokkos_free<DevSp>(env_d);}
+        if(scratch_d) {Kokkos::kokkos_free<DevSp>(scratch_d);}
+        if(counts_d)  {Kokkos::kokkos_free<DevSp>(counts_d);}
+        if(offsets_d) {Kokkos::kokkos_free<DevSp>(offsets_d);}
+        if(pairs_d)   {Kokkos::kokkos_free<DevSp>(pairs_d);}
+        if(anomaly_d) {Kokkos::kokkos_free<DevSp>(anomaly_d);}
+        return 1;
+    }
+
+    using UmHostI   = Kokkos::View<int*,     Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmHostI64 = Kokkos::View<int64_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmDevI    = Kokkos::View<int*,     DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmDevI64  = Kokkos::View<int64_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+    /* Stage the leaf fields the walk reads.  One pass over the local particles,
+     * host-side, into a compact record; the AoS is never touched from device. */
+    {
+#pragma omp parallel for schedule(static)
+        for(int j = 0; j < num_local; j++) {
+            struct gx_recv_leaf_t rec;
+            rec.pos[0] = (double)P[j].Pos[0];
+            rec.pos[1] = (double)P[j].Pos[1];
+            rec.pos[2] = (double)P[j].Pos[2];
+            rec.type   = (P[j].Mass > 0) ? (int)P[j].Type : -1;
+            int pool = -1;
+            if(j_to_pool && j < npart_bound) {
+                const int pp = j_to_pool[j];
+                if(pp >= 0 && pp < num_pool) {pool = pp;}
+            }
+            rec.pool = pool;
+            leaf_h[(size_t)j] = rec;
+        }
+        Kokkos::View<struct gx_recv_leaf_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            lh(leaf_h.data(), (size_t)num_local);
+        Kokkos::View<struct gx_recv_leaf_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            ld(leaf_d, (size_t)num_local);
+        Kokkos::deep_copy(ld, lh);
+    }
+
+    {   /* clear the malformed-tree report */
+        int zero = 0;
+        Kokkos::View<const int, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> zh(&zero);
+        Kokkos::View<int, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>> zd(anomaly_d);
+        Kokkos::deep_copy(zd, zh);
+    }
+
+    const Vec3<MyFloat>  *node_center   = soa->center;
+    const MyFloat        *node_len      = soa->len;
+    const int            *node_sibling  = soa->sibling;
+    const int            *node_nextnode = soa->nextnode;
+    const unsigned int   *node_bitflags = soa->bitflags;
+    const int            *nextnode_aux  = soa->nextnode_aux;
+
+    int status = 0;
+
+    for(long base = 0; base < n_env && status == 0; base += GX_RECV_BATCH) {
+        const int nb = (int)((n_env - base < GX_RECV_BATCH) ? (n_env - base) : GX_RECV_BATCH);
+        for(int b = 0; b < nb; b++) {env_h[(size_t)b] = envelopes[base + b];}
+        {
+            Kokkos::View<struct gx_export_envelope_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                eh(env_h.data(), (size_t)nb);
+            Kokkos::View<struct gx_export_envelope_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                ed(env_d, (size_t)nb);
+            Kokkos::deep_copy(ed, eh);
+        }
+
+        /* Walk: bounded write into the row's scratch slot, true count returned. */
+        {
+            const struct gx_export_envelope_t *env_v = env_d;
+            const struct gx_recv_leaf_t *leaf_v = leaf_d;
+            int *scratch_v = scratch_d; int *counts_v = counts_d; int *anom_v = anomaly_d;
+            const int stride = GX_RECV_STRIDE;
+            Kokkos::parallel_for("gx_recv_walk", nb, KOKKOS_LAMBDA(int b) {
+                counts_v[b] = gx_recv_walk_one(env_v[b], supply_mask,
+                                               node_center, node_len, node_sibling,
+                                               node_nextnode, node_bitflags, nextnode_aux,
+                                               leaf_v,
+                                               tree_base, tree_slots, node_capacity,
+                                               foreign_base, pseudo_start, num_local,
+                                               anom_v,
+                                               &scratch_v[(size_t)b * stride], stride);
+            });
+            Kokkos::fence();
+            gizmo_gpu_check_last_error("gx_recv_walk", nb);
+        }
+
+        int64_t batch_total = 0;
+        {
+            int *counts_v = counts_d; int64_t *offsets_v = offsets_d;
+            Kokkos::parallel_scan("gx_recv_scan", nb,
+                KOKKOS_LAMBDA(int b, int64_t &update, const bool final) {
+                    const int64_t v = (int64_t)counts_v[b];
+                    if(final) {offsets_v[b] = update;}
+                    update += v;
+                }, batch_total);
+            Kokkos::fence();
+        }
+        if(batch_total < 0) {
+            printf("gx_device_receiver_walk: task %d prefix sum over %d envelopes produced a negative pair count (%lld)\n",
+                   ThisTask, nb, (long long)batch_total);
+            fflush(stdout);
+            endrun(90001025);
+            status = 1; break;
+        }
+        if(batch_total == 0) {continue;}
+
+        Kokkos::deep_copy(UmHostI(counts_h.data(), (size_t)nb),  UmDevI(counts_d, (size_t)nb));
+        Kokkos::deep_copy(UmHostI64(offsets_h.data(), (size_t)nb), UmDevI64(offsets_d, (size_t)nb));
+
+        /* Emit in as many passes as the fixed output buffer needs.  Split points
+         * are row boundaries chosen from the counts already in hand, so every
+         * pass fits by construction and no batch is ever abandoned for being
+         * dense. */
+        int r0 = 0;
+        while(r0 < nb && status == 0) {
+            int r1 = r0; int64_t sub_total = 0;
+            while(r1 < nb && sub_total + (int64_t)counts_h[(size_t)r1] <= pair_cap) {
+                sub_total += (int64_t)counts_h[(size_t)r1];
+                r1++;
+            }
+            if(r1 == r0) {
+                /* The buffer holds num_local, and one envelope cannot admit a
+                 * local particle twice -- the exported subtrees are disjoint --
+                 * so a row this large means the traversal emitted a duplicate. */
+                printf("gx_device_receiver_walk: task %d envelope %ld admits %d pairs against %d local particles; the traversal has emitted a duplicate\n",
+                       ThisTask, base + r0, counts_h[(size_t)r0], num_local);
+                fflush(stdout);
+                endrun(90001026);
+                status = 1; break;
+            }
+            const int64_t sub_base = offsets_h[(size_t)r0];
+            {
+                const struct gx_export_envelope_t *env_v = env_d;
+                const struct gx_recv_leaf_t *leaf_v = leaf_d;
+                int *scratch_v = scratch_d; int *counts_v = counts_d;
+                int64_t *offsets_v = offsets_d; int *pairs_v = pairs_d; int *anom_v = anomaly_d;
+                const int stride = GX_RECV_STRIDE;
+                const int rr0 = r0;
+                Kokkos::parallel_for("gx_recv_compact", r1 - r0, KOKKOS_LAMBDA(int t) {
+                    const int b = rr0 + t;
+                    const int n = counts_v[b];
+                    if(n <= 0) {return;}
+                    const int64_t dst = offsets_v[b] - sub_base;
+                    if(n <= stride) {
+                        const size_t src = (size_t)b * stride;
+                        for(int c = 0; c < n; c++) {pairs_v[dst + c] = scratch_v[src + c];}
+                    } else {
+                        /* Overflowed its scratch slot: re-walk straight into the
+                         * final position. */
+                        gx_recv_walk_one(env_v[b], supply_mask,
+                                         node_center, node_len, node_sibling,
+                                         node_nextnode, node_bitflags, nextnode_aux,
+                                         leaf_v,
+                                         tree_base, tree_slots, node_capacity,
+                                         foreign_base, pseudo_start, num_local,
+                                         anom_v, &pairs_v[dst], n);
+                    }
+                });
+                Kokkos::fence();
+                gizmo_gpu_check_last_error("gx_recv_compact", r1 - r0);
+            }
+
+            Kokkos::deep_copy(UmHostI(pairs_h.data(), (size_t)sub_total),
+                              UmDevI(pairs_d, (size_t)sub_total));
+
+            /* Scatter into the bitmap.  It is MPI-facing host memory, and setting
+             * a bit twice is a no-op, so the host does it. */
+            for(int b = r0; b < r1; b++) {
+                const int t = envelope_peer[base + b];
+                if(t < 0 || t >= NTask || t == ThisTask) {continue;}
+                char *mf = matched + (size_t)t * (size_t)num_pool;
+                const int64_t off = offsets_h[(size_t)b] - sub_base;
+                const int n = counts_h[(size_t)b];
+                for(int c = 0; c < n; c++) {mf[pairs_h[(size_t)(off + c)]] = 1;}
+            }
+            r0 = r1;
+        }
+    }
+
+    int anomaly = 0;
+    {
+        Kokkos::View<int, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ah(&anomaly);
+        Kokkos::View<const int, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ad(anomaly_d);
+        Kokkos::deep_copy(ah, ad);
+    }
+
+    Kokkos::kokkos_free<DevSp>(leaf_d);
+    Kokkos::kokkos_free<DevSp>(env_d);
+    Kokkos::kokkos_free<DevSp>(scratch_d);
+    Kokkos::kokkos_free<DevSp>(counts_d);
+    Kokkos::kokkos_free<DevSp>(offsets_d);
+    Kokkos::kokkos_free<DevSp>(pairs_d);
+    Kokkos::kokkos_free<DevSp>(anomaly_d);
+
+    /* The host walk stops the run on this state, so reaching it here means the
+     * same thing.  Falling back would only hide a malformed tree: the host walk
+     * would meet it too. */
+    if(anomaly) {
+        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base; the tree is malformed\n",
+               ThisTask);
+        fflush(stdout);
+        endrun(90001024);
+        return 1;
+    }
+    /* Bits already set when a pass gave up need no undo: the caller falls back to
+     * the host walk, which sets exactly the same bits, and setting a bit twice is
+     * a no-op. */
+    return status;
+}
+
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
