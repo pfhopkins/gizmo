@@ -94,11 +94,24 @@ GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
                                               DeviceContext& ctx)
 {
-    ctx.TimeBinActive_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
-    for(int k = 0; k < TIMEBINS; k++) { ctx.TimeBinActive_uvm[k] = TimeBinActive[k]; }
-    ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-    *ctx.need_wakeup_uvm = 0;
+    /* All owned pointers null before the first request, so a failure part-way
+     * leaves nothing indeterminate for cleanup_device_context to release. */
+    ctx.TimeBinActive_uvm = NULL; ctx.need_wakeup_uvm = NULL;
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
+    ctx.ismdc_uvm = nullptr;
+#endif
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
+    ctx.TimeBinActive_uvm = (int *) gizmo_gpu_alloc_shared(TIMEBINS * sizeof(int), NULL);
+    ctx.need_wakeup_uvm = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    if(!ctx.TimeBinActive_uvm || !ctx.need_wakeup_uvm) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7722,
+            "hydro forces: could not stage the timebin table; the forces are not computed",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    for(int k = 0; k < TIMEBINS; k++) { ctx.TimeBinActive_uvm[k] = TimeBinActive[k]; }
+    *ctx.need_wakeup_uvm = 0;
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* Host-precompute per-active ISMDustChem passive-scalar diffusion values.
@@ -117,12 +130,20 @@ void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
                         ii, ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + ki, 0, CellP);
             }
         }
-        ctx.ismdc_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-            (size_t)args.num_active * n_ismdc * sizeof(double));
-        memcpy(ctx.ismdc_uvm, ismdc_host, (size_t)args.num_active * n_ismdc * sizeof(double));
+        const size_t ismdc_bytes = (size_t)args.num_active * n_ismdc * sizeof(double);
+        ctx.ismdc_uvm = (double *) gizmo_gpu_alloc_shared(ismdc_bytes, NULL);
+        if(ctx.ismdc_uvm) { memcpy(ctx.ismdc_uvm, ismdc_host, ismdc_bytes); }
         delete[] ismdc_host;
-    } else {
-        ctx.ismdc_uvm = nullptr;
+        if(!ctx.ismdc_uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "hydro forces: could not stage the dust-chemistry diffusion species "
+                     "(%.1f MB) for %d active cells; the forces are not computed",
+                     (double) ismdc_bytes / (1024.0 * 1024.0), args.num_active);
+            gizmo_request_controlled_stop(7722, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
     }
 #endif
 }

@@ -83,15 +83,31 @@ void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
 
     /* Sticky single-int wakeup flag, lives across all subgroups of one
      * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm. */
-    ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-    *ctx.need_wakeup_uvm = 0;
+    ctx.need_wakeup_uvm = NULL;
+#if defined(DM_SIDM)
+    ctx.geofactor_uvm = NULL;
+#endif
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
-
+    ctx.need_wakeup_uvm = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    /* Zeroed the moment it exists: cleanup_device_context reads it on every exit
+     * path, including the failure return below. */
+    if(ctx.need_wakeup_uvm) { *ctx.need_wakeup_uvm = 0; }
 #if defined(DM_SIDM)
     /* GeoFactorTable mirror for the SIDM probability lookup. ~8 KB total
      * (GEOFACTOR_TABLE_LENGTH doubles). */
-    ctx.geofactor_uvm = (MyDouble *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-        GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
+    ctx.geofactor_uvm = (MyDouble *) gizmo_gpu_alloc_shared(
+        GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble), NULL);
+    if(!ctx.geofactor_uvm) { ctx.populate_failed = 1; }
+#endif
+    if(!ctx.need_wakeup_uvm || ctx.populate_failed) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7723,
+            "adaptive-softening forces: could not stage the wakeup flag or scattering table; "
+            "the forces are not computed",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+#if defined(DM_SIDM)
     std::memcpy(ctx.geofactor_uvm, GeoFactorTable, GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
 #endif
 

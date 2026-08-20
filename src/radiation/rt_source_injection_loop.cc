@@ -111,7 +111,18 @@ void RtSrcInjectionSpec::populate_device_context(const neighbor_loop_args& args,
         return;
     }
     RtSrcLocalIn *uvm = (RtSrcLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(RtSrcLocalIn));
+        gizmo_gpu_alloc_shared((size_t) N * sizeof(RtSrcLocalIn), NULL);
+    if(!uvm) {
+        ctx.per_active_local = nullptr;
+        ctx.populate_failed = 1;
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "radiation source injection: could not stage %d active sources (%.1f MB); "
+                 "no photons are injected",
+                 N, (double)((size_t) N * sizeof(RtSrcLocalIn)) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7729, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     std::memcpy(uvm, aux->host_locals, N * sizeof(RtSrcLocalIn));
     ctx.per_active_local = uvm;
 }

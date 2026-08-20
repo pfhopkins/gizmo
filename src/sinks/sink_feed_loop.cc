@@ -157,7 +157,17 @@ void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
     const int N = args.num_active;
     if(N > 0) {
         SinkFeedLocalIn *uvm = (SinkFeedLocalIn *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkFeedLocalIn));
+            gizmo_gpu_alloc_shared((size_t) N * sizeof(SinkFeedLocalIn), NULL);
+        if(!uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "sink feedback: could not stage %d active sinks (%.1f MB); "
+                     "no accretion or feedback is applied",
+                     N, (double)((size_t) N * sizeof(SinkFeedLocalIn)) / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         std::memcpy(uvm, aux->host_locals, N * sizeof(SinkFeedLocalIn));
         ctx.per_active_local = uvm;
     }
@@ -176,8 +186,17 @@ void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
     const int n_total = ctx.num_total;
     if(n_total > 0) {
         unsigned char *elig = (unsigned char *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                (size_t)n_total * sizeof(unsigned char));
+            gizmo_gpu_alloc_shared((size_t) n_total * sizeof(unsigned char), NULL);
+        if(!elig) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "sink feedback: could not stage the binary-merge eligibility "
+                     "flags for %d particles (%.1f MB)",
+                     n_total, (double) n_total / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         for(int j = 0; j < n_total; j++) {
             elig[j] = (P[j].Type == 5
                        && is_star_eligible_for_binary_merge_away(j)) ? 1 : 0;

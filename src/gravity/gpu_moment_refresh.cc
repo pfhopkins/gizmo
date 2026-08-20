@@ -134,15 +134,20 @@ gpu_force_softening_kernelradius(const struct particle_data *Pp, int p)
 /* (rt_get_source_luminosity, sink_lum_bol, cr_get_source_injection_rate)*/
 /* are not GPU-callable.                                                */
 /* =================================================================== */
-/* kokkos_malloc throws when it cannot serve the request, so the NULL checks guarding the
- * pools below -- which free the pool and hand the caller a soft bad-stop -- never run if it
- * is called directly: the run aborts on the exception instead.  Returning NULL is what those
- * branches are written against.  Nothing is caught when the allocation succeeds. */
+/* Exhaustion is reported by returning NULL, which the pool guards below -- free
+ * the pool, hand the caller a soft bad-stop -- are written against. The space is
+ * a template parameter here because the raw mirror pool picks its space by
+ * config; on builds where the spaces coincide the branches collapse. */
 template <class Space>
 static void *mr_alloc(const char *label, size_t bytes)
 {
-    try { return Kokkos::kokkos_malloc<Space>(label, bytes); }
-    catch(const std::exception &) { return NULL; }
+    if constexpr (std::is_same<Space, GIZMO_KOKKOS_SHARED_SPACE>::value) {
+        return gizmo_gpu_alloc_shared(bytes, label);
+    } else if constexpr (std::is_same<Space, Kokkos::HostSpace>::value) {
+        return gizmo_gpu_alloc_host(bytes, label);
+    } else {
+        return gizmo_gpu_alloc_device(bytes, label);
+    }
 }
 
 namespace {

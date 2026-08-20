@@ -296,8 +296,23 @@ void rt_update_chemistry(void)
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* device RT chemistry kernel reads All mirrors; tiny-N CPU path reads host All directly */
         /* Gather into compact SharedSpace arrays */
         int batch_n = N_active;
-        struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_n * sizeof(struct gas_cell_data));
+        const size_t chem_stage_bytes = (size_t) batch_n * (sizeof(struct particle_data)
+                                                            + sizeof(struct gas_cell_data));
+        struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) batch_n * sizeof(struct particle_data), NULL);
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) batch_n * sizeof(struct gas_cell_data), NULL);
+        if(!compact_P || !compact_Cell) {
+            /* Released here and nulled, because this path falls through to the
+             * shared release at the end of the block rather than returning. */
+            if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell); compact_Cell = NULL;}
+            if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);    compact_P = NULL;}
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "radiative chemistry: could not stage %d cells (%.1f MB); "
+                     "their ionization states are not advanced",
+                     batch_n, (double) chem_stage_bytes / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7719, msg, __FILE__, __LINE__, __FUNCTION__);
+            batch_n = 0;
+        }
         for(int j = 0; j < batch_n; j++)
         {
             compact_P[j]    = P[chem_indices[j]];
@@ -322,8 +337,8 @@ void rt_update_chemistry(void)
         }
         gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+        if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+        if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
 
     } else if(N_active > 0)
     { /* CPU path: OpenMP-parallel dispatch (fallback for small N on GPU builds) */

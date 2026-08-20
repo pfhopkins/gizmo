@@ -93,8 +93,20 @@ extern "C" void gpu_force_update_tree(void)
     const size_t rt_bytes = 0;
 #endif
     const size_t int_bytes = ((size_t) ntop + 1 + (size_t) n_active_alloc) * sizeof(int);
-    char *scratch_dev = (char *)Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                "force_update_scratch", rt_bytes + int_bytes);
+    char *scratch_dev = (char *) gizmo_gpu_alloc_shared(rt_bytes + int_bytes, "force_update_scratch");
+    /* Refused scratch is handled the way a failed node drift already is below:
+     * this rank reports zero changed nodes and still enters the all-rank
+     * exchange, which is legal -- force_finish_kick_nodes only reads
+     * DomainList on ranks whose own count is nonzero. */
+    const bool scratch_ok = (scratch_dev != NULL);
+    if(!scratch_ok) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "tree-force update: could not stage %d active particles and %d domain "
+                 "slots (%.1f MB); the tree forces are not refreshed",
+                 n_active_cap, ntop, (double)(rt_bytes + int_bytes) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7732, msg, __FILE__, __LINE__, __FUNCTION__);
+    }
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     MyDouble *rt_lum_dp_dev = (MyDouble *) scratch_dev;
 #endif
@@ -102,8 +114,10 @@ extern "C" void gpu_force_update_tree(void)
     int *domain_count_dev = domain_list_dev + ntop;
     int *active_dev       = domain_count_dev + 1;
 
-    domain_count_dev[0] = 0;
-    DomainList = domain_list_dev;   /* redirect global ptr to UVM buffer */
+    if(scratch_ok) {
+        domain_count_dev[0] = 0;
+        DomainList = domain_list_dev;   /* redirect global ptr to UVM buffer */
+    }
 
     /* Re-acquire particles arena (invalidated at end of gpu_gravtree_walk_primary).
      * On UVM systems this is a same-pointer re-registration (cheap). */
@@ -119,8 +133,8 @@ extern "C" void gpu_force_update_tree(void)
      * un-drifted node state, and drains at the next phase-boundary poll -- with
      * NO MPI_Abort. (A direct `goto finish_mpi` from here is ill-formed: it would
      * jump over the t_fut_drift_nodes initialization, which finish_mpi uses.) */
-    const bool drift_ok = (gpu_force_drift_nodes(gizmo_host_ti_current()) == 0);
-    if(!drift_ok) { endrun(929703); }
+    const bool drift_ok = scratch_ok && (gpu_force_drift_nodes(gizmo_host_ti_current()) == 0);
+    if(scratch_ok && !drift_ok) { endrun(929703); }
     double t_fut_drift_nodes = my_second();
 
     /* same count the scratch was sized from, not a second read of the list */
@@ -248,7 +262,7 @@ finish_mpi:
 
     /* Restore global DomainList to NULL and release the one scratch allocation. */
     DomainList = NULL;
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_dev);
+    if(scratch_dev) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_dev);}
 
     PRINT_STATUS(" ..Tree has been updated dynamically (GPU)");
 

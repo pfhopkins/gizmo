@@ -173,7 +173,18 @@ void SinkSwkSpec::populate_device_context(const neighbor_loop_args& args,
         return;
     }
     SinkSwallowLocalIn *uvm = (SinkSwallowLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkSwallowLocalIn));
+        gizmo_gpu_alloc_shared((size_t) N * sizeof(SinkSwallowLocalIn), NULL);
+    if(!uvm) {
+        ctx.per_active_local = nullptr;
+        ctx.populate_failed = 1;
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "sink swallow: could not stage %d active sinks (%.1f MB); "
+                 "no gas is swallowed",
+                 N, (double)((size_t) N * sizeof(SinkSwallowLocalIn)) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7726, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     std::memcpy(uvm, aux->host_locals, N * sizeof(SinkSwallowLocalIn));
     ctx.per_active_local = uvm;
 }

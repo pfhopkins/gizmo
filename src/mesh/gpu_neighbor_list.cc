@@ -425,6 +425,29 @@ void gpu_step_sidx_invalidate_full(void)
 }
 
 
+/* An index that could not be built must not be left looking usable: the walk reads
+ * its tiles, BVH and compact positions directly. Release what was built and leave
+ * the index marked invalid, which is the signal every consumer already tests, so
+ * the caller can hand back an empty neighbour list. gpu_spatial_index_free fences
+ * before releasing device memory, so nothing is released under a running kernel.
+ * The three host build buffers are arena allocations, released in reverse order
+ * exactly as the success path does. */
+static void sidx_build_leave_invalid(gpu_spatial_index_t *idx, int num_total,
+                                     tile_bvh_node_t *h_bvh, sfc_tile_t *h_tiles, int *h_pool,
+                                     const char *what, size_t bytes)
+{
+    myfree(h_bvh);
+    myfree(h_tiles);
+    myfree(h_pool);
+    gpu_spatial_index_free(idx);
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "gpu_spatial_index_build: could not allocate %s (%.1f MB) for %d particles; "
+             "spatial index left unbuilt",
+             what, (double) bytes / (1024.0 * 1024.0), num_total);
+    gizmo_request_controlled_stop(7712, msg, __FILE__, __LINE__, __FUNCTION__);
+}
+
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              int type_bitmask, gpu_spatial_index_t *idx,
                              const char *caller_label,
@@ -479,9 +502,18 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     int bvh_size = (2 * ntiles - 1);
     if(bvh_size < 1) bvh_size = 1;
     int pool_size = (num_pool > 0) ? num_pool : 1;
-    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_sidx_dev_tiles", ntiles * sizeof(sfc_tile_t));
-    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_sidx_dev_bvh", bvh_size * sizeof(tile_bvh_node_t));
-    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_sidx_dev_pool", pool_size * sizeof(int));
+    /* Sized to at least one element, as bvh_size and pool_size already are: a type
+     * mask that matches nothing would otherwise ask for zero bytes, and a request
+     * for none of something cannot be distinguished from a refusal. */
+    size_t sidx_tiles_bytes = (size_t)((ntiles > 0) ? ntiles : 1) * sizeof(sfc_tile_t);
+    size_t sidx_bvh_bytes   = (size_t) bvh_size * sizeof(tile_bvh_node_t);
+    size_t sidx_pool_bytes  = (size_t) pool_size * sizeof(int);
+    idx->d_tiles = (sfc_tile_t *) gizmo_gpu_alloc_device(sidx_tiles_bytes, "ngl_sidx_dev_tiles");
+    if(!idx->d_tiles) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile array", sidx_tiles_bytes); return;}
+    idx->d_bvh = (tile_bvh_node_t *) gizmo_gpu_alloc_device(sidx_bvh_bytes, "ngl_sidx_dev_bvh");
+    if(!idx->d_bvh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile BVH", sidx_bvh_bytes); return;}
+    idx->d_pool = (int *) gizmo_gpu_alloc_device(sidx_pool_bytes, "ngl_sidx_dev_pool");
+    if(!idx->d_pool) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile membership pool", sidx_pool_bytes); return;}
 
     /* Stage host buffers into device memory.  On non-CUDA builds DEVICE_SPACE
      * == SharedSpace and Kokkos::deep_copy reduces to a memcpy. */
@@ -504,7 +536,9 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
        ~64MB for 2M particles vs 800MB for full P_shared. h (slot 3) is a relative
        reach; kept double so the leaf accept stays consistent with the double opener.
        In DEVICE_SPACE so the BVH-walk kernels read from HBM directly. */
-    idx->d_compact_xyzh = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_sidx_dev_compact_xyzh", num_total * 4 * sizeof(double));
+    size_t sidx_compact_bytes = (size_t)((num_total > 0) ? num_total : 1) * 4 * sizeof(double);
+    idx->d_compact_xyzh = (double *) gizmo_gpu_alloc_device(sidx_compact_bytes, "ngl_sidx_dev_compact_xyzh");
+    if(!idx->d_compact_xyzh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device compact position array", sidx_compact_bytes); return;}
     {
         double *compact = idx->d_compact_xyzh;
         double h_inflate = 1.0 + SIDX_H_SLACK; /* lazy-drift slack: see SIDX_H_SLACK comment */
@@ -535,11 +569,14 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * from being freed in LIFO order. The transient mymalloc'd h_tiles /
      * h_pool / h_bvh from build_sfc_tiles + build_tile_bvh are copied
      * out then myfree'd in proper LIFO order below. */
-    idx->h_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_sidx_host_tiles", ntiles * sizeof(sfc_tile_t));
+    idx->h_tiles = (sfc_tile_t *) gizmo_gpu_alloc_host(sidx_tiles_bytes, "ngl_sidx_host_tiles");
+    if(!idx->h_tiles) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile array", sidx_tiles_bytes); return;}
     memcpy(idx->h_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
-    idx->h_pool = (int *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_sidx_host_pool", pool_size * sizeof(int));
+    idx->h_pool = (int *) gizmo_gpu_alloc_host(sidx_pool_bytes, "ngl_sidx_host_pool");
+    if(!idx->h_pool) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile membership pool", sidx_pool_bytes); return;}
     memcpy(idx->h_pool, h_pool, num_pool * sizeof(int));
-    idx->h_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_sidx_host_bvh", bvh_size * sizeof(tile_bvh_node_t));
+    idx->h_bvh = (tile_bvh_node_t *) gizmo_gpu_alloc_host(sidx_bvh_bytes, "ngl_sidx_host_bvh");
+    if(!idx->h_bvh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile BVH", sidx_bvh_bytes); return;}
     memcpy(idx->h_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
     idx->h_bvh_nnodes = bvh_nnodes;
     idx->num_pool = num_pool;
@@ -552,8 +589,11 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * positions are never read by BVH queries (BVH only visits tiles, tiles
      * only contain pool members). */
     int pos_buf_count = (num_total > 0 ? num_total : 1);
-    idx->h_pos_buf = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_sidx_host_pos_buf", 3 * pos_buf_count * sizeof(double));
-    idx->d_pos_buf = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_sidx_dev_pos_buf", 3 * pos_buf_count * sizeof(double));
+    size_t sidx_pos_buf_bytes = (size_t) 3 * pos_buf_count * sizeof(double);
+    idx->h_pos_buf = (double *) gizmo_gpu_alloc_host(sidx_pos_buf_bytes, "ngl_sidx_host_pos_buf");
+    if(!idx->h_pos_buf) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the host position staging buffer", sidx_pos_buf_bytes); return;}
+    idx->d_pos_buf = (double *) gizmo_gpu_alloc_device(sidx_pos_buf_bytes, "ngl_sidx_dev_pos_buf");
+    if(!idx->d_pos_buf) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device position staging buffer", sidx_pos_buf_bytes); return;}
 
 
     /* Free the transient mymalloc'd build buffers in proper LIFO order
@@ -666,21 +706,18 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
 }
 
 
-/* kokkos_malloc THROWS on exhaustion, so a NULL check after it is dead code and the
- * run aborts with no cleanup instead of stopping cleanly. These return NULL instead,
- * matching gpu_tree_alloc_bytes and the runner's own staging allocator. Nothing is
- * caught when the allocation succeeds. */
+/* Exhaustion is reported by returning NULL, so the checks below are live code and
+ * the run stops cleanly instead of aborting mid-flight. A zero-byte request is
+ * treated as nothing to allocate, which the callers here read as a refusal. */
 static void *ngl_alloc_shared(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, bytes); }
-    catch(const std::exception &) { return NULL; }
+    return gizmo_gpu_alloc_shared(bytes, label);
 }
 static void *ngl_alloc_device(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, bytes); }
-    catch(const std::exception &) { return NULL; }
+    return gizmo_gpu_alloc_device(bytes, label);
 }
 
 /* The per-active and per-pair arrays are the largest transients this loop asks for --
@@ -698,6 +735,19 @@ static void ngl_build_leave_empty(gpu_neighbor_list_t *gnl, int num_active,
     if(d_scratch)    {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);}
     if(d_source_pos) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);}
     if(d_radii)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);}
+    /* The row offsets are what makes the empty list readable: every consumer walks
+     * offsets[aa]..offsets[aa+1] unconditionally, and only reaches the neighbour
+     * array when total_pairs > 0. So when the build fails before the offsets exist,
+     * this allocates them here rather than handing back a null row index. The
+     * request is (num_active+1) 8-byte slots -- orders of magnitude below the walk
+     * scratchpad and the pair list whose failure brings us here -- so it is served
+     * from what those releases just returned. Should even that fail, the consumer
+     * reads a null row index and dies where it would have died anyway; there is no
+     * smaller allocation left to fall back to. */
+    if(!gnl->offsets) {
+        gnl->offsets = (int64_t *) ngl_alloc_shared((size_t)(num_active + 1) * sizeof(int64_t),
+                                                    "ngl_pairs_offsets");
+    }
     if(gnl->offsets) {for(int aa = 0; aa <= num_active; aa++) {gnl->offsets[aa] = 0;}}
     gnl->total_pairs = 0;
     char msg[256];
@@ -723,6 +773,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     gnl->num_active = num_active;
+    /* Everything this function hands back starts null, so a failure part-way through
+     * leaves a list whose unbuilt parts are recognisable rather than whatever the
+     * caller's struct happened to contain. Several callers declare it uninitialised,
+     * and the free path releases the spatial-index mirrors too, so those must be
+     * cleared here as well and not only where they are copied from a built index. */
+    gnl->d_active = NULL; gnl->offsets = NULL; gnl->neighbors = NULL; gnl->total_pairs = 0;
+    gnl->d_tiles = NULL; gnl->d_bvh = NULL; gnl->d_pool = NULL; gnl->d_compact_xyzh = NULL;
+    gnl->ntiles = 0; gnl->bvh_root = 0;
     double t_entry = my_second(); /* DIAG: entry */
     const double cpu_rows_child0 = CPU_ChildCharged;
     /* Defensive guard: a cached SIDX's compact_xyzh / pool only contains the
@@ -847,10 +905,19 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             memset(gnl->box_sizes,      0, 3*sizeof(double));
             memset(gnl->box_halves,     0, 3*sizeof(double));
         }
-        gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_active_stub", sizeof(int));
-        gnl->offsets   = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_pairs_offsets_stub", sizeof(int64_t));
+        gnl->d_active  = (int *) ngl_alloc_shared(sizeof(int), "ngl_pairs_active_stub");
+        gnl->offsets   = (int64_t *) ngl_alloc_shared(sizeof(int64_t), "ngl_pairs_offsets_stub");
+        gnl->neighbors = (int *) ngl_alloc_device(sizeof(int), "ngl_pairs_neighbors_stub");
+        /* Single elements: failing these means the node has no memory left at all.
+         * The empty list is the same one every other exhausted allocation here
+         * hands back, so the callers need no separate case. */
+        if(!gnl->d_active || !gnl->offsets || !gnl->neighbors) {
+            ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL,
+                                  "the empty-list placeholders", sizeof(int64_t));
+            cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
+            return;
+        }
         gnl->offsets[0] = 0;
-        gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_pairs_neighbors_stub", sizeof(int));
         gnl->total_pairs = 0;
         cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
@@ -900,6 +967,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     } else {
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
         idx = &local_idx;
+    }
+    /* A build that ran out of memory leaves the index invalid and has already asked
+     * for the stop, naming the buffer. There is nothing to walk, so hand back the
+     * same empty list any other exhausted allocation here produces. */
+    if(!idx->valid) {
+        ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the spatial index", 0);
+        return;
     }
 
     /* Coordinate-staleness invariant, same class as the cache_tbm and
@@ -974,7 +1048,17 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
                 &dirty_host);
             int n_dirty = (int)dirty_host.size();
-            int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dirty", n_dirty * sizeof(int));
+            size_t dirty_bytes = (size_t)((n_dirty > 0) ? n_dirty : 1) * sizeof(int);
+            int *d_dirty = (int *) ngl_alloc_device(dirty_bytes, "ngl_dirty");
+            /* The refresh cannot be skipped: the bits have already been consumed, so
+             * leaving them unwritten would let a later walk read stale reaches. Stop
+             * instead, and leave the list empty so nothing walks the index meanwhile. */
+            if(!d_dirty) {
+                ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL,
+                                      "the refreshed-particle index list", dirty_bytes);
+                cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
+                return;
+            }
             {
                 Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                     hv(dirty_host.data(), n_dirty);

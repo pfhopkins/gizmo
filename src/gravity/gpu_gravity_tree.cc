@@ -118,11 +118,11 @@ static void free_arrays_(void)
      * alias is owned by force_treeallocate and outlives SoA realloc cycles. */
 }
 
-/* kokkos_malloc throws when it cannot serve the request, so the failure branches below --
- * which return 0 so the caller can request a controlled stop -- are unreachable if it is
- * called directly: the run aborts on the exception instead.  Returning NULL is what those
- * branches, and the transactional rollback in gpu_gravity_tree_grow_foreign, are written
- * against.  Nothing is caught when the allocation succeeds. */
+/* Exhaustion is reported by returning NULL, which is what the failure branches
+ * below -- returning 0 so the caller can request a controlled stop -- and the
+ * transactional rollback in gpu_gravity_tree_grow_foreign are written against.
+ * Kept local rather than delegating to the shared helper: this TU does not
+ * include proto.h, and a GPU TU should not take that dependency for one call. */
 static void *tree_soa_alloc(size_t bytes)
 {
     try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", bytes); }

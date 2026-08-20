@@ -145,7 +145,18 @@ void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
         return;
     }
     RadFBRPLocalIn *uvm = (RadFBRPLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(RadFBRPLocalIn));
+        gizmo_gpu_alloc_shared((size_t) N * sizeof(RadFBRPLocalIn), NULL);
+    if(!uvm) {
+        ctx.per_active_local = nullptr;
+        ctx.populate_failed = 1;
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "radiation-pressure feedback: could not stage %d active sources (%.1f MB); "
+                 "no momentum is deposited",
+                 N, (double)((size_t) N * sizeof(RadFBRPLocalIn)) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7728, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     std::memcpy(uvm, aux->host_locals, N * sizeof(RadFBRPLocalIn));
     /* wt_sum field starts at 0 (carried through from radfb_rp_local_fill).
      * iter-0 device kernel accumulates into accum.wt_sum; iter-0 after_iter

@@ -623,7 +623,11 @@ struct SinkFeedSpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-        neighbor.binary_merge_eligible = dctx.binary_merge_eligible[j];
+        /* Absent when the table could not be staged: the run is already stopping,
+         * and no star is a merge candidate without it. Read defensively because
+         * the multi-rank responder walk reaches here for peers' queries even on a
+         * rank that has no actives of its own. */
+        neighbor.binary_merge_eligible = dctx.binary_merge_eligible ? dctx.binary_merge_eligible[j] : (unsigned char)0;
 #endif
         return neighbor;
     }

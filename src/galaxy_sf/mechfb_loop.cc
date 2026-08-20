@@ -277,13 +277,22 @@ void MechFBSpec::populate_device_context(const neighbor_loop_args& args,
      * before every iter; zero-init here is defensive (covers the unlikely
      * case where iter 0 reads before reset fires). */
     const int N = args.num_active;
+    ctx.per_active_local = nullptr;
     if (N > 0) {
         MechFBLocalIn *uvm = (MechFBLocalIn *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(MechFBLocalIn));
+            gizmo_gpu_alloc_shared((size_t) N * sizeof(MechFBLocalIn), NULL);
+        if (!uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "mechanical feedback: could not stage %d active sources (%.1f MB); "
+                     "no feedback is deposited",
+                     N, (double)((size_t) N * sizeof(MechFBLocalIn)) / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7731, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         std::memset(uvm, 0, N * sizeof(MechFBLocalIn));
         ctx.per_active_local = uvm;
-    } else {
-        ctx.per_active_local = nullptr;
     }
 }
 
@@ -718,8 +727,23 @@ struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas) {
     const int n = (n_gas > 0) ? n_gas : 1;
     if (n > s_cap) {
         if (s_buf) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(s_buf);
-        s_buf = (struct MechFBGasDelta *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("mechfb_gas_delta", n * sizeof(struct MechFBGasDelta));
+        const size_t want_bytes = (size_t) n * sizeof(struct MechFBGasDelta);
+        s_buf = (struct MechFBGasDelta *) gizmo_gpu_alloc_shared(want_bytes, "mechfb_gas_delta");
+        /* The old buffer is gone either way, so a refusal leaves none at all.
+         * The caller cannot proceed alone -- peers deposit into this buffer
+         * through the feedback exchange -- so it agrees collectively with the
+         * other ranks to skip the loop, and the stop drains at the next phase
+         * boundary. */
+        if (!s_buf) {
+            s_cap = 0;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "mechanical feedback: could not grow the per-cell deposit buffer to "
+                     "%d cells (%.1f MB); no feedback is deposited",
+                     n, (double) want_bytes / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7731, msg, __FILE__, __LINE__, __FUNCTION__);
+            return nullptr;
+        }
         Kokkos::fence();
         for (int j = 0; j < n; ++j) mechfb_writeback_detail::mechfb_gas_delta_zero(&s_buf[j]);
         Kokkos::fence();

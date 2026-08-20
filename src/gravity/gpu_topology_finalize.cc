@@ -236,10 +236,9 @@ extern "C" int *gpu_father_alloc(int tree_particle_slots)
 {
     size_t bytes = (size_t)tree_particle_slots * sizeof(int);
     if(bytes == 0) {return NULL;}
-    /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
-       controlled-stop path (force_treeallocate) fires instead of a hard terminate. */
-    try { return (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("tree_father", bytes); }
-    catch(const std::exception &) { return NULL; }
+    /* NULL on exhaustion, so the caller's controlled-stop path (force_treeallocate)
+       fires instead of a hard terminate. */
+    return (int *) gizmo_gpu_alloc_shared(bytes, "tree_father");
 }
 
 extern "C" void gpu_father_free(int *p)
@@ -254,11 +253,9 @@ extern "C" void gpu_father_free(int *p)
 extern "C" void *gpu_tree_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}
-    /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
-       controlled-stop path fires instead of a hard terminate. The label names the
-       buffer in the Kokkos allocation stream and any future OOM message. */
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "tree_alloc", bytes); }
-    catch(const std::exception &) { return NULL; }
+    /* NULL on exhaustion, so the caller's controlled-stop path fires instead of a
+       hard terminate. The label names the buffer in the allocation stream. */
+    return gizmo_gpu_alloc_shared(bytes, label ? label : "tree_alloc");
 }
 
 extern "C" void gpu_tree_free_bytes(void *p)

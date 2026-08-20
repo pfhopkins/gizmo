@@ -290,8 +290,16 @@ void mechanical_fb_calc_toplevel(void)
         if(global_num_active == 0) { return; }
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
-         * buffer is all-zero at entry by the drain-zero invariant below. */
+         * buffer is all-zero at entry by the drain-zero invariant below.
+         * Kept AFTER the active-count reduce above so a globally quiet step
+         * never allocates it. If any rank could not obtain it, every rank must
+         * skip together: peers deposit into this buffer through the feedback
+         * exchange, so one rank cannot bow out alone. The failing rank has
+         * already asked for the stop, naming the buffer. */
         LocalGasMechFBInfoTemp = mechfb_get_persistent_gas_delta(N_gas);
+        int deposit_buffer_missing = (LocalGasMechFBInfoTemp == NULL) ? 1 : 0, any_missing = 0;
+        MPI_Allreduce(&deposit_buffer_missing, &any_missing, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_missing) { return; }
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         {int aa = 0; for(int ii : ActiveParticleList) {

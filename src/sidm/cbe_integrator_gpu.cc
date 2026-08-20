@@ -108,11 +108,27 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     /* Large-N GPU path: compact gather → kernel → narrow scatter. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
-    int    *d_active = (int *)    Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    double *d_dt     = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+    const size_t cbe_stage_bytes = (size_t) num_active * (sizeof(struct particle_data)
+                                                          + sizeof(int) + sizeof(double));
+    struct particle_data *compact_P = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) num_active * sizeof(struct particle_data), NULL);
+    int    *d_active = (int *)    gizmo_gpu_alloc_shared((size_t) num_active * sizeof(int), NULL);
+    double *d_dt     = (double *) gizmo_gpu_alloc_shared((size_t) num_active * sizeof(double), NULL);
+    if(!compact_P || !d_active || !d_dt) {
+        if(d_dt)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_dt);}
+        if(d_active)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);}
+        if(compact_P) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "cbe drift-kick: could not stage %d active particles (%.1f MB); "
+                 "their distribution-function moments are not advanced",
+                 num_active, (double) cbe_stage_bytes / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7716, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    double *dT_scratch = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+    /* Diagnostic only: the drift-kick runs without it, as the host path already
+     * allows (its own scratch is optional there too). */
+    double *dT_scratch = (double *) gizmo_gpu_alloc_shared((size_t) num_active * sizeof(double), NULL);
 #else
     double *dT_scratch = nullptr;
 #endif
@@ -156,7 +172,7 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
     }
 
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    {
+    if(dT_scratch) {   /* absent when the diagnostic scratch could not be had */
         double dT_sum = 0.0;
         for(int a = 0; a < num_active; a++) dT_sum += dT_scratch[a];
         cbe_step_diagnostics_observe_repair(/* dP */ 0.0, dT_sum);
@@ -202,7 +218,17 @@ void cbe_postgravity_evaluate_gpu(struct particle_data *P_host,
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
-    struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
+    const size_t postgravity_stage_bytes = (size_t) num_active * sizeof(struct particle_data);
+    struct particle_data *compact_P = (struct particle_data *) gizmo_gpu_alloc_shared(postgravity_stage_bytes, NULL);
+    if(!compact_P) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "cbe post-gravity: could not stage %d active particles (%.1f MB); "
+                 "the closure correction is not applied",
+                 num_active, (double) postgravity_stage_bytes / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7716, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     for(int a = 0; a < num_active; a++) compact_P[a] = P_host[active_indices[a]];
 
     PRINT_STATUS("  CBE postgravity (GPU): %d active", num_active);

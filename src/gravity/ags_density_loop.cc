@@ -133,10 +133,19 @@ void AgsDensitySpec::populate_device_context(const neighbor_loop_args& /*args*/,
     /* Single-int UVM scratch — pair_kernel atomic_or-s a 1 here on any
      * wakeup write. Accumulates across all iters; cleanup_device_context
      * propagates to NeedToWakeupParticles_local once at runner exit. */
-    int *nw = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    ctx.need_wakeup_uvm = NULL;
+    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
+    int *nw = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    if(!nw) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7724,
+            "adaptive-softening density: could not stage the wakeup flag; "
+            "the kernel radii are not updated",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     *nw = 0;
     ctx.need_wakeup_uvm = nw;
-    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
 }
 
 void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,

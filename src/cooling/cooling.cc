@@ -137,16 +137,28 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
 /* dm cooling table builder. Mirrors InitCoolMemory + the cooling-table
    construction loop below for the SM cooling case. Single owner TU (cooling.cc)
    for the kokkos_malloc<SharedSpace>; called once at startup from begrun.cc. */
-static void dm_InitCoolMemory_impl(void)
+static int dm_InitCoolMemory_impl(void)
 {
     const size_t N = (size_t)(NCOOLTAB_DM + 1);
-    #define DMCOOLMEM(name) DMCoolTables.name = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, N * sizeof(double))
+    int all_tables_obtained = 1;
+    #define DMCOOLMEM(name) do { \
+        DMCoolTables.name = (double *) gizmo_gpu_alloc_shared(N * sizeof(double), #name); \
+        if(!DMCoolTables.name) { \
+            all_tables_obtained = 0; \
+            char _msg[256]; \
+            snprintf(_msg, sizeof(_msg), \
+                     "dm cooling tables: could not allocate %s (%.1f MB)", \
+                     #name, (double)(N * sizeof(double)) / (1024.0 * 1024.0)); \
+            gizmo_request_controlled_stop(7717, _msg, __FILE__, __LINE__, __FUNCTION__); \
+        } \
+    } while(0)
     DMCOOLMEM(BetaH0);
     DMCOOLMEM(AlphaHp);
     DMCOOLMEM(AlphaHpRate);
     DMCOOLMEM(GammaeH0);
     DMCOOLMEM(Betaff);
     #undef DMCOOLMEM
+    return all_tables_obtained;
 }
 
 static void dm_MakeCoolingTable_impl(void)
@@ -176,7 +188,7 @@ static void dm_MakeCoolingTable_impl(void)
     }
 }
 
-void InitCool_dm(void) { dm_InitCoolMemory_impl(); dm_MakeCoolingTable_impl(); }
+void InitCool_dm(void) { if(dm_InitCoolMemory_impl()) { dm_MakeCoolingTable_impl(); } }
 #endif /* HYDRO_MULTIFLUID_DM_COOLING */
 
 #if defined(CHIMES)
@@ -316,13 +328,28 @@ void cooling_parent_routine(void)
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
-    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
+    struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct particle_data), NULL);
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct gas_cell_data), NULL);
     /* Per-particle dtime captured at gather time (host) so the device
      * post_cooling_tail kernel can drive update_dust_processes /
      * update_explicit_molecular_fraction / DelayTimeHII countdown.
      * get_particle_timestep_in_physical is host-only and not worth porting. */
-    double *compact_dtime = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(double));
+    double *compact_dtime = (double *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(double), NULL);
+    if(!compact_P || !compact_Cell || !compact_dtime) {
+        /* No batch buffers means this rank cools nothing this step. The count is
+         * zeroed rather than returning, so the loop below runs zero batches and
+         * any collective past it is still reached by every rank. */
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "cooling: could not stage a batch of %d cells (%.1f MB); "
+                 "no cooling is applied on this rank",
+                 batch_cap,
+                 (double)((size_t) batch_cap * (sizeof(struct particle_data)
+                                                + sizeof(struct gas_cell_data)
+                                                + sizeof(double))) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7717, msg, __FILE__, __LINE__, __FUNCTION__);
+        N_active = 0;
+    }
 
     /* ORACLE accumulators are hoisted to function scope above for MPI
      * collective correctness (see comment near N_active early-return). */
@@ -606,9 +633,9 @@ void cooling_parent_routine(void)
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+    if(compact_dtime) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);}
+    if(compact_Cell)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+    if(compact_P)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
 
     /* ORACLE MPI_Allreduce + print HOISTED OUT of the GPU branch (below both
      * branches close) so that every rank reaches it, even when N_active is 0
@@ -1653,13 +1680,28 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 
 
-void InitCoolMemory(void)
+int InitCoolMemory(void)
 {
     /* With Kokkos+CUDA (Kokkos+GPU), allocate cooling table arrays in CUDA unified
        memory via Kokkos so they are accessible from device kernels. The pointer variables
        themselves are __managed__ (see top of file), so assigning to them here is fine.
        Without GPU offload, use the normal mymalloc pool. */
-#define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, (n) * sizeof(type))
+    /* A table that could not be had is reported and leaves the pointer null; the
+     * caller stops before MakeCoolingTable would fill it. Every rank asks for the
+     * same sizes, so they reach the stop together. */
+    int all_tables_obtained = 1;
+#define COOLMEM(name, type, n) do { \
+        const size_t _bytes = (size_t)(n) * sizeof(type); \
+        name = (type *) gizmo_gpu_alloc_shared(_bytes, #name); \
+        if(!name) { \
+            all_tables_obtained = 0; \
+            char _msg[256]; \
+            snprintf(_msg, sizeof(_msg), \
+                     "InitCoolMemory: could not allocate cooling table %s (%.1f MB)", \
+                     #name, (double) _bytes / (1024.0 * 1024.0)); \
+            gizmo_request_controlled_stop(7717, _msg, __FILE__, __LINE__, __FUNCTION__); \
+        } \
+    } while(0)
     COOLMEM(CoolTables.BetaH0,    double, NCOOLTAB + 1);
     COOLMEM(CoolTables.BetaHep,   double, NCOOLTAB + 1);
     COOLMEM(CoolTables.AlphaHp,   double, NCOOLTAB + 1);
@@ -1676,6 +1718,7 @@ void InitCoolMemory(void)
     if(All.ComovingIntegrationOn) { COOLMEM(CoolTables.SpCoolTable1, float, kspecies*i_nH*i_T); }
 #endif
 #undef COOLMEM
+    return all_tables_obtained;
 }
 
 
@@ -2064,7 +2107,7 @@ void InitCool(void)
 #endif
 
 #else // CHIMES
-    InitCoolMemory();
+    if(!InitCoolMemory()) { return; }   /* tables absent: the stop is already requested */
     MakeCoolingTable();
     ensure_cooling_tables_exist();
     ReadIonizeParams("TREECOOL");

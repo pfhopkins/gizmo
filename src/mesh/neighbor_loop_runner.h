@@ -336,6 +336,14 @@ struct NeighborLoopDeviceContextBase {
     struct gas_cell_data *CellP;
     int                   num_total;
 
+    /* Set by a Spec's populate_device_context when it could not obtain one of
+     * its buffers (the hook has already requested a controlled stop naming it,
+     * and left every pointer it owns null, which cleanup_device_context
+     * tolerates). The runner then skips this call's kernel work; the failing
+     * hook cannot do that itself, because it does not know which dispatch
+     * path is executing it. */
+    int populate_failed = 0;
+
     /* Path-correct accessor for particle Type. Reads through the ctx's own
      * P pointer (Mode A: arena-resident P_gpu; Mode B: request-driven local
      * slab — both assigned to ctx.P by the path-specific init paths).
