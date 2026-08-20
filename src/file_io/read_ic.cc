@@ -1672,79 +1672,149 @@ int read_file(char *fname, int readTask, int lastTask)
 
 /*! This function determines on how many files a given snapshot is distributed.
  */
-int find_files(char *fname)
+/*! Build the two candidate paths for an input set: the first file of a multi-file set, and the
+ *  single-file form. Shared so that everything asking "what does this input contain" spells the
+ *  names the same way. */
+static void input_candidate_paths(const char *fname, char *first_of_many, char *single, size_t n)
 {
-    FILE *fd; char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE]; int dummy;
-
-    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.%d", fname, 0);
-    snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s", fname);
-
     if(All.ICFormat == 3)
     {
-        snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.%d.hdf5", fname, 0);
-        snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.hdf5", fname);
+        snprintf(first_of_many, n, "%s.%d.hdf5", fname, 0);
+        snprintf(single, n, "%s.hdf5", fname);
     }
+    else
+    {
+        snprintf(first_of_many, n, "%s.%d", fname, 0);
+        snprintf(single, n, "%s", fname);
+    }
+}
+
+/*! Read one candidate file's header into the global `header` on rank 0 and broadcast it to
+ *  everyone. `single_file` marks the header as describing a one-file set, which the file itself
+ *  does not say. Returns the file count now in the header: zero means the file was not there.
+ *  Reads only the header, and takes nothing from the memory arena, so it is safe to call before
+ *  the arena exists. */
+static int read_input_header(char *path, int single_file, int quiet)
+{
+    FILE *fd; int dummy; int readable = 1;
+
+    if(ThisTask == 0)
+    {
+        if((fd = fopen(path, "r")))
+        {
+            if(All.ICFormat == 1 || All.ICFormat == 2)
+            {
+                /* A short read means a truncated file. On the run's own read that has to be
+                   reported and stop the run; when only looking ahead to see how big the input is,
+                   it must not, because the reader will reach the same file a moment later and say
+                   so properly. Hence the two readers. */
+                if(quiet)
+                {
+                    if(All.ICFormat == 2)
+                    {
+                        int k;
+                        for(k = 0; k < 4; k++) {if(fread(&dummy, sizeof(dummy), 1, fd) != 1) {readable = 0;}}
+                    }
+                    if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
+                    if(readable && fread(&header, sizeof(header), 1, fd) != 1) {readable = 0;}
+                    if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
+                }
+                else
+                {
+                    if(All.ICFormat == 2)
+                    {
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                    }
+
+                    my_fread(&dummy, sizeof(dummy), 1, fd);
+                    my_fread(&header, sizeof(header), 1, fd);
+                    my_fread(&dummy, sizeof(dummy), 1, fd);
+                }
+            }
+            fclose(fd);
+
+            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(path);}
+
+            if(!readable)      {header.num_files = 0;}   /* truncated: report nothing usable found */
+            else if(single_file) {header.num_files = 1;}
+        }
+    }
+
+    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    return header.num_files;
+}
+
+/*! Which file set this run reads its particles from. Starting from a snapshot reads that
+ *  snapshot rather than the initial-conditions file, and the snapshot's name depends on whether
+ *  it was written as one file or a directory of them. Everything that needs to know what the run
+ *  will read -- the reader itself, and the startup memory sizing -- asks here, so the two can
+ *  never disagree about which file that is. */
+void input_source_filename(char *out, size_t n)
+{
+    if(RestartFlag >= 2 && RestartSnapNum >= 0)
+    {
+        if(All.NumFilesPerSnapshot > 1)
+            {snprintf(out, n, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
+        else
+            {snprintf(out, n, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
+    }
+    else {snprintf(out, n, "%s", All.InitCondFile);}
+}
+
+/*! Total number of particles recorded in an input set's header, or -1 if the header cannot be
+ *  read. Used at startup to size the memory arena before anything is allocated from it, which is
+ *  the only point early enough to do so; the value is an input to a size, never to physics.
+ *
+ *  A missing or unreadable file does not stop the run here: the run's own reader reaches the same
+ *  file shortly afterwards and reports it in its usual place, and the caller falls back to a
+ *  conservative size in the meantime. What that guarantee covers, exactly: the file is opened
+ *  before anything is read from it, a short read is detected rather than raised, and the global
+ *  header is restored on the way out. It does not extend to what the HDF5 library itself prints
+ *  when handed a file that is not the shape it expects -- reading an hdf5 header goes through the
+ *  usual reader, which may write its own complaints to the terminal before the run gets to its
+ *  own message. */
+long long peek_total_particles_in_input(const char *fname)
+{
+    char first_of_many[DEFAULT_PATH_BUFFERSIZE_TOUSE], single[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    struct io_header saved_header = header;
+    long long total = 0;
+    int found;
+
+    input_candidate_paths(fname, first_of_many, single, DEFAULT_PATH_BUFFERSIZE_TOUSE);
+
+    header.num_files = 0;
+    found = read_input_header(first_of_many, 0, 1);
+    if(found <= 0) {found = read_input_header(single, 1, 1);}
+
+    if(found > 0)
+    {
+        if(header.num_files <= 1)
+            for(int i = 0; i < 6; i++) {total += header.npart[i];}
+        else
+            for(int i = 0; i < 6; i++)
+                {total += header.npartTotal[i] + (((long long) header.npartTotalHighWord[i]) << 32);}
+    }
+
+    header = saved_header;   /* leave the header exactly as it was: the real read owns it */
+
+    return (found > 0) ? total : -1;
+}
+
+int find_files(char *fname)
+{
+    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+
+    input_candidate_paths(fname, buf, buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE);
 
     header.num_files = 0;
 
-    if(ThisTask == 0)
-    {
-        if((fd = fopen(buf, "r")))
-        {
-            if(All.ICFormat == 1 || All.ICFormat == 2)
-            {
-                if(All.ICFormat == 2)
-                {
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                }
+    if(read_input_header(buf, 0, 0) > 0) {return header.num_files;}
 
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-                my_fread(&header, sizeof(header), 1, fd);
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-            }
-            fclose(fd);
-
-            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(buf);}
-
-        }
-    }
-
-    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    if(header.num_files > 0) {return header.num_files;}
-
-    if(ThisTask == 0)
-    {
-        if((fd = fopen(buf1, "r")))
-        {
-            if(All.ICFormat == 1 || All.ICFormat == 2)
-            {
-                if(All.ICFormat == 2)
-                {
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                }
-
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-                my_fread(&header, sizeof(header), 1, fd);
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-            }
-            fclose(fd);
-
-            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(buf1);}
-
-            header.num_files = 1;
-        }
-    }
-
-    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    if(header.num_files > 0) {return header.num_files;}
+    if(read_input_header(buf1, 1, 0) > 0) {return header.num_files;}
 
     if(ThisTask == 0)
     {

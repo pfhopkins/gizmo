@@ -68,6 +68,43 @@ static struct part_slab_data
 static int *part_sortindex;
 
 
+/*! Memory this module will want from the arena, worked out before the arena exists so that it can
+ *  be sized to hold it. The real allocations are still checked when they happen, against the true
+ *  grid size the FFT library reports; this is only an estimate made early, and errs high.
+ *
+ *  Reported in two parts, because they behave differently. What pm_init_periodic() takes is held
+ *  for the rest of the run -- pm_init_periodic_free() releases the force grid and the per-particle
+ *  scratch but not the density grid or the slab tables -- so it is occupied during every other
+ *  phase too. What a single force takes is released again at the end of that force.
+ */
+void pm_periodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force)
+{
+  long long slabs = ((long long) PMGRID + (long long) NTask - 1) / (long long) NTask;
+  if(slabs < 1) {slabs = 1;}
+  long long gridcells = slabs * (long long) PMGRID * 2 * ((long long) PMGRID / 2 + 1);
+  size_t grid_bytes = (size_t) gridcells * sizeof(d_fftw_real);
+
+  if(npart_per_rank < 0) {npart_per_rank = 0;}
+
+  /* rhogrid, plus the two small per-rank slab tables */
+  *held_always = grid_bytes + (size_t) NTask * 2 * sizeof(ptrdiff_t);
+
+  /* forcegrid, the per-particle scratch, and the rank-pair exchange tables. The last is small
+     until the rank count is large, where it grows as its square and eventually dominates. */
+  *held_per_force = grid_bytes
+                  + (size_t) (8 * npart_per_rank) * (sizeof(struct part_slab_data) + sizeof(int))
+                  /* the mesh points those particles touch: at most eight per particle, before
+                     duplicates between neighbours are removed, which is the bound rather than
+                     the usual count */
+                  + (size_t) (8 * npart_per_rank) * (sizeof(large_array_offset) + sizeof(d_fftw_real))
+                  + (size_t) NTask * (size_t) NTask * sizeof(int)
+                  + (size_t) NTask * sizeof(int);
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+  *held_per_force += grid_bytes;   /* tidal_workspace */
+#endif
+}
+
+
 /*! This routines generates the FFTW-plans to carry out the parallel FFTs
  *  later on. Some auxiliary variables are also initialized.
  */

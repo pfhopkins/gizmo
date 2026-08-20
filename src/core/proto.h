@@ -237,6 +237,14 @@ void gizmo_let_wire_note_failed(long long bytes);
 void report_memory_ledger(const char *when);
 void report_memory_ledger_on_growth(const char *when);
 int gizmo_memory_preflight(void);
+void gizmo_size_memory_arena(void);   /* sets All.MaxMemSize from what will draw on the pool, unless the parameter file asked for a size; call once, before mymalloc_init */
+#ifdef PMGRID
+/* Arena bytes the long-range mesh will want, for startup sizing, split into what it holds for the
+   whole run and what one force computation needs on top of that. */
+void long_range_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+void pm_periodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+void pm_nonperiodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+#endif
 
 /* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
    TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the
@@ -906,6 +914,8 @@ void open_outputfiles(void);
 void peano_hilbert_order(void);
 void predict(double time);
 void read_ic(char *fname);
+void input_source_filename(char *out, size_t n);   /* which file set this run reads its particles from (IC, or a snapshot when starting from one) */
+long long peek_total_particles_in_input(const char *fname);   /* particle count from an input header, for startup memory sizing; -1 if unreadable */
 void gizmo_register_hdf5_deflate_filter(void);  /* file_io/hdf5_deflate_filter.cc */
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
@@ -915,6 +925,7 @@ void remove_particle_from_tree(int i);
 void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
+long long peek_total_particles_in_restart(void);   /* particle count from the restart set, for startup memory sizing; -1 if unreadable */
 void run(void);
 /* Controlled-stop / bad-stop machinery for the Vista no-MPI_Abort policy.
  *
@@ -959,6 +970,15 @@ int         gizmo_poll_controlled_stop(void);   /* collect + return global code;
 void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
+/* Asking the working memory pool whether something will fit, before trying to take it.
+ *
+ * These three are the way to do that; there is no other, and nothing new should be built for it.
+ * Code that is about to take a large amount from the pool asks first and arranges its own graceful
+ * stop, or shortens what it was going to take, rather than finding out from a failed allocation
+ * partway through. The round-based transports use them to decide how much to move at once, and the
+ * long-range mesh uses them to refuse a step that cannot be served. `mpi_report_comittable_memory`
+ * below answers the related but separate question of how much the machine itself can give a task.
+ */
 int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */

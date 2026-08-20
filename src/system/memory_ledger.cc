@@ -9,8 +9,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+
+/* Size of the working memory pool when the run's particle count cannot be read up front, which
+   normally means the input is missing or unreadable and the run is about to stop and say so. Large
+   enough to reach that message on any machine, and to serve a modest run whose input simply could
+   not be inspected early. */
+#define ARENA_MEGABYTES_WHEN_INPUT_UNREADABLE 1024
 
 /* Per-family byte counters, updated at each family's own allocation seam. These are
    rank-local running totals of logical (requested) bytes; the report sums them across
@@ -69,6 +76,7 @@ void gizmo_let_wire_grow(long long delta_bytes)
     if(g_let_wire_current > g_let_wire_highwater) {g_let_wire_highwater = g_let_wire_current;}
 }
 void gizmo_let_wire_reset(void)            {g_let_wire_current = 0;}
+
 void gizmo_let_wire_note_failed(long long bytes) {g_let_wire_failed += bytes;}
 
 /* Per-process virtual and resident size from /proc/self/status (Linux; 0 elsewhere).
@@ -323,6 +331,192 @@ void report_memory_ledger(const char *when) {report_memory_ledger_impl(when, 1);
 /* Print only on memory growth. For collective points reached every so often (domain
    decomposition) where an unconditional print would be too chatty. */
 void report_memory_ledger_on_growth(const char *when) {report_memory_ledger_impl(when, 0);}
+
+/* How big to make the memory arena when the parameter file does not say. Called once, before the
+   arena is created, which is the only moment early enough: the arena is the first thing built and
+   everything else is allocated out of it.
+
+   This is a sensible default, not a guarantee. The arena holds working space, not the run's bulk
+   storage -- particles, cells and tree nodes live outside it and size themselves -- and most of
+   what is left adapts to whatever the arena turns out to be. The transport of tree nodes between
+   ranks, and the handing of particles from rank to rank during a decomposition, both work through
+   as many rounds as it takes and simply use shorter rounds when there is less room. For those,
+   more arena buys speed, not correctness, and sizing the arena to the largest they could ever want
+   would reserve enormous amounts of memory on every node to avoid a few extra rounds -- which is
+   the very thing the round-based transport was written to avoid.
+
+   So only what genuinely has to fit is counted. Anything that adapts gets a fixed allowance to
+   work in, and anything that is both rare and enormous -- group finding, a chemistry step in which
+   every cell is active -- is left out entirely: if such a run does not fit it stops cleanly and
+   says so, and the parameter file is there to give it more.
+
+   Returns megabytes, matching the units the arena and the parameter file use. */
+static int arena_megabytes_from_tenants(long long total_particles)
+{
+    /* What a rank may be asked to hold. The same expression the particle storage itself uses, so
+       the working space that scales with it is sized against the same number. */
+    long long maxpart = (long long) (All.PartAllocFactor * ((double) total_particles / (double) NTask));
+    if(maxpart < 1) {maxpart = 1;}
+
+    /* Held from setup until the run ends, so it sits underneath everything below. */
+    long long always_held = 0;
+
+    /* The largest that any one thing which must fit whole ever gets. These do not overlap: each is
+       taken and given back before the next begins. */
+    long long must_fit = 0;
+
+#ifdef PMGRID
+    {
+        /* The long-range mesh. Its grids and per-particle working space are taken in one piece and
+           there is no smaller way to do it, so the whole of it has to fit. */
+        size_t mesh_always = 0, mesh_per_force = 0;
+        long_range_estimated_arena_bytes(maxpart, &mesh_always, &mesh_per_force);
+        always_held += (long long) mesh_always;
+        if((long long) mesh_per_force > must_fit) {must_fit = (long long) mesh_per_force;}
+    }
+#endif
+
+    /* A step: the gravity walk's export tables and the communication buffer, each sized directly
+       by the buffer parameter, plus a per-particle array or two. */
+    long long step = 2LL * (long long) All.BufferSize * 1024 * 1024
+                   + maxpart * (long long) (2 * sizeof(MyFloat));
+    if(step > must_fit) {must_fit = step;}
+
+    /* Sorting particles into their new owners: a key and a sort record for each, two cost arrays,
+       and per-rank bookkeeping. The buffers that then carry them across are not counted here --
+       those are sized from whatever the arena has free and take more rounds when it is less. */
+    long long decomposition = maxpart * (long long) (sizeof(peanokey)
+                                                     + sizeof(peanokey) + sizeof(int)
+                                                     + 2 * sizeof(float))
+                            + 16LL * (long long) NTask * (long long) sizeof(long long);
+    if(decomposition > must_fit) {must_fit = decomposition;}
+
+#if defined(FOF)
+    /* Finding groups, where that is compiled in. Half a dozen lists the length of the particle
+       count are held together while groups are assembled, and there is no smaller way to do it.
+       Modest per particle, and only present in runs that look for groups at all. */
+    long long group_finding = maxpart * (long long) (3 * sizeof(MyIDType) + 10 * sizeof(int));
+    if(group_finding > must_fit) {must_fit = group_finding;}
+#endif
+
+    /* Room for everything that works in rounds, so that it can use long ones. This is the whole
+       performance side of the number: more would mean fewer rounds, less would mean more of them,
+       and neither is a question of the run working. */
+    const long long room_to_work_in = 512LL * 1024 * 1024;
+
+    /* And a margin for the many small things not worth naming. */
+    long long total = always_held + must_fit + room_to_work_in;
+    total += total / 4;
+
+    long long mb = total / (1024 * 1024);
+    if(mb < 256) {mb = 256;}   /* never so small that ordinary working space cannot be served */
+
+    return (int) ((mb > (long long) INT_MAX) ? (long long) INT_MAX : mb);
+}
+
+
+/* Set the arena size for this run, unless the user asked for a specific one.
+
+   A value in the parameter file is taken as given: it is how an expert overrides this, and how a
+   run that has been tuned by hand keeps its tuning. Otherwise the size comes from the tenants,
+   which needs the particle count, and the only place to get it this early is the header of the
+   file the run is about to read. If that cannot be read -- the file is missing, or a restart set
+   is incomplete -- nothing is reported here, because the reader will report it properly a moment
+   later; a conservative size is used so that the run gets far enough to do so. */
+void gizmo_size_memory_arena(void)
+{
+    long long total_particles = -1;
+    int user_asked = (All.MaxMemSize > 0);
+
+    if(user_asked)
+    {
+        if(ThisTask == 0)
+        {
+            printf("Memory: using the requested %d MB per task for the working memory pool.\n",
+                   All.MaxMemSize);
+            fflush(stdout);
+        }
+    }
+    else
+    {
+        if(RestartFlag == 1)
+        {
+            total_particles = peek_total_particles_in_restart();
+        }
+        else
+        {
+            char fname[MAX_PATH_BUFFERSIZE_TOUSE];
+            input_source_filename(fname, MAX_PATH_BUFFERSIZE_TOUSE);
+            total_particles = peek_total_particles_in_input(fname);
+        }
+
+        if(total_particles > 0)
+        {
+            All.MaxMemSize = arena_megabytes_from_tenants(total_particles);
+            if(ThisTask == 0)
+            {
+                printf("Memory: sized the working memory pool at %d MB per task, for %lld particles "
+                       "over %d tasks.\n", All.MaxMemSize, total_particles, NTask);
+                fflush(stdout);
+            }
+        }
+        else
+        {
+            All.MaxMemSize = ARENA_MEGABYTES_WHEN_INPUT_UNREADABLE;
+            if(ThisTask == 0)
+            {
+                printf("Memory: could not read the particle count from the input, so the working "
+                       "memory pool is set to %d MB per task. If the input is missing or unreadable "
+                       "the message about that follows shortly.\n", All.MaxMemSize);
+                fflush(stdout);
+            }
+        }
+    }
+
+    /* Whatever the size came from, hold it against what this machine can actually give a task,
+       found by asking the system how much it can allocate and dividing it among the tasks sharing
+       a node. This is the only place that comparison is made, for a size from either source.
+
+       A size the code chose itself is brought down to what the machine can back, and says so: the
+       pool is working space that adapts to how much of it there is, so a smaller one costs extra
+       rounds rather than correctness, whereas reserving more than the node has invites the run to
+       be killed partway through with nothing to explain it. A size the user asked for is never
+       overridden -- it is their machine and their judgement -- but it is still reported. */
+    {
+        double safe_per_task = mpi_report_comittable_memory(0, 0);
+        if(safe_per_task > 0 && (double) All.MaxMemSize > safe_per_task)
+        {
+            if(user_asked)
+            {
+                if(ThisTask == 0)
+                {
+                    printf("WARNING: the requested working memory pool (%d MB per task) is larger "
+                           "than this machine can safely give each task (%g MB). The run may still "
+                           "work, but it will fail if enough tasks on a node use their full share "
+                           "at once. Lower Max_Memory_Per_MPI_Task_in_MB, or run fewer tasks per "
+                           "node.\n", All.MaxMemSize, safe_per_task);
+                    fflush(stdout);
+                }
+            }
+            else
+            {
+                int wanted = All.MaxMemSize;
+                All.MaxMemSize = (int) safe_per_task;
+                if(ThisTask == 0)
+                {
+                    printf("Memory: this run would have taken %d MB per task for its working "
+                           "memory pool, which is more than this machine can safely give each task "
+                           "(%g MB), so it is using %d MB instead. If it then stops for lack of "
+                           "working memory, run fewer tasks per node or more nodes, or set "
+                           "Max_Memory_Per_MPI_Task_in_MB explicitly.\n",
+                           wanted, safe_per_task, All.MaxMemSize);
+                    fflush(stdout);
+                }
+            }
+        }
+    }
+}
+
 
 /* Startup persistent-memory preflight -- a user-info aid, run before the big allocations.
    Projects the per-node reserve that is fixed once the run starts -- the Base arena, the

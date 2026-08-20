@@ -111,6 +111,11 @@ void begrun(void)
    * file_io/hdf5_deflate_filter.cc. */
   gizmo_register_hdf5_deflate_filter();
 
+  /* Decide how big the working memory pool should be before building it. This reads only the
+   * header of the file the run is about to load, and touches nothing that the pool owns -- it has
+   * to run here because the pool is the first thing built and everything else comes out of it. */
+  gizmo_size_memory_arena();
+
   mymalloc_init();
 
   /* Bad-stop poll: the Base arena allocation (collective-guarded inside
@@ -275,10 +280,11 @@ void begrun(void)
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
       All.BufferSize = all.BufferSize;
-      /* mymalloc_init() already sized the Base arena from the parameter file, above, before the
-       * restart file was read. Keep the value here in step with the arena that actually exists,
-       * or every consumer of it -- the memory ledger above all -- reports the previous run's
-       * number while a differently-sized arena is reserved. */
+      /* The arena was built above, before this file was read, at a size worked out for THIS run.
+       * Keeping this run's value rather than the one recorded by the run that wrote the file is
+       * what makes that safe: a restart may be on different nodes, and every consumer of this
+       * number -- the memory ledger above all -- would otherwise report a size that is not the
+       * one actually reserved. */
       All.MaxMemSize = all.MaxMemSize;
       /* The remedy printed when the LET foreign-node arena overflows is to raise this and restart,
        * so the restarted run has to see the new value. The restart read itself is unaffected: it
@@ -2748,7 +2754,7 @@ void read_parameter_file(char *fname)
                 //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.99*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */
                 //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.93*safe_memorypertask-All.BufferSize); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
-                if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.90*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
+                if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
                 if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to only main-task writes (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
                 if(strcmp("NumFilesPerSnapshot",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to single-file snapshots (=%d) \n",tag[i],alternate_tag[i],All.NumFilesPerSnapshot); continue;}
@@ -3182,10 +3188,10 @@ void read_parameter_file(char *fname)
 #endif
 
     /* now we're going to do a bunch of checks */
-    if(All.MaxMemSize > safe_memorypertask)
-    {
-        if(ThisTask==0) {printf("WARNING: MaxMemSize (Max_Memory_Per_MPI_Task_in_MB=%d) is currently set to a larger value than the maximum safe amount of memory recommended per task, given by pinging the system for allocatable memory and dividing it among the tasks per node (=%g MB). Depending on the details of your node and core configuration and memory use, this may work, but it is not safe, and can crash if too many processes on a node try to use their full memory at once.\n",All.MaxMemSize,safe_memorypertask); fflush(stdout);}
-    }
+    /* The working memory pool is checked against what this machine can give a task in
+       gizmo_size_memory_arena(), which runs after this and sees the size whether it came from here
+       or was worked out from the run itself. Checking it here as well would miss the second case
+       and say it twice in the first. */
     if((All.ErrTolIntAccuracy<=0)||(All.ErrTolIntAccuracy>0.05))
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);

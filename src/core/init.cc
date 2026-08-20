@@ -76,15 +76,11 @@ void init(void)
         case 2:
         case 3:
         case 4:
-            if(RestartFlag >= 2 && RestartSnapNum >= 0)
             {
                 char fname[MAX_PATH_BUFFERSIZE_TOUSE];
-                if(All.NumFilesPerSnapshot > 1) {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
-                    else {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
+                input_source_filename(fname, MAX_PATH_BUFFERSIZE_TOUSE);
                 read_ic(fname);
-
             }
-            else {read_ic(All.InitCondFile);}
             break;
 
         default:

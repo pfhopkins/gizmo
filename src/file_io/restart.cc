@@ -27,6 +27,51 @@ static void byten(void *x, size_t n, int modus);
 int old_MaxPart = 0, new_MaxPart;
 
 
+/*! Total number of particles recorded in the restart set, or -1 if it cannot be read. Used at
+ *  startup to size the memory arena, which has to be sized before anything is allocated from it
+ *  and therefore before the restart files are read properly.
+ *
+ *  Deliberately modest about what it is for. The whole run-parameter block is the first thing in
+ *  a restart file, so this reads it into a throwaway copy and takes one number out; it never
+ *  touches the live parameters, and restart() below remains the only thing that actually loads
+ *  them. The number is also not required to be exact: a run's particle count grows as gas spawns
+ *  winds and stars, so the primary file and the backup can legitimately disagree, and the size
+ *  this feeds carries enough margin to absorb that. Anything unreadable simply returns -1 and the
+ *  caller falls back to a conservative size, because a restart set that is genuinely broken is
+ *  restart()'s business to report, in its own place, with its own message.
+ */
+long long peek_total_particles_in_restart(void)
+{
+    long long total = -1;
+
+    if(ThisTask == 0)
+    {
+        char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+        FILE *f;
+        int attempt;
+
+        for(attempt = 0; attempt < 2 && total < 0; attempt++)
+        {
+            if(attempt == 0)
+                {snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles/%s.0", All.OutputDir, All.RestartFile);}
+            else
+                {snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles/%s.0.bak", All.OutputDir, All.RestartFile);}
+
+            if((f = fopen(path, "r")))
+            {
+                struct global_data_all_processes stored;
+                if(fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
+                fclose(f);
+            }
+        }
+    }
+
+    MPI_Bcast(&total, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+
+    return total;
+}
+
+
 /*! This function reads or writes the restart files.
  * Each processor writes its own restart file, with the
  * I/O being done in parallel. To avoid congestion of the disks
