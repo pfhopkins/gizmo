@@ -10,6 +10,7 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
+#include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
@@ -100,7 +101,23 @@ void gravity_tree(void)
         rearrange_particle_sequence();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
+        /* The tree just built is current by construction: the build set every
+         * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
+         * local and foreign, from those nodes.  Record that here, at the call
+         * site that KNOWS this is the main step tree, rather than inside
+         * force_treebuild -- which is also used to build group-local and subset
+         * trees whose geometry must never be certified for the step's device
+         * consumers.  The full-drift test is the remaining precondition: it is
+         * what makes the node geometry describe this time rather than merely
+         * being freshly written, and move_particles above drifts only the active
+         * set.  Absent that proof nothing is recorded and consumers fall back to
+         * the host, which is correct but slower -- never wrong.
+         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+         * controlled stop during GPU finalize / LET / pseudo handling and still
+         * return, and a tree whose build asked to stop must never be recorded as
+         * current -- not even for the few statements before the poll exits. */
         gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;

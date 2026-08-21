@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../gravity/gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "../cooling/disk_betacool.h"
@@ -183,7 +184,19 @@ void run(void)
         set_softenings();
         gizmo_full_drift_to(All.Ti_Current);
         force_treebuild(NumPart, NULL);
+        /* Same proof as the main-step build in gravtree.cc: a full drift ran
+         * immediately above, so this tree's node geometry describes this time and
+         * its mirror was filled from it.  Record it, or the first post-restart
+         * step reads the tree as uncertified whenever the dynamic tree update
+         * routes to the host -- which it does on the same candidate-count test
+         * the gravity walk uses, so the sweep that would otherwise certify is
+         * exactly what gets skipped.
+         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+         * controlled stop during GPU finalize / LET / pseudo handling and still
+         * return, and a tree whose build asked to stop must never be recorded as
+         * current -- not even for the few statements before the poll exits. */
         gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
+        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
     }
 
     while(1)			/* main timestep iteration loop */

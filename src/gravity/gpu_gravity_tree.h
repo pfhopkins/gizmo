@@ -201,6 +201,28 @@ int gpu_gravity_soa_drift_certified(integertime time1);
  * gpu_gravity_soa_drift_certified reads. */
 void gpu_gravity_soa_mark_drift_certified(integertime time1);
 
+/* Record that the tree was BUILT current at `ti` (snapshots the treebuild
+ * generation).  Called by the MAIN-STEP tree build only, after force_treebuild
+ * returns and only when a full drift has proven the particles reached `ti`.
+ * ⛔ Not from force_treebuild itself: that routine also builds group-local and
+ * subset trees (subfind), whose geometry must never certify the step's device
+ * consumers, and it cannot tell which kind of build it is being asked for. */
+void gpu_gravity_tree_mark_born_current(integertime ti);
+
+/* Retire both currency records.  Called by tree teardown: node arrays going
+ * away must not leave a record claiming their geometry is current. */
+void gpu_gravity_tree_invalidate_currency(void);
+
+/* THE question a device consumer of node geometry should ask: is that geometry
+ * current at `ti`?  True if the drift sweep certified it OR the tree was built
+ * current at it, AND the mirror those records describe still exists.  Asking
+ * gpu_gravity_soa_drift_certified() instead asks whether the GRAVITY WALK
+ * happened to sweep this step, which is false in many configurations where the
+ * geometry is perfectly current -- SELFGRAVITY_OFF, gravity routed to the host
+ * by GravityHostWalkBelowActive, or ADAPTIVE_TREEFORCE_UPDATE shrinking the
+ * candidate count that routing tests. */
+int gpu_gravity_tree_nodes_current_at(integertime ti);
+
 /* GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
  * payloads) directly on the device, using dependency-counter atomics on

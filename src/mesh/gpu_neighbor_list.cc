@@ -1695,9 +1695,25 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * The one case it cannot repair is a host lazy drift that has already
      * advanced nodes to this time: the sweep skips nodes that are already
      * current and so would leave their mirrors behind. Then, and only then, the
-     * host answers. */
-    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
-    if(!gpu_gravity_soa_drift_certified(All.Ti_Current)) {
+     * host answers.
+     *
+     * Ask whether the geometry IS current, not whether the gravity walk happened
+     * to sweep it: a tree built at this time is current by construction, and
+     * gravity legitimately runs on the host whenever its own candidate count is
+     * small -- which under ADAPTIVE_TREEFORCE_UPDATE it routinely is, since the
+     * count that routing tests is taken after the needs-a-new-treeforce filter.
+     * Keying on the sweep therefore locked this traversal out of configurations
+     * whose tree and mirror were perfectly valid. */
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
+        /* The geometry is current by neither route -- no sweep certified it and
+         * this tree was not built at this time.  A host lazy drift at this time
+         * advanced nodes without their mirrors, and a sweep skips already-current
+         * nodes, so that state is unrepairable here and the host answers.
+         * A tree BUILT after such a drift never reaches this branch: the build
+         * rewrites every node and every mirror, and no later host walk can re-arm
+         * the latch at this time because force_drift_node returns early on a node
+         * that is already current. */
+        if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
 #ifdef SELFGRAVITY_OFF
         /* No gravity walk exists to sweep the nodes in this build, so without
          * this the traversal could never run at all, however valid the tree and

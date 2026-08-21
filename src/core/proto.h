@@ -512,6 +512,7 @@ void gizmo_full_drift_to(integertime time1);
 extern "C" {
 #endif
 void gizmo_full_drift_invalidate(void);
+integertime gizmo_full_drift_ti(void);
 #ifdef __cplusplus
 }
 #endif

@@ -2851,6 +2851,12 @@ void force_treefree(void)
          * the residual mymalloc'd DomainNodeIndex). */
         if(Father)        {gpu_father_free(Father); Father = NULL;}
         gpu_gravity_tree_alias_nextnode(NULL, 0);  /* clear SoA alias before free */
+        /* The node arrays are going away, so nothing may still claim their
+         * geometry is current at any time.  Retiring both records HERE rather
+         * than relying on the next build's generation bump to mask them keeps
+         * the window closed even transiently -- a currency record that outlives
+         * the nodes it describes is the exact class this guards against. */
+        gpu_gravity_tree_invalidate_currency();
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
