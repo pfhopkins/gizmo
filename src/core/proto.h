@@ -562,6 +562,8 @@ int ghost_pool_is_live(void);
  * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
 int ghost_get_epoch_high_water(void);
 void ghost_reset_epoch_high_water(void);
+int gizmo_get_unmet_split_demand(void);
+void gizmo_reset_unmet_split_demand(void);
 /* Value-only in-place refresh of the CURRENT ghost pool along the provenance
  * recorded at the last import: owners re-pack their current P/CellP for exactly
  * the already-exported particles; receivers overwrite the existing ghost slots

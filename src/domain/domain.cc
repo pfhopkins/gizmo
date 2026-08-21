@@ -183,9 +183,13 @@ static int domain_target_particle_capacity(void)
      * The cushion belongs to the second and not the first, so it is headroom rather than an
      * offset: capacity is left alone while the need still fits inside it, and a need that has
      * grown past it is met with room to spare.  Making the capacity track the need exactly would
-     * migrate every particle array each time the measured ghost import ticked up by one slot. */
+     * migrate every particle array each time the measured ghost import ticked up by one slot.
+     * The last term is demand that was REFUSED rather than met: splitting cannot grow storage
+     * from under a standing tree, so elements it could not create are counted and asked for here,
+     * where capacity may move freely.  It clears when this decision consumes it. */
     const double need_f   = (double) All.MaxPartAssignable + append_margin
-                            + (double) ghost_get_epoch_high_water();
+                            + (double) ghost_get_epoch_high_water()
+                            + (double) gizmo_get_unmet_split_demand();
     const double target_f = need_f + safety;
 
     int need   = (int) need_f;
@@ -398,6 +402,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * is down, no ghosts are imported, and the active list has not been rebuilt. */
     if(resize_particle_storage(domain_target_particle_capacity()) == 0) {
         ghost_reset_epoch_high_water();   /* the window this decision consumed ends here */
+        gizmo_reset_unmet_split_demand(); /* likewise: splits refused before this point are answered */
     }
 
 #ifdef BOX_PERIODIC

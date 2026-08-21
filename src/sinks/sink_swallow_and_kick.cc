@@ -569,7 +569,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     if(NumPart + num_already_spawned + n_particles_split >= All.MaxPart ||
        NumPart + num_already_spawned + n_particles_split >= All.MaxPartGas)
     {
-        printf("On Task=%d with NumPart=%d (+N_spawned=%d) we tried to split a particle, but there is no space left...(All.MaxPart=%d, All.MaxPartGas=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart, All.MaxPartGas);
+        printf("On Task=%d there is no room to spawn a wind element: %d particles are here (+%d already spawned this step) and this rank holds %d particle and %d gas slots. Raise ParticleNumberMemoryImbalance_Limit (PartAllocFactor) so a rank may be assigned more of them, or spread the run over more ranks.\n", ThisTask, NumPart, num_already_spawned, All.MaxPart, All.MaxPartGas);
         fflush(stdout); endrun(8888);
         return 0;   /* no space left: honor the no-split contract (return 0) instead of spawning past MaxPart */
     }
