@@ -44,7 +44,7 @@
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
-#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_soa_drift_certified (drift-cert diagnostic) */
+#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_tree_nodes_current_at (node-currency diagnostic) */
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -1094,7 +1094,7 @@ static void mode_b_remote_evaluate_into_buffer(
     long long diag_omp_self = 0, diag_omp_recv = 0;   /* actual threads used per stage; 0 = serial */
     auto nlr_note_threaded_walk = [&]() {
         if(nlr_diag_on && drift_certified < 0)
-            drift_certified = gpu_gravity_soa_drift_certified(All.Ti_Current) ? 1 : 0;
+            drift_certified = gpu_gravity_tree_nodes_current_at(All.Ti_Current) ? 1 : 0;
     };
 
     /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the

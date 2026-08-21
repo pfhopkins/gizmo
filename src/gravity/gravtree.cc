@@ -31,8 +31,11 @@ int gravity_walk_route_to_host(long long n_local_active)
      * time step: the device sweep skips nodes already at its target time, so it can no
      * longer bring their mirror up to date, and a second gravity evaluation at the same
      * time (a Hermite correction pass, a repeated walk for the opening criterion) would
-     * otherwise read that stale geometry. */
-    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+     * otherwise read that stale geometry.  A tree built after that drift is
+     * exempt: the build rewrote every node and every mirror, so the record of an
+     * earlier lazy drift no longer describes anything. */
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)
+            && force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
 
     return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
 }
