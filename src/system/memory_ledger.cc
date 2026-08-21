@@ -332,6 +332,49 @@ void report_memory_ledger(const char *when) {report_memory_ledger_impl(when, 1);
    decomposition) where an unconditional print would be too chatty. */
 void report_memory_ledger_on_growth(const char *when) {report_memory_ledger_impl(when, 0);}
 
+/* How large a chunk to send particle data in, when the parameter file does not say.
+
+   Everything that ships data between tasks in pieces -- reading and writing snapshots, handing
+   particles over during a decomposition, and the request-driven neighbour loops -- works through
+   as many passes as the chunk size requires. The bytes moved are the same either way, so the
+   chunk only has to be big enough that the per-pass costs stop mattering, which a hundred
+   megabytes has been on every run to date.
+
+   The one thing that can change that is running a neighbour loop in the request-driven mode with
+   far more active particles than it is allowed today. That mode sends a query and receives a
+   reply per active particle per neighbouring rank, and the count below is what the heaviest loop
+   costs, measured on a full-size galaxy run: about 2.3 kB per query-and-reply pair and about four
+   and a half pairs per active particle. So if a run raises the limit on how many active particles
+   may take that path, the chunk is raised with it -- enough for a couple of passes -- rather than
+   leaving it to discover the cost as a great many of them. Below roughly twenty thousand active
+   particles per task this makes no difference and the long-standing size is used.
+
+   Both limits have to be raised for that path to widen, since a loop takes it only when the total
+   active count and the largest single task's are each under their own limit. The smaller of the
+   two is therefore what a task can actually be asked to carry, and either one left alone keeps the
+   run where it is today. The result is held to a ceiling as well: past it the loop simply takes
+   more passes, which costs little, whereas a chunk sized for an enormous limit would be a
+   correspondingly enormous block to find room for -- and a run that wants one can say so. */
+double comm_chunk_megabytes_default(void)
+{
+    const double customary_megabytes = 100.0;
+    const double most_worth_taking   = 400.0;     /* the largest that has ever been worth having */
+    const double bytes_per_active    = 10400.0;   /* see above; the heaviest loop, measured */
+    const double passes_to_aim_for   = 2.0;
+
+    /* A limit left unset carries whatever each loop was built with, which is small; the run is
+       then where it has always been and there is nothing to raise. */
+    const int limit_total   = All.NeighborLoopModeBThresholdSum;
+    const int limit_largest = All.NeighborLoopModeBThresholdMax;
+    if(limit_total <= 0 || limit_largest <= 0) {return customary_megabytes;}
+
+    const double per_task = (limit_total < limit_largest) ? (double) limit_total
+                                                          : (double) limit_largest;
+    double raised = (per_task * bytes_per_active / passes_to_aim_for) / (1024.0 * 1024.0);
+    if(raised > most_worth_taking) {raised = most_worth_taking;}
+    return (raised > customary_megabytes) ? raised : customary_megabytes;
+}
+
 /* How big to make the memory arena when the parameter file does not say. Called once, before the
    arena is created, which is the only moment early enough: the arena is the first thing built and
    everything else is allocated out of it.
@@ -376,9 +419,13 @@ static int arena_megabytes_from_tenants(long long total_particles)
     }
 #endif
 
-    /* A step: the gravity walk's export tables and the communication buffer, each sized directly
-       by the buffer parameter, plus a per-particle array or two. */
-    long long step = 2LL * (long long) All.BufferSize * 1024 * 1024
+    /* A step: the communication buffer, the gravity walk's record of anything the local tree
+       could not supply, and a per-particle array or two. The buffer belongs to reading and
+       writing files and so is never held at the same time as the walk's tables, but the tables
+       are small enough now that counting both costs nothing and saves an argument. */
+    long long step = (long long) All.BufferSize * 1024 * 1024
+                   + (long long) GRAVITY_LET_DETECTOR_ENTRIES
+                     * (long long) (sizeof(struct data_index) + sizeof(struct data_nodelist))
                    + maxpart * (long long) (2 * sizeof(MyFloat));
     if(step > must_fit) {must_fit = step;}
 

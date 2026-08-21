@@ -83,6 +83,8 @@
 
 #define  NODELISTLENGTH      8
 
+#define  GRAVITY_LET_DETECTOR_ENTRIES  4096  /* how many targets the gravity walk can record as not covered by the locally-built tree. Recording even one stops the run, so this only has to be large enough to report what happened, with room for every thread to record at once */
+
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 
 #if !defined(EOS_GAMMA)

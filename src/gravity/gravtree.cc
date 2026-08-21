@@ -127,16 +127,16 @@ void gravity_tree(void)
 #ifndef SELFGRAVITY_OFF
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-    size_t MyBufferSize = All.BufferSize;
-    /* DETECTOR buffer only: the gravity MPI export round-trip is retired (gravity now runs
-     * on the target-owning rank via the GPU pre-pass + LET). DataIndexTable/DataNodeList are
-     * no longer shipped -- they only record LET-incompleteness to raise Nexport. Sized off the
-     * surviving export-list structs (no gravdata_in/out payload). */
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist)));
+    /* These two tables only RECORD targets whose gravity the locally-built tree cannot supply:
+     * the MPI export round-trip is retired (gravity runs on the target-owning rank via the GPU
+     * pre-pass and the locally-essential tree), so nothing here is ever sent, and a single entry
+     * is enough to stop the run below. They are therefore held to a fixed small capacity rather
+     * than to the communication chunk size, which used to reserve ~100 MB per rank on every
+     * gravity call for something a healthy run never writes to at all. */
+    All.BunchSize = GRAVITY_LET_DETECTOR_ENTRIES;
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {if(ThisTask == 0) printf(" ..All.BunchSize=%ld\n", All.BunchSize);}
-    int k, ewald_max, diff, save_NextParticle, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
+    int k, ewald_max, diff, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
     Ewaldcount = 0; Costtotal = 0; N_nodesinlist = 0; ewald_max=0;
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
@@ -224,7 +224,7 @@ void gravity_tree(void)
         do /* primary point-element loop */
         {
             iter++;
-            BufferFullFlag = 0; Nexport = 0; save_NextParticle = NextParticle; tstart = my_second();
+            BufferFullFlag = 0; Nexport = 0; tstart = my_second();
 
 #ifdef _OPENMP
 #pragma omp parallel

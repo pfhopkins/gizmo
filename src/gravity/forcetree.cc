@@ -1731,9 +1731,15 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         {
                             if(Nexport >= bunchSize)
                             {
-                                /* out of buffer space. Need to discard work for this particle and interrupt */
+                                /* The table is full, so this target cannot even be recorded. That is the
+                                 * same failure as recording it -- its gravity is not covered by the local
+                                 * tree -- so ask for the same controlled stop here. Without this the walk
+                                 * would return below having silently dropped the targets it had already
+                                 * taken from the active list, since there is no longer a retry pass to
+                                 * pick them up again. */
                                 BufferFullFlag = 1;
                                 exitFlag = 1;
+                                gizmo_request_controlled_stop(914040, "gravtree: too many particles need foreign gravity not covered by the locally-built tree to record them all (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
                             }
                             else
                             {
@@ -2261,9 +2267,11 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                         {
                             if(Nexport >= All.BunchSize)
                             {
-                                /* out if buffer space. Need to discard work for this particle and interrupt */
+                                /* Table full: same failure as recording the entry (see the primary walk),
+                                 * and the dropped targets have no retry pass, so stop the run here too. */
                                 BufferFullFlag = 1;
                                 exitFlag = 1;
+                                gizmo_request_controlled_stop(914040, "gravtree: too many particles need foreign gravity not covered by the locally-built tree to record them all (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
                             }
                             else
                             {

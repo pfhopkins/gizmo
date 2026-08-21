@@ -982,6 +982,7 @@ const char *gizmo_controlled_stop_local_reason(void);
 int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
+double      comm_chunk_megabytes_default(void);         /* size to send particle data between tasks in, when the parameter file does not say */
 /* Vista never-hang fatal policy (fail-fast, cleanup-forbidden) -- core/gizmo_fatal.{h,cc}. */
 [[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);

@@ -2738,7 +2738,7 @@ void read_parameter_file(char *fname)
             {
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume this is a NON-cosmological (static-spacetime) simulation (=%d) \n",tag[i],alternate_tag[i],All.ComovingIntegrationOn); continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume the snapshots will be output at user-specified intervals rather than adopting a list from a given file (=%d) \n",tag[i],alternate_tag[i],All.OutputListOn); continue;}
-                if(strcmp("BufferSize",tag[i])==0) {*((double *)addr[i])=100; printf("Tag %s (%s) not set in parameter file: defaulting to 100MB MPI Buffer allocation (adjust if needed for your machine) (=%g) \n",tag[i],alternate_tag[i],All.BufferSize); continue;}
+                if(strcmp("BufferSize",tag[i])==0) {*((double *)addr[i])=comm_chunk_megabytes_default(); printf("Tag %s (%s) not set in parameter file: sending particle data between tasks in chunks of %g MB. Set it here only to override that.\n",tag[i],alternate_tag[i],All.BufferSize); continue;}
             }
         }
         /* ok now safe to do a loop that has statements (e.g. if's) which can depend on some of the variables above */
