@@ -97,7 +97,10 @@ void read_ic(char *fname)
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
         All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
-        gizmo_set_gas_capacity_from_maxpart();
+        /* The one place the gas COUNT decides whether gas storage exists: no storage exists yet to
+           ask instead, and a run's initial conditions are what settle it for the rest of the run.
+           Everywhere after this reads the storage, never the count -- see the helper. */
+        All.MaxPartGas = (All.TotN_gas > 0) ? All.MaxPart : 0;
         All.MaxPartAssignable = All.MaxPart;   /* how many LOCAL particles a rank may be assigned, as
                                                   opposed to how much storage it has.  The two start
                                                   equal and the same expression on every rank makes the

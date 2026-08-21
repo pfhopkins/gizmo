@@ -2623,9 +2623,19 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * against.  That is why the ASSIGNMENT cap appears here and not the storage capacity:
      * storage may be raised to hold an unusually large ghost import, on one rank and not
      * another, so deriving from it would make the index base differ between ranks and move
-     * during a run.  The assignment cap is the same number everywhere and does not change after
-     * startup, so the ratio is exactly the balanced particle count.
-     * Do NOT re-base it on All.TotNumPart, which splits/spawns/eliminations mutate.
+     * during a run.  The assignment cap is the same number everywhere and holds still for as long
+     * as any tree does -- it is worked out again only at a restart, before that run builds a tree
+     * of its own -- and it is brought up to date there rather than left at whatever the initial
+     * conditions held.  The ratio is the balanced particle count on any run whose cap still tracks
+     * that count.  It is only an approximation to it on a run that has grown past what it can
+     * index, where the cap holds still instead of following: the term is then whatever the cap and
+     * the factor in force imply, which errs HIGH if the factor was also lowered there, and high is
+     * the safe direction -- this bounds an index range, not a storage size.  That run is at
+     * the edge of its index space, and the runtime foreign floor (RuntimeMinLETForeignNodes), which
+     * ratchets up when an import does not fit and travels in the restart file, is what covers it.
+     * Do NOT re-base this on All.TotNumPart directly,
+     * which splits/spawns/eliminations mutate mid-epoch and would move the pseudo range under
+     * pointers already written against it.
      * The restart read does not derive at all: it passes the capacity stored in the file
      * (foreign_node_slots_exact), because inside the read window All.MaxPart is the WRITER's
      * (restored for the serialized Nextnode layout) while PartAllocFactor may already be a

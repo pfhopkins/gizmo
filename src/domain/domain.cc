@@ -386,7 +386,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     domain_free();
     t_treefree = timediff(t_tmp, my_second());
 
-    /* A restart that edited PartAllocFactor has been running on the writer's MaxPart so the
+    /* A restart that raised the particle capacity -- because the parameter file asked for it, or
+     * because the run has grown since it started -- has been running on the writer's MaxPart so the
      * serialized tree payload stayed readable (see restart.cc).  The tree is freed just above, so
      * the new value can take effect now. */
     if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}   /* restores a capacity the storage

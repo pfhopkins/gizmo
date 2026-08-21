@@ -149,10 +149,17 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
    into that shared index space above the local particles and a gas ghost can land at any
    index in the imported range, so a gas record is reachable at any index P[] can reach.
    A run with no gas anywhere allocates no CellP[] at all. Call this after every change to
-   All.MaxPart; never assign All.MaxPartGas directly. */
+   All.MaxPart; never assign All.MaxPartGas directly.
+
+   Whether gas storage exists is a property of the RUN, fixed when the initial conditions were
+   read, so it is read from the storage that exists rather than from All.TotN_gas: that count
+   falls as gas turns into stars, and a run that converted its last gas cell would otherwise
+   lose CellP[] the next time its capacity moved, with no way to get it back. The initial
+   conditions are the one place the count IS the right question, since no storage exists yet;
+   read_ic seeds it there. resize_particle_storage keeps the same rule for the same reason. */
 static inline void gizmo_set_gas_capacity_from_maxpart(void)
 {
-    All.MaxPartGas = (All.TotN_gas > 0) ? All.MaxPart : 0;
+    All.MaxPartGas = (All.MaxPartGas > 0) ? All.MaxPart : 0;
 }
 
 #ifdef BOX_SHEARING
