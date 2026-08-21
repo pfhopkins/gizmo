@@ -71,7 +71,7 @@ struct global_data_all_processes
   int NumFilesPerSnapshot;	/*!< number of files in multi-file snapshot dumps */
   int NumFilesWrittenInParallel;	/*!< maximum number of files that may be written simultaneously when writing/reading restart-files, or when writing snapshot files */
   double BufferSize;		/*!< size of communication buffer in MB */
-  long BunchSize;     	        /*!< number of particles fitting into the buffer in the parallel tree algorithm  */
+  long BunchSize;     	        /*!< how many targets the gravity walk can record as not covered by the locally-built tree before it stops the run */
 
   double PartAllocFactor;	/*!< The largest local particle imbalance the decomposition may produce, as a multiple of the balanced count: MaxPartAssignable = PartAllocFactor * (TotNumPart/NTask).  It is a ceiling on ASSIGNMENT, not a storage size.  Room for imported ghosts is no longer taken from it: ghosts share the P[]/CellP[] arrays, but the amount is measured per rank from the imports that actually happen and added on top, and an import that still does not fit raises the capacity when it arrives.  So this only needs to cover the imbalance the decomposition really reaches, which is why the default is small.  Raising it still inflates MaxNodes / MaxForeignNodes and the domain caps, not ghost room. */
   double TreeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */

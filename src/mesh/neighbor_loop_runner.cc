@@ -1294,10 +1294,10 @@ static void mode_b_remote_evaluate_into_buffer(
      * empty. */
     /* targeted_export_ok, jscale and exporter are hoisted above Stage 3 for
      * the fused walk. */
-    /* Cap = legacy All.BunchSize analog: BufferSize / (query env + reply env).
-     * Our NlrQueryEnvelope IS data_index+data_nodelist+ActiveData fused, so
-     * counting envelopes == legacy counting DataIndexTable entries. (No env var;
-     * All.BufferSize is the existing parameterfile parameter, default 100MB.) */
+    /* How much this round may carry: one communication chunk, divided by the size of a
+     * query and its reply. NlrQueryEnvelope fuses what used to be sent as separate index,
+     * node-list and active records, so counting envelopes here counts what the older code
+     * counted as export entries. All.BufferSize is the parameterfile chunk size. */
     constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
     long long bunch = ((long long)All.BufferSize * 1024 * 1024) /
