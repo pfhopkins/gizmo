@@ -355,6 +355,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     // TO: we don't have to call this before merge_and_split particles()
     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
     //rearrange_particle_sequence();
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_drift = CPU_ChildCharged;
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
@@ -597,6 +601,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
     if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
     LightRepartitionCount++;
 
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     rearrange_particle_sequence();

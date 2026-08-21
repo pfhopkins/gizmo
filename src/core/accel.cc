@@ -83,6 +83,7 @@ void compute_hydro_densities_and_forces(void)
 #endif
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
         interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
+        CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
         compute_stellar_feedback();
@@ -108,6 +109,7 @@ void compute_hydro_densities_and_forces(void)
          * step. Consuming this CSR, the way cellcorrections and gradients do,
          * is what removes such a tear. */
         gizmo_hydro_corridor_begin();
+        CPU_Step[CPU_DENSMISC] += measure_time();
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
         /* Running below feedback is NOT neutral for this routine, by intent.

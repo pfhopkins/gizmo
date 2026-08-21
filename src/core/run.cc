@@ -202,6 +202,7 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+        CPU_Step[CPU_LOGMSG] += measure_time();
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
@@ -270,6 +271,7 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+        CPU_Step[CPU_KICKS] += measure_time();
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
 #endif
@@ -278,6 +280,7 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
+        CPU_Step[CPU_DRIFT] += measure_time();
         {   /* drift-time refresh: incremental tile-bbox + BVH update, no SFC
              * re-sort (gas SIDX persists across drifts; alltypes SIDX is
              * full-freed since it's less hot). domain_decomp boundary below
@@ -304,8 +307,10 @@ void run(void)
                                      * physics calls within the step. */
 
         output_log_messages();	/* write some info to log-files */
+        CPU_Step[CPU_LOGMSG] += measure_time();
 
         set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
+        CPU_Step[CPU_SNAPSHOT] += measure_time();   /* dominated by external table reads */
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
@@ -389,20 +394,24 @@ void run(void)
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
         determine_where_SNe_occur(); // for mechanical FB models
+        CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
+        CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
+        CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
 
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+        CPU_Step[CPU_KICKS] += measure_time();
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
 #endif
@@ -411,10 +420,12 @@ void run(void)
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
+        CPU_Step[CPU_KICKS] += measure_time();
         HermiteOnlyFlag = 2;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
         do_hermite_correction();
+        CPU_Step[CPU_KICKS] += measure_time();
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -1172,6 +1183,35 @@ void write_cpu_log(void)
 
   for(i = 1, CPU_Step[0] = 0; i < CPU_PARTS; i++) {CPU_Step[0] += CPU_Step[i];}
 
+
+  /* Ledger closure check. CPU_Step[0] is the SUM of the buckets, so it can never
+   * reveal a gap on its own: compare it against the true elapsed wall since the
+   * previous call. Any positive difference is wall time charged to no bucket --
+   * the failure mode that follows from advancing the timing chain without
+   * charging the interval it skipped. Reduced across ALL ranks, because the leak
+   * need not be on rank 0. One my_second() and one double per log call. */
+  {
+    static double wall_prev = -1.0;
+    const double wall_now = my_second();
+    if(wall_prev > 0.0)
+      {
+        struct {double v; int r;} loss_loc, loss_max;
+        const double elapsed = wall_now - wall_prev;
+        loss_loc.v = elapsed - CPU_Step[0]; loss_loc.r = ThisTask;
+        MPI_Reduce(&loss_loc, &loss_max, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0 && loss_max.v > 1.0 && loss_max.v > 0.05 * elapsed)
+          {
+            printf("WARNING: timing ledger lost %.2f s (%.0f%% of the step) on task %d: "
+                   "wall time was charged to no bucket. A routine in the step loop is "
+                   "missing its CPU_Step[...] += measure_time(), or a timing bracket "
+                   "advanced the chain past an uncharged interval.\n",
+                   loss_max.v, 100.0 * loss_max.v / elapsed, loss_max.r);
+            fflush(stdout);
+          }
+      }
+    wall_prev = wall_now;
+  }
+
   MPI_Reduce(CPU_Step, max_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
   MPI_Reduce(CPU_Step, avg_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
@@ -1260,6 +1300,8 @@ void write_cpu_log(void)
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
           "ghost import  %10.2f  %5.1f%%\n"
+          "   gi_loops   %10.2f  %5.1f%%\n"
+          "   gi_corridor%10.2f  %5.1f%%\n"
           "ngb build     %10.2f  %5.1f%%\n"
           "pair kernel   %10.2f  %5.1f%%\n"
 	      "domain        %10.2f  %5.1f%%\n"
@@ -1268,6 +1310,8 @@ void write_cpu_log(void)
           "fof/subfind   %10.2f  %5.1f%%\n"
 #endif
           "drift/splitmg %10.2f  %5.1f%%\n"
+          "kicks         %10.2f  %5.1f%%\n"
+          "log/stats     %10.2f  %5.1f%%\n"
 	      "find_timestep %10.2f  %5.1f%%\n"
 	      "io/snapshots  %10.2f  %5.1f%%\n"
 #ifdef COOLING
@@ -1337,7 +1381,10 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM],
+              (All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_GHOSTIMPORT], (All.CPU_Sum[CPU_GHOSTIMPORT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_GHOSTIMPORT_SYMM], (All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_NGB_BUILD], (All.CPU_Sum[CPU_NGB_BUILD]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_PAIR_KERNEL], (All.CPU_Sum[CPU_PAIR_KERNEL]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DOMAIN], (All.CPU_Sum[CPU_DOMAIN]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1346,6 +1393,8 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_FOF], (All.CPU_Sum[CPU_FOF]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KICKS], (All.CPU_Sum[CPU_KICKS]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_LOGMSG], (All.CPU_Sum[CPU_LOGMSG]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef COOLING

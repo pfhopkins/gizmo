@@ -860,8 +860,11 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Gradients      = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT], CPU_SymbolImbalance[CPU_DENSWAIT]);
     fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC], CPU_SymbolImbalance[CPU_DENSMISC]);
     fprintf(FdBalance, "Ghost import   = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT], CPU_SymbolImbalance[CPU_GHOSTIMPORT]);
+    fprintf(FdBalance, "Ghost imp corr = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT_SYMM], CPU_SymbolImbalance[CPU_GHOSTIMPORT_SYMM]);
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
+    fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_KICKS], CPU_SymbolImbalance[CPU_KICKS]);
+    fprintf(FdBalance, "Log & stats    = '%c' / '%c'\n", CPU_Symbol[CPU_LOGMSG], CPU_SymbolImbalance[CPU_LOGMSG]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
     fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT], CPU_SymbolImbalance[CPU_SNAPSHOT]);
