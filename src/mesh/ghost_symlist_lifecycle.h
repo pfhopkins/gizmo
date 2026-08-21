@@ -290,11 +290,14 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
     if(gizmo_sym_num_active_global > 0 && NTask > 1) {
         double t_refresh = my_second();
         ghost_exchange_cleanup();
+        const double t_gi_symm = my_second();
         ghost_exchange_hydro(safety);
         /* Corridor SYMMETRIC import. Charged to its own import sub-row: leaving it
          * in the caller's residual hid it in misc_hydro, which is where the
-         * `ghost import` row lost most of its meaning. */
-        cpu_charge_child(CPU_GHOSTIMPORT_SYMM, timediff(t_refresh, my_second()));
+         * `ghost import` row lost most of its meaning.  The charge starts after the
+         * teardown of the previous import so both corridor sites measure the same
+         * span. */
+        cpu_charge_child(CPU_GHOSTIMPORT_SYMM, timediff(t_gi_symm, my_second()));
         if(ThisTask == 0) {PRINT_STATUS("Ghost refresh before gradients (%.4f s)", timediff(t_refresh, my_second()));}
     }
 
