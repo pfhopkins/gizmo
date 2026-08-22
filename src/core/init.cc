@@ -139,7 +139,6 @@ void init(void)
     All.TopNodeAllocFactor = 0.1; /* for optimization on startup this needs to be increased for these extreme dynamic range runs */
 #endif
     All.TreeAllocFactor = TREE_ALLOC_FACTOR_START; /* this will also iteratively increase to fit the particle distribution */
-    /* All.LETAllocFactor default (1.0) is set via begrun.cc read_parameter_file default handler; user can override via params file. */
     /* To construct the BH-tree for N particles, somewhat less than N
      internal tree-nodes are necessary for ‘normal’ particle distributions.
      TreeAllocFactor sets the number of internal tree-nodes allocated in units of the particle number.

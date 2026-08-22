@@ -35,7 +35,6 @@ GravityConstantInternal            1.0
 MaxMemSize                         5000
 PartAllocFactor                    10.0
 TreeAllocFactor                    2.0
-LETAllocFactor                     1.0
 BufferSize                         500
 TreeDomainUpdateFrequency          0.005
 

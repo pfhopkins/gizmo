@@ -250,19 +250,21 @@ void gravity_tree(void)
              * DataIndexTable/DataNodeList are no longer shipped -- the tree
              * walk only records LET-incompleteness into Nexport.
              *
-             * If Nexport > 0 a particle's gravity is not covered by LET --
-             * raise LETAllocFactor in params; we request a graceful
-             * controlled-stop here (drained at the all-rank poll below, no
-             * retry, no new collective).
+             * If Nexport > 0 a particle's gravity is not covered by LET, and
+             * we request a graceful controlled-stop here (drained at the
+             * all-rank poll below, no retry, no new collective).  It is not a
+             * capacity shortfall: an import too large for the foreign-node
+             * index range is reported by the exchange, which raises the range
+             * and rebuilds before this walk runs.
              * ============================================================ */
             if(Nexport > 0) {
-                printf("LET incomplete: rank %d has Nexport=%ld particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
+                printf("The locally essential tree did not cover the gravity of %ld particles on rank %d. Stopping.\n", Nexport, ThisTask);
                 fflush(stdout);
                 /* Graceful soft-stop: the export round-trip is retired, so we cannot service
                  * these particles -- but the same loop iteration reaches the all-rank
                  * MPI_Allreduce + gizmo_exit_bad_stop_if_requested poll below, which drains
                  * this flag cleanly (no retry, no new collective). */
-                gizmo_request_controlled_stop(914040, "gravtree: Nexport>0 -- particles need foreign gravity not covered by LET (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover some targets' gravity", __FILE__, __LINE__, __FUNCTION__);
             }
 
             /* Export-back loop is retired under GPU offload, so the arena

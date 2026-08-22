@@ -432,7 +432,7 @@ let_build_attempt:
              * whether ANY rank overflowed, so its status is the same on every rank and
              * cannot say who. */
             if(foreign_needed > (long long) MaxForeignNodes)
-                printf("LET foreign-arena overflow persists after %d retries on rank=%d: needed %lld nodes > MaxForeignNodes=%d (MaxNodes=%d). Stopping.\n",
+                printf("The foreign-node index range could not be made large enough in %d rebuilds on rank=%d: needed %lld nodes against a range of %d (local nodes %d). The range grows itself when an import does not fit, so reaching this means the demand outran it every time; running on more ranks or nodes reduces what each one imports. Stopping.\n",
                        LET_MAX_RETRY, ThisTask, foreign_needed, MaxForeignNodes, MaxNodes);
             fflush(stdout);
             endrun(90000062);   /* graceful drain; skip the foreign-moment steps */
@@ -1715,8 +1715,8 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
                      * retired). Reaching a non-empty pseudo means this target's gravity is not
                      * covered by the local LET; record it so Nexport>0 and gravity_tree() can
-                     * raise a graceful controlled-stop ("raise LETAllocFactor"). The
-                     * DataIndexTable/DataNodeList entries are never shipped -- they only count. */
+                     * raise a graceful controlled-stop. The DataIndexTable/DataNodeList entries
+                     * are never shipped -- they only count. */
                     if(exportflag[task = DomainTask[no - (treeBase + maxNodes + maxForeignNodes)]] != target)
                     {
                         exportflag[task] = target;
@@ -1739,7 +1739,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                                  * pick them up again. */
                                 BufferFullFlag = 1;
                                 exitFlag = 1;
-                                gizmo_request_controlled_stop(914040, "gravtree: too many particles need foreign gravity not covered by the locally-built tree to record them all (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+                                gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover these targets' gravity, and there were too many of them to record", __FILE__, __LINE__, __FUNCTION__);
                             }
                             else
                             {
@@ -2271,7 +2271,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                                  * and the dropped targets have no retry pass, so stop the run here too. */
                                 BufferFullFlag = 1;
                                 exitFlag = 1;
-                                gizmo_request_controlled_stop(914040, "gravtree: too many particles need foreign gravity not covered by the locally-built tree to record them all (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+                                gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover these targets' gravity, and there were too many of them to record", __FILE__, __LINE__, __FUNCTION__);
                             }
                             else
                             {
@@ -2613,12 +2613,12 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * foreign-leaf sidecars and the GPU node mirror) is added by force_tree_grow_foreign_storage
      * once the exact count is in hand -- see AllocatedForeignNodes.  Sizing storage from the ceiling
      * instead would reserve every rank the worst rank's import, for the whole run.
-     * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
+     * MaxForeignNodes starts at MaxNodes + synth_overhead, where synth_overhead accounts
      * for synthesized particle leaves (one entry per particle that is a direct child of an essential
      * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
      * 2 × (All.MaxPartAssignable / PartAllocFactor) = 2 × TotNumPart / NTask as headroom covers NTask=2
-     * worst case (both ranks overlap entirely) while staying modest for large NTask.  Both
-     * factors are fixed within a run, which is required: this term sets MaxForeignNodes and so
+     * worst case (both ranks overlap entirely) while staying modest for large NTask.  The
+     * factor is fixed within a run, which is required: this term sets MaxForeignNodes and so
      * the pseudo-particle index base, which restart-serialized node pointers are written
      * against.  That is why the ASSIGNMENT cap appears here and not the storage capacity:
      * storage may be raised to hold an unusually large ghost import, on one rank and not
@@ -2643,8 +2643,8 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * out from under pointers that are already written.  Every later tree is built from scratch
      * and serializes nothing, so it derives normally.
      * Numforeignnodes (current count, <= AllocatedForeignNodes <= MaxForeignNodes) is reset on each
-     * LET exchange.  On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy
-     * export path is used. */
+     * LET exchange.  The range is empty (MaxForeignNodes = 0) only before the first tree is
+     * allocated, or when a restart file carries none. */
     if(foreign_node_slots_exact >= 0)
     {
         /* Restart read: the index ceiling the file's node pointers were written against, not an
@@ -2655,10 +2655,15 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     else
     {
         double synth_overhead = 2.0 * (double)All.MaxPartAssignable / (double)All.PartAllocFactor;
-        long long base = (long long) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
-        /* Take the larger of the parameter-derived floor and the runtime adaptive
-         * floor (raised by force_treebuild when an import does not fit the index range). This is
-         * the SOLE place MaxForeignNodes is derived. */
+        /* A starting guess only.  What a rank actually imports is not predictable from the size of
+         * its own tree, so this is deliberately not tuned: the runtime floor below is raised to the
+         * demand the first time an import does not fit, and that is what sizes the range from then
+         * on.  Being wrong here costs one extra tree rebuild, and the range itself costs four bytes
+         * per slot. */
+        long long base = (long long) ceil((double)MaxNodes + synth_overhead);
+        /* Take the larger of the starting guess and the runtime floor (raised by force_treebuild
+         * when an import does not fit the index range). This is the SOLE place MaxForeignNodes is
+         * derived. */
         long long want = (base > RuntimeMinLETForeignNodes) ? base : RuntimeMinLETForeignNodes;
         if(want < 0) want = 0;
         if(want > (long long)INT_MAX)

@@ -318,9 +318,10 @@ typedef enum {
 /*! Adaptive lower bound (in nodes) on the foreign-node INDEX ceiling MaxForeignNodes.
  *  0 at startup; force_treebuild ratchets it up when an import does not fit the index
  *  range, so the range follows the run's evolving clustering.  force_treeallocate is the
- *  sole consumer.  NOT a parameter: All.LETAllocFactor is the input floor, this is
- *  the runtime adaptive floor.  Restart-persisted, since it co-determines the index
- *  layout a restart file's serialized node indices were written against.
+ *  sole consumer, and it starts the range from the local tree's own size plus a synthesis
+ *  allowance, which does not predict what a rank imports; this floor is what sizes the range
+ *  thereafter.  Restart-persisted, since it co-determines the index layout a restart file's
+ *  serialized node indices were written against.
  *  It does NOT hold node memory: the nodes are allocated to the exact import
  *  (AllocatedForeignNodes), so a generous ceiling costs only its Nextnode ints. */
 extern long long RuntimeMinLETForeignNodes;

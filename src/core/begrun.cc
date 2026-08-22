@@ -286,11 +286,6 @@ void begrun(void)
        * number -- the memory ledger above all -- would otherwise report a size that is not the
        * one actually reserved. */
       All.MaxMemSize = all.MaxMemSize;
-      /* The remedy printed when the LET foreign-node arena overflows is to raise this and restart,
-       * so the restarted run has to see the new value. The restart read itself is unaffected: it
-       * allocates the foreign arena at the exact capacity stored in the file rather than deriving
-       * it, so the new value first takes effect at the next tree rebuild. */
-      All.LETAllocFactor = all.LETAllocFactor;
       All.TimeLimitCPU = all.TimeLimitCPU;
       All.ResubmitOn = all.ResubmitOn;
       All.SnapFormat = all.SnapFormat;
@@ -1348,11 +1343,6 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "TreeDomainUpdateFrequency");
       strcpy(alternate_tag[nt], "TreeRebuild_ActiveFraction");
       addr[nt] = &All.TreeDomainUpdateFrequency;
-      id[nt++] = REAL;
-
-      strcpy(tag[nt], "LETAllocFactor");
-      strcpy(alternate_tag[nt], "LET_ForeignNode_HeadroomFactor");
-      addr[nt] = &All.LETAllocFactor;
       id[nt++] = REAL;
 
 #ifdef MHD_MODIFIED_GRADIENT
@@ -2804,7 +2794,6 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
-                if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom; increase if LET unpack overflows) (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif
@@ -3216,10 +3205,6 @@ void read_parameter_file(char *fname)
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {
         if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n");} endrun(1);
-    }
-    if(All.LETAllocFactor <= 0)
-    {
-        if(ThisTask==0) {printf("LETAllocFactor must be >0 in GPU builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n");} endrun(1);
     }
     if((All.MaxRMSDisplacementFac<=0)||(All.MaxRMSDisplacementFac>0.25))
     {

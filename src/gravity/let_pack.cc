@@ -25,8 +25,9 @@
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
  *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
- *  Buffer-overflow policy: if the import would exceed the foreign-node index
- *  ceiling MaxForeignNodes, endrun() with the LETAllocFactor restart message.
+ *  Buffer-overflow policy: an import that would exceed the foreign-node index
+ *  ceiling MaxForeignNodes is reported as retryable; force_treebuild raises the
+ *  ceiling to the demand and rebuilds.
  *  A graceful-shrink fallback to the legacy export path is not implemented; add it only if
  *  practical memory limits ever require it.
  */
@@ -1893,9 +1894,8 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 {
     if(foreign_needed_out) *foreign_needed_out = 0;
-    /* Defensive no-op if no foreign-node headroom was allocated.  GPU builds
-     * reject LETAllocFactor<=0 during parameter validation because the legacy
-     * gravity export fallback is retired there. */
+    /* Defensive no-op if no foreign-node index range has been established yet -- before the
+     * first tree allocation, or from a restart file that carries none. */
     if(MaxForeignNodes <= 0) return LET_OK;
 
     g_let_pack_oom = 0;   /* fresh status for this exchange */
@@ -2142,7 +2142,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
  * ---------------------------------------------------------------------- */
 extern "C" void let_finalize_unredirected_foreign_topleaves(void)
 {
-    if(MaxForeignNodes <= 0) return;   /* non-GPU build: LET inactive */
+    if(MaxForeignNodes <= 0) return;   /* no foreign-node index range: nothing was imported */
 
     const long long pseudo_lo = (long long)All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes;
     const long long pseudo_hi = pseudo_lo + NTopleaves;
