@@ -72,7 +72,6 @@ MinGasTemp      2.73	    %
 
 %---- Hydro reconstruction (kernel) parameters
 DesNumNgb               32      % domain-reconstruction kernel number: 32 standard, 60-114 for quintic
-MaxHsml                 1.0e10  % minimum gas kernel length (some very large value to prevent errors)
 MinGasHsmlFractional    0       % minimum kernel length relative to gas force softening (<= 1)
 
 

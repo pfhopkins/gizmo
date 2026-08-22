@@ -21,7 +21,6 @@ MaxRMSDisplacementFac              0.1
 
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
-MaxHsml                            1.0e9
 
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7

@@ -38,7 +38,6 @@ TreeDomainUpdateFrequency          0.005
 DesNumNgb                          32
 DesLinkNgb                         16
 MaxNumNgbDeviation                 0.10
-MaxHsml                            1000.0
 MinGasHsmlFractional               0
 
 SofteningGas                       0.02

@@ -12,7 +12,6 @@ MaxSizeTimestep                    0.001
 DesNumNgb                          40
 MaxNumNgbDeviation                 0.1
 GravityConstantInternal            1
-MaxHsml                            2000
 SofteningGas                       0.0001
 SofteningHalo                      0.07
 Softening_Type2                    0.003

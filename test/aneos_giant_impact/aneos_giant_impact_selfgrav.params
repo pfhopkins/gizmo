@@ -20,7 +20,6 @@ TimeBetStatistics                  100.0
 BoxSize                            6.0e9
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
-MaxHsml                            1.0e9
 
 CourantFac                         0.3
 ErrTolIntAccuracy                  0.01
