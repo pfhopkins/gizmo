@@ -26,7 +26,6 @@ ViscosityAMax                      2
 ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
 TimeBetStatistics                  0.5
-MaxMemSize                         3000
 ErrTolTheta                        0.7
 MaxNumNgbDeviation                 0.1
 ResubmitOn                         0

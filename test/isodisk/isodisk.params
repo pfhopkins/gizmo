@@ -63,7 +63,6 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
-MaxMemSize                         4000
 ResubmitOn                         0
 ResubmitCommand                    none
 
@@ -71,7 +70,6 @@ ResubmitCommand                    none
 TreeDomainUpdateFrequency   0.1	% 0.0005-0.05, dept on core+particle number
 
 %----- Memory allocation
-PartAllocFactor            3.0     % memory load allowed (ratio of element number to mean) for better cpu balance [Default=2]
 
 %---- System of units
 UnitMagneticField_in_gauss  1.0   	        % 1 gauss

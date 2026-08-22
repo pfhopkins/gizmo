@@ -56,9 +56,6 @@ OmegaBaryon             0.0
 HubbleParam             1.0
 
 %----- Memory allocation
-MaxMemSize          5000
-PartAllocFactor     10.0
-BufferSize          500
 
 %---- Domain decomposition
 TreeDomainUpdateFrequency   0.005

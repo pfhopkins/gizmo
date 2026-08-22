@@ -42,6 +42,5 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 
-MaxMemSize                         1000
 ResubmitOn                         0
 ResubmitCommand                    none

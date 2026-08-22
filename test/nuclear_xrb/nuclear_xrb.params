@@ -33,7 +33,6 @@ SofteningGas                       50000.0
 SofteningGasMaxPhys                50000.0
 
 % memory
-MaxMemSize                         4000
 
 % misc
 ResubmitOn                         0

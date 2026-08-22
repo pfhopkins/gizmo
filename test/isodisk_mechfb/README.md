@@ -15,7 +15,7 @@ test/isodisk_mechfb` runs the default.
 | --- | --- | --- | --- |
 | default | `Config.sh` | `isodisk_mechfb.params` | `GALSF_FB_MECHANICAL` on a plain `COOLING`+`GALSF`+`METALS` disk |
 | cosmic rays | `Config_cr.sh` | `isodisk_mechfb_cr.params` | the FIRE physics set with `FIRE_CRS=(-1)`, `FIRE_MHD` and a reduced CR speed of light — mechanical feedback with the CR fluid live. Writes `output_cr/` |
-| cosmic rays, multi-bin | `Config_cr0.sh` | `isodisk_mechfb_cr0.params` | as above but `FIRE_CRS=0` (multi-bin CR spectrum) and a larger `MaxMemSize`. Writes `output_cr0/` |
+| cosmic rays, multi-bin | `Config_cr0.sh` | `isodisk_mechfb_cr0.params` | as above but `FIRE_CRS=0` (multi-bin CR spectrum). Writes `output_cr0/` |
 
 The two cosmic-ray variants were formerly a separate `isodisk_mechfb_cr/`
 directory that pointed at these same ICs; they are Config variants of this

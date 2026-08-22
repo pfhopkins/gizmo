@@ -48,6 +48,5 @@ ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 
 % Misc
-MaxMemSize                         1000
 ResubmitOn                         0
 ResubmitCommand                    none

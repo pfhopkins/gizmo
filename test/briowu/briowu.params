@@ -18,7 +18,6 @@ TimeBetSnapshot                    0.1
 MaxSizeTimestep                    0.04
 DesNumNgb                          20
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         2000
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2
 MaxRMSDisplacementFac              0.1

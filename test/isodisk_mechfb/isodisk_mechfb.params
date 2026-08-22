@@ -39,6 +39,5 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
-MaxMemSize                         3000
 ResubmitOn                         0
 ResubmitCommand                    none

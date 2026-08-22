@@ -6,13 +6,11 @@
 %
 InitCondFile                       ../evrard/evrard_ics
 OutputDir                          output_evalpotential
-PartAllocFactor                    10
 TimeMax                            0.05
 TimeBetSnapshot                    0.025
 MaxSizeTimestep                    0.001
 DesNumNgb                          40
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         3000
 GravityConstantInternal            1
 MaxHsml                            2000
 SofteningGas                       0.01

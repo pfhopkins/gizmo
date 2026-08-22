@@ -32,10 +32,7 @@ UnitMass_in_g                      1.989e33
 UnitVelocity_in_cm_per_s           1.0e5
 GravityConstantInternal            1.0
 
-MaxMemSize                         5000
-PartAllocFactor                    10.0
 TreeAllocFactor                    2.0
-BufferSize                         500
 TreeDomainUpdateFrequency          0.005
 
 DesNumNgb                          32

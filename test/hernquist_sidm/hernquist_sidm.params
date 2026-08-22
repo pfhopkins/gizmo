@@ -65,6 +65,5 @@ DM_KickPerCollision                0.0
 DM_InteractionVelocityScale        0.0
 
 % Misc
-MaxMemSize                         2000
 ResubmitOn                         0
 ResubmitCommand                    none

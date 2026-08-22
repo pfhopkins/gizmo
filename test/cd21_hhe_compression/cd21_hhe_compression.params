@@ -29,7 +29,6 @@ MinSizeTimestep                    1.0e-10
 TimeBetStatistics                  1.0e-4
 DesNumNgb                          4
 MaxNumNgbDeviation                 1e-6
-MaxMemSize                         1000
 ErrTolIntAccuracy                  0.0025
 CourantFac                         0.05
 MaxRMSDisplacementFac              0.125
@@ -64,8 +63,6 @@ SofteningDiskMaxPhys               0.05
 SofteningBulgeMaxPhys              0.05
 SofteningStarsMaxPhys              0.05
 SofteningBndryMaxPhys              0.05
-PartAllocFactor                    5.0
-BufferSize                         100
 TimeBegin                          0
 ComovingIntegrationOn              0
 TimeOfFirstSnapshot                0

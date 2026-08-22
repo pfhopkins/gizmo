@@ -44,13 +44,11 @@ MaxRMSDisplacementFac           0.25
 
 DesNumNgb                       16
 MaxNumNgbDeviation              1
-PartAllocFactor                 50
 
 ErrTolForceAcc                  0.001
 ErrTolTheta                     0.7
 
 TimeBetStatistics               5.0e-6
-MaxMemSize                      500
 
 ResubmitOn                      0
 ResubmitCommand                 none

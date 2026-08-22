@@ -32,8 +32,6 @@ BoxSize                            1
 TimeBetSnapshot                    0.5
 DesNumNgb                          4
 MaxNumNgbDeviation                 1e-6
-MaxMemSize                         1000
-PartAllocFactor                    10
 MaxSizeTimestep                    0.05
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2

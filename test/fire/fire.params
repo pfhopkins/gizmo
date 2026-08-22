@@ -31,8 +31,6 @@ Cell_Spawn_Mass_ratio               0.01
 SeedSinkPerUnitMass                 2e-6
 SinkEddingtonFactor                 1e3
 % -- platform/runtime options
-Max_Memory_Per_MPI_Task_in_MB       30000
-MPI_Buffersize_in_MB                200
 ParticleNumberMembalance_Limit      3.5
 TreeRebuild_ActiveFraction          0.002
 Effective_Kernel_NeighborNumber     32

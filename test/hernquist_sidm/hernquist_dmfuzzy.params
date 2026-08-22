@@ -61,6 +61,5 @@ ErrTolTheta                        0.7
 FuzzyDM_Mass_in_eV                 1e-18
 
 % Misc
-MaxMemSize                         2000
 ResubmitOn                         0
 ResubmitCommand                    none

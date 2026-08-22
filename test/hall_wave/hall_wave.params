@@ -1,9 +1,6 @@
 InitCondFile                       hall_wave_ics
 ICFormat                           3
 OutputDir                          output
-MaxMemSize                         2600
-PartAllocFactor                    10
-BufferSize                         150
 TimeBegin                          0
 TimeMax                            79
 ComovingIntegrationOn              0
