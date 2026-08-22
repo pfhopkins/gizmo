@@ -268,8 +268,10 @@ static void radfb_rp_pair_kick(
     double jet_kick = 0.0;
     if ((double)loc.jet_momentum_tocouple > 0) {
         jet_kick = wk * (double)loc.jet_momentum_tocouple / Mass_j;
-            Kokkos::atomic_add(&out.jet_momentum_used,
-                            (MyDouble)(wk * (double)loc.jet_momentum_tocouple));
+        /* Plain accumulation: `out` is the caller's own per-row accumulator on
+         * every path, never shared, and an atomic on it is only defined while
+         * it lives in global memory. */
+        out.jet_momentum_used += (MyDouble)(wk * (double)loc.jet_momentum_tocouple);
     }
     dv_ss += jet_kick;
 #endif
@@ -473,7 +475,14 @@ struct RadFBRPSpec {
     /* Per-field merge — manifest in radfb_rp_loop.cc.
      *   wt_sum            : additive across peer accumulators (iter 0 reduce).
      *   jet_momentum_used : additive (iter 1 reduce). */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
+        ACCUM_ADD(wt_sum)
+        ACCUM_ADD(jet_momentum_used)
+#undef ACCUM_ADD
+    }
 
 
     /* Ghost-writeback + write-detector bookkeeping. All four gated by
@@ -574,9 +583,17 @@ struct RadFBRPSpec {
         if (r2 >= h2 || r2 <= 0) return;
 
         if (active.iter_index == 0) {
-            /* iter 0 : accumulate wt_sum = Σ h_j² */
+            /* iter 0 : accumulate wt_sum = Σ h_j²
+             *
+             * Plain accumulation, not an atomic: the accumulator is private to
+             * whoever is walking this row on every path -- one work item per
+             * active particle on the device, one OpenMP thread per active
+             * particle in the host walker, one lane-private partial under the
+             * within-row lane division. Nothing else can reach it, and taking
+             * its address for an atomic is only defined while it lives in
+             * global memory, which the lane-private partial does not. */
             double h_j = Pj.Get_Particle_Size();
-            Kokkos::atomic_add(&accum.wt_sum, h_j * h_j);
+            accum.wt_sum += h_j * h_j;
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */
             radfb_rp_pair_kick(active.local, active.scalars, Pj, Cj,

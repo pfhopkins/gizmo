@@ -344,7 +344,15 @@ struct RtSrcInjectionSpec {
                                         const AccumData& accum);
 
     /* Additive merge — manifest in rt_source_injection_loop.cc. */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* ============================================================================
+     * MERGE — nothing to merge; AccumData is empty for this Spec (see its
+     * definition in rt_source_injection_loop.h). Declared because the Spec
+     * contract requires it.
+     * ========================================================================== */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& /*local_accum*/, const AccumData& /*peer_accum*/)
+    {
+    }
 
     /* Ghost-writeback + write-detector bookkeeping.
      * Detector uses runner default (loop_name = "rtsrcinjection"). */

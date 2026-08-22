@@ -914,12 +914,10 @@ void open_outputfiles(void)
     /* Each bucket below paints two characters into the map: work share / imbalance share.
        Buckets with no charge site are never painted and are marked with the sentinel. */
     fprintf(FdBalance, "unused slot    = '_' (no writer; never appears in the map)\n");
+    fprintf(FdBalance, "a character may be reused by a second bucket: the map is painted in the\n");
+    fprintf(FdBalance, "order listed here, each bucket contiguous, so position separates the two.\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
-    fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
-    fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1], CPU_SymbolImbalance[CPU_TREEWAIT1]);
     fprintf(FdBalance, "Treewait2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT2], CPU_SymbolImbalance[CPU_TREEWAIT2]);
-    fprintf(FdBalance, "Treesend       = '%c' / '%c'\n", CPU_Symbol[CPU_TREESEND], CPU_SymbolImbalance[CPU_TREESEND]);
-    fprintf(FdBalance, "Treerecv       = '%c' / '%c'\n", CPU_Symbol[CPU_TREERECV], CPU_SymbolImbalance[CPU_TREERECV]);
     fprintf(FdBalance, "Treebuild      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEBUILD], CPU_SymbolImbalance[CPU_TREEBUILD]);
     fprintf(FdBalance, "Treehmaxupdate = '%c' / '%c'\n", CPU_Symbol[CPU_TREEHMAXUPDATE], CPU_SymbolImbalance[CPU_TREEHMAXUPDATE]);
     fprintf(FdBalance, "Treemisc =       '%c' / '%c'\n", CPU_Symbol[CPU_TREEMISC], CPU_SymbolImbalance[CPU_TREEMISC]);
@@ -929,8 +927,11 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Gradients      = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT], CPU_SymbolImbalance[CPU_DENSWAIT]);
     fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC], CPU_SymbolImbalance[CPU_DENSMISC]);
     fprintf(FdBalance, "Ghost import   = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT], CPU_SymbolImbalance[CPU_GHOSTIMPORT]);
+    fprintf(FdBalance, "Ghost imp corr = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT_SYMM], CPU_SymbolImbalance[CPU_GHOSTIMPORT_SYMM]);
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
+    fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_KICKS], CPU_SymbolImbalance[CPU_KICKS]);
+    fprintf(FdBalance, "Log & stats    = '%c' / '%c'\n", CPU_Symbol[CPU_LOGMSG], CPU_SymbolImbalance[CPU_LOGMSG]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
     fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT], CPU_SymbolImbalance[CPU_SNAPSHOT]);

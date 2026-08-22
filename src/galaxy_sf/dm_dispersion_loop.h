@@ -163,7 +163,23 @@ struct DMDispersionSpec {
                                                   double final_h,
                                                   const IterScratch& scratch);
 
-    static void   merge_accum(AccumData& local, const AccumData& peer);
+    /* ============================================================================
+     * merge_accum — Mode B remote peer merge (all fields additive).
+     *
+     * All five fields are simple sums; no MIN reductions (unlike density's
+     * Sink_TimeBinGasNeighbor). Mismatch vs pair_kernel semantics = silent
+     * multi-rank corruption, surfacing only as a difference between rank counts.
+     * ========================================================================== */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local, const AccumData& peer)
+    {
+        local.Ngb        += peer.Ngb;
+        local.DM_Vx      += peer.DM_Vx;
+        local.DM_Vy      += peer.DM_Vy;
+        local.DM_Vz      += peer.DM_Vz;
+        local.DM_VelDisp += peer.DM_VelDisp;
+        local.DM_Rho     += peer.DM_Rho;
+    }
 
     static IterResult after_iter(const AfterIterContext<DMDispersionSpec>& ctx,
                                  const AccumData& accum);

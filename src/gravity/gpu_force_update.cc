@@ -133,7 +133,9 @@ extern "C" void gpu_force_update_tree(void)
      * un-drifted node state, and drains at the next phase-boundary poll -- with
      * NO MPI_Abort. (A direct `goto finish_mpi` from here is ill-formed: it would
      * jump over the t_fut_drift_nodes initialization, which finish_mpi uses.) */
-    const bool drift_ok = scratch_ok && (gpu_force_drift_nodes(gizmo_host_ti_current()) == 0);
+    const bool drift_ok = scratch_ok
+                          && (gpu_gravity_tree_nodes_current_at(gizmo_host_ti_current())
+                              || gpu_force_drift_nodes(gizmo_host_ti_current()) == 0);
     if(scratch_ok && !drift_ok) { endrun(929703); }
     double t_fut_drift_nodes = my_second();
 

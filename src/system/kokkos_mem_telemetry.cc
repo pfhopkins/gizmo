@@ -39,6 +39,13 @@
 #include <cstring>
 #endif
 
+/* Must precede allvars.h, and is not optional for a TU the GPU compiler sees:
+   it supplies the device-pass redirect of `All` to this TU's own managed
+   mirror. Without it the host-only `All` is what the inline host+device
+   accessors in cell_data.h and proto.h read on the device pass, which the
+   compiler reports as a host variable read in a device function. Inert on a
+   pure host build, so it needs no gate of its own. */
+#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"   /* GIZMO_KOKBUCKET_* / GIZMO_KOKSPACE_* enums */
 

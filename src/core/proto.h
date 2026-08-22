@@ -545,6 +545,7 @@ void gizmo_full_drift_to(integertime time1);
 extern "C" {
 #endif
 void gizmo_full_drift_invalidate(void);
+integertime gizmo_full_drift_ti(void);
 #ifdef __cplusplus
 }
 #endif
@@ -1021,7 +1022,6 @@ double gravkick_integ(double a, void *param);
 double growthfactor_integ(double a, void *param);
 void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
-double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode);
 double measure_time(void);
 void cpu_charge_child(int bucket, double dt);
 double cpu_minus_children(double elapsed, double child0);

@@ -25,6 +25,7 @@
 #include "../gravity/forcetree.h"
 #include "../gravity/force_node_drift_sync.h"  /* modeb_node_ti_current_acquire */
 #include "ghost_writeback.h"      /* ghost_get_num_local */
+#include "ghost_exchange_functions.h" /* gx_extended_overlap_wrap_and_test: canonical-wrap SSOT */
 #include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
 
@@ -79,23 +80,16 @@ static inline int sphere_aabb_overlap(const double pos[3],
                                       const struct NODE *nop,
                                       double R)
 {
-    double dx = (double)nop->center[0] - pos[0];
-    double dy = (double)nop->center[1] - pos[1];
-    double dz = (double)nop->center[2] - pos[2];
-    NEAREST_XYZ(dx, dy, dz, 1);
-    /* Legacy per-axis AABB reject at R + 0.5*len (ngb_codeblock_checknode.h normal
-     * branch: if(NGB_PERIODIC_BOX_LONG_* > R+0.5*len) continue, per axis). The node box
-     * spans center +- 0.5*len per axis; a single-axis separation > R+0.5*len means the
-     * query sphere (radius R) cannot reach the box, so no overlap. Conservative — a
-     * neighbor inside the node forces box/sphere intersection, so this never drops a real
-     * neighbor; it removes the corner-case nodes the enclosing-sphere bound alone opens. */
-    const double half = R + 0.5 * (double)nop->len;
-    if(fabs(dx) > half || fabs(dy) > half || fabs(dz) > half) return 0;
-    /* Legacy enclosing-sphere test at R + CUBE_EDGEFACTOR_1*len = R + 0.866*len
-     * (0.5 + 0.366025 = sqrt(3)/2 = SQRT3_OVER_2) — byte-identical to legacy's radial. */
-    const double SQRT3_OVER_2 = 0.86602540378443864676;
-    double r_max = R + (double)nop->len * SQRT3_OVER_2;
-    return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
+    /* Node open test.  Both the box wrap (including the shearing-box straddle
+     * case) and the legacy acceptance geometry live in the shared predicate, so
+     * this walk and the BVH/tile walks cannot drift apart.  A cube's
+     * circumradius is 0.866*len, so the shared per-axis-half-width form
+     * reproduces the legacy node bound exactly. */
+    const double hw = 0.5 * (double)nop->len;
+    return gx_extended_overlap_wrap_and_test((double)nop->center[0] - pos[0],
+                                             (double)nop->center[1] - pos[1],
+                                             (double)nop->center[2] - pos[2],
+                                             hw, hw, hw, R);
 }
 
 /* Mode B SYMMETRIC effective radius for an internal node. Returns

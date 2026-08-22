@@ -421,7 +421,150 @@ struct GradientsSpec
     /* Peer-rank accum merge (Mode B remote). Body in gradients_loop.cc:
      * additive for Gradients[k].*, MAX/MIN for Maxima/Minima, MAX for
      * MaxDistance, additive for everything else. */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* ============================================================================
+     * merge_accum — peer-rank accum reduction (Mode B remote). Field-by-field
+     * additive for Gradients[k].*, MAX/MIN for Maxima/Minima, MAX for
+     * MaxDistance, additive for all CRK/face/SPH/AGS accumulators. Must match
+     * the merge semantics that the pair body implicitly performs across passes.
+     * ========================================================================== */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& dst, const AccumData& src)
+    {
+#define MERGE_ADD(field)  do { dst.field += src.field; } while(0)
+#define MERGE_MAX(field)  do { if(src.field > dst.field) dst.field = src.field; } while(0)
+#define MERGE_MIN(field)  do { if(src.field < dst.field) dst.field = src.field; } while(0)
+
+        /* Gradients[k].* — additive for every quantity in Quantities_for_Gradients. */
+        for(int k = 0; k < 3; k++) {
+            MERGE_ADD(Gradients[k].Density);
+            MERGE_ADD(Gradients[k].Pressure);
+            for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].Velocity[j]); }
+#ifdef MAGNETIC
+            for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].B[j]); }
+#ifdef DIVBCLEANING_DEDNER
+            MERGE_ADD(Gradients[k].Phi);
+#endif
+#endif
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
+            for(int j = 0; j < NUM_METAL_SPECIES; j++) { MERGE_ADD(Gradients[k].Metallicity[j]); }
+#endif
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
+            for(int j = 0; j < N_RT_FREQ_BINS; j++) {
+                MERGE_ADD(Gradients[k].Rad_E_gamma[j]);
+                /* SymmetricTensor2 stores 6 unique elements behind [i][j]==[j][i]
+                 * aliasing — iterate raw storage to avoid double-adding the
+                 * off-diagonals (xy/yz/xz appear via both index orderings). */
+                for(int kd = 0; kd < 6; kd++) { MERGE_ADD(Gradients[k].Rad_E_gamma_ET[j].data[kd]); }
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+                for(int kd = 0; kd < 3; kd++) { MERGE_ADD(Gradients[k].Rad_Flux[j][kd]); }
+#endif
+            }
+#endif
+#ifdef DOGRAD_INTERNAL_ENERGY
+            MERGE_ADD(Gradients[k].InternalEnergy);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            MERGE_ADD(Gradients[k].ElectronNumberDensity);
+            MERGE_ADD(Gradients[k].ElectronTemperature);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].E_battery_T2[j]); }
+#endif
+#ifdef COSMIC_RAY_FLUID
+            for(int j = 0; j < N_CR_PARTICLE_BINS; j++) { MERGE_ADD(Gradients[k].CosmicRayPressure[j]); }
+#endif
+#ifdef DOGRAD_SOUNDSPEED
+            MERGE_ADD(Gradients[k].SoundSpeed);
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+            for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].Velocity_bar[j]); }
+#endif
+        }
+
+        /* Maxima/Minima — element-wise MAX/MIN. */
+        MERGE_MAX(Maxima.Density);  MERGE_MIN(Minima.Density);
+        MERGE_MAX(Maxima.Pressure); MERGE_MIN(Minima.Pressure);
+        for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.Velocity[j]); MERGE_MIN(Minima.Velocity[j]); }
+#ifdef MAGNETIC
+        for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.B[j]); MERGE_MIN(Minima.B[j]); }
+#ifdef DIVBCLEANING_DEDNER
+        MERGE_MAX(Maxima.Phi); MERGE_MIN(Minima.Phi);
+#endif
+#endif
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
+        for(int j = 0; j < NUM_METAL_SPECIES; j++) { MERGE_MAX(Maxima.Metallicity[j]); MERGE_MIN(Minima.Metallicity[j]); }
+#endif
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
+        for(int j = 0; j < N_RT_FREQ_BINS; j++) {
+            MERGE_MAX(Maxima.Rad_E_gamma[j]); MERGE_MIN(Minima.Rad_E_gamma[j]);
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            for(int kd = 0; kd < 3; kd++) { MERGE_MAX(Maxima.Rad_Flux[j][kd]); MERGE_MIN(Minima.Rad_Flux[j][kd]); }
+#endif
+        }
+#endif
+#ifdef DOGRAD_INTERNAL_ENERGY
+        MERGE_MAX(Maxima.InternalEnergy); MERGE_MIN(Minima.InternalEnergy);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        MERGE_MAX(Maxima.ElectronNumberDensity); MERGE_MIN(Minima.ElectronNumberDensity);
+        MERGE_MAX(Maxima.ElectronTemperature);   MERGE_MIN(Minima.ElectronTemperature);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+        for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.E_battery_T2[j]); MERGE_MIN(Minima.E_battery_T2[j]); }
+#endif
+#ifdef COSMIC_RAY_FLUID
+        for(int j = 0; j < N_CR_PARTICLE_BINS; j++) { MERGE_MAX(Maxima.CosmicRayPressure[j]); MERGE_MIN(Minima.CosmicRayPressure[j]); }
+#endif
+#ifdef DOGRAD_SOUNDSPEED
+        MERGE_MAX(Maxima.SoundSpeed); MERGE_MIN(Minima.SoundSpeed);
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+        for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.Velocity_bar[j]); MERGE_MIN(Minima.Velocity_bar[j]); }
+#endif
+
+        MERGE_MAX(MaxDistance);
+
+#if defined(KERNEL_CRK_FACES)
+        MERGE_ADD(m0);
+        for(int k = 0; k < 3; k++) {
+            MERGE_ADD(m1[k]); MERGE_ADD(dm0[k]);
+            for(int kx = 0; kx < 3; kx++) { MERGE_ADD(dm1[k][kx]); }
+        }
+        for(int k = 0; k < 6; k++) {
+            MERGE_ADD(m2[k]);
+            for(int kx = 0; kx < 3; kx++) { MERGE_ADD(dm2[k][kx]); }
+        }
+#endif
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION==6)
+        for(int j = 0; j < 3; j++) { MERGE_ADD(GlassAcc[j]); }
+#endif
+#ifdef HYDRO_SPH
+#ifdef MAGNETIC
+        for(int j = 0; j < 3; j++) { MERGE_ADD(DtB[j]); }
+#ifdef DIVBCLEANING_DEDNER
+        MERGE_ADD(divB);
+#endif
+#endif
+        MERGE_ADD(alpha_limiter);
+#endif
+#ifdef MHD_CONSTRAINED_GRADIENT
+        for(int j = 0; j < 3; j++) {
+            MERGE_ADD(Face_Area[j]);
+            for(int k = 0; k < 3; k++) { MERGE_ADD(FaceCrossX[j][k]); }
+        }
+        MERGE_ADD(FaceDotB);
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+        for(int j = 0; j < 3; j++) { MERGE_ADD(Velocity_hat[j]); }
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
+        MERGE_ADD(AGS_zeta);
+#endif
+
+#undef MERGE_ADD
+#undef MERGE_MAX
+#undef MERGE_MIN
+    }
 
 };
 
@@ -518,7 +661,16 @@ struct GradientsIterSpec
     /* Slim writeback / merge (own bodies, gradients_loop.cc). */
     static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i,
                                         const AccumData& accum);
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* Peer-rank accum merge (Mode B remote): additive, matching GradientsSpec's
+     * MERGE_ADD(FaceDotB) + MERGE_ADD(Gradients[k].Phi). */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& dst, const AccumData& src)
+    {
+        dst.FaceDotB += src.FaceDotB;
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+        for(int k = 0; k < 3; k++) { dst.PhiGrad[k] += src.PhiGrad[k]; }
+#endif
+    }
 };
 #endif /* MHD_CONSTRAINED_GRADIENT */
 

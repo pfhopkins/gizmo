@@ -10,6 +10,7 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
+#include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
@@ -30,8 +31,11 @@ int gravity_walk_route_to_host(long long n_local_active)
      * time step: the device sweep skips nodes already at its target time, so it can no
      * longer bring their mirror up to date, and a second gravity evaluation at the same
      * time (a Hermite correction pass, a repeated walk for the opening criterion) would
-     * otherwise read that stale geometry. */
-    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+     * otherwise read that stale geometry.  A tree built after that drift is
+     * exempt: the build rewrote every node and every mirror, so the record of an
+     * earlier lazy drift no longer describes anything. */
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)
+            && force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
 
     return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
 }
@@ -100,7 +104,23 @@ void gravity_tree(void)
         rearrange_particle_sequence();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
+        /* The tree just built is current by construction: the build set every
+         * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
+         * local and foreign, from those nodes.  Record that here, at the call
+         * site that KNOWS this is the main step tree, rather than inside
+         * force_treebuild -- which is also used to build group-local and subset
+         * trees whose geometry must never be certified for the step's device
+         * consumers.  The full-drift test is the remaining precondition: it is
+         * what makes the node geometry describe this time rather than merely
+         * being freshly written, and move_particles above drifts only the active
+         * set.  Absent that proof nothing is recorded and consumers fall back to
+         * the host, which is correct but slower -- never wrong.
+         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+         * controlled stop during GPU finalize / LET / pseudo handling and still
+         * return, and a tree whose build asked to stop must never be recorded as
+         * current -- not even for the few statements before the poll exits. */
         gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
@@ -495,10 +515,13 @@ void gravity_tree(void)
     plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
-    CPU_Step[CPU_TREEWALK1] += timetree1; CPU_Step[CPU_TREEWALK2] += timetree2;
-    CPU_Step[CPU_TREESEND] += timecommsumm1; CPU_Step[CPU_TREERECV] += timecommsumm2;
-    CPU_Step[CPU_TREEWAIT1] += timewait1; CPU_Step[CPU_TREEWAIT2] += timewait2;
+    /* The span from the end of the build to here is the force walk.  Only the
+     * wait is separately measured inside it, so the walk row is the rest of the
+     * span; charging the remainder to `misc` instead reported the whole walk as
+     * unattributed.  The send/recv and second-walk timers this routine used to
+     * split out have no writer any more and are not charged. */
+    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
+    CPU_Step[CPU_TREEWAIT2] += timewait2;
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(ThisTask == 0)
     {

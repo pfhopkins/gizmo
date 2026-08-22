@@ -200,12 +200,6 @@ void ThermalFBSpec::apply_active_writeback(const neighbor_loop_args& args,
  * Single additive scalar (M_coupled). One line under the macro discipline.
  * ========================================================================== */
 
-void ThermalFBSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
-    ACCUM_ADD(M_coupled)
-#undef ACCUM_ADD
-}
 
 /* ============================================================================
  * HOST-FILL HELPER (SSOT)

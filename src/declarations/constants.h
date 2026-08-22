@@ -278,15 +278,15 @@
  * therefore the meaning of columns in existing logs, never shift. */
 #define CPU_NGB_BUILD         47  /* neighbor-list (CSR) construction, all callers */
 #define CPU_SIDX_REFRESH      48  /* post-drift spatial-index refresh (tile bboxes, BVH refit, device staging) */
-#define CPU_LAZY_DRIFT        49  /* reserved: never charged */
+#define CPU_GHOSTIMPORT_SYMM  49  /* hydro-corridor SYMMETRIC ghost import (sub-row of ghost import) */
 #define CPU_GRAV_PRECOMP      50  /* reserved: never charged */
 #define CPU_FORCE_UPDATE_TREE 51  /* dynamic tree update on reused-tree steps (node drift + top-node kick exchange) */
 #define CPU_SINK_ENV          52  /* sink_environment GPU kernel + scatter */
 #define CPU_SINK_FEEDSWK      53  /* sink_feed + sink_swallow_and_kick combined */
 #define CPU_PAIR_KERNEL       54  /* neighbor-loop pair-kernel launch + fence (runner only) */
 #define CPU_GHOSTIMPORT       55  /* imported-ghost exchange, all callers (hydro, gravity, sinks, feedback) */
-#define CPU_DUMMY09           56  /* reserved */
-#define CPU_DUMMY10           57  /* reserved */
+#define CPU_KICKS             56  /* first+second half-step kicks, Hermite predict/correct */
+#define CPU_LOGMSG            57  /* per-step statistics + log-file writes (a barrier-sync absorber) */
 
 #define CPU_PARTS          58  /* this gives the number of parts above (must be last) */
 

@@ -97,38 +97,6 @@ void SinkFeedSpec::apply_active_writeback(const neighbor_loop_args& args,
     aux->per_active_accum[active_slot] = accum;
 }
 
-/* Per-field merge of a peer's contribution (Mode B remote). Per-field op
- * MUST match the pair_kernel writes. mass_markedswallow_scratch is
- * intentionally NOT in the manifest — per-i scratch, not aggregable
- * across peers. Nothing checks this manifest against pair_kernel at runtime,
- * so drift between them is silent.
- *
- * Adding a new accumulator field for this loop = ONE LINE under the
- * appropriate physics flag's #ifdef. */
-void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)                local_accum.field += peer_accum.field;
-#define ACCUM_ADD_VEC3(field)           for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
-#define ACCUM_MIN_PAIR(value, pos)                                              \
-    do {                                                                        \
-        if(peer_accum.value < local_accum.value) {                              \
-            local_accum.value = peer_accum.value;                               \
-            for(int k = 0; k < 3; k++) local_accum.pos[k] = peer_accum.pos[k];  \
-        }                                                                       \
-    } while(0);
-
-#ifdef SINK_CALC_LOCAL_ANGLEWEIGHTS
-    ACCUM_ADD(Sink_angle_weighted_kernel_sum)
-#endif
-#ifdef SINK_REPOSITION_ON_POTMIN
-    ACCUM_MIN_PAIR(Sink_PotentialMinimumOfNeighbors,
-                   Sink_PotentialMinimumOfNeighborsPos)
-#endif
-
-#undef ACCUM_ADD
-#undef ACCUM_ADD_VEC3
-#undef ACCUM_MIN_PAIR
-}
 
 /* ============================================================================
  * DEVICE CONTEXT LIFECYCLE

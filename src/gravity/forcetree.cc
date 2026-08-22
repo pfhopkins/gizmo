@@ -3007,10 +3007,15 @@ void force_treefree(void)
         if(Father)        {gpu_father_free(Father); Father = NULL;}
         gpu_gravity_tree_alias_nextnode(NULL, 0);  /* clear SoA alias before free */
         /* Freeing the tree invalidates every GPU representation derived from it: the
-         * node mirror the device walk reads, and the drift and moment-refresh state
-         * keyed to that mirror. They are released here so the two representations share
-         * one lifetime; the build that follows reacquires them. The mirror and its pools
-         * are therefore reallocated once per tree epoch rather than held for the run. */
+         * node mirror the device walk reads, the drift and moment-refresh state keyed
+         * to that mirror, and the records saying the node geometry is current. Nothing
+         * may still claim currency for nodes that are going away, so both records are
+         * retired here rather than left for the next build's generation bump to mask;
+         * release() reaches them through free_arrays_, and the explicit call keeps that
+         * guarantee at this site even if the release path is restructured. The mirror
+         * and its pools are therefore reallocated once per tree epoch rather than held
+         * for the run. */
+        gpu_gravity_tree_invalidate_currency();
         gpu_gravity_tree_release();
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}

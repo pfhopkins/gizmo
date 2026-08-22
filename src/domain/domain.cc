@@ -373,6 +373,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     // TO: we don't have to call this before merge_and_split particles()
     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
     //rearrange_particle_sequence();
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_drift = CPU_ChildCharged;
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
@@ -393,6 +397,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
     gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     t_drift_loop = timediff(t_tmp, my_second());
+    /* The merge/split, the reordering and the drift above are what this row is
+     * named for.  What follows -- freeing the tree, resizing particle storage,
+     * wrapping the box -- is decomposition work, so the row closes here rather
+     * than swallowing it. */
+    CPU_Step[CPU_DRIFT] += cpu_minus_children(timediff(t_drift_start, my_second()), child0_drift);
+    cpu_chain_sync(my_second());
+    const double t_dom_rest = my_second();
+    const double child0_dom_rest = CPU_ChildCharged;
 
     t_tmp = my_second();
     force_treefree();
@@ -438,8 +450,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     gizmo_exit_bad_stop_if_requested("domain:particle_capacity");
     t_barrier = timediff(t_tmp, my_second());
     const double t_drift_end = my_second();
-    double t_drift_total = cpu_minus_children(timediff(t_drift_start, t_drift_end), child0_drift);
-    CPU_Step[CPU_DRIFT] += t_drift_total;
+    double t_drift_total = cpu_minus_children(timediff(t_dom_rest, t_drift_end), child0_dom_rest);
+    CPU_Step[CPU_DOMAIN] += t_drift_total;
     cpu_chain_sync(t_drift_end);
     if(ThisTask == 0) {
         printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
@@ -628,6 +640,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
     if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
     LightRepartitionCount++;
 
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     rearrange_particle_sequence();

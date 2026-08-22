@@ -471,7 +471,70 @@ struct SinkEnv1Spec {
      * boundary; per-field reduction op MUST match the pair_kernel writes
      * (sum for additive fields, MAX for DF_mmax_particles). Includes all
      * #ifdef-gated optional fields. */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* Per-field merge of a peer rank's contribution into a local accumulator.
+     * Per-field op MUST match the pair_kernel writes (sum for additive fields,
+     * MAX for max-reduced fields, componentwise sum for vec3). Used by
+     * run_mode_b_remote at the cross-rank boundary; within a single rank,
+     * accumulation is via repeated pair_kernel calls (which already encode
+     * the right per-field op).
+     *
+     * Nothing checks this manifest against pair_kernel at runtime: drift between
+     * the two is silent, and shows up only as a cross-rank difference in the
+     * affected field.
+     *
+     * Adding a new accumulator field for this loop = ONE LINE under the
+     * appropriate physics flag's #ifdef. Operations available below; extend
+     * by adding new ACCUM_* defines if a field needs different op semantics. */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+        /* Local op macros — scoped to this function via #undef below. The
+         * macros expand to the same statements as the prior hand-written
+         * field listing (semantically identical expansion). */
+#define ACCUM_ADD(field)       local_accum.field += peer_accum.field;
+#define ACCUM_ADD_VEC3(field)  for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
+#define ACCUM_MAX(field)       if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
+
+        ACCUM_ADD(Sink_SurroudingGasInternalEnergy)
+        ACCUM_ADD(Mgas_in_Kernel)
+        ACCUM_ADD(Mstar_in_Kernel)
+        ACCUM_ADD(Malt_in_Kernel)
+        ACCUM_ADD_VEC3(Jgas_in_Kernel)
+        ACCUM_ADD_VEC3(Jstar_in_Kernel)
+        ACCUM_ADD_VEC3(Jalt_in_Kernel)
+#ifdef SINK_REPOSITION_ON_POTMIN
+        ACCUM_ADD(DF_rms_vel)
+        ACCUM_ADD_VEC3(DF_mean_vel)
+        ACCUM_MAX(DF_mmax_particles)
+#endif
+#if defined(SINK_OUTPUT_MOREINFO)
+        ACCUM_ADD(Sfr_in_Kernel)
+#endif
+#if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
+        ACCUM_ADD_VEC3(Sink_SurroundingGasVel)
+#endif
+#ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
+        ACCUM_ADD_VEC3(Sink_SurroundingGasCOM)
+#endif
+#if (SINK_GRAVACCRETION == 8)
+        ACCUM_ADD(hubber_mdot_bondi_limiter)
+        ACCUM_ADD(hubber_mdot_vr_estimator)
+        ACCUM_ADD(hubber_mdot_disk_estimator)
+#endif
+#if defined(SINK_GRAVCAPTURE_GAS)
+        ACCUM_ADD(mass_to_swallow_edd)
+#endif
+#if defined(SINK_RETURN_ANGMOM_TO_GAS)
+        ACCUM_ADD_VEC3(angmom_prepass_sum_for_passback)
+#endif
+#if defined(SINK_RETURN_BFLUX)
+        ACCUM_ADD(kernel_norm_topass_in_swallowloop)
+#endif
+
+#undef ACCUM_ADD
+#undef ACCUM_ADD_VEC3
+#undef ACCUM_MAX
+    }
 
     /* ====================================================================
      * ENGINE APPARATUS — touch only when changing the runner contract

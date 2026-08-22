@@ -83,14 +83,6 @@ void DiffFilterSpec::apply_active_writeback(const neighbor_loop_args& args,
         C.MaxDistance_for_grad = (MyFloat)accum.max_dist_for_grad;
 }
 
-void DiffFilterSpec::merge_accum(AccumData& local, const AccumData& peer)
-{
-    local.norm_hat += peer.norm_hat;
-    for (int k = 0; k < 3; k++) local.velocity_bar_delta[k] += peer.velocity_bar_delta[k];
-    if (peer.filter_width_bar  > local.filter_width_bar)  local.filter_width_bar  = peer.filter_width_bar;
-    if (peer.max_dist_for_grad > local.max_dist_for_grad) local.max_dist_for_grad = peer.max_dist_for_grad;
-}
-
 
 double DiffFilterSpec::symmetric_neighbor_radius_scale()
 {
@@ -163,27 +155,6 @@ void DynDiffSpec::apply_active_writeback(const neighbor_loop_args& args,
     }
 }
 
-void DynDiffSpec::merge_accum(AccumData& local, const AccumData& peer)
-{
-    for (int k = 0; k < 3; k++) {
-        for (int v = 0; v < 3; v++) {
-            local.dynamic_fac[k][v]          += peer.dynamic_fac[k][v];
-#ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
-            local.dynamic_fac_const[k][v]    += peer.dynamic_fac_const[k][v];
-#endif
-            local.grad_velocity_hat[k][v]    += peer.grad_velocity_hat[k][v];
-            local.product_velocity_hat[k][v] += peer.product_velocity_hat[k][v];
-        }
-        if (peer.maxima_velocity_hat[k] > local.maxima_velocity_hat[k])
-            local.maxima_velocity_hat[k] = peer.maxima_velocity_hat[k];
-        if (peer.minima_velocity_hat[k] < local.minima_velocity_hat[k])
-            local.minima_velocity_hat[k] = peer.minima_velocity_hat[k];
-    }
-    if (peer.filter_width_hat > local.filter_width_hat)
-        local.filter_width_hat = peer.filter_width_hat;
-    local.dynamic_numerator_hat   += peer.dynamic_numerator_hat;
-    local.dynamic_denominator_hat += peer.dynamic_denominator_hat;
-}
 
 double DynDiffSpec::symmetric_neighbor_radius_scale()
 {

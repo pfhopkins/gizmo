@@ -335,15 +335,6 @@ void MechFBSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     /* Intentionally empty — see banner. */
 }
 
-/* merge_accum — Mode B remote peer accumulator merge. M_coupled adds;
- * Area_weighted_sum[] adds per element. Mirrors the legacy device-side
- * accumulation in mechanical_fb_pair_kernel (myout.Area_weighted_sum[k] +=). */
-void MechFBSpec::merge_accum(AccumData& local, const AccumData& peer) {
-    local.M_coupled += peer.M_coupled;
-    for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
-        local.Area_weighted_sum[k] += peer.Area_weighted_sum[k];
-    }
-}
 
 /* after_iter — STATUS-ONLY.
  *

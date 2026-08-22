@@ -1314,7 +1314,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * ProcessedFlag untouched leaves every candidate to the host loop in gravtree.cc. */
     if(gravity_walk_route_to_host(num_active)) {myfree(idx_host); return 0;}
 
-    if(gpu_force_drift_nodes(ti_curr_host) != 0) {
+    /* Already-current geometry needs no sweep, and asking for one when a host
+     * lazy drift armed the latch earlier in the step would fail rather than
+     * no-op.  A tree built since that drift is current and its mirror was
+     * rewritten with it. */
+    if(!gpu_gravity_tree_nodes_current_at(ti_curr_host)
+            && gpu_force_drift_nodes(ti_curr_host) != 0) {
         myfree(idx_host);   /* LIFO mymalloc cleanup before drain */
         endrun(929702);
         return 1;   /* soft bad-stop: skip walk on un-drifted nodes; drains at next poll */
@@ -1965,8 +1970,7 @@ extern "C" int gpu_ewald_walk_primary(void)
      * this time; it does not survive a host lazy drift that happens afterwards at the
      * same time, which refreshes a node in the AoS while leaving its mirror behind. The
      * second clause covers exactly that ordering. */
-    if(!gpu_gravity_soa_drift_certified(gizmo_host_ti_current())
-            || force_host_lazy_drift_ti() == gizmo_host_ti_current()) {
+    if(!gpu_gravity_tree_nodes_current_at(gizmo_host_ti_current())) {
         return 0;
     }
 

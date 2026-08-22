@@ -35,13 +35,41 @@ static int soa_valid_    = 0;
 static integertime g_soa_drift_ti  = -1;
 static long        g_soa_drift_gen = -1;
 
+/* Second, independent way for the node geometry to be current at a time: the
+ * tree was BUILT at that time. A build sets every node's Ti_current to
+ * All.Ti_Current and refills the whole SoA mirror from those nodes, so a
+ * just-built tree is current by construction -- but the build also bumps the
+ * treebuild generation, which invalidates the sweep stamp above. Without this
+ * record a freshly built, fully current tree reads as uncertified, and every
+ * device consumer of node geometry declines on it.
+ * Kept SEPARATE from the drift stamp rather than folded into it: the two are
+ * written by unrelated subsystems and mean different things.  Gravity's own
+ * routing is left reading the sweep stamp by this change -- that is scope, not
+ * endorsement; those consumers have the same blind-key problem and are a
+ * scheduled follow-up. -1 = no record. */
+static integertime g_soa_born_ti  = -1;
+static long        g_soa_born_gen = -1;
+
 static void gpu_gravity_soa_invalidate_drift_stamp_(void) { g_soa_drift_ti = -1; g_soa_drift_gen = -1; }
+static void gpu_gravity_soa_invalidate_born_stamp_(void)  { g_soa_born_ti  = -1; g_soa_born_gen  = -1; }
+
+/* Retire BOTH currency records.  Public so tree teardown can close the window
+ * the moment the node arrays go away, instead of leaving a positive record
+ * standing until some later build happens to bump the generation. */
+extern "C" void gpu_gravity_tree_invalidate_currency(void)
+{
+    gpu_gravity_soa_invalidate_drift_stamp_();
+    gpu_gravity_soa_invalidate_born_stamp_();
+}
 
 static void free_arrays_(void)
 {
-    /* SSOT: freeing any SoA buffer invalidates drift certification — covers every
-     * free_arrays_ caller (acquire realloc, release, gpu_nextnode_backup_suns). */
+    /* SSOT: freeing any SoA buffer invalidates BOTH currency records — covers
+     * every free_arrays_ caller (acquire realloc, release,
+     * gpu_nextnode_backup_suns). A born-current record that outlived the mirror
+     * it describes would be a stale certification waiting for the first grow. */
     gpu_gravity_soa_invalidate_drift_stamp_();
+    gpu_gravity_soa_invalidate_born_stamp_();
     if(soa_.center)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.center);   soa_.center   = NULL;}
     if(soa_.len)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.len);      soa_.len      = NULL;}
     if(soa_.s)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.s);        soa_.s        = NULL;}
@@ -458,6 +486,35 @@ extern "C" void gpu_gravity_soa_mark_drift_certified(integertime ti)
 extern "C" int gpu_gravity_soa_drift_certified(integertime ti)
 {
     return (g_soa_drift_ti == ti && g_soa_drift_gen == force_treebuild_generation()) ? 1 : 0;
+}
+
+/* Record that this tree was built current at `ti`. Sole writer of the born
+ * record; called by force_treebuild after the mirror and the foreign range are
+ * finalized and after the generation has been bumped, so it captures the
+ * generation a consumer will compare against. */
+extern "C" void gpu_gravity_tree_mark_born_current(integertime ti)
+{
+    g_soa_born_ti  = ti;
+    g_soa_born_gen = force_treebuild_generation();
+}
+
+/* Is the device-visible node geometry current at `ti`? True if the drift sweep
+ * certified it, OR if the tree was built current at `ti`. Two ways to satisfy
+ * ONE question, so consumers ask about the geometry rather than about who
+ * happened to touch it. Both keyed on the treebuild generation, so a rebuild
+ * retires either answer.
+ * A record is only meaningful while the mirror it describes exists, so the
+ * mirror's validity is part of the answer rather than a separate obligation
+ * left to each caller -- a predicate that can say `current` about a released
+ * SoA is one mistake away from a device walk over freed geometry. */
+extern "C" int gpu_gravity_tree_nodes_current_at(integertime ti)
+{
+    if(!soa_valid_ || !soa_.center || !soa_.len || !soa_.sibling || !soa_.nextnode ||
+       !soa_.bitflags || !soa_.nextnode_aux) {return 0;}
+    const long gen = force_treebuild_generation();
+    if(g_soa_born_ti  == ti && g_soa_born_gen  == gen) {return 1;}
+    if(g_soa_drift_ti == ti && g_soa_drift_gen == gen) {return 1;}
+    return 0;
 }
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)
