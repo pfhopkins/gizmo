@@ -548,7 +548,11 @@ void gizmo_size_memory_arena(void)
             else
             {
                 int wanted = All.MaxMemSize;
-                All.MaxMemSize = (int) safe_per_task;
+                /* Not the whole share: the particle arrays and the tree are allocated OUTSIDE this
+                   pool, so handing it everything a task has leaves them nothing and the rank is
+                   killed rather than stopped.  Leave a fraction of the share for them and for the
+                   system, as the advice this replaced did. */
+                All.MaxMemSize = (int) (ARENA_SHARE_OF_TASK_MEMORY * safe_per_task);
                 if(ThisTask == 0)
                 {
                     printf("Memory: this run would have taken %d MB per task for its working "
