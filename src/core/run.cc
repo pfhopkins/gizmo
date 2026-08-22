@@ -892,8 +892,19 @@ void find_next_sync_point_and_drift(void)
    * may still need to old list in the dynamic tree update */
   /* drift_particle modifies KernelRadius — batch-mark h-dirty for SIDX. */
   std::vector<int> _drift_marked;
+  /* Collect the active particles first, then drift them.  drift_particle reads and
+   * writes only its own particle's entries, so the two passes do exactly what the
+   * single interleaved loop did, in the same order, and the drift is then free to
+   * run in parallel.  The collection stays a walk over the occupied bins and their
+   * active lists, which is what a step with a handful of active particles needs --
+   * it must not become a sweep over every particle on the rank. */
   for(n = 0, prev = -1; n < TIMEBINS; n++)
-    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current); _drift_marked.push_back(i);}}}
+    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {_drift_marked.push_back(i);}}}
+  const int n_drift = (int)_drift_marked.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
+  for(int k = 0; k < n_drift; k++) {drift_particle(_drift_marked[k], All.Ti_Current);}
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }
