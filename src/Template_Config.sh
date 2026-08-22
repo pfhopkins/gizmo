@@ -626,7 +626,7 @@
 # --------------------
 # ----- MPI & Parallel-FFTW De-Bugging
 #DOUBLEPRECISION_FFTW               # FFTW in double precision to match libraries
-#DISABLE_ALIGNED_ALLOC              # disable calls to 'aligned_alloc', needed for older C99-only versions of GCC compilers [everything C11+ -should- be compatible and not need this]
+#DISABLE_ALIGNED_ALLOC              # retired: the working memory pool is always aligned now. Blocks it hands out are rounded to a 32-byte boundary and some of them hold particle data, which requires that alignment, so the un-aligned variant was unsafe rather than merely slower. 'aligned_alloc' is standard in C11 and later, which this code requires anyway.
 # --------------------
 # ----- Load-Balancing
 # (ALLOW_IMBALANCED_GASPARTICLELOAD is retired and has no effect: the gas-cell capacity always follows the particle capacity, so the load-balancing freedom it used to enable is unconditional. A run with no gas allocates no gas-cell storage at all.)

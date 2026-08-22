@@ -1974,7 +1974,7 @@ struct NlrQueryEnvelope {
     int        n_nodes;
     /* Reserved, always zero. Holds the wire slot of a removed Mode-B probe
      * flag. Kept so sizeof(NlrQueryEnvelope) is unchanged: the envelope size
-     * divides All.BufferSize to set the streaming round boundary, and round
+     * divides All.CommChunkSize to set the streaming round boundary, and round
      * boundaries fix the order in which replies merge into accums_out. Dropping
      * the field would therefore shift floating-point summation order at large
      * active counts. Reuse this slot before growing the envelope. */

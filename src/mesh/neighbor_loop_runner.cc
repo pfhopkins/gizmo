@@ -1276,7 +1276,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                           cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
     }
 
-    /* ---- PEER round loop (streaming). Build a BufferSize-bounded batch of
+    /* ---- PEER round loop (streaming). Build a CommChunkSize-bounded batch of
      * query envelopes from actives[cursor..N), exchange+evaluate+reply, advance
      * cursor, iterate until every rank is drained (legacy do/while +
      * Allreduce(ndone), code_block_xchange_perform_ops.h:9-191). Bounds total
@@ -1297,10 +1297,10 @@ static void mode_b_remote_evaluate_into_buffer(
     /* How much this round may carry: one communication chunk, divided by the size of a
      * query and its reply. NlrQueryEnvelope fuses what used to be sent as separate index,
      * node-list and active records, so counting envelopes here counts what the older code
-     * counted as export entries. All.BufferSize is the parameterfile chunk size. */
+     * counted as export entries. All.CommChunkSize is the parameterfile chunk size. */
     constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
-    long long bunch = ((long long)All.BufferSize * 1024 * 1024) /
+    long long bunch = ((long long)All.CommChunkSize * 1024 * 1024) /
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
     if(bunch < 1) bunch = 1;
 
@@ -1336,8 +1336,8 @@ static void mode_b_remote_evaluate_into_buffer(
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active",
                             "[mode_b B2a caller=%s] single active's export set (%lld envelopes, "
-                            "~%lld bytes) exceeds BufferSize bunch (%lld envelopes); shipping a solo "
-                            "oversized round — cap ineffective for this call (raise BufferSize).",
+                            "~%lld bytes) exceeds CommChunkSize bunch (%lld envelopes); shipping a solo "
+                            "oversized round — cap ineffective for this call (raise CommChunkSize).",
                             Spec::loop_name, add, add * kEnvPairBytes, bunch);
                     }
                     /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
@@ -1384,8 +1384,8 @@ static void mode_b_remote_evaluate_into_buffer(
                     if(round_env_count > 0 && round_env_count + add > bunch) break;
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active_bcast",
-                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > BufferSize "
-                            "bunch (%lld); solo oversized round — cap ineffective (raise BufferSize).",
+                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > CommChunkSize "
+                            "bunch (%lld); solo oversized round — cap ineffective (raise CommChunkSize).",
                             Spec::loop_name, add, bunch);
                     }
                     for(int p = 0; p < nt; p++) {
@@ -1418,7 +1418,7 @@ static void mode_b_remote_evaluate_into_buffer(
          * answers incoming queries in memory-bounded WHOLE-PEER groups (the
          * legacy import sub-chunk loop, code_block_xchange_perform_ops.h:96-174)
          * instead of materializing every peer's payload at once. Group budget =
-         * the same All.BufferSize that sizes the sender bunch. The bound covers
+         * the same All.CommChunkSize that sizes the sender bunch. The bound covers
          * TRANSPORT payloads only (envelopes + replies) — candidate vectors and
          * pair-kernel scratch scale with the group's query content, not with
          * NTask. Peers are consumed in ascending rank order, so the
@@ -1431,7 +1431,7 @@ static void mode_b_remote_evaluate_into_buffer(
             xch.begin(queries_per_peer);
         }
         const size_t group_budget_bytes =
-            (size_t)((double)All.BufferSize * 1024.0 * 1024.0);
+            (size_t)((double)All.CommChunkSize * 1024.0 * 1024.0);
 
         std::vector<int> group_peers;
         std::vector<std::vector<Envelope>> group_queries;

@@ -54,13 +54,13 @@ void mymalloc_init(void)
   memset(FunctionName, 0, MAXBLOCKS * MAXCHARS);
   memset(FileName, 0, MAXBLOCKS * MAXCHARS);
 
-  n = All.MaxMemSize * ((size_t) 1024 * 1024);
+  n = All.WorkingMemoryPoolSize * ((size_t) 1024 * 1024);
 
-#ifdef DISABLE_ALIGNED_ALLOC
-  Base = malloc(n);
-#else
+  /* Every block handed out of this pool is rounded to MIN_ALIGNMENT, so the pool itself has to
+   * start there or the rounding guarantees nothing.  Callers rely on it: the domain exchange, the
+   * halo-finder redistribution and the particle sorts all take buffers of particle_data out of
+   * here, and that type is over-aligned to 32 bytes, which the plain allocators do not promise. */
   Base = aligned_alloc(MIN_ALIGNMENT, n);
-#endif
   {
     /* Large planned SYMMETRIC allocation -> collective guard on the result.
      * Every rank calls mymalloc_init() once, so this Allreduce is symmetric.
@@ -71,7 +71,7 @@ void mymalloc_init(void)
     MPI_Allreduce(&base_fail_local, &base_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(base_fail_any)
       {
-        if(base_fail_local) {printf("Failed to allocate memory for `Base' (%d Mbytes).\n", All.MaxMemSize); fflush(stdout);}
+        if(base_fail_local) {printf("Failed to allocate the working memory pool (%d MB).\n", All.WorkingMemoryPoolSize); fflush(stdout);}
         gizmo_request_controlled_stop(122, "mymalloc_init: Base arena allocation failed on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
         return;
       }

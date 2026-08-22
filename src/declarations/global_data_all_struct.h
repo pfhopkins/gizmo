@@ -70,7 +70,7 @@ struct global_data_all_processes
   int SnapFormat;		/*!< selects different versions of snapshot file-formats */
   int NumFilesPerSnapshot;	/*!< number of files in multi-file snapshot dumps */
   int NumFilesWrittenInParallel;	/*!< maximum number of files that may be written simultaneously when writing/reading restart-files, or when writing snapshot files */
-  double BufferSize;		/*!< size of communication buffer in MB */
+  double CommChunkSize;		/*!< Size in MB of the chunk particle data is sent between tasks in: the snapshot and initial-conditions field blocks, the generic chunked all-to-all, and the neighbour loops' round batches.  A round-count/memory trade, not a capacity: a smaller chunk means more rounds, never a failure.  Worked out by the code from what a round has to hold, unless the parameter file asks for a size. */
   long BunchSize;     	        /*!< how many targets the gravity walk can record as not covered by the locally-built tree before it stops the run */
 
   double PartAllocFactor;	/*!< The largest local particle imbalance the decomposition may produce, as a multiple of the balanced count: MaxPartAssignable = PartAllocFactor * (TotNumPart/NTask).  It is a ceiling on ASSIGNMENT, not a storage size.  Room for imported ghosts is no longer taken from it: ghosts share the P[]/CellP[] arrays, but the amount is measured per rank from the imports that actually happen and added on top, and an import that still does not fit raises the capacity when it arrives.  So this only needs to cover the imbalance the decomposition really reaches, which is why the default is small.  Raising it still inflates MaxNodes / MaxForeignNodes and the domain caps, not ghost room. */
@@ -229,7 +229,7 @@ struct global_data_all_processes
          MaxSizeTimestep;		/*!< maximum allowed timestep */
   double MaxRMSDisplacementFac;	/*!< this determines a global timestep criterion for cosmological simulations in comoving coordinates.  To this end, the code computes the rms velocity
 				   of all particles, and limits the timestep such that the rms displacement is a fraction of the mean particle separation (determined from the particle mass and the cosmological parameters). This parameter specifies this fraction. */
-  int MaxMemSize;		/*!< Per-MPI-task size in MB of the legacy Base/mymalloc arena. NOT a total memory budget: particle SoA, tree UVM, Kokkos scratch, LET wire buffers, and MPI/ghost buffers are accounted separately, outside this arena. */
+  int WorkingMemoryPoolSize;		/*!< Per-MPI-task size in MB of the working memory pool, the scoped last-in-first-out arena mymalloc hands blocks out of.  NOT a total memory budget: the particle arrays, the tree, device scratch and the transport buffers are allocated outside it and accounted separately.  Worked out by the code from the tenants that actually draw on it, unless the parameter file asks for a size, in which case that size is used untouched. */
   int NeighborLoopModeBThresholdSum;	/*!< optional Mode-A/B dispatch threshold on the summed active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_sum) */
   int NeighborLoopModeBThresholdMax;	/*!< optional Mode-A/B dispatch threshold on the max-rank active-neighbor count; -1 = unset (use each loop's Spec::modeb_threshold_max) */
   int GravityHostWalkBelowActive;	/*!< below this many RANK-LOCAL active gravity candidates, the tree walk and the dynamic tree update run on the host, which drifts nodes lazily as it

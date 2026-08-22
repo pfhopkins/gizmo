@@ -1614,7 +1614,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
                 if(round_bytes > arena_room)
                 {
                     printf("LET exchange: rank %d needs %g MB for one round of transport buffers but has "
-                           "%g MB of arena left. Raise Max_Memory_Per_MPI_Task_in_MB, or spread the run "
+                           "%g MB of arena left. Raise Working_Mem_Pool_Per_Task_in_MB, or spread the run "
                            "over more ranks. Stopping.\n",
                            ThisTask, (double) round_bytes / (1024.0 * 1024.0),
                            (double) arena_room / (1024.0 * 1024.0));

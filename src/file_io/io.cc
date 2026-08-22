@@ -63,8 +63,8 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
 
-        size_t MyBufferSize = All.BufferSize;
-        bytes = MyBufferSize * 1024 * 1024;
+        size_t comm_chunk_mb = All.CommChunkSize;
+        bytes = comm_chunk_mb * 1024 * 1024;
         /* Collective OOM preflight (mirrors allocate_memory): mymalloc() does
          * NOT return NULL on capacity failure -- it routes to the TEMP-hard
          * path -- so check fit BEFORE the call and bad-stop gracefully. All-rank
@@ -4644,8 +4644,8 @@ void write_file(char *fname, int writeTask, int lastTask)
         if(blockpresent(blocknr))
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
+            size_t comm_chunk_mb = All.CommChunkSize;
+            blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
             npart = get_particles_in_block(blocknr, &typelist[0]);
 
             if(npart > 0)

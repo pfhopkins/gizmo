@@ -122,7 +122,7 @@ static void report_memory_ledger_impl(const char *when, int always)
     gizmo_node_comm_init();
 
     /* Base arena: size reserved per task vs. the central allocator's high-water use. */
-    double base_reserved_mb  = (double) All.MaxMemSize;
+    double base_reserved_mb  = (double) All.WorkingMemoryPoolSize;
     double base_highwater_mb = HighMarkBytes / (1024.0 * 1024.0);
 
     /* Sum the Base arena high-water and the per-family byte counters across the tasks
@@ -234,7 +234,7 @@ static void report_memory_ledger_impl(const char *when, int always)
         if(mem_total_kb > 0) {snprintf(node_phys, sizeof(node_phys), "%.1f MB", mem_total_kb / 1024.0);}
         else {snprintf(node_phys, sizeof(node_phys), "unavailable");}
 
-        /* Base reservation accumulates per rank on the node -- MaxMemSize is the same
+        /* Base reservation accumulates per rank on the node -- WorkingMemoryPoolSize is the same
            on every rank, so the node total is simply the per-rank size times the count. */
         double node_base_reserved_mb = base_reserved_mb * GizmoRanksThisNode;
 
@@ -430,7 +430,7 @@ static int arena_megabytes_from_tenants(long long total_particles)
        could not supply, and a per-particle array or two. The buffer belongs to reading and
        writing files and so is never held at the same time as the walk's tables, but the tables
        are small enough now that counting both costs nothing and saves an argument. */
-    long long step = (long long) All.BufferSize * 1024 * 1024
+    long long step = (long long) All.CommChunkSize * 1024 * 1024
                    + (long long) GRAVITY_LET_DETECTOR_ENTRIES
                      * (long long) (sizeof(struct data_index) + sizeof(struct data_nodelist))
                    + maxpart * (long long) (2 * sizeof(MyFloat));
@@ -480,14 +480,14 @@ static int arena_megabytes_from_tenants(long long total_particles)
 void gizmo_size_memory_arena(void)
 {
     long long total_particles = -1;
-    int user_asked = (All.MaxMemSize > 0);
+    int user_asked = (All.WorkingMemoryPoolSize > 0);
 
     if(user_asked)
     {
         if(ThisTask == 0)
         {
             printf("Memory: using the requested %d MB per task for the working memory pool.\n",
-                   All.MaxMemSize);
+                   All.WorkingMemoryPoolSize);
             fflush(stdout);
         }
     }
@@ -506,22 +506,22 @@ void gizmo_size_memory_arena(void)
 
         if(total_particles > 0)
         {
-            All.MaxMemSize = arena_megabytes_from_tenants(total_particles);
+            All.WorkingMemoryPoolSize = arena_megabytes_from_tenants(total_particles);
             if(ThisTask == 0)
             {
                 printf("Memory: sized the working memory pool at %d MB per task, for %lld particles "
-                       "over %d tasks.\n", All.MaxMemSize, total_particles, NTask);
+                       "over %d tasks.\n", All.WorkingMemoryPoolSize, total_particles, NTask);
                 fflush(stdout);
             }
         }
         else
         {
-            All.MaxMemSize = ARENA_MEGABYTES_WHEN_INPUT_UNREADABLE;
+            All.WorkingMemoryPoolSize = ARENA_MEGABYTES_WHEN_INPUT_UNREADABLE;
             if(ThisTask == 0)
             {
                 printf("Memory: could not read the particle count from the input, so the working "
                        "memory pool is set to %d MB per task. If the input is missing or unreadable "
-                       "the message about that follows shortly.\n", All.MaxMemSize);
+                       "the message about that follows shortly.\n", All.WorkingMemoryPoolSize);
                 fflush(stdout);
             }
         }
@@ -538,7 +538,7 @@ void gizmo_size_memory_arena(void)
        overridden -- it is their machine and their judgement -- but it is still reported. */
     {
         double safe_per_task = mpi_report_comittable_memory(0, 0);
-        if(safe_per_task > 0 && (double) All.MaxMemSize > safe_per_task)
+        if(safe_per_task > 0 && (double) All.WorkingMemoryPoolSize > safe_per_task)
         {
             if(user_asked)
             {
@@ -547,27 +547,27 @@ void gizmo_size_memory_arena(void)
                     printf("WARNING: the requested working memory pool (%d MB per task) is larger "
                            "than this machine can safely give each task (%g MB). The run may still "
                            "work, but it will fail if enough tasks on a node use their full share "
-                           "at once. Lower Max_Memory_Per_MPI_Task_in_MB, or run fewer tasks per "
-                           "node.\n", All.MaxMemSize, safe_per_task);
+                           "at once. Lower Working_Mem_Pool_Per_Task_in_MB, or run fewer tasks per "
+                           "node.\n", All.WorkingMemoryPoolSize, safe_per_task);
                     fflush(stdout);
                 }
             }
             else
             {
-                int wanted = All.MaxMemSize;
+                int wanted = All.WorkingMemoryPoolSize;
                 /* Not the whole share: the particle arrays and the tree are allocated OUTSIDE this
                    pool, so handing it everything a task has leaves them nothing and the rank is
                    killed rather than stopped.  Leave a fraction of the share for them and for the
                    system, as the advice this replaced did. */
-                All.MaxMemSize = (int) (ARENA_SHARE_OF_TASK_MEMORY * safe_per_task);
+                All.WorkingMemoryPoolSize = (int) (ARENA_SHARE_OF_TASK_MEMORY * safe_per_task);
                 if(ThisTask == 0)
                 {
                     printf("Memory: this run would have taken %d MB per task for its working "
                            "memory pool, which is more than this machine can safely give each task "
                            "(%g MB), so it is using %d MB instead. If it then stops for lack of "
                            "working memory, run fewer tasks per node or more nodes, or set "
-                           "Max_Memory_Per_MPI_Task_in_MB explicitly.\n",
-                           wanted, safe_per_task, All.MaxMemSize);
+                           "Working_Mem_Pool_Per_Task_in_MB explicitly.\n",
+                           wanted, safe_per_task, All.WorkingMemoryPoolSize);
                     fflush(stdout);
                 }
             }
@@ -592,7 +592,7 @@ int gizmo_memory_preflight(void)
     gizmo_node_comm_init();
 
     /* The reserve a rank makes regardless of how many particles it holds. */
-    long long arena_per_rank = (long long) All.MaxMemSize * 1024 * 1024;
+    long long arena_per_rank = (long long) All.WorkingMemoryPoolSize * 1024 * 1024;
 
     /* Storage for the particles and cells a rank may be given. */
     long long particles_per_rank =
@@ -676,8 +676,8 @@ int gizmo_memory_preflight(void)
             if(share > particles_per_rank + tree_per_rank && nopt < maxopt)
             {
                 long long fits_mb = (share - particles_per_rank - tree_per_rank) / (1024 * 1024);
-                if(fits_mb > (long long) All.BufferSize && fits_mb < All.MaxMemSize)
-                    {snprintf(optbuf[nopt], sizeof(optbuf[0]), "MaxMemSize %lld", fits_mb); nopt++;}
+                if(fits_mb > (long long) All.CommChunkSize && fits_mb < All.WorkingMemoryPoolSize)
+                    {snprintf(optbuf[nopt], sizeof(optbuf[0]), "WorkingMemoryPoolSize %lld", fits_mb); nopt++;}
             }
             for(int k = 0; k < nopt; k++)
                 no += snprintf(options + no, (no < olen) ? olen - no : 0, "%s%s",

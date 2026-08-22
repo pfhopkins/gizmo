@@ -476,7 +476,7 @@ HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | ta
 HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API
 HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz
 MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DGIZMO_GPU_ARENA_DEBUG
+OPT     += -DCHIMES_USE_DOUBLE_PRECISION -DGIZMO_GPU_ARENA_DEBUG
 endif
 
 #----------------------------
@@ -501,7 +501,7 @@ FFTW_LIBS= -L/usr/lib
 HDF5INCL = -I/usr/include/hdf5/openmpi -DH5_USE_16_API
 HDF5LIB  = -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi/ -lhdf5 -lz
 MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION
+OPT     += -DCHIMES_USE_DOUBLE_PRECISION
 ## to get required packages: sudo apt install libhdf5-openmpi-dev libopenmpi-dev
 endif
 

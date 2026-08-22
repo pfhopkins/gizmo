@@ -375,7 +375,7 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
     int number_of_mpi_tasks_per_node = NTask / number_of_shared_memory_nodes;
     double min_memory_mb_in_single_node = minsize[0]/(1024.);
     double safe_memory_mb_per_mpitask_nobuffer = min_memory_mb_in_single_node / number_of_mpi_tasks_per_node;
-    double safe_memory_mb_per_mpitask_withbuffer = safe_memory_mb_per_mpitask_nobuffer - All.BufferSize;
+    double safe_memory_mb_per_mpitask_withbuffer = safe_memory_mb_per_mpitask_nobuffer - All.CommChunkSize;
     return safe_memory_mb_per_mpitask_withbuffer;
 }
 

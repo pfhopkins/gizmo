@@ -279,13 +279,13 @@ void begrun(void)
 
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
-      All.BufferSize = all.BufferSize;
+      All.CommChunkSize = all.CommChunkSize;
       /* The arena was built above, before this file was read, at a size worked out for THIS run.
        * Keeping this run's value rather than the one recorded by the run that wrote the file is
        * what makes that safe: a restart may be on different nodes, and every consumer of this
        * number -- the memory ledger above all -- would otherwise report a size that is not the
        * one actually reserved. */
-      All.MaxMemSize = all.MaxMemSize;
+      All.WorkingMemoryPoolSize = all.WorkingMemoryPoolSize;
       All.TimeLimitCPU = all.TimeLimitCPU;
       All.ResubmitOn = all.ResubmitOn;
       All.SnapFormat = all.SnapFormat;
@@ -1281,9 +1281,9 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.BoxSize;
       id[nt++] = REAL;
 
-      strcpy(tag[nt], "MaxMemSize");
-      strcpy(alternate_tag[nt], "Max_Memory_Per_MPI_Task_in_MB");
-      addr[nt] = &All.MaxMemSize;
+      strcpy(tag[nt], "WorkingMemoryPoolSize");
+      strcpy(alternate_tag[nt], "Working_Mem_Pool_Per_Task_in_MB");
+      addr[nt] = &All.WorkingMemoryPoolSize;
       id[nt++] = INT;
 
       strcpy(tag[nt], "TimeOfFirstSnapshot");
@@ -1916,9 +1916,9 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SofteningBndryMaxPhys;
       id[nt++] = REAL;
 
-      strcpy(tag[nt], "BufferSize");
-      strcpy(alternate_tag[nt], "MPI_Buffersize_in_MB");
-      addr[nt] = &All.BufferSize;
+      strcpy(tag[nt], "CommChunkSize");
+      strcpy(alternate_tag[nt], "MPI_Comm_Chunk_Size_in_MB");
+      addr[nt] = &All.CommChunkSize;
       id[nt++] = REAL;
 
       strcpy(tag[nt], "PartAllocFactor");
@@ -2727,7 +2727,7 @@ void read_parameter_file(char *fname)
             {
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume this is a NON-cosmological (static-spacetime) simulation (=%d) \n",tag[i],alternate_tag[i],All.ComovingIntegrationOn); continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume the snapshots will be output at user-specified intervals rather than adopting a list from a given file (=%d) \n",tag[i],alternate_tag[i],All.OutputListOn); continue;}
-                if(strcmp("BufferSize",tag[i])==0) {*((double *)addr[i])=comm_chunk_megabytes_default(); printf("Tag %s (%s) not set in parameter file: sending particle data between tasks in chunks of %g MB. Set it here only to override that.\n",tag[i],alternate_tag[i],All.BufferSize); continue;}
+                if(strcmp("CommChunkSize",tag[i])==0) {*((double *)addr[i])=comm_chunk_megabytes_default(); printf("Tag %s (%s) not set in parameter file: sending particle data between tasks in chunks of %g MB. Set it here only to override that.\n",tag[i],alternate_tag[i],All.CommChunkSize); continue;}
             }
         }
         /* ok now safe to do a loop that has statements (e.g. if's) which can depend on some of the variables above */
@@ -2738,10 +2738,10 @@ void read_parameter_file(char *fname)
                 /* skip the flags we already addressed above so we dont throw an unintentional error */
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {continue;}
-                if(strcmp("BufferSize",tag[i])==0) {continue;}
+                if(strcmp("CommChunkSize",tag[i])==0) {continue;}
                 /* now move on to the flags we have not addressed already */
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */
-                if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
+                if(strcmp("WorkingMemoryPoolSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
                 if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to only main-task writes (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
                 if(strcmp("NumFilesPerSnapshot",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to single-file snapshots (=%d) \n",tag[i],alternate_tag[i],All.NumFilesPerSnapshot); continue;}

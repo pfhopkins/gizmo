@@ -195,7 +195,7 @@ void read_ic(char *fname)
         (void) allocate_memory(1);
 
         {
-            size_t cbuf_bytes = (size_t) All.BufferSize * 1024 * 1024;
+            size_t cbuf_bytes = (size_t) All.CommChunkSize * 1024 * 1024;
             if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(cbuf_bytes), 1))
                 gizmo_request_controlled_stop(2, "read_ic: CommBuffer arena preflight won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
             else
@@ -1402,8 +1402,8 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * get_input_float_bytes(blocknr);}
 #endif
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
+            size_t comm_chunk_mb = All.CommChunkSize;
+            blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
             npart = get_particles_in_block(blocknr, &typelist[0]);
 
             if(npart > 0)
