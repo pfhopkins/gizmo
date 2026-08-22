@@ -379,6 +379,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
     gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     t_drift_loop = timediff(t_tmp, my_second());
+    /* The merge/split, the reordering and the drift above are what this row is
+     * named for.  What follows -- freeing the tree, resizing particle storage,
+     * wrapping the box -- is decomposition work, so the row closes here rather
+     * than swallowing it. */
+    CPU_Step[CPU_DRIFT] += cpu_minus_children(timediff(t_drift_start, my_second()), child0_drift);
+    cpu_chain_sync(my_second());
+    const double t_dom_rest = my_second();
+    const double child0_dom_rest = CPU_ChildCharged;
 
     t_tmp = my_second();
     force_treefree();
@@ -411,8 +419,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     gizmo_exit_bad_stop_if_requested("domain:particle_capacity");
     t_barrier = timediff(t_tmp, my_second());
     const double t_drift_end = my_second();
-    double t_drift_total = cpu_minus_children(timediff(t_drift_start, t_drift_end), child0_drift);
-    CPU_Step[CPU_DRIFT] += t_drift_total;
+    double t_drift_total = cpu_minus_children(timediff(t_dom_rest, t_drift_end), child0_dom_rest);
+    CPU_Step[CPU_DOMAIN] += t_drift_total;
     cpu_chain_sync(t_drift_end);
     if(ThisTask == 0) {
         printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",

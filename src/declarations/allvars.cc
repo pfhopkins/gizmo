@@ -109,8 +109,10 @@ double CPU_Step[CPU_PARTS];
 /* Characters painted into the balance.txt work/imbalance map, one pair per
  * CPU_Step bucket. write_cpu_log() lays both shares of every bucket into a
  * single flat string, so a character must identify exactly one bucket AND one
- * of the two shares: any character appearing twice — within either array or
- * across the two — makes that column unreadable. '#' (head marker) and '-'
+ * of the two shares.  A character may be reused by a second bucket: the map is
+ * painted in bucket order and each bucket's run is contiguous, so position
+ * separates two uses that sit far apart in the list.  Reusing one between
+ * neighbours is what makes a column unreadable. '#' (head marker) and '-'
  * (unaccounted tail) are painted literally by the writer and are reserved.
  *
  * Only the 43 buckets that have a charge site can ever be painted (the writer
@@ -121,13 +123,13 @@ double CPU_Step[CPU_PARTS];
  * legend. Charging one of those buckets means giving it a real character here,
  * in BOTH arrays, checked unique against every other entry in both. */
 char CPU_Symbol[CPU_PARTS] = {
-    '_', '*', '=', ';', '<', '[', '^', ':', '.', '~', '|', '+', '"', '_',  '`', ',', '_', '_', '_', '&',
+    '_', '*', '_', '_', '<', '_', '_', ':', '.', '~', '|', '+', '"', '_',  '`', ',', '_', '_', '_', '&',
     '$', '_', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
     '_', '_', '_', 'a', '_', '_', 'd', 'e', 'q', ']', '_', '!', 'j', 'k', 'l', 'm',  '/', '@'};
 char CPU_SymbolImbalance[CPU_PARTS] = {
-    '_', 't', 'u', 'v', 'b', 'w', 'A', 'r', 'h', 'B', 'n', 'C', 'o', '_',  's', 'f', '_', '_', '_', 'D', // 20 columns here
+    '_', 't', '_', '_', 'b', '_', '_', 'r', 'h', 'B', 'n', 'C', 'o', '_',  's', 'f', '_', '_', '_', 'D', // 20 columns here
     'x', '_', 'z', 'E', 'I', 'W', 'T', 'V', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N',  'O', 'P', 'Q', 'R',
-    '_', '_', '_', 'S', '_', '_', 'U', 'X', 'Y', '\'', '_', 'y', 'c', 'g', 'i', 'p',  '>', '<'};
+    '_', '_', '_', 'S', '_', '_', 'U', 'X', 'Y', '\'', '_', 'y', 'c', 'g', 'i', 'p',  '>', '='};
 char CPU_String[CPU_STRING_LEN + 1];
 double WallclockTime;		/*!< This holds the last wallclock time measurement for timings measurements */
 double CPU_ChildCharged;

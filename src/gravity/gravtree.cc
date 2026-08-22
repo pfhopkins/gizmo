@@ -513,10 +513,13 @@ void gravity_tree(void)
     plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
-    CPU_Step[CPU_TREEWALK1] += timetree1; CPU_Step[CPU_TREEWALK2] += timetree2;
-    CPU_Step[CPU_TREESEND] += timecommsumm1; CPU_Step[CPU_TREERECV] += timecommsumm2;
-    CPU_Step[CPU_TREEWAIT1] += timewait1; CPU_Step[CPU_TREEWAIT2] += timewait2;
+    /* The span from the end of the build to here is the force walk.  Only the
+     * wait is separately measured inside it, so the walk row is the rest of the
+     * span; charging the remainder to `misc` instead reported the whole walk as
+     * unattributed.  The send/recv and second-walk timers this routine used to
+     * split out have no writer any more and are not charged. */
+    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
+    CPU_Step[CPU_TREEWAIT2] += timewait2;
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(ThisTask == 0)
     {

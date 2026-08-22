@@ -845,12 +845,10 @@ void open_outputfiles(void)
     /* Each bucket below paints two characters into the map: work share / imbalance share.
        Buckets with no charge site are never painted and are marked with the sentinel. */
     fprintf(FdBalance, "unused slot    = '_' (no writer; never appears in the map)\n");
+    fprintf(FdBalance, "a character may be reused by a second bucket: the map is painted in the\n");
+    fprintf(FdBalance, "order listed here, each bucket contiguous, so position separates the two.\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
-    fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
-    fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1], CPU_SymbolImbalance[CPU_TREEWAIT1]);
     fprintf(FdBalance, "Treewait2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT2], CPU_SymbolImbalance[CPU_TREEWAIT2]);
-    fprintf(FdBalance, "Treesend       = '%c' / '%c'\n", CPU_Symbol[CPU_TREESEND], CPU_SymbolImbalance[CPU_TREESEND]);
-    fprintf(FdBalance, "Treerecv       = '%c' / '%c'\n", CPU_Symbol[CPU_TREERECV], CPU_SymbolImbalance[CPU_TREERECV]);
     fprintf(FdBalance, "Treebuild      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEBUILD], CPU_SymbolImbalance[CPU_TREEBUILD]);
     fprintf(FdBalance, "Treehmaxupdate = '%c' / '%c'\n", CPU_Symbol[CPU_TREEHMAXUPDATE], CPU_SymbolImbalance[CPU_TREEHMAXUPDATE]);
     fprintf(FdBalance, "Treemisc =       '%c' / '%c'\n", CPU_Symbol[CPU_TREEMISC], CPU_SymbolImbalance[CPU_TREEMISC]);
