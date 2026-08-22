@@ -372,20 +372,6 @@ void cooling_parent_routine(void)
             compact_dtime[j] = dt;
         }
 
-/* The [GPU_RT_DIAG] A/B comparison blocks below are dormant under the
- * default build (gated by GIZMO_DEBUG_RT_COOLING). They remain available
- * for GPU vs CPU bit-comparison debugging of the cooling kernel and should
- * be retired together with the GIZMO_DEBUG_RT_COOLING flag. */
-#ifdef GIZMO_DEBUG_RT_COOLING
-        /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
-        static int gpu_rt_diag_count = 0;
-        static const int GPU_RT_DIAG_NPART = 5; /* compare this many particles */
-        struct particle_data saved_P[GPU_RT_DIAG_NPART];
-        struct gas_cell_data saved_Cell[GPU_RT_DIAG_NPART];
-        int diag_n = (batch_start == 0 && gpu_rt_diag_count < 20) ? DMIN(GPU_RT_DIAG_NPART, batch_n) : 0;
-        for(int dd = 0; dd < diag_n; dd++) { saved_P[dd] = compact_P[dd]; saved_Cell[dd] = compact_Cell[dd]; }
-#endif /* GIZMO_DEBUG_RT_COOLING */
-
         /* Dispatch batch to GPU */
         {
             struct particle_data *kp = compact_P;
@@ -395,50 +381,6 @@ void cooling_parent_routine(void)
             }, batch_start);
         }
 
-#ifdef GIZMO_DEBUG_RT_COOLING
-        /* GPU_RT_DIAG: compare GPU output with CPU re-run on same inputs.
-         * The GPU kernel (device code) may use FMA and CUDA math; the host re-run
-         * uses the host compiler's math. Differences reveal GPU-specific divergence. */
-        if(diag_n > 0) {
-            gpu_rt_diag_count++;
-            /* Make a fresh copy of the saved inputs for CPU re-run */
-            struct particle_data *cpu_P = (struct particle_data *) mymalloc("cool_diag_P", diag_n * sizeof(struct particle_data));
-            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) mymalloc("cool_diag_Cell", diag_n * sizeof(struct gas_cell_data));
-            memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
-            memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
-            for(int dd = 0; dd < diag_n; dd++) {
-                do_the_cooling_for_particle(dd, cpu_P, cpu_Cell);
-            }
-            for(int dd = 0; dd < diag_n; dd++) {
-                /* GPU output (now in compact_Cell/compact_P after fence) */
-                double rdiff_u  = fabs(compact_Cell[dd].InternalEnergy - cpu_Cell[dd].InternalEnergy) / (fabs(cpu_Cell[dd].InternalEnergy) + 1e-30);
-                double rdiff_ne = fabs(compact_Cell[dd].Ne - cpu_Cell[dd].Ne) / (fabs(cpu_Cell[dd].Ne) + 1e-30);
-                printf("[GPU_RT_DIAG] step=%d ID=%llu  u: gpu=%.15e cpu=%.15e rdiff=%.4e\n",
-                    gpu_rt_diag_count, (unsigned long long)compact_P[dd].ID, compact_Cell[dd].InternalEnergy, cpu_Cell[dd].InternalEnergy, rdiff_u);
-                printf("[GPU_RT_DIAG]   Ne: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Ne, cpu_Cell[dd].Ne, rdiff_ne);
-#if defined(RT_INFRARED)
-                double rdiff_Trad = fabs(compact_Cell[dd].Radiation_Temperature - cpu_Cell[dd].Radiation_Temperature) / (fabs(cpu_Cell[dd].Radiation_Temperature) + 1e-30);
-                double rdiff_Tdust = fabs(compact_Cell[dd].Dust_Temperature - cpu_Cell[dd].Dust_Temperature) / (fabs(cpu_Cell[dd].Dust_Temperature) + 1e-30);
-                printf("[GPU_RT_DIAG]   Trad: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Radiation_Temperature, cpu_Cell[dd].Radiation_Temperature, rdiff_Trad);
-                printf("[GPU_RT_DIAG]   Tdust: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Dust_Temperature, cpu_Cell[dd].Dust_Temperature, rdiff_Tdust);
-#endif
-#if defined(RT_EVOLVE_ENERGY)
-                for(int kk=0; kk<N_RT_FREQ_BINS; kk++) {
-                    double rdiff_E = fabs(compact_Cell[dd].Rad_E_gamma[kk] - cpu_Cell[dd].Rad_E_gamma[kk]) / (fabs(cpu_Cell[dd].Rad_E_gamma[kk]) + 1e-30);
-                    if(rdiff_E > 1e-10) { /* only print if meaningful difference */
-                        printf("[GPU_RT_DIAG]   k=%d  RadE: gpu=%.12e cpu=%.12e rdiff=%.4e\n",
-                            kk, compact_Cell[dd].Rad_E_gamma[kk], cpu_Cell[dd].Rad_E_gamma[kk], rdiff_E);
-                    }
-                }
-#endif
-            }
-            myfree(cpu_Cell); myfree(cpu_P);
-            fflush(stdout);
-        }
-#endif /* GIZMO_DEBUG_RT_COOLING */
 
         /* Post-cooling tail device kernel. Three blocks, each independently
          * #ifdef-gated:
@@ -1117,10 +1059,6 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
 #endif
     };
     double du_net = cooling_rootfind_function(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[target].ID == 1 || pp[target].ID == 100 || pp[target].ID == 1000) {printf("[DOCOOL_INIT] ID=%llu u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
-        (unsigned long long)pp[target].ID, u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
-#endif
 
     /* bracketing */
     double u_step_fac = 1.1;

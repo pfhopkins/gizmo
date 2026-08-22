@@ -534,7 +534,6 @@
 # --------------------
 # ----- General De-Bugging and Special Behaviors
 #DEVELOPER_MODE                    # allows you to modify various numerical parameters (courant factor, etc) at run-time
-#GIZMO_DEBUG_RT_COOLING            # enable RT+COOLING diagnostic prints + GPU↔CPU bit-comparison probes for the cooling kernel. Substantial stdout volume when active; intended for targeted debug of GPU cooling/RT divergence. Slated for retirement once GPU cooling/RT path is fully validated.
 #FORCE_EQUAL_TIMESTEPS             # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
 #STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
 # --------------------

@@ -36,35 +36,6 @@ extern "C" void gizmo_cpu_log_request_force_print(void);
 extern "C" int  gizmo_cpu_log_consume_force_print(void);
 
 
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-static int rt_step_diag_count = 0;
-static void rt_step_checksum(const char *label) {
-    double sum_RadE = 0, sum_Trad = 0, sum_u = 0, sum_Tdust = 0, sum_ne = 0;
-    int ngas = 0;
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Type == 0 && P[i].Mass > 0) {
-            sum_RadE += CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED];
-            sum_Trad += CellP[i].Radiation_Temperature;
-            sum_Tdust += CellP[i].Dust_Temperature;
-            sum_u += CellP[i].InternalEnergy;
-            sum_ne += CellP[i].Ne;
-            ngas++;
-            /* RT_PART: per-particle tracking for specific IDs */
-            if(P[i].ID == 1 || P[i].ID == 100 || P[i].ID == 1000) {
-                printf("[RT_PART] %-20s ID=%llu T=%.6e Tdust=%.6e Trad=%.6e u=%.10e Ne=%.6e RadE_IR=%.6e P=%.6e\n",
-                    label, (unsigned long long)P[i].ID, CellP[i].Temperature, CellP[i].Dust_Temperature,
-                    CellP[i].Radiation_Temperature, CellP[i].InternalEnergy, CellP[i].Ne,
-                    CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED], CellP[i].Pressure);
-            }
-        }
-    }
-    if(ThisTask == 0) {
-        printf("[RT_STEP] %-20s  ngas=%d  sum_RadE_IR=%.10e  sum_Trad=%.6e  sum_Tdust=%.6e  sum_u=%.10e  sum_Ne=%.6e\n",
-            label, ngas, sum_RadE, sum_Trad, sum_Tdust, sum_u, sum_ne);
-        fflush(stdout);
-    }
-}
-#endif
 
 /* --------------------------------------------------------------------------
  * Controlled-stop / bad-stop helper (no-MPI_Abort policy). See core/proto.h for
@@ -230,9 +201,6 @@ void run(void)
         }
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
-#endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
         /* Auto-rebuild guardrail.  force_add_element_to_tree
          * insertions stale the LET / pseudo-particle moments shipped on
@@ -257,9 +225,6 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
-#endif
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
@@ -385,14 +350,8 @@ void run(void)
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
 #endif
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
-#endif
 
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
-#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
@@ -587,9 +546,6 @@ void calculate_non_standard_physics(void)
         if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
 #endif
     }
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-    if(rt_step_diag_count <= 50) rt_step_checksum("after_rt_source");
-#endif
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
     rt_update_chemistry(); /* chemistry update (under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps) */
@@ -680,9 +636,6 @@ void calculate_non_standard_physics(void)
 #ifdef PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
-#endif
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
 #endif
 
 
