@@ -1751,17 +1751,12 @@ static const int  GX_RECV_STRIDE = 512;    /* per-row scratch slots before a re-
  * to the host. */
 static const long GX_RECV_PAIR_FLOOR = GX_RECV_BATCH * (long)GX_RECV_STRIDE;
 
-/* kokkos_malloc THROWS on OOM; catch -> NULL so the caller's NULL check decides
-   what to do.  Same pattern as system/gpu_particles_arena.cc and
-   gravity/gpu_topology_finalize.cc. */
+/* Exhaustion is reported by returning NULL, so the caller's NULL check decides
+   what to do. */
 template <class T>
 static T *gx_recv_alloc(const char *label, size_t count)
 {
-    try {
-        return (T *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, count * sizeof(T));
-    } catch(const std::exception &) {
-        return NULL;
-    }
+    return (T *) gizmo_gpu_alloc_device(count * sizeof(T), label);
 }
 
 
@@ -1817,21 +1812,26 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     const int node_capacity = gpu_gravity_tree_capacity();
     const int foreign_base  = tree_base + MaxNodes;
     const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
-    /* The walk may legally reach any index below the pseudo-particle region, which
-     * includes the foreign range, so the mirror has to cover all of it.  A short
-     * mirror is a precondition failure, not a malformed tree: decline, and the
-     * host answers -- but say so, because a run that quietly answered everything
-     * on the host would otherwise look exactly like a run where the device did
-     * the work.  This says nothing about whether the geometry is current; that
-     * is established below. */
-    if(node_capacity < MaxNodes + MaxForeignNodes ||
+    /* The walk may reach any foreign node that was installed, so the mirror has to
+     * cover the foreign slots that have storage behind them -- AllocatedForeignNodes,
+     * this rank's actual import, which is what the mirror is sized to.  NOT
+     * MaxForeignNodes: that is the shared INDEX ceiling used above to place the
+     * pseudo-particle region, it is the worst rank's import rather than this one's,
+     * and no node is ever installed in the gap between the two, so nothing points
+     * there.  Testing the ceiling would decline on every rank whose import is
+     * smaller than the largest, which is nearly all of them.  A short mirror is a
+     * precondition failure, not a malformed tree: decline, and the host answers --
+     * but say so, because a run that quietly answered everything on the host would
+     * otherwise look exactly like a run where the device did the work.  This says
+     * nothing about whether the geometry is current; that is established below. */
+    if(node_capacity < MaxNodes + AllocatedForeignNodes ||
        soa->nextnode_aux_size < tree_slots + NTopleaves) {
         static int reported = 0;
         if(!reported) {
             reported = 1;
             printf("gx_device_receiver_walk: task %d tree mirror covers %d nodes and %d particle links, short of the %d nodes and %d links the walk can reach; answering on the host\n",
                    ThisTask, node_capacity, soa->nextnode_aux_size,
-                   MaxNodes + MaxForeignNodes, tree_slots + NTopleaves);
+                   MaxNodes + AllocatedForeignNodes, tree_slots + NTopleaves);
             fflush(stdout);
         }
         return 1;
