@@ -1924,8 +1924,7 @@ template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v();
 static void *nlr_active_stage_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) { return NULL; }
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, bytes); }
-    catch(const std::exception &) { return NULL; }
+    return gizmo_gpu_alloc_device(bytes, label);
 }
 
 static void nlr_active_stage_free(void *p)
