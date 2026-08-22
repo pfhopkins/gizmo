@@ -76,7 +76,6 @@ void gizmo_let_wire_grow(long long delta_bytes)
     if(g_let_wire_current > g_let_wire_highwater) {g_let_wire_highwater = g_let_wire_current;}
 }
 void gizmo_let_wire_reset(void)            {g_let_wire_current = 0;}
-
 void gizmo_let_wire_note_failed(long long bytes) {g_let_wire_failed += bytes;}
 
 /* Per-process virtual and resident size from /proc/self/status (Linux; 0 elsewhere).
@@ -363,7 +362,15 @@ double comm_chunk_megabytes_default(void)
     const double passes_to_aim_for   = 2.0;
 
     /* A limit left unset carries whatever each loop was built with, which is small; the run is
-       then where it has always been and there is nothing to raise. */
+       then where it has always been and there is nothing to raise.
+
+       "Unset" is deliberately read as ANY value that is not a positive count, not as the -1 the
+       parameter reader writes for a missing tag.  That is what makes this independent of when it
+       is called: the reader marks a missing limit in a later pass than the one that asks for this
+       size, so at that moment a missing limit is still zero.  Zero is also what a user writes to
+       turn Mode B off outright, and all three want the same answer -- there is no widening to do
+       -- so they share the one branch.  A limit that ever gained a positive "unset" marker would
+       break that, and this is the line to fix if it does. */
     const int limit_total   = All.NeighborLoopModeBThresholdSum;
     const int limit_largest = All.NeighborLoopModeBThresholdMax;
     if(limit_total <= 0 || limit_largest <= 0) {return customary_megabytes;}

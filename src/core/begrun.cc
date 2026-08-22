@@ -1180,7 +1180,6 @@ void read_parameter_file(char *fname)
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
     int i, j, nt, id[MAXTAGS], pnum, errorFlag = 0;
     void *addr[MAXTAGS];
-    double safe_memorypertask = mpi_report_comittable_memory(0,0); /* used for some checks below */
 #ifdef CHIMES
     double Tdust_buf, Tmol_buf, relTol_buf, absTol_buf, expTol_buf, z_reion_buf;
 #endif
@@ -2751,9 +2750,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("OutputListOn",tag[i])==0) {continue;}
                 if(strcmp("BufferSize",tag[i])==0) {continue;}
                 /* now move on to the flags we have not addressed already */
-                //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.99*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */
-                //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.93*safe_memorypertask-All.BufferSize); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
                 if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to only main-task writes (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
