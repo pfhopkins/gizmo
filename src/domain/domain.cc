@@ -184,12 +184,21 @@ static int domain_target_particle_capacity(void)
      * offset: capacity is left alone while the need still fits inside it, and a need that has
      * grown past it is met with room to spare.  Making the capacity track the need exactly would
      * migrate every particle array each time the measured ghost import ticked up by one slot.
-     * The last term is demand that was REFUSED rather than met: splitting cannot grow storage
-     * from under a standing tree, so elements it could not create are counted and asked for here,
-     * where capacity may move freely.  It clears when this decision consumes it. */
-    const double need_f   = (double) All.MaxPartAssignable + append_margin
-                            + (double) ghost_get_epoch_high_water()
-                            + (double) gizmo_get_unmet_split_demand();
+     * Demand that was REFUSED rather than met enters as its own floor, not as another term: the
+     * splitting that refused it tests against this rank's STORAGE (NumPart + n + 1 >= REDUC * MaxPart),
+     * which sits ABOVE the assignment cap whenever a ghost import has grown it, so adding the count
+     * to a cap-based total can leave the total below the storage the refusal was measured against --
+     * and then nothing grows, while the demand is answered on paper.  Expressed against the same
+     * predicate it cannot do that. */
+    double need_f = (double) All.MaxPartAssignable + append_margin
+                    + (double) ghost_get_epoch_high_water();
+    const int unmet_splits = gizmo_get_unmet_split_demand();
+    if(unmet_splits > 0)
+      {
+        const double split_floor = ((double) NumPart + (double) unmet_splits + 1.0)
+                                   / REDUC_FAC_FOR_MEMORY_IN_DOMAIN;
+        if(split_floor > need_f) {need_f = split_floor;}
+      }
     const double target_f = need_f + safety;
 
     int need   = (int) need_f;
@@ -402,7 +411,18 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * is down, no ghosts are imported, and the active list has not been rebuilt. */
     if(resize_particle_storage(domain_target_particle_capacity()) == 0) {
         ghost_reset_epoch_high_water();   /* the window this decision consumed ends here */
-        gizmo_reset_unmet_split_demand(); /* likewise: splits refused before this point are answered */
+        /* Refused splits are answered only if the capacity now in force could actually take them,
+         * under the very predicate that refused them.  A capacity that did not move answers
+         * nothing, so the demand survives to the next boundary rather than being forgotten here. */
+        const int unmet_now = gizmo_get_unmet_split_demand();
+        /* Written exactly as the refusal writes it, truncation included, and against the gas
+         * capacity too: a test that is a fraction more generous than the one that refused would
+         * clear a demand the next step still cannot meet. */
+        const int room     = (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPart);
+        const int room_gas = (All.MaxPartGas > 0) ? (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPartGas) : room;
+        const int wanted   = NumPart + unmet_now + 1;
+        if(unmet_now == 0 || (wanted < room && wanted < room_gas))
+          {gizmo_reset_unmet_split_demand();}
     }
 
 #ifdef BOX_PERIODIC

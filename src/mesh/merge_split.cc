@@ -494,7 +494,9 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     {
         /* Only storage is remembered: a slot the standing tree cannot index is not a shortage of
            anything, and the next tree is built wide enough for the capacity that exists. */
-        if(out_of_storage) {UnmetSplitDemand++;}
+        /* Bounded: a run pinned at its capacity ceiling refuses splits every step, and the count
+           is only ever a request for slots, so it never needs to exceed what a rank could hold. */
+        if(out_of_storage && UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;}
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
         return 0;
         endrun(8888);
