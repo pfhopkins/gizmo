@@ -680,8 +680,8 @@ struct SinkSwkSpec {
                                    double h_search,
                                    const CallScalars& scalars)
     {
-        ActiveData active;
-        active.local            = dctx.per_active_local[active_slot];
+        ActiveData active{};
+        if(dctx.per_active_local) { active.local = dctx.per_active_local[active_slot]; }
         active.pos[0] = (double)active.local.Pos[0];
         active.pos[1] = (double)active.local.Pos[1];
         active.pos[2] = (double)active.local.Pos[2];

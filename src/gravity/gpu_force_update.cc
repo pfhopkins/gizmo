@@ -110,9 +110,15 @@ extern "C" void gpu_force_update_tree(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     MyDouble *rt_lum_dp_dev = (MyDouble *) scratch_dev;
 #endif
-    int *domain_list_dev  = (int *) (scratch_dev + rt_bytes);
-    int *domain_count_dev = domain_list_dev + ntop;
-    int *active_dev       = domain_count_dev + 1;
+    /* Offset only a base that exists: advancing a refused (NULL) base is undefined,
+     * and a compiler may read it as proof the base is non-NULL and drop the
+     * scratch_ok guards below. Refused scratch leaves these NULL, which no path
+     * reads -- !scratch_ok forces num_active to 0 and exits through finish_mpi.
+     * They are still declared here, ahead of that goto, which may not jump over
+     * an initialization. */
+    int *domain_list_dev  = scratch_ok ? (int *) (scratch_dev + rt_bytes) : NULL;
+    int *domain_count_dev = scratch_ok ? domain_list_dev + ntop : NULL;
+    int *active_dev       = scratch_ok ? domain_count_dev + 1 : NULL;
 
     if(scratch_ok) {
         domain_count_dev[0] = 0;

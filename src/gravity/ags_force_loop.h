@@ -324,7 +324,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
             short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
-            Kokkos::atomic_store(need_wakeup, 1);
+            if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
             if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
         }
     }
@@ -335,7 +335,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
 #endif
 
 #if defined(DM_SIDM)
-    {
+    if(neighbor.geofactor) {
         SidmScatterResult sidm_r = sidm_core_flux_compute_pair(
             local, j, P_base, kernel, accum,
             neighbor.geofactor, active.scalars.TimeBinActive,
@@ -344,7 +344,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             if(sidm_r.set_wakeup_j) {
                 short int wakeup_val = (short int)(active.TimeBin + 1);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
-                Kokkos::atomic_store(need_wakeup, 1);
+                if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
                 if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
             }
             /* The kick lands on Pj.Vel immediately, mid-loop, so a later pair

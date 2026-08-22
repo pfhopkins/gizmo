@@ -218,7 +218,9 @@ struct SinkEnv2Spec {
         active.vel[1] = (double)dctx.P[i].Vel[1];
         active.vel[2] = (double)dctx.P[i].Vel[2];
         active.h_search = h_search;
-        const SinkEnv2PerActiveIn& src = dctx.per_active_in[active_slot];
+        const SinkEnv2PerActiveIn zero_in{};
+        const SinkEnv2PerActiveIn& src = dctx.per_active_in ? dctx.per_active_in[active_slot]
+                                                            : zero_in;
         active.Jgas[0]  = (double)src.Jgas[0];
         active.Jgas[1]  = (double)src.Jgas[1];
         active.Jgas[2]  = (double)src.Jgas[2];

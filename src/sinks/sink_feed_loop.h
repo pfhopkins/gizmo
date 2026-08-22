@@ -583,8 +583,8 @@ struct SinkFeedSpec {
                                    double h_search,
                                    const CallScalars& scalars)
     {
-        ActiveData active;
-        active.local            = dctx.per_active_local[active_slot];
+        ActiveData active{};
+        if(dctx.per_active_local) { active.local = dctx.per_active_local[active_slot]; }
         /* Runner-facing top-level fields (Mode B walker reads pos/h_search
          * directly). Copy from the host-staged local so post-drift Mode B
          * walks use the same per-active position the host-fill captured. */

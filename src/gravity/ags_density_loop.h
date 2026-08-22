@@ -289,7 +289,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
              * landed. */
             const short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&neighbor_particle.wakeup, wakeup_val);
-            Kokkos::atomic_or(need_wakeup, 1);
+            if(need_wakeup) { Kokkos::atomic_or(need_wakeup, 1); }
             if(wakeup_dirty_slot) { *wakeup_dirty_slot = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
         }
 #endif
