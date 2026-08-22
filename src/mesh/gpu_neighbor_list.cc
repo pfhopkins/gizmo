@@ -239,7 +239,7 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         sfc_tile_t *tile = &h_tiles[t];
         if(tile->count <= 0) continue;
         int j0 = h_pool[tile->first];
-        double dt0 = get_drift_factor_omp_safe(P_shared[j0].Ti_current, time1, j0, 0);
+        double dt0 = get_drift_factor(P_shared[j0].Ti_current, time1, j0, 0);
         double x0 = P_shared[j0].Pos[0] + P_shared[j0].Vel[0] * dt0;
         double y0 = P_shared[j0].Pos[1] + P_shared[j0].Vel[1] * dt0;
         double z0 = P_shared[j0].Pos[2] + P_shared[j0].Vel[2] * dt0;
@@ -260,7 +260,7 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         if(pos_buf) { pos_buf[j0*3+0] = x0; pos_buf[j0*3+1] = y0; pos_buf[j0*3+2] = z0; }
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
-            double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+            double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
             double x = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
             double y = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
             double z = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
@@ -661,7 +661,7 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
     long n_dt_nonzero = 0;
     #pragma omp parallel for reduction(+:n_dt_nonzero) schedule(static)
     for(int j = 0; j < num_total; j++) {
-        double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+        double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
         if(dt != 0.0) n_dt_nonzero++;
         pos_dbl[j*3+0] = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
         pos_dbl[j*3+1] = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
@@ -1126,7 +1126,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         double h_j = j_h_dbl[j] * j_rad_scale;
                         double cut = (h_i > h_j) ? h_i : h_j;
                         if(r < cut && !std::binary_search(prod.begin(), prod.end(), j)) {   /* physical neighbour, production missed */
-                            double dtj = get_drift_factor_omp_safe(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
+                            double dtj = get_drift_factor(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
                             printf("  [NGL_PRECISION_ORACLE rank=%d] miss caller=%s i.ID=%lld j.ID=%lld r=%.10g cutoff=%.10g margin=%.3g dt_j=%.3g "
                                    "compact_xyzh=(%.10g,%.10g,%.10g;%.6g) truth_xyzh=(%.10g,%.10g,%.10g;%.6g)\n",
                                    ThisTask, lbl, (long long)P_shared[i].ID, (long long)P_shared[j].ID, r, cut, r-cut, dtj,
