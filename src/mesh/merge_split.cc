@@ -348,6 +348,12 @@ void merge_and_split_particles(void)
 
         for (int aa = 0; aa < num_src; aa++) {
             i = ms_src_idx[aa];
+            /* A particle already claimed as somebody's merge target must not also
+             * merge or split away itself in the same pass: its mass is about to
+             * change, and whoever claimed it chose it on the mass it has now.
+             * Testing this once here also avoids evaluating either criterion for a
+             * particle that cannot act on the answer. */
+            if (Ptmp[i].flag != 0) {continue;}
             int64_t nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
 
             if (does_particle_need_to_be_merged(i)) {
