@@ -326,8 +326,20 @@ void merge_and_split_particles(void)
 #else
             if (!((P[ip].Type==0) && TimeBinActive[P[ip].TimeBin])) continue;
 #endif
+            if (P[ip].KernelRadius <= 0) continue;   /* a necessary condition for candidacy
+                                                      * either way, and cheap, so testing it
+                                                      * before the far more expensive criteria
+                                                      * cannot by itself admit or reject
+                                                      * anything -- it only avoids asking. Note
+                                                      * those criteria may draw from the shared
+                                                      * random stream, so asking fewer of them
+                                                      * does change which elements draw and
+                                                      * therefore the realised candidate set.
+                                                      * That is accepted here: the visit order
+                                                      * is already arbitrary and only the
+                                                      * statistics of this routine are meant to
+                                                      * be reproducible. */
             if (!(does_particle_need_to_be_merged(ip) || does_particle_need_to_be_split(ip))) continue;
-            if (P[ip].KernelRadius <= 0) continue;
             ms_src_idx.push_back(ip);
             ms_src_radii.push_back(P[ip].KernelRadius);
         }
