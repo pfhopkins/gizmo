@@ -310,8 +310,19 @@ void merge_and_split_particles(void)
     {
         std::vector<int> ms_src_idx;
         std::vector<double> ms_src_radii;
+        /* Which of the two criteria admitted each candidate, recorded where it is
+         * first evaluated so the arbitration below can use the same answer instead
+         * of asking again. Asking twice was not only wasted work. Where a minimum
+         * time between refinements is enforced, the wait an element must clear is
+         * randomised, so that elements do not all become eligible together on the
+         * same periodicity; re-deriving it meant an element had to clear a freshly
+         * drawn wait twice over, which skewed exactly the spread of first
+         * activations that the randomisation exists to produce. One evaluation per
+         * candidate per step is the intended behaviour. 1 = merge, 2 = split. */
+        std::vector<unsigned char> ms_src_kind;
         ms_src_idx.reserve(64);
         ms_src_radii.reserve(64);
+        ms_src_kind.reserve(64);
 
         int merge_split_types_mask = (1 << 0) /* gas */
 #if defined(GALSF)
@@ -339,9 +350,12 @@ void merge_and_split_particles(void)
                                                       * is already arbitrary and only the
                                                       * statistics of this routine are meant to
                                                       * be reproducible. */
-            if (!(does_particle_need_to_be_merged(ip) || does_particle_need_to_be_split(ip))) continue;
+            const int want_merge = does_particle_need_to_be_merged(ip);
+            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip);
+            if (!(want_merge || want_split)) continue;
             ms_src_idx.push_back(ip);
             ms_src_radii.push_back(P[ip].KernelRadius);
+            ms_src_kind.push_back(want_merge ? 1 : 2);
         }
 
         int num_src = (int)ms_src_idx.size();
@@ -377,7 +391,7 @@ void merge_and_split_particles(void)
             if (Ptmp[i].flag != 0) {continue;}
             int64_t nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
 
-            if (does_particle_need_to_be_merged(i)) {
+            if (ms_src_kind[aa] == 1) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
@@ -427,7 +441,7 @@ void merge_and_split_particles(void)
                     ms_flagged.push_back(i);
                 }
             }
-            else if (does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
+            else if (ms_src_kind[aa] == 2) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
