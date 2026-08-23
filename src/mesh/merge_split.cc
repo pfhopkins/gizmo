@@ -45,7 +45,7 @@
 
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
     when particles fall below some minimum mass threshold */
-int does_particle_need_to_be_merged(int i)
+int does_particle_need_to_be_merged(int i, gizmo_rng_t *rng)
 {
     if(P[i].Mass <= 0) {return 0;}
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
@@ -53,7 +53,7 @@ int does_particle_need_to_be_merged(int i)
 #else
     if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
+    if(check_if_sufficient_mergesplit_time_has_passed(i, rng) == 0) return 0;
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     return 0;
@@ -100,7 +100,7 @@ int does_particle_need_to_be_merged(int i)
 
 /*! Here we can insert any desired criteria for particle splitting: by default, this will occur
     when particles become too massive, but it could also be done when KernelRadius gets very large, densities are high, etc */
-int does_particle_need_to_be_split(int i)
+int does_particle_need_to_be_split(int i, gizmo_rng_t *rng)
 {
     if(P[i].Type != 0) {return 0;} // default behavior: only gas particles split //
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
@@ -108,7 +108,7 @@ int does_particle_need_to_be_split(int i)
 #else
     if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
+    if(check_if_sufficient_mergesplit_time_has_passed(i, rng) == 0) return 0;
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4) {return 0;}
@@ -330,6 +330,39 @@ void merge_and_split_particles(void)
 #endif
                                    ;
 
+#ifdef _OPENMP
+        int ms_nthreads = omp_get_max_threads();
+#else
+        int ms_nthreads = 1;
+#endif
+        if (ms_nthreads < 1) {ms_nthreads = 1;}
+        std::vector<std::vector<int> > ms_idx_thread((size_t)ms_nthreads);
+        std::vector<std::vector<double> > ms_rad_thread((size_t)ms_nthreads);
+        std::vector<std::vector<unsigned char> > ms_kind_thread((size_t)ms_nthreads);
+        /* One chunk per thread, sized explicitly: with a chunk size given, chunks go to
+         * threads in order of thread number, so each thread takes one contiguous block
+         * of ascending indices. */
+        const int ms_chunk = (NumPart + ms_nthreads - 1) / ms_nthreads;
+#pragma omp parallel
+    {
+#ifdef _OPENMP
+        const int tid = omp_get_thread_num();
+#else
+        const int tid = 0;
+#endif
+        /* The criteria below may draw from the rank's random stream, which only one
+         * thread at a time may advance. Which thread draws which number carries no
+         * meaning here, so each thread works from a stream of its own, held privately
+         * so that neighbouring threads do not share the cache line it lives on. The
+         * seed fixes the draws for a given rank, step and thread count. */
+        gizmo_rng_t ms_rng;
+        gizmo_rng_init(&ms_rng, ((uint64_t)All.NumCurrentTiStep * 1000003ULL
+                                 + (uint64_t)ThisTask * 10007ULL
+                                 + (uint64_t)tid) ^ 0x6d5391a7ULL);
+        std::vector<int> ms_idx_priv;
+        std::vector<double> ms_rad_priv;
+        std::vector<unsigned char> ms_kind_priv;
+#pragma omp for schedule(static, ms_chunk)
         for (int ip = 0; ip < NumPart; ip++) {
             if (P[ip].Mass <= 0) continue;
 #if defined(GALSF)
@@ -342,20 +375,33 @@ void merge_and_split_particles(void)
                                                       * before the far more expensive criteria
                                                       * cannot by itself admit or reject
                                                       * anything -- it only avoids asking. Note
-                                                      * those criteria may draw from the shared
-                                                      * random stream, so asking fewer of them
+                                                      * those criteria may draw from a random
+                                                      * stream, so asking fewer of them
                                                       * does change which elements draw and
                                                       * therefore the realised candidate set.
                                                       * That is accepted here: the visit order
                                                       * is already arbitrary and only the
                                                       * statistics of this routine are meant to
                                                       * be reproducible. */
-            const int want_merge = does_particle_need_to_be_merged(ip);
-            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip);
+            const int want_merge = does_particle_need_to_be_merged(ip, &ms_rng);
+            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip, &ms_rng);
             if (!(want_merge || want_split)) continue;
-            ms_src_idx.push_back(ip);
-            ms_src_radii.push_back(P[ip].KernelRadius);
-            ms_src_kind.push_back(want_merge ? 1 : 2);
+            ms_idx_priv.push_back(ip);
+            ms_rad_priv.push_back(P[ip].KernelRadius);
+            ms_kind_priv.push_back(want_merge ? 1 : 2);
+        }
+        /* Published once each, after the loop, rather than grown in place: the per-thread
+         * headers sit next to one another and every growth would write to them. */
+        ms_idx_thread[tid].swap(ms_idx_priv);
+        ms_rad_thread[tid].swap(ms_rad_priv);
+        ms_kind_thread[tid].swap(ms_kind_priv);
+    }
+        /* Concatenating in thread order restores the ascending index order the serial
+         * scan produced. */
+        for (int t = 0; t < ms_nthreads; t++) {
+            ms_src_idx.insert(ms_src_idx.end(), ms_idx_thread[t].begin(), ms_idx_thread[t].end());
+            ms_src_radii.insert(ms_src_radii.end(), ms_rad_thread[t].begin(), ms_rad_thread[t].end());
+            ms_src_kind.insert(ms_src_kind.end(), ms_kind_thread[t].begin(), ms_kind_thread[t].end());
         }
 
         int num_src = (int)ms_src_idx.size();
@@ -1450,13 +1496,13 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 /* subroutine to check if too little time has passed since the last merge-split, in which case we won't allow it again */
-int check_if_sufficient_mergesplit_time_has_passed(int i)
+int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng)
 {
     double N_timesteps_fac = 300.; // require > N timesteps before next merge/split, default was 100, but can be more aggressive - something between 10-100 works well in practice [definitely shorter than 10 can cause problems]
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 2) || defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
     N_timesteps_fac = 30.;
 #endif
-    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
+    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * gizmo_rng_uniform(rng);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
     double dt_incodescale = (get_particle_timestep_in_physical(i, P) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit
