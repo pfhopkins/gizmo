@@ -294,6 +294,14 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
     }
 
+    /* Indices flagged for a merge or a split, appended in the order the candidate
+     * loop below visits them, which is ascending particle index. The apply loop
+     * walks this instead of every local particle: only a flagged index does any
+     * work there, and the flags can only be set on candidates. This substitution
+     * visits the same indices in the same order, so it does not itself change
+     * which merges and splits are applied, or in what sequence. */
+    std::vector<int> ms_flagged;
+
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
      * merge_particles_ij/split_particle_i operate on local P[] indices only.
      * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
@@ -325,6 +333,7 @@ void merge_and_split_particles(void)
         }
 
         int num_src = (int)ms_src_idx.size();
+        ms_flagged.reserve((size_t)num_src);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
@@ -403,6 +412,7 @@ void merge_and_split_particles(void)
                 }
                 if (target_for_merger >= 0) {
                     Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
+                    ms_flagged.push_back(i);
                 }
             }
             else if (does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
@@ -422,6 +432,7 @@ void merge_and_split_particles(void)
                 if (target_for_merger >= 0) {
                     Ptmp[i].flag = 2;
                     Ptmp[i].target_index = target_for_merger;
+                    ms_flagged.push_back(i);
                 }
             }
         }
@@ -434,7 +445,8 @@ void merge_and_split_particles(void)
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
-    for (i = 0; i < NumPart; i++) {
+    for (size_t aa_apply = 0; aa_apply < ms_flagged.size(); aa_apply++) {
+        i = ms_flagged[aa_apply];
         if (Ptmp[i].flag == 1) { // merge this particle
             int did_merge = merge_particles_ij(i, Ptmp[i].target_index);
             if(did_merge == 1) {n_particles_merged++;}
