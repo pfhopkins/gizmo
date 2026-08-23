@@ -32,6 +32,7 @@
 #include "neighbor_list.h"
 #include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift, ghost_get_num_local */
 #include "ghost_exchange_functions.h"   /* the shared accept predicates (canonical box wrap) */
+#include "device_tree_walk.h"          /* the one device tree traversal */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, force_host_lazy_drift_ti */
 #include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
 
@@ -1648,6 +1649,44 @@ struct gx_recv_leaf_t {
  * means the tree is malformed.  The host stops the run there, so the device
  * cannot simply stop walking -- that would silently truncate an envelope.  It
  * records the state and the caller reproduces the host's stop. */
+/* The leaf half of the receiver walk: decide whether a locally-owned particle
+ * is a supply candidate this query admits, and record its pool slot.
+ *
+ * The host filters a leaf twice -- once while walking, with NEAREST_XYZ, and
+ * again in the accept pass, with NGB_PERIODIC_BOX_LONG_*.  The two macro
+ * families differ only in that the first keeps the sign of the wrapped
+ * separation and the second takes its magnitude, so for any separation the
+ * search can actually admit they give the same squared distance and the accept
+ * form alone reproduces the pair.  The equivalence gate is what establishes
+ * that, per pair: it expects the candidate sets to match exactly, and any
+ * disagreement has to be shown to be a boundary case rather than assumed to be
+ * one.
+ *
+ * Accepted slots past `cap` are counted but not written, so the caller can
+ * re-run the row against a buffer sized to the true count. */
+struct GxRecvEmitPairs {
+    const struct gx_recv_leaf_t *leaves;
+    unsigned int supply_mask;
+    int          num_local;
+    int         *out;
+    int          cap;
+    int          n_found;
+
+    KOKKOS_INLINE_FUNCTION
+    void visit(int j, double qx, double qy, double qz, double reach)
+    {
+        if(j >= num_local) {return;}   /* appended ghosts are not local supply */
+        const struct gx_recv_leaf_t &lf = leaves[j];
+        if(lf.type < 0 || lf.pool < 0) {return;}
+        if(!(supply_mask & (1u << lf.type))) {return;}
+        if(gx_pair_accept_wrap_and_test(qx - lf.pos[0], qy - lf.pos[1], qz - lf.pos[2],
+                                        reach, 0.0, NGB_SEARCH_ONEWAY)) {
+            if(n_found < cap) {out[n_found] = lf.pool;}
+            n_found++;
+        }
+    }
+};
+
 KOKKOS_INLINE_FUNCTION
 static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
                             unsigned int supply_mask,
@@ -1662,80 +1701,29 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
                             int foreign_base, int pseudo_start, int num_local,
                             int *anomaly, int *out, int cap)
 {
-    const double px = env.pos[0], py = env.pos[1], pz = env.pos[2];
-    const double h_q = env.h;
-    int n_found = 0;
+    GxDeviceTreeView tree;
+    tree.node_center    = node_center;
+    tree.node_len       = node_len;
+    tree.node_sibling   = node_sibling;
+    tree.node_nextnode  = node_nextnode;
+    tree.node_bitflags  = node_bitflags;
+    tree.nextnode_aux   = nextnode_aux;
+    tree.node_base      = tree_base;
+    tree.particle_slots = tree_slots;
+    tree.node_capacity  = node_capacity;
+    tree.foreign_base   = foreign_base;
+    tree.pseudo_start   = pseudo_start;
 
-    for(int k = 0; k < env.n_nodes; k++) {
-        const int nl = env.nodes[k];
-        if(nl < 0) {break;}                                  /* -1 terminates the list */
-        if(nl < tree_base || nl >= pseudo_start) {continue;}  /* arrived over MPI: validate */
-        if(nl - tree_base >= node_capacity) {   /* precondition leaves this unreachable */
-            Kokkos::atomic_store(anomaly, 1);
-            break;
-        }
-        int no = node_nextnode[nl - tree_base];               /* open the exported node */
+    GxRecvEmitPairs emit;
+    emit.leaves      = leaves;
+    emit.supply_mask = supply_mask;
+    emit.num_local   = num_local;
+    emit.out         = out;
+    emit.cap         = cap;
+    emit.n_found     = 0;
 
-        while(no >= 0) {
-            if(no >= tree_slots && no < tree_base) {
-                Kokkos::atomic_store(anomaly, 1);   /* malformed tree; caller stops the run */
-                break;
-            }
-            if(no < tree_slots) {
-                if(no < num_local) {
-                    /* The host filters a leaf twice -- once while walking, with
-                     * NEAREST_XYZ, and again in the accept pass, with
-                     * NGB_PERIODIC_BOX_LONG_*.  The two macro families differ only
-                     * in that the first keeps the sign of the wrapped separation
-                     * and the second takes its magnitude, so for any separation
-                     * the search can actually admit they give the same squared
-                     * distance and the accept form alone reproduces the pair.
-                     * The equivalence gate is what establishes that, per pair:
-                     * it expects the candidate sets to match exactly, and any
-                     * disagreement has to be shown to be a boundary case rather
-                     * than assumed to be one. */
-                    const struct gx_recv_leaf_t &lf = leaves[no];
-                    if(lf.type >= 0 && lf.pool >= 0 && (supply_mask & (1u << lf.type))) {
-                        if(gx_pair_accept_wrap_and_test(px - lf.pos[0], py - lf.pos[1], pz - lf.pos[2],
-                                                        h_q, 0.0, NGB_SEARCH_ONEWAY)) {
-                            if(n_found < cap) {out[n_found] = lf.pool;}
-                            n_found++;
-                        }
-                    }
-                }
-                no = nextnode_aux[no];
-            } else if(no < pseudo_start) {
-                const int kn = no - tree_base;
-                if(kn < 0 || kn >= node_capacity) {
-                    Kokkos::atomic_store(anomaly, 1);
-                    break;
-                }
-                /* Re-entering the top-level tree means this exported branch is
-                 * exhausted (the sender owns everything above it). */
-                if(node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
-                const double hw = 0.5 * (double)node_len[kn];
-                const int do_open =
-                    gx_extended_overlap_wrap_and_test((double)node_center[kn][0] - px,
-                                                      (double)node_center[kn][1] - py,
-                                                      (double)node_center[kn][2] - pz,
-                                                      hw, hw, hw, h_q);
-                if(do_open) {
-                    const int child = node_nextnode[kn];
-                    /* An imported foreign subtree holds no locally-owned
-                     * particles, so there is nothing below it to find. */
-                    no = (child >= foreign_base && child < pseudo_start)
-                             ? node_sibling[kn] : child;
-                } else {
-                    no = node_sibling[kn];
-                }
-            } else {
-                /* Pseudo-particle: another rank's subtree root, nothing local
-                 * below it.  Step past exactly as the host walk does. */
-                no = nextnode_aux[tree_slots + (no - pseudo_start)];
-            }
-        }
-    }
-    return n_found;
+    gx_device_tree_walk(env, tree, emit, anomaly);
+    return emit.n_found;
 }
 
 /* Envelopes are processed in fixed-size batches, and each batch's accepted pairs
