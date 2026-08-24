@@ -92,6 +92,22 @@ PROBLEM_TIMEOUT_S = float(os.environ.get("FEWBODY_PROBLEM_TIMEOUT", "1800"))
 
 ENERGY_TOL = 0.01  # >1% is a fail, for both variants
 
+# Diagnostic variant: rebuild the tree from scratch every step, to test whether the energy loss comes
+# from stale tree state between rebuilds rather than from the force approximation itself. The tree is
+# normally rebuilt on a cadence and its moments drifted/kicked in between; TreeDomainUpdateFrequency=0
+# removes that entirely, so every step sees moments computed directly from current positions.
+#
+# The force cadence needs no flag here. ADAPTIVE_TREEFORCE_UPDATE would be the lever for gas, but
+# needs_new_treeforce() (gravtree.cc) returns 1 immediately for any Type > 0 -- and again for
+# Hermite-integrated types -- so in a gasless star-only test every particle already gets a fresh walk
+# every step and the flag is inert. Setting it would have made this look like a two-factor variant
+# while changing exactly one thing.
+#
+# FEWBODY_FRESH_TREE is not read by the code. It exists so variant_suffix() gives this run its own
+# output directory and results file, the same trick wind_singlestar uses with WIND_TEST_NRES.
+FRESH_TREE = ("FEWBODY_FRESH_TREE=1",)
+FRESH_TREE_PARAMS = {"TreeDomainUpdateFrequency": "0"}
+
 PLOT_PATH = f"{TEST_DIR}/{TEST_NAME}_energy.png"
 CURVES_PATH = f"{TEST_DIR}/{TEST_NAME}_energy_curves.png"
 PAIRS_PATH = f"{TEST_DIR}/{TEST_NAME}_energy_pairs.png"
@@ -139,8 +155,9 @@ def _make_suite():
         outdir=path.join(TEST_DIR, "ics"), prefix=TEST_NAME)
 
 
-def _write_problem_params(base_text, prob, out_rel):
-    """One params file per problem: same base settings, only the IC-dependent values differ."""
+def _write_problem_params(base_text, prob, out_rel, param_over=None):
+    """One params file per problem: same base settings, only the IC-dependent values differ.
+    param_over adds per-variant overrides on top (see FRESH_TREE)."""
     tmax = N_TFF * prob["t_ff"]
     over = {
         "InitCondFile": path.join("ics", prob["name"] + "_ics"),
@@ -153,6 +170,8 @@ def _write_problem_params(base_text, prob, out_rel):
         "MaxSizeTimestep": f"{prob['t_ff'] / 100.0:.8g}",
         "BoxSize": f"{BOXSIZE:.8g}",
     }
+    if param_over:
+        over.update(param_over)
     lines, seen = [], set()
     for line in base_text.split("\n"):
         k = line.split()
@@ -401,6 +420,7 @@ def _plot_pairwise():
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="tree"),
     pytest.param(("FORCE_EQUAL_TIMESTEPS",), id="tree_equaldt"),
+    pytest.param(FRESH_TREE, id="freshtree"),
     # The direct-summation row is upstream's, and is not ported here. Restore these two lines if
     # SINGLE_STAR_DIRECT_GRAVITY ever lands; everything downstream already accommodates them.
     #   pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
@@ -414,6 +434,7 @@ def test_fewbody(extra_config_flags, request):
 
     out_root_rel = "output" + variant_suffix(extra_config_flags)   # relative to TEST_DIR
     out_root = variant_output_dir(TEST_NAME, extra_config_flags)   # relative to repo root
+    param_over = FRESH_TREE_PARAMS if extra_config_flags == FRESH_TREE else None
 
     skip_run = bool(os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"))
     if not skip_run:
@@ -424,7 +445,7 @@ def test_fewbody(extra_config_flags, request):
     jobs = []
     for p in problems:
         rel = path.join(out_root_rel, p["name"])
-        jobs.append((p, _write_problem_params(base_text, p, rel), path.join(out_root, p["name"])))
+        jobs.append((p, _write_problem_params(base_text, p, rel, param_over), path.join(out_root, p["name"])))
 
     failures = []
     if not skip_run:
