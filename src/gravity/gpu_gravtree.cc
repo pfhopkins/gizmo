@@ -529,6 +529,11 @@ gpu_gravtree_walk_one(int target,
 
         if(no < maxPart) /* particle leaf */
         {
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+               here as well would double every such force. Mirrors the CPU walk in forcetree.cc. */
+            if((ptype == 5) && (P_dev[no].Type == 5)) {no = tree_soa->nextnode_aux[no]; continue;}
+#endif
             dr = P_dev[no].Pos - pos;
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
@@ -670,6 +675,27 @@ gpu_gravtree_walk_one(int target,
             MyFloat mass_node = tree_soa->mass[idx];
             Vec3<MyFloat> center_node = tree_soa->center[idx];
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* A star target must take no star mass from the tree: star_direct_gravity_compute()
+               supplies every star-star pair exactly, so taking them here too would double them.
+               The tree carries monopoles only, so removing the sinks is exact -- drop their mass and
+               shift the node's center of mass to that of what is left. Both terms are on the same
+               clock, since SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as s is
+               drifted with vs. Pure-star nodes have nothing left and are skipped. Mirrors the CPU
+               walk in forcetree.cc; mass_node is reduced before the opening criteria below so they
+               judge the node on the mass actually being used. */
+            if((ptype == 5) && (tree_soa->sink_mass[idx] > 0))
+            {
+                MyFloat sm = (MyFloat) tree_soa->sink_mass[idx];
+                if(mass_node - sm <= 0) { no = tree_soa->sibling[idx]; continue; } /* pure-star node */
+                Vec3<MyFloat> sp = Vec3<MyFloat>{(MyFloat)tree_soa->sink_pos[idx][0],
+                                                 (MyFloat)tree_soa->sink_pos[idx][1],
+                                                 (MyFloat)tree_soa->sink_pos[idx][2]};
+                MyFloat mass_nosink = mass_node - sm;
+                for(int k = 0; k < 3; k++) {s_node[k] = (s_node[k]*mass_node - sp[k]*sm) / mass_nosink;}
+                mass_node = mass_nosink;
+            }
+#endif
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
