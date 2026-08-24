@@ -1324,6 +1324,8 @@ enum iofields
   IO_POT,
   IO_ACCEL,
   IO_HYDROACCEL,
+  IO_HERMITE_POS,
+  IO_HERMITE_VEL,
   IO_HII,
   IO_HeI,
   IO_HeII,

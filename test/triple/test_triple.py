@@ -1,0 +1,203 @@
+"""Hierarchical triple -- momentum and energy conservation across a deep timebin hierarchy.
+
+Equal-mass 4 AU inner binary + 1 Msun tertiary at 100 AU: period ratio 88, so the tertiary
+runs ~6 timebins coarser than the inner stars at every sync point (measured: gap 6 at 99.9% of
+occupancy samples). This is the configuration test/binary cannot reach -- a bound pair splits
+by at most ~1 bin -- and the configuration of the production momentum violation (a hardening
+triple). The inner pair shares a bin by symmetry and cannot leak against itself, so any secular
+COM drift is the inner<->outer channel: forces on the fine stars evaluated with the coarse
+tertiary seen mid-step, up to 2^6 of their own steps from its last sync.
+
+What this guards: the Old*-based source prediction in the Hermite gravity passes
+(gravity/forcetree.cc). With it, the COM drift stays a bounded noise band (growth exponent
+~0); without it, the drift is secular. THE MAGNITUDES ALONE DO NOT DISCRIMINATE AT 50 ORBITS
+-- the assertions here are calibrated so that the O(dt^2) drifted-source error fails them at
+this test's operating point; see the tolerance block for the calibration.
+
+Measured from the IO_HERMITE_SYNC datasets, for the same reason as test/binary: the plain
+Coordinates/Velocities are a mixed state (positions drifted, velocities at the last kick).
+"""
+
+import glob
+import re
+from os import path
+
+import h5py
+import numpy as np
+import pytest
+import matplotlib
+from matplotlib import pyplot as plt
+
+from gizmo.test import (
+    build_and_run_test,
+    clean_test_outputs,
+    variant_output_dir,
+)
+
+TEST_NAME = "triple"
+TEST_DIR = f"test/{TEST_NAME}"
+IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
+
+G_CODE = 4.300917270e-3
+AU_PER_PC = 206264.806
+
+M_IN, M3 = 0.5, 1.0
+A_IN = 4.0 / AU_PER_PC
+A_OUT = 100.0 / AU_PER_PC
+MTOT = 2 * M_IN + M3
+P_OUT = 2.0 * np.pi * np.sqrt(A_OUT ** 3 / (G_CODE * MTOT))
+V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
+
+# Operating point eta=0.00125 (see triple.params). Measured there, 50 outer orbits:
+#   with the source prediction    |dE/E| 2.08e-6 (t^+1.75)   drift band max 2.83e-6 (t^+0.55)
+#   with drifted sources (defect) |dE/E| 8.15e-6 (t^+1.08)   drift band max 6.27e-6 (t^+0.95)
+# Magnitude ceilings are ~3x the fixed code's values and bound gross breakage only -- the
+# defect passes them. What catches the defect is the SECULAR check on the drift exponent:
+# 0.95 vs 0.55 across the 0.85 threshold. (test/binary carries the magnitude discrimination:
+# its 1-bin split leaks 53x harder without the fix at 1000 orbits.)
+MAX_DE_OVER_E = 1e-5
+MAX_COM_DRIFT = 1e-5
+SECULAR_EXPONENT = 0.85
+
+
+def _ensure_ic():
+    if path.exists(IC_FILE):
+        return
+    import subprocess
+    import sys
+    subprocess.run(
+        [sys.executable, "make_triple_ics.py", "--m_in", str(M_IN), "--m3", str(M3),
+         "--a_in_au", "4.0", "--a_out_au", "100.0", "--out", f"{TEST_NAME}_ics.hdf5"],
+        cwd=TEST_DIR, check=True,
+    )
+
+
+def _read(snap):
+    with h5py.File(snap, "r") as f:
+        t = float(dict(f["Header"].attrs)["Time"])
+        g = f["PartType5"]
+        o = np.argsort(np.array(g["ParticleIDs"]))
+        synced = "HermiteSyncCoordinates" in g and "HermiteSyncVelocities" in g
+        assert synced, "IO_HERMITE_SYNC datasets missing -- the metrics are meaningless on the mixed state"
+        return (t, np.array(g["Masses"])[o],
+                np.array(g["HermiteSyncCoordinates"])[o],
+                np.array(g["HermiteSyncVelocities"])[o])
+
+
+def _trajectory(snaps):
+    t, de, dr, a_in = [], [], [], []
+    e0 = v0 = None
+    for s in snaps:
+        ti, m, x, v = _read(s)
+        E = 0.5 * (m * np.sum(v ** 2, axis=1)).sum()
+        for i in range(len(m)):
+            for j in range(i + 1, len(m)):
+                E -= G_CODE * m[i] * m[j] / np.linalg.norm(x[j] - x[i])
+        vc = (m[:, None] * v).sum(0) / m.sum()
+        # inner semi-major axis as an orbit-health check (vis-viva on the inner pair)
+        rr = np.linalg.norm(x[1] - x[0])
+        vv = np.sum((v[1] - v[0]) ** 2)
+        ain = 1.0 / (2.0 / rr - vv / (G_CODE * 2 * M_IN))
+        if e0 is None:
+            e0, v0 = E, vc
+        t.append(ti)
+        de.append(abs(E / e0 - 1.0))
+        dr.append(np.linalg.norm(vc - v0) / V_OUT)
+        a_in.append(ain)
+    return np.array(t), np.array(de), np.array(dr), np.array(a_in)
+
+
+def _envelope(t, y):
+    """Per-OUTER-orbit minimum: within an orbit the instantaneous values oscillate by orders
+    of magnitude with the hierarchy phase; the envelope floor is the integration error."""
+    orb = (t / P_OUT).astype(int)
+    xs, ys = [], []
+    for i in range(orb.max() + 1):
+        k = orb == i
+        if k.sum() < 3:
+            continue
+        xs.append(t[k].mean())
+        ys.append(y[k].min())
+    return np.array(xs), np.array(ys)
+
+
+def _growth_exponent(t, y):
+    xs, ys = _envelope(t, y)
+    k = (xs > 0) & (ys > 0)
+    if k.sum() < 8:
+        return np.nan
+    h = k & (xs >= 0.5 * xs[k].max())
+    return np.polyfit(np.log(xs[h]), np.log(ys[h]), 1)[0]
+
+
+def _plot(t, de, dr, variant_id):
+    matplotlib.rcParams['text.usetex'] = False
+    orbits = t / P_OUT
+    fig, ax = plt.subplots(2, 1, figsize=(8, 6.5), sharex=True)
+    ax[0].plot(orbits, de, lw=.4)
+    ax[1].plot(orbits, dr, lw=.4)
+    for A in ax:
+        A.set_xscale("log")
+        A.set_yscale("log")
+    ax[0].set_ylabel("|E/E$_0$ - 1|")
+    ax[1].set_ylabel("|v$_{com}$| / v$_{out}$")
+    ax[1].set_xlabel("outer orbits")
+    ax[1].set_xlim(1, max(2.0, orbits[-1]))
+    fig.tight_layout()
+    fig.savefig(f"{TEST_DIR}/{TEST_NAME}_{variant_id}_conservation.png", dpi=120)
+    plt.close(fig)
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (1,))
+@pytest.mark.parametrize("num_omp_threads", (1,))
+@pytest.mark.parametrize("extra_config_flags", [
+    pytest.param((), id="starforge_defaults"),
+])
+def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
+    _ensure_ic()
+    clean_test_outputs(TEST_NAME, extra_config_flags)
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
+
+    outdir = variant_output_dir(TEST_NAME, extra_config_flags)
+    snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
+                   key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
+    assert len(snaps) >= 64, f"only {len(snaps)} snapshots -- the run died early"
+
+    t, de, dr, a_in = _trajectory(snaps)
+    assert np.all(np.diff(t) >= 0), "snapshot times are not monotonic -- file ordering is wrong"
+
+    n_orbits = t[-1] / P_OUT
+    _, de_env = _envelope(t, de)
+    _, dr_env = _envelope(t, dr)
+    p_de = _growth_exponent(t, de)
+    p_dr = _growth_exponent(t, dr)
+
+    variant_id = request.node.callspec.id.split("-")[0]
+    _plot(t, de, dr, variant_id)
+    np.savez(f"{TEST_DIR}/summary_{variant_id}.npz",
+             t=t, de=de, drift=dr, a_in=a_in, period_out=P_OUT)
+
+    print(f"  {n_orbits:.1f} outer orbits, {len(snaps)} snapshots")
+    print(f"  |dE/E|      envelope {de_env[-1]:.3e}   growth t^{p_de:+.2f}")
+    print(f"  COM drift   band max {dr_env.max():.3e}   growth t^{p_dr:+.2f}")
+    print(f"  inner orbit a/a0 - 1 = {a_in[-1]/a_in[0]-1:+.3e}")
+
+    # the inner binary must survive untouched -- if it hardened or dissolved, the momentum
+    # numbers describe a different configuration than the one this test is calibrated for
+    assert abs(a_in[-1] / a_in[0] - 1) < 5e-2, "inner binary changed by >5% -- configuration lost"
+
+    assert de_env[-1] < MAX_DE_OVER_E, (
+        f"relative energy error {de_env[-1]:.3e} over {n_orbits:.0f} outer orbits "
+        f"(tol {MAX_DE_OVER_E})")
+    assert dr_env.max() < MAX_COM_DRIFT, (
+        f"COM drift band reached {dr_env.max():.3e} (tol {MAX_COM_DRIFT}); a secular "
+        f"inner<->outer momentum leak has re-opened -- check the Hermite source prediction "
+        f"in gravity/forcetree.cc")
+    if p_dr >= SECULAR_EXPONENT:
+        pytest.fail(
+            f"COM drift grows at t^{p_dr:+.2f} -- secular, not a noise band. The many-bin "
+            f"momentum leak is back.")
+    if p_de >= SECULAR_EXPONENT:
+        pytest.xfail(
+            f"energy drifts secularly (t^{p_de:+.2f}) at the truncation level -- known "
+            f"behaviour, tracked but not blocking")

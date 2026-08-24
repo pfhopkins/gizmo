@@ -1689,6 +1689,30 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel;
 #endif
+#ifdef HERMITE_INTEGRATION
+                /* Hermite-only passes: an inactive Hermite-integrated source sits at its
+                 * KDK-drifted position -- and its stored Vel is whole-step-kicked (see
+                 * do_the_kick) -- so the drifted position is O(dt^2) wrong mid-step. Every
+                 * force the Hermite integrator consumes comes through these passes, so
+                 * re-predict the source from its own Old* state, exactly as
+                 * do_hermite_prediction does for the target. Nothing is written back: the
+                 * predicted state exists only in this force evaluation. Active sources are
+                 * skipped: at HermiteOnlyFlag==1 their Old* are stale (find_timesteps has
+                 * already advanced Ti_begstep, so D=0 would return the previous step's start
+                 * position) and their live Pos is already correct -- corrected at flag==1,
+                 * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
+                 * leapfrog's cancellation structure assumes the plain drifted positions. */
+                if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
+                {
+                    double hD = get_gravkick_factor(P[no].Ti_begstep, ti_Current, no, 0);
+                    dr = P[no].OldPos + (P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/3)) * (hD/2)) * hD - pos;
+                    GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                    r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                    dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
+#endif
+                }
+#endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
 #endif
