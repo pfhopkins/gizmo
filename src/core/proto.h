@@ -41,8 +41,8 @@ long long report_comittable_memory(long long *MemTotal,
                                    long long *SwapFree);
 
 void merge_and_split_particles(void);
-int does_particle_need_to_be_merged(int i, gizmo_rng_t *rng);
-int does_particle_need_to_be_split(int i, gizmo_rng_t *rng);
+int does_particle_need_to_be_merged(int i);
+int does_particle_need_to_be_split(int i);
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key);
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng);

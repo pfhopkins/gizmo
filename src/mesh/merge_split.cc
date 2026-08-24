@@ -45,16 +45,12 @@
 
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
     when particles fall below some minimum mass threshold */
-int does_particle_need_to_be_merged(int i, gizmo_rng_t *rng)
+int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
-    if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i, rng) == 0) return 0;
-#endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     return 0;
 #endif
@@ -100,16 +96,12 @@ int does_particle_need_to_be_merged(int i, gizmo_rng_t *rng)
 
 /*! Here we can insert any desired criteria for particle splitting: by default, this will occur
     when particles become too massive, but it could also be done when KernelRadius gets very large, densities are high, etc */
-int does_particle_need_to_be_split(int i, gizmo_rng_t *rng)
+int does_particle_need_to_be_split(int i)
 {
     if(P[i].Type != 0) {return 0;} // default behavior: only gas particles split //
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
-    if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i, rng) == 0) return 0;
-#endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4) {return 0;}
 #endif
@@ -383,8 +375,21 @@ void merge_and_split_particles(void)
                                                       * is already arbitrary and only the
                                                       * statistics of this routine are meant to
                                                       * be reproducible. */
-            const int want_merge = does_particle_need_to_be_merged(ip, &ms_rng);
-            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip, &ms_rng);
+#ifndef PREVENT_PARTICLE_MERGE_SPLIT
+            /* The gates both criteria share, applied once. They used to sit inside each
+             * criterion, so an element that was not a merger went on to be asked a second
+             * time as a possible split -- and where a minimum time between refinements is
+             * enforced, that second question draws a fresh randomised wait. Today the two
+             * criteria are mutually exclusive and only one answer is ever acted on, so
+             * the extra draw is discarded rather than compounding; asking once here keeps
+             * that true without depending on it. */
+            if (P[ip].Type == 0 && CellP[ip].recent_refinement_flag == 1) continue;
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+            if (check_if_sufficient_mergesplit_time_has_passed(ip, &ms_rng) == 0) continue;
+#endif
+#endif
+            const int want_merge = does_particle_need_to_be_merged(ip);
+            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip);
             if (!(want_merge || want_split)) continue;
             ms_idx_priv.push_back(ip);
             ms_rad_priv.push_back(P[ip].KernelRadius);
