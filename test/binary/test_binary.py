@@ -62,15 +62,19 @@ A0 = A_AU / AU_PER_PC
 V_ORB = np.sqrt(G_CODE * MTOT / A0)          # normalisation for the COM drift
 P_ORB = 2.0 * np.pi * np.sqrt(A0 ** 3 / (G_CODE * MTOT))
 
-# Tolerances. Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope) WITH
-# the Hermite source prediction in gravity/forcetree.cc:
-#     |dE/E| = 4.686e-4    COM drift = 1.594e-4
-# Ceilings ~3x those. These are what make this test the fix's magnitude guard: without the
-# source prediction the same run measures |dE/E| = 1.615e-2 and drift = 8.464e-3 -- 11x and
-# 17x over these ceilings -- so a revert fails here loudly. (test/triple guards the many-bin
-# hierarchy by growth exponent instead; see its docstring for the division of labor.)
-# The growth-exponent check below still xfails by design: the residual after the fix is the
-# 4th-order block-step impulse asymmetry, secular at ~1.6e-7/orbit.
+# WHAT THIS TEST GUARDS, as of the shared-normalization change (SINK_TIMESTEP_SAFETY_FACTOR in
+# core/timestep.cc). With both criteria on one normalization the pair's timebins FUSE, and an
+# isolated binary then has no inactive sources at all -- so the Hermite source prediction in
+# gravity/forcetree.cc never fires here and this test does NOT guard it. It guards the
+# NORMALIZATION: revert that and the bins split again, and the same run measures |dE/E| = 1.6e-2
+# and drift = 8.5e-3, ~10x and ~4x over the ceilings below. test/triple is the guard for the
+# source prediction -- its hierarchy cannot fuse, so the prediction is load-bearing there.
+#
+# Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope), both changes in:
+#     |dE/E| = 7.78e-5    COM drift = 3.48e-15   (drift is at round-off; growth t^-0.25)
+# The drift ceiling is deliberately NOT set near 3e-15: that number is round-off on this
+# machine and would make the test a floating-point-reproducibility check. 5e-4 still catches a
+# revert by 4x, which is the regression this bounds.
 MAX_DE_OVER_E = 1.5e-3
 MAX_COM_DRIFT = 5e-4
 
