@@ -1599,11 +1599,16 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         }
                     }
                 }
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+                   here as well would double every such force */
+                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#endif
                 dr = P[no].Pos - pos;
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 mass = P[no].Mass;
-                
+
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                 r_source = grav_spherical_symmetry_r_from_center(P[no].Pos[0],P[no].Pos[1],P[no].Pos[2],center[0],center[1],center[2]);
 #endif
@@ -1769,6 +1774,12 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     no = nop->u.d.sibling;
                     continue;
                 }
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
+                   supplies every star-star pair exactly. Nodes made entirely of stars therefore have
+                   nothing left for us; skip them here, before the drift and the opening criteria below. */
+                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
+#endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
@@ -1791,7 +1802,28 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     }
                 }
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* Remove the sinks from this node for a star target: star-star pairs come exactly from
+                   star_direct_gravity_compute(), so taking them here too would double them. This tree
+                   carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
+                   so the subtraction is exact rather than approximate: drop the sink mass and move the
+                   center of mass to that of what remains. Both terms are on the same clock, since
+                   SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
+                   with vs -- which is also why this sits after force_drift_node above. Doing it this way
+                   means a star target keeps the ordinary O(log N) walk; the alternative, opening every
+                   node containing a star, costs an extra O(N_star log N) node visits per star target.
+                   mass is reduced before the opening criteria below, so they judge the node on the mass
+                   actually being used. Pure-star nodes were already skipped above. */
+                if((ptype == 5) && (nop->sink_mass > 0))
+                {
+                    double mass_nosink = mass - nop->sink_mass;
+                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                    mass = mass_nosink;
+                }
+                else {dr = nop->u.d.s - pos;}
+#else
                 dr = nop->u.d.s - pos;
+#endif
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home

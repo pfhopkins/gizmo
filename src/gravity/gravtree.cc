@@ -286,6 +286,18 @@ void gravity_tree(void)
      * criterion and is not valid for the next walk. Rebuild the tree+LET before it is reused. */
     if(errtol_before != 0 && All.ErrTolTheta == 0) { TreeReconstructFlag = 1; }
 #endif
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+    /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
+       the tree's own contributions are complete (imports included) but not yet multiplied by All.G
+       in the loop below, and the direct sum is in those same G-free units. */
+    CPU_Step[CPU_TREEMISC] += measure_time();
+    star_direct_gravity_build_table();
+    star_direct_gravity_compute();
+    star_direct_gravity_free_table();
+    CPU_Step[CPU_TREEWALK1] += measure_time();
+#endif
+
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif

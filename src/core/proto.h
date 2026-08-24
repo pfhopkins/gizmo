@@ -676,6 +676,12 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 void update_stellarnumber_and_timedistribofstarformation(void);
 #endif
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+void star_direct_gravity_build_table(void);
+void star_direct_gravity_compute(void);
+void star_direct_gravity_free_table(void);
+#endif
+
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
 double single_star_jet_mdot(int n);

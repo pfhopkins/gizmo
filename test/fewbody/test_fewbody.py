@@ -16,19 +16,22 @@ Each problem is followed for the same number of ITS OWN free-fall times, so a 3-
 half-solar stars and a 10-body system containing a 40 Msun star are compared at equal dynamical
 age rather than equal wall time.
 
-Upstream runs a 2x2 over the two things that can spoil conservation. This tree has only the top
-row, because SINGLE_STAR_DIRECT_GRAVITY is not ported here:
+A 2x2 over the two things that can spoil conservation, so each is isolated rather than inferred,
+plus a fifth diagnostic variant:
 
   tree             production solver, individual timesteps -- tree + integration + unequal-dt
   tree_equaldt     FORCE_EQUAL_TIMESTEPS                   -- tree + integration
-  direct_gravity   SINGLE_STAR_DIRECT_GRAVITY              -- NOT AVAILABLE HERE
-  direct_equaldt   both                                    -- NOT AVAILABLE HERE
+  direct_gravity   SINGLE_STAR_DIRECT_GRAVITY              -- integration + unequal-dt
+  direct_equaldt   both                                    -- integration alone
+  freshtree        TreeDomainUpdateFrequency=0             -- tree rebuilt every step
 
-FORCE_EQUAL_TIMESTEPS puts every particle on one universal step, so the difference between the two
-variants we do have isolates the timestep hierarchy. Separating tree force error from integrator
-error needs the direct-summation row, which is why the plots reserve space for it: the pairwise
-panels render the missing comparisons as "pending" rather than dropping them, so re-enabling the
-bottom row later is just restoring the two parametrize entries below.
+SINGLE_STAR_DIRECT_GRAVITY sums every star-star pair exactly; with no gas here that removes the
+tree from the force calculation entirely. FORCE_EQUAL_TIMESTEPS puts every particle on one
+universal step. So a difference down a column is the tree, a difference across a row is the
+timestep hierarchy, and the last row measures the integrator with nothing else in the way -- no
+single number would tell you which of the three you were looking at. freshtree separates one more
+thing the others cannot: stale tree state between rebuilds, as distinct from the force
+approximation itself.
 
 Energy is read from the in-code synced diagnostic (ENERGY_BUDGET_DIAGNOSTIC), not from snapshots.
 Snapshots write Velocities at kick-time against drift-time positions, an O(dt/2t_dyn) error per
@@ -421,10 +424,8 @@ def _plot_pairwise():
     pytest.param((), id="tree"),
     pytest.param(("FORCE_EQUAL_TIMESTEPS",), id="tree_equaldt"),
     pytest.param(FRESH_TREE, id="freshtree"),
-    # The direct-summation row is upstream's, and is not ported here. Restore these two lines if
-    # SINGLE_STAR_DIRECT_GRAVITY ever lands; everything downstream already accommodates them.
-    #   pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
-    #   pytest.param(("SINGLE_STAR_DIRECT_GRAVITY", "FORCE_EQUAL_TIMESTEPS"), id="direct_equaldt"),
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY", "FORCE_EQUAL_TIMESTEPS"), id="direct_equaldt"),
 ])
 def test_fewbody(extra_config_flags, request):
     variant_id = request.node.callspec.id.split("-")[0]
@@ -493,5 +494,6 @@ def test_fewbody(extra_config_flags, request):
     assert not offenders, (
         f"{variant_id}: {len(offenders)}/{len(jobs)} problems exceed {ENERGY_TOL:.0%} energy "
         f"error (worst {worst_overall:.4f}):\n" + "\n".join(offenders[:20])
-        + "\nWith only the tree variants available, this cannot separate tree force error from "
-          "integrator error; that needs the direct-summation row (see the module docstring).")
+        + "\nCompare the variants: if direct_gravity fails too this is the integrator; if only tree "
+          "fails it is tree force error; if freshtree passes where tree fails it is stale tree state "
+          "between rebuilds rather than the force approximation.")

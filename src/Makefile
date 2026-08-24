@@ -630,6 +630,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
                 gravity/binary.o \
+                gravity/star_direct_gravity.o \
                 gravity/let_pack.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \

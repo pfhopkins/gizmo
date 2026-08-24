@@ -848,6 +848,22 @@ extern ALIGN(32) struct NODE
  *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.MaxPart] gives the first allocated node */
 
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+/* every star in the simulation, replicated on every task, for the exact star-star sum in
+   gravity/star_direct_gravity.cc. Rebuilt each time gravity is evaluated; sized O(N_star). */
+extern struct star_direct_data
+{
+    Vec3<MyDouble> Pos;
+    Vec3<MyFloat> Vel;
+    MyFloat Mass;
+    MyFloat Soft;
+    MyIDType ID;
+}
+ *StarDirect;
+extern int N_StarDirect;
+#endif
+
+
 extern struct extNODE
 {
   Vec3<MyDouble> dp;
