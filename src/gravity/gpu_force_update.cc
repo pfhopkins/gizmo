@@ -164,6 +164,9 @@ extern "C" void gpu_force_update_tree(void)
 #ifdef DM_SCALARFIELD_SCREENING
                 Vec3<MyDouble> dp_dm = (Pp[i].Type != 0) ? dp : Vec3<MyDouble>{};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+                Vec3<MyDouble> sink_dp = (Pp[i].Type == 5) ? dp : Vec3<MyDouble>{}; /* only sinks contribute to the sink moments */
+#endif
 
                 /* Walk Father chain, accumulating kicks. */
                 int no = Fa[i];
@@ -180,6 +183,11 @@ extern "C" void gpu_force_update_tree(void)
 #ifdef DM_SCALARFIELD_SCREENING
                     for(int k = 0; k < 3; k++) {
                         Kokkos::atomic_add(&Ex[no].dp_dm[k], dp_dm[k]);
+                    }
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+                    for(int k = 0; k < 3; k++) {
+                        Kokkos::atomic_add(&Ex[no].sink_dp[k], sink_dp[k]);
                     }
 #endif
                     gpu_atomic_max_myfloat(&Ex[no].vmax, vmax);

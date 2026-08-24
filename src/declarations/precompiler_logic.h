@@ -888,6 +888,30 @@
 #endif
 
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
+#if !defined(SINK_CALC_DISTANCES)
+#define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES)
+/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
+   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
+   Silently losing binary detection would change the integration, so refuse the combination. */
+#error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
+#endif
+#endif
+
+
+/* Drift and kick the sink node moments between rebuilds, as the main moments already are. Requires
+   sink_vel to exist to drift with, hence the condition below -- which must be tested here, after every
+   site that can turn SINK_CALC_DISTANCES on (the last is the GRAVITY_ANALYTIC block just above).
+   SINGLE_STAR_DIRECT_GRAVITY is in the list because it subtracts the sink monopole from mixed nodes and
+   so needs sink_pos on the same clock as u.d.s; it can be set without SINGLE_STAR_TIMESTEPPING, and
+   where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#define SINK_NODE_MOTION_TRACKED
+#endif
+
+
 
 #if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) || defined(HYDRO_MULTIFLUID_IONNEUTRAL)
   #define DO_FLUID_ALTSPECIES_DRAG_CALCULATION

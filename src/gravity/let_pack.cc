@@ -805,7 +805,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
 #ifdef SINK_CALC_DISTANCES
     ref.sink_mass = &w->node.sink_mass;
     ref.sink_pos  = &w->node.sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     ref.N_SINK   = &w->node.N_SINK;
     ref.sink_vel = &w->node.sink_vel;
 #endif

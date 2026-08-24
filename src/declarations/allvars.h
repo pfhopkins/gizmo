@@ -821,13 +821,13 @@ extern ALIGN(32) struct NODE
 #ifdef SINK_CALC_DISTANCES
   MyFloat sink_mass;      /*!< holds the sink mass in the node.  Used for calculating tree based dist to closest sink */
   Vec3<MyFloat> sink_pos;    /*!< holds the mass-weighted position of the the actual sink particles within the node */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Vec3<MyFloat> sink_vel;    /*!< holds the mass-weighted avg. velocity of sink particles in the node. Gate matches N_SINK and every sink_vel reader/writer. */
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     Vec3<MyFloat> sink_acc; /*!< holds the mass-weighted avg. acceleration of sink particles in the node */
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
   int N_SINK;             /*!< holds the number of sink particles in the node. Used for refinement/search criteria */
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
@@ -858,6 +858,10 @@ extern struct extNODE
 #ifdef DM_SCALARFIELD_SCREENING
   Vec3<MyDouble> dp_dm;
   Vec3<MyFloat> vs_dm;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  Vec3<MyDouble> sink_dp;   /*!< momentum change of the sinks in this node, folded into Nodes[].sink_vel on the
+                                 next drift (mirrors dp/dp_dm; the velocity itself lives in Nodes, not here) */
 #endif
   Vec3<MyFloat> vs;
   MyFloat vmax;

@@ -342,7 +342,7 @@ struct mr_scratch_t {
 #ifdef SINK_CALC_DISTANCES
     Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> sink_mass;
     Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Kokkos::View<int*,           MrMemSpace, MrUnmanaged> N_SINK;
     Kokkos::View<Vec3<MyGravFloat>*, MrMemSpace, MrUnmanaged> sink_vel;
 #endif
@@ -401,7 +401,7 @@ struct mr_rawpool_t {
 #ifdef SINK_CALC_DISTANCES
     MyGravFloat*       sink_mass;
     Vec3<MyGravFloat>* sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     int*               N_SINK;
     Vec3<MyGravFloat>* sink_vel;
 #endif
@@ -452,7 +452,7 @@ static void mr_rawpool_free_(void)
 #endif
 #ifdef SINK_CALC_DISTANCES
     MRFREE(sink_mass); MRFREE(sink_pos);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     MRFREE(N_SINK); MRFREE(sink_vel);
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -503,7 +503,7 @@ static int mr_rawpool_ensure_(int n)
 #endif
 #ifdef SINK_CALC_DISTANCES
     MRALLOC(sink_mass, n); MRALLOC(sink_pos, n);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     MRALLOC(N_SINK, n); MRALLOC(sink_vel, n);
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -553,7 +553,7 @@ static int mr_scratch_bind_(mr_scratch_t& scr, int n)
 #endif
 #ifdef SINK_CALC_DISTANCES
     MRBIND(sink_mass, n); MRBIND(sink_pos, n);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     MRBIND(N_SINK, n); MRBIND(sink_vel, n);
 #endif
 #if defined(SPECIAL_POINT_MOTION)
@@ -615,7 +615,7 @@ static moment_node_ref<MyGravFloat> mr_ref_(const mr_scratch_t& scr, int k)
 #ifdef SINK_CALC_DISTANCES
     r.sink_mass = &scr.sink_mass(k);
     r.sink_pos  = &scr.sink_pos(k);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     r.N_SINK   = &scr.N_SINK(k);
     r.sink_vel = &scr.sink_vel(k);
 #endif
@@ -675,7 +675,7 @@ static moment_node_accum<MyGravFloat> mr_child_accum_(const mr_scratch_t& scr, i
 #ifdef SINK_CALC_DISTANCES
     c.sink_mass = scr.sink_mass(curr);
     c.sink_pos  = scr.sink_pos(curr);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     c.N_SINK   = scr.N_SINK(curr);
     c.sink_vel = scr.sink_vel(curr);
 #endif
@@ -944,7 +944,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 #ifdef SINK_CALC_DISTANCES
     Kokkos::deep_copy(ShSpace(soa->sink_mass, n), scr.sink_mass);
     Kokkos::deep_copy(ShVec3 (soa->sink_pos,  n), scr.sink_pos);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Kokkos::deep_copy(ShInt  (soa->N_SINK,    n), scr.N_SINK);
     Kokkos::deep_copy(ShVec3 (soa->sink_vel,  n), scr.sink_vel);
 #endif
@@ -1062,7 +1062,7 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
         Nodes[no].sink_pos  = Vec3<MyFloat>{(MyFloat) soa->sink_pos[k][0],
                                              (MyFloat) soa->sink_pos[k][1],
                                              (MyFloat) soa->sink_pos[k][2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].sink_vel  = Vec3<MyFloat>{(MyFloat) soa->sink_vel[k][0],
                                              (MyFloat) soa->sink_vel[k][1],
                                              (MyFloat) soa->sink_vel[k][2]};
@@ -1072,7 +1072,7 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
                                              (MyFloat) soa->sink_acc[k][1],
                                              (MyFloat) soa->sink_acc[k][2]};
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].N_SINK    = soa->N_SINK[k];
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
