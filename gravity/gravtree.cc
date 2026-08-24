@@ -470,6 +470,17 @@ void gravity_tree(void)
     } /* Ewald_iter */
     myfree(DataNodeList); myfree(DataIndexTable);
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+    /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
+       the tree's own contributions are complete (imports included) but not yet multiplied by All.G,
+       and the direct sum is in those same G-free units. */
+    CPU_Step[CPU_TREEMISC] += measure_time();
+    star_direct_gravity_build_table();
+    star_direct_gravity_compute();
+    star_direct_gravity_free_table();
+    CPU_Step[CPU_TREEWALK1] += measure_time();
+#endif
+
     /* assign node cost to particles */
     if(TakeLevel >= 0) {
         sum_top_level_node_costfactors();
@@ -642,6 +653,21 @@ void gravity_tree(void)
     } /* end of loop over active particles*/
 
 
+#else /* the tree walk that would normally zero-then-accumulate these never runs here, so they would
+         otherwise hold whatever was in the malloc slot -- and consumers read them regardless of whether
+         gravity is compiled in (HERMITE_INTEGRATION's do_the_kick() copies GravAccel/GravJerk into
+         Hermite_OldAcc/OldJerk every step). GravAccel is zeroed again shortly after this, inside
+         add_analytic_gravitational_forces(); that is deliberate redundancy, so this block does not
+         depend on what that routine happens to do. */
+    for (int i : ActiveParticleList) {
+        P[i].GravAccel = {};
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+        P[i].GravJerk = {};
+#endif
+#ifdef EVALPOTENTIAL
+        P[i].Potential = 0;
+#endif
+    }
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 

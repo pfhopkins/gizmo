@@ -85,6 +85,9 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    Vec3<MyDouble> sink_dp = (P[i].Type == 5) ? dp : Vec3<MyDouble>{}; /* only sinks contribute to the sink moments */
+#endif
 
   for(j = 0, vmax = 0; j < 3; j++)
     if((v = fabs(P[i].Vel[j])) > vmax)
@@ -115,6 +118,12 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
           Extnodes[no].dp_dm[k] += dp_dm[k];
       }
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+      for(int k = 0; k < 3; k++) {
+          #pragma omp atomic
+          Extnodes[no].sink_dp[k] += sink_dp[k];
+      }
+#endif
       atomic_max_double(&Extnodes[no].vmax, vmax);
       Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
       Extnodes[no].Ti_lastkicked = All.Ti_Current;
@@ -137,6 +146,9 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         Extnodes[no].dp_dm += dp_dm;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp += sink_dp;
 #endif
       if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
       Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
@@ -174,6 +186,9 @@ void force_finish_kick_nodes(void)
 #ifdef DM_SCALARFIELD_SCREENING
   MyDouble *domainDp_dm_loc, *domainDp_dm_all;
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  MyDouble *domainDp_sink_loc, *domainDp_sink_all;
+#endif
   MyFloat *domainVmax_loc, *domainVmax_all;
 
   /* share the momentum-data of the pseudo-particles accross CPUs */
@@ -192,6 +207,9 @@ void force_finish_kick_nodes(void)
   domainDp_dm_loc = (MyDouble *) mymalloc("domainDp_dm_loc", DomainNumChanged * 3 * sizeof(MyDouble));
 #endif
   domainVmax_loc = (MyFloat *) mymalloc("domainVmax_loc", DomainNumChanged * sizeof(MyFloat));
+#ifdef SINK_NODE_MOTION_TRACKED
+  domainDp_sink_loc = (MyDouble *) mymalloc("domainDp_sink_loc", DomainNumChanged * 3 * sizeof(MyDouble)); /* last in its group, so freed first below: keeps the stack allocator LIFO whatever else is enabled */
+#endif
 
   for(i = 0; i < DomainNumChanged; i++)
     {
@@ -203,6 +221,9 @@ void force_finish_kick_nodes(void)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
 	  domainDp_dm_loc[i * 3 + j] = Extnodes[DomainList[i]].dp_dm[j];
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+	  domainDp_sink_loc[i * 3 + j] = Extnodes[DomainList[i]].sink_dp[j];
 #endif
 	}
       domainVmax_loc[i] = Extnodes[DomainList[i]].vmax;
@@ -234,6 +255,9 @@ void force_finish_kick_nodes(void)
   domainVmax_all = (MyFloat *) mymalloc("domainVmax_all", totDomainNumChanged * sizeof(MyFloat));
 
   domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
+#ifdef SINK_NODE_MOTION_TRACKED
+  domainDp_sink_all = (MyDouble *) mymalloc("domainDp_sink_all", totDomainNumChanged * 3 * sizeof(MyDouble)); /* likewise last, freed first */
+#endif
 
   MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
 		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
@@ -255,6 +279,10 @@ void force_finish_kick_nodes(void)
 #ifdef DM_SCALARFIELD_SCREENING
   MPI_Allgatherv(domainDp_dm_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
 		 domainDp_dm_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  MPI_Allgatherv(domainDp_sink_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
+		 domainDp_sink_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD); /* same 3*MyDouble shape as dp, so it reuses counts_dp/offset_dp */
 #endif
 
   MPI_Allgatherv(domainVmax_loc, DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
@@ -286,6 +314,11 @@ void force_finish_kick_nodes(void)
 	  Extnodes[no].dp_dm[1] += domainDp_dm_all[3 * i + 1];
 	  Extnodes[no].dp_dm[2] += domainDp_dm_all[3 * i + 2];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+	  Extnodes[no].sink_dp[0] += domainDp_sink_all[3 * i + 0];
+	  Extnodes[no].sink_dp[1] += domainDp_sink_all[3 * i + 1];
+	  Extnodes[no].sink_dp[2] += domainDp_sink_all[3 * i + 2];
+#endif
 
 	  if(Extnodes[no].vmax < domainVmax_all[i])
 	    Extnodes[no].vmax = domainVmax_all[i];
@@ -297,6 +330,9 @@ void force_finish_kick_nodes(void)
 	}
     }
 
+#ifdef SINK_NODE_MOTION_TRACKED
+  myfree(domainDp_sink_all);
+#endif
   myfree(domainList_all);
   myfree(domainVmax_all);
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
@@ -306,6 +342,9 @@ void force_finish_kick_nodes(void)
   myfree(domainDp_dm_all);
 #endif
   myfree(domainDp_all);
+#ifdef SINK_NODE_MOTION_TRACKED
+  myfree(domainDp_sink_loc);
+#endif
   myfree(domainVmax_loc);
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     myfree(domainDp_stellarlum_loc);
@@ -355,6 +394,11 @@ void force_drift_node(int no, integertime time1)
       if(Nodes[no].mass_dm) {fac_dm = 1 / Nodes[no].mass_dm;} else {fac_dm = 0;}
 #endif
 
+#ifdef SINK_NODE_MOTION_TRACKED
+      double fac_sink;
+      if(Nodes[no].sink_mass) {fac_sink = 1 / Nodes[no].sink_mass;} else {fac_sink = 0;}
+#endif
+
       Extnodes[no].vs += fac * Extnodes[no].dp;
       Extnodes[no].dp = {};
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
@@ -364,6 +408,10 @@ void force_drift_node(int no, integertime time1)
 #ifdef DM_SCALARFIELD_SCREENING
       Extnodes[no].vs_dm += fac_dm * Extnodes[no].dp_dm;
       Extnodes[no].dp_dm = {};
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+      Nodes[no].sink_vel += fac_sink * Extnodes[no].sink_dp; /* sink_vel lives in Nodes rather than Extnodes, but is updated exactly as vs/vs_dm are */
+      Extnodes[no].sink_dp = {};
 #endif
       Nodes[no].u.d.bitflags &= (~(1 << BITFLAG_NODEHASBEENKICKED));
     }
@@ -376,6 +424,10 @@ void force_drift_node(int no, integertime time1)
 
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
+#endif
+
+#ifdef SINK_NODE_MOTION_TRACKED
+    Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift; /* else the sink COM stays frozen at its last-treebuild value while the sinks move, and the nearest-sink distance and sink timestep criteria read a stale position */
 #endif
 
 

@@ -371,7 +371,6 @@
 #endif
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
-#define RANDOMIZE_GRAVTREE
 #define SINGLE_STAR_TIMESTEPPING 0
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
@@ -612,6 +611,19 @@
 #endif
 
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
+#if !defined(SINK_CALC_DISTANCES)
+#define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES)
+/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
+   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
+   Silently losing binary detection would change the integration, so refuse the combination. */
+#error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
+#endif
+#endif
+
+
 #ifdef MHD_CONSTRAINED_GRADIENT
 /* make sure mid-point gradient calculation for cleaning terms is enabled */
 #ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
@@ -645,7 +657,6 @@
 #define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (5) /* default to type = 5 for this module */
 #endif
 
-
 #if defined(GRAVITY_ANALYTIC)
 #if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(GRAVITY_ANALYTIC)
 #if (GRAVITY_ANALYTIC > 0)
@@ -655,6 +666,17 @@
 #endif
 #endif
 #endif
+#endif
+
+
+/* drift and kick the sink node moments between tree rebuilds, as the main moments already are. Requires
+   sink_vel to exist to drift with, hence the condition below -- which has to be tested here, after every
+   site that can turn SINK_CALC_DISTANCES on. SINGLE_STAR_DIRECT_GRAVITY is in the list because it
+   subtracts the sink monopole from mixed nodes and so needs sink_pos on the same clock as u.d.s; it can
+   be set without SINGLE_STAR_TIMESTEPPING, and where it is, the sink_vel declaration and the moment sums
+   that fill it widen to match this macro. */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#define SINK_NODE_MOTION_TRACKED
 #endif
 
 

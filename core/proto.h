@@ -633,6 +633,12 @@ void update_stellarnumber_and_timedistribofstarformation(void);
 
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
+double single_star_jet_mdot(int n);
+#endif
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+void star_direct_gravity_build_table(void);
+void star_direct_gravity_compute(void);
+void star_direct_gravity_free_table(void);
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 double single_star_feedback_velocity_fortimestep(int n);
@@ -1088,6 +1094,15 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
    per-phase breakdown this once accompanied lives on branch diag/energy-budget-phases. */
 void energy_budget_sync_report(void);
 #define EB_SYNC_REPORT() energy_budget_sync_report()
+#ifdef EVALPOTENTIAL
+/* Kinetic+gravitational energy over all types at full synchronization -- the conserved quantity
+   for a collisionless self-gravitating run, which the gas-only report above cannot see. */
+void energy_budget_gravity_report(void);
+#define EB_GRAV_REPORT() energy_budget_gravity_report()
+#else
+#define EB_GRAV_REPORT()
+#endif
 #else
 #define EB_SYNC_REPORT()
+#define EB_GRAV_REPORT()
 #endif

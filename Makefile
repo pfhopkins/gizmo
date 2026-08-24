@@ -518,7 +518,8 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/pm_nonperiodic.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
-                gravity/binary.o
+                gravity/binary.o \
+                gravity/star_direct_gravity.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				hydro/density.o \

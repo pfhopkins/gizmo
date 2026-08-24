@@ -34,6 +34,43 @@ void energy_budget_sync_report(void)
                All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
     }
 }
+
+#ifdef EVALPOTENTIAL
+/*! Kinetic + gravitational energy over ALL particle types, again only at full synchronization.
+ *
+ *  The report above is gas thermal+kinetic and carries no potential term, so it is blind to a
+ *  collisionless self-gravitating run -- a pure N-body problem has no gas at all and would report
+ *  zeros. This is the conserved quantity for that case.
+ *
+ *  Why this cannot be done from snapshots: io.cc writes Velocities from P[].Vel, which is at
+ *  kick-time, while positions (and hence the potential) are at drift-time. The resulting error is
+ *  of order dt/(2 t_dyn) per particle -- percent-level under a typical accuracy criterion. Across
+ *  a large-N system those per-particle errors are random and average away, which is why the
+ *  snapshot estimate is adequate for a 512-star cluster; across a 3-10 body system, where one star
+ *  can hold a third of the binding energy, they do not, and the snapshot sum cannot resolve a 1%
+ *  budget however carefully the potential is recomputed.
+ *
+ *  Called at the end of the step, after the Hermite correction, so Vel is the final velocity of
+ *  the step and Potential comes from the gravity solve at the (predicted) end-of-step positions. */
+void energy_budget_gravity_report(void)
+{
+    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
+    double loc[3] = {0,0,0}, glob[3]; int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Mass <= 0) {continue;}
+        loc[0] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
+        loc[1] += 0.5 * P[i].Mass * P[i].Potential; /* 1/2 removes the double counting of each pair */
+        loc[2] += P[i].Mass;
+    }
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0)
+    {
+        printf("Energy (synced,grav) t=%.10g E_kin=%.10e E_pot=%.10e E_tot=%.10e M_tot=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+    }
+}
+#endif
 #endif
 
 
@@ -103,7 +140,6 @@ void run(void)
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
         }
-
         find_timesteps();		/* find-timesteps */
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
@@ -192,6 +228,7 @@ void run(void)
         HermiteOnlyFlag = 0;
         do_hermite_correction();
 #endif
+        EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
         if(ThisTask == 0)
