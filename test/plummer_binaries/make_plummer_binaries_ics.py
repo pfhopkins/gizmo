@@ -3,7 +3,7 @@
 Each "particle" of the Plummer sphere is replaced by a pair of equal-mass
 stars on a circular orbit around their mutual center of mass. Units are
 pc - km/s - Msun, so the gravitational constant in code units is
-G = 4.302e-3 pc (km/s)^2 / Msun.
+G comes from gizmo.units (GIZMO's constants.h), 4.300711e-3 pc (km/s)^2 / Msun.
 
 Adapted from test/plummer/make_plummer_ics.py.
 """

@@ -18,7 +18,8 @@ invocations in parallel -- see test_fewbody.py.
 Every draw comes from one seeded generator consumed in a fixed order, so the whole suite is a pure
 function of (seed, n_problems) and re-running reproduces it exactly.
 
-Units are pc - km/s - Msun, so G = 4.302e-3 pc (km/s)^2 / Msun, matching plummer_binaries.
+Units are pc - km/s - Msun. G comes from gizmo.units (GIZMO's constants.h), 4.300711e-3,
+matching plummer_binaries.
 """
 import argparse
 from os import makedirs, path

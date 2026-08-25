@@ -15,7 +15,7 @@ Design choices that make the diagnostics clean:
   * inner orbit started perpendicular to the outer separation so the hierarchies are not
     degenerate at t=0.
 
-Units are pc - km/s - Msun: G = 4.300917e-3.
+Units are pc - km/s - Msun. G comes from gizmo.units (GIZMO's constants.h), 4.300711e-3.
 """
 import argparse
 

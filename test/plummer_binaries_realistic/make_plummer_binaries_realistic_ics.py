@@ -33,25 +33,33 @@ against the single value the equal-mass test uses.
 Wide binaries are left alone: they are cheap, and a cluster-embedded wide binary is precisely
 the configuration where perturbation by neighbours competes with the internal orbit.
 
-Units are pc - km/s - Msun, so G = 4.302e-3 pc (km/s)^2 / Msun.
+Units are pc - km/s - Msun; G comes from gizmo.units (GIZMO's constants.h), not astropy.
 """
 import argparse
 
 import astropy.units as u
 import h5py
 import numpy as np
-from astropy.constants import G as _G_astropy
 from scipy.optimize import brentq
 
-# Unit conversions come from astropy rather than being typed in. Writing the code-time
-# conversion by hand as 365.25 * 977.79222 silently dropped a factor of 1000 here, which
-# inflated every semi-major axis by 1000^(2/3) = 100x and pinned the whole sampled population
-# against the wide-end clip -- the kind of error that produces a plausible-looking IC rather
-# than a crash. Code units are pc - km/s - Msun.
-_CODE_TIME = u.pc / (u.km / u.s)                       # = 977792 yr
-G_CODE = _G_astropy.to(u.pc * (u.km / u.s) ** 2 / u.Msun).value
-AU_PER_PC = (1 * u.pc).to(u.au).value
-DAY_PER_CODE_TIME = (1 * _CODE_TIME).to(u.day).value
+import os as _os
+import sys as _sys
+# Run standalone (the test invokes this as a subprocess from the test directory), so python_src
+# is not on the path the way it is under pytest.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "..", "python_src"))
+from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+
+# G comes from gizmo.units, which mirrors GIZMO's constants.h -- NOT from astropy. An IC built
+# with a different G than the code integrates with is not the orbit it claims to be: Kepler's
+# third law below converts a sampled PERIOD into a semi-major axis, so a 4.8e-5 error in G is a
+# 3.2e-5 error in every a, systematic across the population.
+#
+# The code-time conversion is astropy's, and that is the right call for it: it has no dynamical
+# role, only setting which periods get sampled. Writing it by hand as 365.25 * 977.79222 dropped
+# a factor of 1000 here, inflating every a by 1000^(2/3) = 100x and pinning the whole population
+# against the wide-end clip -- an error that yields a plausible-looking IC rather than a crash.
+DAY_PER_CODE_TIME = (1 * (u.pc / (u.km / u.s))).to(u.day).value      # 1 code time = 977792 yr
 
 PLUMMER_HALF_MASS_RADIUS = 1.305   # in units of a (analytic, GM/a normalization)
 

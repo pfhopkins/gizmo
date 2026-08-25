@@ -23,13 +23,17 @@ import urllib.request
 import h5py
 import numpy as np
 
-# Unit system of shu_jets.params: pc, Msun, km/s
-UNIT_LENGTH_IN_CM = 3.085678e18
-UNIT_MASS_IN_G = 1.989e33
-UNIT_VELOCITY_IN_CM_PER_S = 1.0e5
-G_CGS = 6.674e-8
-# G in code units, i.e. pc * (km/s)^2 / Msun
-G_CODE = G_CGS * UNIT_MASS_IN_G / (UNIT_LENGTH_IN_CM * UNIT_VELOCITY_IN_CM_PER_S**2)
+import os as _os
+import sys as _sys
+# Run standalone (the test invokes this as a subprocess from the test directory), so python_src
+# is not on the path the way it is under pytest.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "..", "python_src"))
+from gizmo.units import G_CODE, UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S  # noqa: E402
+
+# Unit system of shu_jets.params: pc, Msun, km/s. G comes from gizmo.units, which mirrors
+# GIZMO's constants.h. This file previously used G_CGS = 6.674e-8 -- the modern CODATA value --
+# where the code integrates with 6.672e-8, a 3.0e-4 error in every G-derived quantity in the IC.
 
 BASE_IC_URL = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/shu1977/shu1977_ics.hdf5"
 

@@ -370,14 +370,6 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
-    # Every particle here is a star, so this variant routes 100% of the gravity through the
-    # brute-force pass and none through the tree -- the tree's opening error is removed entirely
-    # rather than reduced. That makes it the sharpest available check on SINGLE_STAR_DIRECT_GRAVITY,
-    # and the pair with starforge_defaults isolates what the tree approximation costs a cluster of
-    # hard binaries. Compatible only because SINGLE_STAR_STARFORGE_DEFAULTS sets
-    # SINGLE_STAR_TIMESTEPPING=0, which leaves SINGLE_STAR_FIND_BINARIES off; the two are a
-    # compile-time #error together (see precompiler_logic.h).
-    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()

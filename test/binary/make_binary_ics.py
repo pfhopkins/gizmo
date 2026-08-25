@@ -16,7 +16,8 @@ Everything the test measures is exactly known at t=0:
 Softening is set far below pericentre in binary.params so the orbit is Newtonian throughout
 and the test measures the integrator, not the force kernel.
 
-Units are pc - km/s - Msun: G = 4.300917e-3 pc (km/s)^2 / Msun.
+Units are pc - km/s - Msun. G comes from gizmo.units (mirroring GIZMO's constants.h),
+which is 4.300711e-3 -- not the 4.300917e-3 a modern table gives.
 """
 import argparse
 
