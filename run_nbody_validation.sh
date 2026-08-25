@@ -16,9 +16,15 @@
 #     when a sibling job has already built and is about to run. It now removes only its own.
 # flock is verified working on GPFS, so the lock holds across nodes.
 #
-# Each job asks for a whole exclusive node. That is not about core count -- these are small
-# problems -- it is so no job's timing or memory traffic depends on a co-tenant, and so a long
-# test cannot be slowed by a sibling that happens to land on the same node.
+# RESOURCES ARE PER TEST, not a full node each. These are correctness runs, not benchmarks, so
+# the timing isolation an exclusive node buys is not worth idling 63 cores for a two-particle
+# problem. Slurm gives each job its requested CPUs exclusively even on a shared node, so a
+# co-tenant cannot steal them.
+#
+# The floor is the BUILD, not the run: build_gizmo_for_test runs "make -j8" regardless of how
+# small the test is, so anything asking for fewer than 8 cores just makes its own build slower.
+# Hence 8 for the small tests. fewbody is the exception -- it sizes its own concurrency from the
+# cores it can see (cores/2 problems, 2 ranks each), so it genuinely scales with the allocation.
 set -uo pipefail
 
 SUBMIT=1
@@ -31,13 +37,13 @@ esac; done
 
 REPO=$(cd "$(dirname "$0")" && pwd); cd "$REPO"
 
-# test | ranks | omp | note
+# test | cores | note        (cores = max(what the run uses, 8 for make -j8))
 TESTS=(
-  "binary|1|1|2 sinks e=0.9 q=0.1, 1000 orbits + order sweep; guards the timestep normalization"
-  "triple|1|1|6-bin hierarchy, 50 outer orbits + order sweep; guards the source prediction"
-  "plummer_binaries|4|2|512 sinks in a cluster; synced-state energy, now with a direct potential"
-  "plummer_binaries_realistic|4|2|realistic IMF/period/eccentricity population; NEVER RUN BEFORE"
-  "fewbody|2|1|48 problems x 4 variants; read the direct_* variants, tree_* fail for tree-force reasons"
+  "binary|8|1 rank x 1 thread; build-bound. 1000 orbits + order sweep; guards the timestep normalization"
+  "triple|8|1 rank x 1 thread; build-bound. 6-bin hierarchy + order sweep; guards the source prediction"
+  "plummer_binaries|8|2 ranks x 4 threads (PB_MAX_CORES=8 caps it). Synced-state energy, direct potential"
+  "plummer_binaries_realistic|8|2 ranks x 1 thread; build-bound. Realistic population; NEVER RUN BEFORE"
+  "fewbody|64|self-sizes to cores/2 concurrent problems; the only test that uses a whole node"
 )
 
 echo "=== $(date) N-body validation ==="
@@ -49,7 +55,7 @@ echo
 mkdir -p nbody_val
 JOBIDS=()
 for entry in "${TESTS[@]}"; do
-    IFS='|' read -r name ranks omp note <<< "$entry"
+    IFS='|' read -r name cores note <<< "$entry"
     [ -n "$KEXPR" ] && [[ "$name" != *"$KEXPR"* ]] && continue
     f="test/$name/test_$name.py"
     [ -f "$f" ] || { echo "  SKIP $name: no $f"; continue; }
@@ -60,7 +66,8 @@ for entry in "${TESTS[@]}"; do
 #SBATCH --partition=cca
 #SBATCH --constraint=icelake
 #SBATCH --nodes=1
-#SBATCH --exclusive
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=$cores
 #SBATCH --time=$WALLTIME
 #SBATCH --output=$REPO/nbody_val/${name}-%j.out
 #SBATCH --error=$REPO/nbody_val/${name}-%j.err
@@ -99,12 +106,12 @@ SLURM
     if [ "$SUBMIT" -eq 1 ]; then
         jid=$(sbatch --parsable "nbody_val/$name.sbatch" 2>&1)
         if [[ "$jid" =~ ^[0-9]+$ ]]; then
-            JOBIDS+=("$jid"); printf "  submitted %-28s job %s  (%s ranks x %s omp)\n" "$name" "$jid" "$ranks" "$omp"
+            JOBIDS+=("$jid"); printf "  submitted %-28s job %-9s %s cores\n" "$name" "$jid" "$cores"
         else
             echo "  FAILED to submit $name: $jid"
         fi
     else
-        printf "  wrote     %-28s nbody_val/%s.sbatch\n" "$name" "$name"
+        printf "  wrote     %-28s nbody_val/%-28s %s cores\n" "$name" "$name.sbatch" "$cores"
     fi
 done
 

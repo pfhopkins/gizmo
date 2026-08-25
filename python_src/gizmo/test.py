@@ -106,7 +106,12 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
-_BUILD_LOCK = ".gizmo_build.lock"
+# Anchored to the repo root via this file's location, NOT relative to cwd. A relative path
+# would silently point at a different file if anything ever built from another directory, and
+# two jobs locking different files is no lock at all -- a failure that shows up as a corrupted
+# build rather than as an error.
+_BUILD_LOCK = path.join(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))),
+                        ".gizmo_build.lock")
 _KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
 
 
