@@ -1248,14 +1248,12 @@ void DMGrad_gradient_calc(void);
 #endif
 
 
-#ifdef SINGLE_STAR_TIMESTEPPING
-void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-double gravfac(double r, double mass);
-double gravfac2(double r, double mass);
-void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
-double eccentric_anomaly(double mean_anomaly, double ecc);
-#endif
+/* The binary-orbit integrators (kepler_timestep, odeint_super_timestep, gravfac,
+   gravfac2, grav_accel_jerk, eccentric_anomaly) are defined inline in
+   gravity/binary_functions.h so they are callable from device code; include that
+   header to use them. No prototypes here — a declaration visible without the
+   definition would make the compiler emit an external device call that has no
+   device-side symbol to resolve against. */
 
 /* Kokkos/GPU lifecycle and sync functions (defined in cooling/cooling.cc).
    Declared unconditionally — the call sites in main.cc/begrun.cc/run.cc are

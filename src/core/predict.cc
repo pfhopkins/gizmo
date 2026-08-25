@@ -11,6 +11,7 @@
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 #include "../mesh/kernel.h"
 #include "../gravity/gravtree_force_kernel.h" /* shared weight-function SSOT (grav_weight_function_for_weighted_motion_smoothing) */
+#include "../gravity/binary_functions.h" /* odeint_super_timestep (SINGLE_STAR_TIMESTEPPING) */
 
 /*! Routines for the drift/predict step */
 
@@ -127,7 +128,7 @@ void drift_particle(int i, integertime time1)
     {
         Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
         P[i].Pos += COM_Vel * dt_drift; //center of mass drift
-        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1); // do_fewbody_drift
+        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1, P); // do_fewbody_drift
         P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
         P[i].Pos += fewbody_drift_dx; //Keplerian evolution
         P[i].Vel += fewbody_kick_dv; //move on binary.orbit
