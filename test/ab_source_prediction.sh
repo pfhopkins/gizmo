@@ -76,8 +76,11 @@ run_variant () {                     # $1 = label, $2 = extra Config.sh line (""
     [ -x GIZMO ] || { echo "    $lab: BUILD FAILED (see $TD/ab_build_$lab.log)"; return 1; }
     mv GIZMO "$TD/GIZMO"
 
-    rm -rf "$out"; mkdir -p "$out"
-    sed -e "s|^OutputDir .*|OutputDir  $out|" \
+    # GIZMO runs with cwd = the test directory, so OutputDir must be relative to THAT, not to
+    # the repo root -- and it does not create the subdirectories it writes into (it opens
+    # sink_details/... directly and endruns if the directory is missing, begrun.cc:632).
+    rm -rf "$out"; mkdir -p "$out/sink_details" "$out/restartfiles"
+    sed -e "s|^OutputDir .*|OutputDir  ab_out_$lab|" \
         ${TIMEMAX:+-e "s|^TimeMax .*|TimeMax  $TIMEMAX|"} \
         "$TD/$TEST.params" > "$TD/ab_$lab.params"
     local t0=$(date +%s.%N)
@@ -85,6 +88,11 @@ run_variant () {                     # $1 = label, $2 = extra Config.sh line (""
     local rc=$? t1=$(date +%s.%N)
     echo "$lab $rc $(echo "$t1 - $t0" | bc)" >> "$TD/ab_times.txt"
     echo "    $lab: exit $rc, $(echo "$t1 - $t0" | bc | cut -c1-7)s"
+    if [ "$rc" -ne 0 ]; then
+        echo "    ---- $lab FAILED, last lines of $TD/ab_run_$lab.log ----"
+        tail -6 "$TD/ab_run_$lab.log" | sed 's/^/      /'
+        return 1
+    fi
 }
 
 rm -f "$TD/ab_times.txt"
