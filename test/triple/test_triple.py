@@ -20,7 +20,7 @@ Coordinates/Velocities are a mixed state (positions drifted, velocities at the l
 
 import glob
 import re
-from os import path
+from os import chdir, getcwd, path
 
 import h5py
 import numpy as np
@@ -32,6 +32,7 @@ from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
     variant_output_dir,
+    run_test,
 )
 
 TEST_NAME = "triple"
@@ -58,6 +59,26 @@ V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
 MAX_DE_OVER_E = 1e-5
 MAX_COM_DRIFT = 1e-5
 SECULAR_EXPONENT = 0.85
+
+# --- integration-order sweep ------------------------------------------------------------------
+# The tolerances above bound the error at ONE accuracy setting. They cannot see a change that
+# keeps magnitudes within tolerance while degrading the scheme's ORDER -- which is the claim the
+# Hermite machinery makes, and what the source prediction restored here: measured across this
+# sweep, the energy error converges as eta^2.27 (dt^4.5) with the prediction and eta^1.17
+# (dt^2.3) without. That separation is far wider than the growth-exponent margin the guards
+# above rely on (0.55 vs 0.95), which makes this the sharper regression test of the two.
+#
+# Factors of 4 in eta are factors of 2 in dt -- exactly one timebin -- so the hierarchy is
+# reproduced at each point rather than drifting across bin boundaries. Swept DOWNWARD from the
+# operating point only: above it MaxSizeTimestep binds and caps dt, flattening the fit. Run at
+# SWEEP_ORBITS rather than the fiducial 50: the order is a property of the error's eta-scaling,
+# not of the baseline length. Each finer eta doubles the runtime -- this is the dominant cost.
+SWEEP_ETAS = (5e-3, 1.25e-3, 3.125e-4)
+SWEEP_ORBITS = 20
+# 4th order in dt is eta^2, 2nd order is eta^1; the threshold sits between, nearer the low side
+# because a 3-point fit on a finite run has real scatter. Measured 2.27 with the fix, 1.17
+# without, so 1.5 separates them with margin on both sides.
+MIN_ENERGY_ORDER = 1.5
 
 
 def _ensure_ic():
@@ -148,6 +169,48 @@ def _plot(t, de, dr, variant_id):
     plt.close(fig)
 
 
+def _order_sweep(extra_config_flags, n_ranks, n_omp):
+    """Run the same hierarchy at several ErrTolIntAccuracy values and fit the energy error's order.
+
+    Reuses the binary built for the fiducial run -- only params change, via run_test's override
+    mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous one's
+    snapshots, so each is analysed before the next starts.
+    """
+    outdir = variant_output_dir(TEST_NAME, extra_config_flags)
+    etas, errs = [], []
+    for eta in SWEEP_ETAS:
+        # run_test resolves <name>.params relative to the TEST directory and is normally called
+        # by build_and_run_test from inside it; called from the repo root it raises
+        # FileNotFoundError. Enter and leave around each run, restoring on failure.
+        cwd = getcwd()
+        try:
+            chdir(TEST_DIR)
+            run_test(TEST_NAME, n_ranks, n_omp, param_overrides={
+                "ErrTolIntAccuracy": float(eta),
+                "TimeMax": float(SWEEP_ORBITS * P_OUT),
+                "TimeBetSnapshot": float(P_OUT / 4.0),
+            })
+        finally:
+            chdir(cwd)
+        snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
+                       key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
+        if len(snaps) < 16:
+            pytest.fail(f"sweep point eta={eta:g} produced only {len(snaps)} snapshots")
+        t, de, dr, a_in = _trajectory(snaps)
+        _, de_env = _envelope(t, de)
+        etas.append(eta); errs.append(de_env[-1])
+        print(f"  sweep eta={eta:9.3e}   |dE/E| envelope {de_env[-1]:.3e}")
+    order = np.polyfit(np.log(etas), np.log(errs), 1)[0]
+    print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
+          f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
+    assert order >= MIN_ENERGY_ORDER, (
+        f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
+        f"eta^{MIN_ENERGY_ORDER} floor. Across a 6-bin hierarchy this is the signature of "
+        f"inactive sources being seen at drifted positions -- check the Hermite source "
+        f"prediction in gravity/forcetree.cc and gravity/star_direct_gravity.cc.")
+    return order
+
+
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
 @pytest.mark.parametrize("extra_config_flags", [
@@ -193,6 +256,9 @@ def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"COM drift band reached {dr_env.max():.3e} (tol {MAX_COM_DRIFT}); a secular "
         f"inner<->outer momentum leak has re-opened -- check the Hermite source prediction "
         f"in gravity/forcetree.cc")
+    # Order sweep, after the magnitude asserts so a magnitude regression reports from those.
+    _order_sweep(extra_config_flags, num_mpi_ranks, num_omp_threads)
+
     if p_dr >= SECULAR_EXPONENT:
         pytest.fail(
             f"COM drift grows at t^{p_dr:+.2f} -- secular, not a noise band. The many-bin "

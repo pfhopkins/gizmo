@@ -7,6 +7,7 @@
 #   -k EXPR     restrict to tests matching EXPR     (e.g. -k binary)
 #   -x          stop at the first failure
 #   -l          list the tests and their costs, then exit
+#   -d          fewbody: run only the direct_* variants (skip the known-red tree ones)
 #
 # These four exercise the Hermite sink integrator from opposite directions:
 #
@@ -18,14 +19,13 @@
 #                     EXPONENT, not magnitude; calibrated at eta=1.25e-3.
 #   plummer_binaries  binaries inside a live cluster potential: the realistic mixed case, where
 #                     sinks are also being perturbed by an environment.
-#   fewbody           48 few-body problems, 4 variants. Judge it on the direct_gravity variants:
-#                     under TREE forces it fails all 48 for an unrelated reason (star-star tree
-#                     error; exact forces are ~633x better), so the tree variants say nothing
-#                     about the integrator. NOTE the direct_gravity variants need
-#                     SINGLE_STAR_DIRECT_GRAVITY, whose implementation
-#                     (gravity/star_direct_gravity.cc) is NOT in this tree yet -- it arrives with
-#                     origin/starforge_dev commit 5c08e496. Until that is merged, only the two
-#                     tree variants can build, and those are the uninformative ones.
+#   fewbody           48 few-body problems x 4 variants. READ ONLY THE direct_* VARIANTS. The
+#                     two tree variants fail all 48 -- medians 0.53 and 1.91 against a 0.01
+#                     tolerance -- because the TREE approximation breaks collisional star-star
+#                     forces, which exact forces improve ~633x. That failure predates this work
+#                     and is unrelated to the integrator, but fewbody carries no xfail marks, so
+#                     it surfaces as two red FAILUREs every run. The summary below separates them
+#                     from real regressions; -d runs only the informative variants.
 #
 # NOTE the resting state of binary and triple is 'xfailed', not 'passed': both still record a
 # secular residual (the 4th-order block-step impulse asymmetry) as an expected failure. An
@@ -37,8 +37,10 @@ TIMEOUT=3600
 KEXPR=
 EXITFIRST=
 LISTONLY=0
-while getopts "t:k:xlh" o; do case $o in
+DIRECTONLY=0
+while getopts "t:k:xldh" o; do case $o in
   t) TIMEOUT=$OPTARG ;; k) KEXPR=$OPTARG ;; x) EXITFIRST="-x" ;; l) LISTONLY=1 ;;
+  d) DIRECTONLY=1 ;;
   h) sed -n '2,30p' "$0"; exit 0 ;; *) exit 2 ;;
 esac; done
 
@@ -86,6 +88,8 @@ elif command -v pytest >/dev/null 2>&1; then PY=pytest
 else echo "FATAL: no pytest found (set \$PYTEST)"; exit 1; fi
 
 SEL=(); [ -n "$KEXPR" ] && SEL+=(-k "$KEXPR")
+# -d and -k are both pytest -k expressions and cannot both be passed; -k wins if given.
+if [ "$DIRECTONLY" -eq 1 ] && [ -z "$KEXPR" ]; then SEL+=(-k "not tree"); fi
 LOG="$REPO/sink_integration_tests.log"
 
 echo "=== $(date) sink integration tests ==="
@@ -100,16 +104,17 @@ rc=${PIPESTATUS[0]}
 
 echo
 echo "=== SUMMARY ==="
-grep -aE "^(FAILED|ERROR|XFAIL|XPASS|PASSED)" "$LOG" | cut -c1-120 || echo "  (none)"
+echo "-- known-red (fewbody under tree forces: unrelated to the sink integrator) --"
+grep -aE "^(FAILED|ERROR)" "$LOG" | grep -aE "fewbody.*(tree|tree_equaldt)" | cut -c1-120 || echo "  (none)"
+echo "-- everything else --"
+grep -aE "^(FAILED|ERROR|XFAIL|XPASS|PASSED)" "$LOG" | grep -avE "fewbody.*(tree|tree_equaldt)" | cut -c1-120 || echo "  (none)"
 echo
 echo "  full log:  $LOG"
 echo "  figures:   test/binary/*.png  test/triple/*.png"
 echo
 if [ ! -f gravity/star_direct_gravity.cc ]; then
-  echo "  WARNING: gravity/star_direct_gravity.cc is absent, so fewbody's direct_gravity and"
-  echo "  direct_equaldt variants cannot build. Those are the informative ones -- under tree"
-  echo "  forces all 48 problems fail for an unrelated reason (star-star tree error). Merge"
-  echo "  origin/starforge_dev (commit 5c08e496) to enable them."
+  echo "  WARNING: gravity/star_direct_gravity.cc is absent, so fewbody's direct_* variants"
+  echo "  cannot build -- and those are the only informative ones. Merge origin/starforge_dev."
 fi
 echo "=== $(date) done (exit $rc) ==="
 exit $rc

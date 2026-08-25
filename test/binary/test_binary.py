@@ -33,7 +33,7 @@ recorded per snapshot and fitted for a power law, and the exponent is asserted o
 
 import glob
 import re
-from os import path
+from os import chdir, getcwd, path
 
 import h5py
 import numpy as np
@@ -46,6 +46,7 @@ from gizmo.test import (
     clean_test_outputs,
     variant_output_dir,
     parse_params,
+    run_test,
 )
 
 TEST_NAME = "binary"
@@ -82,6 +83,25 @@ MAX_COM_DRIFT = 5e-4
 # ~0.85 is a drift with a mechanism behind it and should be investigated rather than
 # absorbed into a looser tolerance.
 SECULAR_EXPONENT = 0.85
+
+# --- integration-order sweep ------------------------------------------------------------------
+# The tolerances above bound the error at ONE accuracy setting; they cannot see a change that
+# keeps magnitudes under tolerance while degrading the scheme's ORDER. That order is the actual
+# claim the Hermite machinery makes, so sweep ErrTolIntAccuracy and fit it.
+#
+# Fits the ENERGY error, not the drift: with the pair's bins fused the drift sits at round-off
+# (3.5e-15), where a fit would measure floating-point noise rather than the integrator.
+#
+# Factors of 4 in eta are factors of 2 in dt -- exactly one timebin -- so the bin structure is
+# reproduced at each point instead of drifting across boundaries. Swept DOWNWARD only: above the
+# operating point MaxSizeTimestep binds and caps dt, flattening the fit. Run at SWEEP_ORBITS
+# rather than the fiducial 1000: the order is a property of the error's eta-scaling, not of the
+# baseline length. Each finer eta doubles the runtime, and this is the test's dominant cost.
+SWEEP_ETAS = (5e-3, 1.25e-3, 3.125e-4)
+SWEEP_ORBITS = 100
+# 4th order in dt is eta^2. A 2nd-order scheme gives eta^1. The threshold sits between, nearer
+# the lower side: the fit is over 3 points on a finite-length run, so it has real scatter.
+MIN_ENERGY_ORDER = 1.5
 
 
 def _ensure_ic():
@@ -220,6 +240,49 @@ def _plot(t, energy, ecc, drift, variant_id):
     plt.close(fig)
 
 
+def _order_sweep(extra_config_flags, n_ranks, n_omp):
+    """Run the same problem at several ErrTolIntAccuracy values and fit the energy error's order.
+
+    Reuses the binary built for the fiducial run -- only the params change, via run_test's
+    override mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous
+    one's snapshots, so each is analysed before the next starts.
+    """
+    outdir = variant_output_dir(TEST_NAME, extra_config_flags)
+    etas, errs = [], []
+    for eta in SWEEP_ETAS:
+        # run_test resolves <name>.params relative to the TEST directory and is normally called
+        # by build_and_run_test from inside it; called from the repo root it raises
+        # FileNotFoundError. Enter and leave around each run, restoring on failure.
+        cwd = getcwd()
+        try:
+            chdir(TEST_DIR)
+            run_test(TEST_NAME, n_ranks, n_omp, param_overrides={
+                "ErrTolIntAccuracy": float(eta),
+                "TimeMax": float(SWEEP_ORBITS * P_ORB),
+                "TimeBetSnapshot": float(P_ORB / 4.0),
+            })
+        finally:
+            chdir(cwd)
+        snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
+                       key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
+        if len(snaps) < 16:
+            pytest.fail(f"sweep point eta={eta:g} produced only {len(snaps)} snapshots")
+        t, a, ecc, drift, sep, energy, synced = _trajectory(snaps)
+        _, de_env = _per_orbit_envelope(t, np.abs(energy / energy[0] - 1.0))
+        etas.append(eta); errs.append(de_env[-1])
+        print(f"  sweep eta={eta:9.3e}   |dE/E| envelope {de_env[-1]:.3e}")
+    order = np.polyfit(np.log(etas), np.log(errs), 1)[0]
+    print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
+          f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
+    assert order >= MIN_ENERGY_ORDER, (
+        f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
+        f"eta^{MIN_ENERGY_ORDER} floor. The integrator has lost its order even though the "
+        f"magnitudes at the operating point are still within tolerance -- check that the "
+        f"Hermite source prediction (gravity/forcetree.cc, gravity/star_direct_gravity.cc) "
+        f"and the shared timestep normalization (core/timestep.cc) are both in place.")
+    return order
+
+
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
 @pytest.mark.parametrize("extra_config_flags", [
@@ -280,14 +343,15 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"spurious COM velocity {drift_env:.3e} in units of sqrt(GM/a) (tol {MAX_COM_DRIFT}). "
         f"The ICs have P == 0 exactly, so this is entirely integration error."
     )
-    # The growth law is the diagnostic that distinguishes a bug from discretisation noise.
-    # Reported unconditionally above; asserted only when the drift is large enough for the
-    # exponent to be meaningful, so a well-behaved run cannot fail on fitting noise.
-    # The growth law is the real diagnostic. Measured at t^+0.96 on this configuration: the
-    # COM drift is SECULAR, not the t^0.5 of a random walk, and with two particles there is no
-    # tree opening asymmetry, no gas and no softening involved -- so it is the block-timestep
-    # integration itself. That is a known open bug, so it is recorded as an expected failure
-    # rather than a red test; when the integrator is fixed this xpasses and the marker comes off.
+    # Order sweep. Runs last of the checks that can fail hard: a magnitude regression should
+    # report from the asserts above rather than from a confusing order fit downstream.
+    _order_sweep(extra_config_flags, num_mpi_ranks, num_omp_threads)
+
+    # The growth law distinguishes a bug from discretisation noise, and is asserted only when the
+    # drift is large enough for the exponent to be meaningful, so a well-behaved run cannot fail
+    # on fitting noise. With the shared timestep normalization the pair's bins fuse and the drift
+    # sits at round-off, so this branch no longer fires for the default variant -- it remains as
+    # the guard for a regression that reintroduces a secular leak.
     if drift_env > 1e-6 and p_drift >= SECULAR_EXPONENT:
         pytest.xfail(
             f"known secular momentum leak: COM drift grows as t^{p_drift:.2f} (>= "

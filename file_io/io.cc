@@ -916,10 +916,14 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+                    /* The Old* members only exist when HERMITE_INTEGRATION is compiled in, so
+                       the predictor below must be inside the #ifdef -- not merely guarded by a
+                       runtime flag, which still requires the members to resolve. Without it this
+                       block fails to compile under DISABLE_HERMITE_INTEGRATION and the datasets
+                       simply carry the ordinary values. */
                     int _herm = 0;
 #ifdef HERMITE_INTEGRATION
                     _herm = ((1 << P[pindex].Type) & HERMITE_INTEGRATION) && (P[pindex].Mass > 0);
-#endif
                     if(_herm)
                     {
                         double _d = get_gravkick_factor(P[pindex].Ti_begstep, All.Ti_Current, pindex, 0);
@@ -936,7 +940,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                                            + P[pindex].OldJerk[k] * (_d/2)) * _d);
                         }
                     }
-                    else
+#endif
+                    if(!_herm)
                     {
                         for(k = 0; k < 3; k++)
                             fp[k] = (MyOutputFloat) (blocknr == IO_HERMITE_POS
