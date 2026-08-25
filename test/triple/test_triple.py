@@ -71,19 +71,22 @@ SECULAR_EXPONENT = 0.85
 # keeps magnitudes within tolerance while degrading the scheme's ORDER -- which is the claim the
 # Hermite machinery makes, and what the source prediction restored here.
 #
-# FACTORS OF 2, spanning 5e-3 down to 1.25e-3 only. The first attempt used factors of 4 reaching
-# 3.125e-4 and did not measure an order at all: the error fell 112x over the first leg and then
-# ROSE from 5.3e-8 to 8.3e-8 over the second, i.e. by 1.25e-3 it had already reached a floor and
-# the finest point was sampling round-off and hierarchy-phase noise rather than truncation error.
-# A straight line through that gave eta^1.54, which passed the assertion below while measuring
-# nothing. Dropping the floored point and refining between the two that remain keeps every
-# sample in the regime where the error still converges.
+# FACTORS OF 4 ONLY. dt scales as sqrt(eta), so a factor of 4 is a factor of 2 in dt -- exactly
+# one timebin -- and the whole hierarchy translates rigidly: the GAP between the inner pair and
+# the tertiary is preserved. Factors of 2 (sqrt(2) in dt, half a bin) do NOT preserve it, because
+# the two can land on different sides of a boundary. That was tried and is not a small effect:
+# at eta=2.5e-3 the error came out 7.0e-4, a factor of 118 ABOVE the coarser 5e-3 point, while
+# 1.25e-3 gave 5.3e-8. Do not "refine" this sweep by halving.
 #
-# The cost of factors of 2: dt scales as sqrt(eta), so these steps are sqrt(2) in dt rather than
-# the clean factor of 2 -- half a timebin, not a whole one. Timebin assignments can therefore
-# shift between sweep points instead of translating rigidly, which adds some scatter of its own.
-# That is the trade for staying above the floor; watch for it if the fitted order gets noisy.
-SWEEP_ETAS = (5e-3, 2.5e-3, 1.25e-3)
+# The window is narrow and both ends are measured, not guessed:
+#   FLOOR  eta=1.25e-3 gives 5.3e-8 in two independent runs, and 3.125e-4 gives 8.3e-8 -- higher,
+#          i.e. below 1.25e-3 the envelope is sampling round-off and hierarchy phase, not
+#          truncation error. So 5e-3 is the finest usable point.
+#   CAP    MaxSizeTimestep (P_out/20) binds the tertiary's step above eta ~ 1e-1, which would
+#          flatten the fit by fixing dt independently of eta. 8e-2 is the coarsest point that
+#          clears it (dt = 3.2e-5 against the 3.6e-5 cap).
+# That leaves exactly the three points below, spanning 4 whole bins.
+SWEEP_ETAS = (8e-2, 2e-2, 5e-3)
 SWEEP_ORBITS = 20
 # 4th order in dt is eta^2, 2nd order is eta^1; the threshold sits between, nearer the low side
 # because a 3-point fit on a finite run has real scatter.
