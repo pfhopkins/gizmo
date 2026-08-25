@@ -60,6 +60,74 @@ double get_particle_volume_ags_P(int j, const struct particle_data *P_arr)
 #endif
 }
 
+/* Whether ags_density must solve for this particle's KernelRadius.
+ * Also sets AGS_KernelRadius and AGS_zeta for particles that do not iterate --
+ * a safety default, idempotent, and touching only this particle's own fields. */
+KOKKOS_INLINE_FUNCTION
+int ags_density_isactive_P(int i, struct particle_data *P_arr)
+{
+    int default_to_return = 0; // default to not being active - needs to be pro-actively 'activated' by some physics
+#ifdef ADAPTIVE_GRAVSOFT_FORALL
+    default_to_return = 1;
+    if(!((1 << P_arr[i].Type) & (ADAPTIVE_GRAVSOFT_FORALL))) /* particle is NOT one of the designated 'adaptive' types */
+    {
+        P_arr[i].AGS_KernelRadius = All.ForceSoftening[P_arr[i].Type];
+        P_arr[i].AGS_zeta = 0;
+        default_to_return = 0;
+    } else {default_to_return = 1;} /* particle is AGS-active */
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
+    if(P_arr[i].Type==0)
+    {
+        P_arr[i].AGS_KernelRadius = P_arr[i].KernelRadius; // gas sees gas, these are identical
+        default_to_return = 0; // don't actually need to do the loop //
+    }
+#endif
+#ifdef DM_SIDM
+    if((1 << P_arr[i].Type) & (DM_SIDM)) {default_to_return = 1;}
+#endif
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(P_arr[i].Type)) {default_to_return = 1;}
+#elif defined(DM_FUZZY)
+    if(P_arr[i].Type == 1) {default_to_return = 1;}
+#endif
+    if(P_arr[i].TimeBin < 0) {default_to_return = 0;} /* check our 'marker' for particles which have finished iterating to an KernelRadius solution (if they have, dont do them again) */
+    return default_to_return;
+}
+
+
+/* maximum allowed softening */
+KOKKOS_INLINE_FUNCTION
+double ags_return_maxsoft_P(int i, const struct particle_data *P_arr)
+{
+    double maxsoft = All.MaxKernelRadius; // user-specified maximum: nothing is allowed to exceed this
+#ifdef PMGRID /* Maximum allowed gravitational softening when using the TreePM method. The quantity is given in units of the scale used for the force split (PM_ASMTH) */
+    maxsoft = DMIN(maxsoft, 1e3 * 0.5 * All.Asmth[0]); /* no more than 1/2 the size of the largest PM cell, times a 'safety factor' which can be pretty big */
+#endif
+#if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS)
+    /* MaxAccretionRadius is defined in params.txt in PHYSICAL units. Enforce the
+     * recommended-policy invariant "nothing exceeds MaxKernelRadius" via DMIN
+     * (never > All.MaxKernelRadius, already the line-1 seed): keeps the Mode-B
+     * per-type node band (capped at MaxKernelRadius) a valid upper bound on this
+     * sink's AGS leaf reach. No effect where SinkMaxAccretionRadius < MaxKernelRadius
+     * (the recommended + every-tested config). */
+    if(P_arr[i].Type == 5) {maxsoft = DMIN(maxsoft, All.SinkMaxAccretionRadius / All.cf_atime);}
+#endif
+    return maxsoft;
+}
+
+
+/* minimum allowed softening */
+KOKKOS_INLINE_FUNCTION
+double ags_return_minsoft_P(int i, const struct particle_data *P_arr)
+{
+    double minsoft = All.ForceSoftening[P_arr[i].Type]; // this is the user-specified minimum
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL)
+    minsoft = DMIN(All.MinKernelRadius, minsoft);
+#endif
+    return minsoft;
+}
+
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
 
 
