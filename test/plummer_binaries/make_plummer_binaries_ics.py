@@ -144,7 +144,9 @@ if __name__ == "__main__":
     parser.add_argument("--N_binaries", type=int, default=256)
     parser.add_argument("--m_star", type=float, default=1.0, help="Msun per star")
     parser.add_argument("--a_cluster", type=float, default=1.0, help="Plummer scale radius (pc)")
-    parser.add_argument("--binary_separation_au", type=float, default=100.0)
+    parser.add_argument("--binary_separation_au", type=float, default=1000.0,
+                        help="must match BINARY_SEPARATION_AU in the test; a smaller "
+                             "value silently makes a much more expensive problem")
     parser.add_argument("--boxsize", type=float, default=300.0, help="pc")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default="plummer_binaries_ics.hdf5")

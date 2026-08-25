@@ -102,7 +102,17 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)
 def _ensure_ic():
     if path.isfile(IC_FILE):
         with h5py.File(IC_FILE, "r") as F:
-            if int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES:
+            n_ok = int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES
+            # Check the SEPARATION too, not just the count. Running the generator with its own
+            # defaults produces a file with the right particle count and a different problem --
+            # a 10x tighter binary is ~30x shorter in period and turns a 47 min run into hours,
+            # while looking valid to a count-only check.
+            sep_ok = False
+            if n_ok:
+                x = F["PartType5/Coordinates"][:]
+                sep = np.median(np.linalg.norm(x[0::2] - x[1::2], axis=1)) * AU_PER_PC
+                sep_ok = abs(sep / BINARY_SEPARATION_AU - 1.0) < 1e-3
+            if n_ok and sep_ok:
                 return
     import importlib.util
 
