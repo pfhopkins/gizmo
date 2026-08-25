@@ -67,29 +67,34 @@ MAX_COM_DRIFT = 1e-5
 SECULAR_EXPONENT = 0.85
 
 # --- integration-order sweep ------------------------------------------------------------------
-# The tolerances above bound the error at ONE accuracy setting. They cannot see a change that
-# keeps magnitudes within tolerance while degrading the scheme's ORDER -- which is the claim the
-# Hermite machinery makes, and what the source prediction restored here.
+# The tolerances above bound the error at ONE accuracy setting and cannot see a change that keeps
+# magnitudes within tolerance while degrading the scheme's ORDER, which is the claim the Hermite
+# machinery makes. Hence the sweep. Three constraints fix the points, all of them measured:
 #
-# FACTORS OF 4 ONLY. dt scales as sqrt(eta), so a factor of 4 is a factor of 2 in dt -- exactly
-# one timebin -- and the whole hierarchy translates rigidly: the GAP between the inner pair and
-# the tertiary is preserved. Factors of 2 (sqrt(2) in dt, half a bin) do NOT preserve it, because
-# the two can land on different sides of a boundary. That was tried and is not a small effect:
-# at eta=2.5e-3 the error came out 7.0e-4, a factor of 118 ABOVE the coarser 5e-3 point, while
-# 1.25e-3 gave 5.3e-8. Do not "refine" this sweep by halving.
+# CLAMP. GRAVITY_ACCURATE_FEWBODY_INTEGRATION -- part of SINGLE_STAR_STARFORGE_DEFAULTS -- caps
+#   ErrTolIntAccuracy at 0.01 (core/begrun.cc:2747). Anything coarser is silently reduced to it,
+#   and params-usedvalues does NOT show this: it records the parsed value, before the clamp. A
+#   sweep over (8e-2, 2e-2, 5e-3) produced bit-identical runs for the first two points --
+#   |dE/E| agreeing to all 82 snapshots -- and a meaningless eta^2.11 fit. 1e-2 is the coarsest
+#   usable point, and it is at the clamp, not below it.
 #
-# The window is narrow and both ends are measured, not guessed:
-#   FLOOR  eta=1.25e-3 gives 5.3e-8 in two independent runs, and 3.125e-4 gives 8.3e-8 -- higher,
-#          i.e. below 1.25e-3 the envelope is sampling round-off and hierarchy phase, not
-#          truncation error. So 5e-3 is the finest usable point.
-#   CAP    MaxSizeTimestep (P_out/20) binds the tertiary's step above eta ~ 1e-1, which would
-#          flatten the fit by fixing dt independently of eta. 8e-2 is the coarsest point that
-#          clears it (dt = 3.2e-5 against the 3.6e-5 cap).
-# That leaves exactly the three points below, spanning 4 whole bins.
-SWEEP_ETAS = (8e-2, 2e-2, 5e-3)
-SWEEP_ORBITS = 20
+# FACTOR OF 4, never 2. dt ~ sqrt(eta), so 4x is exactly one timebin and the hierarchy translates
+#   rigidly, preserving the GAP between the inner pair and the tertiary -- the quantity this test
+#   probes. A factor of 2 is half a bin and lets them land on opposite sides of a boundary:
+#   tried, and eta=2.5e-3 came out 118x ABOVE its coarser neighbour.
+#
+# FLOOR, and why the sweep runs as long as the fiducial. At 20 orbits the error bottomed out near
+#   5e-8: eta=1.25e-3 gave 5.3e-8 and 3.125e-4 gave 8.3e-8 -- the FINER point was higher, i.e.
+#   both were sampling round-off and hierarchy phase rather than truncation. Truncation error
+#   accumulates with time while that floor does not, so running the sweep at the fiducial 50
+#   orbits lifts every point clear of it: eta=1.25e-3 measures 8.1e-7 at 50 orbits, 15x its
+#   20-orbit value. This costs ~2.5x the previous sweep and is what makes the measurement real.
+SWEEP_ETAS = (1e-2, 2.5e-3, 6.25e-4)
+SWEEP_ORBITS = 50
 # 4th order in dt is eta^2, 2nd order is eta^1; the threshold sits between, nearer the low side
-# because a 3-point fit on a finite run has real scatter.
+# because a 3-point fit on a finite run has real scatter. NOTE this assertion has passed twice
+# on data that measured nothing (eta^1.54 through a floor, eta^2.11 through two clamped-identical
+# points) -- check the convergence plot's left panel, not just the exponent.
 MIN_ENERGY_ORDER = 1.5
 
 
@@ -224,6 +229,14 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous one's
     snapshots, so each is analysed before the next starts.
     """
+    # GRAVITY_ACCURATE_FEWBODY_INTEGRATION clamps eta at 0.01 (begrun.cc:2747) without saying so
+    # anywhere in the output. Two sweep points above it are silently the same run.
+    assert max(SWEEP_ETAS) <= 0.01, (
+        f"SWEEP_ETAS contains {max(SWEEP_ETAS):g} > 0.01, which GIZMO clamps to 0.01 under "
+        f"GRAVITY_ACCURATE_FEWBODY_INTEGRATION -- those points would be the same run")
+    assert all(abs(SWEEP_ETAS[i]/SWEEP_ETAS[i+1] - 4.0) < 1e-6 for i in range(len(SWEEP_ETAS)-1)), (
+        "SWEEP_ETAS must step by factors of 4 (one whole timebin); a factor of 2 is half a bin "
+        "and changes the hierarchy's bin gap between points")
     outdir = variant_output_dir(TEST_NAME, extra_config_flags)
     etas, errs, series = [], [], []
     for eta in SWEEP_ETAS:
