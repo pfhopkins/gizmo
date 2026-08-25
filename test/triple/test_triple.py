@@ -58,6 +58,9 @@ V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
 # Operating point eta=0.00125 (see triple.params). Measured there, 50 outer orbits:
 #   with the source prediction    |dE/E| 2.08e-6 (t^+1.75)   drift band max 2.83e-6 (t^+0.55)
 #   with drifted sources (defect) |dE/E| 8.15e-6 (t^+1.08)   drift band max 6.27e-6 (t^+0.95)
+# NOTE those were measured with the per-orbit MINIMUM, which _envelope no longer uses -- see its
+# docstring. They will move, and the growth exponents in particular become meaningful rather
+# than tracking oscillation dips. Recalibrate from the next run before trusting these ceilings.
 # Magnitude ceilings are ~3x the fixed code's values and bound gross breakage only -- the
 # defect passes them. What catches the defect is the SECULAR check on the drift exponent:
 # 0.95 vs 0.55 across the 0.85 threshold. (test/binary carries the magnitude discrimination:
@@ -146,8 +149,21 @@ def _trajectory(snaps):
 
 
 def _envelope(t, y):
-    """Per-OUTER-orbit minimum: within an orbit the instantaneous values oscillate by orders
-    of magnitude with the hierarchy phase; the envelope floor is the integration error."""
+    """Per-OUTER-orbit MEDIAN.
+
+    Was the per-orbit minimum, inherited from test/binary where it removes a mixed-state
+    sampling artifact. That reasoning does not carry over: with IO_HERMITE_SYNC the (r,v) pair
+    is already consistent, so the within-orbit spread here is not an artifact to be floored out
+    -- it is the inner binary's phase, sampled at whatever point each snapshot lands.
+
+    Taking the minimum then selects the dips of an oscillating signal rather than the error, and
+    it misreports the trend badly: measured on the same run at eta=5e-3, the per-orbit minimum
+    grows as t^-0.77 while the median grows as t^+0.86 and the maximum as t^+1.05. The error is
+    accumulating linearly; only the minimum statistic said otherwise, which produced a spurious
+    "the error has hit a floor" reading and, from it, a wrong diagnosis of the sweep.
+
+    The median tracks the secular trend and is robust to the phase oscillation.
+    """
     orb = (t / P_OUT).astype(int)
     xs, ys = [], []
     for i in range(orb.max() + 1):
@@ -155,7 +171,7 @@ def _envelope(t, y):
         if k.sum() < 3:
             continue
         xs.append(t[k].mean())
-        ys.append(y[k].min())
+        ys.append(np.median(y[k]))
     return np.array(xs), np.array(ys)
 
 
