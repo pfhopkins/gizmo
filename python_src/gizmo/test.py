@@ -3,6 +3,7 @@
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
 from urllib.request import urlretrieve, HTTPError
+import fcntl
 from shutil import move, rmtree, copyfile
 from glob import glob
 import numpy as np
@@ -105,6 +106,7 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
+_BUILD_LOCK = ".gizmo_build.lock"
 _KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
 
 
@@ -131,7 +133,22 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    system("rm -f GIZMO test/*/GIZMO")
+    # Serialise the build against other processes sharing this tree. Everything from here to the
+    # move is repo-root state -- Config.sh, GIZMO_config.h, every object file, and the GIZMO
+    # binary itself -- so two tests building at once corrupt each other. Holding the lock only
+    # over the BUILD (not the run) is what lets separate Slurm jobs run their tests in parallel:
+    # builds are minutes, runs are tens of minutes. flock is released by the kernel if the holder
+    # dies, so a killed job cannot leave the lock stuck.
+    with open(_BUILD_LOCK, "w") as _lock:
+        fcntl.flock(_lock, fcntl.LOCK_EX)
+        _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)
+
+
+def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_flags: tuple):
+    """The build itself. Caller must hold _BUILD_LOCK -- see build_gizmo_for_test."""
+    # Only this test's binary, NOT test/*/GIZMO: removing other tests' binaries breaks a
+    # concurrent job that has already built and is about to run, and serves no purpose here.
+    system(f"rm -f GIZMO test/{test_name}/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
         with open("Config.sh", "a") as f:
