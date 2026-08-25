@@ -84,12 +84,26 @@ dt ≈ t<sub>dyn</sub>(peri)/30, per unit TimeMax = 32.4:
 test keeps a 100 AU floor and pays for it by running 10× shorter — `TimeMax 3.24` rather than
 32.4 — landing within a few × of the equal-mass test.
 
-`TimeMax 3.24` is about one half-mass crossing, so this measures **conservation**, not cluster
-relaxation. Do not read structural evolution (Lagrange radii, mass segregation) off this run;
-that needs the longer one.
+### Duration
 
-**Runtime is unmeasured** as of writing — the table above is analytic. Calibrate on a compute
-node before treating the cost as known.
+The cluster is **133.85 M<sub>☉</sub>** — the Kroupa IMF gives 256 systems far less mass than
+512 equal 1 M<sub>☉</sub> stars — at the same 1 pc scale radius, so its timescales are ~2×
+longer than `plummer_binaries`':
+
+| | |
+|---|---|
+| t<sub>dyn</sub>(r<sub>half</sub>) | 1.96 code = 1.92 Myr |
+| t<sub>cross</sub> | 2.92 code = 2.86 Myr |
+| σ<sub>1D</sub> | 0.516 km/s |
+
+`TimeMax 29.2` is **10 crossings**, matching what `plummer_binaries` covers, so the two are
+comparable. An earlier value of 3.24 was set as "a tenth of the sibling's 32.4" without
+accounting for the mass difference and delivered 1.1 crossings — roughly a twentieth of the
+evolution, which is why the cluster appeared not to evolve.
+
+Measured cost at TimeMax 3.24: ~4 min for 102 snapshots. The timestep structure is static (both
+orbits circular, no pericentre refinement), so this scales linearly to **~36 min** at 29.2 —
+against ~47 min for the equal-mass test.
 
 ## What is measured
 

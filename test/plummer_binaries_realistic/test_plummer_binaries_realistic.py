@@ -17,9 +17,13 @@ positions rather than read from the snapshot's tree-evaluated Potential field. P
 last-kick velocity with a drifted-position potential gives a kinetic and a potential term
 belonging to different times; at N ~ 335 the exact O(N^2) sum costs milliseconds.
 
-Tolerances are UNCALIBRATED as of writing -- they are placeholders pending a compute-node run.
-The energy assertion is deliberately loose and the test's value until then is the reported
-numbers, not its pass/fail.
+Runs 10 crossing times (TimeMax 29.2), matching test/plummer_binaries. Note this cluster is
+133.85 Msun, not 512: the IMF gives 256 systems much less mass than 512 equal 1 Msun stars, so
+its t_cross is 2.92 code rather than ~3.24 and a duration copied from the sibling would cover a
+twentieth of the evolution.
+
+Tolerances remain provisional -- measured at the shorter duration and not yet re-derived for
+this one, so a failure here is more likely a stale ceiling than a regression.
 """
 
 import glob

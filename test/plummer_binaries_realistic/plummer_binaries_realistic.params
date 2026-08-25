@@ -24,12 +24,12 @@
 %
 InitCondFile                       plummer_binaries_realistic_ics
 OutputDir                          output
-TimeMax                            3.24
+TimeMax                            29.2
 BoxSize                            300
-TimeBetSnapshot                    0.0324
+TimeBetSnapshot                    0.292
 TimeOfFirstSnapshot                0
 TimeBegin                          0
-TimeBetStatistics                  0.04
+TimeBetStatistics                  0.3
 MaxSizeTimestep                    0.05
 MinSizeTimestep                    1e-12
 ErrTolIntAccuracy                  0.005
