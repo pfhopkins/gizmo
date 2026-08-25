@@ -711,7 +711,6 @@ endif
 # (nuclear_physics_functions.h, included by nuclear.cc) so no separate physics .o is needed.
 ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
 GPU_OBJS += nuclear/nuclear.o
-OBJS     += nuclear/nuclear_neutrino.o
 INCL     += nuclear/nuclear.h nuclear/nuclear_physics_functions.h
 endif
 ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
