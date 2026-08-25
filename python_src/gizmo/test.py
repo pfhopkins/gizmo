@@ -140,10 +140,13 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         return
     # Serialise the build against other processes sharing this tree. Everything from here to the
     # move is repo-root state -- Config.sh, GIZMO_config.h, every object file, and the GIZMO
-    # binary itself -- so two tests building at once corrupt each other. Holding the lock only
-    # over the BUILD (not the run) is what lets separate Slurm jobs run their tests in parallel:
-    # builds are minutes, runs are tens of minutes. flock is released by the kernel if the holder
-    # dies, so a killed job cannot leave the lock stuck.
+    # binary itself -- so two builds at once corrupt each other. Released by the kernel if the
+    # holder dies, so a killed process cannot leave it stuck.
+    #
+    # SAME NODE ONLY. Measured: five Slurm jobs on five different nodes sharing this tree via
+    # GPFS all entered the build together and clobbered each other, despite this lock. Do not
+    # rely on it to run tests concurrently across nodes -- give each job its own tree instead
+    # (run_nbody_validation.sh does).
     with open(_BUILD_LOCK, "w") as _lock:
         fcntl.flock(_lock, fcntl.LOCK_EX)
         _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)
