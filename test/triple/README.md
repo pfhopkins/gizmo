@@ -56,30 +56,6 @@ binary's phase rather than an artifact, so taking the minimum tracks oscillation
 the error. On one run it reported t⁻⁰·⁷⁷ where the median gave t⁺⁰·⁸⁶ — the error was growing
 linearly and the statistic said it was shrinking.
 
-## The convergence sweep — read before trusting its exponent
-
-The test also sweeps `ErrTolIntAccuracy` and fits the energy error's order, to catch a change
-that keeps magnitudes in tolerance while degrading the scheme's order. **This sweep has not yet
-produced a trustworthy measurement.** Three attempts gave η^1.54, η^2.11 and η^3.40, all of which
-passed the assertion and none of which meant anything. The reasons are worth knowing, because
-each is a trap the next person will hit:
-
-- **GIZMO clamps eta at 0.01** under `GRAVITY_ACCURATE_FEWBODY_INTEGRATION`
-  (`core/begrun.cc:2747`), silently, and `params-usedvalues` shows the pre-clamp value. Two sweep
-  points above it produced *bit-identical* runs and a confident-looking fit.
-- **Steps must be factors of 4, never 2.** dt ∝ √eta, so ×4 is exactly one timebin and the
-  hierarchy translates rigidly. ×2 is half a bin.
-- **The error floor.** At 20 orbits the finer points measured *higher* than coarser ones —
-  sampling round-off and phase rather than truncation. The sweep now runs the full 50 orbits so
-  every point clears it.
-- **The coarse end may not be asymptotic.** At eta=0.01 the error is 2e-3, and the fitted order
-  across the usable window is ~η^3.9 — far steeper than the η² a 4th-order scheme gives. With
-  the clamp above and the floor below there is no third whole-bin point to disambiguate.
-
-Two guards now assert on the sweep *definition* (no point above the clamp; steps of exactly 4),
-because both failures were silent. Read the left panel of the convergence plot — the per-eta
-error evolution — rather than the fitted exponent.
-
 ## Files
 
 - `make_triple_ics.py` — IC generation; run standalone to inspect the configuration
