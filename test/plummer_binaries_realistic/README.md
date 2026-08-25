@@ -80,9 +80,10 @@ dt ≈ t<sub>dyn</sub>(peri)/30, per unit TimeMax = 32.4:
 | **100 AU** (default) | 9.5e5 |
 | 20 AU | 1.1e7 |
 
-`plummer_binaries` sits at the top of that table (1000 AU, circular) and costs 15–40 min. This
-test keeps a 100 AU floor and pays for it by running 10× shorter — `TimeMax 3.24` rather than
-32.4 — landing within a few × of the equal-mass test.
+`plummer_binaries` sits at the top of that table (1000 AU, circular). This test keeps a 100 AU
+floor, which is what makes it ~30× more expensive per unit time — and is paid for by this
+cluster's longer crossing time meaning 10 crossings is 29.2 code rather than 32.4. See
+*Duration* below for the measured total.
 
 ### Duration
 
