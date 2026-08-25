@@ -121,7 +121,7 @@ def binary_fraction(m1):
 
 def make_realistic_ics(n_systems, a_cluster, boxsize, seed, outfile,
                        m_min=0.08, m_max=30.0, q_min=0.1,
-                       a_min_au=5.0, a_max_au=5.0e3, r_max=None):
+                       a_min_au=100.0, a_max_au=5.0e3, r_max=None):
     rng = np.random.default_rng(seed)
     if r_max is None:
         r_max = 100.0 * PLUMMER_HALF_MASS_RADIUS * a_cluster
@@ -288,7 +288,8 @@ if __name__ == "__main__":
     p.add_argument("--m_min", type=float, default=0.08)
     p.add_argument("--m_max", type=float, default=30.0)
     p.add_argument("--q_min", type=float, default=0.1)
-    p.add_argument("--a_min_au", type=float, default=5.0)
+    p.add_argument("--a_min_au", type=float, default=100.0,
+                   help="pericentre floor in AU; SETS THE RUNTIME, see README.md")
     p.add_argument("--a_max_au", type=float, default=5.0e3)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", default="plummer_binaries_realistic_ics.hdf5")
