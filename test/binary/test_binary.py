@@ -32,6 +32,7 @@ recorded per snapshot and fitted for a power law, and the exponent is asserted o
 """
 
 import glob
+import os
 import re
 from os import chdir, getcwd, path
 
@@ -253,6 +254,12 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp):
         # run_test resolves <name>.params relative to the TEST directory and is normally called
         # by build_and_run_test from inside it; called from the repo root it raises
         # FileNotFoundError. Enter and leave around each run, restoring on failure.
+        # Remove the previous point's snapshots first. The fiducial run is far longer than a
+        # sweep point, so its snapshots are NOT all overwritten -- the leftovers sit at times
+        # beyond this point's TimeMax and dominate the per-orbit envelope, making every point
+        # report the fiducial value and the fitted order come out ~0.
+        for _stale in glob.glob(outdir + "/snapshot_*.hdf5"):
+            os.remove(_stale)
         cwd = getcwd()
         try:
             chdir(TEST_DIR)
