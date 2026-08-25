@@ -42,7 +42,7 @@ TESTS=(
   "binary|8|1 rank x 1 thread; build-bound. 1000 orbits + order sweep; guards the timestep normalization"
   "triple|8|1 rank x 1 thread; build-bound. 6-bin hierarchy + order sweep; guards the source prediction"
   "plummer_binaries|8|2 ranks x 4 threads (PB_MAX_CORES=8 caps it). Synced-state energy, direct potential"
-  "plummer_binaries_realistic|8|2 ranks x 1 thread; build-bound. Realistic population; NEVER RUN BEFORE"
+  "plummer_binaries_realistic|8|2 ranks x 4 threads (PBR_MAX_CORES=8). Realistic population; NEVER RUN BEFORE"
   "fewbody|64|self-sizes to cores/2 concurrent problems; the only test that uses a whole node"
 )
 

@@ -51,6 +51,42 @@ IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 
 PERIODIC = False             # no BOX_PERIODIC, and the cluster is ~1 pc in a 300 pc box
 
+def _physical_cpu_count():
+    """Number of physical CPU cores on this host (counts hyperthreads as 1).
+
+    On Linux we parse /proc/cpuinfo for unique (physical id, core id) pairs;
+    elsewhere we fall back to os.cpu_count() // 2 assuming 2-way SMT.
+    """
+    import os
+    try:
+        with open("/proc/cpuinfo") as f:
+            text = f.read()
+        cores, cur = set(), {}
+        for line in text.splitlines():
+            if not line.strip():
+                if "physical id" in cur and "core id" in cur:
+                    cores.add((cur["physical id"], cur["core id"]))
+                cur = {}
+            elif ":" in line:
+                k, v = line.split(":", 1)
+                cur[k.strip()] = v.strip()
+        if cores:
+            return len(cores)
+    except OSError:
+        pass
+    return max(1, (os.cpu_count() or 4) // 2)
+
+
+# Same shape as test/plummer_binaries: 2 MPI ranks, threads filling out to a total core cap.
+# Capped rather than scaled with the node for the same reason -- a few hundred particles with a
+# deep timestep hierarchy leave a handful active per step, so wider parallelism adds
+# synchronisation without adding work. This test has FEWER particles than plummer_binaries (~335
+# vs 512) and a wider bin spread, so if anything it saturates sooner; 8 is an upper bound, not a
+# measured optimum here.
+PBR_MAX_CORES = 8
+PBR_NUM_MPI_RANKS = 2
+PBR_NUM_OMP_THREADS = max(1, min(PBR_MAX_CORES, _physical_cpu_count()) // PBR_NUM_MPI_RANKS)
+
 N_SYSTEMS = 256
 A_CLUSTER = 1.0              # pc
 BOXSIZE = 300.0
@@ -153,8 +189,8 @@ def _plot(t, energy, drift, a0, a1, variant_id):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (2,))
-@pytest.mark.parametrize("num_omp_threads", (1,))
+@pytest.mark.parametrize("num_mpi_ranks", (PBR_NUM_MPI_RANKS,))
+@pytest.mark.parametrize("num_omp_threads", (PBR_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [pytest.param((), id="starforge_defaults")])
 def test_plummer_binaries_realistic(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
