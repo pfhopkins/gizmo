@@ -1711,11 +1711,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
                  * leapfrog's cancellation structure assumes the plain drifted positions.
                  *
-                 * PERFORMANCE, measured at +16.5% per particle-step: eligible_for_hermite()
-                 * depends only on the SOURCE, but is called per (target, source) pair, and it
-                 * is cross-TU (an optimization barrier) and reads fields far from the ones this
-                 * loop has resident in a 768-byte struct. Precomputing it once per pass into an
-                 * array should recover most of that. Not done. */
+                 * PERFORMANCE: this gate costs ~16% per particle-step, almost all of it in
+                 * eligible_for_hermite() -- it depends only on the SOURCE but is evaluated per
+                 * (target, source) pair, and it is cross-TU, so it blocks optimization here.
+                 * Hoisting it into a per-pass array would recover most of that. Not done. */
 #ifndef DISABLE_HERMITE_SOURCE_PREDICTION
                 if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
                 {

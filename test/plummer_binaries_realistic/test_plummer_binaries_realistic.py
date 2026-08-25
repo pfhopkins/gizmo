@@ -98,11 +98,24 @@ A_MIN_AU = 100.0             # pericentre floor; sets the runtime, see the param
 A_MAX_AU = 5.0e3
 SEED = 42
 
-# Placeholders. |dE/E| over the run; the equal-mass test holds ~1e-3 over 10x this duration, but
-# this population is harder (higher eccentricities, deeper bin spread) and shorter, so the true
-# value is unknown until measured. Recalibrate from a node run before trusting a pass.
-MAX_DE_OVER_E = 5e-2
-MAX_COM_DRIFT = 1e-3         # |v_com| / cluster velocity dispersion
+# Calibrated at 3x the observed maxima from the first full 10-crossing run (2 ranks x 4 threads,
+# icelake, 101 snapshots to t=29.2): |dE/E| peaked at 5.24e-4 and the drift band at 2.24e-4.
+# The old 5e-2 energy ceiling sat 95x above what the code actually does and could not have caught
+# anything. 3x leaves room for the run-to-run variation a different decomposition can produce
+# while still bounding a real regression.
+#
+# ONLY MAGNITUDES ARE ASSERTED HERE -- deliberately, unlike test/triple, which additionally guards
+# a growth EXPONENT. That works there because a clean 3-body configuration gives a stable trend.
+# It does not transfer: measured on this run the drift's local slope reads +0.10, -3.73, +8.71 and
+# +1.03 over successive windows. A negative slope is proof it is not a power law, so any exponent
+# fit here reports where the window landed, not the integrator.
+#
+# The distinction that matters is visible in the raw series: energy climbs monotonically at every
+# one of the 10 crossings (9.3e-6 -> 5.0e-4, settling to ~t^1.3 after an early transient), which
+# is the known 4th-order block-step residual; the drift wanders inside 2.8e-5 to 2.2e-4 with no
+# trend. Bounded momentum against secular energy is the signature the source prediction produces.
+MAX_DE_OVER_E = 1.6e-3       # 3.05x the measured 5.24e-4
+MAX_COM_DRIFT = 7e-4         # |v_com| / cluster dispersion; 3.13x the measured 2.24e-4
 
 
 def _ensure_ic():

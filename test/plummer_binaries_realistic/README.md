@@ -125,8 +125,36 @@ Constants come from `gizmo.units`, which mirrors GIZMO's `declarations/constants
 astropy. The code integrates with `GRAVITY_G_CGS = 6.672e-8`, so reconstructing energies with
 the CODATA value injects a spurious term that sweeps with each orbit.
 
-**Tolerances are placeholders** pending a compute-node run. Until then the test's value is the
-numbers it reports, not its pass/fail.
+### Measured — first full run
+
+10 crossings (t = 29.2, 101 snapshots), 2 ranks × 4 threads on icelake, 79 catalogued binaries:
+
+| crossing | \|dE/E\| | COM drift |
+|---|---|---|
+| 1 | 9.3e-06 | 9.9e-05 |
+| 3 | 9.2e-05 | 1.1e-04 |
+| 5 | 2.3e-04 | 2.8e-05 |
+| 7 | 3.7e-04 | 1.3e-04 |
+| 10 | 5.0e-04 | 1.6e-04 |
+
+**Energy grows secularly; momentum does not.** Energy climbs at every one of the 10 crossings,
+settling to ~t^1.3 after an early transient — the known 4th-order block-step residual. The drift
+wanders inside 2.8e-5 – 2.2e-4 with no trend. That combination is the signature the Hermite
+source prediction is supposed to produce.
+
+Tolerances are set at **3× the observed maxima**: `MAX_DE_OVER_E` 1.6e-3, `MAX_COM_DRIFT` 7e-4.
+The previous 5e-2 energy ceiling sat 95× above what the code does and could not have caught a
+regression.
+
+Of 79 binaries, 66 remained bound; median |da/a| = 5.1e-4 with a 90th percentile of 0.146 — a
+tail of genuinely perturbed systems, which is expected from encounters and is why survival is
+reported but never asserted.
+
+> **No growth-exponent assertion here**, unlike [`test/triple`](../triple). Its drift exponent is
+> a stable statistic on a clean 3-body configuration; this one's is not. Measured local slopes
+> over successive windows: +0.10, −3.73, +8.71, +1.03. A negative slope proves it is not a power
+> law, so an exponent fit would report where the window landed rather than anything about the
+> integrator.
 
 ## Files
 

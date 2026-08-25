@@ -175,7 +175,15 @@ def make_realistic_ics(n_systems, a_cluster, boxsize, seed, outfile,
 
     # ---------------- Plummer COM positions (truncated at r_max) ----------------
     u_max = (r_max / a_cluster) ** 3 / (1 + (r_max / a_cluster) ** 2) ** 1.5
+    # Stratified (one sample per 1/N bin) to cut shot noise in the radial profile, then SHUFFLED.
+    # Without the shuffle this is monotonic in index, and m1 is sorted descending above, so the
+    # most massive system lands innermost and the cluster is fully mass-segregated by
+    # construction -- measured Spearman(mass, radius) = -0.918. That makes it far more bound than
+    # the Plummer velocity sampling below assumes, leaving it sub-virial (2KE/|PE| = 0.66) so it
+    # collapses instead of holding equilibrium. The equal-mass sibling never showed this because
+    # every mass is identical there.
     u = u_max * (np.arange(n_systems) + rng.random(n_systems)) / n_systems
+    rng.shuffle(u)
     r_com = a_cluster * np.sqrt(u ** (2.0 / 3) * (1 + u ** (2.0 / 3) + u ** (4.0 / 3)) / (1 - u**2))
     phi_ang = rng.random(n_systems) * 2 * np.pi
     cos_th = 2.0 * rng.random(n_systems) - 1.0

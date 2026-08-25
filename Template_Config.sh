@@ -671,3 +671,4 @@
 ############################################################################################################################-
 
 #DISABLE_HERMITE_SOURCE_PREDICTION   # A/B only: compile out the Old*-based source prediction in the Hermite gravity passes (gravity/forcetree.cc, gravity/star_direct_gravity.cc), to measure what it costs and what it buys
+#DISABLE_HERMITE_INTEGRATION      # turn off the 4th-order Hermite integration of sinks, leaving them on plain KDK leapfrog. Diagnostic: leapfrog's order is known (2nd), so it is a control for convergence measurements. See precompiler_logic.h, where it negates the HERMITE_INTEGRATION default
