@@ -670,3 +670,4 @@
 #GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16  #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
 ############################################################################################################################-
 
+#DISABLE_HERMITE_SOURCE_PREDICTION   # A/B only: compile out the Old*-based source prediction in the Hermite gravity passes (gravity/forcetree.cc, gravity/star_direct_gravity.cc), to measure what it costs and what it buys

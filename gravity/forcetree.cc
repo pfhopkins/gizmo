@@ -1710,6 +1710,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * position) and their live Pos is already correct -- corrected at flag==1,
                  * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
                  * leapfrog's cancellation structure assumes the plain drifted positions. */
+#ifndef DISABLE_HERMITE_SOURCE_PREDICTION
                 if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
                 {
                     double hD = get_gravkick_factor(P[no].Ti_begstep, ti_Current, no, 0);
@@ -1720,6 +1721,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
 #endif
                 }
+#endif /* DISABLE_HERMITE_SOURCE_PREDICTION */
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;

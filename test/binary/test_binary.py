@@ -246,7 +246,32 @@ def _plot(t, energy, ecc, drift, variant_id):
     plt.close(fig)
 
 
-def _order_sweep(extra_config_flags, n_ranks, n_omp):
+def _plot_convergence(etas, errs, order, variant_id):
+    """log-log energy error vs ErrTolIntAccuracy, with reference slopes.
+
+    The fitted line IS the measurement here, unlike the conservation plot -- and the reference
+    slopes matter as much as the fit: a 4th-order scheme fed drifted source positions degrades
+    to 2nd, so the question this figure answers is which of the two dashed lines the points lie
+    along, not merely whether they are straight.
+    """
+    matplotlib.rcParams["text.usetex"] = False
+    etas, errs = np.asarray(etas, float), np.asarray(errs, float)
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    ax.loglog(etas, errs, "o", ms=7, zorder=3)
+    xs = np.array([etas.min() / 1.6, etas.max() * 1.6])
+    c = np.polyfit(np.log(etas), np.log(errs), 1)
+    ax.loglog(xs, np.exp(np.polyval(c, np.log(xs))), "-", lw=1.4, zorder=2,
+              label=f"fit: $\\eta^{{{order:.2f}}}$  (dt$^{{{2*order:.1f}}}$)")
+    for p, lab in ((1.0, "2nd order  $\\eta^1$"), (2.0, "4th order  $\\eta^2$")):
+        ax.loglog(xs, errs[0] * (xs / etas[0]) ** p, "--", lw=1.0, zorder=1, label=lab)
+    ax.set_xlabel("ErrTolIntAccuracy")
+    ax.set_ylabel("|E/E$_0$ - 1|  (per-orbit envelope)")
+    ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(f"{TEST_DIR}/{TEST_NAME}_{variant_id}_convergence.png", dpi=120)
+    plt.close(fig)
+
+def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     """Run the same problem at several ErrTolIntAccuracy values and fit the energy error's order.
 
     Reuses the binary built for the fiducial run -- only the params change, via run_test's
@@ -286,13 +311,14 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp):
     order = np.polyfit(np.log(etas), np.log(errs), 1)[0]
     print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
           f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
+    _plot_convergence(etas, errs, order, variant_id)
     assert order >= MIN_ENERGY_ORDER, (
         f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
         f"eta^{MIN_ENERGY_ORDER} floor. The integrator has lost its order even though the "
         f"magnitudes at the operating point are still within tolerance -- check that the "
         f"Hermite source prediction (gravity/forcetree.cc, gravity/star_direct_gravity.cc) "
         f"and the shared timestep normalization (core/timestep.cc) are both in place.")
-    return order
+    return np.asarray(etas), np.asarray(errs), order
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
@@ -357,7 +383,12 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     )
     # Order sweep. Runs last of the checks that can fail hard: a magnitude regression should
     # report from the asserts above rather than from a confusing order fit downstream.
-    _order_sweep(extra_config_flags, num_mpi_ranks, num_omp_threads)
+    sweep_etas, sweep_errs, sweep_order = _order_sweep(
+        extra_config_flags, num_mpi_ranks, num_omp_threads, variant_id)
+    # re-save with the sweep included. The earlier savez above is kept deliberately: it runs
+    # before the assertions, so a failing run still leaves its trajectory on disk to look at.
+    np.savez(f"{TEST_DIR}/summary_{variant_id}.npz", t=t, a=a, ecc=ecc, drift=drift, sep=sep, energy=energy, a0=A0, ecc0=ECC, period=P_ORB,
+             sweep_etas=sweep_etas, sweep_errs=sweep_errs, sweep_order=sweep_order)
 
     # The growth law distinguishes a bug from discretisation noise, and is asserted only when the
     # drift is large enough for the exponent to be meaningful, so a well-behaved run cannot fail

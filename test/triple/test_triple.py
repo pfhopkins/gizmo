@@ -69,21 +69,24 @@ SECULAR_EXPONENT = 0.85
 # --- integration-order sweep ------------------------------------------------------------------
 # The tolerances above bound the error at ONE accuracy setting. They cannot see a change that
 # keeps magnitudes within tolerance while degrading the scheme's ORDER -- which is the claim the
-# Hermite machinery makes, and what the source prediction restored here: measured across this
-# sweep, the energy error converges as eta^2.27 (dt^4.5) with the prediction and eta^1.17
-# (dt^2.3) without. That separation is far wider than the growth-exponent margin the guards
-# above rely on (0.55 vs 0.95), which makes this the sharper regression test of the two.
+# Hermite machinery makes, and what the source prediction restored here.
 #
-# Factors of 4 in eta are factors of 2 in dt -- exactly one timebin -- so the hierarchy is
-# reproduced at each point rather than drifting across bin boundaries. Swept DOWNWARD from the
-# operating point only: above it MaxSizeTimestep binds and caps dt, flattening the fit. Run at
-# SWEEP_ORBITS rather than the fiducial 50: the order is a property of the error's eta-scaling,
-# not of the baseline length. Each finer eta doubles the runtime -- this is the dominant cost.
-SWEEP_ETAS = (5e-3, 1.25e-3, 3.125e-4)
+# FACTORS OF 2, spanning 5e-3 down to 1.25e-3 only. The first attempt used factors of 4 reaching
+# 3.125e-4 and did not measure an order at all: the error fell 112x over the first leg and then
+# ROSE from 5.3e-8 to 8.3e-8 over the second, i.e. by 1.25e-3 it had already reached a floor and
+# the finest point was sampling round-off and hierarchy-phase noise rather than truncation error.
+# A straight line through that gave eta^1.54, which passed the assertion below while measuring
+# nothing. Dropping the floored point and refining between the two that remain keeps every
+# sample in the regime where the error still converges.
+#
+# The cost of factors of 2: dt scales as sqrt(eta), so these steps are sqrt(2) in dt rather than
+# the clean factor of 2 -- half a timebin, not a whole one. Timebin assignments can therefore
+# shift between sweep points instead of translating rigidly, which adds some scatter of its own.
+# That is the trade for staying above the floor; watch for it if the fitted order gets noisy.
+SWEEP_ETAS = (5e-3, 2.5e-3, 1.25e-3)
 SWEEP_ORBITS = 20
 # 4th order in dt is eta^2, 2nd order is eta^1; the threshold sits between, nearer the low side
-# because a 3-point fit on a finite run has real scatter. Measured 2.27 with the fix, 1.17
-# without, so 1.5 separates them with margin on both sides.
+# because a 3-point fit on a finite run has real scatter.
 MIN_ENERGY_ORDER = 1.5
 
 
@@ -175,7 +178,32 @@ def _plot(t, de, dr, variant_id):
     plt.close(fig)
 
 
-def _order_sweep(extra_config_flags, n_ranks, n_omp):
+def _plot_convergence(etas, errs, order, variant_id):
+    """log-log energy error vs ErrTolIntAccuracy, with reference slopes.
+
+    The fitted line IS the measurement here, unlike the conservation plot -- and the reference
+    slopes matter as much as the fit: a 4th-order scheme fed drifted source positions degrades
+    to 2nd, so the question this figure answers is which of the two dashed lines the points lie
+    along, not merely whether they are straight.
+    """
+    matplotlib.rcParams["text.usetex"] = False
+    etas, errs = np.asarray(etas, float), np.asarray(errs, float)
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    ax.loglog(etas, errs, "o", ms=7, zorder=3)
+    xs = np.array([etas.min() / 1.6, etas.max() * 1.6])
+    c = np.polyfit(np.log(etas), np.log(errs), 1)
+    ax.loglog(xs, np.exp(np.polyval(c, np.log(xs))), "-", lw=1.4, zorder=2,
+              label=f"fit: $\\eta^{{{order:.2f}}}$  (dt$^{{{2*order:.1f}}}$)")
+    for p, lab in ((1.0, "2nd order  $\\eta^1$"), (2.0, "4th order  $\\eta^2$")):
+        ax.loglog(xs, errs[0] * (xs / etas[0]) ** p, "--", lw=1.0, zorder=1, label=lab)
+    ax.set_xlabel("ErrTolIntAccuracy")
+    ax.set_ylabel("|E/E$_0$ - 1|  (per-orbit envelope)")
+    ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(f"{TEST_DIR}/{TEST_NAME}_{variant_id}_convergence.png", dpi=120)
+    plt.close(fig)
+
+def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     """Run the same hierarchy at several ErrTolIntAccuracy values and fit the energy error's order.
 
     Reuses the binary built for the fiducial run -- only params change, via run_test's override
@@ -215,12 +243,13 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp):
     order = np.polyfit(np.log(etas), np.log(errs), 1)[0]
     print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
           f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
+    _plot_convergence(etas, errs, order, variant_id)
     assert order >= MIN_ENERGY_ORDER, (
         f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
         f"eta^{MIN_ENERGY_ORDER} floor. Across a 6-bin hierarchy this is the signature of "
         f"inactive sources being seen at drifted positions -- check the Hermite source "
         f"prediction in gravity/forcetree.cc and gravity/star_direct_gravity.cc.")
-    return order
+    return np.asarray(etas), np.asarray(errs), order
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
@@ -269,7 +298,12 @@ def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"inner<->outer momentum leak has re-opened -- check the Hermite source prediction "
         f"in gravity/forcetree.cc")
     # Order sweep, after the magnitude asserts so a magnitude regression reports from those.
-    _order_sweep(extra_config_flags, num_mpi_ranks, num_omp_threads)
+    sweep_etas, sweep_errs, sweep_order = _order_sweep(
+        extra_config_flags, num_mpi_ranks, num_omp_threads, variant_id)
+    # re-save with the sweep included. The earlier savez above is kept deliberately: it runs
+    # before the assertions, so a failing run still leaves its trajectory on disk to look at.
+    np.savez(f"{TEST_DIR}/summary_{variant_id}.npz", t=t, de=de, drift=dr, a_in=a_in, period_out=P_OUT,
+             sweep_etas=sweep_etas, sweep_errs=sweep_errs, sweep_order=sweep_order)
 
     if p_dr >= SECULAR_EXPONENT:
         pytest.fail(
