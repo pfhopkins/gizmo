@@ -37,18 +37,23 @@ Units are pc - km/s - Msun, so G = 4.302e-3 pc (km/s)^2 / Msun.
 """
 import argparse
 
+import astropy.units as u
 import h5py
 import numpy as np
+from astropy.constants import G as _G_astropy
 from scipy.optimize import brentq
 
+# Unit conversions come from astropy rather than being typed in. Writing the code-time
+# conversion by hand as 365.25 * 977.79222 silently dropped a factor of 1000 here, which
+# inflated every semi-major axis by 1000^(2/3) = 100x and pinned the whole sampled population
+# against the wide-end clip -- the kind of error that produces a plausible-looking IC rather
+# than a crash. Code units are pc - km/s - Msun.
+_CODE_TIME = u.pc / (u.km / u.s)                       # = 977792 yr
+G_CODE = _G_astropy.to(u.pc * (u.km / u.s) ** 2 / u.Msun).value
+AU_PER_PC = (1 * u.pc).to(u.au).value
+DAY_PER_CODE_TIME = (1 * _CODE_TIME).to(u.day).value
+
 PLUMMER_HALF_MASS_RADIUS = 1.305   # in units of a (analytic, GM/a normalization)
-G_CODE = 4.300917270e-3            # pc (km/s)^2 / Msun
-AU_PER_PC = 206264.806
-# 1 code time is 1 pc / (1 km/s) = 977792 yr. Derived, not typed: writing it as
-# 365.25 * 977.79222 silently dropped a factor of 1000, which inflated every semi-major axis by
-# 1000^(2/3) = 100x and pinned the whole population against the wide-end clip.
-PC_IN_KM = 3.0856775814913673e13
-DAY_PER_CODE_TIME = PC_IN_KM / 86400.0        # = 3.5714e8 days
 
 # --- Kroupa (2001) IMF ---
 IMF_BREAK = 0.5

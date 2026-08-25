@@ -26,9 +26,11 @@ import glob
 import re
 from os import path
 
+import astropy.units as u
 import h5py
 import numpy as np
 import pytest
+from astropy.constants import G as _G_astropy
 import matplotlib
 from matplotlib import pyplot as plt
 
@@ -42,8 +44,10 @@ TEST_NAME = "plummer_binaries_realistic"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 
-G_CODE = 4.300917270e-3      # pc (km/s)^2 / Msun
-AU_PER_PC = 206264.806
+# from astropy, not typed: a hand-written conversion in the IC generator dropped a factor of
+# 1000 and produced a plausible-looking but wrong population. Code units are pc - km/s - Msun.
+G_CODE = _G_astropy.to(u.pc * (u.km / u.s) ** 2 / u.Msun).value
+AU_PER_PC = (1 * u.pc).to(u.au).value
 PERIODIC = False             # no BOX_PERIODIC, and the cluster is ~1 pc in a 300 pc box
 
 N_SYSTEMS = 256
