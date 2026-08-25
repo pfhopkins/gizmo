@@ -21,6 +21,13 @@ import numpy as np
 import pytest
 from matplotlib import pyplot as plt
 
+# G and the AU conversion come from gizmo.units, which mirrors GIZMO's constants.h.
+# NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
+# 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
+# energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# what that test measures.
+from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
@@ -75,7 +82,6 @@ PB_NUM_OMP_THREADS = max(1, min(PB_MAX_CORES, _physical_cpu_count()) // PB_NUM_M
 # to measure how fast it loses the binaries.
 KDK_TIME_FRACTION = 0.1
 
-G_CODE = 4.300917270e-3      # pc (km/s)^2 / Msun -- the code units below
 # BOX_PERIODIC is not in this test's Config.sh, and the cluster (~1 pc) is tiny against the
 # 300 pc box regardless, so pair separations never wrap.
 PERIODIC = False

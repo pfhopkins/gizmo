@@ -22,8 +22,16 @@ import argparse
 import h5py
 import numpy as np
 
-G_CODE = 4.300917270e-3
-AU_PER_PC = 206264.806
+import os as _os
+import sys as _sys
+# Run standalone (the tests invoke this as a subprocess from the test directory), so python_src
+# is not on the path the way it is under pytest. G must come from gizmo.units, which mirrors
+# GIZMO's constants.h: an IC built with a different G than the code integrates with is not the
+# orbit it claims to be.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "..", "python_src"))
+from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+
 
 
 def make_triple_ics(m_in, m3, a_in_au, a_out_au, boxsize, outfile):

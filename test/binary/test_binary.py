@@ -42,6 +42,13 @@ import pytest
 import matplotlib
 from matplotlib import pyplot as plt
 
+# G and the AU conversion come from gizmo.units, which mirrors GIZMO's constants.h.
+# NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
+# 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
+# energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# what that test measures.
+from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
@@ -54,8 +61,6 @@ TEST_NAME = "binary"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 
-G_CODE = 4.300917270e-3
-AU_PER_PC = 206264.806
 
 M1, Q, A_AU, ECC = 1.0, 0.1, 100.0, 0.9
 M2 = Q * M1

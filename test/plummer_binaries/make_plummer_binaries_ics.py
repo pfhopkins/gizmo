@@ -12,10 +12,18 @@ import numpy as np
 from scipy.optimize import brentq
 import h5py
 
+import os as _os
+import sys as _sys
+# Run standalone (the tests invoke this as a subprocess from the test directory), so python_src
+# is not on the path the way it is under pytest. G must come from gizmo.units, which mirrors
+# GIZMO's constants.h: an IC built with a different G than the code integrates with is not the
+# orbit it claims to be.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "..", "python_src"))
+from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+
 
 PLUMMER_HALF_MASS_RADIUS = 1.305  # in units of a (analytic, GM/a normalization)
-G_CODE = 4.300917270e-3            # pc (km/s)^2 / Msun
-AU_PER_PC = 206264.806              # 1 pc / 1 AU
 
 
 def velocity_cdf(R, target):
