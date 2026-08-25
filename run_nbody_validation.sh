@@ -4,6 +4,7 @@
 #   ./run_nbody_validation.sh              # write the job scripts and submit
 #   ./run_nbody_validation.sh -n           # write them, don't submit
 #   ./run_nbody_validation.sh -k binary    # just one
+#   ./run_nbody_validation.sh -k triple,plummer_binaries_realistic   # a subset
 #
 # HOW PARALLEL BUILDS ARE MADE SAFE. Every test builds in the repo root -- Config.sh,
 # GIZMO_config.h, all object files, the GIZMO binary -- so concurrent jobs would corrupt each
@@ -59,7 +60,18 @@ mkdir -p nbody_val
 JOBIDS=()
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r name cores note <<< "$entry"
-    [ -n "$KEXPR" ] && [[ "$name" != *"$KEXPR"* ]] && continue
+    # -k takes a comma-separated list; a test runs if it matches any entry
+    if [ -n "$KEXPR" ]; then
+        _m=0; IFS=',' read -ra _pats <<< "$KEXPR"
+        for _p in "${_pats[@]}"; do [[ "$name" == *"$_p"* ]] && _m=1; done
+        [ "$_m" -eq 0 ] && continue
+    fi
+    # Refuse to double-submit. Two jobs running the same test both write test/<name>/output and
+    # would corrupt each other's snapshots -- the build lock covers the build only, not the run.
+    if squeue -u "$USER" -h -n "nb_$name" -o "%i" 2>/dev/null | grep -q .; then
+        echo "  SKIP $name: job $(squeue -u "$USER" -h -n "nb_$name" -o "%i" | tr "\n" " ")already running (outputs would collide)"
+        continue
+    fi
     f="test/$name/test_$name.py"
     [ -f "$f" ] || { echo "  SKIP $name: no $f"; continue; }
 
