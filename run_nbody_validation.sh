@@ -5,20 +5,17 @@
 #   ./run_nbody_validation.sh -n           # write them, don't submit
 #   ./run_nbody_validation.sh -k binary    # just one
 #
-# HOW PARALLEL BUILDS ARE MADE SAFE: each job gets its OWN COPY OF THE TREE. Every test builds
-# in the repo root -- Config.sh, GIZMO_config.h, all object files, the GIZMO binary -- so
-# concurrent jobs sharing one tree corrupt each other.
-#
-# A build lock was tried first and is NOT sufficient. Measured: five jobs on five different
-# nodes, one shared GPFS tree, all entered the build together and three died with "Did not
-# successfully build GIZMO" -- their objects deleted mid-compile by a sibling's "make clean".
-# flock serialises fine between processes on ONE node and did not across nodes here. The lock
-# remains in python_src/gizmo/test.py for the same-node case, correctly scoped in its comment.
-#
-# Only the SOURCE plus the job's own test directory is copied -- 43 MB, not the 4.7 GB the tree
-# has grown to in accumulated outputs (fewbody's snapshots alone are 4 GB). Copying by
-# exclusion proved fragile; this copies by inclusion. ICs are regenerated per job, which also
-# rules out one job inheriting another's half-written IC.
+# HOW PARALLEL BUILDS ARE MADE SAFE. Every test builds in the repo root -- Config.sh,
+# GIZMO_config.h, all object files, the GIZMO binary -- so concurrent jobs would corrupt each
+# other. Two things in python_src/gizmo/test.py make one shared checkout safe:
+#   * build_gizmo_for_test holds an exclusive fcntl.lockf over the BUILD only, not the run.
+#     Builds serialise (minutes), runs overlap (tens of minutes), so the parallelism survives.
+#     It must be lockf and not flock -- measured here, flock is honoured node-locally and grants
+#     four nodes the same "exclusive" lock at once, while lockf serialises them exactly.
+#   * the build used to "rm -f test/*/GIZMO", deleting every OTHER test's binary. That is what
+#     lets a sibling's build destroy a binary this job is about to run, and no lock fixes it
+#     because it is semantically wrong rather than racy. It now removes only its own -- which is
+#     also what makes the lock sufficient: a build can safely run while a sibling's test runs.
 #
 # RESOURCES ARE PER TEST, not a full node each. These are correctness runs, not benchmarks, so
 # the timing isolation an exclusive node buys is not worth idling 63 cores for a two-particle
@@ -42,8 +39,6 @@ esac; done
 REPO=$(cd "$(dirname "$0")" && pwd); cd "$REPO"
 COMMIT=$(git rev-parse --short HEAD)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-# Per-job trees live on ceph: bulk space, and keeps build churn out of the home filesystem.
-SCRATCH=${SCRATCH:-/mnt/ceph/users/$USER/nbody_val}
 
 # test | cores | note        (cores = max(what the run uses, 8 for make -j8))
 TESTS=(
@@ -84,23 +79,10 @@ set -uo pipefail
 # Private tree for this job. Nothing here is shared with a sibling job, so builds cannot race.
 # .git is excluded (large, and the commit is recorded below instead); ICs and outputs are
 # excluded so each job regenerates its own rather than inheriting a half-written one.
-WORK=$SCRATCH/${name}_\$SLURM_JOB_ID
-rm -rf "\$WORK"; mkdir -p "\$WORK/test"
-# 1. source, without test/ (which is 4.7 GB of accumulated outputs) or build products
-rsync -a --exclude='.git' --exclude='test' --exclude='nbody_val' \\
-      --exclude='*.o' --exclude='GIZMO' --exclude='GIZMO_*' \\
-      "$REPO/" "\$WORK/"
-# 2. just this test's own inputs -- no snapshots, logs, ICs or analysis products
-rsync -a --exclude='output*' --exclude='ab_*' --exclude='ics' --exclude='GIZMO' \\
-      --exclude='*.hdf5' --exclude='*.png' --exclude='*.npz' \\
-      --exclude='*.out' --exclude='*.err' --exclude='results_*.json' \\
-      --exclude='__pycache__' --exclude='*-usedvalues' \\
-      "$REPO/test/$name/" "\$WORK/test/$name/"
-cd "\$WORK"
-echo "    tree: \$(du -sh . 2>/dev/null | cut -f1) copied"
+cd $REPO
 
 echo "=== \$(date) $name on \$(hostname) ==="
-echo "    source  $BRANCH @ $COMMIT  (copied to \$WORK)"
+echo "    source  $BRANCH @ $COMMIT   (shared checkout; build serialised by lockf)"
 echo "    $note"
 echo
 
@@ -143,7 +125,7 @@ done
 echo
 if [ "$SUBMIT" -eq 1 ] && [ ${#JOBIDS[@]} -gt 0 ]; then
     echo "  watch:   squeue -u \$USER -n $(IFS=,; echo "${JOBIDS[*]}" | sed 's/[0-9]*/nb_*/' )"
-    echo "  logs:    nbody_val/<test>-<jobid>.out   (results/plots under $SCRATCH/<test>_<jobid>/)"
+    echo "  logs:    nbody_val/<test>-<jobid>.out"
     echo "  results: for f in nbody_val/*.out; do echo \"== \$f\"; grep -aE '^(PASSED|FAILED|XFAIL|XPASS)' \$f; done"
 else
     echo "  not submitted. submit with:  for f in nbody_val/*.sbatch; do sbatch \$f; done"

@@ -140,15 +140,21 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         return
     # Serialise the build against other processes sharing this tree. Everything from here to the
     # move is repo-root state -- Config.sh, GIZMO_config.h, every object file, and the GIZMO
-    # binary itself -- so two builds at once corrupt each other. Released by the kernel if the
-    # holder dies, so a killed process cannot leave it stuck.
+    # binary itself -- so two builds at once corrupt each other. This is what lets separate
+    # Slurm jobs run tests concurrently from one checkout: the lock covers the BUILD only, so
+    # builds serialise (minutes) while runs overlap (tens of minutes).
     #
-    # SAME NODE ONLY. Measured: five Slurm jobs on five different nodes sharing this tree via
-    # GPFS all entered the build together and clobbered each other, despite this lock. Do not
-    # rely on it to run tests concurrently across nodes -- give each job its own tree instead
-    # (run_nbody_validation.sh does).
+    # lockf, NOT flock. Measured on this filesystem with four jobs on four nodes: fcntl.flock
+    # granted all four simultaneously -- it is honoured node-locally with no cluster
+    # coordination -- while fcntl.lockf serialised them exactly (waits 0/20/40/60 s, no
+    # overlapping intervals). They are different mechanisms with different cluster support; do
+    # not "simplify" this back to flock.
+    #
+    # Chosen over a mkdir/O_EXCL lock because the kernel releases this one when the holder dies.
+    # These jobs get killed and time out; a lock that survives its owner turns one dead job into
+    # every later job hanging until someone clears it by hand.
     with open(_BUILD_LOCK, "w") as _lock:
-        fcntl.flock(_lock, fcntl.LOCK_EX)
+        fcntl.lockf(_lock, fcntl.LOCK_EX)
         _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)
 
 
