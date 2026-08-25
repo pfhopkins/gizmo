@@ -246,7 +246,7 @@ def _plot(t, energy, ecc, drift, variant_id):
     plt.close(fig)
 
 
-def _plot_convergence(etas, errs, order, variant_id):
+def _plot_convergence(etas, errs, order, variant_id, series=None):
     """log-log energy error vs ErrTolIntAccuracy, with reference slopes.
 
     The fitted line IS the measurement here, unlike the conservation plot -- and the reference
@@ -256,7 +256,18 @@ def _plot_convergence(etas, errs, order, variant_id):
     """
     matplotlib.rcParams["text.usetex"] = False
     etas, errs = np.asarray(etas, float), np.asarray(errs, float)
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    # LEFT: how the error accumulates in each run. A sweep point that is anomalous in the fit is
+    # ambiguous from the fit alone -- a uniformly larger error, a late blow-up and a spike at one
+    # phase all look the same there. This panel separates them, and would have identified the
+    # factor-118 outlier at eta=2.5e-3 (a half-timebin offset) on sight.
+    axl = axes[0]
+    if series:
+        for (ts, des), eta in zip(series, etas):
+            axl.loglog(ts / P_ORB, des, lw=.7, label=f"$\\eta$={eta:.3g}")
+        axl.set_xlabel("orbits"); axl.set_ylabel("|E/E$_0$ - 1|")
+        axl.legend(frameon=False, fontsize=8)
+    ax = axes[1]
     ax.loglog(etas, errs, "o", ms=7, zorder=3)
     xs = np.array([etas.min() / 1.6, etas.max() * 1.6])
     c = np.polyfit(np.log(etas), np.log(errs), 1)
@@ -279,7 +290,7 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     one's snapshots, so each is analysed before the next starts.
     """
     outdir = variant_output_dir(TEST_NAME, extra_config_flags)
-    etas, errs = [], []
+    etas, errs, series = [], [], []
     for eta in SWEEP_ETAS:
         # run_test resolves <name>.params relative to the TEST directory and is normally called
         # by build_and_run_test from inside it; called from the repo root it raises
@@ -305,20 +316,22 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
         if len(snaps) < 16:
             pytest.fail(f"sweep point eta={eta:g} produced only {len(snaps)} snapshots")
         t, a, ecc, drift, sep, energy, synced = _trajectory(snaps)
-        _, de_env = _per_orbit_envelope(t, np.abs(energy / energy[0] - 1.0))
+        de_inst = np.abs(energy / energy[0] - 1.0)
+        _, de_env = _per_orbit_envelope(t, de_inst)
         etas.append(eta); errs.append(de_env[-1])
+        series.append((t.copy(), de_inst.copy()))   # full evolution, for the diagnostic panel
         print(f"  sweep eta={eta:9.3e}   |dE/E| envelope {de_env[-1]:.3e}")
     order = np.polyfit(np.log(etas), np.log(errs), 1)[0]
     print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
           f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
-    _plot_convergence(etas, errs, order, variant_id)
+    _plot_convergence(etas, errs, order, variant_id, series)
     assert order >= MIN_ENERGY_ORDER, (
         f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
         f"eta^{MIN_ENERGY_ORDER} floor. The integrator has lost its order even though the "
         f"magnitudes at the operating point are still within tolerance -- check that the "
         f"Hermite source prediction (gravity/forcetree.cc, gravity/star_direct_gravity.cc) "
         f"and the shared timestep normalization (core/timestep.cc) are both in place.")
-    return np.asarray(etas), np.asarray(errs), order
+    return np.asarray(etas), np.asarray(errs), order, series
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
@@ -383,12 +396,14 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     )
     # Order sweep. Runs last of the checks that can fail hard: a magnitude regression should
     # report from the asserts above rather than from a confusing order fit downstream.
-    sweep_etas, sweep_errs, sweep_order = _order_sweep(
+    sweep_etas, sweep_errs, sweep_order, sweep_series = _order_sweep(
         extra_config_flags, num_mpi_ranks, num_omp_threads, variant_id)
     # re-save with the sweep included. The earlier savez above is kept deliberately: it runs
     # before the assertions, so a failing run still leaves its trajectory on disk to look at.
     np.savez(f"{TEST_DIR}/summary_{variant_id}.npz", t=t, a=a, ecc=ecc, drift=drift, sep=sep, energy=energy, a0=A0, ecc0=ECC, period=P_ORB,
-             sweep_etas=sweep_etas, sweep_errs=sweep_errs, sweep_order=sweep_order)
+             sweep_etas=sweep_etas, sweep_errs=sweep_errs, sweep_order=sweep_order,
+             sweep_t=np.array([x[0] for x in sweep_series]),
+             sweep_de=np.array([x[1] for x in sweep_series]))
 
     # The growth law distinguishes a bug from discretisation noise, and is asserted only when the
     # drift is large enough for the exponent to be meaningful, so a well-behaved run cannot fail
