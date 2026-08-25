@@ -231,6 +231,14 @@ def test_plummer_binaries_realistic(num_mpi_ranks, num_omp_threads, extra_config
     print(f"  a range    {a_first[k].min()*AU_PER_PC:.0f} - {a_first[k].max()*AU_PER_PC:.0f} AU;"
           f"  e median {np.median(e_first[np.isfinite(e_first)]):.2f}")
 
+    # Binary survival and |da/a| are REPORTED, never asserted. Which pairs survive is set by
+    # individual chaotic three-body encounters: there is no a priori correct answer, and the
+    # outcome will not reproduce between runs any more than fewbody's threshold counts do (those
+    # moved 3/48 -> 1/48 between two builds differing in no relevant physics). An assertion on
+    # them would fail on chaos and pass on nothing.
+    #
+    # Energy and momentum are different in kind -- they have a priori correct values, so a
+    # deviation is unambiguously integration error. That is why only they are asserted.
     assert energy[-1] < MAX_DE_OVER_E, (
         f"energy error {energy[-1]:.3e} over t={t[-1]:.2f} (tol {MAX_DE_OVER_E}). Measured on the "
         f"synced state with a direct potential, so this is the integrator, not the output "
