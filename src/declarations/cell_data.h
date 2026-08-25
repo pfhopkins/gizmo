@@ -544,7 +544,7 @@ extern struct gas_cell_data
     }
 
     inline double pressure() const {return Pressure;} /*!< gas pressure */
-    inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
+    GIZMO_GPU_FUNCTION inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]. Under battery-only it equals gas T (cached in eos.cc). Under TWO_TEMPERATURE_PLASMA it is the independently evolved value (derived from u_e_cell, cached after each cooling step). Consumers read through this accessor unchanged. */
     GIZMO_GPU_FUNCTION inline double n_e() const {return n_e_cell;} /*!< electron number density [physical cgs]; populated by the cooling pass. */
