@@ -109,7 +109,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
         }
 
     }
-    
+
     return; // all done here
 }
 #endif /* EOS_ELASTIC */

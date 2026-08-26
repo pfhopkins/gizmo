@@ -1023,7 +1023,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
             CR_vmag = sqrt(CR_vmag); if(CR_vmag > CR_vmax) {flux *= CR_vmax/CR_vmag; CR_veff *= CR_vmax/CR_vmag;} // limit flux to free-streaming speed [as with RT]
         }
         if(mode==0) {cell[i].CosmicRayFlux[k_CRegy]=flux;} else {cell[i].CosmicRayFluxPred[k_CRegy]=flux;}
-    
+
         /* update scalar CR energy. first update the CR energies from fluxes. since this is positive-definite, some additional care is needed */
         double dCR_dt = cell[i].DtCosmicRayEnergy[k_CRegy], eCR_tmp = eCR;
         double dCR = dCR_dt*dt_entr, dCRmax = 1.e10*(eCR_tmp+MIN_REAL_NUMBER);
@@ -1035,7 +1035,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         double eCR_0, eCR_00; eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;} // updated energy
         eCR_0 = eCR_tmp; // save this value for below
-        
+
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
         // add update for CR number if evolved explicitly //
         if(mode==0) // only update on kicks, since we worth with a drift-conserved slope determining the ratio of N and E
@@ -1049,7 +1049,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
             cell[i].CosmicRay_Number_in_Bin[k_CRegy] = n_new; // alright, updated CR number for evolution equations
         }
 #endif
-    
+
 #if defined(COOLING_OPERATOR_SPLIT)
         /* now need to account for the adiabatic heating/cooling of the 'fluid', here, with gamma=GAMMA_COSMICRAY(k_CRegy) */
         double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt_entr, (GAMMA_COSMICRAY(k_CRegy)-1.)*eCR_tmp, mode, pp, cell); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
@@ -1061,7 +1061,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
 #endif
 
     } // loop over CR bins complete
-    
+
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
     if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
     {
@@ -1089,7 +1089,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         }
     }
 #endif
-    
+
     return 1;
 }
 #endif
@@ -1109,7 +1109,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
     if(dt_entr <= 0) {return 0;} // no update
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
-        
+
     int k; double eCR, u0; k=0; if(mode==0) {eCR=cell[i].CosmicRayEnergy[k_CRegy]; u0=cell[i].InternalEnergy;} else {eCR=cell[i].CosmicRayEnergyPred[k_CRegy]; u0=cell[i].InternalEnergyPred;} // initial energy
     if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforced throughout code
     if(eCR < 0) {eCR=0;} // limit to physical values
@@ -1135,19 +1135,19 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         eCR_tmp += dCR_div; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
         dCR_div = eCR_tmp - eCR_0; // actual change that is going to be applied
         if(dCR_div < -0.5*pp[i].Mass*u0) {dCR_div=-0.5*pp[i].Mass*u0;} // before re-coupling, ensure this will not cause negative energies
-        if(dCR_div < -0.9*eCR_00) {dCR_div=-0.9*eCR_00;} // before re-coupling, ensure this will not cause negative energies 
+        if(dCR_div < -0.9*eCR_00) {dCR_div=-0.9*eCR_00;} // before re-coupling, ensure this will not cause negative energies
         if(q_whichupdate==0) {if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div; cell[i].InternalEnergy -= dCR_div/pp[i].Mass;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div; cell[i].InternalEnergyPred -= dCR_div/pp[i].Mass;}}
         if(q_whichupdate>0) {if(mode==0) {cell[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1] += dCR_div; cell[i].InternalEnergy -= dCR_div/pp[i].Mass;} else {cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1] += dCR_div; cell[i].InternalEnergyPred -= dCR_div/pp[i].Mass;}}
     }
 
     int target_bin_centering_for_CR_quantities = i; // if this = i, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
     double E_CRs_Gev=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy,cell), Z_charge_CR=fabs(return_CRbin_CR_charge_in_e(i,k_CRegy)), M_cr_mp=return_CRbin_CRmass_in_mp(i,k_CRegy); // charge and energy and resonant Alfven wavenumber (in gyro units) of the CR population we're evolving
-        
+
     // ok, the updates from [0] advection w gas, [1] fluxes, [2] adiabatic, [-] catastrophic (in cooling.c) are all set, just need exchange terms b/t CR and Alfven //
     double EPSILON_SMALL = 1.e-77; // want a very small number here
     Vec3<double> bhat, flux; double Bmag=0, Bmag_Gauss, clight_code=C_LIGHT_CODE, Omega_gyro, eA[2], vA_code, vA2_c2, E_B, fac, flux_G, fac_Omega, f_CR, f_CR_dot_B, cs_thermal, r_turb_driving, G_ion_neutral=0, G_turb_plus_linear_landau=0, G_nonlinear_landau_prefix=0;
     double ne=1, f_ion=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs=rho*UNIT_DENSITY_IN_CGS;
-#ifdef COOLING 
+#ifdef COOLING
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
 #endif
@@ -1163,7 +1163,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
     Bmag *= cell[i].Density/pp[i].Mass * All.cf_a2inv; // convert to actual B in physical units
     E_B = 0.5*Bmag*Bmag * (pp[i].Mass/(cell[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
     double Eth_0 = EPSILON_SMALL + 1.e-8 * pp[i].Mass*u0; // set minimum magnetic energy relative to thermal (maximum plasma beta ~ 1e8) to prevent nasty divergences
-    if(E_B < Eth_0) {Bmag = sqrt(2.*Eth_0/((pp[i].Mass/(cell[i].Density*All.cf_a3inv))));} // enforce this maximum beta for purposes of "B" to insert below 
+    if(E_B < Eth_0) {Bmag = sqrt(2.*Eth_0/((pp[i].Mass/(cell[i].Density*All.cf_a3inv))));} // enforce this maximum beta for purposes of "B" to insert below
     E_B = 0.5*Bmag*Bmag * (pp[i].Mass/(cell[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
     Bmag_Gauss = Bmag * UNIT_B_IN_GAUSS; // turn it into Gauss
     Omega_gyro = (8987.34 * Bmag_Gauss * (Z_charge_CR/E_CRs_Gev)) * UNIT_TIME_IN_CGS; // gyro frequency of the CR population we're evolving, converted to physical code units //
@@ -1176,7 +1176,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
     r_turb_driving = cell[i].Gradients.Pressure.norm_sq(); // compute gradient magnitude
     r_turb_driving = DMAX( cell[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , pp[i].Get_Particle_Size() ) * All.cf_atime; // maximum of gradient scale length or resolution scale
     double k_turb = 1./r_turb_driving, k_L = Omega_gyro / clight_code;
-    
+
     // before acting on the 'stiff' sub-system, account for the 'extra' advection term that accounts for 'twisting' of B:
     fac=0; for(k=0;k<3;k++) {fac += All.cf_a2inv * bhat[k] * (bhat[0]*cell[i].Gradients.Velocity[k][0] + bhat[1]*cell[i].Gradients.Velocity[k][1] + bhat[2]*cell[i].Gradients.Velocity[k][2]);}
     if(All.ComovingIntegrationOn) {fac += All.cf_hubble_a;} // adds cosmological/hubble flow term here [not included in peculiar velocity gradient]
@@ -1185,9 +1185,9 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
 
     // because the equations below will very much try to take things to far-too-small values for numerical precision, we need to define a bunch of sensible bounds for values to allow, to prevent divergences, but also enforce conservation
     // calculate minimum eA,eCR to enforce; needed because if eA is identically zero, nothing can get amplified, and it will always be zero. but for large enough seed to amplify, results should not depend on seed //
-    eA[0]=DMAX(eA[0],0); eA[1]=DMAX(eA[1],0); eCR=DMAX(eCR,0); // enforce non-negative energies 
+    eA[0]=DMAX(eA[0],0); eA[1]=DMAX(eA[1],0); eCR=DMAX(eCR,0); // enforce non-negative energies
     double Min_Egy=0, e_tot=0, e_tot_new=0, fmax=0; e_tot = eCR + eA[0] + eA[1] + EPSILON_SMALL; // sum total energy, enforce positive-definite: will use this to ensure total energy conservation when enforcing minima below
-    { 
+    {
         double h=pp[i].Get_Particle_Size()*All.cf_atime; int k2; for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {Min_Egy+=cell[i].Gradients.B[k][k2]*cell[i].Gradients.B[k][k2];}}
         Min_Egy=h*sqrt(Min_Egy/9.)*All.cf_a2inv; Min_Egy=DMIN(Min_Egy,Bmag); r_turb_driving=DMAX(h,r_turb_driving); Min_Egy=DMIN(Min_Egy,Bmag*pow(h/r_turb_driving,1./3.)); Min_Egy=Min_Egy*pow(DMIN(clight_code/Omega_gyro,DMIN(h,r_turb_driving))/h,1./3.); // Min_Egy is now magnetic field extrap to r_gyro
         Min_Egy = 0.5 * (Min_Egy*Min_Egy) * pp[i].Mass/(cell[i].Density*All.cf_a3inv); // magnetic energy at this scale, from the above //
@@ -1198,8 +1198,8 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
     }
     eCR=DMAX(eCR,Min_Egy); eA[0]=DMAX(eA[0],Min_Egy); eA[1]=DMAX(eA[1],Min_Egy); // enforce
 
-    // ok, now all the advection and adiabatic operations should be complete. they are split above. 
-    //  what remains is the stiff, coupled subsystem of wave growth+damping, which needs to be treated 
+    // ok, now all the advection and adiabatic operations should be complete. they are split above.
+    //  what remains is the stiff, coupled subsystem of wave growth+damping, which needs to be treated
     //  more carefully or else we get very large over/under-shoots
 
     // first define some convenient units and dimensionless quantities, and enforce limits on values of input quantities
@@ -1266,7 +1266,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         double f_eqm, up_eqm, um_eqm, tinv_u, tinv_f;
         double q_tmp = (gammCR-1.)*x_e + gamma_in_t_ll, q_inner = (4.*gamma_nll*fabs(psifac)) / (q_tmp*q_tmp);
         if(q_inner < 1.e-4) {q_inner=q_inner/2.;} else {q_inner=sqrt(1.+q_inner)-1.;}
-        double x_nonzero = q_tmp * q_inner / (2.*gamma_nll); if(fabs(gamma_nll) < EPSILON_SMALL) {x_nonzero = fabs(psifac)/q_tmp;}    
+        double x_nonzero = q_tmp * q_inner / (2.*gamma_nll); if(fabs(gamma_nll) < EPSILON_SMALL) {x_nonzero = fabs(psifac)/q_tmp;}
         double x_f_magnitude = x_e + fabs(psifac) / x_nonzero;
         if(psifac > 0)
         {
@@ -1278,17 +1278,17 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         }
         tinv_f = fabs( ceff2_va2*(psifac + (x_um-x_up)*x_e + (x_up+x_um)*x_f) ) * (1./(EPSILON_SMALL + fabs(f_eqm)) + 1./(EPSILON_SMALL+fabs(x_f)));
         double t_eqm = 1./(tinv_u + tinv_f); // timescale to approach equilibrium solution
-        
+
         // set timestep (steadily  growing from initial conservative value ) //
         dtaux = dtau; if(dtaux > dtau) {dtaux=dtau;}
         if(dtaux > dtau_max) {dtaux = dtau_max;}
         dtau_max *= 2.; if(dtaux > 10.) {dtaux=10.;}
-        
+
         double jump_fac = 0.5; // fraction towards equilibrium to 'jump' each time
         //if(dtaux >= 0.33*jump_fac*t_eqm)
         if(dtau >= jump_fac*t_eqm)
         {
-            // timestep is larger than the timescale to approach the equilibrium solution, 
+            // timestep is larger than the timescale to approach the equilibrium solution,
             //  so move the systems towards equilibrium, strictly
             //
             if(dtaux > jump_fac*t_eqm) {dtaux = jump_fac*t_eqm;} else {jump_fac = dtaux/t_eqm;} // initial 'step' is small fraction of equilibrium
@@ -1309,8 +1309,8 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
 
         } else {
 
-            // timestep is smaller than the timescale to approach equilibrium, so integrate directly, 
-            //  but we will still use a fully implicit backwards-Euler type scheme for the two 'stiffest' 
+            // timestep is smaller than the timescale to approach equilibrium, so integrate directly,
+            //  but we will still use a fully implicit backwards-Euler type scheme for the two 'stiffest'
             //  components of the system (namely, the flux and eA term corresponding to the multiplicative direction)
             //  [the other terms, e.g. the damped energy change and the CR energy change, can be dealt with after]
             //
@@ -1319,7 +1319,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
             double q0 = 1.+ceff2_va2*dtaux*x_dum, g00 = gammCR*x_e + gamma_in_t_ll, psi00 = psifac + x_dum*x_e;
             double a_m1 = -x_up_prev/dtaux, a_0 = g00 + 1./dtaux , a_1 = gamma_nll, c2dt = ceff2_va2*dtaux;
             if(f_eqm<0) {psi00=psifac-x_dum*x_e; a_1=-gamma_nll; a_0=-(g00 + 1./dtaux); a_m1=x_um_prev/dtaux;}
-            double d0 = -a_m1*q0, c0 = x_f_prev - a_0*q0 - c2dt*(a_m1 + psi00), b0 = -a_1*q0 - c2dt*(a_0-x_e), a0 = -a_1*c2dt; 
+            double d0 = -a_m1*q0, c0 = x_f_prev - a_0*q0 - c2dt*(a_m1 + psi00), b0 = -a_1*q0 - c2dt*(a_0-x_e), a0 = -a_1*c2dt;
             if(f_eqm<0) {b0 = -a_1*q0 - c2dt*(a_0+x_e);}
             if(fabs(a0) < EPSILON_SMALL)
             {
@@ -1329,13 +1329,13 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
                 } else {
                     d0/=c0; b0/=c0; c0=fabs(4.*b0*d0); if(c0<1.e-4) {c0*=0.5;} else {c0=sqrt(1.+c0)-1.;}
                     x_out = c0/(2.*fabs(b0)); // quadratic solve
-                }    
+                }
             } else {
                 // cubic solve
-                double p0=-b0/(3.*a0), q0=p0*p0*p0 + (b0*c0-3.*a0*d0)/(6.*a0*a0), r0=c0/(3.*a0), f0=r0-p0*p0, g0=q0*q0 + f0*f0*f0; 
+                double p0=-b0/(3.*a0), q0=p0*p0*p0 + (b0*c0-3.*a0*d0)/(6.*a0*a0), r0=c0/(3.*a0), f0=r0-p0*p0, g0=q0*q0 + f0*f0*f0;
                 if(g0 >= 0.)
                 {
-                    g0=sqrt(g0); a0=q0+g0; b0=q0-g0; 
+                    g0=sqrt(g0); a0=q0+g0; b0=q0-g0;
                     q0=pow(fabs(a0),1./3.); if(a0<0) {q0*=-1.;}
                     r0=pow(fabs(b0),1./3.); if(b0<0) {r0*=-1.;}
                 } else {
@@ -1353,24 +1353,24 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         {
             double g0 = gammCR*x_e + gamma_in_t_ll + x_f; // pure-damping for um
             if(g0 > 0) {
-                expfac=g0*dtaux; if(expfac>efmax) {expfac=efmax;} 
+                expfac=g0*dtaux; if(expfac>efmax) {expfac=efmax;}
                 if(expfac>1.e-6) {expfac=exp(expfac)-1.;}
                 x_um /= (1. + (1.+gamma_nll*x_um/g0)*expfac);
             } else {x_um -= x_um*(g0 + gamma_nll*x_up)*dtaux;} // (linear if x_f hasn't behaved yet)
         } else {
             double g0 = gammCR*x_e + gamma_in_t_ll - x_f; // pure-damping for up
             if(g0 > 0) {
-                expfac=g0*dtaux; if(expfac>efmax) {expfac=efmax;} 
+                expfac=g0*dtaux; if(expfac>efmax) {expfac=efmax;}
                 if(expfac>1.e-6) {expfac=exp(expfac)-1.;}
                 x_up /= (1. + (1.+gamma_nll*x_up/g0)*expfac);
             } else {x_up -= x_up*(g0 + gamma_nll*x_up)*dtaux;} // (linear if x_f hasn't behaved yet)
         }
-        
+
         // calculate total-energy damping (needed for deriving change in e_cr, which is then given by energy conservation) //
         double x_um_eff=0.5*(x_um+x_um_prev), x_up_eff=0.5*(x_up+x_up_prev), x_f_eff=0.5*(x_f+x_f_prev); // effective values for use in damping rates below
-        expfac=gamma_in_t_ll*dtaux; if(expfac>efmax) {expfac=efmax;} 
+        expfac=gamma_in_t_ll*dtaux; if(expfac>efmax) {expfac=efmax;}
         if(expfac>1.e-6) {expfac=exp(expfac)-1.;}
-        double de_damp = x_um_eff/(1.+1./(expfac*(1.+gamma_nll*x_um_eff/gamma_in_t_ll))) + 
+        double de_damp = x_um_eff/(1.+1./(expfac*(1.+gamma_nll*x_um_eff/gamma_in_t_ll))) +
                          x_up_eff/(1.+1./(expfac*(1.+gamma_nll*x_up_eff/gamma_in_t_ll))); // energy loss to thermalized wave-damping
         if(!isfinite(de_damp)) {de_damp=0;}
         double e_tot = DMAX(x_um_prev,0) + DMAX(x_up_prev,0) + DMAX(x_e_prev,0) - de_damp; // total energy (less damping) before step
@@ -1386,14 +1386,14 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(x_um+x_up<xkappa_min) {expfac=xkappa_min/(x_um+x_up); x_um*=expfac; x_up*=expfac;} // only want to enforce -sum- having effective diffusivity, not both
         double e_tot_new=x_e+x_um+x_up; x_e*=e_tot/e_tot_new; x_up*=e_tot/e_tot_new; x_um*=e_tot/e_tot_new; // check energy after limit-enforcement
 	    fmax = x_e*sqrt(ceff2_va2); if(!isfinite(x_f)) {x_f=0;} else {if(x_f>fmax) {x_f=fmax;} else {if(x_f<-fmax) {x_f=-fmax;}}} // check for flux maximum/minimum
-        
+
         // calculate change in parameters to potentially break the cycle here
         dx_e  = (x_e - x_e_prev) / (EPSILON_SMALL + x_e + x_e_prev);
         dx_up = (x_up - x_up_prev) / (EPSILON_SMALL + x_up + x_up_prev);
         dx_um = (x_um - x_um_prev) / (EPSILON_SMALL + x_um + x_um_prev);
         dx_f  = (x_f - x_f_prev) / (EPSILON_SMALL + fabs(x_f) + fabs(x_f_prev));
         double dx_max = sqrt(dx_e*dx_e + dx_up*dx_up + dx_um*dx_um + dx_f*dx_f); // sum in quadrature
-        if(!isfinite(dx_max)) {dx_max=1;} // enforce validity for check below 
+        if(!isfinite(dx_max)) {dx_max=1;} // enforce validity for check below
 
         if((n_iter > 0) && (n_iter % 10000 == 0)) // print diagnostics if the convergence is happening slowly
         {
@@ -1424,7 +1424,7 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
     if(mode==0) {cell[i].InternalEnergy+=thermal_heating/pp[i].Mass;} else {cell[i].InternalEnergyPred+=thermal_heating/pp[i].Mass;} // heating term from damping
     cell[i].CosmicRayDiffusionCoeff[k_CRegy] = 1. / (fac_Omega*((eA[0]+eA[1])/E_B)/(clight_code*clight_code)); // effective diffusion coefficient in code units
 
-        
+
     } // complete loop over CR bins
     return 1; // exit
 }
@@ -1595,7 +1595,7 @@ KOKKOS_INLINE_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, 
 {
     double u0, d_CR; if(mode==0) {u0=cell[i].InternalEnergy;} else {u0=cell[i].InternalEnergyPred;} // initial energy
     if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforced throughout code
-    
+
     double divv_p=-dt_entr*pp[i].Particle_DivVel*All.cf_a2inv, divv_f=divv_p, divv_u=0; // get locally-estimated gas velocity divergence for cells - if using non-Lagrangian method, need to modify. take negative of this [for sign of change to energy] and multiply by timestep
 #ifdef COSMIC_RAY_FLUID
     divv_f=-dt_entr*cell[i].Face_DivVel_ForAdOps*All.cf_a2inv;
@@ -1610,7 +1610,7 @@ KOKKOS_INLINE_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, 
     double Ui = u0 * pp[i].Mass; // factor for multiplication below, and initial thermal energy
     double dtI_hydro = cell[i].DtInternalEnergy * pp[i].Mass * dt_entr; // change given by hydro-step computed delta_InternalEnergy
     double min_IEgy = pp[i].Mass * All.MinEgySpec; // minimum internal energy - in total units -
-    
+
     if(divv_p*dtI_hydro > 0 || divv_f*dtI_hydro > 0) // same sign from hydro and from smooth-flow-estimator, suggests we are in a smooth flow, so we'll use stronger assumptions about the effective 'entropy' here
     {
         if(divv_p*dtI_hydro <= 0) {divv_u=divv_f;} // if divv_f agrees in sign here, use it
