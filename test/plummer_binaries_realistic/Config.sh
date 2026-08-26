@@ -1,10 +1,12 @@
 ########################################
-# plummer_binaries — Plummer sphere of equal-mass circular binaries (Type 5
-# stars) in physical units (pc - km/s - Msun). Uses SINGLE_STAR_STARFORGE_DEFAULTS
-# which (without the HYBRID_MODEL flag) is just the gravity / integration /
-# sink-machinery glue: HERMITE_INTEGRATION, GRAVITY_ACCURATE_FEWBODY_INTEGRATION,
-# SINGLE_STAR_TIMESTEPPING, ADAPTIVE_TREEFORCE_UPDATE, etc. — no COOLING / MHD /
-# RT. Pulls in sink/SF param defaults so the params file stays minimal.
+# plummer_binaries_realistic -- a Plummer cluster whose binaries are drawn from the
+# observed distributions (Kroupa IMF, mass-dependent binary fraction, log-normal
+# periods, thermal eccentricities) rather than being identical 1000 AU equal-mass
+# circular pairs.
+#
+# Same physics flags as test/plummer_binaries, so the two differ ONLY in their initial
+# conditions and run length; any difference in conservation behaviour is attributable
+# to the population, which is the point.
 ########################################
 SINGLE_STAR_STARFORGE_DEFAULTS
 # Print timebin / sync-point info only when active dt >= bin 45's cadence

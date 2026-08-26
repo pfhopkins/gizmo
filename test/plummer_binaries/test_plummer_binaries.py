@@ -21,6 +21,13 @@ import numpy as np
 import pytest
 from matplotlib import pyplot as plt
 
+# G and the AU conversion come from gizmo.units, which mirrors GIZMO's constants.h.
+# NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
+# 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
+# energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# what that test measures.
+from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
@@ -75,6 +82,10 @@ PB_NUM_OMP_THREADS = max(1, min(PB_MAX_CORES, _physical_cpu_count()) // PB_NUM_M
 # to measure how fast it loses the binaries.
 KDK_TIME_FRACTION = 0.1
 
+# BOX_PERIODIC is not in this test's Config.sh, and the cluster (~1 pc) is tiny against the
+# 300 pc box regardless, so pair separations never wrap.
+PERIODIC = False
+
 # Cluster parameters (in code units: pc - km/s - Msun)
 SCALE_RADIUS = 1.0           # pc
 M_STAR = 1.0                 # Msun (per star)
@@ -91,7 +102,17 @@ LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)
 def _ensure_ic():
     if path.isfile(IC_FILE):
         with h5py.File(IC_FILE, "r") as F:
-            if int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES:
+            n_ok = int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES
+            # Check the SEPARATION too, not just the count. Running the generator with its own
+            # defaults produces a file with the right particle count and a different problem --
+            # a 10x tighter binary is ~30x shorter in period and turns a 47 min run into hours,
+            # while looking valid to a count-only check.
+            sep_ok = False
+            if n_ok:
+                x = F["PartType5/Coordinates"][:]
+                sep = np.median(np.linalg.norm(x[0::2] - x[1::2], axis=1)) * AU_PER_PC
+                sep_ok = abs(sep / BINARY_SEPARATION_AU - 1.0) < 1e-3
+            if n_ok and sep_ok:
                 return
     import importlib.util
 
@@ -109,12 +130,22 @@ def _ensure_ic():
 
 
 def _load_snapshot(snap):
+    """Prefer the IO_HERMITE_SYNC datasets: a consistent (r,v) pair at the output time.
+
+    Coordinates/Velocities are NOT such a pair -- positions are drifted to the output time while
+    velocities are left at the last kick (see the IO_VEL comment in file_io/io.cc) -- and in a
+    cluster on deep individual timesteps each star was last kicked at a different instant. Any
+    quantity combining r and v, or summing v across stars, is then evaluated on a configuration
+    the system never occupied.
+    """
     with h5py.File(snap, "r") as F:
-        pos = F["PartType5/Coordinates"][:]
-        vel = F["PartType5/Velocities"][:]
-        mass = F["PartType5/Masses"][:]
-        pot = F["PartType5/Potential"][:]
-        ids = F["PartType5/ParticleIDs"][:]
+        g = F["PartType5"]
+        synced = "HermiteSyncCoordinates" in g and "HermiteSyncVelocities" in g
+        pos = g["HermiteSyncCoordinates"][:] if synced else g["Coordinates"][:]
+        vel = g["HermiteSyncVelocities"][:] if synced else g["Velocities"][:]
+        mass = g["Masses"][:]
+        pot = g["Potential"][:]
+        ids = g["ParticleIDs"][:]
         boxsize = float(F["Header"].attrs["BoxSize"])
     # Sort by ID so binary pairs are contiguous (IDs 1,2 are binary 0; 3,4 are binary 1; ...).
     order = np.argsort(ids)
@@ -144,9 +175,33 @@ def _radii_from_com(pos, mass):
     return np.sqrt(np.sum((pos - com) ** 2, axis=1))
 
 
-def _total_energy(vel, mass, pot):
+def _potential_energy(pos, mass, boxsize, periodic, softening=0.0):
+    """Direct pairwise potential energy from the positions given.
+
+    Not the snapshot's Potential field: that is evaluated by the tree at the DRIFTED positions,
+    so pairing it with last-kick velocities gives a kinetic and a potential term belonging to
+    different times -- the two halves of the energy disagree, and the resulting "conservation"
+    number carries a sampling artifact set by where in each star's timestep the output landed.
+    At N=512 the exact O(N^2) sum is milliseconds, so there is no reason to approximate it.
+
+    Absolute values differ slightly from the tree's by its opening error (ErrTolTheta); only
+    energy DRIFT is comparable across that change, which is what the assertions use.
+    """
+    d = pos[:, None, :] - pos[None, :, :]
+    if periodic:
+        d -= boxsize * np.round(d / boxsize)
+    r2 = np.sum(d * d, axis=-1) + softening * softening
+    np.fill_diagonal(r2, np.inf)                       # drop self-pairs
+    mm = mass[:, None] * mass[None, :]
+    return -0.5 * G_CODE * np.sum(mm / np.sqrt(r2))    # 0.5 for double counting
+
+
+def _total_energy(vel, mass, pot=None, pos=None, boxsize=None, periodic=False):
+    """Total energy. With pos given, the potential is recomputed from those positions so that it
+    shares a clock with vel; otherwise it falls back to the snapshot's tree-evaluated field."""
     ke = 0.5 * np.sum(mass * np.sum(vel**2, axis=1))
-    pe = 0.5 * np.sum(mass * pot)
+    pe = (_potential_energy(pos, mass, boxsize, periodic) if pos is not None
+          else 0.5 * np.sum(mass * pot))
     return ke + pe, ke, pe
 
 
@@ -165,12 +220,10 @@ def _conservation_trajectories(snap_paths):
     """
     times, energies, momenta, ke0 = [], [], [], None
     for s in snap_paths:
+        pos, vel, mass, pot, boxsize = _load_snapshot(s)
         with h5py.File(s, "r") as F:
             t = float(F["Header"].attrs["Time"])
-            vel = F["PartType5/Velocities"][:]
-            mass = F["PartType5/Masses"][:]
-            pot = F["PartType5/Potential"][:]
-        e, ke, _ = _total_energy(vel, mass, pot)
+        e, ke, _ = _total_energy(vel, mass, pos=pos, boxsize=boxsize, periodic=PERIODIC)
         times.append(t)
         energies.append(e)
         momenta.append(np.sum(mass[:, None] * vel, axis=0))

@@ -3,6 +3,7 @@
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
 from urllib.request import urlretrieve, HTTPError
+import fcntl
 from shutil import move, rmtree, copyfile
 from glob import glob
 import numpy as np
@@ -105,6 +106,12 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
+# Anchored to the repo root via this file's location, NOT relative to cwd. A relative path
+# would silently point at a different file if anything ever built from another directory, and
+# two jobs locking different files is no lock at all -- a failure that shows up as a corrupted
+# build rather than as an error.
+_BUILD_LOCK = path.join(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))),
+                        ".gizmo_build.lock")
 _KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
 
 
@@ -131,7 +138,38 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    system("rm -f GIZMO test/*/GIZMO")
+    # Serialise the build against other processes sharing this tree. Everything from here to the
+    # move is repo-root state -- Config.sh, GIZMO_config.h, every object file, and the GIZMO
+    # binary itself -- so two builds at once corrupt each other. The lock covers the BUILD only,
+    # so builds serialise (minutes) while runs overlap (tens of minutes).
+    #
+    # NECESSARY BUT NOT SUFFICIENT for concurrent jobs in one checkout. With this lock in place,
+    # a run of 11 concurrent jobs still produced a binary whose translation units disagreed on
+    # the layout of the All struct -- mymalloc_init read All.MaxMemSize at an offset holding a
+    # double's bit pattern and aborted before any physics -- and the identical test passed the
+    # moment it built alone. Whatever leaks past the lock was not identified. For parallel jobs,
+    # give each its own checkout (git worktree, ~10 MB); keep this lock as the last line of
+    # defence, not the guarantee.
+    #
+    # lockf, NOT flock. Measured on this filesystem with four jobs on four nodes: fcntl.flock
+    # granted all four simultaneously -- it is honoured node-locally with no cluster
+    # coordination -- while fcntl.lockf serialised them exactly (waits 0/20/40/60 s, no
+    # overlapping intervals). They are different mechanisms with different cluster support; do
+    # not "simplify" this back to flock.
+    #
+    # Chosen over a mkdir/O_EXCL lock because the kernel releases this one when the holder dies.
+    # These jobs get killed and time out; a lock that survives its owner turns one dead job into
+    # every later job hanging until someone clears it by hand.
+    with open(_BUILD_LOCK, "w") as _lock:
+        fcntl.lockf(_lock, fcntl.LOCK_EX)
+        _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)
+
+
+def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_flags: tuple):
+    """The build itself. Caller must hold _BUILD_LOCK -- see build_gizmo_for_test."""
+    # Only this test's binary, NOT test/*/GIZMO: removing other tests' binaries breaks a
+    # concurrent job that has already built and is about to run, and serves no purpose here.
+    system(f"rm -f GIZMO test/{test_name}/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
         with open("Config.sh", "a") as f:

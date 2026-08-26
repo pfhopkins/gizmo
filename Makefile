@@ -271,6 +271,9 @@ FC       =  $(CC)
 OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
 OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)
 OPTIMIZE += -g -Wall # compiler warnings
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CXX     = mpic++
 CHIMESINCL = -I/usr/include/sundials

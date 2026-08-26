@@ -469,6 +469,7 @@
 #OUTPUT_TIDAL_TENSOR            # writes tidal tensor (computed in gravity) to snapshots
 #OUTPUT_ACCELERATION            # output physical acceleration of each particle in snapshots
 #OUTPUT_HYDROACCELERATION       # output the 'hydrodynamic' (includes -all- stress tensor terms) acceleration. if enabled with 'OUTPUT_ACCELERATION', that will output the gravitational acceleration, so the sum of the two is the total
+#IO_HERMITE_SYNC                # output HermiteSyncCoordinates/HermiteSyncVelocities: a mutually consistent (r,v) pair at the snapshot time for Hermite-integrated particles. The ordinary Coordinates/Velocities are NOT such a pair (positions are drifted to the output time, velocities are left at the last kick), so vis-viva, orbital elements and kinetic energy are all evaluated on a state that never existed. Predicted, not corrected: 4th order in position, 3rd in velocity
 #OUTPUT_CHANGEOFENERGY          # outputs rate-of-change of internal energy of gas particles in snapshots
 #OUTPUT_VORTICITY               # outputs the vorticity vector
 #OUTPUT_GRADIENT_RHO            # outputs the gradients of the gas density field
@@ -669,3 +670,4 @@
 #GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16  #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
 ############################################################################################################################-
 
+#DISABLE_HERMITE_INTEGRATION      # turn off the 4th-order Hermite integration of sinks, leaving them on plain KDK leapfrog. Diagnostic: leapfrog's order is known (2nd), so it is a control for convergence measurements. See precompiler_logic.h, where it negates the HERMITE_INTEGRATION default

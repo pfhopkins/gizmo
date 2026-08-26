@@ -1,0 +1,54 @@
+# Compile EVERY test config -- the full sweep build.yml deliberately samples from. ~63 configs
+# at ~6 min each is too much per-push, so this runs on demand (workflow_dispatch, e.g. before
+# merging to starforge_dev) and weekly to catch drift in configs nobody builds locally.
+#
+# The matrix is generated from test/*/Config.sh at run time, so adding a test extends the sweep
+# with no edit here. fail-fast is off: one broken config should not hide the other 62.
+
+name: build-sweep
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.gen.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gen
+        run: echo "tests=$(ls -d test/*/Config.sh | cut -d/ -f2 | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJSON(needs.enumerate.outputs.tests) }}
+    name: ${{ matrix.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev \
+                                  libfftw3-dev libfftw3-mpi-dev
+      - name: Configure
+        run: |
+          echo 'SYSTYPE="github-ubuntu"' > Makefile.systype
+          cp "test/${{ matrix.test }}/Config.sh" Config.sh
+          echo "=== effective Config.sh ==="; grep -vE '^\s*#|^\s*$' Config.sh
+      - name: Build
+        run: |
+          make -j4 \
+            HDF5INCL='-I/usr/include/hdf5/openmpi -DH5_USE_16_API' \
+            HDF5LIB='-L/usr/lib/x86_64-linux-gnu/hdf5/openmpi -lhdf5 -lz' \
+            FFTW_INCL='-I/usr/include' \
+            FFTW_LIBS='-L/usr/lib/x86_64-linux-gnu'
+      - name: Confirm binary
+        run: ls -la GIZMO && file GIZMO

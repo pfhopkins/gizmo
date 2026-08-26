@@ -3,7 +3,7 @@
 Each "particle" of the Plummer sphere is replaced by a pair of equal-mass
 stars on a circular orbit around their mutual center of mass. Units are
 pc - km/s - Msun, so the gravitational constant in code units is
-G = 4.302e-3 pc (km/s)^2 / Msun.
+G comes from gizmo.units (GIZMO's constants.h), 4.300711e-3 pc (km/s)^2 / Msun.
 
 Adapted from test/plummer/make_plummer_ics.py.
 """
@@ -12,10 +12,18 @@ import numpy as np
 from scipy.optimize import brentq
 import h5py
 
+import os as _os
+import sys as _sys
+# Run standalone (the tests invoke this as a subprocess from the test directory), so python_src
+# is not on the path the way it is under pytest. G must come from gizmo.units, which mirrors
+# GIZMO's constants.h: an IC built with a different G than the code integrates with is not the
+# orbit it claims to be.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "..", "python_src"))
+from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+
 
 PLUMMER_HALF_MASS_RADIUS = 1.305  # in units of a (analytic, GM/a normalization)
-G_CODE = 4.300917270e-3            # pc (km/s)^2 / Msun
-AU_PER_PC = 206264.806              # 1 pc / 1 AU
 
 
 def velocity_cdf(R, target):
@@ -136,7 +144,9 @@ if __name__ == "__main__":
     parser.add_argument("--N_binaries", type=int, default=256)
     parser.add_argument("--m_star", type=float, default=1.0, help="Msun per star")
     parser.add_argument("--a_cluster", type=float, default=1.0, help="Plummer scale radius (pc)")
-    parser.add_argument("--binary_separation_au", type=float, default=100.0)
+    parser.add_argument("--binary_separation_au", type=float, default=1000.0,
+                        help="must match BINARY_SEPARATION_AU in the test; a smaller "
+                             "value silently makes a much more expensive problem")
     parser.add_argument("--boxsize", type=float, default=300.0, help="pc")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default="plummer_binaries_ics.hdf5")

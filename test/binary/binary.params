@@ -1,0 +1,65 @@
+InitCondFile                       binary_ics
+OutputDir                          output
+
+% e=0.9, q=0.1, a=100 AU, M=1.1 Msun -> P_orb = 9.751362e-04 code time.
+%
+% 1000 orbits. 64 was enough to see a drift but not to pin its growth law: over that range
+% |da/a| spans less than a decade and the fitted exponent came out t^+1.42, which the longer
+% baseline shows was noise (it settles to t^+0.94). At 1000 orbits both diagnostics span more
+% than three decades and the exponents are firm -- COM drift t^+0.991, i.e. linear to 1%,
+% which is what separates a secular leak from the t^0.5 of a random walk.
+%
+% Costs ~3 min of GIZMO, serial. Snapshots every P/4 rather than P/8: that is still four per
+% orbit, enough for the per-orbit envelope, and halves the file count. 4000 files at 16 KB is
+% ~65 MB and 4000 inodes, which matters on a quota'd home filesystem.
+TimeMax                            9.751362e-01
+TimeBetSnapshot                    2.437840e-04
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  2.437840e-04
+BoxSize                            1
+
+% MaxSizeTimestep = P/20, so apocentre is resolved even where the accuracy criterion would
+% happily take a longer step. MinSizeTimestep must clear pericentre: (1-e)^1.5 = 0.032 of the
+% mean motion, and the accuracy criterion asks for far less than that again, so leave it tiny.
+MaxSizeTimestep                    4.875681e-05
+MinSizeTimestep                    1e-14
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+
+% Pericentre is 4.848e-5 pc. Softening is set 500x below that so the force is Newtonian over
+% the whole orbit and the test measures the INTEGRATOR, not the kernel. (The production
+% STARFORGE value, 3.117e-5, would be comparable to pericentre here and would dominate.)
+Softening_Type0                    1e-7
+Softening_Type1                    1e-7
+Softening_Type2                    1e-7
+Softening_Type3                    1e-7
+Softening_Type4                    1e-7
+Softening_Type5                    1e-7
+Softening_Type0_MaxPhysLimit       1e-7
+Softening_Type1_MaxPhysLimit       1e-7
+Softening_Type2_MaxPhysLimit       1e-7
+Softening_Type3_MaxPhysLimit       1e-7
+Softening_Type4_MaxPhysLimit       1e-7
+Softening_Type5_MaxPhysLimit       1e-7
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+
+% No gas in this test, so the default multi-pc accretion search is pure tree-walk overhead.
+SinkMaxAccretionRadius             1e-6
