@@ -121,10 +121,9 @@ int eligible_for_hermite(int i)
        interval -- a hard failure of the conservation check.
        What the fallback was really compensating for is fixed at the source instead: accretion now
        shifts the Hermite carry state along with Pos/Vel (see sinks/sink.cc), so the predictor no
-       longer works from a stale base. Coupling eligibility across a pair was rejected as the
-       alternative: it would demote both members, and losing eligibility shortens the step 3.3x
-       (the SINK_TIMESTEP_SAFETY_FACTOR division in core/timestep.cc), which ratchets the
-       hierarchy downward with no matching path back up. */
+       longer works from a stale base. Coupling eligibility across a pair was rejected: demotion
+       shortens the step 3.3x (see SINK_TIMESTEP_SAFETY_FACTOR in core/timestep.cc), a one-way
+       ratchet on the hierarchy. */
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[i].SuperTimestepFlag >= 2) {return 0;}

@@ -917,10 +917,9 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                 if(P[pindex].Type == type)
                 {
                     /* The Old* members only exist when HERMITE_INTEGRATION is compiled in, so
-                       the predictor below must be inside the #ifdef -- not merely guarded by a
-                       runtime flag, which still requires the members to resolve. Without it this
-                       block fails to compile under DISABLE_HERMITE_INTEGRATION and the datasets
-                       simply carry the ordinary values. */
+                       the predictor below must sit inside the #ifdef -- a runtime guard alone
+                       would not compile under DISABLE_HERMITE_INTEGRATION. In that build the
+                       datasets simply carry the ordinary Pos/Vel via the fallback below. */
                     int _herm = 0;
 #ifdef HERMITE_INTEGRATION
                     _herm = ((1 << P[pindex].Type) & HERMITE_INTEGRATION) && (P[pindex].Mass > 0);

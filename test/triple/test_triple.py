@@ -14,10 +14,10 @@ masses it shared a bin by symmetry and was blind to it, which made the energy di
 6:1 mixture dominated by a component that could not respond to what was under test. See
 make_triple_ics.py for the full reasoning and for what that trade costs.
 
-What this guards: the Old*-based source prediction in the Hermite gravity passes
-(gravity/forcetree.cc). With it, the COM drift stays a bounded noise band; without it, the drift
-is secular. Whether the magnitudes alone discriminate at 50 orbits has to be re-established on
-this configuration -- on the previous one they did not, and only the growth exponent did.
+What is asserted: an energy ceiling that bounds gross breakage only. This configuration is the
+one the Old*-based source prediction (gravity/forcetree.cc) exists for -- the hierarchy cannot
+fuse -- but the committed assertion does not discriminate that fix, and nothing in the committed
+suite does; see the README for what did and what restoring a guard would take.
 
 Measured from the IO_HERMITE_SYNC datasets, for the same reason as test/binary: the plain
 Coordinates/Velocities are a mixed state (positions drifted, velocities at the last kick).
@@ -72,8 +72,9 @@ V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
 # This bounds gross breakage only. It is NOT the check that discriminated the source-prediction
 # defect -- that was the secular growth exponent on the COM drift (t^+0.95 defective vs t^+0.55
 # fixed, across a 0.85 threshold), which the defect passed on magnitude while failing on trend.
-# That check is no longer here, so this test does not guard the fix; test/binary, test/fewbody
-# and the M2e3 survey do.
+# That check was calibrated on a configuration this IC no longer produces and was removed
+# pending recalibration, so NO committed test guards the fix (see the README); the evidence for
+# it lives off-suite.
 MAX_DE_OVER_E = 1.7e-4
 
 def _ic_matches():
@@ -204,11 +205,9 @@ def _plot(t, de, dr, variant_id):
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
-# Hermite only. The KDK control exists to check the ORDER measurement, and test_triple_order
-# does that on 5-orbit runs; putting it here spent a 50-orbit run to produce numbers that were
-# then not asserted on, since every ceiling below is calibrated for Hermite. The non-Hermite
-# build path of the IO_HERMITE_SYNC output block is still covered -- the order sweep writes
-# snapshots through it.
+# Hermite only. A KDK variant here spent a 50-orbit run producing numbers nothing asserted on:
+# every ceiling below is calibrated for Hermite. The non-Hermite build path of the
+# IO_HERMITE_SYNC output block is covered by test/binary's kdk variant.
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
 ])

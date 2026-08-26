@@ -74,8 +74,10 @@ P_ORB = 2.0 * np.pi * np.sqrt(A0 ** 3 / (G_CODE * MTOT))
 # isolated binary then has no inactive sources at all -- so the Hermite source prediction in
 # gravity/forcetree.cc never fires here and this test does NOT guard it. It guards the
 # NORMALIZATION: revert that and the bins split again, and the same run measures |dE/E| = 1.6e-2
-# and drift = 8.5e-3, ~10x and ~4x over the ceilings below. test/triple is the guard for the
-# source prediction -- its hierarchy cannot fuse, so the prediction is load-bearing there.
+# and drift = 8.5e-3, ~10x and ~4x over the ceilings below. The source prediction itself has NO
+# guard in the committed suite -- test/triple's hierarchy cannot fuse, so the prediction is
+# load-bearing there, but its committed assertion does not discriminate it (see
+# test/triple/README.md for what would).
 #
 # Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope), both changes in:
 #     |dE/E| = 7.78e-5    COM drift = 3.48e-15   (drift is at round-off; growth t^-0.25)
