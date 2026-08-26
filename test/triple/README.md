@@ -63,11 +63,16 @@ That is 3× the 5.66e-5 measured on this configuration, and it bounds gross brea
 COM drift, growth exponents and the inner semi-major axis are **printed and saved** to
 `summary_<variant>.npz`, not judged.
 
-> **This test does not currently guard the source-prediction fix.** What discriminated the defect
-> was the secular growth exponent on the COM drift — t^+0.95 defective vs t^+0.55 fixed, across a
-> 0.85 threshold — which the defect *passed* on magnitude while failing on trend. That check was
-> calibrated on a configuration this IC no longer produces and has been removed pending
-> recalibration. `test/binary`, `test/fewbody` and the M2e3 survey carry the discrimination.
+> **This test does not currently guard the source-prediction fix — and nothing in the committed
+> suite does.** What discriminated the defect here was the secular growth exponent on the COM
+> drift — t^+0.95 defective vs t^+0.55 fixed, across a 0.85 threshold — which the defect *passed*
+> on magnitude while failing on trend. That check was calibrated on a configuration this IC no
+> longer produces and has been removed pending recalibration. It cannot be delegated:
+> `test/binary`'s pair shares a timebin so the prediction never fires there, and `test/fewbody`'s
+> 10% ceiling passes fixed and unfixed code alike. The evidence for the fix lives off-suite — the
+> fewbody per-problem medians (2.09×/2.44×), the production seed4 A/B (22× leak suppression), and
+> the M2e3 survey. Restoring an in-suite guard means recalibrating the drift-exponent check on
+> this configuration.
 
 An integration-order sweep was also removed. Its KDK control measured leapfrog converging at
 dt^3.4 — above leapfrog's 2nd-order ceiling, therefore impossible — so the metric was not

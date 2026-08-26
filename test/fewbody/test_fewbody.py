@@ -91,10 +91,11 @@ OMP_THREADS = 0
 PROBLEM_TIMEOUT_S = float(os.environ.get("FEWBODY_PROBLEM_TIMEOUT", "1800"))
 
 # 10%. Measured worst-case |dE/E| across all 48 problems is 0.034 with the source-prediction
-# fix and 0.038 without it, so at this ceiling BOTH pass everything: the threshold no longer
-# discriminates between fixed and unfixed code. What still discriminates is the per-problem
-# median, which improves 2.09x (tree) and 2.44x (direct_gravity) -- compare against a stored
-# baseline rather than reading the pass/fail.
+# fix and 0.038 without it, so at this ceiling BOTH pass everything: this test does NOT
+# discriminate between fixed and unfixed code, it bounds gross breakage only. The quantity that
+# did discriminate is the per-problem MEDIAN, which improved 2.09x (tree) and 2.44x
+# (direct_gravity) with the fix -- but no stored-baseline comparison is implemented here, so that
+# lives in the recorded measurements, not in an assertion.
 #
 # The count was never a good assertion anyway: it is a threshold on chaotic outcomes, and moved
 # 3/48 -> 1/48 between two builds differing in no relevant physics.

@@ -81,14 +81,12 @@ void star_direct_gravity_build_table(void)
          * buffer is touched -- P[i] is untouched, so the KDK path is unaffected. Active stars
          * keep their live state: it is already correct, and at HermiteOnlyFlag==1 their Old* are
          * stale because find_timesteps has already advanced Ti_begstep. */
-#ifndef DISABLE_HERMITE_SOURCE_PREDICTION
         if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
         {
             double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
             sendbuf[k].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;
             sendbuf[k].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/2)) * hD;
         }
-#endif /* DISABLE_HERMITE_SOURCE_PREDICTION */
 #endif
         sendbuf[k].Mass = P[i].Mass;
         sendbuf[k].Soft = ForceSoftening_KernelRadius(i);

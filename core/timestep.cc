@@ -430,19 +430,21 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
-/* Margin the 2nd-order (KDK) calibration carries on the sink gravity timestep, shared by both
- * criteria below. Each is of the form C*sqrt(eta)/omega -- the tidal one with
- * omega^2 = ||T||_F/sqrt(6) = G*m_companion/r^3, the 2-body one with
- * omega = 1/harmonic(t_approach, t_freefall) -- and a 4th-order Hermite step does not need the
- * margin, so both divide it out together.
+/* Safety margin on the sink 2-body timestep, and the common factor Hermite-integrated sinks
+ * divide back out of BOTH gravity criteria below.
  *
- * Both must use the same value, or the criteria are not comparable. omega_tidal <= omega_2body
- * identically (m_companion <= M_total, and t_ff >= the harmonic mean), so with a common
- * normalization the SYMMETRIC 2-body criterion is the binding one for both members of a bound
- * pair. The tidal criterion keys on the COMPANION's mass and so differs between the members by
- * sqrt(m1/m2); if it alone were left at the 2nd-order value it would undercut the 2-body
- * criterion and set a shorter step for the lighter member, placing the two on different
- * timebins. */
+ * The two applications are not symmetric, deliberately. dt_2body multiplies the 0.3 in and,
+ * for Hermite sinks, divides it out again -- net 1.0, its bare value. dt_tidal never carried
+ * the factor, so dividing it out lengthens dt_tidal to 3.33x its bare value for Hermite sinks.
+ * That is the point: omega_tidal <= omega_2body identically (m_companion <= M_total, and t_ff
+ * >= the harmonic mean), so once dt_tidal sits above dt_2body the SYMMETRIC 2-body criterion
+ * binds for both members of a bound pair. The tidal criterion keys on the COMPANION's mass and
+ * differs between unequal members by sqrt(m1/m2); left at its bare value it undercuts the
+ * 2-body criterion for the lighter member and splits the pair across timebins -- the asymmetry
+ * a production momentum-conservation violation was traced to. Relaxing dt_tidal 2x was measured
+ * to close that leak; 3.33x is what makes the ordering exact rather than empirical, and leans
+ * on the 4th-order integrator tolerating a longer step than the 2nd-order calibration these
+ * coefficients were tuned for. */
 #define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
 
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion

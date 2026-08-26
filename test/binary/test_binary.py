@@ -328,9 +328,10 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     assert order >= MIN_ENERGY_ORDER, (
         f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
         f"eta^{MIN_ENERGY_ORDER} floor. The integrator has lost its order even though the "
-        f"magnitudes at the operating point are still within tolerance -- check that the "
-        f"Hermite source prediction (gravity/forcetree.cc, gravity/star_direct_gravity.cc) "
-        f"and the shared timestep normalization (core/timestep.cc) are both in place.")
+        f"magnitudes at the operating point are still within tolerance. The source prediction "
+        f"cannot be the cause here -- this pair shares a timebin, so it never fires (see the "
+        f"module docstring) -- so check the shared timestep normalization (core/timestep.cc) "
+        f"and the Hermite predictor/corrector machinery itself (core/kicks.cc).")
     return np.asarray(etas), np.asarray(errs), order, series
 
 
