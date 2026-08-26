@@ -543,67 +543,9 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
 
 
 #ifdef DIVBCLEANING_DEDNER
-double INLINE_FUNC Get_Gas_PhiField(int i_particle_id)
-{
-    //return CellP[i_particle_id].PhiPred * CellP[i_particle_id].Density / P[i_particle_id].Mass; // volumetric phy-flux (requires extra term compared to mass-based flux)
-    return CellP[i_particle_id].PhiPred / P[i_particle_id].Mass; // mass-based phi-flux
-}
+double INLINE_FUNC Get_Gas_PhiField(int i_particle_id) { return Get_Gas_PhiField_P(i_particle_id, P, CellP); }
 
-double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
-{
-    /* this timescale should always be returned as a -physical- time */
-#ifdef HYDRO_SPH
-    /* PFH: add simple damping (-phi/tau) term */
-    double damping_tinv = 0.5 * All.DivBcleanParabolicSigma * (CellP[i_particle_id].MaxSignalVel / (All.cf_atime*P[i_particle_id].Get_Particle_Size()));
-#else
-    double damping_tinv;
-#ifdef SELFGRAVITY_OFF
-    damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveSpeed / (All.cf_atime*P[i_particle_id].Get_Particle_Size()); // fastest wavespeed has units of [vphys]
-    //double damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveDecay * All.cf_a2inv; // no improvement over fastestwavespeed; decay has units [vphys/rphys]
-#else
-    // only see a small performance drop from fastestwavespeed above to maxsignalvel below, despite the fact that below is purely local (so allows more flexible adapting to high dynamic range)
-    damping_tinv = 0.0;
-    
-    if(P[i_particle_id].KernelRadius > 0)
-    {
-        double h_eff = P[i_particle_id].Get_Particle_Size();
-        double vsig2 = 0.5 * fabs(CellP[i_particle_id].MaxSignalVel);
-        double phi_B_eff = 0.0;
-        if(vsig2 > 0) {phi_B_eff = Get_Gas_PhiField(i_particle_id) / (All.cf_atime * vsig2);}
-        double vsig1 = 0.0;
-        if(CellP[i_particle_id].Density > 0)
-        {
-            vsig1 = sqrt( CellP[i_particle_id].effective_soundspeed()*CellP[i_particle_id].effective_soundspeed() +
-                 (1. / All.cf_atime) *
-                 (CellP[i_particle_id].Bfield().norm_sq() +
-                  phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );
-        }
-        vsig1 = DMAX(vsig1, vsig2);
-        vsig2 = 0.0;
-        vsig2 = CellP[i_particle_id].Gradients.Velocity.frobenius_norm();
-        vsig2 = 3.0 * h_eff * DMAX( vsig2, fabs(P[i_particle_id].Particle_DivVel)) / All.cf_atime;
-        double prefac_fastest = 0.1;
-        double prefac_tinv = 0.5;
-        double area_0 = 0.1;
-#ifdef MHD_CONSTRAINED_GRADIENT
-        prefac_fastest = 1.0;
-        prefac_tinv = 2.0;
-        area_0 = 0.05;
-        vsig2 *= 5.0;
-        if(CellP[i_particle_id].FlagForConstrainedGradients <= 0) prefac_tinv *= 30;
-#endif
-        prefac_tinv *= sqrt(1. + CellP[i_particle_id].ConditionNumber/100.);
-        double area = fabs(CellP[i_particle_id].Face_Area[0]) + fabs(CellP[i_particle_id].Face_Area[1]) + fabs(CellP[i_particle_id].Face_Area[2]);
-        area /= Get_Particle_Expected_Area(P[i_particle_id].KernelRadius);
-        prefac_tinv *= (1. + area/area_0)*(1. + area/area_0);
-        
-        double vsig_max = DMAX( DMAX(vsig1,vsig2) , prefac_fastest * All.FastestWaveSpeed );
-        damping_tinv = prefac_tinv * All.DivBcleanParabolicSigma * (vsig_max / (All.cf_atime * h_eff));
-    }
-#endif
-#endif
-    return damping_tinv;
-}
+double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id) { return Get_Gas_PhiField_DampingTimeInv_P(i_particle_id, P, CellP); }
 
 #endif // dedner
 #endif // magnetic
@@ -621,55 +563,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 /* time-step the positions of the mesh points. this is trivial except if we are evolving the mesh points in non-cartesian coordinates
     (cylindrical or spherical) based on assumed fixed initial velocities (if HYDRO_FIX_MESH_MOTION=2 or 3),
     in which case we have to convert back and forth. */
-void advect_mesh_point(int i, double dt)
-{
-#if (HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3) // cylindrical or spherical coordinates
-    // define the location relative to the origin (needed in these coordinate systems)
-    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // assume center is at coordinate origin
-#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // unless we use a special anchor, to define the center
-    dp_offset = P[i].Pos - P[i].Min_xyz_to_Sink;
-#elif defined(BOX_PERIODIC) // or if periodic, the box mid-point is instead the center
-#if (NUMDIMS==1)
-    dp_offset[0] = -boxHalf_X;
-#elif (NUMDIMS==2)
-    dp_offset[0] = -boxHalf_X; dp_offset[1] = -boxHalf_Y;
-#else
-    dp_offset = Vec3<double>{-boxHalf_X, -boxHalf_Y, -boxHalf_Z};
-#endif
-#endif
-    dp += dp_offset;
-#if (HYDRO_FIX_MESH_MOTION == 2) // cylindrical
-    double r2=dp[0]*dp[0]+dp[1]*dp[1], r=sqrt(r2), c0=dp[0]/r, s0=dp[1]/r, z=dp[2]; // get r, sin/cos theta, z
-    double vr=c0*CellP[i].ParticleVel[0] + s0*CellP[i].ParticleVel[1], vt=s0*CellP[i].ParticleVel[0] - c0*CellP[i].ParticleVel[1], vz=CellP[i].ParticleVel[2]; // velocities in these directions
-    double r_n=r+vr*dt, z_n=z+vz*dt, c_n=c0-s0*(vt/r)*dt, s_n=s0+c0*(vt/r)*dt; // updated cylindrical values
-    dp[0] = c_n*r_n; dp[1] = s_n*r_n; dp[2] = z_n; // back to coordinates
-    CellP[i].ParticleVel[0] = c_n*vr + s_n*vt; // re-set velocities in these coordinates //
-    CellP[i].ParticleVel[1] = s_n*vr - c_n*vt;
-    CellP[i].ParticleVel[2] = vz;
-    return;
-#elif (HYDRO_FIX_MESH_MOTION == 3) // spherical
-    Vec3<double> v = CellP[i].ParticleVel; double r2=dp.norm_sq(); // assume center is at coordinate origin
-    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=dot(dp,v)/r; // updated r is easy
-    double ct = 1./sqrt(1.+dp[1]*dp[1]/(dp[0]*dp[0])), st = (dp[1]/dp[0])*ct; // cos and sin theta
-    double cp = sqrt(1.-dp[2]*dp[2]/(r*r)), sp = dp[2]/r; // cos and sin phi
-    double t_dot = (v[0]*dp[1]-v[1]*dp[0])/(rxy*rxy), p_dot = (dp[2]*(dp[0]*v[0]+dp[1]*v[1])-rxy*rxy*v[2])/(r*r*rxy); // theta, phi derivatives
-    double r_n=r+vr*dt, ct_n=ct-st*t_dot, st_n=st+ct*t_dot, cp_n=cp-sp*t_dot, sp_n=sp+cp*t_dot; // updated angles and positions in spherical
-    dp[0] = r_n * ct_n * cp_n; dp[1] = r_n * st_n * cp_n; dp[2] = r_n * sp_n; // back to coordinates
-    rxy = sqrt(dp[0]*dp[0] + dp[1]*dp[1]); // updated rxy
-    CellP[i].ParticleVel[0] = (dp[0]/r_n) * vr + dp[1] * t_dot + dp[0]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[1] = (dp[1]/r_n) * vr - dp[0] * t_dot + dp[1]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[2] = (dp[2]/r_n) * vr - rxy * p_dot; // back to cartesian velocities
-    return;
-#endif
-    // ok now have the updated x/y/z positions relative to the origin, convert these back to the simulation coordinate frame
-    P[i].Pos = dp - dp_offset;
-#endif // ok done with cylindrical/spherical coordinates
-    
-    
-    // ok anything else ('normal' coordinates), does down here
-    P[i].Pos += CellP[i].ParticleVel * dt; // for standard grid velocities, this is trivial //
-    return;
-}
+void advect_mesh_point(int i, double dt) { advect_mesh_point_P(i, dt, P, CellP); }
 
 
 

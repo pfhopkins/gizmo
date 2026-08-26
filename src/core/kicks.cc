@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "predict_functions.h" /* apply_special_boundary_conditions_P */
 #include "../system/gpu_particles_arena.h"
 #ifdef CBE_INTEGRATOR
 #include "../sidm/sidm_gpu_decls.h"
@@ -626,48 +627,4 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 
     
     
-void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
-{
-#if BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE
-    double box_upper[3]; int j;
-    box_upper[0]=boxSize_X; box_upper[1]=boxSize_Y; box_upper[2]=boxSize_Z;
-    for(j=0; j<3; j++)
-    {
-        if(P[i].Pos[j] <= 0)
-        {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == -1)
-            {
-                if(P[i].Vel[j]<0) {P[i].Vel[j]=-P[i].Vel[j]; if(P[i].Type==0) {CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;} if(mode==1) {P[i].dp[j]+=2*P[i].Vel[j]*mass_for_dp;}}
-                P[i].Pos[j]=DMAX((0.+((double)P[i].ID)*2.e-8)*box_upper[j], 0.1*P[i].Pos[j]); // old  was 1e-9, safer on some problems, but can artificially lead to 'trapping' in some low-res tests
-#ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
-                P[i].Pos[j]+=3.e-3*boxSize_X; P[i].Vel[j] += 0.1; /* special because of our wierd boundary condition for this problem, sorry to have so many hacks for this! */
-#endif
-#ifdef RT_EVOLVE_FLUX
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(CellP[i].Rad_Flux[kf][j]<0) {CellP[i].Rad_Flux[kf][j]=-CellP[i].Rad_Flux[kf][j]; CellP[i].Rad_Flux_Pred[kf][j]=CellP[i].Rad_Flux[kf][j];}}}
-#endif
-
-#ifdef COSMIC_RAY_FLUID
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]<0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
-#endif
-            }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
-        }
-        else if (P[i].Pos[j] >= box_upper[j])
-        {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == 1)
-            {
-                if(P[i].Vel[j]>0) {P[i].Vel[j]=-P[i].Vel[j]; if(P[i].Type==0) {CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;} if(mode==1) {P[i].dp[j]+=2*P[i].Vel[j]*mass_for_dp;}}
-                P[i].Pos[j]=box_upper[j]*(1.-((double)P[i].ID)*2.e-8);
-#ifdef RT_EVOLVE_FLUX
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(CellP[i].Rad_Flux[kf][j]>0) {CellP[i].Rad_Flux[kf][j]=-CellP[i].Rad_Flux[kf][j]; CellP[i].Rad_Flux_Pred[kf][j]=CellP[i].Rad_Flux[kf][j];}}}
-#endif
-#ifdef COSMIC_RAY_FLUID
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]>0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
-#endif
-            }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
-        }
-    }
-#endif
-    return;
-}
+void apply_special_boundary_conditions(int i, double mass_for_dp, int mode) { apply_special_boundary_conditions_P(i, mass_for_dp, mode, P, CellP); }

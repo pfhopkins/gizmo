@@ -128,6 +128,57 @@ double ags_return_minsoft_P(int i, const struct particle_data *P_arr)
     return minsoft;
 }
 
+/* Fuzzy-DM drift/kick. Lives here rather than in sidm/dm_fuzzy_loop.h because that
+ * header includes <Kokkos_Core.hpp> unconditionally and sidm/dm_fuzzy.cc is a host TU;
+ * pulling Kokkos into a host TU breaks the CUDA build while compiling fine on the
+ * OpenMP backend. Everything below touches only this particle's AGS_* fields.
+ * DM_FUZZY implies AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE, so the enclosing gate holds. */
+#ifdef DM_FUZZY
+KOKKOS_INLINE_FUNCTION
+void do_dm_fuzzy_drift_kick_P(int i, double dt, int mode, struct particle_data *pp)
+{
+    if(mode==0)
+    {
+        // calculate various energies: quantum potential QP0, 'stored' numerical pressure NQ0, kinetic energy KE0
+        double dNQ=pp[i].AGS_Dt_Numerical_QuantumPotential*dt, NQ0=pp[i].AGS_Numerical_QuantumPotential, NQ1=NQ0+dNQ, KE0=0.5*pp[i].Mass*pp[i].Vel.norm_sq()*All.cf_a2inv;
+        double f00 = 0.5 * All.ScalarField_hbar_over_mass; // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
+        double d2rho = pp[i].AGS_Gradients2_Density[0][0] + pp[i].AGS_Gradients2_Density[1][1] + pp[i].AGS_Gradients2_Density[2][2]; // laplacian
+        double drho2 = pp[i].AGS_Gradients_Density.norm_sq();
+        double QP0 = (f00*f00 / pp[i].AGS_Density) * (d2rho - 0.5*drho2/pp[i].AGS_Density); // quantum 'potential'
+        NQ1 = DMAX(0,DMAX(NQ1,0.1*NQ0)); NQ1 = DMIN(NQ1,1.1*DMAX(DMAX(KE0+NQ0,fabs(QP0)),KE0+NQ0+QP0)); // limit kick to not produce unphysical energy over-or-under-shoot
+        pp[i].AGS_Numerical_QuantumPotential = NQ1;
+    }
+
+#if (DM_FUZZY > 0) /* if using direct-wavefunction integration methods */
+    double vol_inv = pp[i].AGS_Density / pp[i].Mass;
+    if(mode == 0)
+    {
+        //double psimag_mass_old = (pp[i].AGS_Psi_Re*pp[i].AGS_Psi_Re + pp[i].AGS_Psi_Im*pp[i].AGS_Psi_Im) * vol_inv;
+        pp[i].AGS_Psi_Re += pp[i].AGS_Dt_Psi_Re * dt;
+        pp[i].AGS_Psi_Im += pp[i].AGS_Dt_Psi_Im * dt;
+        double mass_old = pp[i].Mass, dmass = pp[i].AGS_Dt_Psi_Mass * dt, mass_new = mass_old + dmass;
+        dmass = DMIN(DMAX(dmass,-0.5*mass_old),0.5*mass_old);
+        mass_new = mass_old + dmass;
+        double psimag_mass_new = (pp[i].AGS_Psi_Re*pp[i].AGS_Psi_Re + pp[i].AGS_Psi_Im*pp[i].AGS_Psi_Im) * vol_inv;
+#if (DM_FUZZY == 2)
+        mass_new = psimag_mass_new; /* uses direct [NON-MASS-CONSERVING] integration of psi field */
+#endif
+        double psi_corr_fac = sqrt(mass_new / (MIN_REAL_NUMBER + psimag_mass_new));
+        pp[i].Mass = mass_new; pp[i].AGS_Psi_Re *= psi_corr_fac; pp[i].AGS_Psi_Im *= psi_corr_fac;
+
+        pp[i].AGS_Density = pp[i].Mass * vol_inv;
+        pp[i].AGS_Psi_Re_Pred = pp[i].AGS_Psi_Re;
+        pp[i].AGS_Psi_Im_Pred = pp[i].AGS_Psi_Im;
+    } else {
+        /* in drift mode, AGS_Density should automatically be drifted already by the predictor step, but not the other quantities here */
+        pp[i].AGS_Psi_Re_Pred += pp[i].AGS_Dt_Psi_Re * dt;
+        pp[i].AGS_Psi_Im_Pred += pp[i].AGS_Dt_Psi_Im * dt;
+        pp[i].AGS_Density *= 1. + DMIN(DMAX(pp[i].AGS_Dt_Psi_Mass*dt/pp[i].Mass,-0.5),0.5);
+    }
+#endif
+}
+#endif /* DM_FUZZY */
+
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
 
 
