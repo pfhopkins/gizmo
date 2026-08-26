@@ -740,7 +740,13 @@ void sink_final_operations(void)
         if(update_sink_moments)
         {
 #ifdef HERMITE_INTEGRATION
-            P[n].AccretedThisTimestep = 1;
+            P[n].AccretedThisTimestep = 1;  /* recorded for diagnostics; no longer gates eligibility */
+            /* Accretion moves Pos and Vel discontinuously below (SINK_FOLLOW_ACCRETED_MOMENTUM /
+               _COM). OldPos/OldVel are the step-start base that do_hermite_prediction() and
+               do_hermite_correction() integrate from, and they are written at the START of the
+               step (do_the_kick, mode 0) -- before sink_accretion() runs. Capture the pre-
+               accretion state so the base can be shifted by the same delta below. */
+            Vec3<double> hermite_pre_vel = P[n].Vel, hermite_pre_pos = P[n].Pos;
 #endif
             double m_new; m_new = P[n].Mass + SinkTempInfo[i].accreted_Mass;
 #if (SINK_FOLLOW_ACCRETED_ANGMOM == 1) /* in this case we are only counting this if its coming from BH particles */
@@ -775,6 +781,15 @@ void sink_final_operations(void)
 #endif
 #ifdef RT_REINJECT_ACCRETED_PHOTONS
 	    P[n].Sink_accreted_photon_energy += SinkTempInfo[i].accreted_photon_energy;
+#endif
+#ifdef HERMITE_INTEGRATION
+            /* Keep the carry state on the post-accretion trajectory. Without this the prediction
+               that runs later in the same step recomputes Pos/Vel from the stale base and the
+               accretion kick is silently discarded -- measured on test/shu1977 as a 20x COM-drift
+               regression (1.8e-3 vs 8.4e-5) when accreting sinks were simply left Hermite-eligible
+               without this shift. */
+            P[n].OldVel += P[n].Vel - hermite_pre_vel;
+            P[n].OldPos += P[n].Pos - hermite_pre_pos;
 #endif
         } // if(masses > 0) check
 #ifdef HERMITE_INTEGRATION
