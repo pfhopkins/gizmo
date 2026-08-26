@@ -177,8 +177,13 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
 
 void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
-double return_user_desired_target_density(int i);
-double return_user_desired_target_pressure(int i);
+#ifdef HYDRO_GENERATE_TARGET_MESH
+/* Declared under the same flag the definitions in eos/eos_functions.h carry: they
+   used to be defined unconditionally in eos.cc, so an unguarded declaration would
+   now name a symbol that does not exist in builds without the flag. */
+GIZMO_GPU_FUNCTION double return_user_desired_target_density(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_user_desired_target_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
 #ifdef EOS_TILLOTSON
 void tillotson_eos_init(void);
 #endif

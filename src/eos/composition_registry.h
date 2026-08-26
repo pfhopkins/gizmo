@@ -66,7 +66,7 @@ enum {
    real cell carries, so it never fires and every valid id reaches a solid branch.
    Under EOS_TYPES_DEFAULTGAS_AND_SOLIDS it is 0, so CompositionType==0 cells use
    the standard gas fluid. */
-static inline enum EosBranch eos_branch_of(int composition_type)
+GIZMO_GPU_FUNCTION static inline enum EosBranch eos_branch_of(int composition_type)
 {
     if(composition_type == MATERIAL_TILLOTSON_UNUSED) {return EOS_BRANCH_NONE;}
 #if defined(EOS_TILLOTSON) && defined(EOS_ANEOS)
@@ -82,12 +82,12 @@ static inline enum EosBranch eos_branch_of(int composition_type)
 #endif
 }
 
-static inline int tillotson_subindex(int composition_type)
+GIZMO_GPU_FUNCTION static inline int tillotson_subindex(int composition_type)
 {
     return composition_type;
 }
 
-static inline int aneos_subindex(int composition_type)
+GIZMO_GPU_FUNCTION static inline int aneos_subindex(int composition_type)
 {
 #if defined(EOS_TILLOTSON) && defined(EOS_ANEOS)
     return composition_type - N_TILLOTSON_MATERIALS;

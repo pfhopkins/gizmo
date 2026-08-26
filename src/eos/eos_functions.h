@@ -355,6 +355,44 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 }
 
 
+#ifdef HYDRO_GENERATE_TARGET_MESH
+/* ==========================================================================
+ * USER EDIT POINT for HYDRO_GENERATE_TARGET_MESH.  EDIT THESE TWO BODIES.
+ *
+ * This pair of functions gives the 'target' density and pressure the mesh is
+ * driven towards, as a function of particle properties (most commonly
+ * position).  Use it to build ICs: the code moves mesh and mass towards the
+ * profile you return here.
+ *
+ * They live in this header rather than in eos.cc because set_eos_pressure_impl
+ * calls them from the device pass; eos.cc still emits the host symbols through
+ * its usual #undef KOKKOS_INLINE_FUNCTION block, so host callers are unchanged.
+ * Write ordinary arithmetic on pp[i] / cell[i] and All.*; anything calling a
+ * host-only library here would put that library on the device path.
+ * ========================================================================== */
+KOKKOS_INLINE_FUNCTION double return_user_desired_target_density(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    return 1; // uniform density everywhere -- will try to generate a glass //
+    /*
+     // this example would initialize a constant-density (density=rho_0) spherical cloud (radius=r_cloud) with a smooth density 'edge' (width=interp_width) surrounded by an ambient medium of density =rho_0/rho_contrast //
+     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
+     double rho_0=1, r_cloud=0.5*boxHalf_X, interp_width=0.1*r_cloud, rho_contrast=10.;
+     return rho_0 * ((1.-1./rho_contrast)*0.5*erfc(2.*(r-r_cloud)/interp_width) + 1./rho_contrast);
+     */
+}
+KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    return 1; // uniform pressure everywhere -- will try to generate a constant-pressure medium //
+    /*
+     // this example would initialize a radial pressure gradient corresponding to a self-gravitating, spherically-symmetric, infinite power-law
+     //   density profile rho ~ r^(-b) -- note to do this right, you need to actually set that power-law for density, too, in 'return_user_desired_target_density' above
+     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
+     double b = 2.; return 2.*M_PI/fabs((3.-b)*(1.-b)) * pow(return_user_desired_target_density(i, pp, cell),2) * r*r;
+     */
+}
+#endif
+
+
 /* ==========================================================================
  * set_eos_pressure_impl — compute pressure and soundspeed from EOS.
  *
@@ -368,14 +406,20 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  * find_abundances_and_rates that override cooling.cc's inline versions at link
  * time, producing wrong results on CUDA (confirmed by bisection).
  *
- * Branches that call host-only routines (eos_compute, aneos_compute,
- * calculate_tillotson_eos, return_user_desired_target_pressure/density) are
- * guarded by !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__) so the
- * device compilation pass instantiates a no-op for those branches.  The
- * POST_COOLING_DEVICE_EOS_SUPPORTED gate in precompiler_logic.h prevents the
- * device kernel from CALLING set_eos_pressure_impl in builds where any of
- * those branches are active — so the no-op device path is never reached on
- * those builds and the host wrapper remains the single source of truth.
+ * Branches that call host-only TABLE LOOKUPS (eos_compute under EOS_HELMHOLTZ,
+ * aneos_compute under EOS_ANEOS) are guarded by !defined(__CUDA_ARCH__) &&
+ * !defined(__HIP_DEVICE_COMPILE__) so the device compilation pass instantiates a
+ * no-op for them.  The POST_COOLING_DEVICE_EOS_SUPPORTED gate in
+ * precompiler_logic.h prevents the device kernel from CALLING
+ * set_eos_pressure_impl in builds where those two are active — so the no-op
+ * device path is never reached and the host wrapper stays the single source of
+ * truth.  Those two are the only names left in that gate; their tables gain
+ * device mirrors later.
+ *
+ * The Tillotson case and the HYDRO_GENERATE_TARGET_MESH branch are NOT in that
+ * set any more: calculate_tillotson_eos is GPU-marked and the two
+ * return_user_desired_target_* user-edit bodies are inline in this header, so
+ * both run on either pass and their configs use the device EOS path.
  * ========================================================================== */
 
 /* set_eos_pressure_impl below calls Get_Gas_CosmicRayPressure under
@@ -402,6 +446,14 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #ifdef HYDRO_MULTIFLUID_DM
 #include "../declarations/multifluid_helpers.h"
 #include "../sidm/dm_fluid_functions.h"
+#endif
+
+/* Solid-EOS dispatch: eos_branch_of keys the switch below on CompositionType and
+   is pure arithmetic, so it is GPU-marked and the switch runs on either pass.
+   The functions here are `static inline`, i.e. internal linkage, so eos.cc's
+   non-inline re-include of this header cannot duplicate a strong symbol. */
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+#include "composition_registry.h"
 #endif
 
 KOKKOS_INLINE_FUNCTION
@@ -543,7 +595,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 
 #if defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
     /* Host-only EOS branches: call into table-lookup routines (eos_compute,
-       aneos_compute) and the Tillotson inline that is not GPU-marked.  These
+       aneos_compute), which stay on the host until their tables gain device
+       mirrors.  Tillotson is NO LONGER here --
+       calculate_tillotson_eos is GPU-marked and its case runs on either pass.  These
        are compiled IN only when eos.cc declares EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
        before including this header — keeping cooling.cc and any other device-side
        includer free of dependency on eos_compute/aneos_compute/eos_branch_of
@@ -564,6 +618,7 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     soundspeed = eos_out.csound;
     cell[i].Temperature = eos_out.temp;
 #endif
+#endif /* host-only: the EOS_HELMHOLTZ table lookup */
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
     /* Per-particle solid-EOS dispatch keyed on CompositionType. With a
@@ -578,7 +633,11 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             soundspeed = cell[i].SoundSpeed;
             break;
 #endif
-#ifdef EOS_ANEOS
+#if defined(EOS_ANEOS) && defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+        /* Still host-only: aneos_compute is a table lookup and needs a device
+           table mirror before it can move.
+           EOS_ANEOS therefore remains in the POST_COOLING_DEVICE_EOS_SUPPORTED
+           exclusion list, so the device kernel never reaches this branch. */
         case EOS_BRANCH_ANEOS: {
             int aneos_mat = aneos_subindex(cell[i].CompositionType);
             double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
@@ -600,7 +659,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             break;
     }
 #endif
-#endif /* !device for EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS */
 
 #ifdef EOS_MHD_CORE_BAROTROPIC
     press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.));
@@ -677,14 +735,13 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(xJeans>press) press=xJeans;
 #endif
 
-#if defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
 #if defined(HYDRO_GENERATE_TARGET_MESH)
-    /* Host-only: return_user_desired_target_pressure/density are not device-callable
-       and live in eos.cc.  Only compiled in eos.cc's TU per the gate above. */
-    press = return_user_desired_target_pressure(i) * (cell[i].Density / return_user_desired_target_density(i));
-    cell[i].InternalEnergy = cell[i].InternalEnergyPred = return_user_desired_target_pressure(i) / ((gamma_eos_index-1) * cell[i].Density);
+    /* Device-callable: the two user-edit bodies are KOKKOS_INLINE_FUNCTION earlier in
+       this header, so this branch runs on either pass and no longer needs the
+       host-only guard. */
+    press = return_user_desired_target_pressure(i, pp, cell) * (cell[i].Density / return_user_desired_target_density(i, pp, cell));
+    cell[i].InternalEnergy = cell[i].InternalEnergyPred = return_user_desired_target_pressure(i, pp, cell) / ((gamma_eos_index-1) * cell[i].Density);
 #endif
-#endif /* host-only branch for HYDRO_GENERATE_TARGET_MESH */
 
 #ifdef EOS_GENERAL
     if(soundspeed == 0) {double rho_for_soundspeed = cell[i].density_for_energy(); /* every pressure term assembled above scales with the density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */

@@ -24,30 +24,12 @@
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-/*! this pair of functions: 'return_user_desired_target_density' and 'return_user_desired_target_pressure' should be used
- together with 'HYDRO_GENERATE_TARGET_MESH'. This will attempt to move the mesh and mass
- towards the 'target' pressure profile. Use this to build your ICs.
- The 'desired' pressure and density as a function of particle properties (most commonly, position) should be provided in the function below */
-double return_user_desired_target_density(int i)
-{
-    return 1; // uniform density everywhere -- will try to generate a glass //
-    /*
-     // this example would initialize a constant-density (density=rho_0) spherical cloud (radius=r_cloud) with a smooth density 'edge' (width=interp_width) surrounded by an ambient medium of density =rho_0/rho_contrast //
-     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
-     double rho_0=1, r_cloud=0.5*boxHalf_X, interp_width=0.1*r_cloud, rho_contrast=10.;
-     return rho_0 * ((1.-1./rho_contrast)*0.5*erfc(2.*(r-r_cloud)/interp_width) + 1./rho_contrast);
-     */
-}
-double return_user_desired_target_pressure(int i)
-{
-    return 1; // uniform pressure everywhere -- will try to generate a constant-pressure medium //
-    /*
-     // this example would initialize a radial pressure gradient corresponding to a self-gravitating, spherically-symmetric, infinite power-law
-     //   density profile rho ~ r^(-b) -- note to do this right, you need to actually set that power-law for density, too, in 'return_user_desired_target_density' above
-     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
-     double b = 2.; return 2.*M_PI/fabs((3.-b)*(1.-b)) * pow(return_user_desired_target_density(i),2) * r*r;
-     */
-}
+/*! 'return_user_desired_target_density' and 'return_user_desired_target_pressure',
+ used together with 'HYDRO_GENERATE_TARGET_MESH', are the USER EDIT POINT for the
+ target profile the mesh and mass are driven towards. Their bodies are now in
+ eos/eos_functions.h so set_eos_pressure_impl can call them from the device pass;
+ edit them there. The host symbols are still emitted from this file, by the
+ #undef KOKKOS_INLINE_FUNCTION block below. */
 
 /* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
 #ifdef KOKKOS_ENABLE_OPENMPTARGET
@@ -90,11 +72,10 @@ double return_user_desired_target_pressure(int i)
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h.
-   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES turns on the
-   EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/HYDRO_GENERATE_TARGET_MESH branches
-   inside set_eos_pressure_impl — those branches call host-only routines
-   (eos_compute, aneos_compute, calculate_tillotson_eos,
-   return_user_desired_target_pressure/density) and must not be parsed by
+   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES turns on the EOS_HELMHOLTZ and
+   EOS_ANEOS branches inside set_eos_pressure_impl — those branches call host-only routines
+   (eos_compute under EOS_HELMHOLTZ, aneos_compute under EOS_ANEOS; Tillotson and
+   the target-mesh helpers are device-callable now) and must not be parsed by
    device-side includers (cooling.cc).  Only this TU enables them so the
    host external symbol behaves exactly as the pre-refactor function. */
 #undef KOKKOS_INLINE_FUNCTION

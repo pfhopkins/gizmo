@@ -649,7 +649,7 @@ extern struct gas_cell_data
     }
 
 #ifdef EOS_TILLOTSON
-    inline double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
+    GIZMO_GPU_FUNCTION double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
         int type = CompositionType;
         double a=All.Tillotson_EOS_params[type][0], b=All.Tillotson_EOS_params[type][1],
         u0=All.Tillotson_EOS_params[type][2], rho0=All.Tillotson_EOS_params[type][3],
