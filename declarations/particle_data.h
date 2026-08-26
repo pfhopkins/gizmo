@@ -35,7 +35,6 @@ extern ALIGN(32) struct particle_data
     Vec3<MyFloat> OldPos;
     Vec3<MyFloat> OldVel;
     Vec3<MyFloat> OldJerk;
-    short int AccretedThisTimestep;     /*!< set when a sink accreted this step. Diagnostic only: it no longer selects KDK-vs-Hermite (see eligible_for_hermite), because that decision was per-particle and split hard pairs across schemes */
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat TreeMass;  /*!< Mass seen by the particle as it sums up the gravitational force from the tree - should be equal to total mass, a useful debug diagnostic  */

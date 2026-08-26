@@ -740,7 +740,6 @@ void sink_final_operations(void)
         if(update_sink_moments)
         {
 #ifdef HERMITE_INTEGRATION
-            P[n].AccretedThisTimestep = 1;  /* recorded for diagnostics; no longer gates eligibility */
             /* Accretion moves Pos and Vel discontinuously below (SINK_FOLLOW_ACCRETED_MOMENTUM /
                _COM). OldPos/OldVel are the step-start base that do_hermite_prediction() and
                do_hermite_correction() integrate from, and they are written at the START of the
@@ -792,9 +791,6 @@ void sink_final_operations(void)
             P[n].OldPos += P[n].Pos - hermite_pre_pos;
 #endif
         } // if(masses > 0) check
-#ifdef HERMITE_INTEGRATION
-        else { P[n].AccretedThisTimestep = 0; }
-#endif
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
         if(All.ComovingIntegrationOn) {P[n].SinkRadius = DMIN(P[n].SinkRadius, SinkParticle_GravityKernelRadius);} // update sink radius if simulation has it dynamically evolving.
 #endif
