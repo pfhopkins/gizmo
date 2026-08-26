@@ -1,0 +1,57 @@
+# Compile GIZMO under a curated set of test configs on every PR. CI cannot RUN the suite (see
+# pytest.yml), but it CAN prove the #ifdef combinatorics still compile -- the failure class that
+# actually recurs here: a function defined inside one flag's #ifdef and called outside it, or a
+# variant config nobody has built locally in months. Each matrix entry is one flag family; the
+# two "extra" entries are variant combos that broke before (the Hermite-disabled build path, and
+# the direct star-star gravity pass).
+#
+# The FULL 63-config sweep lives in build-sweep.yml (manual + weekly): at ~6 min a config it is
+# too expensive per-push, and this subset spans the flag space that matters.
+
+name: build
+
+on:
+  pull_request:
+    branches: ["starforge_dev"]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: shu1977,             extra: "" }  # STARFORGE defaults + sink formation
+          - { test: gmc_cooling_rt,      extra: "" }  # cooling + radiative transfer
+          - { test: HII_region_subcycle, extra: "" }  # RT subcycling, no self-gravity
+          - { test: fewbody,             extra: "" }  # N-body + energy budget diagnostic
+          - { test: two_temperature,     extra: "" }  # dust two-temperature physics
+          - { test: shu_jets,            extra: "" }  # feedback via cell spawning
+          - { test: binary,              extra: "DISABLE_HERMITE_INTEGRATION" }  # Hermite compiled OUT
+          - { test: plummer_binaries,    extra: "SINGLE_STAR_DIRECT_GRAVITY" }   # direct star-star pass
+
+    name: ${{ matrix.test }}${{ matrix.extra != '' && format(' +{0}', matrix.extra) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev
+      - name: Configure
+        run: |
+          echo 'SYSTYPE="github-ubuntu"' > Makefile.systype
+          cp "test/${{ matrix.test }}/Config.sh" Config.sh
+          if [ -n "${{ matrix.extra }}" ]; then echo "${{ matrix.extra }}" >> Config.sh; fi
+          echo "=== effective Config.sh ==="; grep -vE '^\s*#|^\s*$' Config.sh
+      - name: Build
+        run: |
+          make -j4 \
+            HDF5INCL='-I/usr/include/hdf5/openmpi -DH5_USE_16_API' \
+            HDF5LIB='-L/usr/lib/x86_64-linux-gnu/hdf5/openmpi -lhdf5 -lz'
+      - name: Confirm binary
+        run: ls -la GIZMO && file GIZMO
