@@ -910,7 +910,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
         CellP[j].Sink_CR_Energy_Available_For_Injection = dEcr;     /* store energy for later injection */
 #else
-        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, CellP); /* inject directly */
+        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, P, CellP); /* inject directly */
 #endif
 #endif
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */

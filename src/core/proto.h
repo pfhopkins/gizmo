@@ -362,7 +362,7 @@ void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, cons
 /* Get_Particle_Expected_Area moved to core/predict_functions.h as
  * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 GIZMO_GPU_FUNCTION double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
-double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -377,10 +377,10 @@ GIZMO_GPU_FUNCTION double Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct g
 GIZMO_GPU_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy);
 void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
-double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
 double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);

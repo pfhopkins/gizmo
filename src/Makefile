@@ -584,7 +584,6 @@ EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
 				eos/hydrogen_molecule.o \
-				eos/cosmic_ray_fluid/cosmic_ray_alfven.o \
 				eos/cosmic_ray_fluid/cosmic_ray_utilities.o \
 				solids/elastic_physics.o \
 				solids/grain_physics.o \
