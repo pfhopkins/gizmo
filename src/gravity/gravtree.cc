@@ -13,6 +13,7 @@
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"   /* shared walk helpers; here for hermite_ghost_entry */
+#include "let_data.h"                 /* let_refresh_moments: per-step imported-moment refresh */
 #include "./analytic_gravity.h"
 
 /*! \file gravtree.c
@@ -137,11 +138,13 @@ void gravity_tree(void)
     compute_all_force_softening(0);
 
     /* construct tree if needed */
+    int tree_built_this_call = 0;
 #ifdef HERMITE_INTEGRATION
     if(!HermiteOnlyFlag)
 #endif
     if(TreeReconstructFlag)
     {
+        tree_built_this_call = 1;
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
@@ -170,6 +173,18 @@ void gravity_tree(void)
             TreeMomentsStaleFlag = 0;
         }
     }
+
+    /* Refresh imported foreign moments to the current time (collective; no-op at NTask==1 or
+       when the exchange just ran inside this call's rebuild). Between rebuilds the imports
+       only coast on pack-time vs while the owners' copies are kick-updated every step --
+       measured as the secular hernquist np=2 energy drift (45x np=1 at one crossing). The
+       Hermite passes inherit the refreshed state; refreshing again there would be redundant
+       (their sink LEAF states come from the ghost table, which is per-pass exact). */
+    if(!tree_built_this_call
+#ifdef HERMITE_INTEGRATION
+       && !HermiteOnlyFlag
+#endif
+      ) {let_refresh_moments();}
 
 #ifdef HERMITE_INTEGRATION
     /* Ghost-source table for this Hermite pass -- after any tree build / moment refresh, before

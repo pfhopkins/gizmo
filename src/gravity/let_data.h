@@ -217,6 +217,37 @@ extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreig
 extern MyIDType *ForeignLeafID;   /* source particle ID for a foreign leaf (-> HermiteGhostTab key) */
 #endif
 
+/* ----------------------------------------------------------------------
+ * Per-step refresh of imported foreign moments.
+ *
+ * The LET ships a build-time snapshot; between rebuilds the OWNER's copies of the same
+ * physical nodes are continuously maintained (drifted, kick-updated vs) while the imports
+ * only drift with pack-time vs and can never be opened deeper than shipped. Measured on
+ * hernquist (32k, one crossing): np=2 drifts 45x worse than np=1 and secularly, at ANY
+ * rebuild cadence at np=1 -- the staleness is specifically the imported state. The refresh
+ * re-sends (s, vs) [+ sink moments] for every already-shipped record each step, keyed by
+ * nothing: both sides replay the exchange's flat wire ORDER (sender retains remote_id per
+ * record; receiver retains per-sender slot ranges). Granularity stays frozen -- that is the
+ * remaining "owner-continuation" channel, not addressed here.
+ * ---------------------------------------------------------------------- */
+struct LETRefreshRec {
+    MyFloat s[3];        /* node CoM (or particle Pos for a synthesized leaf), drifted to now */
+    MyFloat vs[3];       /* node mass-weighted velocity (or particle Vel) */
+#ifdef SINK_NODE_MOTION_TRACKED
+    MyFloat sink_pos[3];
+    MyFloat sink_vel[3];
+#endif
+};
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void let_refresh_moments(void);     /* collective; no-op until a valid exchange exists */
+void let_refresh_invalidate(void);  /* call when the tree/slots die (force_treefree) */
+#ifdef __cplusplus
+}
+#endif
+
 /* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
  * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to
  * the owning topleaf's continuation per the subtree header.  It is the only edge that
