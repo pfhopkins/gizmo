@@ -274,6 +274,10 @@ double DriftTable[DRIFT_TABLE_LENGTH];
 /*! table for the cosmological kick factor for gravitational forces */
 double GravKickTable[DRIFT_TABLE_LENGTH];
 
+/*! log-time bounds the two tables above were built over */
+double DriftTable_logTimeBegin;
+double DriftTable_logTimeMax;
+
 void *CommBuffer;		/*!< points to communication buffer, which is used at a few places */
 
 /*! This structure contains data which is the SAME for all tasks (mostly code parameters read from the

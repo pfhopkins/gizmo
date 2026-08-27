@@ -79,7 +79,7 @@ static int drift_kick_table_view_refresh_(struct DriftKickTableView *view)
         drift_kick_table_dev_[DRIFT_TABLE_LENGTH + i] = GravKickTable[i];
     }
     *view = drift_kick_table_view(drift_kick_table_dev_, drift_kick_table_dev_ + DRIFT_TABLE_LENGTH,
-                                  log(All.TimeBegin), log(All.TimeMax), All.Timebase_interval, 1);
+                                  DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, 1);
     return 0;
 }
 

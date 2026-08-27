@@ -26,8 +26,6 @@
  * entirely to allow for more general cosmologies.
  */
 
-static double logTimeBegin;
-static double logTimeMax;
 
 
 double drift_integ(double a, void *param)
@@ -61,13 +59,13 @@ double growthfactor_integ(double a, void *param)
 void init_drift_table(void)
 {
   int i;
-  logTimeBegin = log(All.TimeBegin);
-  logTimeMax = log(All.TimeMax);
+  DriftTable_logTimeBegin = log(All.TimeBegin);
+  DriftTable_logTimeMax = log(All.TimeMax);
 
   for(i = 0; i < DRIFT_TABLE_LENGTH; i++)
     {
-      double a0 = exp(logTimeBegin);
-      double a1 = exp(logTimeBegin + ((logTimeMax - logTimeBegin) / DRIFT_TABLE_LENGTH) * (i + 1));
+      double a0 = exp(DriftTable_logTimeBegin);
+      double a1 = exp(DriftTable_logTimeBegin + ((DriftTable_logTimeMax - DriftTable_logTimeBegin) / DRIFT_TABLE_LENGTH) * (i + 1));
       DriftTable[i]   = gizmo_gl20_integrate(&drift_integ,   a0, a1, NULL);
       GravKickTable[i] = gizmo_gl20_integrate(&gravkick_integ, a0, a1, NULL);
     }
@@ -88,7 +86,7 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 {
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
     struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
-            logTimeBegin, logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+            DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
     return get_drift_factor_impl(time0, time1, dilation, &view);
 }
 
@@ -97,6 +95,6 @@ double get_gravkick_factor(integertime time0, integertime time1, int i, int mode
 {
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
     struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
-            logTimeBegin, logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+            DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
     return get_gravkick_factor_impl(time0, time1, dilation, &view);
 }

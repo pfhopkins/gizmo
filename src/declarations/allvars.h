@@ -369,6 +369,8 @@ extern FILE *FdSinkWindDetails;
 
 extern double DriftTable[DRIFT_TABLE_LENGTH]; /*! table for the cosmological drift factors */
 extern double GravKickTable[DRIFT_TABLE_LENGTH]; /*! table for the cosmological kick factor for gravitational forces */
+extern double DriftTable_logTimeBegin; /*! log of the scale factor the two tables above start at */
+extern double DriftTable_logTimeMax;   /*! log of the scale factor they end at */
 extern void *CommBuffer;    /*!< points to communication buffer, which is used at a few places */
 
 
