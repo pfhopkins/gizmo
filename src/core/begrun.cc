@@ -3007,6 +3007,17 @@ void read_parameter_file(char *fname)
                                 fprintf(stdout, "%-50s%g\n", buf1, *((double *) addr[j]));
                                 break;
                             case STRING:
+                                /* every STRING target is a char[DEFAULT_PATH_BUFFERSIZE_TOUSE]
+                                   field (global_data_all_struct.h keeps them in step). A raw
+                                   strcpy here once overflowed OutputDir[100] into the adjacent
+                                   field and silently scattered snapshot files; enforce the
+                                   contract instead of trusting it. */
+                                if(strlen(buf2) >= DEFAULT_PATH_BUFFERSIZE_TOUSE)
+                                {
+                                    printf("PARAMETER FILE ERROR: value of '%s' exceeds %d characters:\n  %.60s...\n",
+                                           buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE - 1, buf2);
+                                    endrun(886602);
+                                }
                                 strcpy((char *) addr[j], buf2);
                                 fprintf(fdout, "%-50s%s\n", buf1, buf2);
                                 fprintf(stdout, "%-50s%s\n", buf1, buf2);
