@@ -25,6 +25,9 @@ plus a fifth diagnostic variant:
   direct_equaldt   both                                    -- integration alone
   freshtree        TreeDomainUpdateFrequency=0             -- tree rebuilt every step
 
+  tree_kdk         DISABLE_HERMITE_INTEGRATION             -- tree, no jerk
+  direct_kdk       both                                    -- exact forces, no jerk
+
 SINGLE_STAR_DIRECT_GRAVITY sums every star-star pair exactly; with no gas here that removes the
 tree from the force calculation entirely. FORCE_EQUAL_TIMESTEPS puts every particle on one
 universal step. So a difference down a column is the tree, a difference across a row is the
@@ -32,6 +35,12 @@ timestep hierarchy, and the last row measures the integrator with nothing else i
 single number would tell you which of the three you were looking at. freshtree separates one more
 thing the others cannot: stale tree state between rebuilds, as distinct from the force
 approximation itself.
+
+The two _kdk rows drop the jerk. Their absolute error is uninteresting -- KDK is 2nd order and is
+supposed to conserve worse than Hermite -- so never read one against a Hermite row. They are for
+differencing against each OTHER, or against the same variant in another build: tree_kdk vs
+direct_kdk isolates the tree with the jerk out of the picture, which is the only way to tell a
+defective jerk apart from a defective acceleration.
 
 Energy is read from the in-code synced diagnostic (ENERGY_BUDGET_DIAGNOSTIC), not from snapshots.
 Snapshots write Velocities at kick-time against drift-time positions, an O(dt/2t_dyn) error per
@@ -93,7 +102,17 @@ OMP_THREADS = 0
 # than hang the suite; unbounded, one stuck run would stall the whole pytest session.
 PROBLEM_TIMEOUT_S = float(os.environ.get("FEWBODY_PROBLEM_TIMEOUT", "1800"))
 
-ENERGY_TOL = 0.01  # >1% is a fail, for both variants
+# 10%. Upstream measured worst-case |dE/E| across all 48 problems at 0.034 with the
+# source-prediction fix and 0.038 without it, so at this ceiling upstream passes everything:
+# this test does NOT discriminate between fixed and unfixed code, it bounds gross breakage
+# only. The quantity that did discriminate there is the per-problem MEDIAN (2.09x better with
+# the fix on tree) -- but no stored-baseline comparison is implemented here, so that lives in
+# the recorded measurements, not in an assertion.
+#
+# For THIS tree the ceiling is still a live assertion: the kokkos tree variants were failing
+# at median 0.53 (126x the pre-kokkos code), so 10% distinguishes broken from ported-correctly
+# even though it cannot resolve the last factor of 2.
+ENERGY_TOL = 0.10  # >10% is a fail, for both variants
 
 # Diagnostic variant: rebuild the tree from scratch every step, to test whether the energy loss comes
 # from stale tree state between rebuilds rather than from the force approximation itself. The tree is
@@ -426,6 +445,8 @@ def _plot_pairwise():
     pytest.param(FRESH_TREE, id="freshtree"),
     pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
     pytest.param(("SINGLE_STAR_DIRECT_GRAVITY", "FORCE_EQUAL_TIMESTEPS"), id="direct_equaldt"),
+    pytest.param(("DISABLE_HERMITE_INTEGRATION",), id="tree_kdk"),
+    pytest.param(("DISABLE_HERMITE_INTEGRATION", "SINGLE_STAR_DIRECT_GRAVITY"), id="direct_kdk"),
 ])
 def test_fewbody(extra_config_flags, request):
     variant_id = request.node.callspec.id.split("-")[0]

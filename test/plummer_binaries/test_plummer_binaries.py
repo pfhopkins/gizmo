@@ -1,12 +1,16 @@
 """Plummer cluster of equal-mass circular binaries — integration / preservation test.
 
-Each Plummer particle is replaced by a binary (2 Type-5 sinks, 1000 AU separation,
+Each Plummer particle is replaced by a binary (2 Type-5 sinks, 100 AU separation,
 circular orbit). Uses the gravity- and integration-relevant settings from
 SINGLE_STAR_STARFORGE_DEFAULTS: HERMITE_INTEGRATION, GRAVITY_ACCURATE_FEWBODY_INTEGRATION,
 SINGLE_STAR_TIMESTEPPING, etc.
 
 The Lagrange-radii / density-profile preservation is measured on the raw stars
 (consecutive ParticleID pairs 2k-1, 2k define binary k in the IC).
+
+Two variants: the default tree gravity, and SINGLE_STAR_DIRECT_GRAVITY, which replaces every
+star-star pair with an exact brute-force sum. With no gas in this problem the second is a pure
+direct N-body integration, so the two together measure what the tree approximation costs here.
 """
 
 from os import path
@@ -17,6 +21,13 @@ import numpy as np
 import pytest
 from matplotlib import pyplot as plt
 
+# G and the AU conversion come from gizmo.units, which mirrors GIZMO's constants.h.
+# NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
+# 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
+# energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# what that test measures.
+from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
@@ -66,6 +77,14 @@ PB_MAX_CORES = 8
 PB_NUM_MPI_RANKS = 2
 PB_NUM_OMP_THREADS = max(1, min(PB_MAX_CORES, _physical_cpu_count()) // PB_NUM_MPI_RANKS)
 
+# KDK resolves the same hard binaries without the Hermite integrator, taking ~2.4x as many steps
+# per unit time, and is an xfail on energy conservation either way. A tenth of the run is enough
+# to measure how fast it loses the binaries.
+KDK_TIME_FRACTION = 0.1
+
+# BOX_PERIODIC is not in this test's Config.sh, and the cluster (~1 pc) is tiny against the
+# 300 pc box regardless, so pair separations never wrap.
+PERIODIC = False
 
 # Cluster parameters (in code units: pc - km/s - Msun)
 SCALE_RADIUS = 1.0           # pc
@@ -75,20 +94,25 @@ M_CLUSTER = 2 * N_BINARIES * M_STAR
 BINARY_SEPARATION_AU = 1000.0
 BOXSIZE = 300.0
 
-# Only the half-mass radius: the 10th and 90th are not robust (31adca80).
 LAGRANGE_FRACTIONS = (0.5,)
 LAGRANGE_TOL = (0.15,)
-# Unchanged from when the test was written; the code does not currently meet it -- see the
-# xfail below. Note it has never been demonstrated to pass anywhere: the starforge_dev
-# reference run only ever reached t=10.04 of TimeMax=32.4.
-ENERGY_TOL = 0.01
 LAGRANGE_PERCENTILES_DENSE = np.arange(1, 100, dtype=float)
 
 
 def _ensure_ic():
     if path.isfile(IC_FILE):
         with h5py.File(IC_FILE, "r") as F:
-            if int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES:
+            n_ok = int(F["Header"].attrs["NumPart_Total"][5]) == 2 * N_BINARIES
+            # Check the SEPARATION too, not just the count. Running the generator with its own
+            # defaults produces a file with the right particle count and a different problem --
+            # a 10x tighter binary is ~30x shorter in period and turns a 47 min run into hours,
+            # while looking valid to a count-only check.
+            sep_ok = False
+            if n_ok:
+                x = F["PartType5/Coordinates"][:]
+                sep = np.median(np.linalg.norm(x[0::2] - x[1::2], axis=1)) * AU_PER_PC
+                sep_ok = abs(sep / BINARY_SEPARATION_AU - 1.0) < 1e-3
+            if n_ok and sep_ok:
                 return
     import importlib.util
 
@@ -106,12 +130,22 @@ def _ensure_ic():
 
 
 def _load_snapshot(snap):
+    """Prefer the IO_HERMITE_SYNC datasets: a consistent (r,v) pair at the output time.
+
+    Coordinates/Velocities are NOT such a pair -- positions are drifted to the output time while
+    velocities are left at the last kick (see the IO_VEL comment in file_io/io.cc) -- and in a
+    cluster on deep individual timesteps each star was last kicked at a different instant. Any
+    quantity combining r and v, or summing v across stars, is then evaluated on a configuration
+    the system never occupied.
+    """
     with h5py.File(snap, "r") as F:
-        pos = F["PartType5/Coordinates"][:]
-        vel = F["PartType5/Velocities"][:]
-        mass = F["PartType5/Masses"][:]
-        pot = F["PartType5/Potential"][:]
-        ids = F["PartType5/ParticleIDs"][:]
+        g = F["PartType5"]
+        synced = "HermiteSyncCoordinates" in g and "HermiteSyncVelocities" in g
+        pos = g["HermiteSyncCoordinates"][:] if synced else g["Coordinates"][:]
+        vel = g["HermiteSyncVelocities"][:] if synced else g["Velocities"][:]
+        mass = g["Masses"][:]
+        pot = g["Potential"][:]
+        ids = g["ParticleIDs"][:]
         boxsize = float(F["Header"].attrs["BoxSize"])
     # Sort by ID so binary pairs are contiguous (IDs 1,2 are binary 0; 3,4 are binary 1; ...).
     order = np.argsort(ids)
@@ -141,9 +175,33 @@ def _radii_from_com(pos, mass):
     return np.sqrt(np.sum((pos - com) ** 2, axis=1))
 
 
-def _total_energy(vel, mass, pot):
+def _potential_energy(pos, mass, boxsize, periodic, softening=0.0):
+    """Direct pairwise potential energy from the positions given.
+
+    Not the snapshot's Potential field: that is evaluated by the tree at the DRIFTED positions,
+    so pairing it with last-kick velocities gives a kinetic and a potential term belonging to
+    different times -- the two halves of the energy disagree, and the resulting "conservation"
+    number carries a sampling artifact set by where in each star's timestep the output landed.
+    At N=512 the exact O(N^2) sum is milliseconds, so there is no reason to approximate it.
+
+    Absolute values differ slightly from the tree's by its opening error (ErrTolTheta); only
+    energy DRIFT is comparable across that change, which is what the assertions use.
+    """
+    d = pos[:, None, :] - pos[None, :, :]
+    if periodic:
+        d -= boxsize * np.round(d / boxsize)
+    r2 = np.sum(d * d, axis=-1) + softening * softening
+    np.fill_diagonal(r2, np.inf)                       # drop self-pairs
+    mm = mass[:, None] * mass[None, :]
+    return -0.5 * G_CODE * np.sum(mm / np.sqrt(r2))    # 0.5 for double counting
+
+
+def _total_energy(vel, mass, pot=None, pos=None, boxsize=None, periodic=False):
+    """Total energy. With pos given, the potential is recomputed from those positions so that it
+    shares a clock with vel; otherwise it falls back to the snapshot's tree-evaluated field."""
     ke = 0.5 * np.sum(mass * np.sum(vel**2, axis=1))
-    pe = 0.5 * np.sum(mass * pot)
+    pe = (_potential_energy(pos, mass, boxsize, periodic) if pos is not None
+          else 0.5 * np.sum(mass * pot))
     return ke + pe, ke, pe
 
 
@@ -162,12 +220,10 @@ def _conservation_trajectories(snap_paths):
     """
     times, energies, momenta, ke0 = [], [], [], None
     for s in snap_paths:
+        pos, vel, mass, pot, boxsize = _load_snapshot(s)
         with h5py.File(s, "r") as F:
             t = float(F["Header"].attrs["Time"])
-            vel = F["PartType5/Velocities"][:]
-            mass = F["PartType5/Masses"][:]
-            pot = F["PartType5/Potential"][:]
-        e, ke, _ = _total_energy(vel, mass, pot)
+        e, ke, _ = _total_energy(vel, mass, pos=pos, boxsize=boxsize, periodic=PERIODIC)
         times.append(t)
         energies.append(e)
         momenta.append(np.sum(mass[:, None] * vel, axis=0))
@@ -324,12 +380,22 @@ def _plot_variant_density_evolution(variant_id, snaps):
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
+    # Every particle here is a star, so this variant routes 100% of the gravity through the
+    # brute-force pass and none through the tree -- the tree's opening error is removed entirely
+    # rather than reduced. That makes it the sharpest available check on SINGLE_STAR_DIRECT_GRAVITY,
+    # and the pair with starforge_defaults isolates what the tree approximation costs a cluster of
+    # hard binaries. Compatible only because SINGLE_STAR_STARFORGE_DEFAULTS sets
+    # SINGLE_STAR_TIMESTEPPING=0, which leaves SINGLE_STAR_FIND_BINARIES off; the two are a
+    # compile-time #error together (see precompiler_logic.h).
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
     clean_test_outputs(TEST_NAME, extra_config_flags)
     time_max = float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["TimeMax"])
-    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    overrides = None
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                       param_overrides=overrides)
 
     outputdir = variant_output_dir(TEST_NAME, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
@@ -375,8 +441,14 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
     )
     _plot_summary()
 
-    # Structure first: these pass, and keeping them ahead of the energy check means the
-    # flagged energy defect below cannot mask a real change in the density profile.
+    e0, ke0, pe0 = _total_energy(vel0, mass0, pot0)
+    ef, _, _ = _total_energy(velf, massf, potf)
+    rel_e_err = abs(ef - e0) / abs(ke0)
+    assert rel_e_err < 0.01, (
+        f"Energy not conserved: |dE|/KE_0 = {rel_e_err:.4f} (>1%)  "
+        f"(E0={e0:.4g}, Ef={ef:.4g}, KE0={ke0:.4g}, PE0={pe0:.4g})"
+    )
+
     rel = np.abs(r_lag_final - r_lag_initial) / r_lag_initial
     failures = [
         f"r_{int(f * 100)}: |dr/r|={rel[i]:.3f} (tol {LAGRANGE_TOL[i]}); "
@@ -384,21 +456,3 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
         for i, f in enumerate(LAGRANGE_FRACTIONS) if rel[i] > LAGRANGE_TOL[i]
     ]
     assert not failures, "Lagrange radii drifted:\n  " + "\n  ".join(failures)
-
-    e0, ke0, pe0 = _total_energy(vel0, mass0, pot0)
-    ef, _, _ = _total_energy(velf, massf, potf)
-    rel_e_err = abs(ef - e0) / abs(ke0)
-    msg = (f"Energy not conserved: |dE|/KE_0 = {rel_e_err:.4f} (>1%)  "
-           f"(E0={e0:.4g}, Ef={ef:.4g}, KE0={ke0:.4g}, PE0={pe0:.4g})")
-    if rel_e_err >= ENERGY_TOL:
-        # KNOWN DEFECT, flagged rather than asserted. Measured against starforge_dev on an
-        # identical IC/params over a matched t<=10.04 window at the same output cadence, with
-        # zero sink mergers on both sides: reference holds |dE|/KE_0 = 0.0017 with a white
-        # residual (lag-1 autocorr -0.21) and no trend, while this code reaches 0.0091 with a
-        # coherent one (+0.80) -- 12x on the noise-filtered amplitude. So it is not IO sampling
-        # noise and not chaotic divergence. Possibly the same defect as the hernquist
-        # cusp/tree-cadence regression; both show up where forces are resampled on short
-        # orbital timescales. xfail (non-strict) so a fix reports as a pass rather than
-        # silently keeping a stale expectation.
-        pytest.xfail(msg)
-    assert rel_e_err < ENERGY_TOL, msg

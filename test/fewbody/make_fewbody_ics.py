@@ -18,7 +18,8 @@ invocations in parallel -- see test_fewbody.py.
 Every draw comes from one seeded generator consumed in a fixed order, so the whole suite is a pure
 function of (seed, n_problems) and re-running reproduces it exactly.
 
-Units are pc - km/s - Msun, so G = 4.302e-3 pc (km/s)^2 / Msun, matching plummer_binaries.
+Units are pc - km/s - Msun. G comes from gizmo.units (GIZMO's constants.h), 4.300711e-3,
+matching plummer_binaries.
 """
 import argparse
 from os import makedirs, path
@@ -26,7 +27,17 @@ from os import makedirs, path
 import numpy as np
 import h5py
 
-G_CODE = 4.300917270e-3  # pc (km/s)^2 / Msun
+import os as _os
+import sys as _sys
+# Run standalone (the tests invoke this as a subprocess from the test directory), so the
+# harness package (test/harness in this tree; python_src upstream) is not on the path the
+# way it is under pytest. G must come from gizmo.units, which mirrors
+# GIZMO's constants.h: an IC built with a different G than the code integrates with is not the
+# orbit it claims to be.
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                  "..", "harness"))
+from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+
 SALPETER_ALPHA = -2.35   # dN/dm ~ m^alpha
 
 
