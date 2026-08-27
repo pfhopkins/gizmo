@@ -559,6 +559,11 @@ void ghost_exchange_cleanup(void);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
 int ghost_pool_is_live(void);
+/* Time every particle in the live ghost pool is current to, or -1 when there is
+ * no such guarantee. Established only when the owners advanced their particles
+ * before packing them; a consumer that reads -1 must keep testing each ghost's
+ * own Ti_current. */
+integertime ghost_pool_current_ti(void);
 /* Largest ghost import this rank has completed over the current and previous domain epoch, and
  * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
 int ghost_get_epoch_high_water(void);

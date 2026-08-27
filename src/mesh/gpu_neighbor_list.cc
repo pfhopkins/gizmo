@@ -1413,9 +1413,19 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         /* Out-of-line host accessor. Lazy-drift target for CSR
          * neighbors — host-side drift_particle calls. */
         integertime time1 = gizmo_host_ti_current();
+        /* Ghosts imported for this step were advanced to the current time by
+         * their owners before being packed, so the whole imported segment is
+         * already current and there is nothing to confirm per ghost. The pool's
+         * stamp is compared against the time THIS call needs rather than trusted
+         * on its own, so a pool carried over from an earlier time still gets
+         * checked particle by particle. */
+        const int ghost_start = num_total - ghost_get_num_ghosts();
+        const int ghosts_certified = (ghost_pool_current_ti() == time1);
         for(int64_t idx_n = 0; idx_n < gnl->total_pairs; idx_n++) {
             int j = ngb_host[idx_n];
-            if(j >= 0 && j < num_total) drift_particle(j, time1);
+            if(j < 0 || j >= num_total) continue;
+            if(ghosts_certified && j >= ghost_start) continue;
+            drift_particle(j, time1);
         }
         /* Lazy drift just called drift_particle on each j in ngb_host.
          * drift_particle mutates Ti_current, Pos, AND KernelRadius
