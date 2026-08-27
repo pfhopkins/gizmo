@@ -1483,9 +1483,9 @@ void process_wake_ups(void)
 	 * bin already in flight, preventing the multiplicative cascade while
 	 * preserving legitimate hydro-style subcycle wakeups in [floor, max]. */
 	int local_lowest_occupied_active_bin = TIMEBINS;
-	for(n = 0; n < TIMEBINS; n++) {
-	    if(TimeBinActive[n] && TimeBinCount[n] > 0) {
-	        local_lowest_occupied_active_bin = n;
+	for(int nb = 0; nb < TIMEBINS; nb++) {   /* own index: n is the woken-particle counter, zeroed above */
+	    if(TimeBinActive[nb] && TimeBinCount[nb] > 0) {
+	        local_lowest_occupied_active_bin = nb;
 	        break;
 	    }
 	}
