@@ -879,6 +879,69 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+#ifdef IO_HERMITE_SYNC
+            /* A mutually consistent (r,v) pair at the output time.
+             *
+             * The ordinary Coordinates/Velocities blocks are NOT such a pair: positions are
+             * drifted to the output time while velocities are whatever the last kick left
+             * (see the IO_VEL comment). Vis-viva, orbital elements and kinetic energy are
+             * all meaningless on that mixture -- in the e=0.9 binary test it makes
+             * |a/a0 - 1| swing by three orders of magnitude within a single orbit.
+             *
+             * For a Hermite particle the step base is retained, so the consistent state at
+             * any time in the step is just the Taylor series do_hermite_prediction() uses:
+             *     x(D) = OldPos + OldVel*D + Hermite_OldAcc*D^2/2 + OldJerk*D^3/6
+             *     v(D) = OldVel + Hermite_OldAcc*D + OldJerk*D^2/2
+             * with D measured from the particle's own step start. This is the PREDICTED
+             * state, not the corrected one -- the corrector needs the end-of-step
+             * acceleration, which does not exist at an arbitrary output time -- so it is
+             * 4th order in position and 3rd in velocity. That is far above the error being
+             * diagnosed, and unlike the mixed state it is a state the system actually passes
+             * through.
+             *
+             * Particles that are not Hermite-integrated fall back to the ordinary values, so
+             * the datasets are always well defined. */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    /* The Old* members only exist when HERMITE_INTEGRATION is compiled in, so
+                       the predictor below must sit inside the #ifdef -- a runtime guard alone
+                       would not compile under DISABLE_HERMITE_INTEGRATION. In that build the
+                       datasets simply carry the ordinary Pos/Vel via the fallback below. */
+                    int _herm = 0;
+#ifdef HERMITE_INTEGRATION
+                    _herm = ((1 << P[pindex].Type) & HERMITE_INTEGRATION) && (P[pindex].Mass > 0);
+                    if(_herm)
+                    {
+                        double _d = get_gravkick_factor(P[pindex].Ti_begstep, All.Ti_Current, pindex, 0);
+                        for(k = 0; k < 3; k++)
+                        {
+                            if(blocknr == IO_HERMITE_POS)
+                                fp[k] = (MyOutputFloat) (P[pindex].OldPos[k]
+                                        + (P[pindex].OldVel[k]
+                                           + (P[pindex].Hermite_OldAcc[k]
+                                              + P[pindex].OldJerk[k] * (_d/3)) * (_d/2)) * _d);
+                            else
+                                fp[k] = (MyOutputFloat) (P[pindex].OldVel[k]
+                                        + (P[pindex].Hermite_OldAcc[k]
+                                           + P[pindex].OldJerk[k] * (_d/2)) * _d);
+                        }
+                    }
+#endif
+                    if(!_herm)
+                    {
+                        for(k = 0; k < 3; k++)
+                            fp[k] = (MyOutputFloat) (blocknr == IO_HERMITE_POS
+                                                     ? P[pindex].Pos[k] : P[pindex].Vel[k]);
+                    }
+                    fp += 3;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_ACCEL:		/* acceleration */
 #ifdef OUTPUT_ACCELERATION
             for(n = 0; n < pc; pindex++)
@@ -1934,6 +1997,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_VEL:
         case IO_PARTVEL:
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
@@ -2341,6 +2406,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_POS:
         case IO_VEL:
         case IO_PARTVEL:
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
@@ -2628,6 +2695,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
     {
         case IO_POS:
         case IO_VEL:
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_TSTP:
         case IO_ID:
@@ -3106,6 +3175,13 @@ int blockpresent(enum iofields blocknr)
         case IO_VSTURB_DISS:
         case IO_VSTURB_DRIVE:
 #if defined(TURB_DRIVING)
+            return 1;
+#endif
+            break;
+
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+#ifdef IO_HERMITE_SYNC
             return 1;
 #endif
             break;
@@ -3679,6 +3755,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
+        case IO_HERMITE_POS:
+            strncpy(label, "HPOS", 4);
+            break;
+        case IO_HERMITE_VEL:
+            strncpy(label, "HVEL", 4);
+            break;
         case IO_ACCEL:
             strncpy(label, "ACCE", 4);
             break;
@@ -4133,6 +4215,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_POT:
             strcpy(buf, "Potential");
+            break;
+        case IO_HERMITE_POS:
+            strcpy(buf, "HermiteSyncCoordinates");
+            break;
+        case IO_HERMITE_VEL:
+            strcpy(buf, "HermiteSyncVelocities");
             break;
         case IO_ACCEL:
             strcpy(buf, "Acceleration");

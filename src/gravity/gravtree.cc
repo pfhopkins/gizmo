@@ -12,6 +12,7 @@
 #include "gpu_gravtree.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"   /* shared walk helpers; here for hermite_ghost_entry */
 #include "./analytic_gravity.h"
 
 /*! \file gravtree.c
@@ -43,6 +44,75 @@ int Ewald_iter;			/* global in file scope, for simplicity */
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
  *  tree is used.  Elements are only exported to other processors when needed. */
+#ifdef HERMITE_INTEGRATION
+/* Ghost-source table for the Hermite-only passes (see gravtree_force_kernel.h for the why).
+ * Built fresh at the top of every Hermite-pass gravity_tree() call and freed at the bottom:
+ * the owner-side predicted state changes between passes, and unlike the LET (exchanged only at
+ * tree build) it must never go stale. Plain malloc, not mymalloc: the table's lifetime brackets
+ * the walk's LIFO allocations and a stack allocator would deadlock the ordering. The GPU walk
+ * takes a SharedSpace copy at kernel launch (shortrange-table pattern). */
+struct hermite_ghost_entry *HermiteGhostTab = NULL;
+int NHermiteGhost = 0;
+
+static int hermite_ghost_cmp(const void *a, const void *b)
+{
+    MyIDType ia = ((const struct hermite_ghost_entry *) a)->id;
+    MyIDType ib = ((const struct hermite_ghost_entry *) b)->id;
+    return (ia > ib) - (ia < ib);
+}
+
+/* Allgather {ID, pos, vel} of every local HERMITE_INTEGRATION-bitmask particle with OWNER-SIDE
+ * semantics: live drifted state for active or ineligible sources, the Old* prediction for
+ * inactive eligible ones -- exactly what force_treeevaluate presents for a LOCAL source, and
+ * exactly what upstream's export-based remote evaluation sees. Sorted by ID for the walks'
+ * binary search. */
+static void hermite_ghost_table_build(void)
+{
+    NHermiteGhost = 0; HermiteGhostTab = NULL;
+    if(NTask <= 1) {return;}
+    int n_local = 0, i;
+    for(i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {n_local++;}}
+
+    int *counts = (int *) malloc(NTask * sizeof(int));
+    int *displs = (int *) malloc(NTask * sizeof(int));
+    MPI_Allgather(&n_local, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+    int n_tot = 0;
+    for(i = 0; i < NTask; i++) {displs[i] = n_tot * (int) sizeof(struct hermite_ghost_entry); n_tot += counts[i]; counts[i] *= (int) sizeof(struct hermite_ghost_entry);}
+    if(n_tot == 0) {free(displs); free(counts); return;}
+
+    struct hermite_ghost_entry *sendbuf = (struct hermite_ghost_entry *) malloc(((n_local > 0) ? n_local : 1) * sizeof(struct hermite_ghost_entry));
+    int k = 0;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(!((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}
+        sendbuf[k].id  = P[i].ID;
+        sendbuf[k].pos = P[i].Pos;
+        sendbuf[k].vel = P[i].Vel;
+        if(!TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
+        {
+            double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
+            sendbuf[k].pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;
+            sendbuf[k].vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/2)) * hD;
+        }
+        k++;
+    }
+
+    HermiteGhostTab = (struct hermite_ghost_entry *) malloc(n_tot * sizeof(struct hermite_ghost_entry));
+    MPI_Allgatherv(sendbuf, n_local * (int) sizeof(struct hermite_ghost_entry), MPI_BYTE,
+                   HermiteGhostTab, counts, displs, MPI_BYTE, MPI_COMM_WORLD);
+    free(sendbuf); free(displs); free(counts);
+    qsort(HermiteGhostTab, n_tot, sizeof(struct hermite_ghost_entry), hermite_ghost_cmp);
+    NHermiteGhost = n_tot;
+}
+
+static void hermite_ghost_table_free(void)
+{
+    if(HermiteGhostTab) {free(HermiteGhostTab); HermiteGhostTab = NULL;}
+    NHermiteGhost = 0;
+}
+#endif
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -100,6 +170,12 @@ void gravity_tree(void)
             TreeMomentsStaleFlag = 0;
         }
     }
+
+#ifdef HERMITE_INTEGRATION
+    /* Ghost-source table for this Hermite pass -- after any tree build / moment refresh, before
+       ANY walk (primary GPU, CPU fallback, or imported-target evaluation). */
+    if(HermiteOnlyFlag) {hermite_ghost_table_build();}
+#endif
 
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second(); double child0_span = CPU_ChildCharged;
 #if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
@@ -521,6 +597,9 @@ void gravity_tree(void)
         MPI_Reduce(&costtotal_new, &sum_costtotal_new, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);} /* can be non-zero if THREAD_SAFE_COSTS is not used (and due to round-off errors). */
     }
+#endif
+#ifdef HERMITE_INTEGRATION
+    hermite_ghost_table_free();   /* no-op outside the Hermite passes */
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }

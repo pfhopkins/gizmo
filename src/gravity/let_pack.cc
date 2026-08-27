@@ -851,6 +851,9 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     w->leaf_type     = pa->Type;
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = pa->ID;
+#endif
     w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
     if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
@@ -892,6 +895,9 @@ static int let_realloc_fail_should_print(void)
 int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
+#ifdef HERMITE_INTEGRATION
+MyIDType *ForeignLeafID = NULL;
+#endif
 MyFloat *ForeignLeafSoft = NULL;
 
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
@@ -967,6 +973,9 @@ static void pack_recurse(int no, int sib_terminator,
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
     w->leaf_tag = 0; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = 0;
+#endif
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
     /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
@@ -1003,6 +1012,9 @@ static void pack_recurse(int no, int sib_terminator,
             w->leaf_tag      = 1;
             w->leaf_type     = pa->Type;
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
+#ifdef HERMITE_INTEGRATION
+            w->leaf_id       = pa->ID;
+#endif
             w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
             if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
@@ -1553,6 +1565,9 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
                 ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
                 ForeignLeafZeta[foreign_slot] = recv_buf[node_off + j].leaf_ags_zeta;
                 ForeignLeafSoft[foreign_slot] = recv_buf[node_off + j].leaf_force_softening;
+#ifdef HERMITE_INTEGRATION
+                if(ForeignLeafID) {ForeignLeafID[foreign_slot] = recv_buf[node_off + j].leaf_id;}
+#endif
             }
         }
 
@@ -1646,6 +1661,9 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     if(ForeignLeafTag)  memset(ForeignLeafTag,  0, (size_t)MaxForeignNodes * sizeof(int));
     if(ForeignLeafType) memset(ForeignLeafType, 0, (size_t)MaxForeignNodes * sizeof(int));
     if(ForeignLeafZeta) memset(ForeignLeafZeta, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
+#ifdef HERMITE_INTEGRATION
+    if(ForeignLeafID) memset(ForeignLeafID, 0, (size_t)MaxForeignNodes * sizeof(MyIDType));
+#endif
     if(ForeignLeafSoft) memset(ForeignLeafSoft, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
 
     /* All-local receiver cover (WHICH particles): the payload worst-case scalars

@@ -591,9 +591,6 @@ void star_formation_parent_routine(void)
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
                             P[i_star].Sink_Formation_Mass = P[i_star].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
-#ifdef HERMITE_INTEGRATION
-                            P[i_star].AccretedThisTimestep = 0;
-#endif
 #ifdef GRAIN_FLUID
                             P[i_star].Sink_Dust_Mass = 0;
 #endif

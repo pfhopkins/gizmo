@@ -1615,6 +1615,41 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel;
 #endif
+#ifdef HERMITE_INTEGRATION
+                /* Hermite-only passes: an inactive Hermite-integrated source sits at its
+                 * KDK-drifted position -- and its stored Vel is whole-step-kicked (see
+                 * do_the_kick) -- so the drifted position is O(dt^2) wrong mid-step.
+                 * Re-predict the source from its own Old* state, exactly as
+                 * do_hermite_prediction does for the target. This covers the single-particle
+                 * branch only: a source absorbed into a node multipole still contributes at
+                 * its drifted position. Under SINGLE_STAR_DIRECT_GRAVITY_RADIUS (1000 AU,
+                 * STARFORGE default) star-bearing nodes inside that radius are force-opened
+                 * to singles, so close sink pairs -- where the O(dt^2) error matters -- take
+                 * this branch; more distant sinks arrive via drifted nodes uncorrected.
+                 *
+                 * Nothing is written back: the predicted state exists only in this force
+                 * evaluation. Active sources are
+                 * skipped: at HermiteOnlyFlag==1 their Old* are stale (find_timesteps has
+                 * already advanced Ti_begstep, so D=0 would return the previous step's start
+                 * position) and their live Pos is already correct -- corrected at flag==1,
+                 * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
+                 * leapfrog's cancellation structure assumes the plain drifted positions.
+                 *
+                 * PERFORMANCE: this gate costs ~16% per particle-step, almost all of it in
+                 * eligible_for_hermite() -- it depends only on the SOURCE but is evaluated per
+                 * (target, source) pair, and it is cross-TU, so it blocks optimization here.
+                 * Hoisting it into a per-pass array would recover most of that. Not done. */
+                if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
+                {
+                    double hD = get_gravkick_factor(P[no].Ti_begstep, ti_Current, no, 0);
+                    dr = P[no].OldPos + (P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/3)) * (hD/2)) * hD - pos;
+                    GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                    r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                    dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
+#endif
+                }
+#endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
 #endif
@@ -1758,6 +1793,9 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * EXPLICIT and bounds-checked -- not the node index no-maxPart). */
                 int    fl_tag = 0, fl_type = -1;
                 double fl_zeta = 0.0, fl_soft = 0.0;
+#ifdef HERMITE_INTEGRATION
+                MyIDType fl_id = 0;
+#endif
                 if(in_foreign && ForeignLeafTag) {
                     int fs = no - (maxPart + maxNodes);
                     if(fs >= 0 && fs < MaxForeignNodes) {
@@ -1765,6 +1803,9 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         fl_type = ForeignLeafType[fs];
                         fl_zeta = (double) ForeignLeafZeta[fs];
                         fl_soft = (double) ForeignLeafSoft[fs];
+#ifdef HERMITE_INTEGRATION
+                        if(ForeignLeafID) {fl_id = ForeignLeafID[fs];}
+#endif
                     }
                 }
 
@@ -1898,6 +1939,27 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = Extnodes[no].vs - vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+                /* Hermite-only passes: a foreign Hermite-type leaf is seen through a build-time
+                 * LET moment -- drifted position, mass-weighted vs for velocity, no Old* state to
+                 * re-predict from. Override (dr, dv) with the owner-side state from this pass's
+                 * ghost table (see gravtree_force_kernel.h). Local sources take the inline
+                 * prediction in the particle-leaf branch above; multipole-absorbed foreign
+                 * sources stay drifted, exactly as local node-absorbed sources do. */
+                if(HermiteOnlyFlag && fl_tag == 1 && ((1 << fl_type) & HERMITE_INTEGRATION) && NHermiteGhost > 0)
+                {
+                    int gi = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, fl_id);
+                    if(gi >= 0)
+                    {
+                        dr = HermiteGhostTab[gi].pos - pos;
+                        GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                        r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                        dv = HermiteGhostTab[gi].vel - vel;
+#endif
+                    }
+                }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                 cr_injection = nop->cr_injection;
@@ -2706,6 +2768,17 @@ void force_treeallocate(int maxnodes, int maxpart)
         if(ForeignLeafZeta) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
         ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyFloat), "tree_foreign_soft");
         if(ForeignLeafSoft) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyFloat));
+#ifdef HERMITE_INTEGRATION
+        ForeignLeafID = (MyIDType *) gpu_tree_alloc_bytes((size_t) MaxForeignNodes * sizeof(MyIDType), "tree_foreign_id");
+        if(ForeignLeafID) gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) MaxForeignNodes * (long long) sizeof(MyIDType));
+        if(!ForeignLeafID)
+        {
+            printf("Failed to allocate %d foreign-leaf ID slots.\n", MaxForeignNodes);
+            gizmo_request_controlled_stop(90000086, "force_treeallocate: tree foreign-leaf sidecar UVM/SharedSpace OOM (add ranks/nodes or reduce tree/LET-foreign demand)", __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
+        memset(ForeignLeafID, 0, (size_t) MaxForeignNodes * sizeof(MyIDType));
+#endif
         if(!ForeignLeafTag || !ForeignLeafType || !ForeignLeafZeta || !ForeignLeafSoft)
         {
             printf("Failed to allocate %d foreign-leaf sidecar slots.\n", MaxForeignNodes);
@@ -2717,7 +2790,11 @@ void force_treeallocate(int maxnodes, int maxpart)
         memset(ForeignLeafZeta, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
         memset(ForeignLeafSoft, 0, (size_t) MaxForeignNodes * sizeof(MyFloat));
     }
-    else { ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL; }
+    else { ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL;
+#ifdef HERMITE_INTEGRATION
+           ForeignLeafID = NULL;
+#endif
+         }
 
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)
@@ -2832,6 +2909,9 @@ void force_treefree(void)
         if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
         if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
         if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
+#ifdef HERMITE_INTEGRATION
+        if(ForeignLeafID)   {gpu_tree_free_bytes(ForeignLeafID);   ForeignLeafID   = NULL;}
+#endif
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */

@@ -170,6 +170,13 @@ struct LETNodeWire {
                             * that injects momentum under adaptive softening.  Carry the pure value. */
     int     leaf_type;     /* source particle Type -> ptype_sec */
     int     _pad1;         /* explicit tail pad to keep the record 8B-aligned */
+#ifdef HERMITE_INTEGRATION
+    MyIDType leaf_id;      /* source particle ID -> key into the per-Hermite-pass ghost source
+                            * table (HermiteGhostTab). A foreign leaf carries no Old* state, so
+                            * the walk cannot re-predict it the way it does a local inactive
+                            * source; the ID lets it look up the owner-side predicted state
+                            * instead. 0 for non-leaf records. */
+#endif
 };
 #ifdef __cplusplus
 #include <cstddef>
@@ -206,6 +213,9 @@ extern int     *ForeignLeafTag;   /* 1 = real foreign single-particle leaf; 0 = 
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
+#ifdef HERMITE_INTEGRATION
+extern MyIDType *ForeignLeafID;   /* source particle ID for a foreign leaf (-> HermiteGhostTab key) */
+#endif
 
 /* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
  * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to

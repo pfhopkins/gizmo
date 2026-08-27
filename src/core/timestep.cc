@@ -465,6 +465,23 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
+/* Safety margin on the sink 2-body timestep, and the common factor Hermite-integrated sinks
+ * divide back out of BOTH gravity criteria below.
+ *
+ * The two applications are not symmetric, deliberately. dt_2body multiplies the 0.3 in and,
+ * for Hermite sinks, divides it out again -- net 1.0, its bare value. dt_tidal never carried
+ * the factor, so dividing it out lengthens dt_tidal to 3.33x its bare value for Hermite sinks.
+ * That is the point: omega_tidal <= omega_2body identically (m_companion <= M_total, and t_ff
+ * >= the harmonic mean), so once dt_tidal sits above dt_2body the SYMMETRIC 2-body criterion
+ * binds for both members of a bound pair. The tidal criterion keys on the COMPANION's mass and
+ * differs between unequal members by sqrt(m1/m2); left at its bare value it undercuts the
+ * 2-body criterion for the lighter member and splits the pair across timebins -- the asymmetry
+ * a production momentum-conservation violation was traced to. Relaxing dt_tidal 2x was measured
+ * to close that leak; 3.33x is what makes the ordering exact rather than empirical, and leans
+ * on the 4th-order integrator tolerating a longer step than the 2nd-order calibration these
+ * coefficients were tuned for. */
+#define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
     double dt_tidal = 0.5 * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
@@ -476,6 +493,11 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     P[p].tdyn_step_for_treeforce = dt_tidal; // hang onto this to decide how frequently to update the treeforce
 #endif
+#ifdef HERMITE_INTEGRATION
+    /* divide out the 2nd-order margin, as the 2-body criterion does below. After
+     * tdyn_step_for_treeforce, so the tree-update cadence keeps the unscaled value. */
+    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+#endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[p].SuperTimestepFlag>=2) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
@@ -486,9 +508,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef SINGLE_STAR_TIMESTEPPING // this ensures that binaries advance in lock-step, which gives superior conservation
     if(P[p].Type == 5)
     {
-        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * 0.3 / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
+        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt_2body /= 0.3;
+        if(eligible_for_hermite(p)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary

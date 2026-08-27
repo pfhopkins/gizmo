@@ -72,6 +72,22 @@ void star_direct_gravity_build_table(void)
         if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}
         sendbuf[k].Pos = P[i].Pos;
         sendbuf[k].Vel = P[i].Vel;
+#ifdef HERMITE_INTEGRATION
+        /* Same correction the tree walk applies in its single-particle branch (forcetree.cc).
+         * Drifting to All.Ti_Current above puts an INACTIVE star on its KDK-drifted trajectory,
+         * which is O(dt^2) from where it actually is mid-step, and leaves Vel whole-step-kicked;
+         * feeding that to a 4th-order integrator caps its accuracy at 2nd order. During the
+         * Hermite-only passes, send the source's Old*-predicted state instead. Only the send
+         * buffer is touched -- P[i] is untouched, so the KDK path is unaffected. Active stars
+         * keep their live state: it is already correct, and at HermiteOnlyFlag==1 their Old* are
+         * stale because find_timesteps has already advanced Ti_begstep. */
+        if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
+        {
+            double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
+            sendbuf[k].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;
+            sendbuf[k].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/2)) * hD;
+        }
+#endif
         sendbuf[k].Mass = P[i].Mass;
         sendbuf[k].Soft = ForceSoftening_KernelRadius(i);
         sendbuf[k].ID = P[i].ID;
