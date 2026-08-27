@@ -1407,12 +1407,35 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * compact_xyzh write paths absorbs that staleness in the BVH tile-overlap
      * test. Per-pair r² acceptance reads the actual P[j].KernelRadius (now
      * freshly drifted), so correctness is preserved. */
-    if(gnl->total_pairs > 0 && gnl->neighbors) {
+    /* The sweep below is dead work when the pool is already current: every
+     * drift_particle call returns immediately, and the device->host copy and the
+     * h-dirty marking exist only to serve those calls.
+     *
+     * Two proofs are needed, one per segment of the pool, and both are compared
+     * against the time THIS call needs, so anything short of a match falls
+     * through to the full sweep. gizmo_full_drift_ti() covers the local
+     * particles: move_particles deliberately does not advance it, because it
+     * drifts only the active set, which is what makes it a proof rather than a
+     * convention. ghost_pool_current_ti() covers the imported segment,
+     * established when the owners advanced their particles before packing them.
+     *
+     * It needs no separate invalidation. A new timestep advances All.Ti_Current,
+     * so a certificate from an earlier time simply stops matching.
+     *
+     * The h-dirty marking stays covered in exactly this case: a full-N drift
+     * marks the whole local range as it goes, and ghost slots are marked when
+     * they are installed. MEASURED on a production run: on fulldrift steps this
+     * is 92.0 billion pool visits with zero members behind, at ~97 s per rank. */
+    const integertime t_pool = gizmo_host_ti_current();
+    const int ghost_segment_current = (ghost_get_num_ghosts() == 0) ||
+                                      (ghost_pool_current_ti() == t_pool);
+    const int pool_already_current = (gizmo_full_drift_ti() == t_pool) && ghost_segment_current;
+    if(gnl->total_pairs > 0 && gnl->neighbors && !pool_already_current) {
         std::vector<int> ngb_host((size_t)gnl->total_pairs);
         gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
         /* Out-of-line host accessor. Lazy-drift target for CSR
          * neighbors — host-side drift_particle calls. */
-        integertime time1 = gizmo_host_ti_current();
+        integertime time1 = t_pool;
         /* Ghosts imported for this step were advanced to the current time by
          * their owners before being packed, so the whole imported segment is
          * already current and there is nothing to confirm per ghost. The pool's
