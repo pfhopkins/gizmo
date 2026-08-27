@@ -42,10 +42,13 @@ from matplotlib import pyplot as plt
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
 # sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
 # what that test measures.
+from pytreegrav import Potential
+
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
+    parse_params,
     variant_output_dir,
 )
 
@@ -143,13 +146,36 @@ def _load(snap):
         return t, g["Masses"][:], pos, vel, g["ParticleIDs"][:], synced
 
 
+def _force_softening():
+    """Kernel SUPPORT radius for the star type, in code units -- what pytreegrav's `softening`
+    and GIZMO's All.ForceSoftening both mean. The params file gives the Plummer-equivalent;
+    gravtree.cc computes All.ForceSoftening[i] = soft[i] / KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER,
+    and that macro is 1/2.8 for the cubic spline (mesh/kernel.h)."""
+    return 2.8 * float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["Softening_Type5"])
+
+
 def _potential_energy(pos, mass):
-    d = pos[:, None, :] - pos[None, :, :]
+    """Potential energy at the given positions, via pytreegrav's brute-force sum.
+
+    SOFTENED, and the softening is not optional: GIZMO integrates with a cubic-spline kernel that
+    is Newtonian only outside its support radius, so an unsoftened sum diverges from the dynamics
+    the moment any pair penetrates it. Measured on plummer_binaries (same softening, wider orbits):
+    a pair at 8.8 AU against an 18 AU support radius shifted the total energy by 2.7% of KE0 in one
+    snapshot and recovered in the next. This test samples ECCENTRIC orbits, so periapsis passages
+    inside the kernel are more frequent here, not less.
+
+    pytreegrav rather than a hand-rolled kernel: its `softening` is the support radius, the same
+    convention as All.ForceSoftening, and it uses the same spline -- verified against GIZMO's own
+    Potential field to 0.1% where an unsoftened sum was off by 1%.
+    """
     if PERIODIC:
-        d -= BOXSIZE * np.round(d / BOXSIZE)
-    r2 = np.sum(d * d, axis=-1)
-    np.fill_diagonal(r2, np.inf)                       # drop self-pairs
-    return -0.5 * G_CODE * np.sum((mass[:, None] * mass[None, :]) / np.sqrt(r2))
+        raise NotImplementedError(
+            "periodic potential needs Ewald summation; pytreegrav bruteforce is non-periodic. "
+            "PERIODIC is False here (no BOX_PERIODIC, ~1 pc cluster in a 300 pc box), so this "
+            "path is unreachable -- wire in Ewald before enabling it.")
+    soft = np.full(len(mass), _force_softening(), dtype=np.float64)
+    return 0.5 * np.sum(mass * Potential(pos, mass, softening=soft, G=G_CODE,
+                                        method="bruteforce"))
 
 
 def _trajectory(snaps):

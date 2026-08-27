@@ -27,6 +27,8 @@ from matplotlib import pyplot as plt
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
 # sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
 # what that test measures.
+from pytreegrav import Potential
+
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
@@ -175,33 +177,61 @@ def _radii_from_com(pos, mass):
     return np.sqrt(np.sum((pos - com) ** 2, axis=1))
 
 
-def _potential_energy(pos, mass, boxsize, periodic, softening=0.0):
-    """Direct pairwise potential energy from the positions given.
+def _force_softening():
+    """Kernel SUPPORT radius for the star type, in code units -- what pytreegrav's `softening`
+    and GIZMO's All.ForceSoftening both mean. The params file gives the Plummer-equivalent;
+    gravtree.cc does All.ForceSoftening[i] = soft[i] / KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER,
+    and that macro is 1/2.8 for the cubic spline (mesh/kernel.h)."""
+    return 2.8 * float(parse_params(f"{TEST_DIR}/{TEST_NAME}.params")["Softening_Type5"])
 
-    Not the snapshot's Potential field: that is evaluated by the tree at the DRIFTED positions,
-    so pairing it with last-kick velocities gives a kinetic and a potential term belonging to
-    different times -- the two halves of the energy disagree, and the resulting "conservation"
-    number carries a sampling artifact set by where in each star's timestep the output landed.
-    At N=512 the exact O(N^2) sum is milliseconds, so there is no reason to approximate it.
 
-    Absolute values differ slightly from the tree's by its opening error (ErrTolTheta); only
-    energy DRIFT is comparable across that change, which is what the assertions use.
+def _potential_energy(pos, mass, boxsize, periodic, softening):
+    """Potential energy of the given positions, via pytreegrav's brute-force sum.
+
+    The snapshot's own Potential field is not usable here: it is evaluated at the DRIFTED
+    positions from the last force evaluation, so pairing it with the snapshot-time velocities
+    gives kinetic and potential terms belonging to different instants. IO_HERMITE_SYNC supplies
+    a consistent (r, v) pair, so the potential has to be recomputed AT those positions -- that
+    is what makes recomputation necessary rather than merely tidy.
+
+    SOFTENED, and the softening is required, not optional. GIZMO integrates with a cubic-spline
+    kernel that is Newtonian only outside its support radius; an unsoftened sum diverges from the
+    dynamics as soon as any pair penetrates that radius. Measured on this test: a pair reaching
+    8.8 AU against an 18 AU support radius moved the total energy by 7.3 (2.7% of KE0) in a single
+    snapshot and recovered completely in the next -- an artifact large enough to swamp the real
+    signal, and one that appeared in exactly the 2 of 101 snapshots holding a sub-support pair
+    and in none of the other 99.
+
+    pytreegrav rather than a hand-rolled kernel: `softening` there is the support radius, the same
+    convention as All.ForceSoftening, and it uses the same spline. Checked against GIZMO's own
+    Potential field at matched (drifted) positions on the offending snapshot: -629.04 vs -629.71,
+    0.1% -- while unsoftened gives -636.39.
     """
-    d = pos[:, None, :] - pos[None, :, :]
     if periodic:
-        d -= boxsize * np.round(d / boxsize)
-    r2 = np.sum(d * d, axis=-1) + softening * softening
-    np.fill_diagonal(r2, np.inf)                       # drop self-pairs
-    mm = mass[:, None] * mass[None, :]
-    return -0.5 * G_CODE * np.sum(mm / np.sqrt(r2))    # 0.5 for double counting
+        raise NotImplementedError(
+            "periodic potential needs Ewald summation; pytreegrav bruteforce is non-periodic. "
+            "This test sets PERIODIC=False (BOX_PERIODIC is not in its Config and the cluster is "
+            "tiny against the box), so this path is unreachable -- wire in an Ewald-capable "
+            "summation before enabling it.")
+    del boxsize  # non-periodic: no wrapping
+    soft = np.full(len(mass), softening, dtype=np.float64)
+    return 0.5 * np.sum(mass * Potential(pos, mass, softening=soft, G=G_CODE,
+                                         method="bruteforce"))
 
 
-def _total_energy(vel, mass, pot=None, pos=None, boxsize=None, periodic=False):
+def _total_energy(vel, mass, pot=None, pos=None, boxsize=None, periodic=False, softening=None):
     """Total energy. With pos given, the potential is recomputed from those positions so that it
-    shares a clock with vel; otherwise it falls back to the snapshot's tree-evaluated field."""
+    shares a clock with vel (and softening must be given); otherwise it falls back to the
+    snapshot's own tree-evaluated field, which already carries the code's softened kernel."""
     ke = 0.5 * np.sum(mass * np.sum(vel**2, axis=1))
-    pe = (_potential_energy(pos, mass, boxsize, periodic) if pos is not None
-          else 0.5 * np.sum(mass * pot))
+    if pos is not None:
+        if softening is None:
+            raise ValueError("recomputing the potential requires the run's softening: an "
+                             "unsoftened sum disagrees with the code's spline kernel inside its "
+                             "support radius (see _potential_energy)")
+        pe = _potential_energy(pos, mass, boxsize, periodic, softening)
+    else:
+        pe = 0.5 * np.sum(mass * pot)
     return ke + pe, ke, pe
 
 
@@ -223,7 +253,8 @@ def _conservation_trajectories(snap_paths):
         pos, vel, mass, pot, boxsize = _load_snapshot(s)
         with h5py.File(s, "r") as F:
             t = float(F["Header"].attrs["Time"])
-        e, ke, _ = _total_energy(vel, mass, pos=pos, boxsize=boxsize, periodic=PERIODIC)
+        e, ke, _ = _total_energy(vel, mass, pos=pos, boxsize=boxsize, periodic=PERIODIC,
+                                  softening=_force_softening())
         times.append(t)
         energies.append(e)
         momenta.append(np.sum(mass[:, None] * vel, axis=0))
