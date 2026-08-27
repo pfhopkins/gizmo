@@ -2520,7 +2520,15 @@ void read_parameter_file(char *fname)
                 {
 
                     *buf = 0;
-                    fgets(buf, 200, fd);
+                    if(fgets(buf, sizeof(buf), fd) == NULL) {continue;}
+                    /* a line that filled the buffer without its newline was TRUNCATED mid-value;
+                       the remainder would be parsed as a bogus next line. Fail loudly instead. */
+                    if(strlen(buf) == sizeof(buf) - 1 && buf[sizeof(buf) - 2] != '\n' && !feof(fd))
+                    {
+                        printf("PARAMETER FILE ERROR: line longer than %d characters in '%s':\n  %.60s...\n",
+                               (int) sizeof(buf) - 1, fname, buf);
+                        endrun(886601);
+                    }
                     if(sscanf(buf, "%s%s%s", buf1, buf2, buf3) < 2)
                         continue;
 
@@ -2545,6 +2553,17 @@ void read_parameter_file(char *fname)
                                 fprintf(stdout, "%-50s%g\n", buf1, *((double *) addr[j]));
                                 break;
                             case STRING:
+                                /* every STRING target is a char[DEFAULT_PATH_BUFFERSIZE_TOUSE]
+                                   field (global_data_all_struct.h keeps them in step). A raw
+                                   strcpy here once overflowed OutputDir[100] into the adjacent
+                                   field and silently scattered snapshot files; enforce the
+                                   contract instead of trusting it. */
+                                if(strlen(buf2) >= DEFAULT_PATH_BUFFERSIZE_TOUSE)
+                                {
+                                    printf("PARAMETER FILE ERROR: value of '%s' exceeds %d characters:\n  %.60s...\n",
+                                           buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE - 1, buf2);
+                                    endrun(886602);
+                                }
                                 strcpy((char *) addr[j], buf2);
                                 fprintf(fdout, "%-50s%s\n", buf1, buf2);
                                 fprintf(stdout, "%-50s%s\n", buf1, buf2);

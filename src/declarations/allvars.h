@@ -130,9 +130,9 @@ template<typename T> GIZMO_GPU_FUNCTION inline void nearest_xyz(Vec3<T>& v, int 
 #ifdef CHIMES
 extern struct gasVariables *ChimesGasVars;
 extern struct globalVariables ChimesGlobalVars;
-extern char ChimesDataPath[256];
-extern char ChimesEqAbundanceTable[196];
-extern char ChimesPhotoIonTable[196];
+extern char ChimesDataPath[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+extern char ChimesEqAbundanceTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+extern char ChimesPhotoIonTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 extern double chimes_rad_field_norm_factor;
 extern double shielding_length_factor;
 extern double cr_rate;

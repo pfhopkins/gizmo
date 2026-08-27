@@ -278,14 +278,20 @@ struct global_data_all_processes
   /*! If particle masses are all equal for one type, the corresponding entry in MassTable is set to this value, * allowing the size of the snapshot files to be reduced */
   double MassTable[6];
 
-  /* some filenames */
-  char InitCondFile[100],
-    OutputDir[100],
-    SnapshotFileBase[100],
-    RestartFile[100], ResubmitCommand[100], OutputListFilename[100];
+  /* some filenames. DEFAULT_PATH_BUFFERSIZE_TOUSE, matching every local path buffer and the
+     parameter reader's line buffers: a mismatch here is how a 119-char OutputDir once
+     overflowed into SnapshotFileBase (raw strcpy in the parser) and scattered snapshots
+     across a chimera path. The reader now hard-fails on overlong values; keep these sizes
+     and that check in step. Fixed-size char arrays are load-bearing: this struct is
+     serialized as raw bytes (restart byten + MPI_Bcast), so no std::string here. */
+  char InitCondFile[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    OutputDir[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    SnapshotFileBase[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    RestartFile[DEFAULT_PATH_BUFFERSIZE_TOUSE], ResubmitCommand[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    OutputListFilename[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
 #ifdef COOL_GRACKLE
-    char GrackleDataFile[100];
+    char GrackleDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 #endif
     /*! table with desired output times */
     double OutputListTimes[MAXLEN_OUTPUTLIST];
@@ -449,7 +455,7 @@ struct global_data_all_processes
     double AgeTracerRateNormalization;              /* Determines Fraction of time to do age tracer deposition (with checks depending on time bin width for current star) */
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
     double AgeTracerTimeBins[NUM_AGE_TRACERS+1];    /* Bin edges (left) for stellar age passive scalar tracers when using custom (uneven) bins the final value is the right edge of the final bin, hence a total size +1 the number of tracers */
-    char   AgeTracerListFilename[100];              /* file name to read ages from (in Myr) as a single column */
+    char AgeTracerListFilename[DEFAULT_PATH_BUFFERSIZE_TOUSE];              /* file name to read ages from (in Myr) as a single column */
 #else
     double AgeTracerBinStart;                       /* left bin edge of first age tracers (Myr) - for log spaced bins */
     double AgeTracerBinEnd;                         /* right bin edge of last age tracer (Myr)  - for log spaced bins */
@@ -566,7 +572,7 @@ struct global_data_all_processes
 #ifndef GR_TABULATED_COSMOLOGY_W
 #define GR_TABULATED_COSMOLOGY_W
 #endif
-  char TabulatedCosmologyFile[100];	/*!< tabulated parameters for expansion and/or gravity */
+  char TabulatedCosmologyFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];	/*!< tabulated parameters for expansion and/or gravity */
 #ifdef GR_TABULATED_COSMOLOGY_G
   double Gini;
 #endif
@@ -657,7 +663,7 @@ struct global_data_all_processes
 #endif
 
 #ifdef EOS_TABULATED
-    char EosTable[100];
+    char EosTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 #endif
 
 #ifdef EOS_ANEOS
@@ -665,7 +671,7 @@ struct global_data_all_processes
 #define ANEOS_MAX_MATERIALS 7
 #endif
     int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
-    char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
+    char AneosTableFiles[ANEOS_MAX_MATERIALS][DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* file paths for each material's SESAME table */
 #endif
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -708,7 +714,7 @@ struct global_data_all_processes
   double Sink_jet_precess_period;
 #endif
 #ifdef NUCLEAR_NETWORK
-    char NuclearNetworkDataFile[256];
+    char NuclearNetworkDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     double NuclearBurningFloor_T;
     double NuclearBurningFloor_rho;
     double NuclearNSE_T_threshold;
