@@ -124,6 +124,11 @@ static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, 
 }
 static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
+/* Gravitational softening kernel radius of particle p: the value cached by
+ * compute_all_force_softening(). The _P form is the single source of truth and is
+ * callable from device code; the host entry point in gravity/forcetree.cc forwards
+ * to it so the ~40 existing call sites are unchanged. */
+GIZMO_GPU_FUNCTION inline double ForceSoftening_KernelRadius_P(int p, struct particle_data *pp) {return pp[p].ForceSoftening;}
 double ForceSoftening_KernelRadius(int p);
 double compute_force_softening_kernel_radius(int p); /* internal: source-of-truth softening computation */
 void   compute_all_force_softening(int mode);        /* mode=0 active-only; mode=1 all NumPart (init/restart) */

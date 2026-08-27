@@ -7,6 +7,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/timestep_functions.h"
 
 /*!
  * This routine calculates the pre-factors and timesteps for cosmological 
@@ -73,102 +74,29 @@ void init_drift_table(void)
 }
 
 
+/* init_drift_table() runs only under ComovingIntegrationOn, so on a non-cosmological run the
+ * tables below are never filled and never read; the elapsed-time branch is taken instead.
+ */
+
 /*! This function integrates the cosmological prefactor for a drift step between time0 and time1. The value returned is
  *  \f[ \int_{a_0}^{a_1} \frac{{\rm d}a}{H(a)} \f]
- *  A lookup-table is used for reasons of speed.
+ *  A lookup-table is used for reasons of speed. mode selects whose timestep dilation applies:
+ *  0 for particle i, 1 for tree node i.
  */
 
 double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 {
-    double a1, a2, df1, df2, u1, u2;
-    int i1, i2;
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
-
-    if(All.ComovingIntegrationOn == 0)
-    {
-        return (time1 - time0) * All.Timebase_interval * dilation;
-    }
-    else
-    {
-        /* note: will only be called for cosmological integration */
-        a1 = logTimeBegin + time0 * All.Timebase_interval;
-        a2 = logTimeBegin + time1 * All.Timebase_interval;
-        
-        if(logTimeMax > logTimeBegin)
-            u1 = (a1 - logTimeBegin) / (logTimeMax - logTimeBegin) * DRIFT_TABLE_LENGTH;
-        else
-            u1 = 0;
-        i1 = (int) u1;
-        if(i1 >= DRIFT_TABLE_LENGTH)
-            i1 = DRIFT_TABLE_LENGTH - 1;
-        
-        if(i1 <= 1)
-            df1 = u1 * DriftTable[0];
-        else
-            df1 = DriftTable[i1 - 1] + (DriftTable[i1] - DriftTable[i1 - 1]) * (u1 - i1);
-        
-        if(logTimeMax > logTimeBegin)
-            u2 = (a2 - logTimeBegin) / (logTimeMax - logTimeBegin) * DRIFT_TABLE_LENGTH;
-        else
-            u2 = 0;
-        i2 = (int) u2;
-        if(i2 >= DRIFT_TABLE_LENGTH)
-            i2 = DRIFT_TABLE_LENGTH - 1;
-        
-        if(i2 <= 1)
-            df2 = u2 * DriftTable[0];
-        else
-            df2 = DriftTable[i2 - 1] + (DriftTable[i2] - DriftTable[i2 - 1]) * (u2 - i2);
-        
-        return (df2 - df1) * dilation;
-    }
+    struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
+            logTimeBegin, logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+    return get_drift_factor_impl(time0, time1, dilation, &view);
 }
 
 
 double get_gravkick_factor(integertime time0, integertime time1, int i, int mode)
 {
-  double a1, a2, df1, df2, u1, u2;
-  int i1, i2;
-  double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
-
-    if(All.ComovingIntegrationOn == 0)
-    {
-        return (time1 - time0) * All.Timebase_interval * dilation;
-    }
-    else
-    {
-
-        /* note: will only be called for cosmological integration */
-        
-        a1 = logTimeBegin + time0 * All.Timebase_interval;
-        a2 = logTimeBegin + time1 * All.Timebase_interval;
-        
-        if(logTimeMax > logTimeBegin)
-            u1 = (a1 - logTimeBegin) / (logTimeMax - logTimeBegin) * DRIFT_TABLE_LENGTH;
-        else
-            u1 = 0;
-        i1 = (int) u1;
-        if(i1 >= DRIFT_TABLE_LENGTH)
-            i1 = DRIFT_TABLE_LENGTH - 1;
-        
-        if(i1 <= 1)
-            df1 = u1 * GravKickTable[0];
-        else
-            df1 = GravKickTable[i1 - 1] + (GravKickTable[i1] - GravKickTable[i1 - 1]) * (u1 - i1);
-        
-        if(logTimeMax > logTimeBegin)
-            u2 = (a2 - logTimeBegin) / (logTimeMax - logTimeBegin) * DRIFT_TABLE_LENGTH;
-        else
-            u2 = 0;
-        i2 = (int) u2;
-        if(i2 >= DRIFT_TABLE_LENGTH)
-            i2 = DRIFT_TABLE_LENGTH - 1;
-        
-        if(i2 <= 1)
-            df2 = u2 * GravKickTable[0];
-        else
-            df2 = GravKickTable[i2 - 1] + (GravKickTable[i2] - GravKickTable[i2 - 1]) * (u2 - i2);
-        
-        return (df2 - df1) * dilation;
-    }
+    double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
+    struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
+            logTimeBegin, logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+    return get_gravkick_factor_impl(time0, time1, dilation, &view);
 }

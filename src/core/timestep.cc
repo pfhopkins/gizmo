@@ -1600,6 +1600,14 @@ void calc_shearing_box_pos_offset(void) /* function that calculates the shear-of
 #endif
 
 
+/* timestep_dilation_factor, unit_integertime_in_physical, get_physical_timestep_from_timebin,
+   get_particle_timestep_in_physical: definitions now in timestep_functions.h (single source of truth).
+   Include with non-inline linkage to provide externally-visible symbols. */
+#undef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION
+#include "timestep_functions.h"
+
+
 /* Timestep dilation for zoom-in runs with extreme dynamic range. The dilation factor f = 1/a <= 1
    is the rate at which a particle's clock advances relative to the global integer timeline: the
    assigned integer step is divided by f, and every conversion of an integer step back to physical
@@ -1607,40 +1615,8 @@ void calc_shearing_box_pos_offset(void) /* function that calculates the shear-of
    dynamics are integrated more finely. f is frozen for each particle when its timestep is assigned
    (see get_timestep) and cached in P[].TimestepDilationFactor; read the cached value with
    timestep_dilation_factor(). The two functions below are the live evaluations, needed only where
-   no cache exists: at timestep assignment, and for tree nodes. */
-
-#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-/* smallest physical distance from pos to any of the refinement centers */
-static double distance_to_nearest_refinement_center(Vec3<double> pos)
-{
-    double rmin = MAX_REAL_NUMBER;
-    for(int j = 0; j < SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM; j++)
-    {
-        Vec3<double> p0 = All.SpecialParticle_Position_ForRefinement[j];
-        Vec3<double> dp = All.cf_atime * (pos - p0);
-        double r = dp.norm(); if(r < rmin) {rmin = r;}
-    }
-    return rmin;
-}
-
-/* dilation amplitude a >= 1 at distance r from the refinement center: unity far away, saturating
-   at amax on approach */
-static double nuclear_zoom_dilation_amplitude(double r)
-{
-    double fac_amax = 100.;
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES
-#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
-    fac_amax = 1.e6;
-#endif
-#endif
-    double amax = fac_amax;
-    double r_amax = fac_amax * All.ForceSoftening[3]; // modify as needed
-    double index = 1;
-    if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
-    return 1. + 1. / (1./amax + pow(r / r_amax, index));
-}
-#endif
-
+   no cache exists: at timestep assignment, and for tree nodes. Both are built on the device-callable
+   helpers in timestep_functions.h, so they sit below its inclusion. */
 
 /* live dilation factor for particle i. Called at timestep assignment; all other consumers read the
    frozen value via timestep_dilation_factor(). */
@@ -1683,42 +1659,12 @@ double return_timestep_dilation_factor(int i, struct particle_data *pp)
 }
 
 
-/* live dilation factor at the center of mass of tree node 'no', for drifting the node itself. Nodes
-   carry no particle type, so the stars-only restriction is particle-only and does not apply here.
-
-   Nodes also carry no sink distance: Min_Distance_to_Sink is a per-particle result of the gravity
-   walk, and there is no node-level equivalent to feed the weighted-motion smoothing. So under
-   SPECIAL_POINT_WEIGHTED_MOTION (without the nuclear-zoom term, which does work for nodes) a node
-   drifts undilated while the particles it summarises drift at the smoothing weight, leaving its
-   center of mass inconsistent with them. Giving nodes that term means carrying a sink distance
-   through the tree moments. The weighted-motion module is still in development; this needs
-   resolving before it is relied on. */
+/*! Live dilation factor at the center of mass of tree node 'no'. Host callers pass the
+ *  global node array; see return_node_timestep_dilation_factor_P for the rationale. */
 double return_node_timestep_dilation_factor(int no)
 {
-#if !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(DILATION_FOR_STELLAR_KINEMATICS_ONLY)
-    (void)no; return 1;
-#else
-
-    if(All.Time <= All.TimeBegin) {return 1;}
-    if(no < 0) {return 1;}
-
-    double a = 1;
-
-#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    Vec3<double> pos_node; pos_node = Nodes[no].u.d.s;
-    a = nuclear_zoom_dilation_amplitude(distance_to_nearest_refinement_center(pos_node));
-#endif
-
-    return 1. / a;
-#endif
+    return return_node_timestep_dilation_factor_P(no, Nodes);
 }
-
-/* timestep_dilation_factor, unit_integertime_in_physical, get_physical_timestep_from_timebin,
-   get_particle_timestep_in_physical: definitions now in timestep_functions.h (single source of truth).
-   Include with non-inline linkage to provide externally-visible symbols. */
-#undef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION
-#include "timestep_functions.h"
 
 double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp)
 {
