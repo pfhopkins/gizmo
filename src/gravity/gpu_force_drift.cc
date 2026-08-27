@@ -13,10 +13,11 @@
  * of DriftTable and GravKickTable, refreshed from the host on each top-level call.
  * The mirror is 2 x DRIFT_TABLE_LENGTH doubles so the refresh cost is in the noise.
  *
- * Timestep-dilation policy: GPU drift supports all configurations.  For
- * SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM and SPECIAL_POINT_WEIGHTED_MOTION the
- * per-node dilation_dev cache (populated by gpu_force_update_tree) is used;
- * all other configs are provably dilation==1 and skip the cache lookup.
+ * Timestep dilation: under USE_TIMESTEP_DILATION_FOR_ZOOMS the dispatcher below
+ * fills a per-node dilation_dev cache on the host before the launch; all other
+ * configs are provably dilation==1 and skip the cache entirely. Note the node
+ * factor itself has a standing gap under SPECIAL_POINT_WEIGHTED_MOTION, where
+ * nodes drift undilated -- see return_node_timestep_dilation_factor_P.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

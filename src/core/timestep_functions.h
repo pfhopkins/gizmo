@@ -43,11 +43,11 @@ double get_particle_timestep_in_physical(int i, struct particle_data *pp)
 }
 
 /* --- live dilation factors -------------------------------------------------
- * The two helpers below were file-scope statics in core/timestep.cc. They read
- * nothing but All, so they are portable as-is; they live here because the node
- * dilation factor is needed wherever a drift factor is, on host and device
- * alike. core/timestep.cc provides their externally-visible host symbols
- * through the non-inline re-include at the bottom of that file. */
+ * The two nuclear-zoom helpers were file-scope statics in core/timestep.cc and read
+ * nothing but All; the node factor below reads All and the node array passed to it.
+ * They live here because the node dilation factor is needed wherever a drift factor
+ * is, on host and device alike. core/timestep.cc provides their externally-visible
+ * host symbols through its non-inline re-include of this header. */
 
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 /* smallest physical distance from pos to any of the refinement centers */
