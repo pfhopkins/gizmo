@@ -40,7 +40,7 @@ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullp
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
-GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 /* Forward decls for symbols called by eos_functions.h / rt_functions.h under
    various FIRE / COOL_MOLECFRAC / SINGLE_STAR flag combinations.  Must be declared
    before the including headers so overload resolution inside their inline bodies
@@ -303,12 +303,6 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 }
 #endif /* EOS_SUBSTELLAR_ISM */
 
-KOKKOS_INLINE_FUNCTION
-double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
-    return ThermalProperties_impl(u, rho, target, mu_guess, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, pp, cell, &tables_view);
-}
 #endif /* !CHIMES */
 #ifdef TWO_TEMPERATURE_PLASMA
 #include "two_temperature_functions.h"
@@ -2112,8 +2106,12 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 #ifdef COOL_MOLECFRAC_NONEQM
     // first define a number of environmental variables that are fixed over this update step
     double fH2_initial = cell[i].MolecularMassFraction_perNeutralH; // initial molecular fraction per H atom, entering this subroutine, needed for update below
-    double xn_e=1, nh0=0, nHe0, nHepp, nhp, nHep, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergy;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &xn_e, &nh0, &nhp, &nHe0, &nHep, &nHepp, pp, cell); // get thermodynamic properties [will assume fixed value of fH2 at previous update value]
+    double xn_e=1, nh0=0, nHe0=1, nHepp=0, nhp=0, nHep=0, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergy;
+    /* this runs inside the cooling solver, where the helium ionization state is wanted at full
+       accuracy for the molecular rates below, so solve for it here as this always has [assumes a
+       fixed value of fH2 at the previous update value] */
+    xn_e = cell[i].Ne; nh0 = cell[i].HI;
+    temperature = convert_u_to_temp(u0*UNIT_SPECEGY_IN_CGS, rho*UNIT_DENSITY_IN_CGS, i, &xn_e, &nh0, &nhp, &nHe0, &nHep, &nHepp, &mu_meanwt, pp, cell);
     double T=1, f_dustgas_solar=1, urad_G0=1, xH0=1, x_e=0, nH_cgs=rho*UNIT_DENSITY_IN_NHCGS; // initialize definitions of some variables used below to prevent compiler warnings
     f_dustgas_solar=1; urad_G0=1; // initialize metal/dust and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef RT_ISRF_BACKGROUND

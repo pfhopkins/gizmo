@@ -403,9 +403,17 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
     Bmag=sqrt(DMAX(Bmag,0)); b_muG=Bmag*gizmo2gauss/1.e-6; b_muG=sqrt(b_muG*b_muG + 1.e-6); vA_code=sqrt(Bmag*Bmag/(cell[i].Density*All.cf_a3inv)); vA_noion=vA_code; E_B=0.5*Bmag*Bmag*(pp[i].Mass/(cell[i].Density*All.cf_a3inv));
     Omega_per_GeV_ifveqc=(0.00898734*b_muG) * UNIT_TIME_IN_CGS; /* B-field in units of physical microGauss; set a floor at nanoGauss level. convert to physical code units */
 #ifdef COOLING
-    double ne=1, nh0=0, nHe0=0, nHepp, nhp, nHeII, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
+    double ne=1, nh0=0, nHe0=0, nhp=0, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
+    /* neutral helium, for the ion-neutral damping term below. the damping expression is itself a
+       simple approximation that ignores heavier ions and partially-ionized species, so scaling the
+       helium with the hydrogen neutral fraction is accurate enough for it */
+#ifdef RT_CHEM_PHOTOION_HE
+    nHe0 = cell[i].HeI;
+#else
+    nHe0 = yhelium(i, pp) * nh0;
+#endif
 #endif
     M_A = Get_AlfvenMachNumber_Local(i,vA_noion,0, cell); /* get turbulent Alfven Mach number estimate. 0 or 1 to turn on shear-correction */
     L_scale = pp[i].Get_Particle_Size()*All.cf_atime; /* define turbulent scales [estimation of M_A defined by reference to this scale */

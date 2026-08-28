@@ -25,16 +25,6 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 
-/* Include cooling_functions.h for ThermalProperties (used when COOLING + GRAIN_LORENTZFORCE
-   + GRAIN_EPSTEIN_STOKES are all active). Must come after allvars.h for struct definitions.
-   Need CoolTables accessible; use the same pattern as eos.cc. */
-/* The cooling tables are reached as data, through a view built on the host and
-   handed to the kernel; this file must not name the owner's instance. The view
-   type is needed in every configuration, since this file builds one either way. */
-#include "../cooling/cooling_tables.h"
-#if defined(COOLING) && !defined(CHIMES)
-#include "../cooling/cooling_functions.h"
-#endif
 
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/gpu_error_check.h"
@@ -56,8 +46,7 @@
  * writeback machinery (the generic grainbackrx ghost-writeback bundle in
  * solids/grain_physics_loop.cc) as the drag itself. */
 KOKKOS_FUNCTION
-static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp,
-                              const struct PhysicsTablesView *tables)
+static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp)
 {
     int k;
     /* Check drag eligibility and set defaults for non-eligible particles */
@@ -122,9 +111,20 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         double Z_grain = -DMAX(1./(1. + sqrt(1.0e-3/tau_draine_sutin)), 2.5*tau_draine_sutin);
         if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
 #endif
+/* APPROXIMATION, NOT THE INTENDED TREATMENT. Two quantities below describe the gas the
+   grain is coupled to -- its temperature, and its ionized fraction -- and the grain does not
+   carry either one: the density loop interpolates only pp[].Gas_InternalEnergy to the grain.
+   So the temperature is formed from that energy with an assumed fully-molecular weight, and
+   the ionized fraction from a local temperature scaling. Both are stand-ins, and both are
+   worst exactly where they matter, in cold weakly-ionized gas.
+   To do this properly, interpolate the gas temperature and ionized fraction onto the grain in
+   the same density loop that already fills Gas_InternalEnergy, then use them at the two sites
+   marked below: the mean molecular weight and temperature here, and f_ion_to_use in the
+   Coulomb-drag block that follows. */
 #ifdef GRAIN_EPSTEIN_STOKES
         if(grain_subtype == 0 || grain_subtype == 1)
         {
+            /* site 1: assumed molecular weight, pending the interpolated gas temperature */
             double mu = 2.3*PROTONMASS_CGS, temperature = (mu/PROTONMASS_CGS) * (1.4-1.) * U_TO_TEMP_UNITS * pp[idx].Gas_InternalEnergy;
             double cross_section = GRAIN_EPSTEIN_STOKES * 2.0e-15 * (1. + 70./temperature);
             cross_section /= UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS;
@@ -140,14 +140,11 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
             double tstop_Coulomb_inv = 0.797885/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code);
             tstop_Coulomb_inv /= (1. + a_Coulomb*(vgas_mag/cs)*(vgas_mag/cs)*(vgas_mag/cs)) * sqrt(1.+x0*x0);
             tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.;
+            /* site 2: local estimate of the ionized fraction, pending the interpolated value.
+               this previously came from an equilibrium chemistry solve run on an energy invented
+               from the sound speed, with no gas cell behind it, which was its own approximation */
             double T_Kelvin = (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (1.3807e-16 * gamma_eff), f_ion_to_use = 0;
             if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);}
-#ifdef COOLING
-            double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
-            u_tmp = T_Kelvin / (2.3 * U_TO_TEMP_UNITS);
-            temp_tmp = ThermalProperties_impl(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, pp, cellp, tables);
-            f_ion_to_use = DMIN(ne_tmp, 1.);
-#endif
             tstop_Coulomb_inv *= f_ion_to_use;
             tstop_inv += tstop_Coulomb_inv;
         }
@@ -301,12 +298,11 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
            GIZMO_GPU_ENSURE_ALL_FRESH is NOT called here: host code reads the host All
            extern directly; the device-pass-only #define All AllDeviceMirror is inert. */
         PRINT_STATUS("  grain drag (OMP): %d active grains", num_active);
-        const struct PhysicsTablesView host_tables = gizmo_physics_tables_view();
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
         for(int a = 0; a < num_active; a++)
-            grain_drag_kernel(active_indices[a], P_host, CellP_host, &host_tables);
+            grain_drag_kernel(active_indices[a], P_host, CellP_host);
         return;
     }
 
@@ -327,9 +323,9 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
         return;
     }
     /* compact_Cell is zeroed and stays zeroed: caller guarantees active_indices are
-       all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them.
-       The kernel reads CellP only via ThermalProperties(target=-1,...), which now
-       safely handles target=-1 throughout the call stack. */
+       all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them, and
+       the kernel reads none -- every gas quantity it needs is interpolated onto the
+       grain itself in the density loop. */
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < num_active; j++)
         compact_P[j] = P_host[active_indices[j]];
@@ -339,11 +335,8 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
     {
         struct particle_data *kp = compact_P;
         struct gas_cell_data *kc = compact_Cell;
-        /* Built here, on the host, and captured by value: the kernel cannot reach
-           the tables by name from this file. */
-        const struct PhysicsTablesView ktab = gizmo_physics_tables_view();
         gizmo_gpu_kernel_launch("grain_drag", num_active, KOKKOS_LAMBDA(int j) {
-            grain_drag_kernel(j, kp, kc, &ktab);
+            grain_drag_kernel(j, kp, kc);
         });
     }
 

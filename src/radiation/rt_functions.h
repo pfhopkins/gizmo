@@ -236,8 +236,8 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
 #ifdef RT_CHEM_PHOTOION
         double x_Hp = cell[i].HII, x_H0 = cell[i].HI;
 #else
-        double u_in=cell[i].InternalEnergy, rho_in=cell[i].Density*All.cf_a3inv, mu=1, ne=1, nHI=0, nHII=0, nHeI=1, nHeII=0, nHeIII=0;
-        double temp = ThermalProperties(u_in, rho_in, i, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, pp, cell);
+        double u_in=cell[i].InternalEnergy, rho_in=cell[i].Density*All.cf_a3inv, mu=1, ne=1, nHI=0, nHII=0;
+        double temp = ThermalProperties(u_in, rho_in, i, &mu, &ne, &nHI, &nHII, pp, cell);
         double x_Hp = nHII, x_H0 = nHI;
 #endif
         double x_Hminus = 4.e-10 * Tgas * x_elec * x_H0 / ((1. + x_Hp*300. + x_elec*1000.*(Tgas/1.3e4)*(Tgas/1.3e4)/(1.+(Tgas/1.3e4)*(Tgas/1.3e4)) + 4.e-17*1.) * (1. + Tgas/3.e4)); /* H- abundance: see series of equations in our non-equilbrium molecular solver (from e.g. Glover and Jappsen 2007 and other sources), with simple but accurate enough for our purposes replacements to make it quick to compute these to the needed accuracy for our purposes. note we need the free-electron fraction, neutral fraction, and free proton fraction. these denominator terms quantify differences from the idealized scaling assumed here, which assumes an idealized scaling of xH0~1~constant and near-vanishing xHp and x_e, for lower temperatures. last term assumes a constant photon-to-baryon ratio for scaling to different environments */

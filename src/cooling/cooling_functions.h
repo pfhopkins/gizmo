@@ -11,7 +11,7 @@
  *   find_abundances_and_rates_impl
  *   convert_temp_to_u_impl (EOS_SUBSTELLAR_ISM only)
  *   convert_u_to_temp_impl
- *   ThermalProperties_impl
+ *   ThermalProperties
  *
  * All are KOKKOS_INLINE_FUNCTION for device callability from any TU.
  * The originals in cooling.cc are replaced with #include of this header.
@@ -538,36 +538,40 @@ double convert_u_to_temp_impl(double u, double rho, int target, double *ne_guess
 /* ================================================================
    ThermalProperties — get temperature and ionization state from u
    ================================================================ */
+/* Reads the thermochemical state the cooling solver saved on the cell. It does not
+   solve anything, reach a table, or write to the cell: the values it hands back are
+   the ones the last cooling update determined for this gas. A source with no cell of
+   its own (target < 0) has no such state, so the call reports nothing and returns 0 --
+   build the estimate you need locally instead. Helium is deliberately absent: nothing
+   outside the cooling solver consumed it, and it is not saved. */
 KOKKOS_INLINE_FUNCTION
-double ThermalProperties_impl(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(target < 0) {*ne_guess = 0; *nH0_guess = 0; *nHp_guess = 0; *mu_guess = 1; return 0;}
 #ifdef HYDRO_MULTIFLUID_DM
     /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
-    if(target >= 0 && pp[target].FluidType == FLUID_DM) {
-        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0;
-        *nHe0_guess = 1; *nHep_guess = 0; *nHepp_guess = 0;
-        *mu_guess = 1.0;
+    if(pp[target].FluidType == FLUID_DM) {
+        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *mu_guess = 1.0;
         return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
                * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
     }
 #endif
 #if defined(CHIMES)
     int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];
-    *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
+    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
     double temp = ChimesGasVars[target].temperature;
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-    return temp;
 #else
-    if(target >= 0) {*ne_guess=cell[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}
-    rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;
-    double temp = convert_u_to_temp_impl(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell, tables);
+    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+    double temp = cell[target].Temperature;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; *nHe0_guess=0;}}
+    /* gas inside an HII region is held ionized by the local source, which the saved state
+       only picks up once the cell next cools */
+    if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
+#endif
+#endif
+    rho *= UNIT_DENSITY_IN_CGS;
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-#endif
     return temp;
-#endif
 }
 
 

@@ -277,8 +277,8 @@ double get_starformation_rate(int i, int mode)
 #endif // virial sf criteria/scaling block
 
 #if (SINGLE_STAR_SINK_FORMATION & 256) /* scale SFR to fraction of 'molecular' gas in cell */
-    double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred; // pull various known thermal properties, prepare to extract others //
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties, like neutral fraction, temperature, etc, that we will use below //
+    double ne=1, nh0=0, nhp=0, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred; // pull various known thermal properties, prepare to extract others //
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, P, CellP); // get thermodynamic properties, like neutral fraction, temperature, etc, that we will use below //
     rateOfSF *= Get_Gas_Molecular_Mass_Fraction(i, temperature, nh0, ne, 0., P, CellP);
 #endif
 
