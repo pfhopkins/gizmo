@@ -1,0 +1,135 @@
+diff --git a/Template_Config.sh b/Template_Config.sh
+index 70d15b00..88f04f06 100644
+--- a/Template_Config.sh
++++ b/Template_Config.sh
+@@ -673,3 +673,4 @@
+ 
+ #DISABLE_HERMITE_INTEGRATION      # turn off the 4th-order Hermite integration of sinks, leaving them on plain KDK leapfrog. Diagnostic: leapfrog's order is known (2nd), so it is a control for convergence measurements. See precompiler_logic.h, where it negates the HERMITE_INTEGRATION default
+ #DOMAIN_REFINE_EARLY_EXIT      # stop the domain swap-refinement once balance is good enough (DOMAIN_REFINE_TARGET, default 1.30) or attempts stop paying (DOMAIN_REFINE_STALL); ~18% faster at 768 ranks with balance preserved
++#MOMENTUM_CONSERVATION_DIAGNOSTIC # sum total momentum at every full timebin sync; abort if it jumps by >100 Msun*km/s between syncs, and write a restart file at each sync so the last good one can replay the interaction. See momentum_conservation_check() in core/run.cc
+diff --git a/core/proto.h b/core/proto.h
+index 694b1854..9d5a5b88 100644
+--- a/core/proto.h
++++ b/core/proto.h
+@@ -1107,3 +1107,15 @@ void energy_budget_gravity_report(void);
+ #define EB_GRAV_REPORT()
+ #endif
+ 
++#ifdef MOMENTUM_CONSERVATION_DIAGNOSTIC
++/* Total system momentum at full synchronization; see momentum_conservation_check() in run.cc. */
++void momentum_conservation_check(void);
++void momentum_conservation_seed_from_restart(void);
++/* Guard at the call site rather than inside the function, so the common path does not call an
++   external MPI-containing function from the main loop. Tidiness, not a measured win: the
++   diagnostic's real cost is the restart(0) in run.cc, and hoisting this changes nothing
++   about how often that fires. */
++#define MOMCHECK_SYNC() do {if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {momentum_conservation_check();}} while(0)
++#else
++#define MOMCHECK_SYNC()
++#endif
+diff --git a/core/run.cc b/core/run.cc
+index 1d20728d..f4a12bc7 100644
+--- a/core/run.cc
++++ b/core/run.cc
+@@ -73,6 +73,71 @@ void energy_budget_gravity_report(void)
+ #endif
+ #endif
+ 
++#ifdef MOMENTUM_CONSERVATION_DIAGNOSTIC
++/*! Total system momentum (all particle types, all mass on the domain), checked ONLY at full
++    synchronization (HighestActiveTimeBin == HighestOccupiedTimeBin) for the same reason as
++    energy_budget_sync_report() above: it is the only point where every particle's Vel shares a
++    clock, so the vector sum is meaningful. Gravity, hydro, and sink accretion should all conserve
++    momentum to good approximation between syncs; if the total jumps by more than
++    MOMENTUM_CONSERVATION_MAX_JUMP_MSUN_KMS, we stop the run so the restart file written by run()
++    right after this check passes (i.e. from the previous, good global sync) can be reloaded to
++    replay the interaction that broke it.
++    Called after do_hermite_correction() (not alongside EB_SYNC_REPORT, which runs before it),
++    since sinks are Hermite-integrated here and their velocity for this step isn't final until
++    the correction is applied. */
++#define MOMENTUM_CONSERVATION_MAX_JUMP_MSUN_KMS 100.0
++/* have_prev/prev are process memory, not part of the restart file: a fresh process restarted
++   from restart files starts with have_prev=0, so without momentum_conservation_seed_from_restart()
++   below, the first full sync after any restart would silently skip its comparison (nothing to
++   compare against) instead of checking against the state the restart file was written from. */
++static int have_prev = 0;
++static double prev[3];
++void momentum_conservation_check(void)
++{
++    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
++    double loc[3] = {0,0,0}, glob[3]; int i, k;
++    for(i = 0; i < NumPart; i++) {if(P[i].Mass > 0) {for(k=0;k<3;k++) {loc[k] += P[i].Mass * P[i].Vel[k];}}}
++    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
++    if(ThisTask == 0) {printf("Momentum (synced) t=%.10g P = %.8e %.8e %.8e\n", All.Time, glob[0], glob[1], glob[2]); fflush(stdout);} /* temporary: print every full sync, not just on violation, to check dynamics reproduce independent of diagnostic baseline validity */
++
++    /* threshold given in Msun*km/s; convert to code units so this is correct regardless of All's unit choice */
++    double threshold = MOMENTUM_CONSERVATION_MAX_JUMP_MSUN_KMS * (SOLAR_MASS_CGS/All.UnitMass_in_g) / (1.0e5/All.UnitVelocity_in_cm_per_s);
++    if(have_prev)
++    {
++        double d[3] = {glob[0]-prev[0], glob[1]-prev[1], glob[2]-prev[2]};
++        double dmag = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
++        if(dmag > threshold)
++        {
++            if(ThisTask == 0)
++            {
++                printf("MOMENTUM CONSERVATION VIOLATION at t=%.10g (Ti_Current=%lld):\n", All.Time, (long long)All.Ti_Current);
++                printf("  P_prev = %.8e %.8e %.8e\n", prev[0], prev[1], prev[2]);
++                printf("  P_now  = %.8e %.8e %.8e\n", glob[0], glob[1], glob[2]);
++                printf("  |dP| = %.8e code-unit (threshold %.8e = %.3g Msun*km/s)\n", dmag, threshold, MOMENTUM_CONSERVATION_MAX_JUMP_MSUN_KMS);
++                printf("  restartfiles/ holds the prior (good) global sync -- restart from it to replay this interaction.\n");
++                fflush(stdout);
++            }
++            endrun(918273);
++        }
++    }
++    for(k=0;k<3;k++) {prev[k] = glob[k];}
++    have_prev = 1;
++}
++
++/*! Called once, only on RestartFlag==1, before the main loop: seeds prev[]/have_prev from the
++    just-loaded restart state, so the first full sync reached compares against the checkpoint
++    instead of silently skipping (see have_prev comment above). */
++void momentum_conservation_seed_from_restart(void)
++{
++    double loc[3] = {0,0,0}, glob[3]; int i, k;
++    for(i = 0; i < NumPart; i++) {if(P[i].Mass > 0) {for(k=0;k<3;k++) {loc[k] += P[i].Mass * P[i].Vel[k];}}}
++    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
++    for(k=0;k<3;k++) {prev[k] = glob[k];}
++    have_prev = 1;
++    if(ThisTask == 0) {printf("Momentum conservation check: seeded baseline from restart at t=%.10g, P = %.8e %.8e %.8e\n", All.Time, glob[0], glob[1], glob[2]); fflush(stdout);}
++}
++#endif
++
+ 
+ /*! \file run.c
+  *  \brief  iterates over timesteps, main loop
+@@ -126,6 +191,9 @@ void run(void)
+ 
+         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+     }
++#ifdef MOMENTUM_CONSERVATION_DIAGNOSTIC
++    else {momentum_conservation_seed_from_restart();}
++#endif
+ 
+     while(1)			/* main timestep iteration loop */
+     {
+@@ -229,6 +297,19 @@ void run(void)
+         do_hermite_correction();
+ #endif
+         EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
++        MOMCHECK_SYNC();	/* aborts (see momentum_conservation_check) if this fails; if we're still
++                             * here, the state at this global sync is good -- checkpoint it below. */
++#ifdef MOMENTUM_CONSERVATION_DIAGNOSTIC
++        /* THIS is what the diagnostic costs. A checkpoint at every global sync is what makes a
++           violation replayable -- it is how seed 2's leak was reproduced and how the acckick A/B
++           was run -- but it writes the entire restart set each time: 7.2 GB on M2e3_R3 (2.47e6
++           cells), 75 GB on M2e4_R10 (2.47e7). Measured at 192 ranks on M2e4_R10 that is ~45
++           points of misc and roughly 2x wall clock; on M2e3_R3 it is ~5 points. Restart writes
++           are not counted by the io/snapshots timer, so it surfaces as unattributed 'misc' and
++           reads as a mystery rather than as I/O. For a large run, gate this on |dP| already
++           being elevated, or drop it and keep only the printed record. */
++        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {restart(0);}
++#endif
+         /* Check whether we need to interrupt the run */
+         int stopflag = 0;
+         if(ThisTask == 0)
