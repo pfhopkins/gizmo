@@ -237,6 +237,7 @@ extern struct gas_cell_data
 #endif
 #ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
+    MyFloat HI;  /*!< neutral hydrogen fraction (neutral H nuclei per H nucleus), saved by the cooling solver so other modules can read it instead of re-solving the chemistry */
 #endif
 #endif
 #ifdef GALSF
@@ -390,7 +391,9 @@ extern struct gas_cell_data
 #endif
 #endif
 #ifdef RT_CHEM_PHOTOION
-    MyFloat HI;                  /* HI fraction */
+#if !defined(COOLING) || defined(CHIMES)
+    MyFloat HI;                  /* HI fraction [declared above with Ne when the cooling module owns it] */
+#endif
     MyFloat HII;                 /* HII fraction */
 #ifndef COOLING
     MyFloat Ne;               /* electron fraction */

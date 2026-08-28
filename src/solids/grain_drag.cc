@@ -28,10 +28,11 @@
 /* Include cooling_functions.h for ThermalProperties (used when COOLING + GRAIN_LORENTZFORCE
    + GRAIN_EPSTEIN_STOKES are all active). Must come after allvars.h for struct definitions.
    Need CoolTables accessible; use the same pattern as eos.cc. */
-#if defined(COOLING) && !defined(CHIMES)
-#include "../cooling/cooling_tables.h"
 /* The cooling tables are reached as data, through a view built on the host and
-   handed to the kernel; this file must not name the owner's instance. */
+   handed to the kernel; this file must not name the owner's instance. The view
+   type is needed in every configuration, since this file builds one either way. */
+#include "../cooling/cooling_tables.h"
+#if defined(COOLING) && !defined(CHIMES)
 #include "../cooling/cooling_functions.h"
 #endif
 

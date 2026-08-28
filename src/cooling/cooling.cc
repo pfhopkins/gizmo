@@ -110,12 +110,14 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
  *   and massively modified/extended for GIZMO, primarily by Phil Hopkins, Mike Grudic, and Alex Richings.
  */
 
-#ifdef COOLING
-
 /* Cooling tables consolidated into a single struct (cooling_tables.h).
    With GPU offload: __managed__ so device kernels can access directly.
-   Without: plain static. Pointer members point to separately allocated memory. */
+   Without: plain static. Pointer members point to separately allocated memory.
+   Included unconditionally: builds without cooling still define the empty view
+   this file hands out, and that definition needs the complete type. */
 #include "cooling_tables.h"
+
+#ifdef COOLING
 
 #if !defined(CHIMES)
 #if defined(GIZMO_GPU_COMPILER)
@@ -621,6 +623,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+            cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
             }
 #endif
 #endif
@@ -668,6 +671,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
 #endif
+#if !defined(CHIMES) && !defined(COOL_GRACKLE)
+        double u_of_saved_temperature = unew; /* energy that the temperature saved by the solve corresponds to: the operations below can still change unew */
+#endif
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) /* for older model, set internal energy to minimum level if marked as ionized by stars */
         if(cell[i].DelayTimeHII > 0)
@@ -675,6 +681,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             if(unew<uion) {unew=uion; if(cell[i].DtInternalEnergy<0) cell[i].DtInternalEnergy=0;}
 #ifndef CHIMES
             cell[i].Ne = 1.0 + 2.0*yhelium(i, pp); /* fully ionized. note that this gives Ne as free electron fraction per H */
+#ifndef COOL_GRACKLE
+            cell[i].HI = 0; /* fully ionized */
+            cell[i].Temperature = 0.59 * (5./3.-1.) * U_TO_TEMP_UNITS * unew; /* mean molecular weight of the ionized gas, as assumed for the ionized-energy floor above */
+            u_of_saved_temperature = unew;
+#endif
 #endif
         }
 #endif
@@ -761,6 +772,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+#if !defined(CHIMES) && !defined(COOL_GRACKLE)
+        /* sink thermal feedback (and any other post-solve energy addition) changes the energy after the
+         chemistry was solved: carry the saved temperature with it at fixed mean molecular weight, which
+         is the same scaling the chemistry solver uses for its own initial guess */
+        if((u_of_saved_temperature > 0) && (unew > 0)) {cell[i].Temperature *= unew / u_of_saved_temperature;}
+#endif
 
 #ifdef TWO_TEMPERATURE_PLASMA
         /* 2-T plasma post-cooling update. Two operations, in order:
@@ -985,16 +1002,24 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     }
 
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
-    cell[target].Ne = *ne_eval;
+    /* solve the chemical state once at the converged energy, outside the iteration: this is the key
+       chemistry update, and it is the saved thermochemistry that the equation of state, the radiation
+       modules and the dust chemistry read back instead of re-solving it themselves. u and rho are cgs
+       here. the values carried through the iteration are the initial guess. every saved field comes
+       from this one evaluation, so they describe the same state as the energy actually returned:
+       the electron fraction left by the last rate evaluation is at a trial energy, not this one */
+    {
+        double mu_final = 1, ne_final = *ne_eval, nHI = cell[target].HI, nHII = DMAX(0, 1. - nHI), nHeI = 1, nHeII = 0, nHeIII = 0;
+        double temp_final = convert_u_to_temp(u, rho, target, &ne_final, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, &mu_final, pp, cell);
+        *ne_eval = ne_final; /* what the caller saves, and what seeds the next step */
+        cell[target].Ne = ne_final; cell[target].Temperature = temp_final; cell[target].HI = nHI;
 #ifdef RT_CHEM_PHOTOION
-    /* set variables used by RT routines; this must be set only -outside- of iteration, since this is the key chemistry update */
-    double u_in=specific_energy_codeunits_toreturn, rho_in=cell[target].Density*All.cf_a3inv, mu=1, temp, ne=1, nHI=cell[target].HI, nHII=cell[target].HII, nHeI=1, nHeII=0, nHeIII=0;
-    temp = ThermalProperties(u_in, rho_in, target, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, pp, cell);
-    cell[target].HI = nHI; cell[target].HII = nHII;
+        cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE
-    cell[target].HeI = nHeI; cell[target].HeII = nHeII; cell[target].HeIII = nHeIII;
+        cell[target].HeI = nHeI; cell[target].HeII = nHeII; cell[target].HeIII = nHeIII;
 #endif
 #endif
+    }
 
     /* safe return */
     return specific_energy_codeunits_toreturn;
@@ -1371,7 +1396,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     {
         /* at high T (fully ionized); only free-free and Compton cooling are present.  Assumes no heating. */
         Heat = LambdaExc = LambdaExcH0 = LambdaExcHep = LambdaIon = LambdaIonH0 = LambdaIonHe0 = LambdaIonHep = LambdaRec = LambdaRecHp = LambdaRecHep = LambdaRecHepp = LambdaRecHepd = 0;
-        nHp = 1.0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
+        nH0 = 0; nHp = 1.0; nHe0 = 0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
         *n_elec_eval = n_elec; /* save this value for the output cycle */
 
         LambdaFF = 1.42e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - logT) * (5.5 - logT) / 3)) * (nHp + 4 * nHepp) * n_elec * (1. + sqrt(T/0.4e10)); // free-free (with simplified relativistic correction)

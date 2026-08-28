@@ -678,6 +678,9 @@ void init(void)
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;
+            /* seed the saved neutral fraction from it with the relation the chemistry solver uses for
+               its own first guess, so the pair starts consistent. a restart restores both directly */
+            CellP[i].HI = DMAX(0, DMIN(1, 1. - CellP[i].Ne / 1.2));
 #endif
 #if defined(COOL_MOLECFRAC_NONEQM)
             CellP[i].MolecularMassFraction = 0.0; CellP[i].MolecularMassFraction_perNeutralH = 0.0; // start atomic

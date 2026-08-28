@@ -336,6 +336,8 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     *fp++ = (MyOutputFloat) CellP[pindex].HI;
 #elif (COOL_GRACKLE_CHEMISTRY > 0)
                     *fp++ = (MyOutputFloat) CellP[pindex].grHI;
+#elif defined(COOLING) && !defined(CHIMES) && !defined(COOL_GRACKLE)
+                    *fp++ = (MyOutputFloat) CellP[pindex].HI; /* saved by the cooling solver, and read back by read_ic */
 #else
                     double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy); // needs to be in code units
                     temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);

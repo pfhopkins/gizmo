@@ -563,7 +563,7 @@ double ThermalProperties_impl(double u, double rho, int target, double *mu_guess
     rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;
     double temp = convert_u_to_temp_impl(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell, tables);
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; nHe0_guess=0;}}
+    if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; *nHe0_guess=0;}}
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
 #endif
     return temp;
