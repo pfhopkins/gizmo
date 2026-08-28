@@ -30,12 +30,8 @@
    Need CoolTables accessible; use the same pattern as eos.cc. */
 #if defined(COOLING) && !defined(CHIMES)
 #include "../cooling/cooling_tables.h"
-#if defined(GIZMO_GPU_COMPILER)
-extern __managed__ struct cooling_tables_t CoolTables;
-#else
-extern struct cooling_tables_t CoolTables;
-#endif
-/* cooling_functions.h now uses CoolTables.fieldname directly — no aliases needed */
+/* The cooling tables are reached as data, through a view built on the host and
+   handed to the kernel; this file must not name the owner's instance. */
 #include "../cooling/cooling_functions.h"
 #endif
 
@@ -59,7 +55,8 @@ extern struct cooling_tables_t CoolTables;
  * writeback machinery (the generic grainbackrx ghost-writeback bundle in
  * solids/grain_physics_loop.cc) as the drag itself. */
 KOKKOS_FUNCTION
-static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp)
+static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp,
+                              const struct PhysicsTablesView *tables)
 {
     int k;
     /* Check drag eligibility and set defaults for non-eligible particles */
@@ -147,7 +144,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 #ifdef COOLING
             double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
             u_tmp = T_Kelvin / (2.3 * U_TO_TEMP_UNITS);
-            temp_tmp = ThermalProperties(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, pp, cellp);
+            temp_tmp = ThermalProperties_impl(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, pp, cellp, tables);
             f_ion_to_use = DMIN(ne_tmp, 1.);
 #endif
             tstop_Coulomb_inv *= f_ion_to_use;
@@ -303,11 +300,12 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
            GIZMO_GPU_ENSURE_ALL_FRESH is NOT called here: host code reads the host All
            extern directly; the device-pass-only #define All AllDeviceMirror is inert. */
         PRINT_STATUS("  grain drag (OMP): %d active grains", num_active);
+        const struct PhysicsTablesView host_tables = gizmo_physics_tables_view();
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
         for(int a = 0; a < num_active; a++)
-            grain_drag_kernel(active_indices[a], P_host, CellP_host);
+            grain_drag_kernel(active_indices[a], P_host, CellP_host, &host_tables);
         return;
     }
 
@@ -340,8 +338,11 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
     {
         struct particle_data *kp = compact_P;
         struct gas_cell_data *kc = compact_Cell;
+        /* Built here, on the host, and captured by value: the kernel cannot reach
+           the tables by name from this file. */
+        const struct PhysicsTablesView ktab = gizmo_physics_tables_view();
         gizmo_gpu_kernel_launch("grain_drag", num_active, KOKKOS_LAMBDA(int j) {
-            grain_drag_kernel(j, kp, kc);
+            grain_drag_kernel(j, kp, kc, &ktab);
         });
     }
 

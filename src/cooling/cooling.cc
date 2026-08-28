@@ -128,6 +128,22 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
    No convenience aliases — they caused linker symbol ownership bugs on CUDA. */
 #endif /* !CHIMES */
 
+/* Hand out the tables owned by this file, as data. Everything outside this
+   file reaches them this way; nothing outside declares the instances. Call it
+   on the host immediately before a dispatch, so the view carries whatever the
+   tables hold at that moment. */
+struct PhysicsTablesView gizmo_physics_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+#if !defined(CHIMES)
+    view.cooling = &CoolTables;
+#endif
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+    view.dm_cooling = &DMCoolTables;
+#endif
+    return view;
+}
+
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
 /* DMCoolTables OWNER's builder bodies. The __managed__ instance is defined
    earlier in this file (above the eos_functions.h include); the integral
@@ -230,6 +246,68 @@ KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess,
 #endif
 #define COOLING_FUNCTIONS_OWNER
 #include "cooling_functions.h"
+
+#if !defined(CHIMES)
+/* Host-facing entry points, and the ones this file's own kernels use.
+   The bodies live in cooling_functions.h and take the tables as data; this
+   file owns the tables, so it is the one place allowed to name them. Every
+   caller elsewhere -- on the host through these symbols, on the device by
+   passing its own view -- goes through that single set of bodies. */
+KOKKOS_INLINE_FUNCTION
+struct PhysicsTablesView cooling_owner_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+    view.cooling = &CoolTables;
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+    view.dm_cooling = &DMCoolTables;
+#endif
+    return view;
+}
+
+KOKKOS_INLINE_FUNCTION
+double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return return_local_gammamultiplier_impl(target, cell, &tables_view);
+}
+
+KOKKOS_INLINE_FUNCTION
+double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return find_abundances_and_rates_impl(logT, rho, target, shieldfac, return_cooling_mode, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, LambdaExc_return, LambdaIon_return, LambdaRec_return, LambdaFF_return, pp, cell, &tables_view);
+}
+
+#if defined(EOS_SUBSTELLAR_ISM)
+KOKKOS_INLINE_FUNCTION
+double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_temp_to_u_impl(temp, rho, target, cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell, &tables_view);
+}
+
+KOKKOS_INLINE_FUNCTION
+double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_u_to_temp_impl(u, rho, target, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell, &tables_view);
+}
+#else
+KOKKOS_INLINE_FUNCTION
+double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_u_to_temp_impl(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell, &tables_view);
+}
+#endif /* EOS_SUBSTELLAR_ISM */
+
+KOKKOS_INLINE_FUNCTION
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return ThermalProperties_impl(u, rho, target, mu_guess, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, pp, cell, &tables_view);
+}
+#endif /* !CHIMES */
 #ifdef TWO_TEMPERATURE_PLASMA
 #include "two_temperature_functions.h"
 #endif
@@ -2775,3 +2853,16 @@ void gizmo_gpu_sync_all(void) {
 #endif
     Kokkos::fence();
 }
+
+#ifndef COOLING
+/* Builds without the tables still need this symbol, so that code taking a view
+   reads the same in every configuration and no call site has to ask which one
+   it is in. The view is empty; the physics that would consult it is compiled
+   out alongside the tables. A CHIMES build is NOT one of these: it still
+   compiles the definition above, whose body is what the CHIMES gate empties. */
+struct PhysicsTablesView gizmo_physics_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+    return view;
+}
+#endif

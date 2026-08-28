@@ -49,11 +49,52 @@ struct cooling_tables_t {
 #endif
 };
 
-/* Global cooling tables instance. Defined in cooling.cc.
-   Other TUs that need it should declare:
-     extern struct cooling_tables_t CoolTables;
-   before use. Not declared here to avoid conflict with the
-   __managed__ definition in cooling.cc (nvcc doesn't allow
-   extern + __managed__ definition in the same TU). */
+/* The global cooling tables instance is defined in cooling.cc, which owns it.
+   Code inside that file reads it by name. Code anywhere else -- and in
+   particular any function that may be compiled into a device kernel -- must
+   NOT declare it, and must take the tables as data instead: see the table
+   view below. Declaring the instance in another translation unit is a silent
+   correctness bug, not a link error: a device symbol cannot be shared across
+   translation units without relocatable device code, which this build does
+   not use, so the declaration binds to storage the owner never fills. */
+
+/* Table view -- how any function reaches table data it does not own.
+ *
+ * A device kernel cannot reach a table by name across translation units, so
+ * the tables travel as data: the host fills this view from the live tables at
+ * dispatch, the kernel captures it by value, and the functions below it take
+ * it by pointer. Two properties follow, and both matter:
+ *
+ *   - The values are current by construction. The view is filled on the host
+ *     immediately before each dispatch, so table contents that change during
+ *     a run -- the radiation background scalars are rewritten every timestep --
+ *     are picked up with no separate refresh step to forget.
+ *
+ *   - Adding a table does not touch a single call site. Every entry point
+ *     takes this one view, whatever it happens to need out of it, so a new
+ *     table is a new member here plus the code that reads it. Callers never
+ *     name the tables they are passing through.
+ *
+ * The members are pointers to storage the owning module allocates and keeps
+ * alive; the view neither owns nor frees anything. Each is present under the
+ * same condition that compiles its table, and the view itself always exists,
+ * so functions taking it keep one signature in every configuration. */
+struct cooling_tables_t;
+struct dm_cooling_tables_t;
+
+struct PhysicsTablesView
+{
+#if !defined(CHIMES)
+    const struct cooling_tables_t *cooling;
+#endif
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+    const struct dm_cooling_tables_t *dm_cooling;
+#endif
+};
+
+/* Fill a view from the live tables. Defined in cooling.cc, which owns them.
+   Host-only: call it before a dispatch and let the kernel capture the result
+   by value. */
+struct PhysicsTablesView gizmo_physics_tables_view(void);
 
 #endif /* COOLING_TABLES_H */
