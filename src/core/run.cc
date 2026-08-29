@@ -373,6 +373,47 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#ifdef GIZMO_STALE_FORCE_DUMP
+        /* Diagnostic, off unless GIZMO_STALE_FORCE_DUMP=N is set in Config.sh: dump the force state
+         * on the first N steps that did NOT rebuild the tree.
+         *
+         * Why it has to be here and not in a snapshot. Snapshots are written at full-sync points,
+         * where every particle is active AND GlobNumForceUpdate peaks so a decomposition has just
+         * run. Any force diagnostic taken from a snapshot therefore scores a FRESH tree whatever
+         * the rebuild cadence, and is blind to stale-tree error by construction. Several
+         * hypotheses about the tree tested clean against snapshots for exactly this reason.
+         *
+         * Score offline against a direct sum (pytreegrav) on the positions written here: those are
+         * the ones the walk actually used, so the comparison isolates tree error from drift error.
+         * Look at the ACTIVE subset and at the TAIL (fraction over a threshold) -- the defect this
+         * was built for is invisible in a median over all particles. */
+        {
+            static int n_dumped = 0;
+            if(!reconstructed_tree && n_dumped < GIZMO_STALE_FORCE_DUMP && All.NumCurrentTiStep > 32)
+            {
+                char fn[512];
+                snprintf(fn, sizeof(fn), "%sstaleforce_%03d.%d", All.OutputDir, n_dumped, ThisTask);
+                FILE *fp = fopen(fn, "w");
+                if(fp)
+                {
+                    fprintf(fp, "# step %lld  Time %.17g  NumPart %d\n",
+                            (long long) All.NumCurrentTiStep, All.Time, NumPart);
+                    fprintf(fp, "# id active mass x y z ax ay az\n");
+                    for(int i = 0; i < NumPart; i++)
+                    {
+                        fprintf(fp, "%llu %d %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                                (unsigned long long) P[i].ID, (TimeBinActive[P[i].TimeBin] ? 1 : 0),
+                                (double) P[i].Mass, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2],
+                                (double) P[i].GravAccel[0], (double) P[i].GravAccel[1], (double) P[i].GravAccel[2]);
+                    }
+                    fclose(fp);
+                }
+                n_dumped++;
+                if(ThisTask == 0) {printf("STALE_FORCE_DUMP %d at step %lld\n", n_dumped, (long long) All.NumCurrentTiStep); fflush(stdout);}
+            }
+        }
+#endif
+
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
 #ifdef PMGRID
