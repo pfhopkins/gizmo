@@ -1005,8 +1005,14 @@ int merge_particles_ij(int i, int j)
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
     CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
-#if defined(COOLING) && !defined(CHIMES)
-    CellP[j].Ne = wt_j*CellP[j].Ne + wt_i*CellP[i].Ne; /* the electron and neutral fractions belong to the same cached composition, so they mix the same way */
+/* the electron and neutral fractions are part of the same cached composition and mix the same way. each
+   is declared by whichever of the cooling and photo-ionization modules owns it, so each line carries that
+   field's own existence condition; they differ because only the neutral fraction is declared when the
+   photo-ionization module runs alongside the CHIMES chemistry. */
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION) && !defined(COOLING))
+    CellP[j].Ne = wt_j*CellP[j].Ne + wt_i*CellP[i].Ne;
+#endif
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
     CellP[j].HI = wt_j*CellP[j].HI + wt_i*CellP[i].HI;
 #endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
