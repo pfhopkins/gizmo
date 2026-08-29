@@ -38,6 +38,7 @@ static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_
     cell[i].Gamma = gamma_eos_index;
     cell[i].Pressure = press;
     double mu_dark = 1.0;
+    cell[i].MeanMolecularWeight = 1.0; /* dark fluid: trivial weight, so the temperature helper matches this line */
     cell[i].Temperature = (MyFloat)( cell[i].InternalEnergyPred * (gamma_eos_index - 1.0) * mu_dark
                                      * PROTONMASS_CGS / BOLTZMANN_CGS
                                      * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS );

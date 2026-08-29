@@ -132,6 +132,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             double mu_from_species = (1. + 4.*y_helium) / (1. + y_helium + x_elec);
             CellP[target].Ne = x_elec;
             CellP[target].HI = DMAX(0, DMIN(1, x_HI));
+            CellP[target].MeanMolecularWeight = mu_from_species;
             CellP[target].Temperature = mu_from_species * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
             
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
@@ -264,6 +265,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             double temp = 0.59 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
             double f_ion_guess = 0; if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
             CellP[i].Temperature = temp;
+            CellP[i].MeanMolecularWeight = 0.59; /* the ionized weight this placeholder temperature assumes */
             CellP[i].Ne = f_ion_guess;
             CellP[i].HI = DMAX(0, 1. - f_ion_guess);
 #ifdef RT_CHEM_PHOTOION

@@ -423,7 +423,7 @@ KOKKOS_INLINE_FUNCTION
 double convert_u_to_temp_impl(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,tables->cooling->Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,tables->cooling->Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
-    if(target >= 0) { temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS); }
+    if(target >= 0) { temp = cell[target].gas_temperature_from_u(u / UNIT_SPECEGY_IN_CGS); } /* same relation, taken from the cache that owns it */
     else            { temp = u * PROTONMASS_CGS / BOLTZMANN_CGS; }
     temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;
@@ -562,15 +562,14 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     double temp = ChimesGasVars[target].temperature;
 #else
     *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
-    double temp = cell[target].Temperature;
+    double temp = cell[target].gas_temperature_from_u(u);
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
     /* gas inside an HII region is held ionized by the local source, which the saved state
        only picks up once the cell next cools */
     if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
 #endif
 #endif
-    rho *= UNIT_DENSITY_IN_CGS;
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
+    *mu_guess = cell[target].MeanMolecularWeight;
     return temp;
 }
 

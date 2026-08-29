@@ -665,9 +665,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
 #endif
-#if !defined(CHIMES) && !defined(COOL_GRACKLE)
-        double u_of_saved_temperature = unew; /* energy that the temperature saved by the solve corresponds to: the operations below can still change unew */
-#endif
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) /* for older model, set internal energy to minimum level if marked as ionized by stars */
         if(cell[i].DelayTimeHII > 0)
@@ -676,9 +673,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef CHIMES
             cell[i].Ne = 1.0 + 2.0*yhelium(i, pp); /* fully ionized. note that this gives Ne as free electron fraction per H */
 #ifndef COOL_GRACKLE
-            cell[i].HI = 0; /* fully ionized */
-            cell[i].Temperature = 0.59 * (5./3.-1.) * U_TO_TEMP_UNITS * unew; /* mean molecular weight of the ionized gas, as assumed for the ionized-energy floor above */
-            u_of_saved_temperature = unew;
+            cell[i].HI = 0; cell[i].MeanMolecularWeight = 0.59; /* fully ionized, as assumed for the ionized-energy floor above */
+            cell[i].Temperature = cell[i].gas_temperature_from_u(unew);
 #endif
 #endif
         }
@@ -766,12 +762,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#if !defined(CHIMES) && !defined(COOL_GRACKLE)
-        /* sink thermal feedback (and any other post-solve energy addition) changes the energy after the
-         chemistry was solved: carry the saved temperature with it at fixed mean molecular weight, which
-         is the same scaling the chemistry solver uses for its own initial guess */
-        if((u_of_saved_temperature > 0) && (unew > 0)) {cell[i].Temperature *= unew / u_of_saved_temperature;}
-#endif
 
 #ifdef TWO_TEMPERATURE_PLASMA
         /* 2-T plasma post-cooling update. Two operations, in order:
@@ -1006,7 +996,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         double mu_final = 1, ne_final = *ne_eval, nHI = cell[target].HI, nHII = DMAX(0, 1. - nHI), nHeI = 1, nHeII = 0, nHeIII = 0;
         double temp_final = convert_u_to_temp(u, rho, target, &ne_final, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, &mu_final, pp, cell);
         *ne_eval = ne_final; /* what the caller saves, and what seeds the next step */
-        cell[target].Ne = ne_final; cell[target].Temperature = temp_final; cell[target].HI = nHI;
+        cell[target].Ne = ne_final; cell[target].HI = nHI;
+        cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
+        cell[target].Temperature = temp_final;
 #ifdef RT_CHEM_PHOTOION
         cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE

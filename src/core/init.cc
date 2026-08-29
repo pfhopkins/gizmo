@@ -643,6 +643,7 @@ void init(void)
             CellP[i].Temperature = (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
 #endif
             CellP[i].Gamma = GAMMA_DEFAULT;
+            CellP[i].MeanMolecularWeight = 1.; /* refreshed at the first equation-of-state call, before any consumer */
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;

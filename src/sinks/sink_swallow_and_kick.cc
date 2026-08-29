@@ -895,6 +895,8 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         if(P[i].Type==5) {if(P[i].ProtoStellarStage == 6) {CellP[j].InternalEnergy = All.MinGasTemp / (  0.59 * (5./3.-1.) * U_TO_TEMP_UNITS ) + sne_energy_fraction_in_thermal/(1.-sne_energy_fraction_in_thermal) * pow(single_star_SN_velocity(i),2.0);}}
 #endif
         CellP[j].InternalEnergyPred = CellP[j].InternalEnergy;
+        CellP[j].MeanMolecularWeight = 0.59; CellP[j].Gamma = 5./3.; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
+        CellP[j].Temperature = CellP[j].gas_temperature_from_u(CellP[j].InternalEnergy);
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);
