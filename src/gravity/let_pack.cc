@@ -218,6 +218,20 @@ static inline void let_cluster_push(const struct LETCoverLeaf *c)
  *   g_orphan_all      -- every rank's records, concatenated by rank (post-Allgatherv).
  *   g_orphan_off      -- prefix-sum offsets: rank R's records = g_orphan_all[off[R], off[R+1]).
  * Process-lifetime scratch (like g_topleaf_scalars / the g_cover* arrays); grow-only. */
+/* Refresh retention (see LETRefreshRec in let_data.h). Sender: remote_id per shipped record,
+ * flat in the exchange's send layout. Receiver: per-sender installed slot ranges. Both replay
+ * the SAME wire order at refresh time, so no per-record identity is exchanged again. Rebuilt
+ * by every successful let_run_exchange; dies with the tree (let_refresh_invalidate). */
+static int  *g_rf_export_ids   = NULL;   /* [g_rf_send_total] remote_id per sent record */
+static int  *g_rf_send_counts  = NULL;   /* [NTask] */
+static int  *g_rf_send_offs    = NULL;   /* [NTask] */
+static int   g_rf_send_total   = 0;
+static int  *g_rf_recv_counts  = NULL;   /* [NTask] */
+static int  *g_rf_recv_offs    = NULL;   /* [NTask] */
+static int  *g_rf_import_base  = NULL;   /* [NTask] absolute slot base per sender */
+static int   g_rf_recv_total   = 0;
+static int   g_rf_valid        = 0;
+
 static struct LETOrphanRecord *g_my_orphans = NULL;
 static int g_my_orphans_n = 0, g_my_orphans_cap = 0;
 static struct LETOrphanRecord *g_orphan_all = NULL;
@@ -1380,6 +1394,38 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         total_hdr_send += send_hdr_counts[r]; total_hdr_recv += recv_hdr_counts[r];
     }
 
+    /* Refresh retention, sender half: remember WHAT was shipped to WHOM, in wire order.
+     * plain malloc, not mymalloc: lifetime spans many steps and the LIFO stack cannot
+     * bracket it. Previous retention (if any) is superseded wholesale. */
+    let_refresh_invalidate();
+    g_rf_send_counts = (int *) malloc(NTask * sizeof(int));
+    g_rf_send_offs   = (int *) malloc(NTask * sizeof(int));
+    g_rf_recv_counts = (int *) malloc(NTask * sizeof(int));
+    g_rf_recv_offs   = (int *) malloc(NTask * sizeof(int));
+    g_rf_import_base = (int *) malloc(NTask * sizeof(int));
+    g_rf_export_ids  = (int *) malloc(((total_send > 0) ? total_send : 1) * sizeof(int));
+    if(g_rf_send_counts && g_rf_send_offs && g_rf_recv_counts && g_rf_recv_offs
+       && g_rf_import_base && g_rf_export_ids)
+    {
+        int off = 0;
+        for(int r = 0; r < NTask; r++)
+        {
+            g_rf_send_counts[r] = send_counts_int[r];
+            g_rf_send_offs[r]   = off;
+            g_rf_recv_counts[r] = recv_counts_int[r];
+            g_rf_import_base[r] = -1;   /* filled by let_unpack_and_install */
+            for(int j = 0; j < send_counts_int[r]; j++)
+                g_rf_export_ids[off + j] = send_buf_per_rank[r][j].remote_id;
+            off += send_counts_int[r];
+        }
+        g_rf_send_total = total_send;
+        g_rf_recv_total = total_recv;
+        int roff = 0;
+        for(int r = 0; r < NTask; r++) {g_rf_recv_offs[r] = roff; roff += recv_counts_int[r];}
+        g_rf_valid = 1;   /* provisional; cleared again if install fails/overflows */
+    }
+    else {let_refresh_invalidate();}
+
     /* Allocate offsets for both exchanges (in units of struct elements, NOT
      * bytes), then flat_send / flat_recv for both data streams. All
      * temporaries are freed in strict reverse order at the end of this
@@ -1509,6 +1555,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
     if(foreign_needed_out) *foreign_needed_out = foreign_needed;
     if(foreign_needed > (long long)MaxForeignNodes)
     {
+        let_refresh_invalidate();   /* nothing installed; retention must not outlive the retry */
         return LET_OVERFLOW_RETRYABLE;
     }
 
@@ -1527,6 +1574,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
         }
 
         int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
+        if(g_rf_valid && g_rf_import_base) {g_rf_import_base[r] = slot_base;}
 
         /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
          * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
@@ -1937,3 +1985,86 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
     }
 }
 
+
+
+/* ----------------------------------------------------------------------
+ * Per-step refresh of imported foreign moments (see LETRefreshRec, let_data.h).
+ *
+ * Collective. Sender replays its retained export lists in wire order, shipping each
+ * record's CURRENT (s, vs) -- node moments drifted to All.Ti_Current for real nodes,
+ * live Pos/Vel for synthesized single-particle leaves. Receiver overwrites the installed
+ * slots in the same order and stamps them current, then re-mirrors the foreign range to
+ * the GPU SoA wholesale (gpu_scatter_foreign_to_soa: everything else it copies -- mass,
+ * topology, softening -- is unchanged, so the re-copy is idle but harmless).
+ * ---------------------------------------------------------------------- */
+extern "C" void let_refresh_invalidate(void)
+{
+    free(g_rf_export_ids);  g_rf_export_ids  = NULL;
+    free(g_rf_send_counts); g_rf_send_counts = NULL;
+    free(g_rf_send_offs);   g_rf_send_offs   = NULL;
+    free(g_rf_recv_counts); g_rf_recv_counts = NULL;
+    free(g_rf_recv_offs);   g_rf_recv_offs   = NULL;
+    free(g_rf_import_base); g_rf_import_base = NULL;
+    g_rf_send_total = g_rf_recv_total = 0;
+    g_rf_valid = 0;
+}
+
+extern "C" void let_refresh_moments(void)
+{
+    /* Validity is collective: retention is (in)validated at the same points on every rank
+     * inside the collective exchange, so this early-out cannot desynchronize the Alltoallv. */
+    if(!g_rf_valid || NTask <= 1) {return;}
+
+    struct LETRefreshRec *sendbuf = (struct LETRefreshRec *)
+        mymalloc("LET_refresh_send", ((g_rf_send_total > 0) ? g_rf_send_total : 1) * sizeof(struct LETRefreshRec));
+    struct LETRefreshRec *recvbuf = (struct LETRefreshRec *)
+        mymalloc("LET_refresh_recv", ((g_rf_recv_total > 0) ? g_rf_recv_total : 1) * sizeof(struct LETRefreshRec));
+
+    for(int k = 0; k < g_rf_send_total; k++)
+    {
+        struct LETRefreshRec *rec = &sendbuf[k];
+        int rid = g_rf_export_ids[k];
+        if(rid >= 0)
+        {
+            if(Nodes[rid].Ti_current != All.Ti_Current) {force_drift_node(rid, All.Ti_Current);}
+            for(int d = 0; d < 3; d++) {rec->s[d] = Nodes[rid].u.d.s[d]; rec->vs[d] = Extnodes[rid].vs[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {rec->sink_pos[d] = Nodes[rid].sink_pos[d]; rec->sink_vel[d] = Nodes[rid].sink_vel[d];}
+#endif
+        }
+        else
+        {
+            int pi = -1 - rid;   /* synthesized single-particle leaf: ship the live particle */
+            if(P[pi].Ti_current != All.Ti_Current) {drift_particle(pi, All.Ti_Current);}
+            for(int d = 0; d < 3; d++) {rec->s[d] = P[pi].Pos[d]; rec->vs[d] = P[pi].Vel[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {rec->sink_pos[d] = P[pi].Pos[d]; rec->sink_vel[d] = P[pi].Vel[d];}
+#endif
+        }
+    }
+
+    gizmo_mpi_alltoallv_typed(sendbuf, g_rf_send_counts, g_rf_send_offs,
+                              recvbuf, g_rf_recv_counts, g_rf_recv_offs,
+                              sizeof(struct LETRefreshRec), MPI_COMM_WORLD);
+
+    for(int r = 0; r < NTask; r++)
+    {
+        int base = g_rf_import_base[r];
+        if(base < 0 || g_rf_recv_counts[r] == 0) {continue;}
+        const struct LETRefreshRec *seg = recvbuf + g_rf_recv_offs[r];
+        for(int j = 0; j < g_rf_recv_counts[r]; j++)
+        {
+            int no = base + j;
+            for(int d = 0; d < 3; d++) {Nodes[no].u.d.s[d] = seg[j].s[d]; Extnodes[no].vs[d] = seg[j].vs[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {Nodes[no].sink_pos[d] = seg[j].sink_pos[d]; Nodes[no].sink_vel[d] = seg[j].sink_vel[d];}
+#endif
+            Nodes[no].Ti_current = All.Ti_Current;   /* stamped current: force_drift_node no-ops until the next step */
+        }
+    }
+
+    myfree(recvbuf);
+    myfree(sendbuf);
+
+    if(Numforeignnodes > 0) {gpu_scatter_foreign_to_soa(All.MaxPart + MaxNodes, Numforeignnodes);}
+}

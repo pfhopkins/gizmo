@@ -2914,6 +2914,7 @@ void force_treefree(void)
 #endif
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
+        let_refresh_invalidate();   /* imported-slot retention dies with the slots */
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
         tree_allocated_flag = 0;
     }
