@@ -154,6 +154,7 @@
 #define UNIT_FLUX_IN_HABING     (((UNIT_FLUX_IN_CGS)/HABING_FLUX_CGS))
 #define UNIT_EGY_DENSITY_IN_HABING ((UNIT_PRESSURE_IN_CGS)/(HABING_FLUX_CGS / C_LIGHT_CGS))
 #define U_TO_TEMP_UNITS         ((PROTONMASS_CGS/BOLTZMANN_CGS)*((UNIT_ENERGY_IN_CGS)/(UNIT_MASS_IN_CGS))) /* units to convert specific internal energy to temperature. needs to be multiplied by dimensionless factor=mean_molec_weight_in_amu*(gamma_eos-1) */
+#define MEAN_MOLECULAR_WEIGHT_IONIZED (0.59) /* mean molecular weight of fully-ionized primordial gas, in units of the proton mass. this is the composition assumed wherever no chemistry is solved: it is the fallback the cached MeanMolecularWeight is set to, and the value the non-gas helpers use */
 #ifndef C_LIGHT_CODE
 #define C_LIGHT_CODE            ((C_LIGHT_CGS/UNIT_VEL_IN_CGS)) /* pure convenience function, speed-of-light in code units */
 #endif

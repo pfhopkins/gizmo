@@ -481,7 +481,7 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
     }
 #else
-    cell[i].MeanMolecularWeight = 1.; /* no chemistry tracked here, so the trivial ideal-gas weight */
+    cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* no chemistry solved here, so the fallback composition */
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
 #endif
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the

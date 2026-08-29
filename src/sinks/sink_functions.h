@@ -63,7 +63,7 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
     double cs = 0;
     if(kp_j.Type == 0) {
         double vA = kc_j.Alfven_speed();
-        if(fabs(kc_j.gamma_eos_value() - 1) < 0.1) { cs = sqrt(vA*vA + 3.*kc_j.Pressure/kc_j.Density); }
+        if(fabs(kc_j.Gamma - 1) < 0.1) { cs = sqrt(vA*vA + 3.*kc_j.Pressure/kc_j.Density); }
         else                                         { cs = sqrt(vA*vA + 2.*kc_j.InternalEnergy); }
     }
 

@@ -127,14 +127,12 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
     double m_ion = 24.3; // Mg dominates ions in dense gas [where this is relevant]; this is ion mass in units of proton mass
     double zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell); // cosmic ray ionization rate (fixed as constant for non-CR runs)
 #ifdef COOLING
-    double T_eff_atomic = 1.23 * (5./3.-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; /* we'll use this to make a quick approximation to the actual mean molecular weight here */
-    double nH_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, T_transition=DMIN(8000.,nH_cgs), f_mol=1./(1. + T_eff_atomic*T_eff_atomic/(T_transition*T_transition));
-    mean_molecular_weight = 4. / (1. + (3. + 4.*cell[i].Ne - 2.*f_mol) * HYDROGEN_MASSFRAC);
+    mean_molecular_weight = cell[i].MeanMolecularWeight; /* the composition the cooling solve determined, rather than a local estimate from Ne */
 #endif
 #ifdef METALS
     f_dustgas = 0.5 * pp[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // appropriate dust-to-metals ratio
 #endif
-    double temperature = mean_molecular_weight * (cell[i].gamma_eos_value()-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
+    double temperature = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]

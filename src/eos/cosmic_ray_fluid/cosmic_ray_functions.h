@@ -1503,7 +1503,7 @@ KOKKOS_INLINE_FUNCTION double CR_gas_heating(int target, double n_elec, double n
         if(return_CRbin_CR_species_ID(k_CRegy) > 0)
         {
             double E_GeV = return_CRbin_kinetic_energy_in_GeV(target,k_CRegy, cell), beta = return_CRbin_beta_factor(target,k_CRegy, cell), Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy));
-            double T_eff_fullion = 0.59*(5./3.-1.)*U_TO_TEMP_UNITS*cell[target].InternalEnergyPred, xm = 0.0286*sqrt(T_eff_fullion/2.e6);
+            double T_eff_fullion = MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS*cell[target].InternalEnergyPred, /* deliberately the fully-ionized value, as the name says */ xm = 0.0286*sqrt(T_eff_fullion/2.e6);
             e_heat += b_coulomb_ion_per_GeV * ((Z*Z*beta*beta)/((beta*beta*beta+xm*xm*xm)*E_GeV)) * e_cr_units; // all protons Coulomb-heat, can be rapid for low-E
             if(E_GeV>=0.28) {e_heat += f_heat_hadronic * a_hadronic * e_cr_units;} // only GeV CRs or higher trigger above threshold for collisions
         }

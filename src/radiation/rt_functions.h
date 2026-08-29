@@ -222,7 +222,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
 #endif
         double f_neutral_approx = DMAX(0., 1.-x_elec); /* approximate neutral fraction (good enough for us for what we need below) */
         double f_free_metals_approx = zmetals * DMAX(0, 1.-0.5*dust_to_metals_vs_standard); /* metal mass fraction times the free (not locked in dust abundance), assuming the default solar scaling is 1/2 */
-        double Tgas=1. + 0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; /* crude estimate of gas temperature to use with scalings below, and gas density in cgs */
+        double Tgas=1. + cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred), rho_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; /* crude estimate of gas temperature to use with scalings below, and gas density in cgs */
         double k_electron = 0.4 * HYDROGEN_MASSFRAC * x_elec / ((1. + 2.7e11*rho_cgs/(Tgas*Tgas)) * (1. + pow(Trad/4.5e8, 0.86))); /* Thompson scattering (non-relativistic), scaling with free electron fraction [remembering that in our units, x_elec is n_e/n_H_nuclei, not scaled to total nuclear number]; includes corrections for partial degeneracy at low gas temperatures from Buchler et al. 1976, and Klein-Nishina terms at high radiation temperatures >1e9 */
         double k_molecular = 0.1 * (f_free_metals_approx + 3.e-9) * f_neutral_approx; /* molecular line opacities, which should only dominate at low-temperatures in the fits below, but are not really assumed to extrapolate to the very low densities we apply this to here; this works ok comparing e.g. Lenzuni, Chernoff & Salpeter 1991 ApJS 76 759L [opacities for metal free gases], using the 3e-9 to represent the H2 molecular opacity (really low, only here for completeness) */
 #if defined(COOL_MOLECFRAC_NONEQM)
@@ -562,7 +562,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 #ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
-        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+        double T_eff=cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred), rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
         double kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
         return (0.35 + kappa_abs) * fac;
     }
@@ -674,7 +674,7 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
 #ifdef RT_FREEFREE
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
-        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
+        double T_eff=cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred), rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
         return kappa_abs / (0.35 + kappa_abs);
     }
 #endif
@@ -1708,7 +1708,7 @@ KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct partic
 {
 #ifdef RT_FREEFREE
     int k = RT_FREQ_BIN_FREEFREE;
-    double t_eff = 0.59 * (cell[target].gamma_eos_value()-1.) * U_TO_TEMP_UNITS * cell[target].InternalEnergyPred; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+    double t_eff = cell[target].gas_temperature_from_u(cell[target].InternalEnergyPred); // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
     je[k] = rt_absorb_frac_albedo(target, k, pp, cell) * rt_kappa(target,k, pp, cell) * cell[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
 #endif
 }

@@ -95,18 +95,12 @@ struct sh25_plasma_state build_plasma_state_for_battery(int i, struct gas_cell_d
     double zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell);
 
     /* --- Temperature, mu, and electron fraction --- */
-    double T_K = mean_molecular_weight * (cell[i].gamma_eos_value() - 1.0)
-                 * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred;
+    double T_K = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); /* composition from the cooling solve, rather than the local estimate above */
     double n_e_cgs = 0;
 #ifdef COOLING
     {
-        const double T_eff_atomic = 1.23 * (5./3.-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred;
-        const double nH_cgs = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS;
-        const double T_transition = DMIN(8000.0, nH_cgs);
-        const double f_mol = 1.0 / (1.0 + T_eff_atomic*T_eff_atomic / (T_transition*T_transition));
-        mean_molecular_weight = 4.0 / (1.0 + (3.0 + 4.0*cell[i].Ne - 2.0*f_mol) * HYDROGEN_MASSFRAC);
-        T_K = mean_molecular_weight * (cell[i].gamma_eos_value() - 1.0)
-              * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred;
+        mean_molecular_weight = cell[i].MeanMolecularWeight; /* the composition the cooling solve determined, rather than a local estimate from Ne */
+        T_K = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
         n_e_cgs = cell[i].Ne * HYDROGEN_MASSFRAC * mean_molecular_weight
                   * (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS);
     }

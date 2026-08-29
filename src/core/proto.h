@@ -115,6 +115,14 @@ GIZMO_GPU_FUNCTION static inline double MINMOD(double a, double b) {return (a>0)
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
 
+/* Thermal soundspeed squared, and temperature, for a specific internal energy carried by something
+   that is NOT a gas cell: a grain moving through gas, or a sink reporting on the gas around it.
+   These callers hold an energy but have no cell of their own, so there is no composition to read,
+   and an ideal fully-ionized gas is assumed. Do NOT reach for the gas-cell versions with a non-gas
+   index -- the cell entry for such a particle is never filled, so its composition is meaningless. */
+GIZMO_GPU_FUNCTION static inline double soundspeed2_from_u_nongas(double u) {return GAMMA_DEFAULT * (GAMMA_DEFAULT - 1.) * u;}
+GIZMO_GPU_FUNCTION static inline double temperature_from_u_nongas(double u) {return MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT - 1.) * U_TO_TEMP_UNITS * u;}
+
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)
     return C_LIGHT_CODE;

@@ -476,7 +476,7 @@ void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<doubl
     double Bmag=0, Bmag_0=0;
     {auto Bphys = CellP[j].B * (All.cf_a2inv/volume_for_BtoVB); Bmag = Bphys.norm_sq(); Bmag_0 = CellP[j].B.norm_sq();} // get actual Bfield
     double Bmag_low_rel_to_progenitor = 1.e-10 * sqrt(Bmag); // set to some extremely low value relative to cloned element
-    double u_internal_new_cell = All.Sink_outflow_temperature / (  0.59 * (5./3.-1.) * U_TO_TEMP_UNITS ); // internal energy of new wind cell
+    double u_internal_new_cell = All.Sink_outflow_temperature / (  MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS ); // internal energy of new wind cell
     double Bmag_low_rel_to_pressure = 1.e-3 * sqrt(2.*CellP[j].Density*All.cf_a3inv * u_internal_new_cell); // set to beta = 1e6
     Bmag = DMAX(Bmag_low_rel_to_progenitor , Bmag_low_rel_to_pressure); // pick the larger of these (still small) B-field values
 #ifdef MHD_B_SET_IN_PARAMS
@@ -886,16 +886,16 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
         } /* complete CR initialization to null */
 #endif
-        CellP[j].InternalEnergy = All.Sink_outflow_temperature / (  0.59 * (5./3.-1.) * U_TO_TEMP_UNITS ); /* internal energy, determined by desired wind temperature (assume fully ionized primordial gas with gamma=5/3) */
+        CellP[j].InternalEnergy = All.Sink_outflow_temperature / (  MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS ); /* internal energy, determined by desired wind temperature (assume fully ionized primordial gas with gamma=5/3) */
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
         CellP[j].InternalEnergy = 0.01 * (0.5*v_magnitude_physical*v_magnitude_physical); /* set to be 1% of the kinetic energy of the ejecta, here */
 #endif
 #if defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
         double sne_energy_fraction_in_thermal = 1.e-3;
-        if(P[i].Type==5) {if(P[i].ProtoStellarStage == 6) {CellP[j].InternalEnergy = All.MinGasTemp / (  0.59 * (5./3.-1.) * U_TO_TEMP_UNITS ) + sne_energy_fraction_in_thermal/(1.-sne_energy_fraction_in_thermal) * pow(single_star_SN_velocity(i),2.0);}}
+        if(P[i].Type==5) {if(P[i].ProtoStellarStage == 6) {CellP[j].InternalEnergy = All.MinGasTemp / (  MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS ) + sne_energy_fraction_in_thermal/(1.-sne_energy_fraction_in_thermal) * pow(single_star_SN_velocity(i),2.0);}}
 #endif
         CellP[j].InternalEnergyPred = CellP[j].InternalEnergy;
-        CellP[j].MeanMolecularWeight = 0.59; CellP[j].Gamma = 5./3.; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
+        CellP[j].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; CellP[j].Gamma = GAMMA_DEFAULT; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
         CellP[j].Temperature = CellP[j].gas_temperature_from_u(CellP[j].InternalEnergy);
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */

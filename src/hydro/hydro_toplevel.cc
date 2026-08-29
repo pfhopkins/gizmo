@@ -231,7 +231,7 @@ void hydro_final_operations_and_cleanup(void)
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
 
             // need to explicitly include adiabatic correction from the hubble-flow (for drifting) here //
-            if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(CellP[i].gamma_eos_value()-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
+            if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(CellP[i].Gamma-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
             // = du/dlna -3*(gamma-1)*u ; then dlna/dt = H(z) =  All.cf_hubble_a //
 
 

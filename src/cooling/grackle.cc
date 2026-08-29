@@ -262,10 +262,10 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                cooling.cc -- that is a different network from the one the tables just solved,
                so its answer would not describe this gas. Use a chemistry mode if you need
                real abundances. */
-            double temp = 0.59 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
+            double temp = temperature_from_u_nongas(energy);
             double f_ion_guess = 0; if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
             CellP[i].Temperature = temp;
-            CellP[i].MeanMolecularWeight = 0.59; /* the ionized weight this placeholder temperature assumes */
+            CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* the ionized weight this placeholder temperature assumes */
             CellP[i].Ne = f_ion_guess;
             CellP[i].HI = DMAX(0, 1. - f_ion_guess);
 #ifdef RT_CHEM_PHOTOION
