@@ -1302,6 +1302,7 @@ void process_wake_ups(void)
     int i, n, max_time_bin_active, bin, binold, prev, next; long long ntot;
     integertime dt_bin, ti_next_for_bin, ti_next_kick, ti_next_kick_global;
 
+
     /* find the next kick time */
     for(n = 0, ti_next_kick = TIMEBASE; n < TIMEBINS; n++)
     {
@@ -1317,7 +1318,14 @@ void process_wake_ups(void)
         }
     }
 
-    MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    /* Second element gates the scan below on whether any rank holds an outstanding request.
+       Fused into this reduction rather than given its own: MIN over a negated flag is an OR, so
+       the gate costs no extra sync, and it is global, so a request that migrated to another rank
+       still opens the scan everywhere. */
+    integertime wk_loc[2] = {ti_next_kick, -(integertime)NeedToWakeupParticles_local}, wk_glob[2];
+    MPI_Allreduce(wk_loc, wk_glob, 2, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    ti_next_kick_global = wk_glob[0];
+    NeedToWakeupParticles = (wk_glob[1] < 0);
 
     PRINT_STATUS("Predicting next timestep: %g", (ti_next_kick_global - All.Ti_Current) * All.Timebase_interval);
     max_time_bin_active = 0;
@@ -1332,19 +1340,40 @@ void process_wake_ups(void)
     bin = 0; for(n = 0; n < TIMEBINS; n++) {if(TimeBinCount[n] > 0) {bin = n; break;}}
     n = 0;
 
-    /* No gating flag: every rank scans its own particles every step. The scan is local and cheap,
-       while the Allreduce it replaces was a global sync on the per-step critical path. The flag was
-       also rank-local while the requests are per-particle, so it could be stale for a particle that
-       migrated after being flagged -- the case its own comment worked around -- and being process
-       memory it was silently lost across a restart, stranding woken cells in a coarse bin. */
+    /* The scan below is O(NumPart) at every sync point, which at production scale is the single
+       largest cost in the run: ~130k particles at 736 B of stride, ~100 times a second, and 97% of
+       those passes find nothing. Gating it is only safe because the flag cannot go false while a
+       request is live -- see the reduction above for migration, the recompute below for requests
+       that outlive a pass, and begrun() for restarts, where the flag is process memory but
+       P[].wakeup is serialized. */
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
 
+    int still_pending = 0;
+#ifdef WAKEUP_GATE_AUDIT
+    /* Debug build only: the gate is sound iff no particle carries a request while it is shut.
+       Costs exactly the scan the gate exists to avoid, so this is a diagnostic, never production. */
+    if(!NeedToWakeupParticles)
+    {
+        int leaked = 0, li = -1;
+        for(i = 0; i < NumPart; i++) {if(P[i].wakeup) {leaked++; if(li < 0) {li = i;}}}
+        int leaked_glob = 0;
+        MPI_Allreduce(&leaked, &leaked_glob, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(leaked_glob) {
+            if(leaked) {printf("GATE-AUDIT step=%d task=%d: gate SHUT with %d pending (first i=%d type=%d bin=%d wakeup=%d active=%d)\n",
+                (int)All.NumCurrentTiStep, ThisTask, leaked, li, P[li].Type, (int)P[li].TimeBin, (int)P[li].wakeup,
+                (int)TimeBinActive[P[li].TimeBin]); fflush(stdout);}
+            NeedToWakeupParticles = 1;  /* report and carry on, so the audit run stays on the correct trajectory */
+        }
+    }
+#endif
+    if(NeedToWakeupParticles)
     {
 	for(i = 0; i < NumPart; i++)
 	{
 	    if(!P[i].wakeup) {continue;}
+	    still_pending = 1; /* still set, serviced or not; nothing below clears it */
 #if !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 	    if(P[i].Type != 0) {continue;} // only gas particles can be awakened
 #endif
@@ -1448,12 +1477,12 @@ void process_wake_ups(void)
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 	    }
 	}
-    }
 
     sumup_large_ints(1, &n, &ntot);
     if(ThisTask == 0) {if(ntot > 0) {printf("%d%09d particles activated (in wakeup check).\n", (int) (ntot / 1000000000), (int) (ntot % 1000000000));}}
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
-    {   /* unconditional and collective: every rank reaches process_wake_ups every step */
+    {   /* collective, and inside the gate: every rank takes the same branch, since the gate is a
+           global OR. Accumulates only on steps that had something to accumulate. */
         double eb_loc[2] = {WakeRev_dE, WakeRev_dE_active}, eb_glob[2];
         long eb_nl[4] = {WakeRev_nrev, WakeRev_nmoved, WakeRev_nactive, WakeRev_nnoop}, eb_ng[4];
         MPI_Allreduce(eb_loc, eb_glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -1474,8 +1503,12 @@ void process_wake_ups(void)
         }
     }
 #endif
+    /* Recompute, do not clear: nothing above clears P[].wakeup -- a serviced particle keeps it
+       until it next goes active and hydro_toplevel clears it, which can be several steps later --
+       so an unconditional clear here would strand every request that outlives one pass. */
+    NeedToWakeupParticles_local = still_pending;
+    }
     NeedToWakeupParticles = 0;
-    NeedToWakeupParticles_local = 0;
 }
 #endif
 

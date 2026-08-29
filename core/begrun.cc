@@ -242,6 +242,12 @@ void begrun(void)
 				   Note:  All.PartAllocFactor is treated in restart() separately.
 				 */
 
+#ifdef WAKEUP
+      /* P[].wakeup is serialized, the flag that gates acting on it is not. Force one pass so the
+         flag is rebuilt from the requests that came back, instead of resuming with it closed. */
+      NeedToWakeupParticles_local = 1;
+#endif
+
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
       All.BufferSize = all.BufferSize;
