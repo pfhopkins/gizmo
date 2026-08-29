@@ -617,10 +617,15 @@ static void let_build_cover_tree(int R)
  * circuits at the first LEAF topleaf that opens. Iterative (balanced tree depth
  * <= ~log2(NTopleaves) < 40; the 64-slot stack cannot overflow for a balanced
  * build, and the guarded conservative return keeps it correct if it ever could). */
+/* `margin` inflates R's cover boxes before the test. The cover boxes are built from receiver
+ * positions AT PACK TIME, but the resulting LET is reused until the next rebuild -- so a target
+ * that drifts closer afterwards can want resolution that was never shipped. margin=0 reproduces
+ * the historical decision EXACTLY (the boxes are passed through untouched, no arithmetic), which
+ * is what every caller outside the probe uses. */
 static int let_cover_opens(double cx, double cy, double cz,
                            double sx, double sy, double sz,
                            double len, double mass, double maxsoft, int node_nsink,
-                           double rcut, double rcut2, int is_first_step)
+                           double rcut, double rcut2, int is_first_step, double margin)
 {
     if(g_cover_n <= 0) return 0;
     int stack[64]; int sp = 0; stack[sp++] = 0;   /* root */
@@ -632,8 +637,14 @@ static int let_cover_opens(double cx, double cy, double cz,
         double t_soft_max = 0.0;
         for(int t = 0; t < 6; t++) if(cn->max_soft_by_type[t] > t_soft_max) t_soft_max = cn->max_soft_by_type[t];
         double t_aold_min = cn->min_OldAcc * All.ErrTolForceAcc;
+        const double *bmin_use = cn->bmin, *bmax_use = cn->bmax;
+        double bmin_m[3], bmax_m[3];
+        if(margin > 0) {
+            for(int d3 = 0; d3 < 3; d3++) {bmin_m[d3] = cn->bmin[d3] - margin; bmax_m[d3] = cn->bmax[d3] + margin;}
+            bmin_use = bmin_m; bmax_use = bmax_m;
+        }
         gravtree_open_t d = gravtree_open_decision_cell(cx, cy, cz, sx, sy, sz, len, mass, maxsoft,
-            node_nsink, cn->bmin, cn->bmax,
+            node_nsink, bmin_use, bmax_use,
             t_soft_max, cn->min_soft, t_aold_min, cn->has_sink, rcut, rcut2, is_first_step);
         if(d != GRAV_OPEN_NODE) continue;         /* aggregate doesn't open -> prune this subtree */
         if(cn->c0 < 0) return 1;                  /* a real topleaf opens -> essential */
@@ -662,7 +673,7 @@ static int let_cover_opens(double cx, double cy, double cz,
 static int let_node_essential_for_rank(double cx, double cy, double cz,
                                        double sx, double sy, double sz,
                                        double len, double mass, double maxsoft,
-                                       int n_sink)
+                                       int n_sink, double margin)
 {
     double rcut = 0.0, rcut2 = 0.0;
 #ifdef PMGRID
@@ -681,7 +692,7 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
      * domain / rank-wide scalar extrema and so never let the PM/theta/relative cull prune);
      * the opening predicate itself is untouched. */
     return let_cover_opens(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
-                           rcut, rcut2, is_first_step);
+                           rcut, rcut2, is_first_step, margin);
 }
 
 /* ----------------------------------------------------------------------
@@ -977,7 +988,27 @@ static void pack_recurse(int no, int sib_terminator,
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
     node_nsink = Nodes[no].N_SINK;
 #endif
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, node_nsink);
+    /* Motion margin (GIZMO_LET_MOTION_MARGIN, a multiple of the softening support radius; 0 or
+     * undefined reproduces the historical decision exactly).
+     *
+     * The cover boxes are built from receiver positions at PACK time, but the LET they produce is
+     * reused until the next rebuild. A target that drifts closer afterwards can want resolution
+     * that was never shipped, and the walk then falls back to the coarse multipole the (now stale)
+     * predicate approved. Inflating the boxes makes the test provision for the LET's lifetime
+     * rather than the instant it is packed.
+     *
+     * One softening is the natural scale, for two reasons that coincide: it covers the largest
+     * displacement over a rebuild interval (measured at 61% of a softening over two steps), and it
+     * approximates the softening-proximity force-open that the shared predicate omits under
+     * Barnes-Hut -- that test lives in the ErrTolTheta `else` and so never runs (upstream is the
+     * same; upstream is immune only because it exports to the owner instead of accepting a foreign
+     * multipole). Cost measured by GIZMO_LET_MARGIN_PROBE: +8.1% essential nodes at 1.0 x soft. */
+    double let_margin = 0.0;
+#ifdef GIZMO_LET_MOTION_MARGIN
+    let_margin = ((double) GIZMO_LET_MOTION_MARGIN) * All.ForceSoftening[1];
+#endif
+    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, node_nsink, let_margin);
+
 
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
