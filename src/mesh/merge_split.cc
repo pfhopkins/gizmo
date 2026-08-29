@@ -1005,6 +1005,10 @@ int merge_particles_ij(int i, int j)
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
     CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
+#if defined(COOLING) && !defined(CHIMES)
+    CellP[j].Ne = wt_j*CellP[j].Ne + wt_i*CellP[i].Ne; /* the electron and neutral fractions belong to the same cached composition, so they mix the same way */
+    CellP[j].HI = wt_j*CellP[j].HI + wt_i*CellP[i].HI;
+#endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
     P[j].Pos = pos_new; // center-of-mass conserving //
