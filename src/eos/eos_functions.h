@@ -471,7 +471,8 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
 #endif
     if(All.Time <= All.TimeBegin) {
-        temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; /* use whatever was initialized already, because this hasn't been fully iterated in the cooling routine yet */
+        cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* nothing has been solved yet, so the fallback composition, and the temperature that follows from it */
+        temp = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
     } else {
         double ne=1, nh0=0, nhp=0, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
@@ -482,7 +483,7 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     }
 #else
     cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* no chemistry solved here, so the fallback composition */
-    temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
+    temp = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
 #endif
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the
        cell holds right now. anything wanting another energy derives it with gas_temperature_from_u */

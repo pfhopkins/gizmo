@@ -562,7 +562,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 #ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
-        double T_eff=cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred), rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+        double T_eff=cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred), rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // temperature from the composition the cooling solve stored, or the ionized fallback where none was, nothing fancy, to get the temperature //
         double kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
         return (0.35 + kappa_abs) * fac;
     }
@@ -1708,7 +1708,7 @@ KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct partic
 {
 #ifdef RT_FREEFREE
     int k = RT_FREQ_BIN_FREEFREE;
-    double t_eff = cell[target].gas_temperature_from_u(cell[target].InternalEnergyPred); // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+    double t_eff = cell[target].gas_temperature_from_u(cell[target].InternalEnergyPred); // temperature from the composition the cooling solve stored, or the ionized fallback where none was, nothing fancy, to get the temperature //
     je[k] = rt_absorb_frac_albedo(target, k, pp, cell) * rt_kappa(target,k, pp, cell) * cell[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
 #endif
 }

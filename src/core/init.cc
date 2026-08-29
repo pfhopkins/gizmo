@@ -643,7 +643,6 @@ void init(void)
             CellP[i].Temperature = (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
 #endif
             CellP[i].Gamma = GAMMA_DEFAULT;
-            CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* refreshed at the first equation-of-state call, before any consumer */
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
@@ -698,6 +697,9 @@ void init(void)
             CellP[i].Rad_Flux_AGN = 0;
 #endif
         }
+        /* the cached composition is not carried in snapshots, so seed it on any start that does not
+           restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
+        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED;}
 #ifdef GALSF_SUBGRID_WINDS
         if(RestartFlag == 0) {CellP[i].DelayTime = 0;}
 #if (GALSF_SUBGRID_WIND_SCALING==1)

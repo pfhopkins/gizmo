@@ -999,6 +999,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         cell[target].Ne = ne_final; cell[target].HI = nHI;
         cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
         cell[target].Temperature = temp_final;
+        cell[target].Gamma = cell[target].gamma_eos_value(); /* the other half, so the pair describes this solve rather than the previous equation-of-state call */
 #ifdef RT_CHEM_PHOTOION
         cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE

@@ -332,7 +332,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-#if (COOL_GRACKLE_CHEMISTRY > 0)
+#if defined(RT_CHEM_PHOTOION)
+                    *fp++ = (MyOutputFloat) CellP[pindex].HI;
+#elif (COOL_GRACKLE_CHEMISTRY > 0)
                     *fp++ = (MyOutputFloat) CellP[pindex].grHI;
 #else
                     *fp++ = (MyOutputFloat) CellP[pindex].HI; /* saved by the cooling solver, and read back by read_ic */
