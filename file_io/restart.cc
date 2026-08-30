@@ -341,6 +341,26 @@ void restart(int modus)
 	      byten(DomainCenter, 3 * sizeof(double), modus);
 	      byten(&DomainLen, sizeof(double), modus);
 	      byten(&DomainFac, sizeof(double), modus);
+
+	      if(modus)		/* read */
+		{
+		  /* Extnodes[].Flag is serialized just above; GlobFlag, the counter it is compared
+		     against, is a plain global (allvars.cc:168) and is not. A resume restarts the
+		     counter at 0 while the nodes carry markers from the previous run, so a node whose
+		     stored Flag collided with an early counter value would read as already-visited and
+		     be skipped when force_update_tree() collects the top-level nodes it has to
+		     communicate.
+		     Flag is only ever a within-pass marker -- every use is
+		     `if(Flag != GlobFlag) {Flag = GlobFlag; ...}` immediately after a GlobFlag++ -- so
+		     any state in which no Flag equals the current counter is valid. Clearing them is
+		     therefore sufficient, and unlike seeding GlobFlag from max(Flag) it reads nothing:
+		     Extnodes_base comes from mymalloc and only nodes the build touched have ever had
+		     Flag written, so a max over the array can pick up an unwritten entry and push the
+		     counter near INT_MAX, where ++ overflows within a few passes. */
+		  int i;
+		  for(i = 0; i < Numnodestree; i++) {Extnodes_base[i].Flag = 0;}
+		  GlobFlag = 0;
+		}
 	    }
 
 	  fclose(fd);
