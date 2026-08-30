@@ -470,10 +470,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
 #endif
-    if(All.Time <= All.TimeBegin) {
-        cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* nothing has been solved yet, so the fallback composition, and the temperature that follows from it */
-        temp = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
-    } else {
+    {
+        /* the composition is seeded at initialization and owned by the cooling solve thereafter, so it is
+           read here rather than re-established: the first timestep calls this routine several times, and
+           overwriting the cache would discard the solve that has already run */
         double ne=1, nh0=0, nhp=0, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
         cell[i].Gamma = cell[i].gamma_eos_value();
