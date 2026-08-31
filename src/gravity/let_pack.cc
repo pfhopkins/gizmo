@@ -698,7 +698,8 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
  *
  * Sets BITFLAG_MULTIPLEPARTICLES (forced after finalize) so the receiver's
  * walk uses the synthesized multipole directly (exact for a single particle)
- * instead of skipping to a non-existent source-side particle.
+ * instead of skipping to a non-existent source-side particle, and tags the wire
+ * LET_LEAF_TAG_REAL_LEAF so the receiver consumes it with leaf semantics.
  *
  * Two payloads differ from the previous hand-inlined form, both for a
  * single-particle leaf and both matching the live GPU venues + the CPU
@@ -861,7 +862,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
      * moment already carries every other source field (and for a singleton equals the particle
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
      * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
-    w->leaf_tag      = 1;
+    w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
     w->leaf_type     = pa->Type;
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
@@ -981,7 +982,7 @@ static void pack_recurse(int no, int sib_terminator,
     int my_idx = (*count)++;
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
-    w->leaf_tag = 0; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+    w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
     /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
@@ -993,8 +994,11 @@ static void pack_recurse(int no, int sib_terminator,
 
     if(!is_essential)
     {
-        /* Multipole-only: receiver's walk will close on this node (their criterion
-         * matches our worst-case bound), so they never descend.  No recursion. */
+        /* Multipole-only: no target in the receiver's cover opens this node under the predicate we
+         * evaluated, so its children are not shipped.  Tag it TRUNCATED so the receiver can tell a
+         * node it may descend from one it may not -- if a later walk there does open it, the import
+         * is incomplete and the walk must say so rather than quietly accept the multipole. */
+        w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
         return;
     }
 
@@ -1009,13 +1013,13 @@ static void pack_recurse(int no, int sib_terminator,
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
          * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeParticleSlots); if not, the
-         * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
-         * surfaces it rather than mis-routing a non-particle as a leaf. */
+         * tree is malformed -- ship it as a truncated aggregate so the receiver treats it as
+         * terminal and surfaces it, rather than mis-routing a non-particle as a leaf. */
         int p = Nodes[no].u.d.nextnode;
         if(p >= 0 && p < All.TreeParticleSlots)
         {
             struct particle_data *pa = &P[p];
-            w->leaf_tag      = 1;
+            w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
             w->leaf_ags_zeta = 0;
@@ -1028,8 +1032,9 @@ static void pack_recurse(int no, int sib_terminator,
         else
         {
             printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); "
-                   "shipping untagged (receiver guard will surface it).\n", no, p, ThisTask);
+                   "shipping as a truncated aggregate (receiver guard will surface it).\n", no, p, ThisTask);
             fflush(stdout);
+            w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;   /* not a real leaf, and not descendable */
         }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
         return;  /* no children to recurse into */
@@ -1128,8 +1133,14 @@ static void pack_recurse(int no, int sib_terminator,
                 (sib_terminator < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_terminator);
         }
     }
-    /* else: no children shipped (e.g., all were particles outside essential range);
-     *       nextnode stays LET_WIRE_EXIT; receiver will treat as multipole-leaf. */
+    else
+    {
+        /* No children shipped (every child was a pseudo/foreign slot this pack skips), so nextnode
+         * stays LET_WIRE_EXIT and there is nothing to descend into.  Same terminal status as the
+         * pruned case above, reached by a different route -- tag it the same way.  Re-fetch by index:
+         * grow_wire_buf may have moved the buffer during the child recursion. */
+        (*buf)[my_idx].leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
+    }
 }
 
 /* ----------------------------------------------------------------------

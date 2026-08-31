@@ -27,6 +27,8 @@
  */
 
 #include "gravity_box_distance.h"
+#include "let_data.h"            /* LET_LEAF_TAG_* + grav_classify_node (import topology vocabulary) */
+
 
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
@@ -224,9 +226,10 @@ KOKKOS_INLINE_FUNCTION
 int grav_apply_foreign_leaf_identity(int leaf_tag, int leaf_type, double leaf_zeta, double leaf_force_soft,
                                      int *ptype_sec, double *zeta_sec, double *h_p)
 {
-    if(leaf_tag == 1) { *ptype_sec = leaf_type; *zeta_sec = leaf_zeta; *h_p = leaf_force_soft; return 1; }
+    if(leaf_tag == LET_LEAF_TAG_REAL_LEAF) { *ptype_sec = leaf_type; *zeta_sec = leaf_zeta; *h_p = leaf_force_soft; return 1; }
     return 0;
 }
+
 
 /* zeta/zeta_sec (AGS-softening correction) and ags_bitflag_primary (symmetrize-by-
  * averaging) are passed unconditionally; callers supply 0 when the corresponding flag

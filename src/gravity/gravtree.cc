@@ -277,6 +277,15 @@ void gravity_tree(void)
              * index range is reported by the exchange, which raises the range
              * and rebuilds before this walk runs.
              * ============================================================ */
+            /* Import completeness.  The walk records rather than reports: it runs threaded over
+             * targets, one incompleteness can involve many nodes, and a stop request only takes
+             * effect at the poll below.  Speak once for the pass here, then ask for that stop --
+             * the forces on those targets were computed from an import that did not cover them. */
+            if(gravity_report_incomplete_import() > 0) {
+                gizmo_request_controlled_stop(90000087, "gravtree: the imported tree did not carry the structure the walk resolved",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            }
+
             if(Nexport > 0) {
                 printf("The locally essential tree did not cover the gravity of %ld particles on rank %d. Stopping.\n", Nexport, ThisTask);
                 fflush(stdout);

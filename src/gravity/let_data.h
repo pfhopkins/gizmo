@@ -22,6 +22,57 @@
 #include <stdint.h>
 #include "../declarations/allvars.h"
 
+/* Device-callable without forcing a Kokkos dependency on host-only includers. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
+
+
+/* How a foreign (imported) node was shipped, carried per node on the LET wire and mirrored into
+ * the receiver's ForeignLeafTag sidecar.  This is what makes "can this node be descended?" an
+ * explicit property of the import rather than something the walk infers from pointer values.
+ *
+ * The sender prunes the import against its own evaluation of the opening predicate: a node no
+ * target on the receiving rank would open is shipped WITHOUT its children.  Any later walk that
+ * evaluates the predicate STRICTER than the sender did can then ask to descend a node whose
+ * children were never sent.  Inferring that from `nextnode < 0` catches it only under the last
+ * topleaf, where the subtree's exit resolves to "end of walk"; under every other topleaf the exit
+ * resolves to a VALID SIBLING, so the walk steps out of the foreign subtree and drops that node's
+ * mass with no diagnostic at all.  Tagging the truncation where it happens makes the test exact
+ * for every topleaf. */
+#define LET_LEAF_TAG_NODE                0  /* interior node; its children were shipped -> descendable */
+#define LET_LEAF_TAG_REAL_LEAF           1  /* single-particle leaf; terminal, consume with leaf semantics */
+#define LET_LEAF_TAG_TRUNCATED_AGGREGATE 2  /* aggregate shipped multipole-only; terminal, NOT descendable */
+
+typedef enum {
+    GRAV_NODE_LOCAL = 0,        /* not imported: ordinary local tree node */
+    GRAV_NODE_FOREIGN_OPENABLE, /* imported with its children -> may be descended */
+    GRAV_NODE_FOREIGN_LEAF,     /* imported single-particle leaf: terminal, leaf semantics */
+    GRAV_NODE_FOREIGN_TRUNCATED /* imported multipole-only: terminal, and opening it means the import is short */
+} grav_node_kind_t;
+
+/* Classify a node ONCE, before any decision that might descend it.  Both walks call this ahead of
+ * the single-particle branch AND the acceptance predicate, so the wire tag is the single authority
+ * on descendability and no path can reach `nextnode` on a node whose children were never sent.
+ * The nextnode<0 sentinel is kept as a backstop: a node the packer failed to tag is still treated
+ * as terminal rather than followed. */
+KOKKOS_INLINE_FUNCTION
+grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode)
+{
+    if(!in_foreign) {return GRAV_NODE_LOCAL;}
+    if(leaf_tag == LET_LEAF_TAG_REAL_LEAF) {return GRAV_NODE_FOREIGN_LEAF;}
+    if(leaf_tag == LET_LEAF_TAG_TRUNCATED_AGGREGATE || nextnode < 0) {return GRAV_NODE_FOREIGN_TRUNCATED;}
+    return GRAV_NODE_FOREIGN_OPENABLE;
+}
+
+/* A terminal node is consumed where it stands; only these two kinds may reach the accept path
+ * after the predicate says OPEN. */
+KOKKOS_INLINE_FUNCTION
+int grav_node_is_terminal(grav_node_kind_t k)
+{
+    return (k == GRAV_NODE_FOREIGN_LEAF || k == GRAV_NODE_FOREIGN_TRUNCATED);
+}
+
 /* ----------------------------------------------------------------------
  * Per-rank payload (LET pack input)
  *
@@ -149,7 +200,11 @@ struct LETCoverLeaf {
  * ---------------------------------------------------------------------- */
 struct LETNodeWire {
     int    remote_id;      /* sender's Nodes_base index (identity/debug only; NOT topology) */
-    int    leaf_tag;       /* 1 = real foreign single-particle leaf source; 0 = node/multipole.
+    int    leaf_tag;       /* LET_LEAF_TAG_* (gravtree_opening.h): 0 = node whose children were
+                            * shipped, 1 = real single-particle leaf, 2 = aggregate shipped
+                            * multipole-only because the sender's opening test closed on it --
+                            * terminal and NOT descendable, which the receiver's walk must know
+                            * explicitly rather than infer from a continuation pointer.
                             * A foreign singleton (one particle, shipped as a synthesized terminal
                             * multipole) must be consumed with PARTICLE-LEAF secondary-source
                             * semantics, not node semantics -- see the leaf-identity sidecar below

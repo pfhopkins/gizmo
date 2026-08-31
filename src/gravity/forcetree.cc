@@ -1431,6 +1431,53 @@ void force_add_element_to_tree(int iparent, int ichild)
  *  memory-access panelty (which reduces cache performance) incurred by the
  *  table.
  */
+/* Import-completeness record for the gravity walk.
+ *
+ * A walk that opens a foreign node the sender shipped multipole-only has outrun its import: the
+ * force for that target is not computable from the nodes in hand.  The walk cannot report this
+ * where it happens -- it runs threaded over targets, one incompleteness can involve many nodes,
+ * and endrun() only REQUESTS a stop and returns, so the walk keeps going.  So the walk records,
+ * and gravity_report_incomplete_import() speaks once for the whole pass with the first case as
+ * the example. */
+static long long IncompleteImportCount = 0;
+static int    IncompleteImportNode = -1, IncompleteImportType = -1;
+static unsigned long long IncompleteImportID = 0;
+static double IncompleteImportLen = 0, IncompleteImportMass = 0;
+
+void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, double len, double mass)
+{
+#ifdef _OPENMP
+#pragma omp critical(_incomplete_import_)
+#endif
+    {
+        if(IncompleteImportCount == 0)
+        {
+            IncompleteImportNode = node; IncompleteImportID = id; IncompleteImportType = ptype;
+            IncompleteImportLen = len;   IncompleteImportMass = mass;
+        }
+        IncompleteImportCount++;
+    }
+}
+
+/* Reports and clears.  Returns the count so the caller can decide what to do about it. */
+long long gravity_report_incomplete_import(void)
+{
+    long long n = IncompleteImportCount;
+    if(n > 0)
+    {
+        printf("The gravity walk needed to descend %lld imported node(s) that arrived without children on rank %d, "
+               "so the force on those targets is not computable from the imported tree. The import is pruned when the "
+               "tree is built, against where the particles were then; by now they have moved far enough that the walk "
+               "resolves structure the import no longer carries. First case: node %d, target ID=%llu type=%d, node size "
+               "%g mass %g. Building the tree more often avoids this -- lower TreeDomainUpdateFrequency.\n",
+               n, ThisTask, IncompleteImportNode, IncompleteImportID, IncompleteImportType,
+               IncompleteImportLen, IncompleteImportMass);
+        fflush(stdout);
+    }
+    IncompleteImportCount = 0;
+    return n;
+}
+
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
@@ -1763,12 +1810,6 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
                 nop = &Nodes[no];
                 int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
-                /* LET guard: if a foreign node has nextnode < 0 (unreplaced -1 sentinel from
-                 * unpack, meaning this is the last topleaf with no sibling), opening the node
-                 * would immediately exit the while(no >= 0) walk and skip its force contribution.
-                 * Force multipole treatment instead so the node's contribution is accumulated. */
-                int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
-
                 /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
                  * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
                 int    fl_tag = 0, fl_type = -1;
@@ -1789,12 +1830,22 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     no = nop->u.d.sibling;
                     continue;
                 }
+                /* Classify BEFORE anything that could descend.  The wire tag is the authority on
+                 * whether this node's children were shipped; both the single-particle branch just
+                 * below and the acceptance predicate further down consult this one answer, so no
+                 * path can follow nextnode on a node whose children the sender never sent. */
+                grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
-                    if(mass) /* open cell */
+                    if(mass) /* open cell: descend to the particle this node holds */
                     {
-                        if(!foreign_force_multipole)
+                        /* Only a local node, or a foreign node shipped WITH its children, has
+                         * anything below it here.  A foreign node that reaches this branch with the
+                         * multi-particle bit clear was shipped multipole-only (the packer sets that
+                         * bit on every leaf it does ship), so its nextnode is the continuation past
+                         * the subtree, not a child -- following it would skip the node's mass. */
+                        if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE)
                         {
                             no = nop->u.d.nextnode;
                             continue;
@@ -1843,31 +1894,25 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         r2, cen0, cen1, cen2, soft, h, aold, ptype,
                         nop->len, mass, nop->maxsoft,
                         pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
-                    /* Foreign LET policy (mirrors the GPU walk exactly).  A foreign tagged leaf
-                     * (fl_tag==1) is a TERMINAL leaf source: its nextnode is the DFS CONTINUATION after
-                     * the leaf, NOT a child to descend.  A predicate OPEN on it must mean "accept this
-                     * already-leaf source with leaf semantics" (the leaf identity is restored below),
-                     * never "descend".  foreign_force_multipole (the nextnode<0 sentinel) is the other
-                     * terminal that must be accepted.  Both fall through to the accept path; only a
-                     * genuine descendable node takes nextnode.  (Pre-fix the descend guard keyed on
-                     * foreign_force_multipole alone, so a tagged leaf whose continuation resolved to a
-                     * valid >=0 slot was OPENED -> advanced to its continuation -> its mass was never
-                     * summed; the dropped foreign-leaf mass is rank-asymmetric, breaking force
-                     * reciprocity / momentum conservation at np>=2 under adaptive softening.) */
-                    int foreign_real_leaf = (in_foreign && fl_tag == 1);
-                    int must_accept_foreign_terminal = foreign_force_multipole || foreign_real_leaf;
+                    /* Foreign LET policy (mirrors the GPU walk exactly).  A terminal foreign node --
+                     * a tagged single-particle leaf, or an aggregate the sender shipped multipole-only --
+                     * has no children here: its nextnode is the continuation PAST the subtree, not a
+                     * child.  So a predicate OPEN on one cannot mean "descend"; for a leaf it means
+                     * "accept this already-leaf source with leaf semantics" (restored below), and for a
+                     * truncated aggregate it means the import no longer covers what this walk asks of
+                     * it.  Only a node shipped WITH its children takes nextnode. */
                     if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
-                    if(pred == GRAV_OPEN_NODE && !must_accept_foreign_terminal) {no = nop->u.d.nextnode; continue;}
-                    /* Permanent invariant guard (predicate-keyed; mirrors the GPU walk): a
-                     * predicate-OPEN foreign terminal forced to multipole that is NOT a tagged real
-                     * leaf is an unopenable aggregate that would silently downgrade leaf-sensitive
-                     * physics. Hard-surface (controlled stop) until an owner-continuation fix exists. */
-                    if(pred == GRAV_OPEN_NODE && foreign_force_multipole && fl_tag != 1) {
-                        printf("[GRAV-INVARIANT VIOLATION rank=%d] CPU walk: predicate-OPEN foreign-terminal "
-                               "node %d accepted as multipole but not a tagged real leaf (unopenable "
-                               "aggregate in leaf-sensitive support); C2/owner-continuation required. Stopping.\n",
-                               ThisTask, no);
-                        fflush(stdout); endrun(90000087);
+                    if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
+                    /* Import-completeness guard.  Accepting this multipole would drop the sub-node
+                     * structure the target resolves, silently and asymmetrically between ranks, so the
+                     * walk records it instead.  Counted rather than printed: this can fire per opened
+                     * node per target from inside the threaded walk, and endrun() only REQUESTS a stop
+                     * and returns, so printing here would bury the run in interleaved lines.  The count
+                     * is reported once and drained after the walk (gravtree.cc). */
+                    if(pred == GRAV_OPEN_NODE && node_kind == GRAV_NODE_FOREIGN_TRUNCATED)
+                    {
+                        gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, ptype,
+                                                       (double) nop->len, (double) nop->u.d.mass);
                     }
                 }
 
