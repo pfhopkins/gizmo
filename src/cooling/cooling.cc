@@ -615,7 +615,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
-            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
+            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
             cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
             }

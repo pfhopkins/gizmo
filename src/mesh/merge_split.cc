@@ -1015,6 +1015,16 @@ int merge_particles_ij(int i, int j)
 #if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
     CellP[j].HI = wt_j*CellP[j].HI + wt_i*CellP[i].HI;
 #endif
+#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+    /* the ionization states are a partition of the same nuclei as the neutral fraction above, so they
+       have to mix with it or the merged cell holds fractions that no longer sum correctly */
+    CellP[j].HII = wt_j*CellP[j].HII + wt_i*CellP[i].HII;
+#ifdef RT_CHEM_PHOTOION_HE
+    CellP[j].HeI = wt_j*CellP[j].HeI + wt_i*CellP[i].HeI;
+    CellP[j].HeII = wt_j*CellP[j].HeII + wt_i*CellP[i].HeII;
+    CellP[j].HeIII = wt_j*CellP[j].HeIII + wt_i*CellP[i].HeIII;
+#endif
+#endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
     P[j].Pos = pos_new; // center-of-mass conserving //

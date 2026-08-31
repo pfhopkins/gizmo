@@ -266,11 +266,12 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                so its answer would not describe this gas. Use a chemistry mode if you need
                real abundances. */
             {
-            double temp = temperature_from_u_nongas(energy);
-            double f_ion_guess = 0; if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
+            double f_ion_guess = 0; double temp = temperature_from_u_nongas(energy); /* only to decide whether the gas is warm enough to ionize */
+            if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
+            double mu_guess = 1./(0.80125 + f_ion_guess);
             CellP[target].Gamma = GAMMA_DEFAULT;
-            CellP[target].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* the ionized weight this placeholder temperature assumes */
-            CellP[target].Temperature = temp;
+            CellP[target].MeanMolecularWeight = mu_guess;
+            CellP[target].Temperature = mu_guess * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy; /* from the weight stored above, so the pair agrees */
             CellP[target].Ne = f_ion_guess;
             CellP[target].HI = DMAX(0, 1. - f_ion_guess);
 #ifdef RT_CHEM_PHOTOION
