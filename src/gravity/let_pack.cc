@@ -228,10 +228,14 @@ static int *g_orphan_off = NULL;
 static int g_orphan_off_cap = 0;
 
 /* Merge one local orphan target's opening scalars into an orphan record (same worst-case ops as the
- * per-topleaf table: min OldAcc, max soft-by-type, min soft, OR has_sink). */
+ * per-topleaf table: min OldAcc, max soft-by-type, min soft, OR has_sink).  The OldAcc
+ * reduction is a TRUE minimum including zero: the walk forms aold = ErrTolForceAcc*OldAcc with
+ * no positivity test, so a target with OldAcc==0 has aold==0 and its relative criterion opens
+ * EVERY node with mass.  Excluding zero from this minimum therefore certified nodes as
+ * non-essential that such a target does open, and the import lost them. */
 static inline void let_orphan_merge(struct LETOrphanRecord *r, double oa, double soft, int ptype)
 {
-    if(oa > 0 && oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
+    if(oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
     if(soft > r->s.max_soft_by_type[ptype]) r->s.max_soft_by_type[ptype] = soft;
     if(soft < r->s.min_soft) r->s.min_soft = soft;
     if(ptype == 5) r->s.has_sink = 1;
@@ -387,7 +391,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         }
         /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
          * empty-owned-topleaf fallback baked in below stays a true worst case. */
-        if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
+        if(oa < out->min_OldAcc) out->min_OldAcc = oa;
         if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
         if(soft < out->min_soft) out->min_soft = soft;
         if(t == 5) out->has_sink = 1;
@@ -413,7 +417,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
 
     /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave), then
      * each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max scalars
-     * (max soft-by-type, min soft, min positive OldAcc, OR has_sink). An empty owned topleaf collected no
+     * (max soft-by-type, min soft, min OldAcc including zero, OR has_sink). An empty owned topleaf collected no
      * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
      * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
     g_my_clusters_n = 0;
@@ -435,7 +439,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
                 struct LETClusterMember *m = &g_cl_members[r];
                 for(int d = 0; d < 3; d++) { if(m->pos[d] < c.bmin[d]) c.bmin[d] = m->pos[d]; if(m->pos[d] > c.bmax[d]) c.bmax[d] = m->pos[d]; }
                 if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
-                if(m->oldacc > 0 && m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
+                if(m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
                 if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
                 if(m->type == 5) c.s.has_sink = 1;
             }
