@@ -213,7 +213,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #if (SINGLE_STAR_TIMESTEPPING > 0)
 #endif
 
-void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
+void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef HYDRO_GENERATE_TARGET_MESH
 /* Declared under the same flag the definitions in eos/eos_functions.h carry: they
    used to be defined unconditionally in eos.cc, so an unguarded declaration would

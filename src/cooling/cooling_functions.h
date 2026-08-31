@@ -578,16 +578,11 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
 #endif /* COOLING — end of cooling-specific functions */
 
 
-/* The host wrapper `set_eos_pressure` (declared in proto.h) remains in
-   eos/eos.cc — NOT inlined here. nvcc inlining of the wrapper with
-   __managed__ All_dev context produces wrong results on CUDA. Non-GPU TUs
-   link against eos.cc's host symbol via proto.h declaration.
-   NOTE: the device-callable `set_eos_pressure_impl` (in eos/eos_functions.h)
-   IS called from the post-cooling device kernel when
-   POST_COOLING_DEVICE_EOS_SUPPORTED is defined — see cooling/cooling.cc:465
-   and declarations/precompiler_logic.h:767-787. This comment is about the
-   host wrapper specifically; it is not a statement that EOS computation is
-   pinned to host in general. */
+/* The host wrapper `set_eos_pressure` stays in eos/eos.cc and is not inlined here;
+   the reason it and its body must remain separate is recorded beside the definition
+   there. The device-callable `set_eos_pressure_impl` is a different thing and IS
+   called from the post-cooling device kernel, so none of this says the equation of
+   state is pinned to the host. */
 
 
 #endif /* COOLING_FUNCTIONS_H */

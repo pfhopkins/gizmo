@@ -44,9 +44,9 @@
     this subroutine needs to set the value of the 'press' variable (pressure), which you can see from the
     templates below can follow an arbitrary equation-of-state. for more general equations-of-state you want to specifically set the soundspeed
     variable as well. */
-/* set_eos_pressure: definition moved to cooling/cooling_functions.h for cross-TU GPU callability.
-   eos.cc includes cooling_functions.h (below) so the inline definition is available to callers
-   that link against eos.o. */
+/* set_eos_pressure: the host symbol is defined further down in this file; its body is
+   set_eos_pressure_impl in eos/eos_functions.h. See the note beside the definition for why
+   the two are separate and must stay that way. */
 
 
 /* Get_Gas_Ionized_Fraction: definition now in eos_functions.h */
@@ -96,18 +96,21 @@
 #pragma omp end declare target
 #endif
 
-/* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
-   as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl.
-   This preserves public API and external linkage exactly: existing host
-   callers (kicks/predict/sfr_eff/merge_split/init/density/density_loop/cooling-
-   scatter-fallback) continue to call this symbol unchanged.  The header pattern
-   matches the established Get_Gas_Molecular_Mass_Fraction / yhelium etc. setup
-   (single source of truth in eos_functions.h, external host symbol generated
-   in eos.cc via the `#undef KOKKOS_INLINE_FUNCTION` mechanism in this TU).
-   Do NOT include cooling_functions.h here — doing so creates __host__ non-inline
-   strong symbols for ThermalProperties/convert_u_to_temp/find_abundances_and_rates
-   that override cooling.cc's inline versions at link time, producing wrong results
-   on CUDA (bisected empirically). */
+/* set_eos_pressure — the host symbol. Its body is set_eos_pressure_impl in
+   eos/eos_functions.h, and the two are deliberately separate.
+
+   DO NOT COLLAPSE THEM INTO ONE. The body reads All in fifteen places, and in a GPU
+   translation unit All resolves to that unit's own managed mirror. Keeping one
+   non-inline host symbol here means every host caller shares a single mirror, while
+   the translation units that genuinely need the body on the device instantiate the
+   inline form themselves. Merging the two would inline it against a different mirror
+   in each unit, which links cleanly and returns wrong temperatures only on CUDA -- a
+   build with no device pass cannot see it.
+
+   For the same reason, do NOT include cooling_functions.h in this file: that creates
+   non-inline host symbols for ThermalProperties/convert_u_to_temp/
+   find_abundances_and_rates which override cooling.cc's at link time, with the same
+   silent CUDA-only result. Both were bisected empirically. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     set_eos_pressure_impl(i, pp, cell);
