@@ -30,7 +30,6 @@
  */
 
 
-/* RT_STEP_DIAG: checksum function for bisecting RT divergence */
 /* Forward declarations for cpu.txt force-print flag (defined below near
  * write_cpu_log; called from the step loop in run() above). */
 extern "C" void gizmo_cpu_log_request_force_print(void);
@@ -214,7 +213,6 @@ void run(void)
             break;
         }
 
-        /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
         int TreeReconstructFlag_local = TreeReconstructFlag;
         /* Auto-rebuild guardrail.  force_add_element_to_tree
          * insertions stale the LET / pseudo-particle moments shipped on
@@ -279,7 +277,7 @@ void run(void)
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(HERMITE_INTEGRATION)
         if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
         /* Pick up a rebuild raised since the local copy was taken above. The drift/output in between
