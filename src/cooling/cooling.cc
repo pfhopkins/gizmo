@@ -597,7 +597,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
      * this file alongside CoolTables), so this is device-clean. */
     if(pp[i].FluidType == FLUID_DM) {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
-        do_dark_cooling_for_particle(i, pp, cell);
+        struct PhysicsTablesView dm_tables_view = cooling_owner_tables_view();
+        do_dark_cooling_for_particle(i, pp, cell, &dm_tables_view);
 #endif
         return;
     }

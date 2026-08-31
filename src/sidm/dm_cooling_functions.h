@@ -2,29 +2,15 @@
  *
  * Split off from sidm/dm_fluid_functions.h so that broad EOS consumers
  * (eos/eos_functions.h, transitively pulled by rt_functions.h /
- * cooling_functions.h / many TUs) do NOT pull the DMCoolTables-dependent
- * cooling chain. This mirrors the cooling/cooling_functions.h vs
+ * cooling_functions.h / many TUs) do NOT pull the table-dependent cooling chain. This mirrors the cooling/cooling_functions.h vs
  * cooling/cooling_tables.h split: the device-callable cooling-rate chain
  * lives in this functions header; the consolidated table struct lives in
- * sidm/dm_cooling_tables.h; the __managed__ DMCoolTables instance is
- * defined in cooling/cooling.cc (single GPU-compiled owner TU).
+ * sidm/dm_cooling_tables.h; the table instance is defined in cooling/cooling.cc,
+ * which is its only owner.
  *
- * Consumer protocol (mirrors cooling/cooling_functions.h:37 +
- * solids/grain_drag.cc:33-37 for CoolTables): each TU that includes this
- * header must own its extern declaration BEFORE the include, with the
- * __managed__ qualifier under GIZMO_GPU_COMPILER so device-pass reads
- * resolve to the managed symbol (avoiding #20094-D):
- *
- *     #if defined(GIZMO_GPU_COMPILER)
- *     extern __managed__ struct dm_cooling_tables_t DMCoolTables;
- *     #else
- *     extern struct dm_cooling_tables_t DMCoolTables;
- *     #endif
- *     #include "../sidm/dm_cooling_functions.h"
- *
- * The owner TU (cooling/cooling.cc) has the definition in scope already
- * and skips the extern — extern + __managed__ in the same TU is rejected
- * by nvcc; see cooling/cooling_tables.h:50-57.
+ * The chain takes its tables as data, in a PhysicsTablesView filled by the
+ * owner and passed down, so no TU names the table instance and none has to
+ * declare it. This is the same arrangement the gas cooling chain uses.
  *
  * Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -52,23 +38,7 @@
 #include "../declarations/gizmo_quadrature.h"
 #include "../core/timestep_functions.h"      /* get_particle_timestep_in_physical (called by do_dark_cooling_for_particle below) */
 #include "dm_cooling_tables.h"               /* dm_cooling_tables_t + NCOOLTAB_DM + InitCool_dm() decl */
-
-/* DMCoolTables instance is __managed__ in cooling/cooling.cc.
-   Consumer protocol (mirrors cooling/cooling_functions.h:37 + solids/grain_drag.cc:33-37
-   for CoolTables): each TU that includes this header must own its extern declaration
-   BEFORE the include, with the __managed__ qualifier under GIZMO_GPU_COMPILER so
-   device-pass reads resolve to the managed symbol (avoiding #20094-D):
-
-       #if defined(GIZMO_GPU_COMPILER)
-       extern __managed__ struct dm_cooling_tables_t DMCoolTables;
-       #else
-       extern struct dm_cooling_tables_t DMCoolTables;
-       #endif
-       #include "../sidm/dm_fluid_functions.h"
-
-   The owner TU (cooling/cooling.cc) has the definition in scope already and skips
-   the extern (extern + __managed__ in the same TU is rejected by nvcc; see
-   cooling/cooling_tables.h:50-57 for the canonical statement of this rule). */
+#include "../cooling/cooling_tables.h"       /* PhysicsTablesView: the tables arrive as data, like the gas chain */
 
 /* ---- species indices for cooling_DarkH2 (file-scope; was per-function dup) ---- */
 static const int QH_DM = 0, QH2_DM = 1, QHj_DM = 2, QE_DM = 3;
@@ -303,20 +273,20 @@ static KOKKOS_INLINE_FUNCTION double dm_cooling_DarkH2(double *n, double Tgas)
 static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, double rho, int target, int return_cooling_mode,
                                                    double *ne_guess, double *nH0_guess, double *nHp_guess,
                                                    double *mu_guess,
-                                                   struct gas_cell_data *cell)
+                                                   struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
-    if(!isfinite(logT) || !isfinite(rho)) {logT = DMCoolTables.Tmin;}
-    if(logT <= DMCoolTables.Tmin) {
+    if(!isfinite(logT) || !isfinite(rho)) {logT = tables->dm_cooling->Tmin;}
+    if(logT <= tables->dm_cooling->Tmin) {
         *nH0_guess = 1.0; *nHp_guess = 0.0; *ne_guess = 1.e-22;
         *mu_guess = 1.0/(1.0 + *ne_guess);
         return 0;
     }
-    if(logT >= DMCoolTables.Tmax) {
+    if(logT >= tables->dm_cooling->Tmax) {
         *nH0_guess = 0.0; *nHp_guess = 1.0; *ne_guess = 1.0;
         *mu_guess = 1.0/(1.0 + *ne_guess);
         return 0;
     }
-    double t = (logT - DMCoolTables.Tmin) / DMCoolTables.deltaT;
+    double t = (logT - tables->dm_cooling->Tmin) / tables->dm_cooling->deltaT;
     int j = (int)t;
     if(j < 0) {j = 0;}
     /* Tables allocated as NCOOLTAB_DM+1 entries (indices 0..NCOOLTAB_DM). The
@@ -329,9 +299,9 @@ static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, d
     /* Closed-form equilibrium: recombination vs collisional ionization
      * (no photoionization in this placeholder; iteration of Roy's version
      * was structurally pointless since the formula has no n_elec dependence). */
-    double aHp     = flow * DMCoolTables.AlphaHp[j]     + fhi * DMCoolTables.AlphaHp[j+1];
-    double aHpRate = flow * DMCoolTables.AlphaHpRate[j] + fhi * DMCoolTables.AlphaHpRate[j+1];
-    double geH0    = DMAX(flow * DMCoolTables.GammaeH0[j] + fhi * DMCoolTables.GammaeH0[j+1], 1.e-40);
+    double aHp     = flow * tables->dm_cooling->AlphaHp[j]     + fhi * tables->dm_cooling->AlphaHp[j+1];
+    double aHpRate = flow * tables->dm_cooling->AlphaHpRate[j] + fhi * tables->dm_cooling->AlphaHpRate[j+1];
+    double geH0    = DMAX(flow * tables->dm_cooling->GammaeH0[j] + fhi * tables->dm_cooling->GammaeH0[j+1], 1.e-40);
     double nH0     = aHp / (MIN_REAL_NUMBER + aHp + geH0);
     double nHp     = 1.0 - nH0;
     double n_elec  = nHp;
@@ -341,8 +311,8 @@ static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, d
     if(target >= 0) {cell[target].Ne = n_elec;}
 
     if(return_cooling_mode == 1) {
-        double bH0 = flow * DMCoolTables.BetaH0[j] + fhi * DMCoolTables.BetaH0[j+1];
-        double bff = flow * DMCoolTables.Betaff[j] + fhi * DMCoolTables.Betaff[j+1];
+        double bH0 = flow * tables->dm_cooling->BetaH0[j] + fhi * tables->dm_cooling->BetaH0[j+1];
+        double bff = flow * tables->dm_cooling->Betaff[j] + fhi * tables->dm_cooling->Betaff[j+1];
         double LambdaExc = bH0 * n_elec * nH0;
         double LambdaIon = 0.5 * All.ADM_ElectronMass * pow(C_LIGHT_CGS, 2.0) * pow(All.ADM_FineStructure, 2.0) * geH0 * n_elec * nH0;
         double LambdaRec = aHpRate * n_elec * nHp;
@@ -355,7 +325,7 @@ static KOKKOS_INLINE_FUNCTION double dm_find_abundances_and_rates(double logT, d
 /* Convert specific u to T via Newton iteration on mu. */
 static KOKKOS_INLINE_FUNCTION double dm_convert_u_to_temp(double u, double rho, int target, double *ne_guess,
                                            double *nH0_guess, double *nHp_guess, double *mu_guess,
-                                           struct gas_cell_data *cell)
+                                           struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     double T_0 = u * All.ADM_ProtonMass / BOLTZMANN_CGS;
     *mu_guess = 1.0 / (1.0 + *ne_guess);
@@ -363,29 +333,29 @@ static KOKKOS_INLINE_FUNCTION double dm_convert_u_to_temp(double u, double rho, 
     int iter = 0;
     while(iter < MAXITER) {
         double temp_old = temp;
-        dm_find_abundances_and_rates(log10(DMAX(temp, pow(10., DMCoolTables.Tmin))), rho, target, 0,
-                                      ne_guess, nH0_guess, nHp_guess, mu_guess, cell);
+        dm_find_abundances_and_rates(log10(DMAX(temp, pow(10., tables->dm_cooling->Tmin))), rho, target, 0,
+                                      ne_guess, nH0_guess, nHp_guess, mu_guess, cell, tables);
         temp = (5./3.-1.) * (*mu_guess) * T_0;
         if(fabs(temp - temp_old) / DMAX(temp, 1.0) < 1.e-4) {break;}
         iter++;
     }
-    if(temp <= 0) {temp = pow(10., DMCoolTables.Tmin);}
-    if(log10(temp) < DMCoolTables.Tmin) {temp = pow(10., DMCoolTables.Tmin);}
+    if(temp <= 0) {temp = pow(10., tables->dm_cooling->Tmin);}
+    if(log10(temp) < tables->dm_cooling->Tmin) {temp = pow(10., tables->dm_cooling->Tmin);}
     return temp;
 }
 
 /* Net cooling rate (heating − cooling) per nH^2 in cgs. */
-static KOKKOS_INLINE_FUNCTION double dm_CoolingRate(double logT, double rho, double n_elec_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_CoolingRate(double logT, double rho, double n_elec_guess, int target, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     double n_elec = n_elec_guess, nH0, nHp, mu;
     double nHcgs = rho / All.ADM_ProtonMass;
-    if(logT <= DMCoolTables.Tmin) {logT = DMCoolTables.Tmin + 0.5 * DMCoolTables.deltaT;}
+    if(logT <= tables->dm_cooling->Tmin) {logT = tables->dm_cooling->Tmin + 0.5 * tables->dm_cooling->deltaT;}
     if(!isfinite(rho)) {return 0;}
     double T = pow(10.0, logT);
 
     double Lambda;
-    if(logT < DMCoolTables.Tmax) {
-        Lambda = dm_find_abundances_and_rates(logT, rho, target, 1, &n_elec, &nH0, &nHp, &mu, cell);
+    if(logT < tables->dm_cooling->Tmax) {
+        Lambda = dm_find_abundances_and_rates(logT, rho, target, 1, &n_elec, &nH0, &nHp, &mu, cell, tables);
         /* dark-H2 rovib contribution at low T (cap at the SM-analog 4.4 logT plus ADM scalings) */
         if(logT <= 4.4 + log10(All.ADM_ElectronMass/ELECTRON_MASS_SM_CGS) + 2.0*log10(All.ADM_FineStructure/FINE_STRUCTURE_SM)) {
             double n[4];
@@ -406,15 +376,15 @@ static KOKKOS_INLINE_FUNCTION double dm_CoolingRate(double logT, double rho, dou
     return Q;
 }
 
-static KOKKOS_INLINE_FUNCTION double dm_CoolingRateFromU(double u, double rho, double ne_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_CoolingRateFromU(double u, double rho, double ne_guess, int target, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     double nH0, nHp, mu; (void)nH0; (void)nHp;
-    double temp = dm_convert_u_to_temp(u, rho, target, &ne_guess, &nH0, &nHp, &mu, cell);
-    return dm_CoolingRate(log10(temp), rho, ne_guess, target, cell);
+    double temp = dm_convert_u_to_temp(u, rho, target, &ne_guess, &nH0, &nHp, &mu, cell, tables);
+    return dm_CoolingRate(log10(temp), rho, ne_guess, target, cell, tables);
 }
 
 /* Implicit cooling solver via bisection (mirrors standard DoCooling pattern). */
-static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, double dt, double ne_guess, int target, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, double dt, double ne_guess, int target, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     rho   *= UNIT_DENSITY_IN_CGS;
     u_old *= UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
@@ -422,17 +392,17 @@ static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, doub
     double nHcgs = rho / All.ADM_ProtonMass;
     double ratefact = nHcgs * nHcgs / rho;
     double u = u_old, u_lower = u, u_upper = u;
-    double LambdaNet = dm_CoolingRateFromU(u, rho, ne_guess, target, cell);
+    double LambdaNet = dm_CoolingRateFromU(u, rho, ne_guess, target, cell, tables);
     int iter_upper = 0, iter_lower = 0;
     if(u - u_old - ratefact * LambdaNet * dt < 0) {
         u_upper *= sqrt(1.1); u_lower /= sqrt(1.1);
-        while((iter_upper < MAXITER) && (u_upper - u_old - ratefact * dm_CoolingRateFromU(u_upper, rho, ne_guess, target, cell) * dt < 0)) {
+        while((iter_upper < MAXITER) && (u_upper - u_old - ratefact * dm_CoolingRateFromU(u_upper, rho, ne_guess, target, cell, tables) * dt < 0)) {
             u_upper *= 1.1; u_lower *= 1.1; iter_upper++;
         }
     }
     if(u - u_old - ratefact * LambdaNet * dt > 0) {
         u_lower /= sqrt(1.1); u_upper *= sqrt(1.1);
-        while((iter_lower < MAXITER) && (u_lower - u_old - ratefact * dm_CoolingRateFromU(u_lower, rho, ne_guess, target, cell) * dt > 0)) {
+        while((iter_lower < MAXITER) && (u_lower - u_old - ratefact * dm_CoolingRateFromU(u_lower, rho, ne_guess, target, cell, tables) * dt > 0)) {
             u_upper /= 1.1; u_lower /= 1.1; iter_lower++;
         }
     }
@@ -440,7 +410,7 @@ static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, doub
     double du;
     do {
         u = 0.5 * (u_lower + u_upper);
-        LambdaNet = dm_CoolingRateFromU(u, rho, ne_guess, target, cell);
+        LambdaNet = dm_CoolingRateFromU(u, rho, ne_guess, target, cell, tables);
         if(u - u_old - ratefact * LambdaNet * dt > 0) {u_upper = u;} else {u_lower = u;}
         du = u_upper - u_lower;
         iter++;
@@ -458,7 +428,7 @@ static KOKKOS_INLINE_FUNCTION double dm_DoCooling(double u_old, double rho, doub
 /* Placeholder dark cooling entry point. With HYDRO_MULTIFLUID_DM_COOLING off,
  * this is a strict-adiabatic no-op. With it on, dispatches to the consolidated
  * ADM cooling chain above. */
-static KOKKOS_INLINE_FUNCTION void do_dark_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
+static KOKKOS_INLINE_FUNCTION void do_dark_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
     double dtime = get_particle_timestep_in_physical(i, pp);
@@ -468,7 +438,7 @@ static KOKKOS_INLINE_FUNCTION void do_dark_cooling_for_particle(int i, struct pa
         cell[i].DtInternalEnergy = DMAX(cell[i].DtInternalEnergy, -0.99 * cell[i].InternalEnergy / dtime);
         cell[i].DtInternalEnergy = DMIN(cell[i].DtInternalEnergy,  1.e4 * cell[i].InternalEnergy / dtime);
         cell[i].DtInternalEnergy *= (UNIT_ENERGY_IN_CGS/UNIT_MASS_IN_CGS) / UNIT_TIME_IN_CGS * All.ADM_ProtonMass;
-        double unew = dm_DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, cell[i].Ne, i, cell);
+        double unew = dm_DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, cell[i].Ne, i, cell, tables);
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = unew;
         cell[i].Pressure = (5./3.-1) * cell[i].Density * unew;
