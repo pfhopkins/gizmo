@@ -35,7 +35,15 @@ extern ALIGN(32) struct particle_data
 #ifdef PMGRID
     Vec3<MyFloat> GravPM;           /*!< particle acceleration due to long-range PM gravity force */
 #endif
-    MyFloat OldAcc;                    /*!< magnitude of old gravitational force. Used in relative opening criterion */
+    MyFloat OldAcc;                    /*!< acceleration scale the relative tree-opening criterion is measured against:
+                                            the magnitude of the previous gravity-tree (+Ewald+PM) acceleration, in the
+                                            non-G units the predicate expects. Refreshed ONLY when the tree is built, from
+                                            OldAcc_LatestWalk, because the imported ghost tree is pruned against this value
+                                            and every walk living on that tree must open exactly what the import covers. */
+    MyFloat OldAcc_LatestWalk;         /*!< the same quantity as measured by the most recent gravity walk, held here until
+                                            the next tree build promotes it into OldAcc. Captured before the radiation,
+                                            analytic-gravity and companion terms enter GravAccel, so it stays a property of
+                                            the force the tree computes rather than of everything acting on the particle. */
 #ifdef SPECIAL_POINT_MOTION
     Vec3<MyFloat> Acc_Total_PrevStep;  /*!< old total acceleration on a given cell/particle */
 #endif

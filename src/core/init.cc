@@ -242,6 +242,7 @@ void init(void)
         P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, P);
 #endif
         if(header.flag_ic_info != FLAG_SECOND_ORDER_ICS) {P[i].OldAcc = 0;}	/* Do not zero in 2lpt case as masses are stored here */
+        P[i].OldAcc_LatestWalk = 0;	/* no walk has measured one yet; the 2lpt exception above is about OldAcc's borrowed storage, not this */
 
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY)
         P[i].Potential = 0;

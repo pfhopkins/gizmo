@@ -69,6 +69,29 @@ int Ewald_iter;			/* global in file scope, for simplicity */
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
  *  tree is used.  Elements are only exported to other processors when needed. */
+/*! Promote the staged tree-opening acceleration scale into the value the criterion reads.
+ *
+ *  Runs ONCE per tree build, immediately before the tree (and with it the imported ghost tree) is
+ *  constructed, and nowhere else.  The import is pruned against this value: a sender ships a node
+ *  as a childless multipole precisely when no target on the receiving rank would open it, and
+ *  OldAcc enters that test.  Were it to change while the tree still stands, a later walk could
+ *  apply a stricter criterion than the sender did, ask to descend a node whose children were never
+ *  sent, and either stop on the completeness guard or -- under a topleaf that has a sibling --
+ *  silently skip that node's mass.  Promoting here ties the value to the lifetime of the structure
+ *  pruned against it, so every walk on a given tree opens exactly what its import covers.
+ *
+ *  All local particles, not just the active ones: a particle may become active while this tree
+ *  still stands, and its opening decisions must be covered by the same import.  For a particle
+ *  whose walk measured nothing new this rewrites the identical value.
+ */
+void refresh_old_acceleration_for_tree_opening(void)
+{
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < NumPart; i++) {P[i].OldAcc = P[i].OldAcc_LatestWalk;}
+}
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -102,6 +125,7 @@ void gravity_tree(void)
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
         rearrange_particle_sequence();
+        refresh_old_acceleration_for_tree_opening();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
         /* The tree just built is current by construction: the build set every
@@ -393,15 +417,23 @@ void gravity_tree(void)
         }
 #endif
 
-        /* calculate 'old acceleration' for use in the relative tree-opening criterion */
-        if(!(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0)) /* to prevent that we overwrite OldAcc in the first evaluation for 2lpt ICs */
-            {
-                auto accel = P[i].GravAccel;
+        /* Measure the acceleration scale the relative tree-opening criterion will use, HERE: after
+         * the G multiplication above, and before the companion subtraction, radiation pressure and
+         * analytic-gravity terms below.  That keeps it a property of the force the gravity tree
+         * computes -- the error the opening criterion exists to control -- rather than of every
+         * force acting on the particle, which would let rapidly varying radiation or an external
+         * field decide how finely the tree is opened.  It is only staged here; the tree build
+         * promotes it into OldAcc, so the value cannot shift under a tree whose import was pruned
+         * against it.  (Particles that skipped the walk above never reach this and keep the scale
+         * from their last real walk, as before.) */
+        if(!(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0)) /* 2lpt ICs keep masses in OldAcc until the first evaluation */
+        {
+            auto accel_for_opening = P[i].GravAccel;
 #ifdef PMGRID
-                accel += P[i].GravPM;
+            accel_for_opening += P[i].GravPM;
 #endif
-                P[i].OldAcc = accel.norm() / All.G; /* convert back to the non-G units for convenience to match units in loops assumed */
-            }
+            P[i].OldAcc_LatestWalk = accel_for_opening.norm() / All.G;   /* back to non-G units, matching the predicate */
+        }
 
 #if (SINGLE_STAR_TIMESTEPPING > 0) /* Subtract component of force from companion if in binary, because we will operator-split this */
         if((P[i].Type == 5) && (P[i].is_in_a_binary == 1)) {subtract_companion_gravity(i);}

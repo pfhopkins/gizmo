@@ -891,6 +891,7 @@ GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct partic
 GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp);
 
 void gravity_tree(void);
+void refresh_old_acceleration_for_tree_opening(void);
 void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, double len, double mass);
 long long gravity_report_incomplete_import(void);
 void hydro_force(void);
