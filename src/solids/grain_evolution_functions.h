@@ -193,7 +193,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
  * material via ion impact. Same physical process for both bits, differing
  * only in the energy source of the impinging ions:
  *   bit 3 THERM_SPUT  -> ions drawn from a hot gas thermal distribution
- *                        (T_thermal from Gas_InternalEnergy)
+ *                        (T_thermal from the interpolated Gas_Temperature)
  *   bit 4 NTHERM_SPUT -> ions seen by a grain drifting through gas
  *                        (T_drift = (1/2) m_p v_drift^2 / k_B)
  * When both bits are active the rates do not add independently -- they are
@@ -231,16 +231,10 @@ void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
     /* Build effective sputter temperature from the active source bits. */
     double T_eff = 0.0;
 #if (GRAIN_EVOLUTION & 8)
-    /* Thermal contribution. Gas T estimated from the kernel-weighted
-     * Gas_InternalEnergy already carried on the grain super-particle (see
-     * hydro/density.cc:720) using mu = 0.6 (singly-ionized H+He);
-     * sputtering activates only at T > 1e4 K where this is accurate to
-     * ~10%. A future refinement could read mu from the host gas cell's
-     * chemistry, but the polynomial Y(T) varies far more slowly with T
-     * than the 10% T-uncertainty would matter. */
-    if(P[i].Gas_InternalEnergy > 0) {
-        const double mu_ionized = 0.6;
-        T_eff += P[i].Gas_InternalEnergy * mu_ionized * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
+    /* Thermal contribution, from the kernel-weighted gas temperature carried on the
+     * grain super-particle. */
+    if(P[i].Gas_Temperature > 0) {
+        T_eff += P[i].Gas_Temperature;
     }
 #endif
 #if (GRAIN_EVOLUTION & 16)
@@ -323,14 +317,10 @@ KOKKOS_INLINE_FUNCTION
 void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 {
     if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
-    if(P[i].Gas_InternalEnergy <= 0) { return; }
+    if(P[i].Gas_Temperature <= 0) { return; }
     if(P[i].KernelRadius <= 0) { return; }
 
-    /* Gas T from kernel-weighted Gas_InternalEnergy. Use mu = 2.3 (cold
-     * molecular H2 + He), accurate at the < 200 K regime where ice
-     * condensation/sublimation actually drives mantle dynamics. */
-    const double mu_molecular = 2.3;
-    double T_gas = P[i].Gas_InternalEnergy * mu_molecular * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
+    double T_gas = P[i].Gas_Temperature;
     if(T_gas <= 0) { return; }
 
     double rho_gas_cgs = (double)P[i].Gas_Density * UNIT_DENSITY_IN_CGS * All.cf_a3inv;

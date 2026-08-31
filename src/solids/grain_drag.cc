@@ -90,7 +90,8 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
     if((grain_subtype <= 2) && (dt > 0) && (pp[idx].Gas_Density > 0) && (vgas_mag > 0))
     {
         double gamma_eff = GAMMA_DEFAULT;
-        double cs = sqrt((gamma_eff*(gamma_eff-1)) * pp[idx].Gas_InternalEnergy);
+        double mu_gas = molecular_weight_estimator_for_gas_around_grain(pp[idx].Gas_Temperature, pp[idx].Gas_fion);
+        double cs = sqrt(gamma_eff * pp[idx].Gas_Temperature / (mu_gas * U_TO_TEMP_UNITS));
         double rho_gas = pp[idx].Gas_Density * All.cf_a3inv;
         double x0 = 0.469993*sqrt(gamma_eff) * vgas_mag/cs;
         double tstop_inv = MAX_REAL_NUMBER;
@@ -111,21 +112,12 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         double Z_grain = -DMAX(1./(1. + sqrt(1.0e-3/tau_draine_sutin)), 2.5*tau_draine_sutin);
         if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
 #endif
-/* APPROXIMATION, NOT THE INTENDED TREATMENT. Two quantities below describe the gas the
-   grain is coupled to -- its temperature, and its ionized fraction -- and the grain does not
-   carry either one: the density loop interpolates only pp[].Gas_InternalEnergy to the grain.
-   So the temperature is formed from that energy with an assumed fully-molecular weight, and
-   the ionized fraction from a local temperature scaling. Both are stand-ins, and both are
-   worst exactly where they matter, in cold weakly-ionized gas.
-   To do this properly, interpolate the gas temperature and ionized fraction onto the grain in
-   the same density loop that already fills Gas_InternalEnergy, then use them at the two sites
-   marked below: the mean molecular weight and temperature here, and f_ion_to_use in the
-   Coulomb-drag block that follows. */
+/* The temperature and ionized fraction of the gas the grain is coupled to are interpolated onto it
+   by the density loop, so the blocks below read them rather than guessing from a sound speed. */
 #ifdef GRAIN_EPSTEIN_STOKES
         if(grain_subtype == 0 || grain_subtype == 1)
         {
-            /* site 1: assumed molecular weight, pending the interpolated gas temperature */
-            double mu = 2.3*PROTONMASS_CGS, temperature = (mu/PROTONMASS_CGS) * (1.4-1.) * U_TO_TEMP_UNITS * pp[idx].Gas_InternalEnergy;
+            double mu = mu_gas*PROTONMASS_CGS, temperature = pp[idx].Gas_Temperature;
             double cross_section = GRAIN_EPSTEIN_STOKES * 2.0e-15 * (1. + 70./temperature);
             cross_section /= UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS;
             double n_mol = rho_gas * UNIT_MASS_IN_CGS / mu, mean_free_path = 1 / (n_mol * cross_section);
@@ -140,11 +132,9 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
             double tstop_Coulomb_inv = 0.797885/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code);
             tstop_Coulomb_inv /= (1. + a_Coulomb*(vgas_mag/cs)*(vgas_mag/cs)*(vgas_mag/cs)) * sqrt(1.+x0*x0);
             tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.;
-            /* site 2: local estimate of the ionized fraction, pending the interpolated value.
-               this previously came from an equilibrium chemistry solve run on an energy invented
-               from the sound speed, with no gas cell behind it, which was its own approximation */
-            double T_Kelvin = (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (1.3807e-16 * gamma_eff), f_ion_to_use = 0;
-            if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);}
+            double T_Kelvin = pp[idx].Gas_Temperature, f_ion_to_use;
+            if(pp[idx].Gas_fion >= 0) {f_ion_to_use = DMAX(0., DMIN(1., pp[idx].Gas_fion));}
+            else {f_ion_to_use = (T_Kelvin > 1000.) ? exp(-15000./T_Kelvin) : 0;} /* no chemistry in this configuration */
             tstop_Coulomb_inv *= f_ion_to_use;
             tstop_inv += tstop_Coulomb_inv;
         }

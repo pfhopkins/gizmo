@@ -592,7 +592,10 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
     if(IS_PARTICLE_DRAGVALID(P[p].Type, P[p].FluidType))
     {
-        csnd = soundspeed2_from_u_nongas(P[p].Gas_InternalEnergy); /* a grain has no cell of its own to read a composition from */
+        /* a grain has no cell of its own, so the surrounding gas temperature and ionized fraction are carried onto
+           it and the composition estimated from them */
+        csnd = GAMMA_DEFAULT * P[p].Gas_Temperature
+               / (molecular_weight_estimator_for_gas_around_grain(P[p].Gas_Temperature, P[p].Gas_fion) * U_TO_TEMP_UNITS);
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
         csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density + MIN_REAL_NUMBER);

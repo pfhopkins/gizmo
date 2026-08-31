@@ -844,7 +844,8 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
         /* multi-fluid collisional interaction ambient gas scatter. */
         if (IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) {
             P[i].Gas_Density = (MyFloat)accum.AmbientGasRho;
-            P[i].Gas_InternalEnergy = (MyFloat)accum.Gas_InternalEnergy;
+            P[i].Gas_Temperature = (MyFloat)accum.Gas_Temperature;
+            P[i].Gas_fion = (MyFloat)accum.Gas_fion;
             P[i].Gas_Velocity[0] = (MyFloat)accum.GasVel[0];
             P[i].Gas_Velocity[1] = (MyFloat)accum.GasVel[1];
             P[i].Gas_Velocity[2] = (MyFloat)accum.GasVel[2];
@@ -1097,7 +1098,12 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
         if (IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) {
             if (P[i].Gas_Density > 0) {
-                P[i].Gas_InternalEnergy /= P[i].Gas_Density;
+                P[i].Gas_Temperature /= P[i].Gas_Density;
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
+                P[i].Gas_fion /= P[i].Gas_Density;
+#else
+                P[i].Gas_fion = -1; /* no chemistry to supply one; the estimator falls back on this */
+#endif
                 P[i].Gas_Velocity[0] /= P[i].Gas_Density;
                 P[i].Gas_Velocity[1] /= P[i].Gas_Density;
                 P[i].Gas_Velocity[2] /= P[i].Gas_Density;
@@ -1107,7 +1113,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
                 }
   #endif
             } else {
-                P[i].Gas_InternalEnergy = 0;
+                P[i].Gas_Temperature = 0; P[i].Gas_fion = -1;
                 P[i].Gas_Velocity[0] = P[i].Gas_Velocity[1] = P[i].Gas_Velocity[2] = 0;
   #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
                 P[i].Gas_B[0] = P[i].Gas_B[1] = P[i].Gas_B[2] = 0;

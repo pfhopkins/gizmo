@@ -482,7 +482,7 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
     }
 #else
-    cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* no chemistry solved here, so the fallback composition */
+    cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; /* no chemistry solved here, so the fallback composition */
     temp = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
 #endif
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the

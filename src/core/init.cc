@@ -385,7 +385,7 @@ void init(void)
 
 #ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
         if(RestartFlag == 0) {
-            P[i].Gas_Density = P[i].Gas_InternalEnergy = 0; P[i].Gas_Velocity = {}; P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;
+            P[i].Gas_Density = P[i].Gas_Temperature = 0; P[i].Gas_fion = -1; P[i].Gas_Velocity = {}; P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;
 #if defined(GRAIN_BACKREACTION)
             P[i].Grain_DeltaMomentum = {};
 #endif
@@ -699,7 +699,7 @@ void init(void)
         }
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
-        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED;}
+        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
 #ifdef GALSF_SUBGRID_WINDS
         if(RestartFlag == 0) {CellP[i].DelayTime = 0;}
 #if (GALSF_SUBGRID_WIND_SCALING==1)

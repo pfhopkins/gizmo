@@ -143,7 +143,12 @@ extern ALIGN(32) struct particle_data
     MyFloat Grain_Size;
 #endif
     MyFloat Gas_Density;
-    MyFloat Gas_InternalEnergy;
+    MyFloat Gas_Temperature;  /* kernel-weighted temperature of the surrounding gas. carried rather than the internal
+                                 energy because a grain has no cell, and so no composition with which to convert one to
+                                 the other; the modules that want a soundspeed rebuild it from this and the estimated
+                                 mean molecular weight */
+    MyFloat Gas_fion;         /* kernel-weighted ionized fraction of the surrounding gas, or negative where the
+                                 configuration solves no chemistry to supply one */
     Vec3<MyFloat> Gas_Velocity;
     MyFloat Grain_AccelTimeMin;
 #if defined(GRAIN_BACKREACTION)
@@ -160,7 +165,7 @@ extern ALIGN(32) struct particle_data
     MyFloat Composition[GRAIN_NUM_SPECIES];
 #if (GRAIN_EVOLUTION & (32|64))
     /* Kernel-weighted local gas-phase volatile mass fractions, populated by the
-     * density loop (mirrors Gas_InternalEnergy). Read by the condensation/
+     * density loop (mirrors Gas_Temperature). Read by the condensation/
      * sublimation operator inside grain_drag_kernel to compute exchange rates. */
     MyFloat Gas_VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
     /* Per-step accumulators for grain->gas back-reaction from COND/SUBL.

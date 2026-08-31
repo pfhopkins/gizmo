@@ -240,12 +240,8 @@ static void gasgrain_rt_gas_search_pair_kernel(
     {
         const double R_grain_cgs = (double)P[j].Grain_Size;
         const double m_grain_single_cgs = (4.0/3.0) * M_PI * R_grain_cgs*R_grain_cgs*R_grain_cgs * All.Grain_Internal_Density;
-        if((m_grain_single_cgs > 0) && (P[j].Gas_InternalEnergy > 0)) {
-            const double gamma_eff = GAMMA_DEFAULT;
-            const double cs_code = sqrt(gamma_eff*(gamma_eff-1.0) * (double)P[j].Gas_InternalEnergy);
-            const double cs_cgs = cs_code * UNIT_VEL_IN_CGS;
-            const double T_K_est = cs_cgs * cs_cgs * (2.3 * PROTONMASS_CGS)
-                                   / (gamma_eff * BOLTZMANN_CGS);
+        if((m_grain_single_cgs > 0) && (P[j].Gas_Temperature > 0)) {
+            const double T_K_est = (double)P[j].Gas_Temperature;
             /* Use gas cell's electron density (local.Ne_gas, local.Density_gas) when
                available (bit 8 + gas source); otherwise n_e=0 returns Z≈0. */
             const double rho_gas_cgs = (double)local.Density_gas * All.cf_a3inv * UNIT_DENSITY_IN_CGS;

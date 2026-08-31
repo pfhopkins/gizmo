@@ -154,7 +154,9 @@
 #define UNIT_FLUX_IN_HABING     (((UNIT_FLUX_IN_CGS)/HABING_FLUX_CGS))
 #define UNIT_EGY_DENSITY_IN_HABING ((UNIT_PRESSURE_IN_CGS)/(HABING_FLUX_CGS / C_LIGHT_CGS))
 #define U_TO_TEMP_UNITS         ((PROTONMASS_CGS/BOLTZMANN_CGS)*((UNIT_ENERGY_IN_CGS)/(UNIT_MASS_IN_CGS))) /* units to convert specific internal energy to temperature. needs to be multiplied by dimensionless factor=mean_molec_weight_in_amu*(gamma_eos-1) */
-#define MEAN_MOLECULAR_WEIGHT_IONIZED (0.59) /* mean molecular weight of fully-ionized primordial gas, in units of the proton mass. this is the composition assumed wherever no chemistry is solved: it is the fallback the cached MeanMolecularWeight is set to, and the value the non-gas helpers use */
+#define MEAN_MOLECULAR_WEIGHT_IONIZED (0.59) /* mean molecular weight of fully-ionized primordial gas, in units of the proton mass. use this where the gas is genuinely ionized by construction, e.g. inside an HII region; where a run simply solves no chemistry, MEAN_MOLECULAR_WEIGHT_DEFAULT is the value to use, and a user can set that one */
+#define MEAN_MOLECULAR_WEIGHT_ATOMIC (1.28) /* mean molecular weight of fully-atomic solar metallicity gas */
+#define MEAN_MOLECULAR_WEIGHT_MOLECULAR (2.3) /* mean molecular weight of fully-molecular solar metallicity gas */
 #ifndef C_LIGHT_CODE
 #define C_LIGHT_CODE            ((C_LIGHT_CGS/UNIT_VEL_IN_CGS)) /* pure convenience function, speed-of-light in code units */
 #endif
@@ -308,3 +310,8 @@
 
 #define CUBE_EDGEFACTOR_1 0.366025403785    /* CUBE_EDGEFACTOR_1 = 0.5 * (sqrt(3)-1) */
 #define CUBE_EDGEFACTOR_2 0.86602540        /* CUBE_EDGEFACTOR_2 = 0.5 * sqrt(3) */
+
+
+#if !defined(MEAN_MOLECULAR_WEIGHT_DEFAULT)
+#define MEAN_MOLECULAR_WEIGHT_DEFAULT (MEAN_MOLECULAR_WEIGHT_IONIZED) /* default to ionized value but allow user-setting */
+#endif

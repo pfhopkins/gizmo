@@ -121,7 +121,31 @@ GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
    and an ideal fully-ionized gas is assumed. Do NOT reach for the gas-cell versions with a non-gas
    index -- the cell entry for such a particle is never filled, so its composition is meaningless. */
 GIZMO_GPU_FUNCTION static inline double soundspeed2_from_u_nongas(double u) {return GAMMA_DEFAULT * (GAMMA_DEFAULT - 1.) * u;}
-GIZMO_GPU_FUNCTION static inline double temperature_from_u_nongas(double u) {return MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT - 1.) * U_TO_TEMP_UNITS * u;}
+GIZMO_GPU_FUNCTION static inline double temperature_from_u_nongas(double u) {return MEAN_MOLECULAR_WEIGHT_DEFAULT * (GAMMA_DEFAULT - 1.) * U_TO_TEMP_UNITS * u;}
+
+/* Approximate mean molecular weight of the gas surrounding a grain. A grain has no cell of its own,
+   so this stands in for the composition a cell would carry.
+   Without chemistry there is nothing to estimate from, and the value must instead MATCH the one the
+   gas cells themselves were given, or the soundspeed rebuilt from the interpolated temperature will
+   not agree with the gas it came from. So that case returns MEAN_MOLECULAR_WEIGHT_DEFAULT, the same
+   constant the cells use, and the two cancel exactly whatever the user sets it to.
+   With chemistry, the interpolated temperature and ionized fraction give a real estimate. The
+   molecular fraction is a crude temperature scaling, which is ample here: this feeds drag
+   coefficients and sputtering rates, not a thermodynamic solve. The coefficients reproduce the
+   standard solar-composition limits -- 1.25 neutral atomic, 0.56 fully ionized, 2.32 fully
+   molecular. A negative f_ion means no fraction was available and returns the molecular value. */
+GIZMO_GPU_FUNCTION static inline double molecular_weight_estimator_for_gas_around_grain(double gas_temperature, double f_ion)
+{
+#if !defined(COOLING)
+   return MEAN_MOLECULAR_WEIGHT_DEFAULT; /* in this case return the default constant value in the code, as the functions below only make sense for runs with the COOLING physics enabled */
+#else
+    if(!(f_ion >= 0)) {return MEAN_MOLECULAR_WEIGHT_MOLECULAR;}
+    double f_i = DMAX(0., DMIN(1., f_ion));
+    double f_mol = exp(-DMIN(40., DMAX(0., gas_temperature) / 100.));
+    f_mol = DMIN(f_mol, 1. - f_i); /* molecular and ionized are exclusive; the fit is only sensible where they do not overlap */
+    return 1. / DMAX(0.1, 0.80125 + f_i - 0.37 * f_mol);
+#endif
+}
 
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)

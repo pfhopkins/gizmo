@@ -159,7 +159,8 @@ struct DensityAccumData {
 
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     MyDouble                   AmbientGasRho;
-    MyDouble                   Gas_InternalEnergy;
+    MyDouble                   Gas_Temperature;
+    MyDouble                   Gas_fion;
   #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     Vec3<MyDouble>             Gas_B;
   #endif
@@ -431,7 +432,8 @@ struct DensitySpec {
 
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
         local.AmbientGasRho += peer.AmbientGasRho;
-        local.Gas_InternalEnergy += peer.Gas_InternalEnergy;
+        local.Gas_Temperature += peer.Gas_Temperature;
+        local.Gas_fion += peer.Gas_fion;
   #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
         local.Gas_B[0] += peer.Gas_B[0];
         local.Gas_B[1] += peer.Gas_B[1];
@@ -508,7 +510,8 @@ struct DensitySpec {
 #endif
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
         accum.AmbientGasRho = 0;
-        accum.Gas_InternalEnergy = 0;
+        accum.Gas_Temperature = 0;
+        accum.Gas_fion = 0;
   #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
         accum.Gas_B[0] = 0; accum.Gas_B[1] = 0; accum.Gas_B[2] = 0;
   #endif
@@ -687,7 +690,12 @@ struct DensitySpec {
                     pos_i_md[0] = i_active.pos[0]; pos_i_md[1] = i_active.pos[1]; pos_i_md[2] = i_active.pos[2];
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(pos_i_md, Pj.Pos, dv, 1);
                 }
-                accum.Gas_InternalEnergy += mj_wk * (double)CellPj->InternalEnergyPred;
+                /* the temperature is what the dust modules want; a grain has no cell, so it cannot convert an
+                   energy into one itself. the ionized fraction rides along for the same reason. */
+                accum.Gas_Temperature += mj_wk * (double)CellPj->gas_temperature_from_u(CellPj->InternalEnergyPred);
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
+                accum.Gas_fion += mj_wk * (double)DMAX(0., DMIN(1., 1. - CellPj->HI));
+#endif
                 accum.GasVel[0] += mj_wk * ((double)i_active.Vel[0] - dv[0]); /* shares with TURB_DRIVING SmoothedVel; combo unsupported */
                 accum.GasVel[1] += mj_wk * ((double)i_active.Vel[1] - dv[1]);
                 accum.GasVel[2] += mj_wk * ((double)i_active.Vel[2] - dv[2]);
