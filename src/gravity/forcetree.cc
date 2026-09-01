@@ -489,7 +489,7 @@ let_build_attempt:
         long long n_zero_loc = 0, n_zero_tot = 0;
         for(int i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
         MPI_Allreduce(&n_zero_loc, &n_zero_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        long long in_tree = (long long) Nodes[All.MaxPart].N_part;
+        long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;   /* root node; node ids start at TreeNodeIndexBase, not MaxPart */
         long long deficit = (long long) All.TotNumPart - in_tree;
         if(deficit > n_zero_tot || deficit < 0)
         {
