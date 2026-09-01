@@ -797,6 +797,70 @@ static inline void gx_pack_send_slot(const struct particle_data *src_P,
     else                                memset(dst_CellP, 0, sizeof(struct gas_cell_data));
 }
 
+/* Time every particle in the live ghost pool is current to, or -1 when there is
+ * no live certified pool. Set once per import/refresh, after every exported slot
+ * has been advanced to that time, and cleared wherever the pool it describes
+ * stops existing.
+ *
+ * Consumers compare it against the time they need rather than trusting it
+ * outright, so a stale or cleared stamp costs a per-particle check and never a
+ * wrong answer. Nothing can corrupt it in the other direction, because no path
+ * moves a particle backwards -- drift_particle refuses that outright. */
+static integertime g_ghost_pool_current_ti = -1;
+integertime ghost_pool_current_ti(void) { return g_ghost_pool_current_ti; }
+
+/* Advance every particle about to be exported to the current time, so nothing
+ * goes on the wire behind the time its receiver will read it at.
+ *
+ * A ghost shipped behind the current time has to be advanced again by every rank
+ * that receives it, in neighbour-list order, inside the barrier-sensitive part of
+ * the dispatch -- work the owner can do once, in pool order, here. It also lets a
+ * receiver rely on the pool's currency instead of re-deriving it per particle,
+ * and it is a prerequisite for ever shipping a compact ghost record: the fields
+ * the drift needs are exactly the ones a compaction would drop.
+ *
+ * Threaded, because the drift is real per-particle work -- it runs the implicit
+ * thermochemistry solve through set_eos_pressure. That requires each particle be
+ * visited exactly once: a particle exported to several ranks appears once per
+ * destination, and two threads testing its Ti_current before either writes would
+ * advance it twice. Establishing the distinct set first is what keeps the
+ * parallel pass safe, at one stamp compare per slot; the stamp is
+ * generation-counted so it never needs clearing between calls. */
+static void gx_certify_send_list_current(const int *home_idx, int n_slots, integertime t_now)
+{
+    if(!home_idx || n_slots <= 0) {return;}
+
+    static std::vector<unsigned int> seen;
+    static unsigned int seen_gen = 0;
+    if((int)seen.size() < NumPart) {seen.assign((size_t)NumPart, 0u);}
+    if(++seen_gen == 0u) {std::fill(seen.begin(), seen.end(), 0u); seen_gen = 1u;}
+
+    /* Holds only the particles actually behind, so it is both the work list and
+     * the h-dirty list. drift_particle rescales KernelRadius, so a mark is owed
+     * for a particle that moved -- but marking every exported slot would drive
+     * the dirty tracker toward a full-pool refresh on the many steps where
+     * nothing was behind. */
+    static std::vector<int> behind;
+    behind.clear();
+    for(int k = 0; k < n_slots; k++) {
+        const int j = home_idx[k];
+        if(j < 0 || j >= NumPart) {continue;}
+        if(seen[(size_t)j] == seen_gen) {continue;}
+        seen[(size_t)j] = seen_gen;
+        if(P[j].Ti_current != t_now) {behind.push_back(j);}
+    }
+    if(behind.empty()) {return;}
+
+    const int n_behind = (int)behind.size();
+    const int *behind_idx = behind.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for(int e = 0; e < n_behind; e++) {drift_particle(behind_idx[e], t_now);}
+
+    gizmo_mark_kernel_radius_dirty_indices(behind_idx, n_behind);
+}
+
 /* SSOT for the forward particle+cell transport: the two typed Alltoallv calls
    (P always; CellP only when gas exists globally) with element-unit counts.
    Used by BOTH import impls (materialising ghosts at &P[NumPart]) and
@@ -833,6 +897,10 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
+    /* Drop the previous pool's currency stamp at entry, so an import that
+     * returns early cannot leave a guarantee standing for a pool that no longer
+     * exists. */
+    g_ghost_pool_current_ti = -1;
 
     int i, k, task;
     int tile_target = GHOST_TILE_TARGET;
@@ -1192,6 +1260,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     if(global_fail != 0) {
         tile_preflight_cleanup();
         NumGhostParticles = 0;   /* rollback: no ghosts materialised this call */
+        g_ghost_pool_current_ti = -1;
         return (global_fail == 2) ? GHOST_EXCHANGE_COUNT_RANGE_EXCEEDED
                                   : GHOST_EXCHANGE_PARTICLE_CAPACITY_EXCEEDED;
     }
@@ -1211,6 +1280,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
 
     int *task_offset = (int *) mymalloc("ghost_toff", NTask * sizeof(int));
     memcpy(task_offset, send_disp, NTask * sizeof(int));
+    for(int off = 0; off < total_send; off++) {send_home_idx[off] = -1;}
 
     for(task = 0; task < NTask; task++)
     {
@@ -1223,10 +1293,21 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                 if(task_offset[task] >= send_disp[task] + send_count[task]) break;
                 int j = pool[tile_first[t] + s];
                 int off = task_offset[task]++;
-                gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
                 send_home_idx[off] = j; /* record home index for writeback + refresh provenance */
             }
         }
+    }
+    /* Advance the exported particles before copying them. The walk above only
+     * records which particle lands in each slot; a destination whose run stops
+     * early on its own guard leaves later slots at the -1 seeded before it, and
+     * the pack below skips those exactly as the previously fused loop left them
+     * untouched. */
+    gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
+    for(int off = 0; off < total_send; off++)
+    {
+        const int j = send_home_idx[off];
+        if(j < 0) {continue;}
+        gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
     }
 
     /* ================================================================
@@ -1270,6 +1351,10 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     /* SIDX lifecycle notify: fires on every rank for every exchange completion,
      * INCLUDING the count==0 / no-receive path. count==0 invalidates any
      * cached ghost segment from a prior import (no stale-ghost survival). */
+    /* Every rank advanced its outgoing slots to this same All.Ti_Current above,
+       and the exchange is collective, so the pool just installed is current at
+       that time. */
+    g_ghost_pool_current_ti = All.Ti_Current;
     gpu_sidx_notify_ghost_imported(NumPart_before_ghost, NumGhostParticles);
 
     /* ================================================================
@@ -1873,6 +1958,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
+    g_ghost_pool_current_ti = -1;   /* see the tile impl's note */
 
     static int gx_call_seq_rd = 0;
     gx_call_seq_rd++;
@@ -2475,8 +2561,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     for(int off = 0; off < total_send; off++) {
         int j = h_pool[send_pool_slot[off]];
-        gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
         send_home_idx[off] = j;
+    }
+    /* Advance the exported particles before copying them, so nothing goes on the
+     * wire behind the time its receiver will read it at. */
+    gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
+    for(int off = 0; off < total_send; off++) {
+        gx_pack_send_slot(P, CellP, send_home_idx[off], &send_P[off], &send_CellP[off]);
     }
     free(send_pool_slot);
 
@@ -2493,6 +2584,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         gpu_compact_xyzh_mark_h_dirty_range(NumPart_before_ghost, NumPart);
     }
     /* SIDX lifecycle notify: see comment in tile-overlap impl. Unconditional. */
+    /* Every rank advanced its outgoing slots to this same All.Ti_Current above,
+       and the exchange is collective, so the pool just installed is current at
+       that time. */
+    g_ghost_pool_current_ti = All.Ti_Current;
     gpu_sidx_notify_ghost_imported(NumPart_before_ghost, NumGhostParticles);
 
     /* Home-index exchange + provenance maps. */
@@ -2633,6 +2728,7 @@ void ghost_exchange_cleanup(void)
     N_gas = N_gas_before_ghost;
     NumGhostParticles = 0;
     NumPart_before_ghost = -1;
+    g_ghost_pool_current_ti = -1;   /* the pool the stamp described is gone */
     /* Free ghost provenance map */
     if(ghost_home_rank_map)  { free(ghost_home_rank_map);  ghost_home_rank_map = NULL; }
     if(ghost_home_index_map) { free(ghost_home_index_map); ghost_home_index_map = NULL; }
@@ -2686,6 +2782,7 @@ int ghost_refresh_values(void)
     struct gas_cell_data *send_CellP = new struct gas_cell_data[(ns > 0 ? ns : 1)];
     /* Re-pack current owner values via the SAME slot helper import uses, in the
        SAME send order (ghost_send_home_idx) that produced this pool. */
+    gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
     for(int k = 0; k < ns; k++) {
         gx_pack_send_slot(P, CellP, ghost_send_home_idx[k], &send_P[k], &send_CellP[k]);
     }
@@ -2695,6 +2792,9 @@ int ghost_refresh_values(void)
     gx_forward_particle_exchange(send_P, send_CellP, ghost_wb_send_count, ghost_wb_send_disp,
                                  &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
                                  ghost_wb_recv_count, ghost_wb_recv_disp);
+    /* The refresh re-packed at the current time, so the pool is current to it --
+       re-stamp, or the guarantee would lag the pool it describes. */
+    g_ghost_pool_current_ti = All.Ti_Current;
     delete[] send_P; delete[] send_CellP;
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;

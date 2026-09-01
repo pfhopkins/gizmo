@@ -73,6 +73,14 @@ void  gpu_father_free(int *p);
 void *gpu_tree_alloc_bytes(size_t bytes, const char *label);  /* generic SharedSpace alloc; label names the buffer */
 void  gpu_tree_free_bytes(void *p);        /* matching free */
 
+/*! Put a shared-space block into the state its release is cheapest from; call it
+ *  immediately before releasing one.  gpu_tree_free_bytes and the gravity-tree mirror
+ *  already do; gpu_father_free does NOT, because the measurement that justifies this
+ *  covered the node arrays and the mirror and did not cover Father[].  Blocks whose
+ *  length was never recorded are left alone. */
+void  gizmo_gpu_prepare_shared_for_free(void *ptr);
+void  gizmo_gpu_shared_track(void *ptr, size_t bytes);
+
 #ifdef __cplusplus
 }
 #endif

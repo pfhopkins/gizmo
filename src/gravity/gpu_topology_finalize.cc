@@ -13,6 +13,9 @@
 #include <string.h>
 
 #include <Kokkos_Core.hpp>
+#if defined(KOKKOS_ENABLE_HIP)
+#include <hip/hip_runtime.h>   /* hipMemPrefetchAsync, for the release path below */
+#endif
 #include <exception>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -250,17 +253,112 @@ extern "C" void gpu_father_free(int *p)
  * Nextnode (and any future tree-storage array that needs to be GPU-addressable).
  * Pattern matches gpu_father_alloc/free; struct sizes are computed at call site
  * in forcetree.cc which has the NODE/extNODE definitions in scope. */
+/* Releasing one of these SharedSpace blocks costs far more than allocating it did:
+ * on a GPU build the block is managed memory whose pages are spread across host and
+ * device when the tree is torn down, and the unmap has to reconcile that.  Measured on
+ * one FIRE zoom, releasing the node arrays and the mirror ran at 0.149 GB/s against
+ * 2.26 GB/s to copy the same bytes, and cost about half of every tree build.  Migrating
+ * a block back to the host in one bulk call immediately before releasing it removes
+ * that: the migration runs at ~7 GB/s and the release then costs essentially nothing.
+ *
+ * Touching the pages by hand does NOT work -- a strided host read changes nothing and a
+ * strided host write costs more than it saves.  It is the single bulk migration that
+ * matters, which is why this is one call and not a loop.
+ *
+ * The block's length is recorded when it is allocated rather than passed in at the
+ * release: every release site would otherwise have to repeat the size, and a length
+ * that is too long would read past the allocation.  A block this table has no room for
+ * is simply not recorded, and is then released the way it always was.
+ */
+#define GIZMO_SHARED_TRACKED_SLOTS 256
+static struct {void *ptr; size_t bytes;} shared_tracked[GIZMO_SHARED_TRACKED_SLOTS];
+static int shared_tracked_count = 0;
+
+static void shared_tracked_record(void *ptr, size_t bytes)
+{
+    if(!ptr) {return;}
+    /* An address already present is updated rather than added again, so a block that
+     * ever escaped through some other release path cannot leave an entry behind that a
+     * later allocation at the same address would inherit. */
+    for(int i = 0; i < shared_tracked_count; i++) {
+        if(shared_tracked[i].ptr == ptr) {shared_tracked[i].bytes = bytes; return;}
+    }
+    if(shared_tracked_count >= GIZMO_SHARED_TRACKED_SLOTS) {return;}   /* untracked, still correct */
+    shared_tracked[shared_tracked_count].ptr = ptr;
+    shared_tracked[shared_tracked_count].bytes = bytes;
+    shared_tracked_count++;
+}
+
+static size_t shared_tracked_take(void *ptr)
+{
+    for(int i = 0; i < shared_tracked_count; i++) {
+        if(shared_tracked[i].ptr == ptr) {
+            size_t bytes = shared_tracked[i].bytes;
+            shared_tracked[i] = shared_tracked[--shared_tracked_count];
+            return bytes;
+        }
+    }
+    return 0;
+}
+
+/*! Record how long a shared-space block is, so that releasing it can migrate exactly
+ *  that block and no more.  The tree allocators below do this for themselves; the
+ *  gravity-tree mirror keeps its own allocator and calls this directly. */
+extern "C" void gizmo_gpu_shared_track(void *ptr, size_t bytes)
+{
+    shared_tracked_record(ptr, bytes);
+}
+
+/*! Put a shared-space block into the state its release is cheapest from.  Call
+ *  immediately before releasing it; safe on any pointer, and does nothing for a block
+ *  whose length was never recorded.  Whether there is anything to do is a property of
+ *  the backend: where shared space is ordinary host memory there is no migration and
+ *  the release was never expensive. */
+extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
+{
+    if(!ptr) {return;}
+    size_t bytes = shared_tracked_take(ptr);
+    if(bytes == 0) {return;}
+#if defined(KOKKOS_ENABLE_HIP)
+    if(hipMemPrefetchAsync(ptr, bytes, hipCpuDeviceId, 0) != hipSuccess)
+    {
+        /* Clear the error before returning.  It is sticky, so leaving it set would hand
+         * it to the next routine that checks, which would stop the run and name a kernel
+         * that did nothing wrong.  Failing to migrate only costs speed: the block is
+         * released either way and the answer does not change. */
+        hipGetLastError();
+#ifdef OUTPUT_ADDITIONAL_RUNINFO
+        /* Once per run: the release still happens and the answer is unaffected, but the
+         * run is paying the slow release this exists to avoid, and nothing else would
+         * say so. */
+        static int reported = 0;
+        if(!reported && ThisTask == 0)
+        {
+            reported = 1;
+            printf("Note: could not migrate a tree block to host memory before releasing it; "
+                   "tree builds will be slower than they need to be.\n");
+            fflush(stdout);
+        }
+#endif
+        return;
+    }
+    hipDeviceSynchronize();
+#endif
+}
+
 extern "C" void *gpu_tree_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}
     /* NULL on exhaustion, so the caller's controlled-stop path fires instead of a
        hard terminate. The label names the buffer in the allocation stream. */
-    return gizmo_gpu_alloc_shared(bytes, label ? label : "tree_alloc");
+    void *ptr = gizmo_gpu_alloc_shared(bytes, label ? label : "tree_alloc");
+    shared_tracked_record(ptr, bytes);
+    return ptr;
 }
 
 extern "C" void gpu_tree_free_bytes(void *p)
 {
-    if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+    if(p) {gizmo_gpu_prepare_shared_for_free(p); Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
 }
 
 
