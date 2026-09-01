@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../gravity/gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "../cooling/disk_betacool.h"
@@ -100,35 +101,7 @@ void energy_budget_gravity_report(void)
 extern "C" void gizmo_cpu_log_request_force_print(void);
 extern "C" int  gizmo_cpu_log_consume_force_print(void);
 
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-static int rt_step_diag_count = 0;
-static void rt_step_checksum(const char *label) {
-    double sum_RadE = 0, sum_Trad = 0, sum_u = 0, sum_Tdust = 0, sum_ne = 0;
-    int ngas = 0;
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Type == 0 && P[i].Mass > 0) {
-            sum_RadE += CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED];
-            sum_Trad += CellP[i].Radiation_Temperature;
-            sum_Tdust += CellP[i].Dust_Temperature;
-            sum_u += CellP[i].InternalEnergy;
-            sum_ne += CellP[i].Ne;
-            ngas++;
-            /* RT_PART: per-particle tracking for specific IDs */
-            if(P[i].ID == 1 || P[i].ID == 100 || P[i].ID == 1000) {
-                printf("[RT_PART] %-20s ID=%llu T=%.6e Tdust=%.6e Trad=%.6e u=%.10e Ne=%.6e RadE_IR=%.6e P=%.6e\n",
-                    label, (unsigned long long)P[i].ID, CellP[i].Temperature, CellP[i].Dust_Temperature,
-                    CellP[i].Radiation_Temperature, CellP[i].InternalEnergy, CellP[i].Ne,
-                    CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED], CellP[i].Pressure);
-            }
-        }
-    }
-    if(ThisTask == 0) {
-        printf("[RT_STEP] %-20s  ngas=%d  sum_RadE_IR=%.10e  sum_Trad=%.6e  sum_Tdust=%.6e  sum_u=%.10e  sum_Ne=%.6e\n",
-            label, ngas, sum_RadE, sum_Trad, sum_Tdust, sum_u, sum_ne);
-        fflush(stdout);
-    }
-}
-#endif
+
 
 /* --------------------------------------------------------------------------
  * Controlled-stop / bad-stop helper (no-MPI_Abort policy). See core/proto.h for
@@ -215,6 +188,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
  * reached, when a `stop' file is found in the output directory, or
  * when the simulation ends because we arrived at TimeMax.
  */
+
 void run(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
@@ -233,10 +207,38 @@ void run(void)
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }
+    else
+    {
+        /* The restart files carry the authoritative state -- particles, domains, the integer
+         * timeline -- but not the tree the gravity walk actually reads: its GPU node mirror and
+         * its installed foreign nodes are derived from that state and are rebuilt, never stored.
+         * Build them once here, from what was just restored, so the first step can reuse a tree
+         * the same way any other step does. Particle order and the domain assignment are left
+         * exactly as they were read. The full drift is the standard precondition for a tree
+         * build: a restart file written on the periodic timer can hold particles that were never
+         * drifted to the sync point. */
+        set_softenings();
+        gizmo_full_drift_to(All.Ti_Current);
+        force_treebuild(NumPart, NULL);
+        /* Same proof as the main-step build in gravtree.cc: a full drift ran
+         * immediately above, so this tree's node geometry describes this time and
+         * its mirror was filled from it.  Record it, or the first post-restart
+         * step reads the tree as uncertified whenever the dynamic tree update
+         * routes to the host -- which it does on the same candidate-count test
+         * the gravity walk uses, so the sweep that would otherwise certify is
+         * exactly what gets skipped.
+         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+         * controlled stop during GPU finalize / LET / pseudo handling and still
+         * return, and a tree whose build asked to stop must never be recorded as
+         * current -- not even for the few statements before the poll exits. */
+        gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
+        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
+    }
 
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+        CPU_Step[CPU_LOGMSG] += measure_time();
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
@@ -278,9 +280,6 @@ void run(void)
         }
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
-#endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
         /* Auto-rebuild guardrail.  force_add_element_to_tree
          * insertions stale the LET / pseudo-particle moments shipped on
@@ -305,19 +304,30 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
-#endif
+        CPU_Step[CPU_KICKS] += measure_time();
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
-        gpu_step_sidx_invalidate(); /* drift-time refresh: incremental tile-bbox + BVH
-                                     * update, no SFC re-sort (gas SIDX persists across
-                                     * drifts; alltypes SIDX is full-freed since it's
-                                     * less hot). domain_decomp boundary below triggers
-                                     * the full rebuild via gpu_step_sidx_invalidate_full(). */
+        CPU_Step[CPU_DRIFT] += measure_time();
+        {   /* drift-time refresh: incremental tile-bbox + BVH update, no SFC
+             * re-sort (gas SIDX persists across drifts; alltypes SIDX is
+             * full-freed since it's less hot). domain_decomp boundary below
+             * triggers the full rebuild via gpu_step_sidx_invalidate_full().
+             *
+             * Charged to its own bucket rather than left inside the enclosing
+             * residual interval: its cost keys on the particle count, not on
+             * how many particles are active, so a residual bucket hides it
+             * exactly where it matters most. The span contains no
+             * measure_time() chain call, so charging it as a child is
+             * sufficient -- the enclosing chain call deducts it automatically. */
+            const double t_sidx_start = my_second();
+            const double child0_sidx = CPU_ChildCharged;
+            gpu_step_sidx_invalidate();
+            cpu_charge_child(CPU_SIDX_REFRESH,
+                             cpu_minus_children(timediff(t_sidx_start, my_second()), child0_sidx));
+        }
         ghost_exchange_local_tree_invalidate_drift(); /* Bucket 3: drop the
                                      * persistent local-tree cache used by request-driven
                                      * ghost_exchange. Drift may have moved pool positions,
@@ -327,14 +337,21 @@ void run(void)
                                      * physics calls within the step. */
 
         output_log_messages();	/* write some info to log-files */
+        CPU_Step[CPU_LOGMSG] += measure_time();
 
         set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
+        CPU_Step[CPU_SNAPSHOT] += measure_time();   /* dominated by external table reads */
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
         if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
+        /* Pick up a rebuild raised since the local copy was taken above. The drift/output in between
+           can discard the tree (group finding on a snapshot does), and the reduce below overwrites
+           the flag with that older copy, which would leave the reuse branch updating a tree that is
+           no longer there. */
+        if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
         MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
         MPI_Allreduce(MPI_IN_PLACE, &NeedFullDomainDecomp, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
@@ -357,7 +374,19 @@ void run(void)
         else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
         else
         {
-            force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
+            /* update tree dynamically with kicks of last step so that it can be
+             * reused. Charged to its own bucket: the node drift inside it is
+             * O(tree nodes) and independent of how many particles are active,
+             * and it only runs on reused-tree steps, so a residual bucket both
+             * hides it and mixes it with unrelated per-step work. Same
+             * child-charge argument as the spatial-index refresh above. */
+            {
+                const double t_tree_update_start = my_second();
+                const double child0_tree_update = CPU_ChildCharged;
+                force_update_tree();
+                cpu_charge_child(CPU_FORCE_UPDATE_TREE,
+                                 cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
+            }
             make_list_of_active_particles();	/* now we can set the new chain list of active particles */
         }
 
@@ -370,6 +399,12 @@ void run(void)
              * a per-decomp summary is the most informative cheap-cadence sample. */
             gizmo_cpu_log_request_force_print();
         }
+
+        /* Every rank arrives here together: the branch above is chosen from a globally summed
+           active count and an all-reduced rebuild flag. A tree that could not be updated or
+           rebuilt has already asked to stop, and walking it would hang rather than return, so
+           drain the request here instead of carrying a broken tree into the force computation. */
+        gizmo_exit_bad_stop_if_requested("run:after_tree_update");
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
@@ -430,33 +465,33 @@ void run(void)
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
         determine_where_SNe_occur(); // for mechanical FB models
+        CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
+        CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
-#endif
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
+        CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
-#endif
+        CPU_Step[CPU_KICKS] += measure_time();
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
         EB_SYNC_REPORT();
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
+        CPU_Step[CPU_KICKS] += measure_time();
         HermiteOnlyFlag = 2;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
         do_hermite_correction();
+        CPU_Step[CPU_KICKS] += measure_time();
 #endif
         EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
         /* Check whether we need to interrupt the run */
@@ -643,9 +678,6 @@ void calculate_non_standard_physics(void)
         if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
 #endif
     }
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-    if(rt_step_diag_count <= 50) rt_step_checksum("after_rt_source");
-#endif
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
     rt_update_chemistry(); /* chemistry update (under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps) */
@@ -736,9 +768,6 @@ void calculate_non_standard_physics(void)
 #ifdef PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
-#endif
-#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
-        if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
 #endif
 
 
@@ -894,6 +923,11 @@ void find_next_sync_point_and_drift(void)
 	TimeBinActive[n] = 0;
     }
 
+  /* Snapshot the count the coming step will actually integrate, before star formation,
+   * sink swallows or merges can add to the live counter. Routing decisions that run
+   * before make_list_of_active_particles rebuilds the list read this, not NumForceUpdate. */
+  NumForceUpdateAtSyncPoint = NumForceUpdate;
+
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;
   MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -919,8 +953,19 @@ void find_next_sync_point_and_drift(void)
    * may still need to old list in the dynamic tree update */
   /* drift_particle modifies KernelRadius — batch-mark h-dirty for SIDX. */
   std::vector<int> _drift_marked;
+  /* Collect the active particles first, then drift them.  drift_particle reads and
+   * writes only its own particle's entries, so the two passes do exactly what the
+   * single interleaved loop did, in the same order, and the drift is then free to
+   * run in parallel.  The collection stays a walk over the occupied bins and their
+   * active lists, which is what a step with a handful of active particles needs --
+   * it must not become a sweep over every particle on the rank. */
   for(n = 0, prev = -1; n < TIMEBINS; n++)
-    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current); _drift_marked.push_back(i);}}}
+    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {_drift_marked.push_back(i);}}}
+  const int n_drift = (int)_drift_marked.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
+  for(int k = 0; k < n_drift; k++) {drift_particle(_drift_marked[k], All.Ti_Current);}
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }
@@ -1210,6 +1255,35 @@ void write_cpu_log(void)
 
   for(i = 1, CPU_Step[0] = 0; i < CPU_PARTS; i++) {CPU_Step[0] += CPU_Step[i];}
 
+
+  /* Ledger closure check. CPU_Step[0] is the SUM of the buckets, so it can never
+   * reveal a gap on its own: compare it against the true elapsed wall since the
+   * previous call. Any positive difference is wall time charged to no bucket --
+   * the failure mode that follows from advancing the timing chain without
+   * charging the interval it skipped. Reduced across ALL ranks, because the leak
+   * need not be on rank 0. One my_second() and one double per log call. */
+  {
+    static double wall_prev = -1.0;
+    const double wall_now = my_second();
+    if(wall_prev > 0.0)
+      {
+        struct {double v; int r;} loss_loc, loss_max;
+        const double elapsed = wall_now - wall_prev;
+        loss_loc.v = elapsed - CPU_Step[0]; loss_loc.r = ThisTask;
+        MPI_Reduce(&loss_loc, &loss_max, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0 && loss_max.v > 1.0 && loss_max.v > 0.05 * elapsed)
+          {
+            printf("WARNING: timing ledger lost %.2f s (%.0f%% of the step) on task %d: "
+                   "wall time was charged to no bucket. A routine in the step loop is "
+                   "missing its CPU_Step[...] += measure_time(), or a timing bracket "
+                   "advanced the chain past an uncharged interval.\n",
+                   loss_max.v, 100.0 * loss_max.v / elapsed, loss_max.r);
+            fflush(stdout);
+          }
+      }
+    wall_prev = wall_now;
+  }
+
   MPI_Reduce(CPU_Step, max_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
   MPI_Reduce(CPU_Step, avg_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
@@ -1271,7 +1345,6 @@ void write_cpu_log(void)
 	      "tree+gravity  %10.2f  %5.1f%%\n"
 	      "   treebuild  %10.2f  %5.1f%%\n"
 	      "   treewalk   %10.2f  %5.1f%%\n"
-	      "   treecomm   %10.2f  %5.1f%%\n"
 	      "   treeimbal  %10.2f  %5.1f%%\n"
 	      "   treemisc   %10.2f  %5.1f%%\n"
 #ifdef PMGRID
@@ -1298,6 +1371,8 @@ void write_cpu_log(void)
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
           "ghost import  %10.2f  %5.1f%%\n"
+          "   gi_loops   %10.2f  %5.1f%%\n"
+          "   gi_corridor%10.2f  %5.1f%%\n"
           "ngb build     %10.2f  %5.1f%%\n"
           "pair kernel   %10.2f  %5.1f%%\n"
 	      "domain        %10.2f  %5.1f%%\n"
@@ -1306,6 +1381,8 @@ void write_cpu_log(void)
           "fof/subfind   %10.2f  %5.1f%%\n"
 #endif
           "drift/splitmg %10.2f  %5.1f%%\n"
+          "kicks         %10.2f  %5.1f%%\n"
+          "log/stats     %10.2f  %5.1f%%\n"
 	      "find_timestep %10.2f  %5.1f%%\n"
 	      "io/snapshots  %10.2f  %5.1f%%\n"
 #ifdef COOLING
@@ -1334,17 +1411,17 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+          "sidx refresh  %10.2f  %5.1f%%\n"
+          "tree update   %10.2f  %5.1f%%\n"
           "misc          %10.2f  %5.1f%%\n",
 
     All.CPU_Sum[CPU_ALL], 100.0,
-    All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2] + All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV]
-              + All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD] + All.CPU_Sum[CPU_TREEMISC],
-    (All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2] + All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV]
-              + All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD] + All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD] + All.CPU_Sum[CPU_TREEMISC],
+    (All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD]
+              + All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEBUILD], (All.CPU_Sum[CPU_TREEBUILD]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2], (All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWALK2]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV], (All.CPU_Sum[CPU_TREESEND] + All.CPU_Sum[CPU_TREERECV]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2], (All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_TREEWALK1], (All.CPU_Sum[CPU_TREEWALK1]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_TREEWAIT2], (All.CPU_Sum[CPU_TREEWAIT2]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEMISC], (All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef PMGRID
     All.CPU_Sum[CPU_MESH], (All.CPU_Sum[CPU_MESH]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1373,7 +1450,10 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM],
+              (All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_GHOSTIMPORT], (All.CPU_Sum[CPU_GHOSTIMPORT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_GHOSTIMPORT_SYMM], (All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_NGB_BUILD], (All.CPU_Sum[CPU_NGB_BUILD]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_PAIR_KERNEL], (All.CPU_Sum[CPU_PAIR_KERNEL]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DOMAIN], (All.CPU_Sum[CPU_DOMAIN]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1382,6 +1462,8 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_FOF], (All.CPU_Sum[CPU_FOF]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KICKS], (All.CPU_Sum[CPU_KICKS]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_LOGMSG], (All.CPU_Sum[CPU_LOGMSG]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef COOLING
@@ -1411,6 +1493,8 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
+    All.CPU_Sum[CPU_SIDX_REFRESH], (All.CPU_Sum[CPU_SIDX_REFRESH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_FORCE_UPDATE_TREE], (All.CPU_Sum[CPU_FORCE_UPDATE_TREE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
 
     fprintf(FdCPU, "\n");

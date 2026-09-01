@@ -276,10 +276,6 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
     double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
     if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell) / fdustmet_init;}
     double result_dedt = LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[DUST_DEDT] ID=%llu T=%.4e Td=%.4e nH=%.4e LDfac=%.6e kap_em=%.6e d_em=%.6e d_abs=%.6e fac_abs=%.4e result=%.6e\n",
-        (unsigned long long)pp[i].ID, T, Tdust, nHcgs, LambdaDust_fac, kappa_emission, dust_emission, dust_absorption_rate, fac_abs, result_dedt);}
-#endif
     return result_dedt;
 }
 
@@ -362,9 +358,6 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
        temperature; the secant method below is more robust for this case). */
     T_old = Tdust; double dEdt_old = dEdt; Tdust = Tdust_guess; dEdt = dEdt_guess; // For our second guess we take the backeting value opposite of the initial guess.
     double dT_dustgas = T-Tdust;
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[TDUST_ITER] ID=%llu T=%.8e Tdust_guess=%.8e T_lower=%.8e T_upper=%.8e dEdt_guess=%.6e bracket_iters=%d\n", (unsigned long long)pp[i].ID, T, Tdust_guess, T_lower, T_upper, dEdt_guess, n_iter);}
-#endif
     do  // secant method iterations with bisection as a backup; usually converges to machine epsilon in 4-5 iterations
     {
         dT_dustgas = T - Tdust;
@@ -376,17 +369,11 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
         if(fac < 0.5) { // accept the secant iteration if it is converging more rapidly
             T_old=Tdust;
             Tdust=T_secant;
-#ifdef GIZMO_DEBUG_RT_COOLING
-            if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[TDUST_ITER] ID=%llu iter=%d SECANT Tdust=%.10e dEdt=%.6e fac=%.4e T_lo=%.8e T_hi=%.8e\n", (unsigned long long)pp[i].ID, n_iter, Tdust, dEdt, fac, T_lower, T_upper);}
-#endif
         } else { // if secant isn't working do bisection iteration instead; guaranteed to reduce the error
             T_old = Tdust;
             Tdust = sqrt(T_lower*T_upper);
             dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
             fac = 0.5;
-#ifdef GIZMO_DEBUG_RT_COOLING
-            if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[TDUST_ITER] ID=%llu iter=%d BISECT Tdust=%.10e dEdt=%.6e T_lo=%.8e T_hi=%.8e\n", (unsigned long long)pp[i].ID, n_iter, Tdust, dEdt, T_lower, T_upper);}
-#endif
         }
         if(dEdt>0) {T_lower=Tdust;} else {T_upper=Tdust;} // either way, update upper and lower bounds
         n_iter++;
@@ -395,9 +382,6 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
             if(n_iter > MAXITER){break;}
         }
     } while(fabs(dT_dustgas - (T-Tdust)) > 1.e-3 * fabs(T-Tdust)); // sufficient to converge dust cooling to 10^-3 tolerance, at this point uncertainties in dust properties will dominate the error budget
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[TDUST_ITER] ID=%llu FINAL Tdust=%.10e n_iter=%d\n", (unsigned long long)pp[i].ID, Tdust, n_iter);}
-#endif
 
     return Tdust;
 }
@@ -861,22 +845,13 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
 
     if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
 
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu T=%.8e Tdust_bracket=[%.8e,%.8e] dE_bracket=[%.6e,%.6e] n_bracket=%d\n", (unsigned long long)pp[i].ID, T, T_lower, T_upper, dE_lower, dE_upper, n_iter);}
-#endif
     if(dE!=0){
         BrentRootfindResult rfr = brent_rootfind(dust_dE_rootfn, T_lower-T, T_upper-T, dE_lower, dE_upper, dTdust_tol, 0., MAXITER);
         Tdust = rfr.x + T;
-#ifdef GIZMO_DEBUG_RT_COOLING
-        if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu rootfind Tdust=%.10e iter=%d\n", (unsigned long long)pp[i].ID, Tdust, rfr.iter);}
-#endif
     }
     double LambdaDust = 0;
 #ifdef COOLING
     LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
-#endif
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu FINAL Tdust=%.10e LambdaDust=%.10e Trad_CW=%.10e\n", (unsigned long long)pp[i].ID, Tdust, LambdaDust, cell[i].Radiation_Temperature_CoolingWeighted);}
 #endif
     cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
     cell[i].Dust_Temperature = Tdust;

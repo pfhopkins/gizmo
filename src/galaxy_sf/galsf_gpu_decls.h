@@ -27,19 +27,12 @@
  * so this header (and mechanical_fb.cc, compiled non-GPU) does not need Kokkos.
  * The legacy mechanical_fb_evaluate_gpu evaluator was retired together with
  * galaxy_sf/mechanical_fb_gpu.cc. ---- */
-struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas);
-void                   mechfb_free_local_gas_delta(struct MechFBGasDelta *p);
 struct MechFBCallScalars;
 /* Host-side builder for MechFBCallScalars.  Used by
  * MechFBSpec::populate_call_scalars so cosmology / unit-factor / CR-rigidity
  * values are read through the same scalars struct instead of bare All.*.
  * Defined in galaxy_sf/mechfb_loop.cc. */
 void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars);
-/* Zero the gas-only portion of a SharedSpace LocalGasMechFBInfoTemp buffer.
- * Implemented in the GPU TU (mechfb_loop.cc) via Kokkos parallel_for so the
- * non-GPU mechanical_fb.cc TU doesn't take a backend dependency on whether
- * SharedSpace is host-readable bytewise. */
-void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas);
 /* Persistent grow-only gas-delta buffer replacing per-step alloc + O(N_gas) zero
  * + free; mechfb_reset_one_gas_delta re-zeros one drained cell (SSOT). */
 struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas);

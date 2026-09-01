@@ -44,7 +44,7 @@
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
-#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_soa_drift_certified (drift-cert diagnostic) */
+#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_tree_nodes_current_at (node-currency diagnostic) */
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -879,6 +879,10 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
         Spec::populate_device_context(args, ctx);
     }
     NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
+    /* A hook that could not stage its buffers has already asked for the stop.
+     * This path is host-local with no collectives, so returning leaves no peer
+     * waiting; the guard above releases whatever the hook did obtain. */
+    if(ctx.populate_failed) { return; }
 
     /* Freeze active snapshots host-side BEFORE drift. */
     std::vector<ActiveData> actives(N);
@@ -1094,7 +1098,7 @@ static void mode_b_remote_evaluate_into_buffer(
     long long diag_omp_self = 0, diag_omp_recv = 0;   /* actual threads used per stage; 0 = serial */
     auto nlr_note_threaded_walk = [&]() {
         if(nlr_diag_on && drift_certified < 0)
-            drift_certified = gpu_gravity_soa_drift_certified(All.Ti_Current) ? 1 : 0;
+            drift_certified = gpu_gravity_tree_nodes_current_at(All.Ti_Current) ? 1 : 0;
     };
 
     /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the
@@ -1272,7 +1276,7 @@ static void mode_b_remote_evaluate_into_buffer(
                                           cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
     }
 
-    /* ---- PEER round loop (streaming). Build a BufferSize-bounded batch of
+    /* ---- PEER round loop (streaming). Build a CommChunkSize-bounded batch of
      * query envelopes from actives[cursor..N), exchange+evaluate+reply, advance
      * cursor, iterate until every rank is drained (legacy do/while +
      * Allreduce(ndone), code_block_xchange_perform_ops.h:9-191). Bounds total
@@ -1290,13 +1294,13 @@ static void mode_b_remote_evaluate_into_buffer(
      * empty. */
     /* targeted_export_ok, jscale and exporter are hoisted above Stage 3 for
      * the fused walk. */
-    /* Cap = legacy All.BunchSize analog: BufferSize / (query env + reply env).
-     * Our NlrQueryEnvelope IS data_index+data_nodelist+ActiveData fused, so
-     * counting envelopes == legacy counting DataIndexTable entries. (No env var;
-     * All.BufferSize is the existing parameterfile parameter, default 100MB.) */
+    /* How much this round may carry: one communication chunk, divided by the size of a
+     * query and its reply. NlrQueryEnvelope fuses what used to be sent as separate index,
+     * node-list and active records, so counting envelopes here counts what the older code
+     * counted as export entries. All.CommChunkSize is the parameterfile chunk size. */
     constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
-    long long bunch = ((long long)All.BufferSize * 1024 * 1024) /
+    long long bunch = ((long long)All.CommChunkSize * 1024 * 1024) /
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
     if(bunch < 1) bunch = 1;
 
@@ -1332,8 +1336,8 @@ static void mode_b_remote_evaluate_into_buffer(
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active",
                             "[mode_b B2a caller=%s] single active's export set (%lld envelopes, "
-                            "~%lld bytes) exceeds BufferSize bunch (%lld envelopes); shipping a solo "
-                            "oversized round — cap ineffective for this call (raise BufferSize).",
+                            "~%lld bytes) exceeds CommChunkSize bunch (%lld envelopes); shipping a solo "
+                            "oversized round — cap ineffective for this call (raise CommChunkSize).",
                             Spec::loop_name, add, add * kEnvPairBytes, bunch);
                     }
                     /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
@@ -1380,8 +1384,8 @@ static void mode_b_remote_evaluate_into_buffer(
                     if(round_env_count > 0 && round_env_count + add > bunch) break;
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active_bcast",
-                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > BufferSize "
-                            "bunch (%lld); solo oversized round — cap ineffective (raise BufferSize).",
+                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > CommChunkSize "
+                            "bunch (%lld); solo oversized round — cap ineffective (raise CommChunkSize).",
                             Spec::loop_name, add, bunch);
                     }
                     for(int p = 0; p < nt; p++) {
@@ -1414,7 +1418,7 @@ static void mode_b_remote_evaluate_into_buffer(
          * answers incoming queries in memory-bounded WHOLE-PEER groups (the
          * legacy import sub-chunk loop, code_block_xchange_perform_ops.h:96-174)
          * instead of materializing every peer's payload at once. Group budget =
-         * the same All.BufferSize that sizes the sender bunch. The bound covers
+         * the same All.CommChunkSize that sizes the sender bunch. The bound covers
          * TRANSPORT payloads only (envelopes + replies) — candidate vectors and
          * pair-kernel scratch scale with the group's query content, not with
          * NTask. Peers are consumed in ascending rank order, so the
@@ -1427,7 +1431,7 @@ static void mode_b_remote_evaluate_into_buffer(
             xch.begin(queries_per_peer);
         }
         const size_t group_budget_bytes =
-            (size_t)((double)All.BufferSize * 1024.0 * 1024.0);
+            (size_t)((double)All.CommChunkSize * 1024.0 * 1024.0);
 
         std::vector<int> group_peers;
         std::vector<std::vector<Envelope>> group_queries;
@@ -1701,6 +1705,15 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         Spec::populate_device_context(args, ctx);
     }
     NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
+    /* ctx.populate_failed is deliberately NOT honoured on this multi-rank leg:
+     * returning here would desync the query/reply transport the peers enter
+     * below, and answering their queries needs the very buffers that failed.
+     * What makes that safe is that the readers tolerate an absent buffer --
+     * a Spec whose load_neighbor indexes a hook-owned array must test it
+     * first (sink_feed's binary_merge_eligible is the worked example, and it
+     * is sized by num_total rather than by the active count, so it is not
+     * small). The stop is already requested with the buffer named, and the
+     * loop contributes nothing further. */
 
     /* Caller-owned per-call AccumData buffer; helper writes into it.
      * Explicit Spec::zero_accum per slot: defensive
@@ -1748,9 +1761,8 @@ static void run_mode_b_remote(const neighbor_loop_args& args, const double *radi
  * matching helper below) differ between the two paths.
  *
  * The spatial-index fields of gnl (d_tiles / d_bvh / d_pool / ntiles /
- * bvh_root / periodic_flags / box_sizes / box_halves) stay zero/null
- * because the pair_kernel does not read them (it uses nearest_xyz which
- * reads All.BoxSize_* via the AllDeviceMirror).
+ * bvh_root) stay zero/null because the pair_kernel does not read them (it
+ * uses nearest_xyz, which reads All.BoxSize_* via the AllDeviceMirror).
  *
  * The runner OWNS the SharedSpace/DeviceSpace allocations made here and
  * frees them in nlr_free_external_csr_gnl(). It does NOT free the caller's
@@ -1758,9 +1770,33 @@ static void run_mode_b_remote(const neighbor_loop_args& args, const double *radi
  * keeps host CSR alive for the duration of every run_neighbor_loop call
  * that injects it; the corridor design owns CSR across multiple consumers
  * by holding it in the gizmo_sym_* globals. */
-static inline void
+/* Exhaustion is reported by returning NULL, so a caller NULL-check can
+ * controlled-stop with attribution (the label appears in the memory ledger)
+ * instead of a hard terminate. */
+static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
+{
+    if(bytes == 0) { return NULL; }
+    return gizmo_gpu_alloc_shared(bytes, label);
+}
+
+/* One wording for every runner staging buffer that could not be had. The stop is
+ * drained at the next phase boundary; until then the loop simply leaves its actives
+ * untouched. Nothing here returns early past a collective — the ghost-writeback
+ * pair around the kernel work still fires, so no peer rank is left waiting. */
+static void nlr_stop_no_staging_memory(const char *loop_name, const char *what, size_t bytes)
+{
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "%s: could not allocate %s (%.1f MB); this loop leaves its actives untouched",
+             loop_name ? loop_name : "neighbour loop", what,
+             (double) bytes / (1024.0 * 1024.0));
+    gizmo_request_controlled_stop(7713, msg, __FILE__, __LINE__, __FUNCTION__);
+}
+
+static inline bool
 nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
-                                gpu_neighbor_list_t *gnl)
+                                gpu_neighbor_list_t *gnl,
+                                const char *loop_name)
 {
     /* zero-init everything; we touch only what we own */
     memset(gnl, 0, sizeof(*gnl));
@@ -1775,13 +1811,21 @@ nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
     const size_t nbr_bytes = (size_t)(pairs > 0 ? pairs : 1) * sizeof(int);
 
     /* offsets and d_active in SharedSpace (UVM) — host memcpy is fine */
-    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_offsets", off_bytes);
-    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active", act_bytes);
+    gnl->offsets  = (int64_t *) nlr_shared_alloc_bytes(off_bytes, "modea_csr_offsets");
+    gnl->d_active = (int *)     nlr_shared_alloc_bytes(act_bytes, "modea_active");
+    /* neighbors in DeviceSpace (GPU HBM) — must deep_copy from host view */
+    gnl->neighbors = (int *) gizmo_gpu_alloc_device(nbr_bytes, "modea_csr_neighbors");
+    /* Report the refusal rather than staging into null: the memcpy below writes
+     * the caller's whole CSR, and the pair kernel reads all three. The caller
+     * releases what did land and stops. */
+    if(!gnl->offsets || !gnl->d_active || !gnl->neighbors) {
+        nlr_stop_no_staging_memory(loop_name, "the injected neighbour list",
+                                   off_bytes + act_bytes + nbr_bytes);
+        return false;
+    }
     memcpy(gnl->offsets,  ext->offsets,          off_bytes);
     memcpy(gnl->d_active, ext->active_indices,   act_bytes);
 
-    /* neighbors in DeviceSpace (GPU HBM) — must deep_copy from host view */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("modea_csr_neighbors", nbr_bytes);
     if(pairs > 0) {
         Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
             h_n(ext->neighbors, (size_t)pairs);
@@ -1789,6 +1833,7 @@ nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
             d_n(gnl->neighbors, (size_t)pairs);
         Kokkos::deep_copy(d_n, h_n);
     }
+    return true;
 }
 
 static inline void
@@ -1863,15 +1908,207 @@ template <typename Spec> static constexpr bool nlr_mode_a_chunked_active_staging
  * a defensive backstop so a mis-set opt-in on a ghost-writeback Spec cannot chunk. */
 template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v();
 
-/* Non-throwing SharedSpace alloc: kokkos_malloc throws on host-OOM; catch -> NULL
- * so a caller NULL-check can controlled-stop with attribution (the label appears
- * in the memory ledger) instead of a hard terminate. Mirrors gpu_tree_alloc_bytes
- * / gpu_particles_uvm_alloc for the runner's own staging buffers. */
-static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
+/* The staged i-side ActiveData array is written by the staging kernel and read
+ * by the pair kernel, both on the device; no host code reads it. Keeping it in
+ * device memory therefore costs nothing in reachability and keeps the staging
+ * kernel's writes off the migratable shared path, which on a discrete-memory
+ * device is where that kernel's cost lives.
+ *
+ * The accumulator array is NOT eligible and must stay shared: the host reads it
+ * directly, in apply_active_writeback on the single-pass path and in the scatter
+ * back into the driver's per-slot accumulators on the iterative path.
+ *
+ * On a host-only backend the two spaces are the same type, so this is a no-op
+ * there by construction -- a local run can show that nothing regressed, it
+ * cannot exercise the separation. Same non-throwing contract as above. */
+static void *nlr_active_stage_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) { return NULL; }
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, bytes); }
-    catch(const std::exception &) { return NULL; }
+    return gizmo_gpu_alloc_device(bytes, label);
+}
+
+static void nlr_active_stage_free(void *p)
+{
+    if(p == NULL) { return; }
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);
+}
+
+/* ============================================================================
+ * TeamRowReduce support: combining lanes' partial accumulators.
+ *
+ * A Kokkos reducer over Spec::AccumData. Its join IS Spec::merge_accum and its
+ * init IS Spec::zero_accum, so the lane combination and the cross-rank Mode-B
+ * reply merge are the same algebra by construction rather than by agreement --
+ * there is no second copy of the merge rules to drift.
+ *
+ * This rests on zero_accum being the identity element of merge_accum, which is
+ * already required and already holds: Mode-B starts each peer's accumulator from
+ * zero_accum before merging, so the pair is a monoid tree-wide. The two cases
+ * that could have failed both check out -- DensitySpec::zero_accum sets its
+ * sink fields to explicit MIN-reduction sentinels rather than zero, and
+ * GradientsSpec byte-zeroes where 0 is a true identity because its Maxima and
+ * Minima range over signed deltas, a set that contains the self-delta.
+ *
+ * join takes the whole accumulator. Decomposing it field-wise would be wrong,
+ * not merely slower: SinkFeedSpec merges a coupled minimum-with-payload, taking
+ * the peer's position only when the peer's potential is lower, and independent
+ * per-field reduction would pair a winning value with a losing payload.
+ * ========================================================================== */
+template <typename Spec>
+struct NlrAccumReducer {
+    using reducer          = NlrAccumReducer<Spec>;
+    using value_type       = typename Spec::AccumData;
+    using result_view_type = Kokkos::View<value_type, Kokkos::AnonymousSpace,
+                                          Kokkos::MemoryUnmanaged>;
+
+    /* The lane combination moves an accumulator between threads with a shuffle,
+     * and a shuffle of anything larger than one machine word is performed as a
+     * whole number of INT-SIZED PIECES: the backends compute that count as
+     * sizeof(T) / sizeof(int), truncating. An accumulator whose size is not a
+     * whole number of those pieces therefore loses its trailing bytes in the
+     * reduction -- silently, with no diagnostic, and only on the device, where
+     * whichever field happens to sit last would come back holding whatever the
+     * receiving lane had there before.
+     *
+     * That is a bad failure to leave discoverable only by a wrong answer, so it
+     * is a build error instead. If a new accumulator trips this, pad it to a
+     * multiple of sizeof(int) rather than reordering its fields to hide the
+     * tail -- the next field added would put it back. An accumulator with no
+     * members at all is exempt because it carries nothing to lose. */
+    static_assert(std::is_empty<value_type>::value ||
+                  (sizeof(value_type) % sizeof(int)) == 0,
+                  "Spec::AccumData must be a whole number of int-sized pieces: the device lane "
+                  "reduction shuffles it as sizeof(AccumData)/sizeof(int) words and would drop "
+                  "the remainder. Pad the struct to a multiple of sizeof(int).");
+
+    KOKKOS_INLINE_FUNCTION explicit NlrAccumReducer(value_type& v) : m_value(v) {}
+
+    KOKKOS_INLINE_FUNCTION void join(value_type& dst, const value_type& src) const {
+        Spec::merge_accum(dst, src);
+    }
+    KOKKOS_INLINE_FUNCTION void init(value_type& v) const { Spec::zero_accum(v); }
+    KOKKOS_INLINE_FUNCTION value_type&       reference()         const { return m_value; }
+    KOKKOS_INLINE_FUNCTION result_view_type  view()              const { return result_view_type(&m_value); }
+    KOKKOS_INLINE_FUNCTION bool              references_scalar() const { return true; }
+
+private:
+    value_type& m_value;
+};
+
+/* The TeamRowReduce pair kernel, shared by both Mode-A dispatch sites.
+ *
+ * A named functor rather than a lambda for two reasons. It can be instantiated
+ * once up front to size the team and again per chunk to run, which keeps the
+ * occupancy query out of the chunk loop; and nvcc forbids defining an extended
+ * device lambda inside another lambda, which a per-chunk lambda factory would
+ * require.
+ *
+ * The two sites differ only in how a work item reaches its CSR row. The
+ * single-pass site walks the active list directly, so row = chunk_base + i. The
+ * iterative site walks a compacted active set into a build-time row index, so
+ * row = csr_lookup[active_set[i]]. Passing active_set == nullptr selects the
+ * former. Both index the staged actives and accumulators by i.
+ */
+template <typename Spec, typename DeviceCtx>
+struct NlrModeATeamPairKernel {
+    using ActiveData   = typename Spec::ActiveData;
+    using AccumData    = typename Spec::AccumData;
+    using ScatterData  = typename Spec::ScatterData;
+    using NeighborData = typename Spec::NeighborData;
+    using TeamMember   = typename Kokkos::TeamPolicy<>::member_type;
+
+    DeviceCtx      ctx;
+    ActiveData    *d_actives;
+    AccumData     *d_accums;
+    const int64_t *offsets;
+    const int     *neighbors;
+    const int     *active_set;   /* nullptr on the single-pass site */
+    const int     *csr_lookup;   /* used only when active_set != nullptr */
+    int            chunk_base;   /* used only when active_set == nullptr */
+
+    KOKKOS_INLINE_FUNCTION void operator()(const TeamMember& team) const {
+        const int i   = team.league_rank();
+        const int row = (active_set != nullptr) ? csr_lookup[active_set[i]]
+                                                : chunk_base + i;
+        const ActiveData& a = d_actives[i];
+        const int64_t start = offsets[row], end = offsets[row + 1];
+
+        /* An empty or malformed row must produce the zero accumulator and
+         * nothing else. The serial walk got this for free -- `for(nn = start;
+         * nn < end; ...)` simply runs zero times when end <= start -- but a
+         * team range takes a COUNT, and a non-positive one is not something to
+         * hand it. Restoring the property explicitly keeps the two assignments
+         * equivalent on degenerate rows as well as ordinary ones. */
+        const int row_len = (end > start) ? (int)(end - start) : 0;
+        if(row_len == 0) {
+            Kokkos::single(Kokkos::PerTeam(team), [&]() { Spec::zero_accum(d_accums[i]); });
+            return;
+        }
+
+        AccumData row_accum;
+        Kokkos::parallel_reduce(
+            Kokkos::TeamThreadRange(team, row_len),
+            [&](int nn, AccumData& lane_accum) {
+                ScatterData     s{};
+                IdentitySidecar id{};
+                NeighborData    nb = Spec::load_neighbor(ctx, neighbors[start + nn], id, a);
+                Spec::pair_kernel(a, nb, lane_accum, s);
+            },
+            NlrAccumReducer<Spec>(row_accum));
+
+        /* Every lane leaves the reduction holding the combined value; one
+         * publishes it. */
+        Kokkos::single(Kokkos::PerTeam(team), [&]() { d_accums[i] = row_accum; });
+    }
+};
+
+/* Lanes per row for a TeamRowReduce Spec, or 1 to select the flat kernel.
+ *
+ * Keyed only on structural properties -- execution space, the Spec's assignment
+ * policy, its search_mode, and sizeof(AccumData). No caller name appears here,
+ * so every ONEWAY loop gets the one-way width and every SYMMETRIC loop the
+ * symmetric one with no per-loop work, which is the whole point of resolving it
+ * in one place.
+ *
+ * The Kokkos bound is applied last and is a LEGALITY clamp: it reports the
+ * largest team the backend can launch for this functor, and does not shrink as
+ * the reduction value grows. The accumulator size is handled separately, and
+ * deliberately bluntly, by the fat-accumulator cap. */
+template <typename Spec, typename Functor>
+static int nlr_mode_a_team_width(const Functor& f)
+{
+    if constexpr (gizmo_gpu_default_space_is_host()) {
+        return 1;
+    } else if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::RowSerial) {
+        return 1;
+    } else {
+        /* Every input is fixed by the Spec and the kernel type, so this resolves
+         * once per (Spec, kernel) rather than once per dispatch: the occupancy
+         * query behind it is not worth repeating, and the answer cannot change
+         * within a run. */
+        static const int resolved = [&]() {
+            int target;
+            if(NUMDIMS < 3) {
+                target = NLR_TEAM_WIDTH_LOWDIM;
+            } else {
+                target = (Spec::search_mode == MODE_B_SEARCH_ONEWAY)
+                         ? NLR_TEAM_WIDTH_ONEWAY : NLR_TEAM_WIDTH_SYMMETRIC;
+                if(sizeof(typename Spec::AccumData) > NLR_TEAM_FAT_ACCUM_BYTES) {
+                    target = NLR_TEAM_WIDTH_FAT_ACCUM;
+                }
+            }
+            /* A non-positive answer means the backend reports NO launchable
+             * team size for this functor, not "no limit" -- fall back to the
+             * flat kernel rather than launching at the full target. */
+            const int hw = gizmo_gpu_team_size_max(f);
+            if(hw <= 0)       { return 1; }
+            if(hw < target)   { target = hw; }
+            int w = 1;
+            while((w << 1) <= target) { w <<= 1; }
+            return w;
+        }();
+        return resolved;
+    }
 }
 
 template <typename Spec>
@@ -1898,8 +2135,13 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
      * device-visible NGL build. Source `radii` is runner-staged on host
      * (call-lifetime only); we copy into shared/UVM so gpu_ngb_list_build
      * and the device pair kernel can read the per-active values. */
-    double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
-        N * sizeof(double));
+    const size_t radii_uvm_bytes = (size_t) N * sizeof(double);
+    double *radii_uvm = (double *) nlr_shared_alloc_bytes(radii_uvm_bytes, "modea_radii");
+    if(radii_uvm == NULL) {
+        /* Nothing has been acquired yet, so there is nothing to release. */
+        nlr_stop_no_staging_memory(Spec::loop_name, "the per-active search radii", radii_uvm_bytes);
+        return;
+    }
     for(int aa = 0; aa < N; aa++) {
         radii_uvm[aa] = radii[aa];
     }
@@ -1973,7 +2215,12 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
             return;
         }
         StageTimer t(tim ? &tim->dt_collect : nullptr);
-        nlr_stage_external_csr_into_gnl(ec, &gnl);
+        if(!nlr_stage_external_csr_into_gnl(ec, &gnl, Spec::loop_name)) {
+            nlr_free_external_csr_gnl(&gnl);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+            gpu_particles_arena_release();
+            return;
+        }
     } else {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         /* Active-source-in-pool contract: stage explicit P[active_i].Pos for specs
@@ -1990,6 +2237,17 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                            1.0, radii_uvm, _nlr_srcpos, Spec::loop_name,
                            nlr_spec_symmetric_j_radius_scale<Spec>(),
                            Spec::radius_policy);
+    }
+
+    /* A build that ran out of memory hands back the empty list, without the row
+     * index the kernel reads first, and has already asked for the stop. Release
+     * this call's own buffers and return; no MPI has been issued here. */
+    if(gnl.d_active == nullptr) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+        if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
+        else { gpu_ngb_list_free(&gnl, sidx); }
+        gpu_particles_arena_release();
+        return;
     }
 
     /* Chunk the fat per-active staging so its transient footprint is bounded.
@@ -2012,25 +2270,30 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         if(k < (size_t)N) { K = (int)k; }
     }
 
-    /* UVM-allocate chunk-sized ActiveData[] and AccumData[] arrays via the
-     * non-throwing SharedSpace allocator. These are the largest per-active
-     * transients (the demonstrated FIF OOM site); an allocation failure here
-     * means a genuinely full node (K is byte-capped), so controlled-stop with
-     * the buffer named in the ledger rather than a hard terminate. run_mode_a
-     * issues no MPI, so the request drains collectively at the caller's next
-     * phase poll (same as the external-CSR contract-violation path above). */
-    ActiveData *d_actives = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
+    /* Allocate chunk-sized ActiveData[] and AccumData[] arrays, both through
+     * non-throwing allocators. They live in DIFFERENT spaces: the staged
+     * actives are device-only (see nlr_active_stage_alloc_bytes), the
+     * accumulators must stay host-readable for the writeback below. These are
+     * the largest per-active transients (the demonstrated FIF OOM site); an
+     * allocation failure here means the corresponding pool is genuinely full
+     * (K is byte-capped), so controlled-stop with the buffer named in the
+     * ledger rather than a hard terminate. run_mode_a issues no MPI, so the
+     * request drains collectively at the caller's next phase poll (same as the
+     * external-CSR contract-violation path above). */
+    ActiveData *d_actives = (ActiveData *) nlr_active_stage_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
     AccumData  *d_accums  = (AccumData  *) nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData),  "modea_accum_data");
     if(d_actives == NULL || d_accums == NULL) {
         if(d_accums)  { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
-        if(d_actives) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives); }
+        nlr_active_stage_free(d_actives);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
         if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
         else { gpu_ngb_list_free(&gnl, sidx); }
         gpu_particles_arena_release();
         gizmo_request_controlled_stop(7710,
-            "run_mode_a: Mode-A per-active staging (modea_active_data/modea_accum_data) SharedSpace OOM "
-            "-- add ranks/nodes or reduce the active set", __FILE__, __LINE__, __FUNCTION__);
+            "run_mode_a: Mode-A per-active staging out of memory (modea_active_data is device-resident, "
+            "modea_accum_data is host-visible) -- reduce the active set; note that adding ranks per node "
+            "does NOT relieve device memory, since the ranks on a node share it",
+            __FILE__, __LINE__, __FUNCTION__);
         return;
     }
 
@@ -2045,10 +2308,27 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                   "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
     static_assert(std::is_trivially_copyable<DeviceCtx>::value,
                   "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
+                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
+                  "within-row lane division its pair kernel has never been checked for");
     if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
         Spec::populate_device_context(args, ctx);
     }
     NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
+    /* A hook that could not stage its buffers has already asked for the stop.
+     * Same exit as the staging failure above: release everything this call
+     * obtained and return — this function issues no MPI, so the request drains
+     * at the caller's next phase poll. The guard releases the hook's buffers. */
+    if(ctx.populate_failed) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
+        nlr_active_stage_free(d_actives);   /* device space, not shared -- see nlr_active_stage_alloc_bytes */
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
+        if(args.external_csr != nullptr) { nlr_free_external_csr_gnl(&gnl); }
+        else { gpu_ngb_list_free(&gnl, sidx); }
+        gpu_particles_arena_release();
+        return;
+    }
 
     /* (3)-(4) Chunked stage -> pair-kernel -> writeback. Each chunk [c0, c0+n)
      * stages into chunk-local slots [0,n): CSR rows / radii are read at the
@@ -2060,6 +2340,17 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     int     *d_active_idx = gnl.d_active;
     int64_t *offsets      = gnl.offsets;
     int     *neighbors    = gnl.neighbors;
+
+    /* Team width is a property of the Spec and the kernel type, not of a chunk,
+     * so it is resolved once here rather than per chunk -- the occupancy query
+     * behind it is not something to repeat inside the loop. */
+    using TeamKernel = NlrModeATeamPairKernel<Spec, DeviceCtx>;
+    int team_width = 1;
+    if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+        TeamKernel probe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0};
+        team_width = nlr_mode_a_team_width<Spec>(probe);
+    }
+
     for(int c0 = 0; c0 < N; c0 += K) {
         const int n = (N - c0 < K) ? (N - c0) : K;
 
@@ -2070,11 +2361,21 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                                               radii_uvm[aa], cs);
         });
 
-        /* pair-kernel over [c0, c0+n) — generic over Spec. */
+        /* pair-kernel over [c0, c0+n) — generic over Spec.
+         *
+         * Two assignments of the same physics. The flat form gives one work item
+         * per active particle, which then walks its whole CSR row in sequence.
+         * The team form gives one team per active particle whose lanes stride
+         * the row together and combine through Spec::merge_accum. Which one runs
+         * is decided by nlr_mode_a_team_width from structural properties only;
+         * width 1 selects the flat form, and does so through if constexpr, so a
+         * width-1 Spec compiles to exactly the kernel it compiled to before
+         * teams existed rather than to a one-lane imitation of a team. */
         {
             StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             const double t_pair_kernel_start = my_second();
-            gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+
+            auto flat_kernel = KOKKOS_LAMBDA(int kk) {
                 const int aa = c0 + kk;
                 Spec::zero_accum(d_accums[kk]);
                 const ActiveData& a = d_actives[kk];
@@ -2086,7 +2387,18 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                     NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[kk], s);
                 }
-            });
+            };
+
+            if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+                if(team_width > 1) {
+                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0};
+                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
+                } else {
+                    gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
+                }
+            } else {
+                gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
+            }
             cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
         }
         /* Launches fenced internally by gizmo_gpu_kernel_launch. UVM coherent ->
@@ -2107,7 +2419,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
      * sink_environment_gpu.cc:261 idiom). External-CSR path frees only what
      * we staged (gnl offsets/neighbors/d_active); caller owns host CSR. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives);
+    nlr_active_stage_free(d_actives);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
     if(args.external_csr != nullptr) {
         nlr_free_external_csr_gnl(&gnl);
@@ -2318,8 +2630,14 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
  * ========================================================================== */
 
 template <typename Spec>
-void run_neighbor_loop(const neighbor_loop_args& args)
+void run_neighbor_loop(const neighbor_loop_args& args_in)
 {
+    /* The one live argument view for this call.  A ghost import can raise the particle
+     * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
+     * object below; every later reader sees the current values.  There is deliberately no
+     * second, unrefreshed copy in scope -- reading a stale P[] reads freed storage. */
+    neighbor_loop_args args = args_in;
+
     /* ---- Compile-time spec consistency ---- */
 
     /* WritePattern ↔ AccumData/ScatterData consistency. */
@@ -2479,8 +2797,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const uint64_t s_arena0 = g_gpu_arena_acquire_counter;
     const int      s_np0    = NumPart;
 
-    /* ---- Working copy of args; refreshed after path-conditional prep ---- */
-    neighbor_loop_args effective_args = args;
 
     /* ---- Path-conditional prep on imported-ghost paths ---- */
     /* Mode A's substrate today satisfies its freshness + neighbor-pool
@@ -2539,9 +2855,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
             /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
              * the runner's data view; only paths that imported ghosts read this
              * extended view (Mode B paths use the original args via copy). */
-            effective_args.num_total = NumPart;
-            effective_args.P         = P;
-            effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+            args.num_total = NumPart;
+            args.P         = P;
+            args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
         }
     }
 
@@ -2561,25 +2877,25 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * Each dispatch helper checks both the Spec's `uses_*` trait AND the
      * path-imports-ghosts predicate; on Mode B paths the predicate is
      * false and all four hook calls compile to no-ops. */
-    nlr_dispatch_ghost_write_detector_begin<Spec>(effective_args, plan);
-    nlr_dispatch_ghost_writeback_begin<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_write_detector_begin<Spec>(args, plan);
+    nlr_dispatch_ghost_writeback_begin<Spec>(args, plan);
 
     /* ---- Path dispatch ---- */
     switch(plan.path) {
         case NeighborLoopPlan::Path::ModeA_GpuNgl:
-            run_mode_a<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_a<Spec>(args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Local:
-            run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_local<Spec>(args, radii.data(), tim_ptr);
             break;
         case NeighborLoopPlan::Path::ModeB_Remote:
-            run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
+            run_mode_b_remote<Spec>(args, radii.data(), tim_ptr);
             break;
     }
 
     /* ---- Spec lifecycle hooks (end, reverse order) ---- */
-    nlr_dispatch_ghost_writeback_end<Spec>(effective_args, plan);
-    nlr_dispatch_ghost_write_detector_end<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_writeback_end<Spec>(args, plan);
+    nlr_dispatch_ghost_write_detector_end<Spec>(args, plan);
 
     /* ---- Imported-ghost cleanup ---- */
     /* Caller-owned pools (external_csr) outlive this call — the caller tears
@@ -2672,7 +2988,7 @@ struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups
  * NlrIterDriver<Spec> — constructor + destructor.
  * ========================================================================== */
 template <typename Spec>
-NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
+NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
                                    const typename Spec::CallScalars& s)
     : args(a), cs(s), iter_index(0),
       local_active_total(0), global_active_total(-1),
@@ -2688,9 +3004,7 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
       mode_a_cached_gnl       (a.num_subgroups, gpu_neighbor_list_t{}),
       mode_a_csr_offset_lookup(a.num_subgroups, nullptr),
       mode_a_csr_buffered_h   (a.num_subgroups, nullptr),
-      mode_a_csr_valid        (a.num_subgroups, false),
-      /* effective_args: copy of base slice; refreshed on Mode A ghost import. */
-      effective_args(static_cast<const neighbor_loop_args&>(a))
+      mode_a_csr_valid        (a.num_subgroups, false)
 {
     using IterScratch = typename Spec::IterScratch;
     using AccumData   = typename Spec::AccumData;
@@ -2704,10 +3018,25 @@ NlrIterDriver<Spec>::NlrIterDriver(const neighbor_loop_args_iterative& a,
         active_set_size[sg] = n;
         if (n <= 0) continue;     /* leave pointers as nullptr; pair_kernel is no-op */
 
-        scratch_uvm[sg]    = (IterScratch *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_iter_scratch", n * sizeof(IterScratch));
-        accum_uvm  [sg]    = (AccumData   *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data", n * sizeof(AccumData));
-        radii_uvm  [sg]    = (double      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii", n * sizeof(double));
-        active_set_uvm[sg] = (int         *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_set", n * sizeof(int));
+        const size_t sg_bytes = (size_t) n * (sizeof(IterScratch) + sizeof(AccumData)
+                                              + sizeof(double) + sizeof(int));
+        scratch_uvm[sg]    = (IterScratch *) nlr_shared_alloc_bytes((size_t) n * sizeof(IterScratch), "modea_iter_scratch");
+        accum_uvm  [sg]    = (AccumData   *) nlr_shared_alloc_bytes((size_t) n * sizeof(AccumData), "modea_accum_data");
+        radii_uvm  [sg]    = (double      *) nlr_shared_alloc_bytes((size_t) n * sizeof(double), "modea_radii");
+        active_set_uvm[sg] = (int         *) nlr_shared_alloc_bytes((size_t) n * sizeof(int), "modea_active_set");
+        /* Without its four arrays this subgroup cannot be walked, so it is left in
+         * the same state as one with no actives at all: sized zero, pointers null,
+         * which every dispatch and the destructor already handle. The other
+         * subgroups keep their state and the run stops at the next phase boundary. */
+        if (!scratch_uvm[sg] || !accum_uvm[sg] || !radii_uvm[sg] || !active_set_uvm[sg]) {
+            if (scratch_uvm[sg])    { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_uvm[sg]);    scratch_uvm[sg] = nullptr; }
+            if (accum_uvm[sg])      { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(accum_uvm[sg]);      accum_uvm[sg] = nullptr; }
+            if (radii_uvm[sg])      { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm[sg]);      radii_uvm[sg] = nullptr; }
+            if (active_set_uvm[sg]) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active_set_uvm[sg]); active_set_uvm[sg] = nullptr; }
+            active_set_size[sg] = 0;
+            nlr_stop_no_staging_memory(Spec::loop_name, "the per-subgroup iteration state", sg_bytes);
+            continue;
+        }
 
         /* Byte-zero IterScratch ONCE — persists across iters. */
         std::memset(scratch_uvm[sg], 0, n * sizeof(IterScratch));
@@ -2893,15 +3222,28 @@ void NlrIterDriver<Spec>::initialize_device_context_mode_a_after_arena()
     }
 
     /* Bind to arena-resident P_gpu / CellP_gpu. Use the driver's
-     * effective_args: if ghost import ran above, these
+     * args: if ghost import ran above, these
      * point at the refreshed POST-IMPORT global P/CellP/NumPart; otherwise
      * they equal the original base args. CellP=NULL is legitimate (gas-free). */
+    if (!nlr_args_view_is_live(args)) {
+        if (ThisTask == 0) {
+            fprintf(stderr,
+                "[NlrIterDriver<%s>::initialize_device_context_mode_a_after_arena] FATAL: the "
+                "argument view no longer describes the live particle storage (P=%p vs %p, "
+                "num_total=%d vs %d). Binding a device context to it would read released memory.\n",
+                Spec::loop_name, (void *) args.P, (void *) P, args.num_total, NumPart);
+            fflush(stderr);
+        }
+        /* Soft bad-stop + return WITHOUT binding ctx: same shape as the two lifecycle
+         * violations above, drained at the runner's next poll before any dispatch. */
+        endrun(81215); return;
+    }
     ctx.P         = gpu_particles_arena_P();
-    ctx.CellP     = (effective_args.CellP != nullptr) ? gpu_particles_arena_CellP() : nullptr;
-    ctx.num_total = effective_args.num_total;
+    ctx.CellP     = (args.CellP != nullptr) ? gpu_particles_arena_CellP() : nullptr;
+    ctx.num_total = args.num_total;
 
     if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
-        Spec::populate_device_context(effective_args, ctx);
+        Spec::populate_device_context(args, ctx);
     }
     ctx_initialized = true;
 }
@@ -2945,6 +3287,10 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             mask_union |= args.subgroups[sg].j_type_bitmask;
             const NlrSubgroup& sgr = args.subgroups[sg];
+            /* A subgroup whose per-active radii could not be staged contributes
+             * nothing to the import. The import itself is collective, so this
+             * rank still enters it -- just asking for no ghosts of its own. */
+            if (radii_uvm[sg] == nullptr) { continue; }
             for (int k = 0; k < sgr.num_active_local; k++) {
                 union_actives.push_back(sgr.active_indices[k]);
                 union_radii_oversized.push_back(radii_uvm[sg][k] * Spec::mode_a_csr_buffer_factor);
@@ -2963,18 +3309,18 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
                                                    nlr_spec_supply_band_dominated<Spec>());
         ghost_import_done = true;
 
-        /* Refresh effective_args from globals (ghost import grew NumPart and
+        /* Refresh args from globals (ghost import grew NumPart and
          * may have realloc'd P/CellP). Matches non-iter line 2049-2051. */
-        effective_args.num_total = NumPart;
-        effective_args.P         = P;
-        effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+        args.num_total = NumPart;
+        args.P         = P;
+        args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
     }
 
     /* === (2) Arena acquire ONCE per call, with refreshed args === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
-    gpu_particles_arena_acquire(effective_args.num_total,
-                                 effective_args.P, effective_args.CellP);
+    gpu_particles_arena_acquire(args.num_total,
+                                 args.P, args.CellP);
     arena_acquired = true;
 
     /* === (3) Bind ctx to arena-resident pointers + populate extended DeviceContext === */
@@ -3073,7 +3419,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     /* === (1) cleanup_device_context for extended Specs === */
     if (ctx_initialized) {
         if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
-            Spec::cleanup_device_context(effective_args, ctx);
+            Spec::cleanup_device_context(args, ctx);
         }
         ctx_initialized = false;
     }
@@ -3107,16 +3453,16 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
         ghost_import_done = true;
     }
 
-    /* === (5) Refresh effective_args from post-import globals === */
-    effective_args.num_total = NumPart;
-    effective_args.P         = P;
-    effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
+    /* === (5) Refresh args from post-import globals === */
+    args.num_total = NumPart;
+    args.P         = P;
+    args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
 
     /* === (6) Fresh arena view of new pool === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
-    gpu_particles_arena_acquire(effective_args.num_total,
-                                 effective_args.P, effective_args.CellP);
+    gpu_particles_arena_acquire(args.num_total,
+                                 args.P, args.CellP);
     arena_acquired = true;
 
     /* === (7) Rebind ctx + (8) populate extended ctx for NEW pool === */
@@ -3261,6 +3607,11 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     using ScatterData  = typename Spec::ScatterData;
     using NeighborData = typename Spec::NeighborData;
 
+    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
+                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
+                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
+                  "within-row lane division its pair kernel has never been checked for");
+
     const NlrSubgroup& sgr = drv.args.subgroups[sg];
     const int n_compacted  = drv.active_set_size[sg];
 
@@ -3277,7 +3628,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     NeighborLoopPlan plan;
     plan.path              = NeighborLoopPlan::Path::ModeA_GpuNgl;
     plan.num_active_global = drv.global_active_total;
-    neighbor_loop_args sub = drv.effective_args;
+    neighbor_loop_args sub = drv.args;
     sub.active_list = (n_compacted > 0) ? active_particle_indices_iter.data() : nullptr;
     sub.num_active  = n_compacted;
 
@@ -3316,8 +3667,13 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             active_particle_indices_host_build[k] = sgr.active_indices[slot];
             radii_buffered_host_build[k]          = drv.radii_uvm[sg][slot] * Spec::mode_a_csr_buffer_factor;
         }
-        double *radii_oversized_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_radii",
-            n_compacted * sizeof(double));
+        const size_t radii_oversized_bytes = (size_t) n_compacted * sizeof(double);
+        double *radii_oversized_uvm = (double *) nlr_shared_alloc_bytes(radii_oversized_bytes, "modea_radii");
+        /* A refused buffer leaves the CSR unbuilt. The rebuild is skipped rather than
+         * returned from: the ghost-writeback pair below fires on every rank, so a
+         * return here would leave the peers waiting on a reverse-comm that never
+         * comes -- a hang, which is the one outcome worse than the stop itself. */
+        if (radii_oversized_uvm != NULL) {
         for (int k = 0; k < n_compacted; k++) radii_oversized_uvm[k] = radii_buffered_host_build[k];
 
         /* Active-source-in-pool contract: stage explicit P[active_i].Pos for specs
@@ -3335,6 +3691,10 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                            nlr_spec_symmetric_j_radius_scale<Spec>(),
                            Spec::radius_policy);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_oversized_uvm);
+        /* A build that ran out of memory hands back the empty list and has already
+         * asked for the stop. Its row index is absent, which is exactly what the
+         * kernel below reads first, so the CSR must not be marked valid. */
+        if (drv.mode_a_cached_gnl[sg].d_active != nullptr) {
 
         /* Allocate csr_offset_lookup + csr_buffered_h sized to subgroup max.
          * Lookup keyed on subgroup-slot (invariant):
@@ -3344,10 +3704,22 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *                              current actives, and converged slots
          *                              never re-enter active_set). */
         const int n_max = sgr.num_active_local;
-        drv.mode_a_csr_offset_lookup[sg] = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_lookup",
-            n_max * sizeof(int));
-        drv.mode_a_csr_buffered_h[sg]    = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_csr_h",
-            n_max * sizeof(double));
+        const size_t csr_lookup_bytes = (size_t) n_max * sizeof(int);
+        const size_t csr_h_bytes      = (size_t) n_max * sizeof(double);
+        drv.mode_a_csr_offset_lookup[sg] = (int *) nlr_shared_alloc_bytes(csr_lookup_bytes, "modea_csr_lookup");
+        drv.mode_a_csr_buffered_h[sg]    = (double *) nlr_shared_alloc_bytes(csr_h_bytes, "modea_csr_h");
+        if (!drv.mode_a_csr_offset_lookup[sg] || !drv.mode_a_csr_buffered_h[sg]) {
+            if (drv.mode_a_csr_offset_lookup[sg]) {
+                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(drv.mode_a_csr_offset_lookup[sg]);
+                drv.mode_a_csr_offset_lookup[sg] = nullptr;
+            }
+            if (drv.mode_a_csr_buffered_h[sg]) {
+                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(drv.mode_a_csr_buffered_h[sg]);
+                drv.mode_a_csr_buffered_h[sg] = nullptr;
+            }
+            nlr_stop_no_staging_memory(Spec::loop_name, "the CSR row lookup",
+                                       csr_lookup_bytes + csr_h_bytes);
+        } else {
         for (int s = 0; s < n_max; s++) {
             drv.mode_a_csr_offset_lookup[sg][s] = -1;
             drv.mode_a_csr_buffered_h[sg][s]    = 0.0;
@@ -3358,6 +3730,12 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             drv.mode_a_csr_buffered_h[sg][slot]    = radii_buffered_host_build[k];
         }
         drv.mode_a_csr_valid[sg] = true;
+        }   /* CSR row lookup obtained */
+        }   /* neighbour list built */
+        } else {
+            nlr_stop_no_staging_memory(Spec::loop_name, "the oversized per-active search radii",
+                                       radii_oversized_bytes);
+        }
     }
 
     /* ===== (2) Ghost write detector + writeback begin =====
@@ -3365,11 +3743,13 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
      * uses_ghost_writeback Specs, INCLUDING empty-actives ranks, to keep
      * MPI reverse-comm collectives in lockstep with non-empty ranks.
      * Plan.path == ModeA_GpuNgl gates the dispatch hooks via
-     * nlr_path_uses_imported_ghosts; uses effective_args (post-import). */
+     * nlr_path_uses_imported_ghosts; uses args (post-import). */
     nlr_dispatch_ghost_write_detector_begin<Spec>(sub, plan);
     nlr_dispatch_ghost_writeback_begin<Spec>(sub, plan);
 
-    if (n_compacted > 0) {
+    /* The CSR is what the kernel walks, so an unbuilt one means no work this
+     * iteration -- but the writeback pair above and below still runs. */
+    if (n_compacted > 0 && drv.mode_a_csr_valid[sg]) {
         /* ===== (3) Stage d_actives + (4) pair-kernel launch =====
          * CSR ROW LOOKUP USAGE:
          *   slot = active_set[k]
@@ -3378,11 +3758,28 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
          *   h    = radii_uvm[slot]            (current radius — kernel filter)
          * CSR build uses drv.ctx.num_total (= post-import effective num_total).
          * Walk gnl.offsets[row]..offsets[row+1]. */
-        ActiveData *d_actives = (ActiveData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_active_data",
-            n_compacted * sizeof(ActiveData));
-        AccumData *d_accums = (AccumData *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("modea_accum_data",
-            n_compacted * sizeof(AccumData));
-        {
+        /* Non-throwing on both, matching run_mode_a. The staged actives are
+         * device-resident, and device memory is exhausted PER RANK rather than
+         * node-wide, so a throw here would escape a single rank while its peers
+         * sat in the reverse-comm collectives below -- a hang instead of a
+         * reported stop. Failure is handled like a subgroup with nothing left to
+         * do: the work below is skipped, the stop is requested, and control falls
+         * through to the UNCONDITIONAL writeback_end, so every rank still enters
+         * the collectives the same number of times. */
+        ActiveData *d_actives = (ActiveData *) nlr_active_stage_alloc_bytes(
+            (size_t)n_compacted * sizeof(ActiveData), "modea_active_data");
+        AccumData *d_accums = (AccumData *) nlr_shared_alloc_bytes(
+            (size_t)n_compacted * sizeof(AccumData), "modea_accum_data");
+        if (d_actives == NULL || d_accums == NULL) {
+            if (d_accums) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
+            nlr_active_stage_free(d_actives);
+            gizmo_request_controlled_stop(7711,
+                "nlr_iter_dispatch_subgroup_mode_a: per-active staging out of memory "
+                "(modea_active_data is device-resident, modea_accum_data is host-visible) "
+                "-- reduce the active set; note that adding ranks per node does NOT relieve "
+                "device memory, since the ranks on a node share it",
+                __FILE__, __LINE__, __FUNCTION__);
+        } else {
             auto cs_ref = drv.cs;
             const typename Spec::DeviceContext dctx_local = drv.ctx;
             int    *active_set_arr = drv.active_set_uvm[sg];
@@ -3401,7 +3798,11 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             });
 
             const double t_pair_kernel_start = my_second();
-            gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, KOKKOS_LAMBDA(int k) {
+
+            /* Same two assignments as the single-pass site; see the commentary
+             * there. The only difference is the extra indirection from the
+             * compacted active set to the build-time CSR row. */
+            auto flat_kernel = KOKKOS_LAMBDA(int k) {
                 int slot = active_set_arr[k];
                 int row  = csr_lookup[slot];
                 Spec::zero_accum(d_accums[k]);
@@ -3414,18 +3815,32 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                     NeighborData nb = Spec::load_neighbor(dctx_local, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[k], s);
                 }
-            });
+            };
+
+            if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+                using TeamKernel = NlrModeATeamPairKernel<Spec, typename Spec::DeviceContext>;
+                TeamKernel fn{dctx_local, d_actives, d_accums, offsets, neighbors,
+                              active_set_arr, csr_lookup, 0};
+                const int team_width = nlr_mode_a_team_width<Spec>(fn);
+                if (team_width > 1) {
+                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n_compacted, team_width, fn);
+                } else {
+                    gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, flat_kernel);
+                }
+            } else {
+                gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, flat_kernel);
+            }
             cpu_charge_child(CPU_PAIR_KERNEL, timediff(t_pair_kernel_start, my_second()));
-        }
 
-        /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */
-        for (int k = 0; k < n_compacted; k++) {
-            int slot = drv.active_set_uvm[sg][k];
-            drv.accum_uvm[sg][slot] = d_accums[k];
-        }
+            /* ===== (6) Scatter compacted accums into driver accum_uvm ===== */
+            for (int k = 0; k < n_compacted; k++) {
+                int slot = drv.active_set_uvm[sg][k];
+                drv.accum_uvm[sg][slot] = d_accums[k];
+            }
 
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
+            nlr_active_stage_free(d_actives);
+        }
     }
 
     /* ===== (5) Ghost writeback end + detector end (unconditional) ===== */
@@ -3522,8 +3937,13 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
  * run_neighbor_loop_iterative<Spec> — body (step 2b).
  * ========================================================================== */
 template <typename Spec>
-void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
+void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 {
+    /* The one live argument view for this call.  A ghost import can raise the particle
+     * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
+     * object as they change; the driver holds a reference to it, so the runner and every
+     * hook read the same, current values.  The caller's own copy is left untouched. */
+    neighbor_loop_args_iterative args = args_in;
 
     /* ===== Compile-time spec consistency ===== */
     static_assert(std::is_same_v<typename Spec::IterControl, Iterative>,
@@ -3758,6 +4178,20 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     }
 
     for (drv.iter_index = 0; drv.iter_index < Spec::max_iters; drv.iter_index++) {
+        if(!nlr_args_view_is_live(args)) {
+            if(ThisTask == 0) {
+                fprintf(stderr, "[run_neighbor_loop_iterative<%s>] FATAL: the argument view no longer "
+                        "describes the live particle storage at iter=%d (P=%p vs %p, num_total=%d vs %d). "
+                        "A capacity change during the call was not reflected here.\n",
+                        Spec::loop_name, drv.iter_index, (void *) args.P, (void *) P,
+                        args.num_total, NumPart);
+                fflush(stderr);
+            }
+            /* Request the stop and stay in lockstep: this loop body holds MPI collectives,
+             * so breaking out on one rank alone would hang its peers.  The stop drains at
+             * the next phase boundary. */
+            endrun(81214);
+        }
 
         /* mode_a_rebuild_csr_every_iter correctness
          * fallback. When the Spec sets
@@ -4024,12 +4458,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
     for (int sg = 0; sg < args.num_subgroups; sg++) {
         const NlrSubgroup& sgr = args.subgroups[sg];
         const int n_total = sgr.num_active_local;
-        if (n_total <= 0) continue;
-        /* Use effective_args: Mode A iterative refreshed
+        /* This loop is bounded by the subgroup's ORIGINAL active count, not by
+         * how many are still iterating, so it also has to skip a subgroup whose
+         * per-active state could never be staged: there are no results to write
+         * back, and the constructor has already asked for the stop. */
+        if (n_total <= 0 || drv.accum_uvm[sg] == nullptr) continue;
+        /* Use args: Mode A iterative refreshed
          * P/CellP/num_total after ghost import; apply_active_writeback hooks
-         * may read these for correctness. Mode B leaves effective_args ==
+         * may read these for correctness. Mode B leaves args ==
          * base args. */
-        neighbor_loop_args sub = drv.effective_args;
+        neighbor_loop_args sub = drv.args;
         sub.active_list = sgr.active_indices;
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {

@@ -39,6 +39,8 @@
 
 
 
+void report_parameters_a_restart_cannot_change(const void *from_file);
+
 void begrun(void)
 {
   struct global_data_all_processes all;
@@ -108,6 +110,11 @@ void begrun(void)
    * HDF5 library was built without zlib (no-op otherwise). See
    * file_io/hdf5_deflate_filter.cc. */
   gizmo_register_hdf5_deflate_filter();
+
+  /* Decide how big the working memory pool should be before building it. This reads only the
+   * header of the file the run is about to load, and touches nothing that the pool owns -- it has
+   * to run here because the pool is the first thing built and everything else comes out of it. */
+  gizmo_size_memory_arena();
 
   mymalloc_init();
 
@@ -272,7 +279,13 @@ void begrun(void)
 
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
-      All.BufferSize = all.BufferSize;
+      All.CommChunkSize = all.CommChunkSize;
+      /* The arena was built above, before this file was read, at a size worked out for THIS run.
+       * Keeping this run's value rather than the one recorded by the run that wrote the file is
+       * what makes that safe: a restart may be on different nodes, and every consumer of this
+       * number -- the memory ledger above all -- would otherwise report a size that is not the
+       * one actually reserved. */
+      All.WorkingMemoryPoolSize = all.WorkingMemoryPoolSize;
       All.TimeLimitCPU = all.TimeLimitCPU;
       All.ResubmitOn = all.ResubmitOn;
       All.SnapFormat = all.SnapFormat;
@@ -283,6 +296,57 @@ void begrun(void)
       All.ErrTolIntAccuracy = all.ErrTolIntAccuracy;
       All.MinGasKernelRadiusFractional = all.MinGasKernelRadiusFractional;
       All.MinGasTemp = all.MinGasTemp;
+      /* Which neighbour-loop and gravity-walk paths a step takes is a choice about how to compute,
+       * not part of the state being resumed, so a restart is free to be given different values.
+       * Without these the restart quietly kept whichever values the chain was first started with,
+       * while the startup echo reported the ones in the parameter file -- so a run could be walking
+       * a different path than its own log said, with nothing to show for it. */
+      All.NeighborLoopModeBThresholdSum = all.NeighborLoopModeBThresholdSum;
+      All.NeighborLoopModeBThresholdMax = all.NeighborLoopModeBThresholdMax;
+      All.GravityHostWalkBelowActive = all.GravityHostWalkBelowActive;
+      /* The rest of this block is the same kind of thing: how accurately or how often something is
+       * computed, rather than what is being computed.  A physical coefficient is deliberately not
+       * here -- changing one mid-run either changes the problem or, worse, changes what the data
+       * already in the restart file means. */
+#ifdef DEVELOPER_MODE
+      All.ErrTolTheta = all.ErrTolTheta;
+#endif
+#if defined(TURB_DIFFUSION) && defined(TURB_DIFF_DYNAMIC)
+      All.TurbDynamicDiffFac = all.TurbDynamicDiffFac;
+      All.TurbDynamicDiffIterations = all.TurbDynamicDiffIterations;
+      All.TurbDynamicDiffMax = all.TurbDynamicDiffMax;
+      All.TurbDynamicDiffSmoothing = all.TurbDynamicDiffSmoothing;
+#endif
+#ifdef NUCLEAR_NETWORK
+      All.NuclearBurningFloor_T = all.NuclearBurningFloor_T;
+      All.NuclearBurningFloor_rho = all.NuclearBurningFloor_rho;
+      All.NuclearNSE_T_threshold = all.NuclearNSE_T_threshold;
+#endif
+#ifdef TURB_DRIVING
+      All.TurbDriving_Global_DtTurbUpdates = all.TurbDriving_Global_DtTurbUpdates;
+#endif
+#if defined(TURB_DRIVING) && defined(TURB_DRIVING_SPECTRUMGRID)
+      All.TimeBetTurbSpectrum = all.TimeBetTurbSpectrum;
+#endif
+#if (defined(SINK_PARTICLES) || defined(GALSF_SUBGRID_WINDS)) && defined(FOF)
+      All.TimeBetOnTheFlyFoF = all.TimeBetOnTheFlyFoF;
+#endif
+#if defined(GALSF) && defined(GALSF_SUBGRID_WINDS)
+      All.WindFreeTravelDensFac = all.WindFreeTravelDensFac;
+#endif
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_WINDS)
+      All.Cell_Spawn_Mass_ratio_MS = all.Cell_Spawn_Mass_ratio_MS;
+#endif
+#ifdef SINK_WIND_SPAWN_SET_BFIELD_POLTOR
+      All.Sink_spawn_injectionradius = all.Sink_spawn_injectionradius;
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+      All.GrainPromotion_DustGasRatioThresh = all.GrainPromotion_DustGasRatioThresh;
+      All.GrainPromotion_MassThresh_cgs = all.GrainPromotion_MassThresh_cgs;
+#endif
+#ifdef CBE_INTEGRATOR
+      All.CBEMassEffFloor = all.CBEMassEffFloor;
+#endif
 #ifdef CHIMES
       All.ChimesThermEvolOn = all.ChimesThermEvolOn;
 #endif
@@ -342,10 +406,10 @@ void begrun(void)
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
         All.ArtCondConstant = all.ArtCondConstant;
 #endif
-#if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
+#if defined(MAGNETIC) && defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         All.ArtMagDispConst = all.ArtMagDispConst;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
         /* derived state, not parameters: recomputed only on global timesteps. Zeroing on restart
@@ -391,20 +455,20 @@ void begrun(void)
         All.Sink_Rad_MomentumFactor = all.Sink_Rad_MomentumFactor;
 #endif
 #endif // sinks
-#ifdef GALSF_FB_FIRE_RT_LOCALRP
+#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_LOCALRP)
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
         All.HIIRegion_fLum_Coupled = all.HIIRegion_fLum_Coupled;
 #endif
 #ifdef RT_LEBRON
         All.PhotonMomentum_Coupled_Fraction = all.PhotonMomentum_Coupled_Fraction;
 #endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+#if defined(RT_LEBRON) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         All.PhotonMomentum_fUV = all.PhotonMomentum_fUV;
         All.PhotonMomentum_fOPT = all.PhotonMomentum_fOPT;
 #endif
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
         All.SNe_Energy_Renormalization = all.SNe_Energy_Renormalization;
         All.StellarMassLoss_Rate_Renormalization = all.StellarMassLoss_Rate_Renormalization;
         All.StellarMassLoss_Energy_Renormalization = all.StellarMassLoss_Energy_Renormalization;
@@ -412,7 +476,7 @@ void begrun(void)
 #ifdef COSMIC_RAY_FLUID
       All.CosmicRayDiffusionCoeff = all.CosmicRayDiffusionCoeff;
 #endif
-#ifdef GALSF_FB_FIRE_AGE_TRACERS
+#if defined(GALSF) && defined(GALSF_FB_FIRE_AGE_TRACERS)
       All.AgeTracerRateNormalization = all.AgeTracerRateNormalization;
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
       strcpy(All.AgeTracerListFilename, all.AgeTracerListFilename);
@@ -421,7 +485,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#ifdef CR_DYNAMICAL_INJECTION_IN_SNE
+#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
@@ -488,6 +552,11 @@ void begrun(void)
 #endif
 
       if(All.TimeMax != all.TimeMax) {readjust_timebase(All.TimeMax, all.TimeMax);}
+
+      /* Everything a restart is allowed to take from the parameter file has now been taken.  Say
+       * which of the rest the file asked for and did not get, since they were read and echoed on
+       * the way in and would otherwise look as though they had been applied. */
+      report_parameters_a_restart_cannot_change(&all);
     }
 
 #ifdef GALSF_EFFECTIVE_EQS
@@ -844,12 +913,13 @@ void open_outputfiles(void)
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "balance.txt");
     if(!(FdBalance = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
     fprintf(FdBalance, "\n");
+    /* Each bucket below paints two characters into the map: work share / imbalance share.
+       Buckets with no charge site are never painted and are marked with the sentinel. */
+    fprintf(FdBalance, "unused slot    = '_' (no writer; never appears in the map)\n");
+    fprintf(FdBalance, "a character may be reused by a second bucket: the map is painted in the\n");
+    fprintf(FdBalance, "order listed here, each bucket contiguous, so position separates the two.\n");
     fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1], CPU_SymbolImbalance[CPU_TREEWALK1]);
-    fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2], CPU_SymbolImbalance[CPU_TREEWALK2]);
-    fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1], CPU_SymbolImbalance[CPU_TREEWAIT1]);
     fprintf(FdBalance, "Treewait2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT2], CPU_SymbolImbalance[CPU_TREEWAIT2]);
-    fprintf(FdBalance, "Treesend       = '%c' / '%c'\n", CPU_Symbol[CPU_TREESEND], CPU_SymbolImbalance[CPU_TREESEND]);
-    fprintf(FdBalance, "Treerecv       = '%c' / '%c'\n", CPU_Symbol[CPU_TREERECV], CPU_SymbolImbalance[CPU_TREERECV]);
     fprintf(FdBalance, "Treebuild      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEBUILD], CPU_SymbolImbalance[CPU_TREEBUILD]);
     fprintf(FdBalance, "Treehmaxupdate = '%c' / '%c'\n", CPU_Symbol[CPU_TREEHMAXUPDATE], CPU_SymbolImbalance[CPU_TREEHMAXUPDATE]);
     fprintf(FdBalance, "Treemisc =       '%c' / '%c'\n", CPU_Symbol[CPU_TREEMISC], CPU_SymbolImbalance[CPU_TREEMISC]);
@@ -859,8 +929,11 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Gradients      = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT], CPU_SymbolImbalance[CPU_DENSWAIT]);
     fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC], CPU_SymbolImbalance[CPU_DENSMISC]);
     fprintf(FdBalance, "Ghost import   = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT], CPU_SymbolImbalance[CPU_GHOSTIMPORT]);
+    fprintf(FdBalance, "Ghost imp corr = '%c' / '%c'\n", CPU_Symbol[CPU_GHOSTIMPORT_SYMM], CPU_SymbolImbalance[CPU_GHOSTIMPORT_SYMM]);
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
+    fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_KICKS], CPU_SymbolImbalance[CPU_KICKS]);
+    fprintf(FdBalance, "Log & stats    = '%c' / '%c'\n", CPU_Symbol[CPU_LOGMSG], CPU_SymbolImbalance[CPU_LOGMSG]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
     fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT], CPU_SymbolImbalance[CPU_SNAPSHOT]);
@@ -886,6 +959,8 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Pair kernel    = '%c' / '%c'\n", CPU_Symbol[CPU_PAIR_KERNEL],        CPU_SymbolImbalance[CPU_PAIR_KERNEL]);
     fprintf(FdBalance, "Sink env       = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_ENV],          CPU_SymbolImbalance[CPU_SINK_ENV]);
     fprintf(FdBalance, "Sink feed/swk  = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_FEEDSWK],      CPU_SymbolImbalance[CPU_SINK_FEEDSWK]);
+    fprintf(FdBalance, "Sidx refresh   = '%c' / '%c'\n", CPU_Symbol[CPU_SIDX_REFRESH],      CPU_SymbolImbalance[CPU_SIDX_REFRESH]);
+    fprintf(FdBalance, "Tree update    = '%c' / '%c'\n", CPU_Symbol[CPU_FORCE_UPDATE_TREE], CPU_SymbolImbalance[CPU_FORCE_UPDATE_TREE]);
     fprintf(FdBalance, "\n");
 #endif
 
@@ -1020,6 +1095,72 @@ void open_outputfiles(void)
 
 
 
+/* What the parameter file actually set, recorded as it is read.  Resuming from a restart file takes
+ * most of All from that file, so a parameter that is not one of the few copied back above is read,
+ * echoed, and then quietly replaced -- which reads exactly like it took effect.  Keeping the field's
+ * position rather than its name lets one loop report every such parameter without a line of code per
+ * parameter.  Only fields inside All are kept: a handful of parameters point elsewhere, and those
+ * are not what a restart file overwrites. */
+#define PARAMETERS_FROM_FILE_MAX 300
+static struct { char name[64]; size_t offset; int kind; } ParametersFromFile[PARAMETERS_FROM_FILE_MAX];
+static int NParametersFromFile = 0;   /* kind: 0 floating point, 1 integer, 2 text */
+
+static void note_parameter_from_file(const char *name, void *address, int kind)
+{
+    if(NParametersFromFile >= PARAMETERS_FROM_FILE_MAX) {return;}
+    char *base = (char *) &All, *end = base + sizeof(All), *p = (char *) address;
+    if(p < base || p >= end) {return;}
+    snprintf(ParametersFromFile[NParametersFromFile].name, sizeof(ParametersFromFile[0].name), "%s", name);
+    ParametersFromFile[NParametersFromFile].offset = (size_t) (p - base);
+    ParametersFromFile[NParametersFromFile].kind = kind;
+    NParametersFromFile++;
+}
+
+/*! Report the parameters this run was given but cannot use, because resuming from a restart file
+ *  takes them from the file instead.  Called once, after the restart state has been read and the
+ *  handful of parameters a restart may change have been copied back, with `from_file` being All as
+ *  the parameter file left it. */
+void report_parameters_a_restart_cannot_change(const void *from_file)
+{
+    if(ThisTask != 0) {return;}
+    int reported = 0;
+    for(int p = 0; p < NParametersFromFile; p++)
+    {
+        const char *in_use = (const char *) &All + ParametersFromFile[p].offset;
+        const char *wanted = (const char *) from_file + ParametersFromFile[p].offset;
+        char shown_use[64], shown_want[64];
+        int differs = 0;
+        switch(ParametersFromFile[p].kind)
+        {
+            case 0:
+                differs = (*(const double *) in_use != *(const double *) wanted);
+                snprintf(shown_use, sizeof(shown_use), "%g", *(const double *) in_use);
+                snprintf(shown_want, sizeof(shown_want), "%g", *(const double *) wanted);
+                break;
+            case 1:
+                differs = (*(const int *) in_use != *(const int *) wanted);
+                snprintf(shown_use, sizeof(shown_use), "%d", *(const int *) in_use);
+                snprintf(shown_want, sizeof(shown_want), "%d", *(const int *) wanted);
+                break;
+            default:
+                differs = (strcmp(in_use, wanted) != 0);
+                snprintf(shown_use, sizeof(shown_use), "%.60s", in_use);
+                snprintf(shown_want, sizeof(shown_want), "%.60s", wanted);
+                break;
+        }
+        if(!differs) {continue;}
+        if(!reported)
+        {
+            printf("\nResuming from a restart file, so the following cannot be taken from the parameter\n"
+                   "file: each keeps the value the run was started with. Begin from an initial condition\n"
+                   "or a snapshot to change them.\n");
+        }
+        reported++;
+        printf("   %-46s parameter file: %-16s in use: %s\n", ParametersFromFile[p].name, shown_want, shown_use);
+    }
+    if(reported) {printf("\n"); fflush(stdout);}
+}
+
 /*! This function parses the parameterfile in a simple way.  Each paramater is
  *  defined by a keyword (`tag'), and can be either of type douple, int, or
  *  character string.  The routine makes sure that each parameter appears
@@ -1037,7 +1178,6 @@ void read_parameter_file(char *fname)
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
     int i, j, nt, id[MAXTAGS], pnum, errorFlag = 0;
     void *addr[MAXTAGS];
-    double safe_memorypertask = mpi_report_comittable_memory(0,0); /* used for some checks below */
 #ifdef CHIMES
     double Tdust_buf, Tmol_buf, relTol_buf, absTol_buf, expTol_buf, z_reion_buf;
 #endif
@@ -1144,9 +1284,9 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.BoxSize;
       id[nt++] = REAL;
 
-      strcpy(tag[nt], "MaxMemSize");
-      strcpy(alternate_tag[nt], "Max_Memory_Per_MPI_Task_in_MB");
-      addr[nt] = &All.MaxMemSize;
+      strcpy(tag[nt], "WorkingMemoryPoolSize");
+      strcpy(alternate_tag[nt], "Working_Mem_Pool_Per_Task_in_MB");
+      addr[nt] = &All.WorkingMemoryPoolSize;
       id[nt++] = INT;
 
       strcpy(tag[nt], "TimeOfFirstSnapshot");
@@ -1206,11 +1346,6 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "TreeDomainUpdateFrequency");
       strcpy(alternate_tag[nt], "TreeRebuild_ActiveFraction");
       addr[nt] = &All.TreeDomainUpdateFrequency;
-      id[nt++] = REAL;
-
-      strcpy(tag[nt], "LETAllocFactor");
-      strcpy(alternate_tag[nt], "LET_ForeignNode_HeadroomFactor");
-      addr[nt] = &All.LETAllocFactor;
       id[nt++] = REAL;
 
 #ifdef MHD_MODIFIED_GRADIENT
@@ -1652,6 +1787,10 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.NeighborLoopModeBThresholdMax;
         id[nt++] = INT;
 
+        strcpy(tag[nt], "GravityHostWalkBelowActive");
+        addr[nt] = &All.GravityHostWalkBelowActive;
+        id[nt++] = INT;
+
 
 #ifdef SUBFIND
       strcpy(tag[nt], "DesLinkNgb");
@@ -1780,9 +1919,9 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SofteningBndryMaxPhys;
       id[nt++] = REAL;
 
-      strcpy(tag[nt], "BufferSize");
-      strcpy(alternate_tag[nt], "MPI_Buffersize_in_MB");
-      addr[nt] = &All.BufferSize;
+      strcpy(tag[nt], "CommChunkSize");
+      strcpy(alternate_tag[nt], "MPI_Comm_Chunk_Size_in_MB");
+      addr[nt] = &All.CommChunkSize;
       id[nt++] = REAL;
 
       strcpy(tag[nt], "PartAllocFactor");
@@ -2545,6 +2684,9 @@ void read_parameter_file(char *fname)
 
                     if(j >= 0)
                     {
+                        /* Remember that the file set this one, so a restart can report the ones it
+                         * is about to override rather than echoing them as though they took. */
+                        note_parameter_from_file(buf1, addr[j], (id[j] == REAL) ? 0 : ((id[j] == INT) ? 1 : 2));
                         switch (id[j])
                         {
                             case REAL:
@@ -2607,7 +2749,7 @@ void read_parameter_file(char *fname)
             {
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume this is a NON-cosmological (static-spacetime) simulation (=%d) \n",tag[i],alternate_tag[i],All.ComovingIntegrationOn); continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume the snapshots will be output at user-specified intervals rather than adopting a list from a given file (=%d) \n",tag[i],alternate_tag[i],All.OutputListOn); continue;}
-                if(strcmp("BufferSize",tag[i])==0) {*((double *)addr[i])=100; printf("Tag %s (%s) not set in parameter file: defaulting to 100MB MPI Buffer allocation (adjust if needed for your machine) (=%g) \n",tag[i],alternate_tag[i],All.BufferSize); continue;}
+                if(strcmp("CommChunkSize",tag[i])==0) {*((double *)addr[i])=comm_chunk_megabytes_default(); printf("Tag %s (%s) not set in parameter file: sending particle data between tasks in chunks of %g MB. Set it here only to override that.\n",tag[i],alternate_tag[i],All.CommChunkSize); continue;}
             }
         }
         /* ok now safe to do a loop that has statements (e.g. if's) which can depend on some of the variables above */
@@ -2618,12 +2760,10 @@ void read_parameter_file(char *fname)
                 /* skip the flags we already addressed above so we dont throw an unintentional error */
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {continue;}
-                if(strcmp("BufferSize",tag[i])==0) {continue;}
+                if(strcmp("CommChunkSize",tag[i])==0) {continue;}
                 /* now move on to the flags we have not addressed already */
-                //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.99*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */
-                //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.93*safe_memorypertask-All.BufferSize); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
-                if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.90*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
+                if(strcmp("WorkingMemoryPoolSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
                 if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to only main-task writes (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
                 if(strcmp("NumFilesPerSnapshot",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to single-file snapshots (=%d) \n",tag[i],alternate_tag[i],All.NumFilesPerSnapshot); continue;}
@@ -2664,6 +2804,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the interaction kernel. Trying to set a reasonable guess of =%g based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.DesNumNgb); continue;}
                 if(strcmp("NeighborLoopModeBThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_sum */
                 if(strcmp("NeighborLoopModeBThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop uses its Spec::modeb_threshold_max */
+                if(strcmp("GravityHostWalkBelowActive",tag[i])==0) {*((int *)addr[i])=10000; printf("Tag %s (%s) not set in parameter file: defaulting to run the gravity walk and the dynamic tree update on the host below %d RANK-LOCAL active candidates per step (0 would disable this and always use the device path). \n",tag[i],alternate_tag[i],All.GravityHostWalkBelowActive); continue;}
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
                 if(strcmp("AGS_DesNumNgb",tag[i])==0) {*((double *)addr[i])=(0.5*(KERNEL_NMIN+KERNEL_NMAX)); printf("Tag %s (%s) not set in parameter file: you did not set a target effective neighbor number for the adaptive-gravity (non-fluid) interaction kernel. Trying to set a reasonable guess (=%g) based on the kernel specified, but PLEASE CHECK that this is intended and experiment with different values or set your own for safety. \n",tag[i],alternate_tag[i],All.AGS_DesNumNgb); continue;}
 #endif
@@ -2675,7 +2816,6 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
-                if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom; increase if LET unpack overflows) (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif
@@ -2693,7 +2833,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("CBECollisionCrossSection",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 = collisions disabled (=%g) \n",tag[i],alternate_tag[i],All.CBECollisionCrossSection); continue;}
 #endif
                 if(strcmp("TimeLimitCPU",tag[i])==0) {*((double *)addr[i])=8.6e4; printf("Tag %s (%s) not set in parameter file: defaulting to 24-hours before auto-shutdown (=%g) \n",tag[i],alternate_tag[i],All.TimeLimitCPU); continue;}
-                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=10.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (needed for ghost particle headroom in multi-rank runs) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
+                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=2.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (the largest local particle imbalance the decomposition may produce; room for imported ghosts is measured and added separately) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
 #if !(defined(BOX_PERIODIC) || defined(BOX_SHEARING) || defined(BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE) || defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z))
                 if(strcmp("BoxSize",tag[i])==0) {*((double *)addr[i])=0; continue;} /* can ignore box size */
 #endif
@@ -3056,10 +3196,10 @@ void read_parameter_file(char *fname)
 #endif
 
     /* now we're going to do a bunch of checks */
-    if(All.MaxMemSize > safe_memorypertask)
-    {
-        if(ThisTask==0) {printf("WARNING: MaxMemSize (Max_Memory_Per_MPI_Task_in_MB=%d) is currently set to a larger value than the maximum safe amount of memory recommended per task, given by pinging the system for allocatable memory and dividing it among the tasks per node (=%g MB). Depending on the details of your node and core configuration and memory use, this may work, but it is not safe, and can crash if too many processes on a node try to use their full memory at once.\n",All.MaxMemSize,safe_memorypertask); fflush(stdout);}
-    }
+    /* The working memory pool is checked against what this machine can give a task in
+       gizmo_size_memory_arena(), which runs after this and sees the size whether it came from here
+       or was worked out from the run itself. Checking it here as well would miss the second case
+       and say it twice in the first. */
     if((All.ErrTolIntAccuracy<=0)||(All.ErrTolIntAccuracy>0.05))
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);
@@ -3080,13 +3220,13 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("NeighborLoopModeBThresholdMax must be >= -1 (-1 = unset/use per-loop defaults, 0 = disable Mode B on adaptive paths, positive = threshold)\n");} endrun(1);
     }
+    if(All.GravityHostWalkBelowActive < 0)
+    {
+        if(ThisTask==0) {printf("GravityHostWalkBelowActive must be >= 0 (0 = no count-based host routing, positive = rank-local active-candidate count below which the host walk is used)\n");} endrun(1);
+    }
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {
         if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n");} endrun(1);
-    }
-    if(All.LETAllocFactor <= 0)
-    {
-        if(ThisTask==0) {printf("LETAllocFactor must be >0 in GPU builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n");} endrun(1);
     }
     if((All.MaxRMSDisplacementFac<=0)||(All.MaxRMSDisplacementFac>0.25))
     {

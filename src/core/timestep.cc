@@ -67,7 +67,9 @@ void find_timesteps(void)
             if(P[i].Type==0)
             {
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
-                double vsig1 = sqrt( CellP[i].effective_soundspeed()*CellP[i].effective_soundspeed() + fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density );
+                double vA2_for_vsig = 0; // the magnetic term needs a density to divide by; a cell without one contributes only its sound speed, rather than an infinity that this max-reduction would then spread to every rank
+                if(CellP[i].Density > 0) {vA2_for_vsig = fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density;}
+                double vsig1 = sqrt( CellP[i].effective_soundspeed()*CellP[i].effective_soundspeed() + vA2_for_vsig );
                 double vsig0 = DMAX(vsig1,vsig2);
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
@@ -676,6 +678,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
 
 #ifdef CONDUCTION
+            if(CellP[p].Kappa_Conduction > 0) /* no conductivity means no conduction constraint at all; without this test the regularizer below stands in for the zero and returns a finite limit that is not physical. A real conductivity at low density genuinely does demand a short step, so that case is left alone */
             {
                 double L_cond_inv = sqrt(CellP[p].Gradients.InternalEnergy[0]*CellP[p].Gradients.InternalEnergy[0] +
                                          CellP[p].Gradients.InternalEnergy[1]*CellP[p].Gradients.InternalEnergy[1] +
@@ -840,7 +843,8 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif // explicit-solver check
 #if defined(RT_RAD_PRESSURE_FORCES) // -regardless- of if using an explicit solver, here the acceleration isn't saved to Rad_Accel so we calculate that timestep constraint
                     double gradErad = CellP[p].Gradients.Rad_E_gamma_ET[kf].norm_sq();
-                    double radacc = CellP[p].flux_limiter(kf) * (sqrt(gradErad) / CellP[p].Density) / All.cf_atime; // radiation acceleration for a timestep criterion
+                    double radacc = 0; // radiation acceleration for a timestep criterion; needs a density to divide by, and a cell without one imposes no constraint here
+                    if(CellP[p].Density > 0) {radacc = CellP[p].flux_limiter(kf) * (sqrt(gradErad) / CellP[p].Density) / All.cf_atime;}
                     if(gradErad > 0 && radacc > 0)
                     {
                         double dt_radacc = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * DMAX(ForceSoftening_KernelRadius(p), P[p].KernelRadius) / radacc);
@@ -902,6 +906,7 @@ integertime get_timestep(int p,		/*!< particle index */
             
 
 #ifdef VISCOSITY
+            if((CellP[p].Eta_ShearViscosity != 0) || (CellP[p].Zeta_BulkViscosity != 0)) /* no viscosity means no viscous constraint: same stand-in-regularizer trap as the conduction step above */
             {
                 int kv1; double dv_mag=0,v_mag=1.0e-33;
                 v_mag += P[p].Vel.norm_sq();
@@ -949,9 +954,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(DIVBCLEANING_DEDNER)
             double fac_magnetic_pressure = 1. / All.cf_atime;
             double phi_b_units = Get_Gas_PhiField(p) / ( All.cf_atime * CellP[p].MaxSignalVel);
-            double vsig1 =  sqrt( CellP[p].effective_soundspeed()*CellP[p].effective_soundspeed() +
-                    fac_magnetic_pressure * (CellP[p].Bfield().norm_sq() +
-                                             phi_b_units*phi_b_units) / CellP[p].Density );
+            double vA2_for_vsig = 0; // as in the fast-wavespeed scan above: no density to divide by means no magnetic contribution here, not an infinite signal speed
+            if(CellP[p].Density > 0) {vA2_for_vsig = fac_magnetic_pressure * (CellP[p].Bfield().norm_sq() + phi_b_units*phi_b_units) / CellP[p].Density;}
+            double vsig1 =  sqrt( CellP[p].effective_soundspeed()*CellP[p].effective_soundspeed() + vA2_for_vsig );
 
             dt_courant = 0.8 * All.CourantFac * (All.cf_atime*L_particle) / vsig1; // 2.0 factor may be added (PFH) //
             if(dt_courant < dt) {dt = dt_courant;}

@@ -3,7 +3,7 @@
  * GPU implementation of the local-tree moment refresh that mirrors the
  * CPU code in force_refresh_node_moments (gravity/forcetree.cc:3826).
  * The CPU body is a 4-step pass (zero / particle-accumulate / bottom-up
- * propagate / normalize) over Nodes[MaxPart .. MaxPart+Numnodestree).
+ * propagate / normalize) over Nodes[tree_base .. tree_base+Numnodestree).
  *
  * On the GPU we use 5 device kernels with dependency-counter atomics so
  * the bottom-up walk parallelises:
@@ -134,6 +134,22 @@ gpu_force_softening_kernelradius(const struct particle_data *Pp, int p)
 /* (rt_get_source_luminosity, sink_lum_bol, cr_get_source_injection_rate)*/
 /* are not GPU-callable.                                                */
 /* =================================================================== */
+/* Exhaustion is reported by returning NULL, which the pool guards below -- free
+ * the pool, hand the caller a soft bad-stop -- are written against. The space is
+ * a template parameter here because the raw mirror pool picks its space by
+ * config; on builds where the spaces coincide the branches collapse. */
+template <class Space>
+static void *mr_alloc(const char *label, size_t bytes)
+{
+    if constexpr (std::is_same<Space, GIZMO_KOKKOS_SHARED_SPACE>::value) {
+        return gizmo_gpu_alloc_shared(bytes, label);
+    } else if constexpr (std::is_same<Space, Kokkos::HostSpace>::value) {
+        return gizmo_gpu_alloc_host(bytes, label);
+    } else {
+        return gizmo_gpu_alloc_device(bytes, label);
+    }
+}
+
 namespace {
 struct precomputed_t {
 #ifdef RT_USE_GRAVTREE
@@ -154,7 +170,7 @@ struct precomputed_t {
 
 /* Persistent grow-and-keep pool for the per-particle source-input buffers,
  * mirroring the gpu_gravity_tree.cc SoA idiom: reused across refreshes,
- * reallocated only when NumPart grows, freed at GPU gravity teardown
+ * reallocated only when NumPart grows, freed when the tree is freed
  * (gpu_moment_refresh_release).  Removes per-refresh allocator churn. */
 static precomputed_t pre_persist_ = {};
 static int           pre_cap_     = 0;   /* current capacity in particles */
@@ -169,21 +185,21 @@ static int precompute_ensure_(int N)
 #if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
     precomputed_t& pre = pre_persist_;
 #ifdef RT_USE_GRAVTREE
-    pre.src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum", (long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
+    pre.src_lum = (MyFloat *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum", (long)N * N_RT_FREQ_BINS * sizeof(MyFloat));
     if(!pre.src_lum) {printf("gpu_moment_refresh: src_lum alloc failed\n"); endrun(913301); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #ifdef CHIMES_STELLAR_FLUXES
-    pre.src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_g0", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
-    pre.src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_ion", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    pre.src_lum_G0  = (double *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_g0", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    pre.src_lum_ion = (double *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_srclum_ion", (long)N * CHIMES_LOCAL_UV_NBINS * sizeof(double));
     if(!pre.src_lum_G0 || !pre.src_lum_ion) {printf("gpu_moment_refresh: CHIMES alloc failed\n"); endrun(913302); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    pre.bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhlum", (long)N * sizeof(MyFloat));
-    pre.bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhangle", (long)N * sizeof(Vec3<MyFloat>));
+    pre.bh_lum   = (MyFloat *)       mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhlum", (long)N * sizeof(MyFloat));
+    pre.bh_angle = (Vec3<MyFloat> *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_bhangle", (long)N * sizeof(Vec3<MyFloat>));
     if(!pre.bh_lum || !pre.bh_angle) {printf("gpu_moment_refresh: bh_lum alloc failed\n"); endrun(913303); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    pre.cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_crinject", (long)N * sizeof(MyFloat));
+    pre.cr_inject = (MyFloat *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_crinject", (long)N * sizeof(MyFloat));
     if(!pre.cr_inject) {printf("gpu_moment_refresh: cr_inject alloc failed\n"); endrun(913304); precompute_free_(pre); pre_cap_ = 0; return 1;}
 #endif
 #endif
@@ -269,8 +285,8 @@ static void precompute_free_(precomputed_t& pre)
 /* ------------------------------------------------------------------ */
 /* Father[i] mirror in SharedSpace.  Persistent grow-and-keep pool      */
 /* (same idiom as the source-input pool above): grown only when NumPart */
-/* grows, refilled from Father[] every refresh, freed at GPU gravity     */
-/* teardown (gpu_moment_refresh_release).                                */
+/* grows, refilled from Father[] every refresh, freed when the tree is  */
+/* freed (gpu_moment_refresh_release).                                   */
 /* ------------------------------------------------------------------ */
 static int *fmirror_persist_ = NULL;
 static int  fmirror_cap_     = 0;   /* current capacity in particles */
@@ -279,11 +295,19 @@ static int *father_mirror_ensure_(int N)
 {
     if(fmirror_cap_ < N) {
         if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
-        fmirror_persist_ = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_fmirror", (long)N * sizeof(int));
+        fmirror_persist_ = (int *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_fmirror", (long)N * sizeof(int));
         if(!fmirror_persist_) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); fmirror_cap_ = 0; return NULL;}
         fmirror_cap_ = N;
     }
-    for(int i = 0; i < N; i++) {fmirror_persist_[i] = Father[i];}
+    /* Father[] only has All.TreeParticleSlots entries, while N counts every particle P[] holds, and
+     * that can be the larger of the two once the particle capacity is raised mid-step.  Slots beyond
+     * the tree's own are filled with the value the tree already uses for a particle it does not
+     * contain, so consumers treat them as absent instead of reading past the array.  Imported ghosts
+     * need no special handling here: their slots were not in the tree at its last build, so they
+     * already carry that same value. */
+    const int ncopy = (N < All.TreeParticleSlots) ? N : All.TreeParticleSlots;
+    for(int i = 0; i < ncopy; i++) {fmirror_persist_[i] = Father[i];}
+    for(int i = ncopy; i < N; i++) {fmirror_persist_[i] = -1;}
     return fmirror_persist_;
 }
 
@@ -478,9 +502,12 @@ static int mr_rawpool_ensure_(int n)
     if(raw_cap_ >= n) {return 0;}        /* capacity already sufficient: reuse */
     mr_rawpool_free_();                  /* drop the smaller pool before growing */
     int fail = 0;
+/* Stop asking once one request has failed: the node is out of memory at the size this pool
+ * needs, and the remaining fields would only add to the pressure before the caller stops. */
 #define MRALLOC(p, count) do { \
-        raw_.p = (decltype(raw_.p)) Kokkos::kokkos_malloc<MrMemSpace>("treescratch_moment_raw_" #p, (long)(count) * sizeof(*raw_.p)); \
-        if(!raw_.p) { fail = 1; } } while(0)
+        if(!fail) { \
+            raw_.p = (decltype(raw_.p)) mr_alloc<MrMemSpace>("treescratch_moment_raw_" #p, (long)(count) * sizeof(*raw_.p)); \
+            if(!raw_.p) { fail = 1; } } } while(0)
     MRALLOC(pending, n); MRALLOC(mass, n);    MRALLOC(s, n);       MRALLOC(vs, n);     MRALLOC(Npart, n);
     MRALLOC(hmax, n);    MRALLOC(vmax, n);    MRALLOC(divVmax, n); MRALLOC(maxsoft, n); MRALLOC(bitflags, n);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
@@ -731,17 +758,17 @@ static void mr_normalize_payloads_(const mr_scratch_t& scr, int k, const Vec3<My
 }
 
 /* Pending-counter init launcher.  For each k in [0..n_iter), atomically
- * increments pending[father(k) - MaxPart] when father falls within
+ * increments pending[father(k) - tree_base] when father falls within
  * [range_lo, range_hi).  The topnode-subtree variant passes a
  * restricted iteration range + filter. */
 static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> pending,
-                                     int *father_soa, int MaxPart,
+                                     int *father_soa, int tree_base,
                                      int n_iter, int range_lo, int range_hi)
 {
     Kokkos::parallel_for("mr_pending_init", n_iter, KOKKOS_LAMBDA(int k) {
         int f = father_soa[k];
         if(f >= range_lo && f < range_hi) {
-            Kokkos::atomic_inc(&pending(f - MaxPart));
+            Kokkos::atomic_inc(&pending(f - tree_base));
         }
     });
 }
@@ -759,7 +786,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int n          = Numnodestree;       /* number of internal nodes [0..n) in SoA */
-    int MaxPart    = All.MaxPart;
+    int tree_base    = All.TreeNodeIndexBase;
     int N          = NumPart;
 
     /* ---------------- 1. arenas / SoA / per-particle precompute -------- */
@@ -810,8 +837,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     /* ---------------- Kernel 2: pending counter init ------------------- */
-    mr_pending_init_launch_(scr.pending, father_soa, MaxPart, n,
-                             MaxPart, MaxPart + n);
+    mr_pending_init_launch_(scr.pending, father_soa, tree_base, n,
+                             tree_base, tree_base + n);
 
     /* ---------------- Kernel 3: particle pass -------------------------- */
     double maxKR = All.MaxKernelRadius;
@@ -831,8 +858,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 #endif
     Kokkos::parallel_for("mr_part_accum", N, KOKKOS_LAMBDA(int i) {
         int f = fmirror[i];
-        if(f < MaxPart || f >= MaxPart + n) {return;}
-        int k = f - MaxPart;
+        if(f < tree_base || f >= tree_base + n) {return;}
+        int k = f - tree_base;
         const struct particle_data *pa = &P_dev[i];
 
         /* Load this leaf's fields + per-particle precomputes into the shared kernel's POD (native
@@ -884,8 +911,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
         int curr = k0;
         while(true) {
             int f = father_soa[curr];
-            if(f < MaxPart || f >= MaxPart + n) {return;}
-            int kp = f - MaxPart;
+            if(f < tree_base || f >= tree_base + n) {return;}
+            int kp = f - tree_base;
             mr_propagate_to_parent_(scr, curr, kp);
             int prev = Kokkos::atomic_fetch_sub(&scr.pending(kp), 1);
             if(prev != 1) {return;}
@@ -971,7 +998,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 
     /* ---------------- cleanup ----------------------------------------- */
     /* The source-input + Father-mirror pools are persistent (grow-and-keep);
-     * they are reused next refresh and freed only at GPU gravity teardown
+     * they are reused next refresh and freed when the tree is freed
      * (gpu_moment_refresh_release).  No per-call free here. */
     (void) fmirror;
 
@@ -979,11 +1006,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 }
 
 /* =================================================================== */
-/* Free the persistent gpu_moment_refresh scratch pools.  Attached to    */
-/* the existing gpu_gravity_tree_release() teardown API (alongside the    */
-/* SoA + force-drift pools).  Note: that release API is not yet invoked   */
-/* before Kokkos::finalize -- the pre-finalize release plumbing for the   */
-/* GPU persistent pools is a pre-existing cross-subsystem cleanup item.   */
+/* Free the persistent gpu_moment_refresh scratch pools.  Reached through */
+/* gpu_gravity_tree_release() (alongside the SoA + force-drift pools),    */
+/* which force_treefree() calls, so these pools are dropped and regrown   */
+/* once per tree epoch rather than held for the whole run.                */
 /* =================================================================== */
 extern "C" void gpu_moment_refresh_release(void)
 {
@@ -1005,10 +1031,10 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
 {
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {return;}
-    int MaxPart = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
 
     for(int k = 0; k < n; k++) {
-        int no = MaxPart + k;
+        int no = tree_base + k;
         Nodes[no].u.d.mass     = (MyFloat) soa->mass[k];
         Nodes[no].u.d.s        = Vec3<MyFloat>{(MyFloat) soa->s[k][0],
                                                 (MyFloat) soa->s[k][1],

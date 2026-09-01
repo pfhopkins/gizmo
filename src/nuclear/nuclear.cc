@@ -202,8 +202,22 @@ void nuclear_parent_routine(void)
     static const int GPU_BURN_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_BURN_BATCH_SIZE) ? N_active : GPU_BURN_BATCH_SIZE;
-    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
+    struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct particle_data), NULL);
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct gas_cell_data), NULL);
+    if(!compact_P || !compact_Cell) {
+        /* No batch buffers means this rank burns nothing this step. The count is
+         * zeroed rather than returning, so the loop below runs zero batches and
+         * any collective past it is still reached by every rank. */
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "nuclear burning: could not stage a batch of %d cells (%.1f MB); "
+                 "no burning is applied on this rank",
+                 batch_cap,
+                 (double)((size_t) batch_cap * (sizeof(struct particle_data)
+                                                + sizeof(struct gas_cell_data))) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7720, msg, __FILE__, __LINE__, __FUNCTION__);
+        N_active = 0;
+    }
 
     for (int batch_start = 0; batch_start < N_active; batch_start += GPU_BURN_BATCH_SIZE) {
         int batch_n = N_active - batch_start;
@@ -239,8 +253,8 @@ void nuclear_parent_routine(void)
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+    if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+    if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
 
   } else
 #endif

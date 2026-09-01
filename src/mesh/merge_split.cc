@@ -580,11 +580,29 @@ void merge_and_split_particles(void)
     so care needs to be taken modifying this so that it's done in a way that is (1) conservative, (2) minimizes perturbations to the
     volumetric quantities of the flow, and (3) doesn't crash the tree or lead to particle 'overlap'
     Modified by Takashi Okamoto on 20/6/2019.  */
+/*! Elements this rank wanted to create since the last domain boundary and could not, for want of
+    particle storage.  Splitting refuses rather than growing storage under it -- growing mid-step
+    would move arrays the tree and the active list are standing on -- so the demand is remembered
+    here and the next domain boundary, which is where capacity may move freely, adds it to what it
+    asks for.  Per-rank and never communicated: the boundary consumes it locally, exactly as it
+    does the ghost-import high-water beside it. */
+static int UnmetSplitDemand = 0;
+int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
+void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
+
 int split_particle_i(int i, int n_particles_split, int i_nearest)
 {
     double mass_of_new_particle;
-    if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
+    const int out_of_storage = ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas)))
+                               || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart));
+    if( out_of_storage
+        || !gizmo_particle_index_fits_live_tree(NumPart + n_particles_split + 1) )   /* splitting runs before the tree is torn down, and the rearrange that follows reads each particle's parent */
     {
+        /* Only storage is remembered: a slot the standing tree cannot index is not a shortage of
+           anything, and the next tree is built wide enough for the capacity that exists. */
+        /* Bounded: a run pinned at its capacity ceiling refuses splits every step, and the count
+           is only ever a request for slots, so it never needs to exceed what a rank could hold. */
+        if(out_of_storage && UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;}
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
         return 0;
         endrun(8888);
@@ -1191,17 +1209,20 @@ static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sib
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
-    no = All.MaxPart;
+    no = All.TreeNodeIndexBase;
 
-    while(no >= 0){ // walk the whole tree, starting from the root node (=All.MaxPart)
-        if(no < All.MaxPart) { // we got a particle
+    while(no >= 0){ // walk the whole tree, starting from the root node (=All.TreeNodeIndexBase)
+        if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {
+            /* No valid object lives between the particle slots and the node index base: malformed tree. */
+            endrun(90001024); break;}
+        if(no < All.TreeParticleSlots) { // we got a particle
             next=Nextnode[no];
             if(no != i && no != j){ // don't mess with Nextnodes if looking at i or j - handle that separately
                 if(next == i) {Nextnode[no] = j; previous_node_i = no;}
                 else if(next == j) { Nextnode[no] = i; previous_node_j = no;}
             }
             no = next;
-        } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (LET)
+        } else if(no < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (LET)
             next = Nodes[no].u.d.nextnode;
             if(next == i) { previous_node_i = no; rearrange_set_node_nextnode(no, j);}
             else if(next == j) { previous_node_j = no; rearrange_set_node_nextnode(no, i);}
@@ -1209,7 +1230,7 @@ void swap_treewalk_pointers(int i, int j){
             else if(Nodes[no].u.d.sibling == j) { rearrange_set_node_sibling(no, i); pre_sibling_j = no;}
             no = next;
         } else { // pseudoparticle (index shifted up by MaxForeignNodes)
-            int pseudo_idx = no - MaxNodes - MaxForeignNodes;
+            int pseudo_idx = All.TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes);
             next = Nextnode[pseudo_idx];
             if(next==i) {Nextnode[pseudo_idx] = j;}
             else if(next == j) {Nextnode[pseudo_idx] = i;}
@@ -1239,19 +1260,20 @@ void swap_treewalk_pointers(int i, int j){
 */
 void remove_particle_from_treewalk(int i){
     int no, next;
-    long iter = 0, iter_max = (long)All.MaxPart + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
-    no = All.MaxPart;
+    long iter = 0, iter_max = (long)All.TreeParticleSlots + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
+    no = All.TreeNodeIndexBase;
     while(no >= 0){ // walk the tree to find anything that might point to i and redirect it to i's nextnode
-        if(no < All.MaxPart){
+        if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {endrun(90001024); break;} /* gap: malformed tree */
+        if(no < All.TreeParticleSlots){
             next = Nextnode[no];
             if(Nextnode[no] == i) {Nextnode[no] = Nextnode[i];}
-        } else if (no < All.MaxPart + MaxNodes + MaxForeignNodes){ // local or foreign tree node (LET; must match swap_treewalk_pointers)
+        } else if (no < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes){ // local or foreign tree node (LET; must match swap_treewalk_pointers)
             next = Nodes[no].u.d.nextnode;
             if(next == i) {rearrange_set_node_nextnode(no, Nextnode[i]);}
             if(Nodes[no].u.d.sibling == i) {rearrange_set_node_sibling(no, Nextnode[i]);}
         } else { // pseudoparticle (index shifted up by MaxForeignNodes)
-            next = Nextnode[no - MaxNodes - MaxForeignNodes];
-            if(next == i) {Nextnode[no - MaxNodes - MaxForeignNodes] = Nextnode[i];}
+            next = Nextnode[All.TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
+            if(next == i) {Nextnode[All.TreeParticleSlots + (no - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)] = Nextnode[i];}
         }
         no = next;
         if(++iter > iter_max){ // corrupt/cyclic chain: stop gracefully instead of hanging forever

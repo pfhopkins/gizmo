@@ -118,12 +118,12 @@ void mode_b_local_neighbor_walk(const double pos[3],
  * from slot layout. build() once per call; read-only during the walk, so ONE
  * instance is safely shared across all walking threads. */
 struct ModeBTopleafMap {
-    std::vector<int> leaf_of_topnode;               /* [no - All.MaxPart] -> topleaf id, -1 = not a topleaf */
+    std::vector<int> leaf_of_topnode;               /* [no - All.TreeNodeIndexBase] -> topleaf id, -1 = not a topleaf */
     int topnode_map_size = 0;                       /* valid offsets: [0, topnode_map_size) */
     void build(void);                               /* fill from DomainNodeIndex[0..NTopleaves) */
     /* Returns the topleaf id for internal node `no`, or -1 if not a topleaf. */
-    inline int topleaf_of(int no, int max_part) const {
-        const int off = no - max_part;
+    inline int topleaf_of(int no, int tree_base) const {
+        const int off = no - tree_base;
         if(off < 0 || off >= topnode_map_size) return -1;
         return leaf_of_topnode[off];
     }

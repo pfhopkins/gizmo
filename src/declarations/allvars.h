@@ -182,6 +182,7 @@ extern int NTask;		/*!< number of processors */
 extern int PTask;		/*!< note: NTask = 2^PTask */
 extern double CPUThisRun;	/*!< Sums CPU time of current process */
 extern int NumForceUpdate;	/*!< number of active particles on local processor in current timestep  */
+extern int NumForceUpdateAtSyncPoint;	/*!< NumForceUpdate as fixed at the sync point, before the physics of the step can add to it (star formation, sink swallows). Routing decisions taken before the active list is rebuilt must use this rather than the live counter, which several later call sites mutate. */
 extern long long GlobNumForceUpdate;
 extern int NumGasUpdate;	/*!< number of active gas cells on local processor in current timestep  */
 extern int MaxTopNodes;	        /*!< Maximum number of nodes in the top-level tree used for domain decomposition */
@@ -268,8 +269,9 @@ extern int HermiteOnlyFlag;     /*!< flag to only do Hermite integration for app
 
 extern int MaxNodes;        /*!< maximum allowed number of internal nodes */
 extern int Numnodestree;    /*!< number of (internal) nodes in each tree */
-extern int MaxForeignNodes;  /*!< LET: foreign-node capacity = ceil(All.LETAllocFactor * MaxNodes); set in force_treeallocate; 0 on non-GPU builds.  Index map: foreign nodes occupy [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [MaxPart+MaxNodes+MaxForeignNodes, ...). */
-extern int Numforeignnodes;  /*!< LET: count of foreign nodes currently installed (<= MaxForeignNodes); reset on each LET exchange. */
+extern int MaxForeignNodes;  /*!< LET: the CEILING of the foreign-node INDEX range, published by force_treeallocate -- derived there for a fresh tree, or restored verbatim from the restart file for a serialized one, whose node pointers encode the ceiling the writer used.  0 before the first tree is allocated.  Index map: foreign nodes occupy [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+MaxForeignNodes); pseudo-particles shifted to [TreeNodeIndexBase+MaxNodes+MaxForeignNodes, ...).  This is an index ceiling, NOT the amount of foreign-node storage that exists: see AllocatedForeignNodes. */
+extern int AllocatedForeignNodes;  /*!< LET: how many foreign-node slots actually have STORAGE behind them (node/extnode arena extent, foreign-leaf sidecars, GPU node mirror).  Zero when the tree is allocated; raised once per tree build to the exact import this rank received, by force_tree_grow_foreign_storage.  Per-rank, unlike the ceiling.  Invariant: Numforeignnodes <= AllocatedForeignNodes <= MaxForeignNodes. */
+extern int Numforeignnodes;  /*!< LET: count of foreign nodes currently installed (<= AllocatedForeignNodes); reset on each LET exchange. */
 
 extern int *Nextnode;        /*!< gives next node in tree walk  (nodes array) */
 extern int *Father;        /*!< gives parent node in tree (Prenodes array) */
@@ -847,7 +849,7 @@ extern ALIGN(32) struct NODE
 #endif
 }
  *Nodes_base,			/*!< points to the actual memory allocated for the nodes */
- *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.MaxPart] gives the first allocated node */
+ *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.TreeNodeIndexBase] gives the first allocated node */
 
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY

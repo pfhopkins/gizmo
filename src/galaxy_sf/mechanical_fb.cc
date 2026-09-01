@@ -93,12 +93,16 @@ void determine_where_SNe_occur(void)
         dtmean += dt;
     } // for (int i : ActiveParticleList) //
 
-    MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ptotal, &mpi_ptotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&nhosttotal, &mpi_nhosttotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ntotal, &mpi_ntotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&npossible, &mpi_npossible, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    /* The six log-file diagnostics are independent sums to rank 0, so they ride
+     * one six-element reduction rather than six single-value ones: same values,
+     * one collective latency instead of six. This routine runs on every step
+     * that has any feedback-eligible particle, so the five saved collectives
+     * are five fewer places for rank skew to be absorbed. */
+    const double loc_fb_diag[6] = {dtmean, rmean, ptotal, nhosttotal, ntotal, npossible};
+    double glob_fb_diag[6] = {0,0,0,0,0,0};
+    MPI_Reduce(loc_fb_diag, glob_fb_diag, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    mpi_dtmean = glob_fb_diag[0]; mpi_rmean = glob_fb_diag[1]; mpi_ptotal = glob_fb_diag[2];
+    mpi_nhosttotal = glob_fb_diag[3]; mpi_ntotal = glob_fb_diag[4]; mpi_npossible = glob_fb_diag[5];
 
     if(ThisTask == 0)
     {
@@ -283,8 +287,16 @@ void mechanical_fb_calc_toplevel(void)
         if(global_num_active == 0) { return; }
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
-         * buffer is all-zero at entry by the drain-zero invariant below. */
+         * buffer is all-zero at entry by the drain-zero invariant below.
+         * Kept AFTER the active-count reduce above so a globally quiet step
+         * never allocates it. If any rank could not obtain it, every rank must
+         * skip together: peers deposit into this buffer through the feedback
+         * exchange, so one rank cannot bow out alone. The failing rank has
+         * already asked for the stop, naming the buffer. */
         LocalGasMechFBInfoTemp = mechfb_get_persistent_gas_delta(N_gas);
+        int deposit_buffer_missing = (LocalGasMechFBInfoTemp == NULL) ? 1 : 0, any_missing = 0;
+        MPI_Allreduce(&deposit_buffer_missing, &any_missing, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_missing) { return; }
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         {int aa = 0; for(int ii : ActiveParticleList) {

@@ -39,6 +39,13 @@
 #include <cstring>
 #endif
 
+/* Must precede allvars.h, and is not optional for a TU the GPU compiler sees:
+   it supplies the device-pass redirect of `All` to this TU's own managed
+   mirror. Without it the host-only `All` is what the inline host+device
+   accessors in cell_data.h and proto.h read on the device pass, which the
+   compiler reports as a host variable read in a device function. Inert on a
+   pure host build, so it needs no gate of its own. */
+#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"   /* GIZMO_KOKBUCKET_* / GIZMO_KOKSPACE_* enums */
 
@@ -60,8 +67,10 @@ static std::atomic<bool> g_unknown_space_claimed{false};
 static char g_unknown_space_name[64] = {0};
 
 /* Deterministic first-match label-prefix table. treescratch_* precede tree_ for
-   clarity even though "treescratch" does not match the "tree_" prefix. Unlabeled
-   allocations arrive as "" or "no-label" and fall through to UNCLASSIFIED. */
+   clarity even though "treescratch" does not match the "tree_" prefix. ngl_sidx_
+   and ngl_pairs_ ARE extensions of ngl_, so they must stay above it; ngl_ then
+   catches whatever neither names. Unlabeled allocations arrive as "" or
+   "no-label" and fall through to UNCLASSIFIED. */
 static int classify_bucket(const char *label)
 {
     if(!label) {return GIZMO_KOKBUCKET_UNCLASSIFIED;}
@@ -73,6 +82,8 @@ static int classify_bucket(const char *label)
     if(!strncmp(label, "treescratch_build_", 18)) {return GIZMO_KOKBUCKET_TREESCRATCH_BUILD;}
     if(!strncmp(label, "treescratch_moment_",19)) {return GIZMO_KOKBUCKET_TREESCRATCH_MOMENT;}
     if(!strncmp(label, "tree_",               5)) {return GIZMO_KOKBUCKET_TREE_ARRAYS;}
+    if(!strncmp(label, "ngl_sidx_",           9)) {return GIZMO_KOKBUCKET_NGL_SIDX;}
+    if(!strncmp(label, "ngl_pairs_",          10)) {return GIZMO_KOKBUCKET_NGL_PAIRS;}
     if(!strncmp(label, "ngl_",                4)) {return GIZMO_KOKBUCKET_NGL;}
     return GIZMO_KOKBUCKET_UNCLASSIFIED;
 }

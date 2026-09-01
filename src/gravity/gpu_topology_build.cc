@@ -60,7 +60,7 @@ static int  g_slot_map_active     = 0;     /* 1 iff this build is a non-identity
 static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *label) {
     if(old_cap >= new_cap) {return buf;}
     if(buf) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(buf);}
-    buf = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, (long)new_cap * sizeof(int));
+    buf = (int *) gizmo_gpu_alloc_shared((long)new_cap * sizeof(int), label);
     if(!buf) {
         printf("gpu_topology_build: %s alloc failed (n=%d)\n", label, new_cap);
     }
@@ -233,7 +233,7 @@ namespace {
 
 /* Per-internal-node BFS unit. */
 struct BfsItem {
-    int parent_soa;   /* parent's SoA index (= Nodes[] absolute - MaxPart) */
+    int parent_soa;   /* parent's SoA index (= Nodes[] absolute - tree_base) */
     int range_first;  /* particle range [range_first, range_last) in sorted_idx */
     int range_last;
     int parent_depth; /* octree depth of parent (root = 0); split bits read at this level */
@@ -285,13 +285,13 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     int ntl       = NTopleaves;
     int max_nodes = MaxNodes;
-    int max_part  = All.MaxPart;
+    int tree_base  = All.TreeNodeIndexBase;
 
     /* SharedSpace single-int counters: easy host/device coordination. */
-    int *sz_curr = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *sz_next = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *ncount  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
-    int *fail    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_build_ctr", sizeof(int));
+    int *sz_curr = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *sz_next = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *ncount  = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    int *fail    = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
     if(!sz_curr || !sz_next || !ncount || !fail) {
         printf("gpu_topology_emit_bfs: counter alloc failed\n");
         if(sz_curr) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
@@ -317,7 +317,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         int count = tcnt[t];
         if(count < 1) {return;}
         int parent_abs = dni[t];
-        int parent_soa = parent_abs - max_part;
+        int parent_soa = parent_abs - tree_base;
         if(parent_soa < 0 || parent_soa >= max_nodes) {return;}
 
         /* Topleaf depth = log2(DomainLen / topleaf_len), exact integer. */
@@ -453,11 +453,11 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                     cc[2] = pc[2] + ((k & 4) ? lh : -lh);
                     soa_center[new_soa] = cc;
                     soa_len[new_soa]    = cl;
-                    soa_father[new_soa] = w.parent_soa + max_part;
+                    soa_father[new_soa] = w.parent_soa + tree_base;
                     long sb = (long)new_soa * 8;
                     for(int s = 0; s < 8; s++) {soa_suns[sb + s] = -1;}
 
-                    slot_value = max_part + new_soa;
+                    slot_value = tree_base + new_soa;
 
                     /* Push child BFS entry. */
                     BfsItem nw;

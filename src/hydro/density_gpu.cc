@@ -118,31 +118,13 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
-    /* Copy CSR neighbor list to SharedSpace (offsets 64-bit; neighbor values int) */
-    int64_t *d_offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)(num_active + 1) * sizeof(int64_t));
-    int *d_neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)((csr_total_pairs > 0) ? csr_total_pairs : 1) * sizeof(int));
-    int *d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
-    memcpy(d_offsets, csr_offsets_host, (size_t)(num_active + 1) * sizeof(int64_t));
-    memcpy(d_neighbors, csr_neighbors_host, (size_t)csr_total_pairs * sizeof(int));
-    memcpy(d_active, active_indices_host, num_active * sizeof(int));
-
-    /* Copy TimeBinActive to SharedSpace */
-    int *d_TimeBinActive = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
-    memcpy(d_TimeBinActive, TimeBinActive, TIMEBINS * sizeof(int));
-
-    /* Wakeup flag in SharedSpace */
-    int *d_NeedToWakeup = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-    *d_NeedToWakeup = 0;
-
-    /* Output array in SharedSpace */
-    struct hydro_data_out *d_out = (struct hydro_data_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct hydro_data_out));
-
-    PRINT_STATUS("  GPU hydro: %d active, %lld pairs", num_active, (long long)csr_total_pairs);
-
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     /* Pre-compute ISMDustChem passive scalar diffusion values on host.
      * return_ismdustchem_species_of_interest_for_diffusion_and_yields() reads
-     * All.* grain tables not mirrored to All_dev, so it is not device-callable. */
+     * All.* grain tables not mirrored to All_dev, so it is not device-callable.
+     * Staged before the neighbour list so that a refusal here has nothing to
+     * release. The kernel reads it per active particle, so there is no version
+     * of this call that proceeds without it. */
     double *d_ismdc = nullptr;
     const int n_ismdc = NUM_ISMDUSTCHEM_PASSIVE_SCALARS;
     if(n_ismdc > 0 && num_active > 0) {
@@ -155,11 +137,65 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                         ii, ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + ki, 0, CellP_host);
             }
         }
-        d_ismdc = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)num_active * n_ismdc * sizeof(double));
-        memcpy(d_ismdc, ismdc_host, (size_t)num_active * n_ismdc * sizeof(double));
+        const size_t d_ismdc_bytes = (size_t)num_active * n_ismdc * sizeof(double);
+        d_ismdc = (double *) gizmo_gpu_alloc_shared(d_ismdc_bytes, NULL);
+        if(d_ismdc) {memcpy(d_ismdc, ismdc_host, d_ismdc_bytes);}
         delete[] ismdc_host;
+        if(!d_ismdc) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "hydro_evaluate_gpu: could not stage the dust-chemistry diffusion "
+                     "species (%.1f MB) for %d active particles; the hydro forces are "
+                     "not computed",
+                     (double) d_ismdc_bytes / (1024.0 * 1024.0), num_active);
+            gizmo_request_controlled_stop(7714, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
     }
 #endif
+
+    /* Copy CSR neighbor list to SharedSpace (offsets 64-bit; neighbor values int),
+     * plus TimeBinActive, the wakeup flag and the output array. All are taken
+     * before any of them is written, so that a node with no memory left is
+     * reported once, with nothing half-staged. */
+    const size_t d_offsets_bytes   = (size_t)(num_active + 1) * sizeof(int64_t);
+    const size_t d_neighbors_bytes = (size_t)((csr_total_pairs > 0) ? csr_total_pairs : 1) * sizeof(int);
+    const size_t d_active_bytes    = (size_t)((num_active > 0) ? num_active : 1) * sizeof(int);
+    const size_t d_timebin_bytes   = (size_t) TIMEBINS * sizeof(int);
+    const size_t d_out_bytes       = (size_t)((num_active > 0) ? num_active : 1) * sizeof(struct hydro_data_out);
+    int64_t *d_offsets = (int64_t *) gizmo_gpu_alloc_shared(d_offsets_bytes, NULL);
+    int *d_neighbors = (int *) gizmo_gpu_alloc_shared(d_neighbors_bytes, NULL);
+    int *d_active = (int *) gizmo_gpu_alloc_shared(d_active_bytes, NULL);
+    int *d_TimeBinActive = (int *) gizmo_gpu_alloc_shared(d_timebin_bytes, NULL);
+    int *d_NeedToWakeup = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    struct hydro_data_out *d_out = (struct hydro_data_out *) gizmo_gpu_alloc_shared(d_out_bytes, NULL);
+    if(!d_offsets || !d_neighbors || !d_active || !d_TimeBinActive || !d_NeedToWakeup || !d_out) {
+        if(d_out)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);}
+        if(d_NeedToWakeup)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_NeedToWakeup);}
+        if(d_TimeBinActive) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_TimeBinActive);}
+        if(d_active)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);}
+        if(d_neighbors)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);}
+        if(d_offsets)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);}
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        if(d_ismdc)         {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ismdc);}
+#endif
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "hydro_evaluate_gpu: could not stage the neighbour list and outputs "
+                 "(%.1f MB) for %d active particles; the hydro forces are not computed",
+                 (double)(d_offsets_bytes + d_neighbors_bytes + d_active_bytes
+                          + d_timebin_bytes + sizeof(int) + d_out_bytes) / (1024.0 * 1024.0),
+                 num_active);
+        gizmo_request_controlled_stop(7714, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    memcpy(d_offsets, csr_offsets_host, (size_t)(num_active + 1) * sizeof(int64_t));
+    memcpy(d_neighbors, csr_neighbors_host, (size_t)csr_total_pairs * sizeof(int));
+    memcpy(d_active, active_indices_host, num_active * sizeof(int));
+    memcpy(d_TimeBinActive, TimeBinActive, TIMEBINS * sizeof(int));
+    *d_NeedToWakeup = 0;
+
+    PRINT_STATUS("  GPU hydro: %d active, %lld pairs", num_active, (long long)csr_total_pairs);
 
     /* GPU hydro force kernel */
     {

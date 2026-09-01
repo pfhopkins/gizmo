@@ -53,16 +53,6 @@ void SinkEnv2Spec::apply_active_writeback(const neighbor_loop_args& args,
     aux->per_active_accum[active_slot] = accum;
 }
 
-/* Per-field merge (Mode B remote). sink_env2 has only two additive fields. */
-void SinkEnv2Spec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
-
-    ACCUM_ADD(MgasBulge_in_Kernel)
-    ACCUM_ADD(MstarBulge_in_Kernel)
-
-#undef ACCUM_ADD
-}
 
 /* ============================================================================
  * DEVICE CONTEXT LIFECYCLE
@@ -82,7 +72,18 @@ void SinkEnv2Spec::populate_device_context(const neighbor_loop_args& args,
         return;
     }
     SinkEnv2PerActiveIn *uvm = (SinkEnv2PerActiveIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkEnv2PerActiveIn));
+        gizmo_gpu_alloc_shared((size_t) N * sizeof(SinkEnv2PerActiveIn), NULL);
+    if(!uvm) {
+        ctx.per_active_in = nullptr;
+        ctx.populate_failed = 1;
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "sink environment: could not stage %d active sinks (%.1f MB); "
+                 "their angular momenta are not measured",
+                 N, (double)((size_t) N * sizeof(SinkEnv2PerActiveIn)) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7725, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     std::memcpy(uvm, aux->host_inputs, N * sizeof(SinkEnv2PerActiveIn));
     ctx.per_active_in = uvm;
 }

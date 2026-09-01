@@ -36,14 +36,12 @@ Softening_Type3_MaxPhysLimit       5e-6
 Softening_Type4_MaxPhysLimit       5e-6
 Softening_Type5_MaxPhysLimit       5e-6
 MaxSizeTimestep                    1.0
-MaxHsml                            100
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2
 MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
-MaxMemSize                         3000
 MaxNumNgbDeviation                 0.1
 ResubmitOn                         0
 ResubmitCommand                    none

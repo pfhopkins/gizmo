@@ -120,23 +120,6 @@ void DMGradSpec::apply_active_writeback(const neighbor_loop_args& args,
     }
 }
 
-void DMGradSpec::merge_accum(AccumData& local, const AccumData& peer)
-{
-    for (int k = 0; k < 3; k++) {
-        local.grad_rho[k] += peer.grad_rho[k];
-        for (int k2 = 0; k2 < 3; k2++)
-            local.grad2_rho[k2][k] += peer.grad2_rho[k2][k];
-#if (DM_FUZZY > 0)
-        local.grad_psi_re[k] += peer.grad_psi_re[k];
-        local.grad_psi_im[k] += peer.grad_psi_im[k];
-        for (int k2 = 0; k2 < 3; k2++) {
-            local.grad2_psi_re[k2][k] += peer.grad2_psi_re[k2][k];
-            local.grad2_psi_im[k2][k] += peer.grad2_psi_im[k2][k];
-        }
-#endif
-    }
-}
-
 
 /* ============================================================================
  * DMGrad_gradient_calc — toplevel. Two external gradient passes; within each,

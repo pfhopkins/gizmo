@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <string.h>
+#include <limits.h>
 
 
 #include "../declarations/allvars.h"
@@ -95,69 +96,97 @@ void read_ic(char *fname)
         }
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
-        /* Ghost headroom floor for heavy decomposition.
+        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        /* The one place the gas COUNT decides whether gas storage exists: no storage exists yet to
+           ask instead, and a run's initial conditions are what settle it for the rest of the run.
+           Everywhere after this reads the storage, never the count -- see the helper. */
+        All.MaxPartGas = (All.TotN_gas > 0) ? All.MaxPart : 0;
+        All.MaxPartAssignable = All.MaxPart;   /* how many LOCAL particles a rank may be assigned, as
+                                                  opposed to how much storage it has.  The two start
+                                                  equal and the same expression on every rank makes the
+                                                  assignment cap uniform without communication. */
+        /* Fix, for the whole run, the largest particle capacity a rank may ever be raised to, and
+         * with it the gravity tree's node-index base.  Particle indices occupy
+         * [0,TreeNodeIndexBase) and every node/foreign-node/pseudo-particle index sits above it, so
+         * the base only has to exceed any local particle index that can ever occur; it is not a
+         * memory size and nothing is allocated from it.
          *
-         * Imported ghosts are appended into P[]/CellP[] at [NumPart, NumPart+NumGhost), so the
-         * ghost budget is whatever MaxPart leaves spare. But MaxPart scales with the LOCAL
-         * PARTICLE COUNT while ghost demand scales with the DOMAIN SURFACE, and those diverge
-         * as ranks are added: the surface-to-volume ratio of a subdomain grows without bound as
-         * it shrinks. Evrard at 27001 particles over 48 ranks (562/rank) wants ~5156 ghosts
-         * against 562 local -- 9:1 -- so even PartAllocFactor=10 leaves nothing and the run
-         * bad-stops in ghost_exchange (code 7702) having missed by under 2%.
+         * The ceiling divides the node's memory among the ranks sharing it and spends the whole
+         * share on particle slots.  That is a deliberate over-estimate -- the tree, transport
+         * buffers and the arena need room too -- because erring high costs almost nothing here
+         * while erring low would refuse a capacity the machine could have supplied.  Whether the
+         * memory is really there remains the allocator's answer at the moment it is asked.
+         * The second term keeps the tree's per-particle side arrays, which are sized from this
+         * ceiling, to a small share of the node: they cost a couple of dozen bytes per slot
+         * against a couple of thousand for the particle arrays, so on a run with substantial
+         * per-particle physics the memory term binds and this one never does; it only takes over
+         * for configurations whose particles are small enough that the ratio stops being tiny.
+         * Where the node's memory cannot be read, a multiple of the balanced particle count stands
+         * in -- it needs only to be comfortably above any capacity such a run would reach.
+         * A MAXIMUM across ranks keeps the value identical everywhere, which is what lets the node
+         * index base be a shared constant; on the homogeneous nodes these runs use, every rank
+         * computes the same number anyway.
          *
-         * Growing on demand at the point of the miss is not viable: that call site sits inside
-         * an in-flight neighbour loop whose Spec hooks hold raw P/CellP views (see the note in
-         * mesh/ghost_exchange.cc). So give small subdomains an absolute floor instead, which
-         * costs a few MB per rank at exactly the decompositions where per-rank memory is
-         * cheapest, and nothing at all in the large-N-per-rank regime that dominates production.
-         *
-         * The floor is a headroom count, not a physical prediction -- ghost demand depends on
-         * the kernel radius and clustering, which are not known here. It is deliberately set
-         * where a 562-particle subdomain gets several thousand ghost slots. */
+         * Whether the FULL index space (base plus the node, foreign-node and pseudo-particle
+         * ranges above it) fits an int depends on capacities that are not known until a tree is
+         * built, so the authoritative check lives in force_treeallocate.  A ceiling that leaves no
+         * room for the particle range is unusable, so ask for a stop and leave the base at 0: the
+         * tree-readiness checks then read "no tree" rather than accepting a base that collides with
+         * particle indices.  The stop drains at the poll below, before any of this is used. */
         {
-            /* The floor is TotNumPart, not a tuned constant, because that is a HARD BOUND on what
-               any rank can need: ghosts are copies of OTHER ranks' particles, so
-               local + ghosts <= TotNumPart always. Flooring there is therefore provably sufficient
-               and never wasteful beyond the true requirement. Measured ghost:local ratios at 48
-               ranks -- evrard 9:1, shu_M120 12:1, gmc_cooling_rt 34:1 -- show why no fixed
-               multiple of the LOCAL count is safe, and an earlier absolute floor of 16384 slots
-               was both too small for gmc_cooling_rt (needed 18011) and never even reached for
-               shu_M120 (needed 39540, natural MaxPart already 30920).
+            long long bytes_per_slot = (long long) sizeof(struct particle_data)
+                                     + 2 + 3 * (long long) sizeof(int);
+            if(All.TotN_gas > 0) {bytes_per_slot += (long long) sizeof(struct gas_cell_data);}
+            const long long tree_aux_bytes_per_slot = 2 * (long long) sizeof(int);   /* Father + Nextnode's particle segment */
+            const double    tree_aux_share_of_node  = 0.05;
 
-               The cap bounds memory on very large problems. It only ever binds when
-               PartAllocFactor * N/NTask is ALREADY below it, i.e. small-to-moderate problems on
-               many ranks -- exactly the regime where the ghost:local ratio explodes and where
-               per-rank memory is most plentiful. Production runs with large N/rank never reach it.
+            /* Take the memory of the least generous node and the crowding of the most
+             * crowded one, so the share below is the smallest any rank actually has.  The
+             * result is the same number everywhere without a second reduction over it: a
+             * maximum over per-rank shares would instead let a partly-filled node -- one
+             * rank where its peers hold eight -- hand every other rank a share eight times
+             * what it owns, and the tree side arrays are allocated from this, not merely
+             * bounded by it. */
+            long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
+            (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
+            gizmo_node_comm_init();
+            long long ranks_per_node = (GizmoRanksThisNode > 0) ? (long long) GizmoRanksThisNode : 1;
+            if(mem_total_kb <= 0) {mem_total_kb = LLONG_MAX;}   /* unreadable here; let a peer that can read it decide */
+            MPI_Allreduce(MPI_IN_PLACE, &mem_total_kb,   1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+            MPI_Allreduce(MPI_IN_PLACE, &ranks_per_node, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
 
-               RAISE ONLY. An earlier version of this block also clamped MaxPart DOWN to
-               TotNumPart, reasoning that a rank cannot hold more particles than exist. That was
-               wrong: MaxPart is a SLOT budget, not a particle count, and PartAllocFactor
-               deliberately provisions several times TotNumPart at low rank counts for load
-               imbalance plus ghosts. The clamp silently confiscated 80% of gmc_cooling's budget
-               (123770 -> 24754 at 2 ranks) and regressed both it and soundwave[1-8], which had
-               been passing. Never lower what the factor asked for. */
-            const long long ghost_headroom_cap = 262144;   /* slots; ~100 MB/rank of particle_data */
-            long long floor_slots = (long long) All.TotNumPart;
-            if(floor_slots > ghost_headroom_cap) {floor_slots = ghost_headroom_cap;}
-            if((long long) All.MaxPart < floor_slots) {All.MaxPart = (int) floor_slots;}
-            if(All.TotN_gas > 0) {
-                long long floor_gas = (long long) All.TotN_gas;
-                if(floor_gas > ghost_headroom_cap) {floor_gas = ghost_headroom_cap;}
-                if((long long) All.MaxPartGas < floor_gas) {All.MaxPartGas = (int) floor_gas;}
+            /* Also stay within reach of what this run could plausibly need.  The memory
+             * terms alone say nothing about the problem size, so a small run on a large
+             * machine would size the tree side arrays for hundreds of millions of slots it
+             * will never hold -- and they are written in full at every tree build.  The
+             * starting capacity already carries the user's imbalance allowance, so a wide
+             * multiple of it is far above anything a run reaches while still being finite. */
+            long long cap = 16LL * (long long) All.MaxPart;
+            if(mem_total_kb > 0 && mem_total_kb != LLONG_MAX)
+            {
+                const long long share = mem_total_kb * 1024 / ranks_per_node;
+                const long long cap_mem = share / bytes_per_slot;
+                const long long cap_aux = (long long)(tree_aux_share_of_node * (double) share)
+                                          / tree_aux_bytes_per_slot;
+                if(cap_mem < cap) {cap = cap_mem;}
+                if(cap_aux < cap) {cap = cap_aux;}
             }
-            if(ThisTask == 0) {printf("Ghost-headroom floor: MaxPart=%d MaxPartGas=%d (%d ranks, %lld particles, %lld gas)\n", All.MaxPart, All.MaxPartGas, NTask, (long long) All.TotNumPart, (long long) All.TotN_gas);}
+            if(cap < (long long) All.MaxPart) {cap = (long long) All.MaxPart;}   /* never below what is already allocated */
+            if(cap > (long long)(INT_MAX / 4)) {cap = (long long)(INT_MAX / 4);}
+            const long long cap_uniform = cap;   /* every rank computed this from the same reduced inputs */
+
+            if(cap_uniform < (long long) All.MaxPart)
+            {
+                if(ThisTask == 0) {printf("MaxPart=%d is too large for the tree's integer index space (the largest usable ceiling, %lld, is below the particle range). Use more ranks, or lower PartAllocFactor.\n", All.MaxPart, cap_uniform); fflush(stdout);}
+                endrun(90001021);
+            }
+            else
+            {
+                All.MaxPartExpandable = (int) cap_uniform;
+                All.TreeNodeIndexBase = All.MaxPartExpandable;
+                if(ThisTask == 0) {printf("Allocating %d particle slots per rank; capacity may rise to %d; tree node indices start at %d.\n", All.MaxPart, All.MaxPartExpandable, All.TreeNodeIndexBase); fflush(stdout);}
+            }
         }
-        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
-            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list build.\n", All.PartAllocFactor);
-            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] and need headroom.\n");
-            printf("  Raising PartAllocFactor adds ghost slots but also inflates P/CellP/tree storage and\n");
-            printf("  may not fix overlarge imports; consider more ranks/nodes or reducing ghost-import demand.\n");
-        }
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-        All.MaxPartGas = All.MaxPart;
-#endif
 
         /* All-rank preflight + allocate. allocate_memory(1) sets a SOFT bad-stop (not an
          * fatal hard-exit) on a preflight/UVM/STL OOM; CommBuffer gets the same cheap arena
@@ -166,7 +195,7 @@ void read_ic(char *fname)
         (void) allocate_memory(1);
 
         {
-            size_t cbuf_bytes = (size_t) All.BufferSize * 1024 * 1024;
+            size_t cbuf_bytes = (size_t) All.CommChunkSize * 1024 * 1024;
             if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(cbuf_bytes), 1))
                 gizmo_request_controlled_stop(2, "read_ic: CommBuffer arena preflight won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
             else
@@ -1373,8 +1402,8 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * get_input_float_bytes(blocknr);}
 #endif
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
+            size_t comm_chunk_mb = All.CommChunkSize;
+            blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
             npart = get_particles_in_block(blocknr, &typelist[0]);
 
             if(npart > 0)
@@ -1646,79 +1675,149 @@ int read_file(char *fname, int readTask, int lastTask)
 
 /*! This function determines on how many files a given snapshot is distributed.
  */
-int find_files(char *fname)
+/*! Build the two candidate paths for an input set: the first file of a multi-file set, and the
+ *  single-file form. Shared so that everything asking "what does this input contain" spells the
+ *  names the same way. */
+static void input_candidate_paths(const char *fname, char *first_of_many, char *single, size_t n)
 {
-    FILE *fd; char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE]; int dummy;
-
-    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.%d", fname, 0);
-    snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s", fname);
-
     if(All.ICFormat == 3)
     {
-        snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.%d.hdf5", fname, 0);
-        snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s.hdf5", fname);
+        snprintf(first_of_many, n, "%s.%d.hdf5", fname, 0);
+        snprintf(single, n, "%s.hdf5", fname);
     }
+    else
+    {
+        snprintf(first_of_many, n, "%s.%d", fname, 0);
+        snprintf(single, n, "%s", fname);
+    }
+}
+
+/*! Read one candidate file's header into the global `header` on rank 0 and broadcast it to
+ *  everyone. `single_file` marks the header as describing a one-file set, which the file itself
+ *  does not say. Returns the file count now in the header: zero means the file was not there.
+ *  Reads only the header, and takes nothing from the memory arena, so it is safe to call before
+ *  the arena exists. */
+static int read_input_header(char *path, int single_file, int quiet)
+{
+    FILE *fd; int dummy; int readable = 1;
+
+    if(ThisTask == 0)
+    {
+        if((fd = fopen(path, "r")))
+        {
+            if(All.ICFormat == 1 || All.ICFormat == 2)
+            {
+                /* A short read means a truncated file. On the run's own read that has to be
+                   reported and stop the run; when only looking ahead to see how big the input is,
+                   it must not, because the reader will reach the same file a moment later and say
+                   so properly. Hence the two readers. */
+                if(quiet)
+                {
+                    if(All.ICFormat == 2)
+                    {
+                        int k;
+                        for(k = 0; k < 4; k++) {if(fread(&dummy, sizeof(dummy), 1, fd) != 1) {readable = 0;}}
+                    }
+                    if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
+                    if(readable && fread(&header, sizeof(header), 1, fd) != 1) {readable = 0;}
+                    if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
+                }
+                else
+                {
+                    if(All.ICFormat == 2)
+                    {
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                        my_fread(&dummy, sizeof(dummy), 1, fd);
+                    }
+
+                    my_fread(&dummy, sizeof(dummy), 1, fd);
+                    my_fread(&header, sizeof(header), 1, fd);
+                    my_fread(&dummy, sizeof(dummy), 1, fd);
+                }
+            }
+            fclose(fd);
+
+            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(path);}
+
+            if(!readable)      {header.num_files = 0;}   /* truncated: report nothing usable found */
+            else if(single_file) {header.num_files = 1;}
+        }
+    }
+
+    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    return header.num_files;
+}
+
+/*! Which file set this run reads its particles from. Starting from a snapshot reads that
+ *  snapshot rather than the initial-conditions file, and the snapshot's name depends on whether
+ *  it was written as one file or a directory of them. Everything that needs to know what the run
+ *  will read -- the reader itself, and the startup memory sizing -- asks here, so the two can
+ *  never disagree about which file that is. */
+void input_source_filename(char *out, size_t n)
+{
+    if(RestartFlag >= 2 && RestartSnapNum >= 0)
+    {
+        if(All.NumFilesPerSnapshot > 1)
+            {snprintf(out, n, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
+        else
+            {snprintf(out, n, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
+    }
+    else {snprintf(out, n, "%s", All.InitCondFile);}
+}
+
+/*! Total number of particles recorded in an input set's header, or -1 if the header cannot be
+ *  read. Used at startup to size the memory arena before anything is allocated from it, which is
+ *  the only point early enough to do so; the value is an input to a size, never to physics.
+ *
+ *  A missing or unreadable file does not stop the run here: the run's own reader reaches the same
+ *  file shortly afterwards and reports it in its usual place, and the caller falls back to a
+ *  conservative size in the meantime. What that guarantee covers, exactly: the file is opened
+ *  before anything is read from it, a short read is detected rather than raised, and the global
+ *  header is restored on the way out. It does not extend to what the HDF5 library itself prints
+ *  when handed a file that is not the shape it expects -- reading an hdf5 header goes through the
+ *  usual reader, which may write its own complaints to the terminal before the run gets to its
+ *  own message. */
+long long peek_total_particles_in_input(const char *fname)
+{
+    char first_of_many[DEFAULT_PATH_BUFFERSIZE_TOUSE], single[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    struct io_header saved_header = header;
+    long long total = 0;
+    int found;
+
+    input_candidate_paths(fname, first_of_many, single, DEFAULT_PATH_BUFFERSIZE_TOUSE);
+
+    header.num_files = 0;
+    found = read_input_header(first_of_many, 0, 1);
+    if(found <= 0) {found = read_input_header(single, 1, 1);}
+
+    if(found > 0)
+    {
+        if(header.num_files <= 1)
+            for(int i = 0; i < 6; i++) {total += header.npart[i];}
+        else
+            for(int i = 0; i < 6; i++)
+                {total += header.npartTotal[i] + (((long long) header.npartTotalHighWord[i]) << 32);}
+    }
+
+    header = saved_header;   /* leave the header exactly as it was: the real read owns it */
+
+    return (found > 0) ? total : -1;
+}
+
+int find_files(char *fname)
+{
+    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+
+    input_candidate_paths(fname, buf, buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE);
 
     header.num_files = 0;
 
-    if(ThisTask == 0)
-    {
-        if((fd = fopen(buf, "r")))
-        {
-            if(All.ICFormat == 1 || All.ICFormat == 2)
-            {
-                if(All.ICFormat == 2)
-                {
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                }
+    if(read_input_header(buf, 0, 0) > 0) {return header.num_files;}
 
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-                my_fread(&header, sizeof(header), 1, fd);
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-            }
-            fclose(fd);
-
-            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(buf);}
-
-        }
-    }
-
-    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    if(header.num_files > 0) {return header.num_files;}
-
-    if(ThisTask == 0)
-    {
-        if((fd = fopen(buf1, "r")))
-        {
-            if(All.ICFormat == 1 || All.ICFormat == 2)
-            {
-                if(All.ICFormat == 2)
-                {
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                    my_fread(&dummy, sizeof(dummy), 1, fd);
-                }
-
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-                my_fread(&header, sizeof(header), 1, fd);
-                my_fread(&dummy, sizeof(dummy), 1, fd);
-            }
-            fclose(fd);
-
-            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(buf1);}
-
-            header.num_files = 1;
-        }
-    }
-
-    MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    if(header.num_files > 0) {return header.num_files;}
+    if(read_input_header(buf1, 1, 0) > 0) {return header.num_files;}
 
     if(ThisTask == 0)
     {

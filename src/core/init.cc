@@ -76,15 +76,11 @@ void init(void)
         case 2:
         case 3:
         case 4:
-            if(RestartFlag >= 2 && RestartSnapNum >= 0)
             {
                 char fname[MAX_PATH_BUFFERSIZE_TOUSE];
-                if(All.NumFilesPerSnapshot > 1) {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
-                    else {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
+                input_source_filename(fname, MAX_PATH_BUFFERSIZE_TOUSE);
                 read_ic(fname);
-
             }
-            else {read_ic(All.InitCondFile);}
             break;
 
         default:
@@ -143,8 +139,7 @@ void init(void)
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     All.TopNodeAllocFactor = 0.1; /* for optimization on startup this needs to be increased for these extreme dynamic range runs */
 #endif
-    All.TreeAllocFactor = 0.45; /* this will also iteratively increase to fit the particle distribution */
-    /* All.LETAllocFactor default (1.0) is set via begrun.cc read_parameter_file default handler; user can override via params file. */
+    All.TreeAllocFactor = TREE_ALLOC_FACTOR_START; /* this will also iteratively increase to fit the particle distribution */
     /* To construct the BH-tree for N particles, somewhat less than N
      internal tree-nodes are necessary for ‘normal’ particle distributions.
      TreeAllocFactor sets the number of internal tree-nodes allocated in units of the particle number.

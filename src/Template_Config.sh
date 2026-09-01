@@ -536,7 +536,6 @@
 # --------------------
 # ----- General De-Bugging and Special Behaviors
 #DEVELOPER_MODE                    # allows you to modify various numerical parameters (courant factor, etc) at run-time
-#GIZMO_DEBUG_RT_COOLING            # enable RT+COOLING diagnostic prints + GPU↔CPU bit-comparison probes for the cooling kernel. Substantial stdout volume when active; intended for targeted debug of GPU cooling/RT divergence. Slated for retirement once GPU cooling/RT path is fully validated.
 #FORCE_EQUAL_TIMESTEPS             # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
 #STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
 # --------------------
@@ -647,10 +646,10 @@
 # --------------------
 # ----- MPI & Parallel-FFTW De-Bugging
 #DOUBLEPRECISION_FFTW               # FFTW in double precision to match libraries
-#DISABLE_ALIGNED_ALLOC              # disable calls to 'aligned_alloc', needed for older C99-only versions of GCC compilers [everything C11+ -should- be compatible and not need this]
+#DISABLE_ALIGNED_ALLOC              # retired: the working memory pool is always aligned now. Blocks it hands out are rounded to a 32-byte boundary and some of them hold particle data, which requires that alignment, so the un-aligned variant was unsafe rather than merely slower. 'aligned_alloc' is standard in C11 and later, which this code requires anyway.
 # --------------------
 # ----- Load-Balancing
-#ALLOW_IMBALANCED_GASPARTICLELOAD   # increases All.MaxPartGas to All.MaxPart: can allow better load-balancing in some cases, but uses more memory. But use me if you run into errors where it can't fit the domain (where you would increase PartAllocFac, but can't for some reason)
+# (ALLOW_IMBALANCED_GASPARTICLELOAD is retired and has no effect: the gas-cell capacity always follows the particle capacity, so the load-balancing freedom it used to enable is unconditional. A run with no gas allocates no gas-cell storage at all.)
 ####################################################################################################
 
 

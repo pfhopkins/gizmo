@@ -502,6 +502,14 @@ int subfind_locngb_treefind_variable(Vec3<double>& searchcenter, double hguess)
 
 
 
+static int loctree_allocated_flag = 0;
+
+/*! Whether the local halo-finder tree is currently standing. It offsets the shared Nodes pointer
+ *  by All.MaxPart while borrowing the global Nodes/Nextnode/Father symbols, so that offset would
+ *  be wrong the instant the particle capacity moved: the storage resize refuses to run inside
+ *  this window and asks here. */
+int subfind_loctree_is_allocated(void) {return loctree_allocated_flag;}
+
 /* that function allocates memory used for storage of the tree
  * and auxiliary arrays for tree-walk and link-lists.
  */
@@ -524,6 +532,7 @@ size_t subfind_loctree_treeallocate(int maxnodes, int maxpart)	/* usually maxnod
   allbytes += bytes;
 
   Nodes = Nodes_base - All.MaxPart;
+  loctree_allocated_flag = 1;
 
   return allbytes;
 }
@@ -537,6 +546,7 @@ void subfind_loctree_treefree(void)
   myfree(Father);
   myfree(Nextnode);
   myfree(Nodes_base);
+  loctree_allocated_flag = 0;
 }
 
 

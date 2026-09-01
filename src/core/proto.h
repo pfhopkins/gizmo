@@ -144,6 +144,24 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
 }
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
+/* SSOT for the gas-cell capacity: CellP[] is indexed by the PARTICLE index, so it must
+   span the same index range as P[] whenever any gas exists. Imported ghosts are appended
+   into that shared index space above the local particles and a gas ghost can land at any
+   index in the imported range, so a gas record is reachable at any index P[] can reach.
+   A run with no gas anywhere allocates no CellP[] at all. Call this after every change to
+   All.MaxPart; never assign All.MaxPartGas directly.
+
+   Whether gas storage exists is a property of the RUN, fixed when the initial conditions were
+   read, so it is read from the storage that exists rather than from All.TotN_gas: that count
+   falls as gas turns into stars, and a run that converted its last gas cell would otherwise
+   lose CellP[] the next time its capacity moved, with no way to get it back. The initial
+   conditions are the one place the count IS the right question, since no storage exists yet;
+   read_ic seeds it there. resize_particle_storage keeps the same rule for the same reason. */
+static inline void gizmo_set_gas_capacity_from_maxpart(void)
+{
+    All.MaxPartGas = (All.MaxPartGas > 0) ? All.MaxPart : 0;
+}
+
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
 #endif
@@ -226,6 +244,14 @@ void gizmo_let_wire_note_failed(long long bytes);
 void report_memory_ledger(const char *when);
 void report_memory_ledger_on_growth(const char *when);
 int gizmo_memory_preflight(void);
+void gizmo_size_memory_arena(void);   /* sets All.WorkingMemoryPoolSize from what will draw on the pool, unless the parameter file asked for a size; call once, before mymalloc_init */
+#ifdef PMGRID
+/* Arena bytes the long-range mesh will want, for startup sizing, split into what it holds for the
+   whole run and what one force computation needs on top of that. */
+void long_range_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+void pm_periodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+void pm_nonperiodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force);
+#endif
 
 /* Kokkos allocation telemetry (defined in system/kokkos_mem_telemetry.cc, a device
    TU). A superset high-water of ALL Kokkos-managed memory, reported separately by the
@@ -248,7 +274,9 @@ enum {
   GIZMO_KOKBUCKET_FINE_SIDECAR,         /* label fine_sidecar (device fine sidecar) */
   GIZMO_KOKBUCKET_TREESCRATCH_BUILD,    /* label prefix treescratch_build_  (topology/Peano/Morton) */
   GIZMO_KOKBUCKET_TREESCRATCH_MOMENT,   /* label prefix treescratch_moment_ (moment-refresh pools)  */
-  GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_           */
+  GIZMO_KOKBUCKET_NGL_SIDX,             /* label prefix ngl_sidx_  (tile/BVH/pool/compact-position spatial index) */
+  GIZMO_KOKBUCKET_NGL_PAIRS,            /* label prefix ngl_pairs_ (per-dispatch active list, CSR offsets/neighbours, search scratch) */
+  GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_ (remaining neighbour-list memory: build/refresh scratch) */
   GIZMO_KOKBUCKET_UNCLASSIFIED,
   GIZMO_KOKBUCKET_COUNT
 };
@@ -262,12 +290,28 @@ enum { GIZMO_KOKCELL_COUNT = (int)GIZMO_KOKBUCKET_COUNT * (int)GIZMO_KOKSPACE_CO
 /* Fill caller arrays [GIZMO_KOKCELL_COUNT], row-major bucket x space. */
 extern "C" void        gizmo_kokkos_mem_buckets(long long *cur, long long *hw);
 extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unrecognized space seen, or NULL */
+
+/* Allocation that reports exhaustion by RETURNING NULL rather than throwing.  Kokkos::kokkos_malloc
+   throws, and an exception leaving a dispatcher kills the rank where it stands: the run never reaches
+   the phase boundary that drains a controlled stop, so instead of every rank finalizing cleanly one
+   dies and the rest wait on it.  A caller that checks the result can request the stop and return, and
+   the run ends the way every other failure ends.  `label` is passed through unchanged because the
+   memory ledger classifies allocations by it; pass NULL where the call site has none, so an unlabeled
+   allocation stays unlabeled and keeps landing where it did.  Declared without any Kokkos type so
+   host-compiled TUs including this header gain no dependency on <Kokkos_Core.hpp>; the space each one
+   names is fixed by which function is called.  Zero cost when the allocation succeeds. */
+extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label);   /* SharedSpace/UVM: host- and device-readable */
+extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label);   /* device-only memory */
+extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* host memory obtained through Kokkos */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
-   (current-at-print is misleading: force_treeallocate resets it before a stop ledger). */
+   (current-at-print is misleading: force_treeallocate resets it before a stop ledger).
+   "alloc" is the foreign storage that exists; "ceiling" is the index range it sits in, which
+   costs only its Nextnode ints (counted in the aux term) -- the two are far apart by design. */
 void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
-                              long long *foreign_cap_nodes, long long *foreign_used_hw_nodes,
-                              long long *foreign_floor_nodes);
+                              long long *foreign_alloc_nodes, long long *foreign_used_hw_nodes,
+                              long long *foreign_floor_nodes, long long *foreign_ceiling_nodes);
+extern "C" size_t gpu_gravity_tree_bytes_per_node(void);   /* per-node size of the GPU node mirror, counting only the always-present fields, for the startup projection (which runs before a tree exists) */
 
 void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);
@@ -302,7 +346,6 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 void x86_fix(void) ;
 
 void *gizmo_aligned_alloc(size_t alignment, size_t nbytes); /* over-aligned scratch outside the arena; free() with free(). see mymalloc.cc */
-int gizmo_grow_particle_storage(long long needed_slots, const char *why); /* adaptive P/CellP growth; 1=grown, 0=left alone. see allocate.cc */
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
 void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const char *func, const char *file, int line);
 
@@ -504,6 +547,7 @@ void gizmo_full_drift_to(integertime time1);
 extern "C" {
 #endif
 void gizmo_full_drift_invalidate(void);
+integertime gizmo_full_drift_ti(void);
 #ifdef __cplusplus
 }
 #endif
@@ -517,6 +561,12 @@ void ghost_exchange_cleanup(void);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
 int ghost_pool_is_live(void);
+/* Largest ghost import this rank has completed over the current and previous domain epoch, and
+ * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
+int ghost_get_epoch_high_water(void);
+void ghost_reset_epoch_high_water(void);
+int gizmo_get_unmet_split_demand(void);
+void gizmo_reset_unmet_split_demand(void);
 /* Value-only in-place refresh of the CURRENT ghost pool along the provenance
  * recorded at the last import: owners re-pack their current P/CellP for exactly
  * the already-exported particles; receivers overwrite the existing ghost slots
@@ -564,12 +614,22 @@ void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end);
 #ifdef __cplusplus
 }
 #endif
-int ghost_get_previous_count(void);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 void set_units_sfr(void);
 int allocate_memory(int do_collective_preflight);   /* Never holds on OOM: requests a soft controlled-stop and returns nonzero; caller drains at its poll. do_collective_preflight selects the arena preflight's fit-check: =1 all-rank (read_ic, one Allreduce); =0 LOCAL only (restart subset/turn, no MPI). Returns 0 ok / 812 arena-OOM / 1 UVM-STL-OOM. */
+/* Move the persistent particle-storage arrays owned by allocate_memory() to new_maxpart, carrying the
+   live particles over, and publish the new All.MaxPart (All.MaxPartGas follows it). The saved Peano
+   keys are NOT among them -- they reallocate themselves when short and are harmless when oversized,
+   so they are left to the domain code that owns them. Growing is legal with imported ghosts
+   present and a tree standing; releasing capacity requires neither, plus new_maxpart >= NumPart.
+   Requesting the current capacity returns immediately. On failure some arrays are left oversized --
+   never undersized relative to All -- the accounting stays truthful, a controlled stop is requested
+   for the caller to drain, and a nonzero code is returned: 7720 target below the live particle count,
+   7721 allocation failed mid-migration, 7723 illegal context, 7724 target overlaps the tree node
+   index base. This is the ONLY route by which All.MaxPart may change once storage exists. */
+int resize_particle_storage(int new_maxpart);
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
@@ -873,6 +933,8 @@ void open_outputfiles(void);
 void peano_hilbert_order(void);
 void predict(double time);
 void read_ic(char *fname);
+void input_source_filename(char *out, size_t n);   /* which file set this run reads its particles from (IC, or a snapshot when starting from one) */
+long long peek_total_particles_in_input(const char *fname);   /* particle count from an input header, for startup memory sizing; -1 if unreadable */
 void gizmo_register_hdf5_deflate_filter(void);  /* file_io/hdf5_deflate_filter.cc */
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
@@ -882,6 +944,7 @@ void remove_particle_from_tree(int i);
 void reorder_gas(void);
 void reorder_particles(void);
 void restart(int modus);
+long long peek_total_particles_in_restart(void);   /* particle count from the restart set, for startup memory sizing; -1 if unreadable */
 void run(void);
 /* Controlled-stop / bad-stop machinery for the Vista no-MPI_Abort policy.
  *
@@ -926,9 +989,19 @@ int         gizmo_poll_controlled_stop(void);   /* collect + return global code;
 void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
+/* Asking the working memory pool whether something will fit, before trying to take it.
+ *
+ * These three are the way to do that; there is no other, and nothing new should be built for it.
+ * Code that is about to take a large amount from the pool asks first and arranges its own graceful
+ * stop, or shortens what it was going to take, rather than finding out from a failed allocation
+ * partway through. The round-based transports use them to decide how much to move at once, and the
+ * long-range mesh uses them to refuse a step that cannot be served. `mpi_report_comittable_memory`
+ * below answers the related but separate question of how much the machine itself can give a task.
+ */
 int         gizmo_alloc_fits_this_rank(size_t bytes, int nblocks);   /* LOCAL (no MPI): 1 if `bytes` + `nblocks` fit in THIS rank's arena + block-table, else 0. Safe in subset/turn; building block for caller-side OOM preflight. */
 int         gizmo_alloc_fits_all_ranks(size_t bytes, int nblocks);   /* collective: 1 if `bytes` AND `nblocks` blocks fit in the arena + block-table on EVERY rank, else 0 (caller-side preflight for large symmetric allocations) */
 size_t      gizmo_mymalloc_rounded_size(size_t n);      /* arena bytes a request of n actually consumes (MIN_ALIGNMENT rounding); for accurate preflight totals */
+double      comm_chunk_megabytes_default(void);         /* size to send particle data between tasks in, when the parameter file does not say */
 /* Vista never-hang fatal policy (fail-fast, cleanup-forbidden) -- core/gizmo_fatal.{h,cc}. */
 [[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason,
                                             const char *file, int line, const char *func);
@@ -958,7 +1031,6 @@ double gravkick_integ(double a, void *param);
 double growthfactor_integ(double a, void *param);
 void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
-double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode);
 double measure_time(void);
 void cpu_charge_child(int bucket, double dt);
 double cpu_minus_children(double elapsed, double child0);

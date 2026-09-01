@@ -256,7 +256,16 @@ struct MechFBSpec {
                                        int active_slot, int i,
                                        const AccumData& accum);
 
-    static void merge_accum(AccumData& local, const AccumData& peer);
+    /* merge_accum — Mode B remote peer accumulator merge. M_coupled adds;
+     * Area_weighted_sum[] adds per element. Mirrors the legacy device-side
+     * accumulation in mechanical_fb_pair_kernel (myout.Area_weighted_sum[k] +=). */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local, const AccumData& peer) {
+        local.M_coupled += peer.M_coupled;
+        for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
+            local.Area_weighted_sum[k] += peer.Area_weighted_sum[k];
+        }
+    }
 
     /* Per-active post-iter hook — STATUS-ONLY.
      * Returns NeedsMore until iter_index >= num_modes-1, then Converged.
@@ -504,8 +513,8 @@ void mechfb_repack_per_active_local(const neighbor_loop_args& args,
 
 #endif /* GALSF_FB_MECHANICAL */
 
-/* NOTE: toplevel helpers callable from non-GPU TUs (mechfb_alloc_local_gas_delta,
- * mechfb_free_local_gas_delta, mechfb_run_iterative) are declared in
+/* NOTE: the toplevel helpers callable from non-GPU TUs (mechfb_run_iterative,
+ * mechfb_get_persistent_gas_delta, mechfb_reset_one_gas_delta) are declared in
  * galaxy_sf/galsf_gpu_decls.h — keep this header GPU-TU-only because it
  * includes mechanical_fb_functions.h whose inline pair_kernel body uses
  * Kokkos:: symbols. */

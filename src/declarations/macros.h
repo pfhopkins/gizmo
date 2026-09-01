@@ -9,7 +9,13 @@
 
 
 
-#ifndef DISABLE_MEMORY_MANAGER
+/* Working memory comes from the managed pool. There was once a switch here that swapped these for
+   bare malloc and free; it is gone, because everything that keeps a run inside its memory now
+   works by asking the pool how much room is left. Without the pool the pool always looks empty:
+   the transport of tree nodes between ranks sizes its rounds from the free space and would take
+   the largest round every time, the checks that refuse an allocation before it is attempted would
+   always agree to it, and the memory report would have nothing to report. The pool also hands
+   back memory aligned as the physics kernels expect, which plain malloc does not promise. */
 
 #define  mymalloc(x, y)            mymalloc_fullinfo(x, y, __FUNCTION__, __FILE__, __LINE__)
 #define  mymalloc_movable(x, y, z) mymalloc_movable_fullinfo(x, y, z, __FUNCTION__, __FILE__, __LINE__)
@@ -19,7 +25,7 @@
 #define  myfree_movable(x)         myfree_movable_fullinfo(x, __FUNCTION__, __FILE__, __LINE__)
 #define  report_memory_usage(x, y) report_detailed_memory_usage_of_largest_task(x, y, __FUNCTION__, __FILE__, __LINE__)
 
-// compiler specific data alignment hints: use only with memory manager as malloc'd memory is not sufficiently aligned
+// compiler specific data alignment hints
 // (experimenting right now with removing this, as many compilers internal AVX optimizations appear to be doing marginally better, and can resolve crashes on some compilers)
 #if defined(__xlC__) // XLC compiler
 #define ALIGN(n) __attribute__((__aligned__(n)))
@@ -27,18 +33,6 @@
 #define ALIGN(n) __attribute__((__aligned__(n)))
 #elif defined(__INTEL_COMPILER) // Intel Compiler
 #define ALIGN(n) __declspec(align(n))
-#endif
-
-#else
-
-#define  mymalloc(x, y)            malloc(y)
-#define  mymalloc_movable(x, y, z) malloc(z)
-#define  myrealloc(x, y)           realloc(x, y)
-#define  myrealloc_movable(x, y)   realloc(x, y)
-#define  myfree(x)                 free(x)
-#define  myfree_movable(x)         free(x)
-#define  report_memory_usage(x, y) printf("Memory manager disabled.\n")
-
 #endif
 
 #ifndef ALIGN // Unknown Compiler or using default malloc
@@ -189,20 +183,25 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
-/* Device-only memory space: GPU HBM on CUDA builds, falls back to SharedSpace
-   elsewhere.  Use for arrays that are kernel-read-only and can be fed via
-   explicit deep_copy from a SharedSpace/HostSpace stage — the previous
-   "half-port" (only scratch/counts in CudaSpace, kernel still reading
-   compact_xyzh/tiles/bvh/pool through UVM) showed no benefit because the
-   hot read path was unchanged.  A complete port (build phase fills SharedSpace
-   stage, deep_copy to CudaSpace mirror, kernel reads CudaSpace) eliminates
-   HMM/TLB-miss overhead on small-N kernels where one thread does ~1000s of
-   scattered UVM reads through the BVH and compact_xyzh.  The PM_ERR_COUNT
-   crash that followed the prior partial port was independent (PMGRID=512
-   single-rank int overflow in MPI_Sendrecv slab transposes — fixed in
-   gravity/pm_*.cc memcpy-self-send patch). */
+/* Device-only memory space: GPU HBM on a GPU backend, SharedSpace when there is
+   no device (host builds).  Use for arrays that are kernel-read-only and can be
+   fed via explicit deep_copy from a SharedSpace/HostSpace stage — a partial move
+   (only scratch/counts device-resident, kernel still reading
+   compact_xyzh/tiles/bvh/pool through managed memory) buys nothing, because the
+   hot read path is unchanged.  Moving the whole read path (build phase fills a
+   SharedSpace stage, deep_copy to the device mirror, kernel reads the mirror)
+   is what removes the page-state/TLB-miss overhead on small-N kernels, where a
+   single thread makes thousands of scattered managed-memory reads through the
+   BVH and compact_xyzh.
+   Nothing allocated here may be dereferenced on the host: stage through
+   SharedSpace/HostSpace and deep_copy in both directions.
+   The PM_ERR_COUNT crash that once followed a partial move was independent
+   (PMGRID=512 single-rank int overflow in MPI_Sendrecv slab transposes — fixed
+   in gravity/pm_*.cc memcpy-self-send patch). */
 #ifdef KOKKOS_ENABLE_CUDA
 #define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::CudaSpace
+#elif defined(KOKKOS_ENABLE_HIP)
+#define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::HIPSpace
 #else
 #define GIZMO_KOKKOS_DEVICE_SPACE GIZMO_KOKKOS_SHARED_SPACE
 #endif

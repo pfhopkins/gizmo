@@ -5,16 +5,13 @@
 %
 InitCondFile                       ../gmc_cooling/gmc_cooling_ics
 OutputDir                          output_pmgrid
-PartAllocFactor                    10
 TimeMax                            0.05
 TimeBetSnapshot                    0.025
 MaxSizeTimestep                    0.001
 DesNumNgb                          40
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         5000
 GravityConstantInternal            1
 BoxSize                            100.0
-MaxHsml                            2000
 SofteningGas                       0.1
 SofteningHalo                      0.07
 Softening_Type2                    0.003

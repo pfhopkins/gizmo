@@ -16,8 +16,6 @@ BoxSize                            1
 TimeBetSnapshot                    0.1
 DesNumNgb                          4
 MaxNumNgbDeviation                 1e-6
-MaxMemSize                         1000
-PartAllocFactor                    10
 Grain_Internal_Density             1
 Grain_Size_Min                     1.23608
 Grain_Size_Max                     1.23608

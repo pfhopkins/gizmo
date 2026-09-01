@@ -22,7 +22,7 @@ GIZMO_GPU_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, doub
 GIZMO_GPU_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 void   InitCool(void);
 #ifndef CHIMES
-void   InitCoolMemory(void);
+int    InitCoolMemory(void);
 void   IonizeParams(void);
 void   IonizeParamsFunction(void);
 void   IonizeParamsTable(void);

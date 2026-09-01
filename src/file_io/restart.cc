@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../domain/domain.h"
+#include "../gravity/let_data.h"
 
 static FILE *fd;
 
@@ -24,6 +25,51 @@ static void in(int *x, int modus);
 static void byten(void *x, size_t n, int modus);
 
 int old_MaxPart = 0, new_MaxPart;
+
+
+/*! Total number of particles recorded in the restart set, or -1 if it cannot be read. Used at
+ *  startup to size the memory arena, which has to be sized before anything is allocated from it
+ *  and therefore before the restart files are read properly.
+ *
+ *  Deliberately modest about what it is for. The whole run-parameter block is the first thing in
+ *  a restart file, so this reads it into a throwaway copy and takes one number out; it never
+ *  touches the live parameters, and restart() below remains the only thing that actually loads
+ *  them. The number is also not required to be exact: a run's particle count grows as gas spawns
+ *  winds and stars, so the primary file and the backup can legitimately disagree, and the size
+ *  this feeds carries enough margin to absorb that. Anything unreadable simply returns -1 and the
+ *  caller falls back to a conservative size, because a restart set that is genuinely broken is
+ *  restart()'s business to report, in its own place, with its own message.
+ */
+long long peek_total_particles_in_restart(void)
+{
+    long long total = -1;
+
+    if(ThisTask == 0)
+    {
+        char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+        FILE *f;
+        int attempt;
+
+        for(attempt = 0; attempt < 2 && total < 0; attempt++)
+        {
+            if(attempt == 0)
+                {snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles/%s.0", All.OutputDir, All.RestartFile);}
+            else
+                {snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles/%s.0.bak", All.OutputDir, All.RestartFile);}
+
+            if((f = fopen(path, "r")))
+            {
+                struct global_data_all_processes stored;
+                if(fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
+                fclose(f);
+            }
+        }
+    }
+
+    MPI_Bcast(&total, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+
+    return total;
+}
 
 
 /*! This function reads or writes the restart files.
@@ -52,6 +98,7 @@ void restart(int modus)
     double save_PartAllocFactor;
     int nprocgroup, primaryTask, groupTask;
     struct global_data_all_processes all_task0 = {};   /* zero-init so the required groupTask==0 Bcast is safe even if rank 0 failed its header read */
+    int rekeyed_MaxPartAssignable = 0;   /* worked out during the read, put in force at the end of it */
     int nmulti = MULTIPLEDOMAINS, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
     
 
@@ -188,23 +235,103 @@ void restart(int modus)
 
 	  if(modus)		/* read */
 	    {
-	      if(All.PartAllocFactor != save_PartAllocFactor)
+	      /* The most local particles a rank may be assigned is PartAllocFactor times the balanced
+	       * count, and both of those can differ from what the run that wrote this file had: the
+	       * factor because the parameter file may have been edited, the count because particles are
+	       * created and destroyed while a run proceeds.  Work it out again from what is true now, so
+	       * that resuming a run keeps the MEANING of the factor rather than the value it happened to
+	       * imply at the start.  The same expression on every rank, over a particle count every rank
+	       * already agrees on, so the result is identical everywhere without communicating it -- the
+	       * property the cap depends on.  Written exactly as when the initial conditions were read,
+	       * so a resumed run and a fresh one at the same size reach the same number.
+	       *
+	       * An edited factor and a moved particle count go through the same arithmetic here on
+	       * purpose.  They used to be separate: only an edit worked anything out again, so resuming
+	       * with the factor untouched held the cap at whatever the initial conditions implied,
+	       * however far the run had grown past them, while retyping the same factor with one digit
+	       * changed worked it out in full.  Two restarts that ask for the same thing have to do the
+	       * same thing, and a factor that is defined relative to the particle count has to follow it. */
+	      const int factor_was_raised = (save_PartAllocFactor > All.PartAllocFactor);
+	      All.PartAllocFactor = save_PartAllocFactor;
+
+	      long long cap_wanted = (long long) (All.PartAllocFactor * (All.TotNumPart / NTask));
+	      if(cap_wanted < 1) {cap_wanted = 1;}
+
+	      /* The run's capacity ceiling was fixed when the ICs were read and travels in the restart
+	       * file; it bounds the tree's node index base and its per-particle side arrays, so nothing
+	       * may be assigned past it.  It is a bound on INDICES, and nothing is allocated from it: it
+	       * is a whole node's memory share priced entirely in particle slots, many times what a run
+	       * ever holds.  Storage, on the other hand, IS sized from the cap -- so adopting the
+	       * ceiling as the cap would ask for that whole share in particle arrays.  A cap that wants
+	       * to go past it therefore does not move at all: the run keeps the cap it already had,
+	       * which is what it was running at anyway, and is told why.  A factor the user RAISED is refused instead: that
+	       * is a request that cannot be met, and saying so is more use than quietly doing something
+	       * else.  A factor the user LOWERED is not refused, since it asks for less than changing
+	       * nothing would have.  A ceiling of zero, which can only mean the file does not carry one,
+	       * needs no special case: nothing sits below it, so the cap simply holds still and the
+	       * reads below report the file's real trouble. */
+	      if(cap_wanted > (long long) All.MaxPartExpandable)
 		{
-		  old_MaxPart = All.MaxPart;	/* old MaxPart */
-
+		  if(factor_was_raised)
+		    {
+		      /* Rank-uniform inputs, so every rank reaches this together and one of them says it. */
+		      if(ThisTask == 0)
+			{
+			  printf("At %lld particles, the PartAllocFactor %g asked for here needs %lld particle slots per rank, past the %d this run can index, fixed when it started. Restart at the previous value, which resumes, or start a fresh run with more memory available per rank.\n",
+				 (long long) All.TotNumPart, All.PartAllocFactor, cap_wanted, All.MaxPartExpandable);
+			  fflush(stdout);
+			}
+		      /* Skip this rank's payload: allocate_memory + the reads below would run at the very
+		       * capacity just rejected.  Drains at the per-turn poll, like the other soft stops here. */
+		      endrun(90001023); restart_status = 90001023; goto finish_turn;
+		    }
 		  if(ThisTask == 0)
-		    printf("PartAllocFactor changed: %f/%f , adapting bounds ...\n",
-			   All.PartAllocFactor, save_PartAllocFactor);
+		    {
+		      printf("At %lld particles, PartAllocFactor %g asks for %lld particle slots per rank, past the %d this run can index, fixed when it started. Keeping the %d it already had. If the decomposition then cannot stay within that, lower PartAllocFactor, or start a fresh run with more memory available per rank.\n",
+			     (long long) All.TotNumPart, All.PartAllocFactor, cap_wanted, All.MaxPartExpandable,
+			     All.MaxPartAssignable);
+		      fflush(stdout);
+		    }
+		  cap_wanted = (long long) All.MaxPartAssignable;   /* hold still: see above */
+		}
 
-		  All.PartAllocFactor = save_PartAllocFactor;
-		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-		  All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));
-#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
-          All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
-#endif
-          new_MaxPart = All.MaxPart;
+	      if((int) cap_wanted != All.MaxPartAssignable)
+		{
+		  if(ThisTask == 0)
+		    {
+		      printf("Resuming with %lld particles and PartAllocFactor %g: the most local particles a rank may be assigned moves from %d to %d.\n",
+			     (long long) All.TotNumPart, All.PartAllocFactor, All.MaxPartAssignable, (int) cap_wanted);
+		      fflush(stdout);
+		    }
+		  /* Not in force yet: the top tree serialized in this file was refined against the
+		   * WRITER's cap, and the read below deserializes it into an allocation this same cap
+		   * sizes (domain_allocate -> MaxTopNodes).  Lower the cap first and that allocation is
+		   * too small for the top tree about to be read into it, which is a heap overrun rather
+		   * than a stop, since NTopnodes is read from the file unchecked.  So the new cap takes
+		   * effect where the new capacity does, once every payload has been read. */
+		  rekeyed_MaxPartAssignable = (int) cap_wanted;
 
-		  save_PartAllocFactor = -1;
+		  /* How much storage this rank holds is a separate question from what it may be assigned,
+		   * and only one direction of it belongs here.  Storage is raised now when the cap has
+		   * outgrown it, because the decomposition that consumes the cap has to find the room
+		   * already there.  It is never LOWERED here: this file is about to be read into it, and a
+		   * rank can legitimately hold more particles than the cap alone suggests, since particles
+		   * created between decompositions are bounded by storage rather than by the cap.  Releasing
+		   * what a smaller cap no longer needs is the domain boundary's business, where it is done
+		   * only once the saving is worth the migration.
+		   *
+		   * When it is raised, All.MaxPart goes back to the writer's value a few lines below so the
+		   * serialized tree payload stays readable, and reaches the new one at the END OF THIS READ, with the cap.
+		   * The two are therefore deliberately unequal for the duration of this read: do not "tidy"
+		   * them into agreement, and do not assert storage >= cap globally -- that assertion is
+		   * resize_particle_storage's business, and its first call comes after both are in force. */
+		  if(cap_wanted > (long long) All.MaxPart)
+		    {
+		      old_MaxPart = All.MaxPart;	/* the capacity the payload below was written at */
+		      All.MaxPart = (int) cap_wanted;
+		      gizmo_set_gas_capacity_from_maxpart();
+		      new_MaxPart = All.MaxPart;
+		    }
 		}
 
 	      if(all_task0.Time != All.Time)
@@ -241,7 +368,20 @@ void restart(int modus)
 
 	  if(modus)		/* read */
 	    {
-	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}	/* such that tree is still valid */
+	      /* Restore the WRITER's MaxPart FOR THE REST OF THIS READ, AND NO LONGER -- the swap back
+	       * is at the end of restart(), and the two belong together.  What this used to be FOR was
+	       * the tree: force_treeallocate published the particle-slot count from it, so the writer's
+	       * value had to be in place for the serialized Nextnode pseudo segment to land at the
+	       * offset the writer used.  That reason is gone -- the slot count now comes from the file
+	       * explicitly (below) -- and it is kept because removing it is a decision in its own right,
+	       * not a side effect of changing what the tree reads.  Storage here was allocated at the
+	       * RAISED capacity, and the NumPart guard above ran against that same value.
+	       * What this window may NOT do is outlive the read.  It once did, on the reasoning that
+	       * nothing looks at All.MaxPart before the domain boundary; that was true of the tree and
+	       * false of the live step, where a ghost import grows storage against it and a wind spawn
+	       * refuses against it -- both reading a capacity smaller than the decomposition is already
+	       * allowed to assign. */
+	      if(old_MaxPart) {All.MaxPart = old_MaxPart;}
 	    }
 
 
@@ -330,6 +470,29 @@ void restart(int modus)
 	  in(&nmulti, modus);
         in(&NTopleaves, modus);
         in(&NTopnodes, modus);
+        /* The tree node arrays are sized from the domain's local-particle cap, which changes
+           with the decomposition, so the node count this tree was built with travels in the
+           restart file: the reader reproduces the writer's node and foreign capacities for an
+           unedited restart, keeping the serialized node, pseudo-particle and Nextnode indices
+           below valid.
+           The LET foreign-node capacity travels too, and is handed to force_treeallocate verbatim
+           below rather than re-derived: the serialized node pointers encode it (pseudo-particles
+           start at TreeNodeIndexBase + MaxNodes + MaxForeignNodes), and one of its inputs,
+           PartAllocFactor, is a value the user may edit on a restart.
+           RuntimeMinLETForeignNodes, the run's ratcheted LET foreign-arena floor, travels so later
+           trees, which derive their own capacity, keep the run's ratchet. */
+        in(&MaxNodes, modus);
+        in(&MaxForeignNodes, modus);
+        byten(&RuntimeMinLETForeignNodes, sizeof(RuntimeMinLETForeignNodes), modus);
+        if(modus && MaxForeignNodes < 0)
+          {
+            printf("Restart file on task=%d carries a negative LET foreign-node capacity (%d), so the tree layout it describes cannot be reproduced.\n",
+                   ThisTask, MaxForeignNodes);
+            fflush(stdout);
+            /* soft: allocating and deserializing against an unusable layout would corrupt the tree.
+             * Skip this rank's payload, drain at the per-turn poll. */
+            endrun(90001026); restart_status = 90001026; goto finish_turn;
+          }
 	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
 	    {
 	      if(ThisTask == 0)
@@ -345,7 +508,14 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
-		  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+		  /* The reader must rebuild the layout the WRITER serialized, so the slot count comes
+		   * from the file, not from this rank's current capacity. The two are equal only while
+		   * the capacity never moves; once it can grow mid-step the writer's tree side arrays
+		   * were allocated with the smaller count, and its pseudo-particle segment sits at that
+		   * smaller offset in Nextnode[]. Allocating at the grown capacity would deserialize the
+		   * pseudo segment from the wrong offset -- the same physical-layout reason MaxNodes and
+		   * MaxForeignNodes are read from the file rather than re-derived. */
+		  force_treeallocate(MaxNodes, All.TreeParticleSlots, MaxForeignNodes);
 		  /* tree-alloc UVM OOM: a NULL base means force_treeallocate soft-flagged. NO collective
 		   * in this per-turn (subset) context -- skip the byten payload (local file reads) and
 		   * drain at restart's existing all-rank poll. */
@@ -370,7 +540,7 @@ void restart(int modus)
 	      byten(Father, NumPart * sizeof(int), modus);
 
 	      byten(Nextnode, NumPart * sizeof(int), modus);
-	      byten(Nextnode + All.MaxPart, NTopnodes * sizeof(int), modus);
+	      byten(Nextnode + All.TreeParticleSlots, NTopnodes * sizeof(int), modus);
 
 	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
 	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
@@ -401,6 +571,17 @@ void restart(int modus)
       gizmo_exit_bad_stop_if_requested("restart:groupTask_turn");
     }
 
+  /* Every payload has been read, so the writer's numbers have done their job and this run's take
+   * over here -- both of them, together, because they are two halves of one capacity.
+   *
+   * The advertised storage may not stay at the writer's value for any longer than the read, or a
+   * consumer that grows storage mid-step would ask for less than the decomposition is already
+   * allowed to assign and be refused for it.  The assignment cap may not move any EARLIER than
+   * this, because the top tree read above was sized by it.  The same swap remains at the domain
+   * boundary, where it is now a no-op that costs one comparison and keeps that path correct on
+   * its own terms. */
+  if(modus != 0 && rekeyed_MaxPartAssignable) {All.MaxPartAssignable = rekeyed_MaxPartAssignable;}
+  if(modus != 0 && old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
 
   if(modus != 0 && nmulti != MULTIPLEDOMAINS)	/* in this case we must force a domain decomposition */
     {

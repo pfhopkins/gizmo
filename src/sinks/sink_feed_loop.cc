@@ -97,38 +97,6 @@ void SinkFeedSpec::apply_active_writeback(const neighbor_loop_args& args,
     aux->per_active_accum[active_slot] = accum;
 }
 
-/* Per-field merge of a peer's contribution (Mode B remote). Per-field op
- * MUST match the pair_kernel writes. mass_markedswallow_scratch is
- * intentionally NOT in the manifest — per-i scratch, not aggregable
- * across peers. Nothing checks this manifest against pair_kernel at runtime,
- * so drift between them is silent.
- *
- * Adding a new accumulator field for this loop = ONE LINE under the
- * appropriate physics flag's #ifdef. */
-void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)                local_accum.field += peer_accum.field;
-#define ACCUM_ADD_VEC3(field)           for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
-#define ACCUM_MIN_PAIR(value, pos)                                              \
-    do {                                                                        \
-        if(peer_accum.value < local_accum.value) {                              \
-            local_accum.value = peer_accum.value;                               \
-            for(int k = 0; k < 3; k++) local_accum.pos[k] = peer_accum.pos[k];  \
-        }                                                                       \
-    } while(0);
-
-#ifdef SINK_CALC_LOCAL_ANGLEWEIGHTS
-    ACCUM_ADD(Sink_angle_weighted_kernel_sum)
-#endif
-#ifdef SINK_REPOSITION_ON_POTMIN
-    ACCUM_MIN_PAIR(Sink_PotentialMinimumOfNeighbors,
-                   Sink_PotentialMinimumOfNeighborsPos)
-#endif
-
-#undef ACCUM_ADD
-#undef ACCUM_ADD_VEC3
-#undef ACCUM_MIN_PAIR
-}
 
 /* ============================================================================
  * DEVICE CONTEXT LIFECYCLE
@@ -157,7 +125,17 @@ void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
     const int N = args.num_active;
     if(N > 0) {
         SinkFeedLocalIn *uvm = (SinkFeedLocalIn *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkFeedLocalIn));
+            gizmo_gpu_alloc_shared((size_t) N * sizeof(SinkFeedLocalIn), NULL);
+        if(!uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "sink feedback: could not stage %d active sinks (%.1f MB); "
+                     "no accretion or feedback is applied",
+                     N, (double)((size_t) N * sizeof(SinkFeedLocalIn)) / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         std::memcpy(uvm, aux->host_locals, N * sizeof(SinkFeedLocalIn));
         ctx.per_active_local = uvm;
     }
@@ -176,8 +154,17 @@ void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
     const int n_total = ctx.num_total;
     if(n_total > 0) {
         unsigned char *elig = (unsigned char *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                (size_t)n_total * sizeof(unsigned char));
+            gizmo_gpu_alloc_shared((size_t) n_total * sizeof(unsigned char), NULL);
+        if(!elig) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "sink feedback: could not stage the binary-merge eligibility "
+                     "flags for %d particles (%.1f MB)",
+                     n_total, (double) n_total / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         for(int j = 0; j < n_total; j++) {
             elig[j] = (P[j].Type == 5
                        && is_star_eligible_for_binary_merge_away(j)) ? 1 : 0;

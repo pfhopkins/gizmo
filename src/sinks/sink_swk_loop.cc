@@ -98,65 +98,6 @@ void SinkSwkSpec::apply_active_writeback(const neighbor_loop_args& args,
     aux->per_active_accum[active_slot] = accum;
 }
 
-/* Per-field merge of a peer rank's contribution. Per-field op MUST match
- * the pair_kernel writes; Accreted_Age uses MIN-merge with the
- * MAX_REAL_NUMBER sentinel from zero_accum. Nothing checks the two against
- * each other at runtime, so drift between them is silent.
- *
- * Adding a new accumulator field for this loop = ONE LINE under the
- * appropriate physics flag's #ifdef. */
-void SinkSwkSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)        local_accum.field += peer_accum.field;
-#define ACCUM_ADD_VEC3(field)   for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
-#define ACCUM_MIN(field)        if(peer_accum.field < local_accum.field) local_accum.field = peer_accum.field;
-#define ACCUM_ADD_ARRAY(field, len)                                       \
-    for(int k = 0; k < (len); k++) local_accum.field[k] += peer_accum.field[k];
-
-    ACCUM_ADD(accreted_Mass)
-    ACCUM_ADD(accreted_Sink_Mass)
-    ACCUM_ADD(accreted_Sink_Mass_reservoir)
-#if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
-    ACCUM_ADD(Sink_AccretionDeficit)
-#endif
-#ifdef GRAIN_FLUID
-    ACCUM_ADD(accreted_dust_Mass)
-#endif
-#ifdef RT_REINJECT_ACCRETED_PHOTONS
-    ACCUM_ADD(accreted_photon_energy)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-    ACCUM_ADD_VEC3(accreted_momentum)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_COM)
-    ACCUM_ADD_VEC3(accreted_centerofmass)
-#endif
-#if defined(SINK_RETURN_BFLUX)
-    ACCUM_ADD_VEC3(accreted_B)
-#endif
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    ACCUM_ADD_VEC3(accreted_J)
-#endif
-#ifdef SINK_COUNTPROGS
-    ACCUM_ADD(Sink_CountProgs)
-#endif
-#ifdef GALSF
-    ACCUM_MIN(Accreted_Age)
-#endif
-    ACCUM_ADD(n_gas_swallowed)
-    ACCUM_ADD(n_sink_swallowed)
-    ACCUM_ADD(n_star_swallowed)
-    ACCUM_ADD(n_dm_swallowed)
-    ACCUM_ADD_ARRAY(delta_TimeBin_Sink_mass,          TIMEBINS)
-    ACCUM_ADD_ARRAY(delta_TimeBin_Sink_dynamicalmass, TIMEBINS)
-    ACCUM_ADD_ARRAY(delta_TimeBin_Sink_Mdot,          TIMEBINS)
-    ACCUM_ADD_ARRAY(delta_TimeBin_Sink_Medd,          TIMEBINS)
-
-#undef ACCUM_ADD
-#undef ACCUM_ADD_VEC3
-#undef ACCUM_MIN
-#undef ACCUM_ADD_ARRAY
-}
 
 /* ============================================================================
  * DEVICE CONTEXT LIFECYCLE
@@ -173,7 +114,18 @@ void SinkSwkSpec::populate_device_context(const neighbor_loop_args& args,
         return;
     }
     SinkSwallowLocalIn *uvm = (SinkSwallowLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkSwallowLocalIn));
+        gizmo_gpu_alloc_shared((size_t) N * sizeof(SinkSwallowLocalIn), NULL);
+    if(!uvm) {
+        ctx.per_active_local = nullptr;
+        ctx.populate_failed = 1;
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "sink swallow: could not stage %d active sinks (%.1f MB); "
+                 "no gas is swallowed",
+                 N, (double)((size_t) N * sizeof(SinkSwallowLocalIn)) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7726, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     std::memcpy(uvm, aux->host_locals, N * sizeof(SinkSwallowLocalIn));
     ctx.per_active_local = uvm;
 }

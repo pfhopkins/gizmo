@@ -37,11 +37,9 @@
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 #include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
-#include "ghost_exchange_functions.h" /* gx_pair_accept (shared geometric accept) */
+#include "ghost_exchange_functions.h" /* gx_pair_accept_wrap_and_test: shared accept, wraps via the canonical macros */
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
-#include "gpu_fine_sidecar.h"    /* L4 S2a device fine-tree sidecar (upload/free/valid/readback) */
-#include "../gravity/gpu_gravity_tree.h"  /* gpu_gravity_soa_ensure_drifted (S2b-1 drift stamp) */
 #include "mode_b_local_walker.h"
 #ifdef _OPENMP
 #include <omp.h>                 /* threaded sender export + receiver walk below */
@@ -86,7 +84,16 @@ bool gizmo_nlr_phase0_diag_enabled(void);
 static int NumPart_before_ghost = -1;
 static int N_gas_before_ghost = -1;
 static int NumGhostParticles = 0;
-static int PreviousGhostCount = 0; /* ghost count from the most recent completed exchange, for domain headroom */
+/* The largest ghost import this rank has completed, over the epoch running now and the one before
+ * it.  The capacity a rank needs is set by its worst import, not its most recent one, and ghost
+ * demand is strongly uneven between ranks, so this is kept per rank and is the measured term the
+ * epoch sizing asks for.  Two epochs rather than one because a single quiet epoch would otherwise
+ * be enough to justify releasing storage that the next one immediately asks for again, and paying
+ * two migrations to save memory for one epoch is a poor trade.  Neither value is carried across a
+ * restart: a restored capacity is already whatever the run had grown to, and the sizing refuses to
+ * lower it until it has observed an import. */
+static int GhostEpochHighWater = 0;
+static int GhostPreviousEpochHighWater = 0;
 
 /* Ghost provenance map: for each ghost particle, the home MPI rank and index.
    Used by ghost_writeback to reverse-communicate j-particle modifications.
@@ -606,7 +613,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
  * knows exactly, so routing needs nothing from the supply side.  The traversal AND
  * export opener are both R_open = h_q (mode_b_local_walker.cc, the R_open branch
  * and the topleaf export re-test), and the accept ignores h_j entirely
- * (ghost_exchange_functions.h gx_pair_accept, ONEWAY branch).  Query h already
+ * (ghost_exchange_functions.h gx_pair_accept_wrap_and_test, ONEWAY branch).  Query h already
  * carries the spec safety factor, so a widened query cannot outgrow the opener.
  * KEEP THOSE THREE IN STEP: if ONEWAY accept ever gains an h_j term, or the opener
  * stops using h_q, this eligibility no longer holds and must be re-derived.
@@ -761,11 +768,18 @@ static inline double ghost_tile_effective_radius(int j, unsigned int supply_mask
 }
 
 /* Pure particle-slot fit predicate: do `required` total (local+ghost) particles
- * fit P[]/CellP[] (All.MaxPart)? Policy (what to do on a miss) lives in the
- * caller, NOT here — keep this free of multi-space/budget logic. */
+ * fit P[] and CellP[]? Policy (what to do on a miss) lives in the caller, NOT
+ * here — keep this free of multi-space/budget logic.
+ * Both capacities are tested because an imported ghost occupies P[j] and, when
+ * the run has gas, CellP[j] at the same index: the received range is written to
+ * CellP[NumPart..] whatever the ghost types are. The two capacities are equal by
+ * construction (gizmo_set_gas_capacity_from_maxpart), so the gas test is
+ * redundant today and states the requirement rather than assuming it. */
 static inline int ghost_particle_slots_fit(long long required)
 {
-    return (required <= (long long)All.MaxPart) ? 1 : 0;
+    if(required > (long long)All.MaxPart) {return 0;}
+    if(All.TotN_gas > 0 && required > (long long)All.MaxPartGas) {return 0;}
+    return 1;
 }
 
 /* SSOT for "what a send slot contains": one exported particle's P (+ gas CellP,
@@ -1013,38 +1027,11 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     int *send_to = (int *) calloc(local_ntiles * NTask, sizeof(int));
     int my_tile_start = tile_disp[ThisTask];
 
-    /* Per-axis min-AABB-AABB squared distance under periodic wrap. Returns
-     * negative gap on this axis if the AABBs overlap. Inlined for hot loop. */
-    auto axis_gap = [&](double c_a, double hw_a, double c_b, double hw_b, int kk) -> double {
-#if defined(BOX_PERIODIC)
-        int is_periodic = 1;
-        double bsize = (kk==0) ? boxSize_X : ((kk==1) ? boxSize_Y : boxSize_Z);
-#if defined(BOX_REFLECT_X)
-        if(kk==0) is_periodic = 0;
-#endif
-#if defined(BOX_REFLECT_Y)
-        if(kk==1) is_periodic = 0;
-#endif
-#if defined(BOX_REFLECT_Z)
-        if(kk==2) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_X)
-        if(kk==0) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_Y)
-        if(kk==1) is_periodic = 0;
-#endif
-#if defined(BOX_OUTFLOW_Z)
-        if(kk==2) is_periodic = 0;
-#endif
-#else
-        int is_periodic = 0;
-        double bsize = 0;
-#endif
-        double dx = fabs(c_a - c_b);
-        if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
-        return dx - hw_a - hw_b;
-    };
+    /* Tile-pair overlap is a point against the Minkowski sum of the two boxes.
+     * The box wrap belongs to the canonical macro family (the former per-axis
+     * form here could not represent a shearing box's x-y coupling), so it lives
+     * in gx_boxpair_overlap_wrap_and_test; the exact clamped-gap acceptance
+     * this pass relies on is unchanged. */
 
     /* Pass 1: need_from[rt] — driven by OUR active tiles. Outer loop over
      * local tiles with active_count > 0 only (tiny-N: just a handful). */
@@ -1080,17 +1067,16 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                                     : DMAX(lm->active_hmax, rm->hmax) * safety_factor;
                 if(search_r <= 0) continue;
                 double search_r2 = search_r * search_r;
-                double dist2 = 0;
-                int overlaps = 1;
+                double dc[3], hw_sum[3];
                 for(k = 0; k < 3; k++) {
-                    double c_r = 0.5 * (rm->lo[k] + rm->hi[k]);
-                    double hw_r = 0.5 * (rm->hi[k] - rm->lo[k]);
-                    double gap = axis_gap(c_lo[k], c_hw[k], c_r, hw_r, k);
-                    if(gap <= 0) continue;
-                    if(gap > search_r) { overlaps = 0; break; }
-                    dist2 += gap * gap;
+                    const double c_r  = 0.5 * (rm->lo[k] + rm->hi[k]);
+                    const double hw_r = 0.5 * (rm->hi[k] - rm->lo[k]);
+                    dc[k]     = c_lo[k] - c_r;
+                    hw_sum[k] = c_hw[k] + hw_r;
                 }
-                if(overlaps && dist2 < search_r2) need_from[rt] = 1;
+                if(gx_boxpair_overlap_wrap_and_test(dc[0], dc[1], dc[2],
+                                                    hw_sum[0], hw_sum[1], hw_sum[2],
+                                                    search_r, search_r2)) need_from[rt] = 1;
             }
         }
     }
@@ -1180,7 +1166,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * later packing allocs are freed explicitly by the normal path). It does NOT
      * touch NumGhostParticles: on normal completion that field already holds the
      * materialised ghost count and MUST survive (ghost-writeback / cleanup /
-     * PreviousGhostCount read it); the fallback bail resets it explicitly. */
+     * cleanup reads it); the fallback bail resets it explicitly. */
     auto tile_preflight_cleanup = [&]() {
         myfree(send_disp); myfree(recv_disp);
         myfree(send_count); myfree(recv_count);
@@ -1333,13 +1319,22 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
     }
-    /* Warn if ghost particles used >80% of available headroom */
-    if(NumPart > 0.8 * All.MaxPart) {
-        double usage_frac = (double)NumPart / (double)All.MaxPart;
-        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). PartAllocFactor (currently %.2f) "
-                      "adds ghost slots but also inflates P/CellP/tree storage and may not fix overlarge "
-                      "imports; consider more ranks/nodes or reducing ghost-import demand.",
-                      100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
+    /* Report a rank that is approaching the largest capacity this run may ever reach.  The test is
+     * against that ceiling and not against the current capacity: the current one is raised whenever
+     * an import does not fit, so running close to it is the intended state and saying so every time
+     * would be noise on every rank of every exchange.  Approaching the ceiling is the condition that
+     * actually ends a run, and it is reported once, because it is a property of the run rather than
+     * of the exchange that happened to notice it. */
+    if(All.MaxPartExpandable > 0 && NumPart > 0.8 * All.MaxPartExpandable) {
+        static int reported_near_ceiling = 0;
+        if(!reported_near_ceiling) {
+            reported_near_ceiling = 1;
+            PRINT_WARNING("Ghost exchange: task %d holds %d particles, %.0f%% of the %d it can ever hold. "
+                          "Local particles plus imported ghosts are approaching the ceiling fixed at startup; "
+                          "more ranks/nodes, or a smaller ghost-import demand, would relieve it.",
+                          ThisTask, NumPart, 100.0 * (double)NumPart / (double)All.MaxPartExpandable,
+                          All.MaxPartExpandable);
+        }
     }
 
     /* Cleanup: later packing allocs (mymalloc LIFO + malloc), then the shared
@@ -1393,51 +1388,31 @@ struct gx_query_t {
     int    _pad;
 };
 
-/* Fixed-size export envelope carried from sender to supply rank: one query plus
- * the start nodes its sender walk reached on that peer.  A (query,peer) needing
- * more than NODELISTLENGTH nodes SPLITS into multiple envelopes (the Mode-B
- * export convention); the receiver walks each independently and dedups through
- * the matched bitmap, so a split costs an extra envelope and nothing else. */
-struct gx_export_envelope_t {
-    double pos[3];
-    double h;
-    int    n_nodes;
-    int    nodes[NODELISTLENGTH];
-    int    _pad;
-};
+/* gx_export_envelope_t (the sender->supply wire record) is declared in
+ * mesh/neighbor_list.h: the device receiver traversal compiles in another
+ * translation unit and consumes the same records. */
 
 /* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
  * (mesh/sfc_tiles_functions.h). For each axis, take the periodic-shortened
  * gap between sphere center and bbox; if any gap exceeds search_r, prune.
  * Otherwise sum-of-squares vs search_r2 for the final accept. */
 static inline int gx_bbox_overlaps_sphere(const double bbox_lo[3], const double bbox_hi[3],
-                                          const double pos[3], double search_r, double search_r2,
-                                          const int periodic_flags[3], const double box_sizes[3])
+                                          const double pos[3], double search_r, double search_r2)
 {
-    double dist2 = 0;
+    (void)search_r2;   /* the shared predicate squares the radius itself */
+    /* The box wrap is the canonical macro family's job, and it needs a centre
+     * separation rather than a lo/hi interval, so convert here.  Rounding the
+     * half-width UP (the larger of the two sides) keeps the test conservative
+     * under FP, which is what the direct point-to-interval form used to buy;
+     * over-opening costs a leaf test, under-opening drops a real neighbour. */
+    double c[3], hw[3];
     for(int k = 0; k < 3; k++) {
-        /* Direct point-to-interval gap from lo/hi (a true lower bound on the
-         * point-to-contained-particle distance).  This avoids the center/half-width
-         * decomposition (0.5*(lo+hi), 0.5*(hi-lo)) whose rounding could make the gap
-         * marginally NON-conservative at the search boundary and prune a reachable
-         * particle.  Periodic axes: test the nearest images (tile width < box) and
-         * take the minimum, so the gap is the true min-image distance — at least as
-         * conservative as the prior center/min-image form. */
-        double lo = bbox_lo[k], hi = bbox_hi[k], p = pos[k];
-        double gap = (p < lo) ? (lo - p) : ((p > hi) ? (p - hi) : 0.0);
-        if(periodic_flags[k] && gap > 0.0) {
-            double L = box_sizes[k];
-            double pm = p - L, pp = p + L;
-            double gm = (pm < lo) ? (lo - pm) : ((pm > hi) ? (pm - hi) : 0.0);
-            double gp = (pp < lo) ? (lo - pp) : ((pp > hi) ? (pp - hi) : 0.0);
-            if(gm < gap) gap = gm;
-            if(gp < gap) gap = gp;
-        }
-        if(gap <= 0.0) continue;          /* this axis overlaps */
-        if(gap > search_r) return 0;      /* prune fast */
-        dist2 += gap * gap;
+        c[k]  = 0.5 * (bbox_lo[k] + bbox_hi[k]);
+        double up = bbox_hi[k] - c[k], dn = c[k] - bbox_lo[k];
+        hw[k] = (up > dn) ? up : dn;
     }
-    return (dist2 < search_r2) ? 1 : 0;
+    return gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2],
+                                             hw[0], hw[1], hw[2], search_r);
 }
 
 /* Host-only BVH walk for the request-driven path. Mirrors
@@ -1465,7 +1440,6 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                               unsigned int supply_mask,
                               const tile_bvh_node_t *bvh, int bvh_root,
                               const double pos_q[3], double h_q, int search_mode,
-                              const int periodic_flags[3], const double box_sizes[3],
                               char *match_bitmask /* size num_pool */,
                               long *n_exact_hits /* optional (NULL in production): count EXACT matches
                                                   * this call would produce, computing r2 even for
@@ -1489,8 +1463,7 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                             : ((h_q > node_hmax_eff) ? h_q : node_hmax_eff);
         if(search_r <= 0) continue;
         double search_r2 = search_r * search_r;
-        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2,
-                                    periodic_flags, box_sizes)) continue;
+        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2)) continue;
         if(node->left < 0) {
             /* Leaf: per-particle accept against EXACT predicate. */
             int tile_idx = -(node->left + 1);
@@ -1531,9 +1504,10 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
                 double hj_dbl = gx_policy_scaled_h(j_neighbor, g_glt_cache.radius_policy_when_built,
                                                    g_glt_cache.j_radius_scale_when_built,
                                                    g_glt_cache.safety_factor_when_built);
-                if(gx_pair_accept(pos_q, h_q,
-                                  P[j_neighbor].Pos[0], P[j_neighbor].Pos[1], P[j_neighbor].Pos[2],
-                                  hj_dbl, search_mode, periodic_flags, box_sizes)) {
+                if(gx_pair_accept_wrap_and_test(pos_q[0] - (double)P[j_neighbor].Pos[0],
+                                                pos_q[1] - (double)P[j_neighbor].Pos[1],
+                                                pos_q[2] - (double)P[j_neighbor].Pos[2],
+                                                h_q, hj_dbl, search_mode)) {
                     if(n_exact_hits) (*n_exact_hits)++;
                     if(!already) match_bitmask[pool_pos] = 1;
                 }
@@ -1544,18 +1518,6 @@ static void gx_walk_local_bvh(const float *compact_xyzh,
             stack[sp++] = node->right;
         }
     }
-}
-
-/* Conservative sphere-vs-node-cube overlap — trivial pass-through to the shared
- * scalar predicate gx_node_sphere_overlap_center_len (ghost_exchange_functions.h),
- * the SSOT the device fine-tree walk also uses.  Extracts Nodes[] center/len here so
- * the shared helper stays geometry-only (no NODE/globals). */
-static inline int gx_node_sphere_overlap(const double pos_q[3], const struct NODE *nop, double R,
-                                         const int periodic_flags[3], const double box_sizes[3])
-{
-    return gx_node_sphere_overlap_center_len(pos_q, (double)nop->center[0], (double)nop->center[1],
-                                             (double)nop->center[2], (double)nop->len, R,
-                                             periodic_flags, box_sizes);
 }
 
 
@@ -1571,8 +1533,7 @@ static char *compute_matched_broadcast(
     const struct gx_query_t *all_queries, const int *q_disps, const int *all_q_counts,
     const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
     const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
-    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode,
-    const int periodic_flags[3], const double box_sizes[3])
+    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode)
 {
     /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
     char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
@@ -1590,7 +1551,6 @@ static char *compute_matched_broadcast(
                               h_pool_types, supply_mask,
                               h_bvh, bvh_root,
                               q->pos, q->h, search_mode,
-                              periodic_flags, box_sizes,
                               match_for_t, NULL);
         }
     }
@@ -1633,7 +1593,7 @@ static void ensure_broadcast_queries(int *available,
 /* Walk-export routed producer — the discovery path for every spec that passes
  * gx_walk_export_eligible().  Sender: per local query mode_b_walk_and_export -> per-peer
  * NodeList -> fixed-size envelopes -> Alltoallv.  Receiver: mode_b_walk_from_start_nodes
- * (resume from the exported NodeList) -> gx_pair_accept (the ghost-exchange SSOT predicate)
+ * (resume from the exported NodeList) -> gx_pair_accept_wrap_and_test (the ghost-exchange SSOT predicate)
  * -> matched[t*num_pool+p] bitmap, the same layout the shared Steps 4-6 install consume.
  * MODE-GENERIC (search_mode is passed through): this is the install target for both search
  * modes, so ONEWAY and SYMMETRIC discover on ONE substrate rather than two.
@@ -1666,7 +1626,6 @@ static char *compute_matched_walk_export(
     const struct ghost_exchange_spec_t *spec,
     const struct gx_query_t *local_queries, int n_local_queries,
     int num_pool, unsigned int supply_mask, int search_mode,
-    const int periodic_flags[3], const double box_sizes[3],
     struct gx_walk_export_result *res)
 {
     if(res) memset(res, 0, sizeof(*res));
@@ -1680,7 +1639,7 @@ static char *compute_matched_walk_export(
     const double walker_j_reach_scale = spec->j_radius_scale * spec->safety_factor;
     /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
      * envelope Alltoallv below / the caller's compare Allreduce). */
-    int ok_local = (All.MaxPart > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
+    int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
     int ok_all = 0;
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return NULL; }
@@ -1817,11 +1776,34 @@ static char *compute_matched_walk_export(
                     if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
 
     /* (e) RECEIVER: bounded resume-walk from the exported NodeList -> SSOT accept -> bitmap.
-     * HOST-THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized per-envelope
-     * cand slot — each thread writes ONLY its own index (no shared write), walker race-safe.  The
-     * ACCEPT + bitmap set run SERIALLY afterward (cheap): this keeps the matched_walk_export bitmap race-free
-     * AND the installed set order-independent (a bit is set or not), so the set is deterministic. */
-    {
+     * Two interchangeable backends produce the SAME bitmap; the set is
+     * order-independent (a bit is set or it is not), so which one ran is not
+     * observable downstream.
+     *
+     * The device traversal is tried first and answers whenever the tree mirror
+     * is current.  It declines rank-locally otherwise, and this window holds no
+     * collectives, so a rank that declines simply does the work itself and no
+     * other rank needs to agree.  Declining is for an unusable device tree state
+     * or an allocation failure -- never for a disagreement, which would be a bug
+     * to fix rather than to route around. */
+    int receiver_done_on_device = 0;
+    if(tot_r > 0) {
+        std::vector<int> envelope_peer((size_t)tot_r, -1);
+        for(int t = 0; t < NTask; t++) {
+            for(int r = 0; r < rc[t]; r++) {envelope_peer[(size_t)rd[t] + r] = t;}
+        }
+        receiver_done_on_device =
+            (gx_device_receiver_walk(recv, tot_r, envelope_peer.data(),
+                                     supply_mask, search_mode,
+                                     spec->radius_policy, walker_j_reach_scale,
+                                     g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
+                                     num_pool, matched_walk_export) == 0);
+    }
+    /* Host backend.  THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized
+     * per-envelope cand slot — each thread writes ONLY its own index (no shared write), walker
+     * race-safe.  The ACCEPT + bitmap set run SERIALLY afterward (cheap), which keeps the
+     * matched_walk_export bitmap race-free. */
+    if(!receiver_done_on_device) {
         std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 16)
@@ -1856,8 +1838,10 @@ static char *compute_matched_walk_export(
                     double hj_dbl = gx_policy_scaled_h(j, spec->radius_policy,
                                                        spec->j_radius_scale,
                                                        spec->safety_factor);
-                    if(gx_pair_accept(e->pos, e->h, P[j].Pos[0], P[j].Pos[1], P[j].Pos[2],
-                                      hj_dbl, search_mode, periodic_flags, box_sizes)) {
+                    if(gx_pair_accept_wrap_and_test(e->pos[0] - (double)P[j].Pos[0],
+                                                    e->pos[1] - (double)P[j].Pos[1],
+                                                    e->pos[2] - (double)P[j].Pos[2],
+                                                    e->h, hj_dbl, search_mode)) {
                         mf[pp] = 1;   /* idempotent: set semantics, duplicates are a no-op */
                     }
                 }
@@ -2279,8 +2263,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     (void)bvh_nnodes;
 
     /* Periodic flags / box sizes for the BVH walker. */
-    int periodic_flags[3] = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
-    double box_sizes[3]   = { boxSize_X, boxSize_Y, boxSize_Z };
 
 
     /* Matched producer selection: for ONEWAY callers the routed top-leaf
@@ -2313,7 +2295,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
                                             h_compact_xyzh, h_tiles, ntiles,
                                             h_pool, num_pool, h_pool_types, supply_mask,
-                                            h_bvh, bvh_root, search_mode, periodic_flags, box_sizes);
+                                            h_bvh, bvh_root, search_mode);
         /* Broadcast is the safety path — its alloc failing is terminal.  Drain
          * COLLECTIVELY here, BEFORE Step 4 dereferences matched: a per-rank NULL
          * must become an all-rank controlled stop, never a NULL walk/segfault. */
@@ -2339,14 +2321,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Walk-export discovery: produce the routed set (sender export + bounded receiver
      * walk, collective-safe) and INSTALL it for an eligible spec via the shared
      * ownership-transfer.  Placed here so it reads the SAME g_glt_cache snapshot as the
-     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept), so the
+     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept_wrap_and_test), so the
      * only way this set can differ from a full walk is routing COVERAGE, which is what
      * the per-spec supply-band domination proof establishes. */
     const int walk_export_install = gx_walk_export_eligible(spec);
     if(walk_export_install && NTask > 1) {
         matched_walk_export = compute_matched_walk_export(spec, local_queries, n_local_queries,
                                                   num_pool, supply_mask, search_mode,
-                                                  periodic_flags, box_sizes, &walk_export_res);
+                                                  &walk_export_res);
         /* Install via the shared ownership-transfer, so Steps 4-6 are reached by exactly
          * one path whichever producer supplied the set. */
         if(matched_walk_export && walk_export_res.status == GX_WALK_EXPORT_OK) {
@@ -2424,16 +2406,36 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int total_send = count_range_ok ? (int)total_send_ll : 0;
     int total_recv = count_range_ok ? (int)total_recv_ll : 0;
 
+    /* Ghosts cannot be refused: this is the last-resort Mode-A discovery and there is nothing
+     * further to fall back to, so an import that does not fit the current capacity raises it.
+     * The capacity is the size of one memory block, and growing it is legal here with the gravity
+     * tree standing and no ghost yet written -- that is what makes it movable mid-step. The need is
+     * EXACT, since request-driven discovery already counted it, so nothing is added on top: a
+     * capacity only ever rises, and a margin would raise the run's footprint permanently on the
+     * strength of one crowded step. Whether the memory exists is the allocator's answer rather than
+     * a prediction of it; on failure the resize requests a controlled stop and leaves every array at
+     * a capacity the advertised one is backed by. Purely local -- no communication, and nothing on
+     * the common path but one comparison. Runs BEFORE the pack so the capacity is settled before
+     * anything is written at &P[NumPart]; the guard below still decides whether the append happens. */
+    {
+        const long long required = (long long) NumPart + total_recv_ll;
+        if(count_range_ok && required > (long long) All.MaxPart && required <= (long long) INT_MAX) {
+            (void) resize_particle_storage((int) required);
+        }
+    }
+
     /* Check space (mirrors legacy guard).  Request-driven is the last-resort
      * Mode-A discovery — there is NO further fallback — so a count/displacement
      * overflow of the int MPI transport range, or ghosts that would not fit
-     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below. */
+     * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below.
+     * This stays the ONE predicate that decides whether the append may happen: if
+     * the growth above was refused or failed, it is this guard that stops the run. */
     if(!count_range_ok) {
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
         /* NOTE: growing P[]/CellP[] HERE does not work, and the attempt is instructive.
-         * gizmo_grow_particle_storage() (allocate.cc) reallocates correctly, but this call
+         * A capacity raise (resize_particle_storage, allocate.cc) reallocates correctly, but this call
          * site is inside an in-flight iterative neighbour loop: the runner refreshes its own
          * effective_args after a ghost import (neighbor_loop_runner.cc, "may have realloc'd
          * P/CellP") while the Spec hooks still read the original args, so DensitySpec::after_iter
@@ -2445,7 +2447,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
          * in read_ic.cc/restart.cc), which is why this path should now be rare. */
         printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
                total_recv, ThisTask, All.MaxPart - NumPart);
-        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed MaxPart (raise PartAllocFactor, add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7702, "ghost_exchange (request-driven): ghost append would exceed the particle capacity and the capacity could not be raised to hold it (add ranks/nodes, or reduce ghost-import demand)", __FILE__, __LINE__, __FUNCTION__);
     }
     /* Per-rank capacity check above is asymmetric; drain it at this all-rank poll
      * BEFORE Step 5, so no rank appends ghosts past MaxPart (OOB) or desyncs the
@@ -2637,7 +2639,7 @@ void ghost_exchange_cleanup(void)
      * NumGhostParticles>0 — a cleanup from the no-ghost-imported state is
      * a valid signal that bumps the epoch. */
     gpu_sidx_notify_ghost_cleanup();
-    PreviousGhostCount = NumGhostParticles; /* save for domain decomposition headroom */
+    if(NumGhostParticles > GhostEpochHighWater) {GhostEpochHighWater = NumGhostParticles;}
     NumPart = NumPart_before_ghost;
     N_gas = N_gas_before_ghost;
     NumGhostParticles = 0;
@@ -2688,12 +2690,11 @@ int ghost_refresh_values(void)
     if(send_tot != (long long)ghost_send_home_count)        return GHOST_REFRESH_FAIL_POOL_MUTATED;
 
     int ns = ghost_send_home_count;
-    /* gizmo_aligned_alloc, not malloc: struct particle_data is alignof 32 and glibc malloc
-       guarantees only 16, so gx_pack_send_slot's `*dst_P = src_P[j]` -- which the compiler
-       turns into aligned 32-byte vector stores -- segfaults whenever malloc hands back a
-       16-but-not-32-aligned pointer. */
-    struct particle_data *send_P = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), (ns > 0 ? ns : 1) * sizeof(struct particle_data));
-    struct gas_cell_data *send_CellP = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), (ns > 0 ? ns : 1) * sizeof(struct gas_cell_data));
+    /* new[], not malloc: particle_data is over-aligned (32 bytes), and the C
+     * allocator has no type information so it cannot honour that. new[] selects
+     * the aligned form automatically for an over-aligned type. */
+    struct particle_data *send_P = new struct particle_data[(ns > 0 ? ns : 1)];
+    struct gas_cell_data *send_CellP = new struct gas_cell_data[(ns > 0 ? ns : 1)];
     /* Re-pack current owner values via the SAME slot helper import uses, in the
        SAME send order (ghost_send_home_idx) that produced this pool. */
     for(int k = 0; k < ns; k++) {
@@ -2705,7 +2706,7 @@ int ghost_refresh_values(void)
     gx_forward_particle_exchange(send_P, send_CellP, ghost_wb_send_count, ghost_wb_send_disp,
                                  &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
                                  ghost_wb_recv_count, ghost_wb_recv_disp);
-    free(send_P); free(send_CellP);
+    delete[] send_P; delete[] send_CellP;
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;
 }
@@ -2723,7 +2724,16 @@ unsigned long long ghost_provenance_epoch(void) { return g_ghost_provenance_epoc
    for external-CSR consumers (see neighbor_loop_runner.h). */
 int ghost_pool_is_live(void) { return (NumPart_before_ghost >= 0) ? 1 : 0; }
 int ghost_get_num_ghosts(void) { return NumGhostParticles; }
-int ghost_get_previous_count(void) { return PreviousGhostCount; }
+int ghost_get_epoch_high_water(void)
+{
+    return (GhostPreviousEpochHighWater > GhostEpochHighWater) ? GhostPreviousEpochHighWater
+                                                               : GhostEpochHighWater;
+}
+void ghost_reset_epoch_high_water(void)
+{
+    GhostPreviousEpochHighWater = GhostEpochHighWater;
+    GhostEpochHighWater = 0;
+}
 int ghost_get_num_local(void)  { return (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart; }
 int *ghost_get_home_rank(void)  { return ghost_home_rank_map; }
 int *ghost_get_home_index(void) { return ghost_home_index_map; }

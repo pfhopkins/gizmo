@@ -82,6 +82,8 @@ static int *toGo, *toGoGas;
 static int *toGet, *toGetGas;
 static int *list_NumPart;
 static int *list_N_gas;
+static int *list_MaxPart;      /*!< every rank's particle capacity, gathered when the exchange has to be reworked */
+static int *list_MaxPartGas;   /*!< every rank's gas-cell capacity, gathered alongside it */
 static int *list_load;
 static int *list_loadgas;
 static double *list_work;
@@ -145,7 +147,12 @@ static float *domainWorkGas;	/*!< a table that gives the total "work" due to the
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
 static int *domainCountGas;	/*!< a table that gives the total number of gas cells held by each processor */
 static int domain_allocated_flag = 0;
-static int maxLoad, maxLoadgas;
+static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): All.MaxPartAssignable*REDUC_FAC, the all-type one then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below half.  Rank-identical, and every consumer depends on that: domain_assign_load_or_work_balanced runs on every rank over globally-reduced inputs and would otherwise build DIFFERENT DomainTask[] maps on different ranks. */
+/* What the most recent bound check found short, so the caller that gives up can explain itself.
+ * The check reads counts that domain_sumCost has already reduced across all ranks, so these end up
+ * holding the same values everywhere -- the agreement comes from those inputs, not from anything the
+ * check itself does. */
+static int domain_bound_needed = 0, domain_bound_limit = 0;
 static double totgravcost, gravcost, totgascost, gascost;
 static long long totpartcount;
 static int UseAllParticles;
@@ -153,6 +160,121 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+
+/*! How much particle storage this rank should hold for the coming epoch.
+ *
+ *  Storage covers three things that are measured, not guessed: the local particles the
+ *  decomposition is allowed to assign (world-uniform, so the assignment decisions stay uniform),
+ *  the particles that may be created between decompositions, and the imported ghosts, which are
+ *  the only strongly rank-dependent term and are taken from what this rank actually imported.
+ *  The last term is a cushion for the amount by which the next epoch's worst import may exceed
+ *  the one just observed; it scales with the particles per rank, since that is what sets the
+ *  scale of the error, and not with how much memory the machine happens to have.
+ *
+ *  Growing is unconditional: too little storage stops the run, and the reactive growth at the
+ *  ghost boundary can only rescue what it sees coming.  Releasing storage is deliberately
+ *  reluctant -- it only happens when the saving is worth a migration by both a proportion and an
+ *  absolute count, and never before an import has actually been observed, which is what keeps a
+ *  fresh start and a restart from immediately discarding capacity they are about to want back. */
+static int domain_target_particle_capacity(void)
+{
+    const double balanced      = (NTask > 0) ? ((double) All.TotNumPart / (double) NTask) : 0.0;
+    const double append_margin = (1.0 - REDUC_FAC_FOR_MEMORY_IN_DOMAIN) * (double) All.MaxPartAssignable;
+    const double safety        = DOMAIN_CAPACITY_SAFETY_FRACTION * balanced;
+
+    /* What the coming epoch is expected to need, and what to hold if the capacity has to move.
+     * The cushion belongs to the second and not the first, so it is headroom rather than an
+     * offset: capacity is left alone while the need still fits inside it, and a need that has
+     * grown past it is met with room to spare.  Making the capacity track the need exactly would
+     * migrate every particle array each time the measured ghost import ticked up by one slot.
+     * Demand that was REFUSED rather than met enters as its own floor, not as another term: the
+     * splitting that refused it tests against this rank's STORAGE (NumPart + n + 1 >= REDUC * MaxPart),
+     * which sits ABOVE the assignment cap whenever a ghost import has grown it, so adding the count
+     * to a cap-based total can leave the total below the storage the refusal was measured against --
+     * and then nothing grows, while the demand is answered on paper.  Expressed against the same
+     * predicate it cannot do that. */
+    double need_f = (double) All.MaxPartAssignable + append_margin
+                    + (double) ghost_get_epoch_high_water();
+    const int unmet_splits = gizmo_get_unmet_split_demand();
+    if(unmet_splits > 0)
+      {
+        const double split_floor = ((double) NumPart + (double) unmet_splits + 1.0)
+                                   / REDUC_FAC_FOR_MEMORY_IN_DOMAIN;
+        if(split_floor > need_f) {need_f = split_floor;}
+      }
+    const double target_f = need_f + safety;
+
+    int need   = (int) need_f;
+    int target = (target_f >= (double) All.MaxPartExpandable) ? All.MaxPartExpandable : (int) target_f;
+    if(target < All.MaxPartAssignable) {target = All.MaxPartAssignable;}   /* invariant I5 */
+    if(need   > target)                {need   = target;}                  /* at the run's ceiling */
+    /* Never ask for less storage than the particles already present.  Creation between
+     * decompositions is bounded by the storage capacity rather than by the assignment cap, so a
+     * burst of splits can leave more particles here than the cap alone would suggest. */
+    if(target < NumPart)               {target = NumPart;}
+
+    if(All.MaxPart < need) {return target;}
+
+    /* Release only a worthwhile amount, and only once an import has actually been measured -- which
+     * is also what stops a fresh start, or a restart holding a capacity the run already grew into,
+     * from discarding storage it is about to want back. */
+    if(ghost_get_epoch_high_water() <= 0) {return All.MaxPart;}
+    const int slack = All.MaxPart - target;
+    if(slack < (int) (DOMAIN_CAPACITY_SHRINK_FRACTION * (double) All.MaxPart)) {return All.MaxPart;}
+    if(slack < (int) (DOMAIN_CAPACITY_SHRINK_MIN_FRAC * balanced))            {return All.MaxPart;}
+    return target;
+}
+
+/*! Compute the domain local-particle assignment caps into DomainMaxPartLocal /
+ *  DomainMaxGasLocal, both MaxPartAssignable*REDUC_FAC.  report is retained for the
+ *  caller's benefit and prints nothing now that the caps are a plain fraction of the
+ *  assignment ceiling.  Single source of truth for both callers.
+ *
+ *  These caps do NOT reserve room for imported ghosts.  They once did, subtracting the
+ *  previous exchange's ghost count from the assignment ceiling, because ghosts and local
+ *  particles were drawn from a single capacity and anything given away to one was taken
+ *  from the other.  They are separate quantities now -- MaxPartAssignable bounds what the
+ *  decomposition may assign, All.MaxPart is this rank's storage and covers the ghosts on
+ *  top of it -- so subtracting the ghost count here charged for the same slots twice.  At
+ *  a large import that double charge exceeded the whole assignment ceiling and drove the
+ *  cap to its floor, and no decomposition could satisfy it: the ceiling had to be set
+ *  several times larger than the run needed simply to survive its own reservation.
+ *
+ *  EVERY term here comes from All.MaxPartAssignable, never from this rank's All.MaxPart:
+ *  the caps decide how work is DISTRIBUTED, and both callers feed them to comparisons whose
+ *  outcome selects a collective path (domain_check_memory_bound gates a collective re-split
+ *  on an already-reduced load, so the cap is the only term that could differ between ranks).
+ *  Deriving any one of them from per-rank storage would let ranks disagree there.  The gas
+ *  cap keys on whether gas STORAGE exists, not on All.TotN_gas, which falls as gas turns
+ *  into stars; the two capacities are one quantity (see gizmo_set_gas_capacity_from_maxpart),
+ *  so the gas cap is the same number whenever any gas exists. */
+static void domain_compute_local_caps(int report)
+{
+    (void) report;
+    DomainMaxGasLocal  = (All.MaxPartGas > 0) ? (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN) : 0;
+    DomainMaxPartLocal = (int) (All.MaxPartAssignable * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+}
+
+/*! Number of tree nodes to allocate for the local gravity tree. The tree holds only the
+ *  particles resident on this rank, so it is sized from the domain's local-particle
+ *  assignment cap rather than All.MaxPart, which additionally covers imported ghosts.
+ *  All.TreeAllocFactor (default 0.45, set in init.cc) is calibrated against a cap that carries the
+ *  PartAllocFactor cushion, while a tree over N particles needs up to ~0.7*N nodes to be
+ *  on the safe side, so the cushion is restored here as a 0.7/0.45 = 1.56 factor on the
+ *  cap; the result is clamped to the assignment cap the storage was originally sized from,
+ *  so this never allocates more than before. Undersizing is not an error (the TreeAllocFactor ratchet
+ *  in force_treebuild recovers) but the ratchet is global and permanent, so the margin is
+ *  set to avoid it rather than to squeeze the last few percent.
+ *  Both inputs are rank-independent -- DomainMaxPartLocal and the clamp derive from
+ *  All.MaxPartAssignable, and the ratchet moves All.TreeAllocFactor off a collective in
+ *  force_treebuild -- so MaxNodes stays rank-uniform.  Clamping against this rank's own
+ *  All.MaxPart instead would break that on its own, since storage may grow on one rank alone. */
+static int domain_tree_maxnodes(void)
+{
+    double sizing_cap = (0.7 / TREE_ALLOC_FACTOR_START) * (double) DomainMaxPartLocal;   /* calibrated against the tree factor a run starts from */
+    if(sizing_cap > (double) All.MaxPartAssignable) {sizing_cap = (double) All.MaxPartAssignable;}
+    return (int) (All.TreeAllocFactor * sizing_cap) + NTopnodes;
+}
 
 #if (DOMAIN_TIMEBINS == 1)
 /* Per-timebin cost tracking for Gadget-4-style domain decomposition.
@@ -254,6 +376,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     // TO: we don't have to call this before merge_and_split particles()
     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
     //rearrange_particle_sequence();
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_drift = CPU_ChildCharged;
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
@@ -274,6 +400,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
     gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     t_drift_loop = timediff(t_tmp, my_second());
+    /* The merge/split, the reordering and the drift above are what this row is
+     * named for.  What follows -- freeing the tree, resizing particle storage,
+     * wrapping the box -- is decomposition work, so the row closes here rather
+     * than swallowing it. */
+    CPU_Step[CPU_DRIFT] += cpu_minus_children(timediff(t_drift_start, my_second()), child0_drift);
+    cpu_chain_sync(my_second());
+    const double t_dom_rest = my_second();
+    const double child0_dom_rest = CPU_ChildCharged;
 
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
     /* main-integration decompositions only. FOF/SUBFIND pass UseAllTimeBins=1 and must not
@@ -287,7 +421,31 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     domain_free();
     t_treefree = timediff(t_tmp, my_second());
 
-    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
+    /* A restart that raised the particle capacity -- because the parameter file asked for it, or
+     * because the run has grown since it started -- has been running on the writer's MaxPart so the
+     * serialized tree payload stayed readable (see restart.cc).  The tree is freed just above, so
+     * the new value can take effect now. */
+    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}   /* restores a capacity the storage
+                                                                       was already allocated with, so it
+                                                                       is not a capacity change */
+
+    /* The one point in a step where the particle capacity may be raised or lowered freely: the tree
+     * is down, no ghosts are imported, and the active list has not been rebuilt. */
+    if(resize_particle_storage(domain_target_particle_capacity()) == 0) {
+        ghost_reset_epoch_high_water();   /* the window this decision consumed ends here */
+        /* Refused splits are answered only if the capacity now in force could actually take them,
+         * under the very predicate that refused them.  A capacity that did not move answers
+         * nothing, so the demand survives to the next boundary rather than being forgotten here. */
+        const int unmet_now = gizmo_get_unmet_split_demand();
+        /* Written exactly as the refusal writes it, truncation included, and against the gas
+         * capacity too: a test that is a fraction more generous than the one that refused would
+         * clear a demand the next step still cannot meet. */
+        const int room     = (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPart);
+        const int room_gas = (All.MaxPartGas > 0) ? (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPartGas) : room;
+        const int wanted   = NumPart + unmet_now + 1;
+        if(unmet_now == 0 || (wanted < room && wanted < room_gas))
+          {gizmo_reset_unmet_split_demand();}
+    }
 
 #ifdef BOX_PERIODIC
     t_tmp = my_second();
@@ -296,11 +454,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #endif
 
     t_tmp = my_second();
-    MPI_Barrier(MPI_COMM_WORLD);
+    /* This poll is itself an all-rank reduction, so it synchronizes exactly like the barrier it
+     * replaces and drains anything the storage resize above (or any earlier phase) asked to stop
+     * for, without adding a collective to the step. */
+    gizmo_exit_bad_stop_if_requested("domain:particle_capacity");
     t_barrier = timediff(t_tmp, my_second());
     const double t_drift_end = my_second();
-    double t_drift_total = cpu_minus_children(timediff(t_drift_start, t_drift_end), child0_drift);
-    CPU_Step[CPU_DRIFT] += t_drift_total;
+    double t_drift_total = cpu_minus_children(timediff(t_dom_rest, t_drift_end), child0_dom_rest);
+    CPU_Step[CPU_DOMAIN] += t_drift_total;
     cpu_chain_sync(t_drift_end);
     if(ThisTask == 0) {
         printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
@@ -342,6 +503,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       all_bytes += bytes;
       list_N_gas = (int *) mymalloc("list_N_gas", bytes = (sizeof(int) * NTask));
       all_bytes += bytes;
+      list_MaxPart = (int *) mymalloc("list_MaxPart", bytes = (sizeof(int) * NTask));
+      all_bytes += bytes;
+      list_MaxPartGas = (int *) mymalloc("list_MaxPartGas", bytes = (sizeof(int) * NTask));
+      all_bytes += bytes;
       list_load = (int *) mymalloc("list_load", bytes = (sizeof(int) * NTask));
       all_bytes += bytes;
       list_loadgas = (int *) mymalloc("list_loadgas", bytes = (sizeof(int) * NTask));
@@ -365,26 +530,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
 	  PRINT_STATUS(" ..using %g MB of temporary storage for domain decomposition... (presently allocated=%g MB)",all_bytes / (1024.0 * 1024.0), AllocatedBytes / (1024.0 * 1024.0));
 
-      maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-      maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-      /* Adaptive ghost headroom: reduce maxLoad by the previous ghost count (with safety margin)
-         so domain decomposition leaves room for ghost particles on boundary ranks.
-         Uses MPI_MAX of per-rank ghost counts as a conservative global estimate. */
-      {
-          int prev_ghost_local = ghost_get_previous_count();
-          int prev_ghost_max;
-          MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-          if(prev_ghost_max > 0) {
-              int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
-              int maxLoad_new = All.MaxPart - ghost_headroom;
-              if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;} /* never reserve more than half */
-              if(maxLoad_new < maxLoad) {
-                  if(ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
-                                                   ghost_headroom, prev_ghost_max, maxLoad, maxLoad_new);}
-                  maxLoad = maxLoad_new;
-              }
-          }
-      }
+      domain_compute_local_caps(1);	/* sets DomainMaxPartLocal/DomainMaxGasLocal; reports the ghost-headroom reduction */
 
       report_memory_usage(&HighMark_domain, "DOMAIN");
 
@@ -409,6 +555,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       myfree(list_work);
       myfree(list_loadgas);
       myfree(list_load);
+      myfree(list_MaxPartGas);
+      myfree(list_MaxPart);
       myfree(list_N_gas);
       myfree(list_NumPart);
       myfree(toGetGas);
@@ -479,7 +627,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   TopNodes = (struct topnode_data *) myrealloc(TopNodes, bytes = (NTopnodes * sizeof(struct topnode_data) + NTopnodes * sizeof(int)));
   PRINT_STATUS(" ..freed %g MByte in top-level domain structure", (MaxTopNodes - NTopnodes) * sizeof(struct topnode_data) / (1024.0 * 1024.0));
   DomainTask = (int *) (TopNodes + NTopnodes);
-  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+  force_treeallocate(domain_tree_maxnodes(), All.MaxPartExpandable);
   gizmo_exit_bad_stop_if_requested("domain:treeallocate"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
   reconstruct_timebins();
   gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
@@ -502,6 +650,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
     if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
     LightRepartitionCount++;
 
+    /* Close the measure_time chain BEFORE this bracket's own t0. The
+     * cpu_chain_sync at the end of the bracket advances the clock to its
+     * t1, so without this the interval preceding t0 is charged to nobody. */
+    CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     rearrange_particle_sequence();
@@ -617,24 +769,14 @@ void domain_Decomposition_light(int UseAllTimeBins)
     toGetGas = (int *) mymalloc("toGetGas", NTask * sizeof(int));
     list_NumPart = (int *) mymalloc("list_NumPart", NTask * sizeof(int));
     list_N_gas = (int *) mymalloc("list_N_gas", NTask * sizeof(int));
+    list_MaxPart = (int *) mymalloc("list_MaxPart", NTask * sizeof(int));
+    list_MaxPartGas = (int *) mymalloc("list_MaxPartGas", NTask * sizeof(int));
     list_load = (int *) mymalloc("list_load", NTask * sizeof(int));
     list_loadgas = (int *) mymalloc("list_loadgas", NTask * sizeof(int));
     list_work = (double *) mymalloc("list_work", NTask * sizeof(double));
     list_workgas = (double *) mymalloc("list_workgas", NTask * sizeof(double));
 
-    maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-    {   /* adaptive ghost headroom (same logic as full decomposition above) */
-        int prev_ghost_local = ghost_get_previous_count();
-        int prev_ghost_max;
-        MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(prev_ghost_max > 0) {
-            int ghost_headroom = (int)(prev_ghost_max * 1.3);
-            int maxLoad_new = All.MaxPart - ghost_headroom;
-            if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;}
-            if(maxLoad_new < maxLoad) {maxLoad = maxLoad_new;}
-        }
-    }
+    domain_compute_local_caps(0);	/* light repartition: same caps, silent (matches historical no-report here) */
 
     /* re-split and re-assign */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
@@ -697,6 +839,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     /* free everything in LIFO order */
     myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
+    myfree(list_MaxPartGas); myfree(list_MaxPart);
     myfree(list_N_gas); myfree(list_NumPart);
     myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
     myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
@@ -717,7 +860,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
-    force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+    force_treeallocate(domain_tree_maxnodes(), All.MaxPartExpandable);
     gizmo_exit_bad_stop_if_requested("domain:treeallocate_light"); /* drain a tree-alloc UVM OOM (all-rank) before any tree use */
     reconstruct_timebins();
     wakeup_sidecar_invalidate();   /* light repartition rearranged + exchanged particles → rebuild WakeupDirty next scan */
@@ -731,7 +874,12 @@ void domain_allocate(void)
 {
   size_t bytes, all_bytes = 0;
 
-  MaxTopNodes = (int) (All.TopNodeAllocFactor * All.MaxPart + 1);
+  /* Sized from the assignment cap, not this rank's storage: the top tree is refined by a computation
+   * every rank runs over the same globally-shared counts, and this bound decides where that
+   * refinement stops (domain_insertnode and the tree-import/merge paths all test against it).  A
+   * rank-dependent bound would let ranks build DIFFERENT top trees, and every particle's destination
+   * is read off that tree. */
+  MaxTopNodes = (int) (All.TopNodeAllocFactor * All.MaxPartAssignable + 1);
 
   DomainStartList = (int *) mymalloc("DomainStartList", bytes = (NTask * MULTIPLEDOMAINS * sizeof(int)));
   all_bytes += bytes;
@@ -960,8 +1108,53 @@ int domain_decompose(void)
 
       if(status != 0)
       {
-          if(ThisTask == 0) {printf("No domain decomposition that stays within memory bounds is possible.\n");}
-          endrun(0);
+          /* The per-rank cap is PartAllocFactor times the average particle count per rank AT THE TIME THE
+           * CAP WAS SET -- when the initial conditions were read, or when PartAllocFactor was last changed
+           * on a restart.  A run whose particle number grows spends that headroom, so say so with the
+           * numbers rather than leaving the user to work out why a limit they never chose was reached. */
+          if(ThisTask == 0)
+          {
+              const double avg_now = (NTask > 0) ? ((double) All.TotNumPart / (double) NTask) : 0.0;
+              const double avg_when_capped = (All.PartAllocFactor > 0) ? ((double) All.MaxPartAssignable / All.PartAllocFactor) : 0.0;
+              printf("No domain decomposition fits within the per-rank limit on particles.\n");
+              printf("  particles now:  %lld total, %.0f per rank on average\n", (long long) All.TotNumPart, avg_now);
+              printf("  when cap set:   %.0f per rank on average", avg_when_capped);
+              if(avg_when_capped > 0) {printf("  (growth since: %.2fx)", avg_now / avg_when_capped);}
+              printf("\n");
+              printf("  per-rank cap:   %d = %g x PartAllocFactor %g x that average\n",
+                     domain_bound_limit, (double) REDUC_FAC_FOR_MEMORY_IN_DOMAIN, All.PartAllocFactor);
+              printf("  best attempt:   %d per rank, over the cap by %d\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
+              /* Changing PartAllocFactor on a restart re-derives the cap from the CURRENT particle count,
+               * so what is needed is a factor over the CURRENT average -- NOT the old factor scaled by
+               * how much the run has grown, which would reserve that much again and exhaust the node.
+               * There is also a limit to what a restart will take: the run's capacity ceiling was fixed
+               * when it started, and a restart refuses a factor that would put the per-rank slot count
+               * above it (restart.cc).  A factor that would be refused is not worth suggesting, so when
+               * the ceiling is what binds, say that and point at the one route that does work. */
+              if(avg_now > 0)
+              {
+                  const double factor_needed  = 1.1 * (double) domain_bound_needed / (REDUC_FAC_FOR_MEMORY_IN_DOMAIN * avg_now);
+                  const double factor_ceiling = (double) All.MaxPartExpandable / avg_now;
+                  if(factor_needed <= factor_ceiling)
+                      printf("Restart with PartAllocFactor of about %.2f, or treat the present state as the\n"
+                             "initial conditions for a new run.  Changing it re-derives the cap from the current\n"
+                             "particle count, so it need only cover the imbalance above -- raising it in\n"
+                             "proportion to how much the run has grown would reserve far more memory than that.\n",
+                             factor_needed);
+                  else
+                      printf("A restart cannot fix this: it would need PartAllocFactor of about %.2f, and this run\n"
+                             "cannot go above %.2f, its ceiling of %d particle slots per rank having been fixed when\n"
+                             "it started.  Treat the present state as the initial conditions for a new run.\n",
+                             factor_needed, factor_ceiling, All.MaxPartExpandable);
+              }
+              fflush(stdout);
+          }
+          /* All ranks arrive here together, because the bound check tests counts that domain_sumCost has
+           * already reduced across all of them, so the stop can be requested and drained on the spot
+           * rather than continuing into the exchange with an assignment that does not fit.  Anything
+           * rank-local added to that check would break this and hang the poll below. */
+          endrun(90000022);
+          gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
     }
 
@@ -1108,15 +1301,17 @@ int domain_check_memory_bound(int multipledomains)
     }
 #endif
 
-    if(max_load > maxLoad)
+    if(max_load > DomainMaxPartLocal)
     {
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / maxLoad, maxLoad, max_load);}
+      domain_bound_needed = max_load; domain_bound_limit = DomainMaxPartLocal;
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
       return 1;
     }
 
-    if(max_gasload > maxLoadgas)
+    if(max_gasload > DomainMaxGasLocal)
     {
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / maxLoadgas, maxLoadgas, max_gasload);}
+      domain_bound_needed = max_gasload; domain_bound_limit = DomainMaxGasLocal;
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
       return 1;
     }
 
@@ -1545,8 +1740,8 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 
   /* memory limits: reject assignments that would push a rank above this fraction of max capacity */
   double memory_safety_frac = 0.9;
-  double max_load_per_task = memory_safety_frac * maxLoad;
-  double max_gasload_per_task = memory_safety_frac * maxLoadgas;
+  double max_load_per_task = memory_safety_frac * DomainMaxPartLocal;
+  double max_gasload_per_task = memory_safety_frac * DomainMaxGasLocal;
 
   domainAssign = (struct domain_segments_data *) mymalloc("domainAssign",
 							  multipledomains * NTask *
@@ -2038,6 +2233,13 @@ int domain_countToGo(size_t nlimit)
         
         MPI_Allgather(&NumPart, 1, MPI_INT, list_NumPart, 1, MPI_INT, MPI_COMM_WORLD);
         MPI_Allgather(&N_gas, 1, MPI_INT, list_N_gas, 1, MPI_INT, MPI_COMM_WORLD);
+        /* Capacities are per-rank, so the question "can task ta receive this many?" has to be asked of
+           ta's own capacity. Every other input to the overflow test below is already synchronized --
+           the counts by Bcast from ta, the loads by the two gathers above -- so reading the LOCAL
+           capacity instead would be the one term that differs between ranks, and it feeds both the
+           iteration count of the Bcast loops and the outer convergence flag. */
+        MPI_Allgather(&All.MaxPart, 1, MPI_INT, list_MaxPart, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Allgather(&All.MaxPartGas, 1, MPI_INT, list_MaxPartGas, 1, MPI_INT, MPI_COMM_WORLD);
         int flag, flagsum, ntoomany, ta, i, target;
         int count_togo, count_toget, count_togo_gas, count_toget_gas;
         
@@ -2067,7 +2269,7 @@ int domain_countToGo(size_t nlimit)
                     MPI_Bcast(&count_toget_gas, 1, MPI_INT, ta, MPI_COMM_WORLD);
                     
                     int ifntoomany;
-                    ntoomany = list_N_gas[ta] + count_toget_gas - count_togo_gas - All.MaxPartGas;
+                    ntoomany = list_N_gas[ta] + count_toget_gas - count_togo_gas - list_MaxPartGas[ta];
                     ifntoomany = (ntoomany > 0);
                     if(ifntoomany)
                     {
@@ -2076,7 +2278,7 @@ int domain_countToGo(size_t nlimit)
                             if(flagsum < 25) {PRINT_STATUS(" ..domain exchange must be modified - cannot receive %d gas elements on task=%d (iter=%d)", ntoomany, ta, flagsum+1);}
                             else {
                                 printf(" ..domain exchange must be modified - cannot receive %d gas elements on task=%d (iter=%d)\n", ntoomany, ta, flagsum+1);
-                                printf(" ..list_N_gas[ta=%d]=%d  count_toget_gas=%d count_togo_gas=%d MaxPartGas=%d NTask=%d flagsum=%d\n", ta, list_N_gas[ta], count_toget_gas, count_togo_gas,All.MaxPartGas,NTask,flagsum); fflush(stdout);
+                                printf(" ..list_N_gas[ta=%d]=%d  count_toget_gas=%d count_togo_gas=%d MaxPartGas=%d NTask=%d flagsum=%d\n", ta, list_N_gas[ta], count_toget_gas, count_togo_gas,list_MaxPartGas[ta],NTask,flagsum); fflush(stdout);
                             }
                         }
                         flag = 1;
@@ -2105,14 +2307,14 @@ int domain_countToGo(size_t nlimit)
                         }
                     }
                     
-                    ntoomany = list_NumPart[ta] + count_toget - count_togo - All.MaxPart;
+                    ntoomany = list_NumPart[ta] + count_toget - count_togo - list_MaxPart[ta];
                     ifntoomany = (ntoomany > 0);
                     if(ifntoomany) {
                         if(ntoomany > 0 && ThisTask==0) {
                             if(flagsum < 25) {PRINT_STATUS(" ..domain exchange must be modified - cannot receive %d elements on task=%d (iter=%d)", ntoomany, ta, flagsum+1);}
                             else {
                                 printf(" ..domain exchange must be modified - cannot receive %d elements on task=%d (iter=%d)\n", ntoomany, ta, flagsum+1);
-                                printf(" ..list_NumPart[ta=%d]=%d count_toget=%d count_togo=%d MaxPart=%d NTask=%d flagsum=%d \n", ta, list_NumPart[ta], count_toget, count_togo, All.MaxPart, NTask, flagsum); fflush(stdout);
+                                printf(" ..list_NumPart[ta=%d]=%d count_toget=%d count_togo=%d MaxPart=%d NTask=%d flagsum=%d \n", ta, list_NumPart[ta], count_toget, count_togo, list_MaxPart[ta], NTask, flagsum); fflush(stdout);
                             }
                         }
                     
@@ -3085,7 +3287,11 @@ int domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_dat
 	      NTopnodes += 8;
 	    }
 	  else
-	    {endrun(90000022); return 1;} /* out of TopNodes: soft bad-stop + status-return (skips the Daughter<0 deref below); folds into caller errflag -> TopNodeAllocFactor retry */
+	    {return 1;} /* out of TopNodes: report it and let the caller retry with a larger
+			   TopNodeAllocFactor, exactly as the other sites that run out do.  Asking
+			   for a stop here as well would end the run on the first overflow, which is
+			   the case the retry exists to absorb; a retry that cannot grow the top tree
+			   enough still stops, at the factor's own limit in domain_Decomposition. */
 	}
 
       sub = treeA[noA].Daughter + (treeB[noB].StartKey - treeA[noA].StartKey) / (treeA[noA].Size >> 3);

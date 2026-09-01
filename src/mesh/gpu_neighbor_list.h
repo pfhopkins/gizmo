@@ -39,10 +39,6 @@ struct gpu_neighbor_list_t {
     int ntiles;
     int bvh_root;
 
-    /* Periodicity parameters (copied to avoid global access in kernels) */
-    int periodic_flags[3];
-    double box_sizes[3];
-    double box_halves[3];
 
     /* Compact position+h array for BVH traversal cache efficiency (points into
        spatial index memory; do NOT free from gnl — owned by gpu_spatial_index_t).
@@ -61,9 +57,6 @@ struct gpu_spatial_index_t {
     int *d_pool;
     int ntiles;
     int bvh_root;
-    int periodic_flags[3];
-    double box_sizes[3];
-    double box_halves[3];
     /* Compact position+h array: d_compact_xyzh[i*4+0..3] = x,y,z,h for particle i.
        DOUBLE (positions x,y,z; h reach in slot 3): float absolute positions are
        invalid for GIZMO's dynamic range (see §37/§38). ~64MB for 2M particles vs
@@ -120,6 +113,18 @@ struct gpu_spatial_index_t {
      * requires both epochs to match as well as num_total. */
     uint64_t ghost_epoch_when_built = 0;
     uint64_t pool_epoch_when_built  = 0;
+    /* Coordinate staleness, which is a SEPARATE axis from the epochs above:
+     * those record MEMBERSHIP identity, this records that a drift moved the
+     * positions the cached tile bboxes, BVH and compact_xyzh[i*4+0..2] were
+     * built from. Set when the step's drift completes, cleared by a refresh or
+     * a fresh build. The refresh runs at the point of REUSE rather than at
+     * drift time: a consumer that invalidates on count or epoch
+     * rebuilds from current positions anyway, so refreshing eagerly does work
+     * that is then discarded. This mirrors how the h component of the same
+     * array is already handled (marked dirty, refreshed on next build).
+     * INVARIANT: no walk may consume an index with this set — enforced by a
+     * hard abort in gpu_ngb_list_build. */
+    int positions_stale_after_drift = 0;
 };
 
 
@@ -184,7 +189,7 @@ void gpu_step_sidx_invalidate_full(void);
  * * (1+SIDX_H_SLACK) — the CONSERVATIVE lazy-drift candidate margin, NOT the
  * bare KernelRadius. It must track arena[j]'s current reach for every j that
  * any cached neighbor search reads as a candidate (BVH-walk reads compact for
- * pruning + the leaf check_tile_particles reads compact[j*4+3] for h_j in
+ * pruning + the leaf check_tile_particles_gpu reads compact[j*4+3] for h_j in
  * SYMMETRIC mode).  Whenever code mutates arena[j].KernelRadius (or imports
  * a ghost slot that overwrites it), it must register j as dirty so the next
  * cached gpu_ngb_list_build's compact_h_refresh covers it.
@@ -337,5 +342,38 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
                                         const double *i_search_radii_host,
                                         int j_type_bitmask, int search_mode,
                                         neighbor_list_t *out);
+
+/* Device traversal of received export envelopes (the supply-rank half of
+   request-driven ghost discovery).  Resumes a bounded subtree walk from each
+   envelope's start nodes, applies the shared accept predicate at every local
+   leaf, and sets matched[peer * num_pool + pool_slot] for the pairs it admits —
+   the same bitmap the host walk produces, with the same set semantics, so the
+   two are interchangeable.
+
+   Returns 0 when it did the work; nonzero when it declined, in which case the
+   caller must run the host walk instead and matched[] is left untouched.  Every
+   decline is decided before anything is written, so the two backends never
+   interleave into the bitmap.  Declining is rank-local and safe: the window this
+   runs in contains no collectives.  Reasons to decline are a search mode not yet
+   supported here, too little work to be worth staging the local leaves, the node
+   geometry not being certified current on the device, a tree mirror that does not
+   cover the range the walk may reach, and allocation failure.
+
+   Two states instead request a controlled stop, because neither can arise unless
+   the tree or the traversal is already wrong and continuing would answer with a
+   silently truncated or duplicated neighbour set: an index in the gap between the
+   particle slots and the node base (what the host walk stops on), and a single
+   envelope admitting more particles than the rank owns.
+
+   envelope_peer[k] is the task that sent envelope k.  j_to_pool / npart_bound
+   map a local particle index to its slot in the supply pool (negative = not in
+   the pool).  radius_policy and j_reach_scale are the caller's symmetric-search
+   reach; ONEWAY ignores both. */
+int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
+                            const int *envelope_peer,
+                            unsigned int supply_mask, int search_mode,
+                            mode_b_radius_policy_t radius_policy, double j_reach_scale,
+                            const int *j_to_pool, int npart_bound,
+                            int num_pool, char *matched);
 
 #endif /* GPU_NEIGHBOR_LIST_H */

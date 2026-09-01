@@ -6,15 +6,12 @@
 %
 InitCondFile                       evrard_ics
 OutputDir                          output
-PartAllocFactor                    10
 TimeMax                            0.8
 TimeBetSnapshot                    0.1
 MaxSizeTimestep                    0.001
 DesNumNgb                          40
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         3000
 GravityConstantInternal            1
-MaxHsml                            2000
 SofteningGas                       0.0001
 SofteningHalo                      0.07
 Softening_Type2                    0.003

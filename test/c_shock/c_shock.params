@@ -2,9 +2,6 @@ InitCondFile                       c_shock_ics
 ICFormat                           3
 OutputDir                          output
 TimeLimitCPU                       999999999
-MaxMemSize                         2600
-PartAllocFactor                    10
-BufferSize                         150
 TimeBegin                          0
 TimeMax                            25.e5
 ComovingIntegrationOn              0

@@ -56,9 +56,6 @@ OmegaBaryon             0.0
 HubbleParam             1.0
 
 %----- Memory allocation
-MaxMemSize          5000
-PartAllocFactor     10.0
-BufferSize          500
 
 %---- Domain decomposition
 TreeDomainUpdateFrequency   0.005
@@ -69,7 +66,6 @@ MinGasTemp      2.73
 
 %---- Hydro kernel parameters
 DesNumNgb               32
-MaxHsml                 1.0e10
 MinGasHsmlFractional    0
 
 %---- Gravitational softening (GRAVITY_NOT_PERIODIC => tree gravity off for periodic dims)

@@ -385,18 +385,39 @@ void add_turb_accel()
     if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* All-mirror dispatch-boundary belt; the turb_accel kernel itself reads no All.* but keep the call at the GPU dispatch point per the All-mirror convention */
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
-        double *gpu_mode = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
-        double *gpu_aka  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
-        double *gpu_akb  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
-        double *gpu_ampl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * sizeof(double));
+        const size_t mode_bytes = (size_t) StNModes * 3 * sizeof(double);
+        const size_t ampl_bytes = (size_t) StNModes * sizeof(double);
+        const size_t compact_bytes = (size_t) N_active * (sizeof(struct particle_data)
+                                                          + sizeof(struct gas_cell_data));
+        double *gpu_mode = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
+        double *gpu_aka  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
+        double *gpu_akb  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
+        double *gpu_ampl = (double *) gizmo_gpu_alloc_shared(ampl_bytes, NULL);
+        /* Gather into compact SharedSpace arrays */
+        struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct particle_data), NULL);
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct gas_cell_data), NULL);
+        if(!gpu_mode || !gpu_aka || !gpu_akb || !gpu_ampl || !compact_P || !compact_Cell) {
+            if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+            if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
+            if(gpu_ampl)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);}
+            if(gpu_akb)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_akb);}
+            if(gpu_aka)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_aka);}
+            if(gpu_mode)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);}
+            free(turb_indices);
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "turbulent driving: could not stage %d gas particles and %d driving "
+                     "modes (%.1f MB); no driving acceleration is applied",
+                     N_active, StNModes,
+                     (double)(3 * mode_bytes + ampl_bytes + compact_bytes) / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7715, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         memcpy(gpu_mode, StMode, StNModes * 3 * sizeof(double));
         memcpy(gpu_aka,  StAka,  StNModes * 3 * sizeof(double));
         memcpy(gpu_akb,  StAkb,  StNModes * 3 * sizeof(double));
         memcpy(gpu_ampl, StAmpl, StNModes * sizeof(double));
 
-        /* Gather into compact SharedSpace arrays */
-        struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N_active * sizeof(struct particle_data));
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N_active * sizeof(struct gas_cell_data));
         for(int j = 0; j < N_active; j++)
         {
             compact_P[j]    = P[turb_indices[j]];

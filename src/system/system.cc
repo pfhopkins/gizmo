@@ -258,6 +258,11 @@ long long report_comittable_memory(long long *MemTotal,
   FILE *fd;
   char buf[1024];
 
+  /* Every value is reported in kB, and every one starts at zero: on a platform with no
+   * /proc/meminfo nothing below is read, and a caller must be able to tell "not available" from a
+   * real figure rather than inherit whatever its variables happened to hold. */
+  *MemTotal = 0; *Committed_AS = 0; *SwapTotal = 0; *SwapFree = 0;
+
   if((fd = fopen("/proc/meminfo", "r")))
     {
       while(1)
@@ -359,8 +364,17 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
         }
         if(ThisTask == maxtask[2])
         {
-            printf("Task with the maximum commited memory");
-            system("echo $HOST");
+            /* One complete line, written through the same stream as everything
+             * else. Reporting the host by handing stdout to a shell put the
+             * hostname on the file descriptor directly while this text stayed
+             * in the buffer, so the two arrived out of order and an abnormal
+             * stop left the sentence dangling with nothing after it. The shell
+             * also had to be right about $HOST, which it is not under a plain
+             * sh. */
+            char hostname[256];
+            if(gethostname(hostname, sizeof(hostname)) != 0) {snprintf(hostname, sizeof(hostname), "unknown");}
+            hostname[sizeof(hostname) - 1] = '\0';
+            printf("Task with the maximum commited memory: task=%d on %s\n", maxtask[2], hostname);
         }
         fflush(stdout);
     }
@@ -370,7 +384,7 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
     int number_of_mpi_tasks_per_node = NTask / number_of_shared_memory_nodes;
     double min_memory_mb_in_single_node = minsize[0]/(1024.);
     double safe_memory_mb_per_mpitask_nobuffer = min_memory_mb_in_single_node / number_of_mpi_tasks_per_node;
-    double safe_memory_mb_per_mpitask_withbuffer = safe_memory_mb_per_mpitask_nobuffer - All.BufferSize;
+    double safe_memory_mb_per_mpitask_withbuffer = safe_memory_mb_per_mpitask_nobuffer - All.CommChunkSize;
     return safe_memory_mb_per_mpitask_withbuffer;
 }
 

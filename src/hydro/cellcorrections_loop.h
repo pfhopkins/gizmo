@@ -245,7 +245,9 @@ struct CellcorrectionsSpec {
                                         int active_slot, int i,
                                         const AccumData& accum);
 
-    /* Per-field merge of a peer-rank accum into local accum (Mode B remote). */
+    /* Per-field merge of a peer-rank accum into local accum (Mode B remote),
+     * and the join of the Mode-A within-row lane reduction. */
+    KOKKOS_INLINE_FUNCTION
     static void merge_accum(AccumData& local, const AccumData& peer)
     {
         local.volume_1 += peer.volume_1;

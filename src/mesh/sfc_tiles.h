@@ -126,11 +126,4 @@ int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_
 
 void free_sfc_tiles(sfc_tile_t *tiles, int *pool_indices);
 
-/* Build a CSR neighbor list using SFC tiles as the spatial index.
- * Same interface and output format as build_neighbor_list(). */
-void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *CellP,
-                             int num_total, int *active_indices, int num_active,
-                             int search_mode, int type_bitmask,
-                             neighbor_list_t *out);
-
 #endif /* SFC_TILES_H */

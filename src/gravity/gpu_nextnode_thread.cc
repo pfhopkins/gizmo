@@ -23,10 +23,13 @@
  *         the last child's subtree)
  *
  *   * Apply this successor to E based on E's type:
- *       - particle (E < MaxPart):              Nextnode[E]              = succ
- *       - pseudo  (E >= MaxPart + MaxNodes + MaxForeignNodes):   Nextnode[E - MaxNodes - MaxForeignNodes]   = succ
- *           (foreign-node range [MaxPart+MaxNodes, +MaxForeignNodes) sits below pseudos;
- *            foreign nodes carry their own NODE.u.d.nextnode and don't use Nextnode[])
+ *       - particle (E < TreeParticleSlots):     Nextnode[E]              = succ
+ *       - pseudo  (E >= TreeNodeIndexBase + MaxNodes + MaxForeignNodes):
+ *             Nextnode[TreeParticleSlots + (E - TreeNodeIndexBase - MaxNodes - MaxForeignNodes)] = succ
+ *           (Nextnode[] holds TreeParticleSlots particle slots first, then the pseudo segment;
+ *            the foreign-node range [TreeNodeIndexBase+MaxNodes, +MaxForeignNodes) sits below
+ *            pseudos in the INDEX space but consumes no Nextnode[] slots -- foreign nodes carry
+ *            their own NODE.u.d.nextnode)
  *       - internal node (otherwise):           handled by E's own thread
  *         (E's last descendant gets succ via the recursion of sibling[E]
  *         pointers — already set by force_update_node_recursive)
@@ -39,9 +42,9 @@
  *
  * Output:
  *   * SoA: soa->nextnode[k]  for internal nodes k in [0..n)
- *   * SoA: soa->nextnode_aux[i]  for particles i in [0..MaxPart)
- *           and pseudo-particles at indices [MaxPart..MaxPart+NTopnodes)
- *   * AoS: Nodes[MaxPart+k].u.d.nextnode  (for the legacy CPU walk path)
+ *   * SoA: soa->nextnode_aux[i]  for particles i in [0..TreeParticleSlots)
+ *           and pseudo-particles at slots [TreeParticleSlots..TreeParticleSlots+NTopnodes)
+ *   * AoS: Nodes[TreeNodeIndexBase+k].u.d.nextnode  (for the legacy CPU walk path)
  *   * AoS: Nextnode[i]  (for legacy CPU walks; writes covered by host loop
  *           after the device kernel returns)
  *
@@ -69,7 +72,8 @@ extern "C" int gpu_nextnode_thread(void)
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int n         = Numnodestree;
-    int MaxPart   = All.MaxPart;
+    int tree_base = All.TreeNodeIndexBase;
+    int part_slots = All.TreeParticleSlots;
     int MaxNodes_ = MaxNodes;
     int MaxForeignNodes_ = MaxForeignNodes;    /* LET foreign-node range size */
     int NTopnodes_= NTopnodes;
@@ -84,8 +88,8 @@ extern "C" int gpu_nextnode_thread(void)
     if(!soa->suns_backup) {printf("gpu_nextnode_thread: suns_backup null — must call gpu_nextnode_backup_suns first\n"); return 1;}
 
     /* soa->nextnode_aux is aliased to UVM Nextnode[] (owned by
-     * force_treeallocate, sized MaxPart+NTopnodes+MaxForeignNodes).  Just sanity-check it. */
-    int aux_size = MaxPart + NTopnodes_ + MaxForeignNodes_;
+     * force_treeallocate, sized TreeParticleSlots+NTopnodes+MaxForeignNodes).  Just sanity-check it. */
+    int aux_size = part_slots + NTopnodes_ + MaxForeignNodes_;
     if(!soa->nextnode_aux || soa->nextnode_aux_size < aux_size) {
         printf("gpu_nextnode_thread: nextnode_aux alias missing or undersized (have=%d, need=%d)\n",
                soa->nextnode_aux_size, aux_size);
@@ -99,7 +103,7 @@ extern "C" int gpu_nextnode_thread(void)
     int          *aux_soa     = soa->nextnode_aux;
 
     Kokkos::parallel_for("nx_thread", n, KOKKOS_LAMBDA(int k) {
-        /* k is the SoA index (0..n).  Internal-node id = MaxPart + k. */
+        /* k is the SoA index (0..n).  Internal-node id = tree_base + k. */
         long base = (long)k * 8;
         /* Find first non-empty sun. */
         int first = -1, first_pos = -1;
@@ -129,18 +133,22 @@ extern "C" int gpu_nextnode_thread(void)
             int prev_id = suns_backup[base + prev_pos];
             int succ = (next >= 0) ? next : sibling_soa[k];
             /* Write successor for prev_id based on its type. */
-            if(prev_id < MaxPart) {
+            if(prev_id < part_slots) {
                 /* particle */
                 aux_soa[prev_id] = succ;
-            } else if(prev_id >= MaxPart + MaxNodes_ + MaxForeignNodes_) {
-                /* pseudo-particle (foreign-node range sits below pseudos): Nextnode/aux
-                 * index is id - MaxNodes_ - MaxForeignNodes_ */
-                int idx = prev_id - MaxNodes_ - MaxForeignNodes_;
-                if(idx >= 0 && idx < MaxPart + NTopnodes_) {aux_soa[idx] = succ;}
+            } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
+                /* pseudo-particle (the foreign-node range sits below pseudos in the index
+                 * space but occupies no slots): the pseudo segment starts after the
+                 * part_slots physical particle slots. */
+                int idx = part_slots + (prev_id - tree_base - MaxNodes_ - MaxForeignNodes_);
+                if(idx >= 0 && idx < part_slots + NTopnodes_) {aux_soa[idx] = succ;}
             }
-            /* Foreign nodes (prev_id in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes))
+            /* Foreign nodes (prev_id in [tree_base+MaxNodes, tree_base+MaxNodes+MaxForeignNodes))
              * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
-             * directly from LET unpack. */
+             * directly from LET unpack.  An id between part_slots and tree_base cannot occur in a
+             * well-formed tree and matches no branch here, so it writes nothing; that is deliberate.
+             * This is a write-side classifier, so dropping such an id is already safe, and the walks
+             * that would DEREFERENCE it stop on it explicitly. */
             /* internal node: skip — its own thread sets nextnode_soa, and
              * its last DFS descendant gets `succ` via the chain of
              * sibling pointers (already set by force_update_node_recursive). */

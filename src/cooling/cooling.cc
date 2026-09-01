@@ -137,16 +137,28 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
 /* dm cooling table builder. Mirrors InitCoolMemory + the cooling-table
    construction loop below for the SM cooling case. Single owner TU (cooling.cc)
    for the kokkos_malloc<SharedSpace>; called once at startup from begrun.cc. */
-static void dm_InitCoolMemory_impl(void)
+static int dm_InitCoolMemory_impl(void)
 {
     const size_t N = (size_t)(NCOOLTAB_DM + 1);
-    #define DMCOOLMEM(name) DMCoolTables.name = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, N * sizeof(double))
+    int all_tables_obtained = 1;
+    #define DMCOOLMEM(name) do { \
+        DMCoolTables.name = (double *) gizmo_gpu_alloc_shared(N * sizeof(double), #name); \
+        if(!DMCoolTables.name) { \
+            all_tables_obtained = 0; \
+            char _msg[256]; \
+            snprintf(_msg, sizeof(_msg), \
+                     "dm cooling tables: could not allocate %s (%.1f MB)", \
+                     #name, (double)(N * sizeof(double)) / (1024.0 * 1024.0)); \
+            gizmo_request_controlled_stop(7717, _msg, __FILE__, __LINE__, __FUNCTION__); \
+        } \
+    } while(0)
     DMCOOLMEM(BetaH0);
     DMCOOLMEM(AlphaHp);
     DMCOOLMEM(AlphaHpRate);
     DMCOOLMEM(GammaeH0);
     DMCOOLMEM(Betaff);
     #undef DMCOOLMEM
+    return all_tables_obtained;
 }
 
 static void dm_MakeCoolingTable_impl(void)
@@ -176,7 +188,7 @@ static void dm_MakeCoolingTable_impl(void)
     }
 }
 
-void InitCool_dm(void) { dm_InitCoolMemory_impl(); dm_MakeCoolingTable_impl(); }
+void InitCool_dm(void) { if(dm_InitCoolMemory_impl()) { dm_MakeCoolingTable_impl(); } }
 #endif /* HYDRO_MULTIFLUID_DM_COOLING */
 
 #if defined(CHIMES)
@@ -229,7 +241,7 @@ KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double 
 KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
+KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z, int target);
 KOKKOS_FUNCTION double GetLambdaSpecies(long kspecies, long NCOOLTAB_LOCAL, long ki, long kip, long kj, double dki, double dkj, double tmin, double tdiff);
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 
@@ -316,13 +328,28 @@ void cooling_parent_routine(void)
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
-    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
+    struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct particle_data), NULL);
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct gas_cell_data), NULL);
     /* Per-particle dtime captured at gather time (host) so the device
      * post_cooling_tail kernel can drive update_dust_processes /
      * update_explicit_molecular_fraction / DelayTimeHII countdown.
      * get_particle_timestep_in_physical is host-only and not worth porting. */
-    double *compact_dtime = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(double));
+    double *compact_dtime = (double *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(double), NULL);
+    if(!compact_P || !compact_Cell || !compact_dtime) {
+        /* No batch buffers means this rank cools nothing this step. The count is
+         * zeroed rather than returning, so the loop below runs zero batches and
+         * any collective past it is still reached by every rank. */
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "cooling: could not stage a batch of %d cells (%.1f MB); "
+                 "no cooling is applied on this rank",
+                 batch_cap,
+                 (double)((size_t) batch_cap * (sizeof(struct particle_data)
+                                                + sizeof(struct gas_cell_data)
+                                                + sizeof(double))) / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7717, msg, __FILE__, __LINE__, __FUNCTION__);
+        N_active = 0;
+    }
 
     /* ORACLE accumulators are hoisted to function scope above for MPI
      * collective correctness (see comment near N_active early-return). */
@@ -345,20 +372,6 @@ void cooling_parent_routine(void)
             compact_dtime[j] = dt;
         }
 
-/* The [GPU_RT_DIAG] A/B comparison blocks below are dormant under the
- * default build (gated by GIZMO_DEBUG_RT_COOLING). They remain available
- * for GPU vs CPU bit-comparison debugging of the cooling kernel and should
- * be retired together with the GIZMO_DEBUG_RT_COOLING flag. */
-#ifdef GIZMO_DEBUG_RT_COOLING
-        /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
-        static int gpu_rt_diag_count = 0;
-        static const int GPU_RT_DIAG_NPART = 5; /* compare this many particles */
-        struct particle_data saved_P[GPU_RT_DIAG_NPART];
-        struct gas_cell_data saved_Cell[GPU_RT_DIAG_NPART];
-        int diag_n = (batch_start == 0 && gpu_rt_diag_count < 20) ? DMIN(GPU_RT_DIAG_NPART, batch_n) : 0;
-        for(int dd = 0; dd < diag_n; dd++) { saved_P[dd] = compact_P[dd]; saved_Cell[dd] = compact_Cell[dd]; }
-#endif /* GIZMO_DEBUG_RT_COOLING */
-
         /* Dispatch batch to GPU */
         {
             struct particle_data *kp = compact_P;
@@ -368,51 +381,6 @@ void cooling_parent_routine(void)
             }, batch_start);
         }
 
-#ifdef GIZMO_DEBUG_RT_COOLING
-        /* GPU_RT_DIAG: compare GPU output with CPU re-run on same inputs.
-         * The GPU kernel (device code) may use FMA and CUDA math; the host re-run
-         * uses the host compiler's math. Differences reveal GPU-specific divergence. */
-        if(diag_n > 0) {
-            gpu_rt_diag_count++;
-            /* Make a fresh copy of the saved inputs for CPU re-run */
-            /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
-            struct particle_data *cpu_P = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), diag_n * sizeof(struct particle_data));
-            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), diag_n * sizeof(struct gas_cell_data));
-            memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
-            memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
-            for(int dd = 0; dd < diag_n; dd++) {
-                do_the_cooling_for_particle(dd, cpu_P, cpu_Cell);
-            }
-            for(int dd = 0; dd < diag_n; dd++) {
-                /* GPU output (now in compact_Cell/compact_P after fence) */
-                double rdiff_u  = fabs(compact_Cell[dd].InternalEnergy - cpu_Cell[dd].InternalEnergy) / (fabs(cpu_Cell[dd].InternalEnergy) + 1e-30);
-                double rdiff_ne = fabs(compact_Cell[dd].Ne - cpu_Cell[dd].Ne) / (fabs(cpu_Cell[dd].Ne) + 1e-30);
-                printf("[GPU_RT_DIAG] step=%d ID=%llu  u: gpu=%.15e cpu=%.15e rdiff=%.4e\n",
-                    gpu_rt_diag_count, (unsigned long long)compact_P[dd].ID, compact_Cell[dd].InternalEnergy, cpu_Cell[dd].InternalEnergy, rdiff_u);
-                printf("[GPU_RT_DIAG]   Ne: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Ne, cpu_Cell[dd].Ne, rdiff_ne);
-#if defined(RT_INFRARED)
-                double rdiff_Trad = fabs(compact_Cell[dd].Radiation_Temperature - cpu_Cell[dd].Radiation_Temperature) / (fabs(cpu_Cell[dd].Radiation_Temperature) + 1e-30);
-                double rdiff_Tdust = fabs(compact_Cell[dd].Dust_Temperature - cpu_Cell[dd].Dust_Temperature) / (fabs(cpu_Cell[dd].Dust_Temperature) + 1e-30);
-                printf("[GPU_RT_DIAG]   Trad: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Radiation_Temperature, cpu_Cell[dd].Radiation_Temperature, rdiff_Trad);
-                printf("[GPU_RT_DIAG]   Tdust: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
-                    compact_Cell[dd].Dust_Temperature, cpu_Cell[dd].Dust_Temperature, rdiff_Tdust);
-#endif
-#if defined(RT_EVOLVE_ENERGY)
-                for(int kk=0; kk<N_RT_FREQ_BINS; kk++) {
-                    double rdiff_E = fabs(compact_Cell[dd].Rad_E_gamma[kk] - cpu_Cell[dd].Rad_E_gamma[kk]) / (fabs(cpu_Cell[dd].Rad_E_gamma[kk]) + 1e-30);
-                    if(rdiff_E > 1e-10) { /* only print if meaningful difference */
-                        printf("[GPU_RT_DIAG]   k=%d  RadE: gpu=%.12e cpu=%.12e rdiff=%.4e\n",
-                            kk, compact_Cell[dd].Rad_E_gamma[kk], cpu_Cell[dd].Rad_E_gamma[kk], rdiff_E);
-                    }
-                }
-#endif
-            }
-            free(cpu_P); free(cpu_Cell);
-            fflush(stdout);
-        }
-#endif /* GIZMO_DEBUG_RT_COOLING */
 
         /* Post-cooling tail device kernel. Three blocks, each independently
          * #ifdef-gated:
@@ -448,9 +416,8 @@ void cooling_parent_routine(void)
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
         /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
          * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
-        /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
-        struct particle_data *oracle_P_scratch = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), batch_n * sizeof(struct gas_cell_data));
+        struct particle_data *oracle_P_scratch = (struct particle_data *) mymalloc("cool_oracle_P", batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) mymalloc("cool_oracle_Cell", batch_n * sizeof(struct gas_cell_data));
         memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
         memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
 #endif
@@ -584,7 +551,7 @@ void cooling_parent_routine(void)
             #undef POSTCOOL_ORACLE_CMP_ARR
             #undef POSTCOOL_ORACLE_CMP
         }
-        free(oracle_P_scratch); free(oracle_Cell_scratch);
+        myfree(oracle_Cell_scratch); myfree(oracle_P_scratch);
         oracle_n_compared += batch_n;
 #endif
 
@@ -608,9 +575,9 @@ void cooling_parent_routine(void)
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+    if(compact_dtime) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);}
+    if(compact_Cell)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+    if(compact_P)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
 
     /* ORACLE MPI_Allreduce + print HOISTED OUT of the GPU branch (below both
      * branches close) so that every rank reaches it, even when N_active is 0
@@ -620,11 +587,16 @@ void cooling_parent_routine(void)
   } else
 #endif
   { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
-    /* aligned: particle_data is alignof 32, malloc guarantees only 16. This is the CPU cooling
-       dispatch path; do_the_cooling_for_particle() does Vec3 arithmetic on these buffers, which
-       the compiler emits as aligned 32-byte vector stores -- see gizmo_aligned_alloc. */
-    struct particle_data *compact_P    = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), N_active * sizeof(struct gas_cell_data));
+    /* Allocate these from the arena, not with malloc. The cooling chain is
+     * compiled against the alignment the arena gives P[] and CellP[], and the
+     * compiler vectorizes parts of it into 32-byte aligned loads on hosts with
+     * AVX. malloc only promises 16 bytes on x86-64, so a step that takes this
+     * fallback path faults inside the cooling kernel on the first such load,
+     * with a fault address of zero and nothing wrong with the index. The arena
+     * also reports exhaustion rather than handing back a null that nothing here
+     * checks. */
+    struct particle_data *compact_P    = (struct particle_data *) mymalloc("cool_compact_P", N_active * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("cool_compact_Cell", N_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
@@ -651,8 +623,8 @@ void cooling_parent_routine(void)
         if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
 #endif
     }
-    free(compact_Cell);
-    free(compact_P);
+    myfree(compact_Cell);
+    myfree(compact_P);
   } /* end CPU/GPU path selection */
 
 #if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
@@ -1087,10 +1059,6 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
 #endif
     };
     double du_net = cooling_rootfind_function(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
-#ifdef GIZMO_DEBUG_RT_COOLING
-    if(pp[target].ID == 1 || pp[target].ID == 100 || pp[target].ID == 1000) {printf("[DOCOOL_INIT] ID=%llu u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
-        (unsigned long long)pp[target].ID, u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
-#endif
 
     /* bracketing */
     double u_step_fac = 1.1;
@@ -1359,7 +1327,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
         {
             /* cooling rates tabulated for each species from Wiersma, Schaye, & Smith tables (2008) */
-            LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z); //* nHcgs*nHcgs;
+            LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z, target); //* nHcgs*nHcgs;
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
@@ -1677,13 +1645,28 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 
 
-void InitCoolMemory(void)
+int InitCoolMemory(void)
 {
     /* With Kokkos+CUDA (Kokkos+GPU), allocate cooling table arrays in CUDA unified
        memory via Kokkos so they are accessible from device kernels. The pointer variables
        themselves are __managed__ (see top of file), so assigning to them here is fine.
        Without GPU offload, use the normal mymalloc pool. */
-#define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, (n) * sizeof(type))
+    /* A table that could not be had is reported and leaves the pointer null; the
+     * caller stops before MakeCoolingTable would fill it. Every rank asks for the
+     * same sizes, so they reach the stop together. */
+    int all_tables_obtained = 1;
+#define COOLMEM(name, type, n) do { \
+        const size_t _bytes = (size_t)(n) * sizeof(type); \
+        name = (type *) gizmo_gpu_alloc_shared(_bytes, #name); \
+        if(!name) { \
+            all_tables_obtained = 0; \
+            char _msg[256]; \
+            snprintf(_msg, sizeof(_msg), \
+                     "InitCoolMemory: could not allocate cooling table %s (%.1f MB)", \
+                     #name, (double) _bytes / (1024.0 * 1024.0)); \
+            gizmo_request_controlled_stop(7717, _msg, __FILE__, __LINE__, __FUNCTION__); \
+        } \
+    } while(0)
     COOLMEM(CoolTables.BetaH0,    double, NCOOLTAB + 1);
     COOLMEM(CoolTables.BetaHep,   double, NCOOLTAB + 1);
     COOLMEM(CoolTables.AlphaHp,   double, NCOOLTAB + 1);
@@ -1700,6 +1683,7 @@ void InitCoolMemory(void)
     if(All.ComovingIntegrationOn) { COOLMEM(CoolTables.SpCoolTable1, float, kspecies*i_nH*i_T); }
 #endif
 #undef COOLMEM
+    return all_tables_obtained;
 }
 
 
@@ -2088,7 +2072,7 @@ void InitCool(void)
 #endif
 
 #else // CHIMES
-    InitCoolMemory();
+    if(!InitCoolMemory()) { return; }   /* tables absent: the stop is already requested */
     MakeCoolingTable();
     ensure_cooling_tables_exist();
     ReadIonizeParams("TREECOOL");
@@ -2109,7 +2093,7 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
 /* Metal-line table lookup — KOKKOS_FUNCTION so device kernels can call it */
 KOKKOS_FUNCTION
-double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
+double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z, int target)
 {
     double ne_over_nh_tbl=1, Lambda=0;
     int k, N_species_active = (int)NUM_LIVE_SPECIES_FOR_COOLTABLES;
@@ -2121,12 +2105,29 @@ double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
     long i_T=iymax+1, inHT=i_T*(ixmax+1);
     if(All.ComovingIntegrationOn && All.SpeciesTableInUse<48) {dz=log10(1/All.Time)*48; dz=dz-(int)dz; mdz=1-dz;} else {dz=0; mdz=1;}
 
+    /* A density that is not positive and finite, or a non-finite temperature,
+     * cannot index these tables, and it means the cell reached cooling with
+     * invalid state -- the real error is wherever that state was produced.
+     * Report the values, which are the evidence for finding it, and stop.
+     * Catching it here is not optional: log10 of a negative density is a NaN,
+     * every comparison against a NaN is false, so a NaN would pass BOTH bounds
+     * below and convert to a large negative table index. */
+    if(!((nHcgs > 0) && isfinite(nHcgs) && isfinite(logT)))
+    {
+        printf("GetCoolingRateWSpecies: cell=%d reached the metal-line tables with unusable state "
+               "nHcgs=%g logT=%g -- invalid upstream, stopping\n", target, nHcgs, logT);
+        endrun(90001019);
+        return 0;
+    }
+
     dx = (log10(nHcgs)-(-8.0))/(0.0-(-8.0))*ixmax;
     dy = (logT-2.0)/(9.0-2.0)*iymax;
-    if(dx<0) {dx=0;} else {if(dx>ixmax) {dx=ixmax;}}
+    /* written so that a NaN, if one ever reaches here, lands on 0 rather than
+     * passing through: !(x>=0) is true for a NaN where x<0 is false */
+    if(!(dx>=0)) {dx=0;} else {if(dx>ixmax) {dx=ixmax;}}
     ix0=(int)dx; ix1=ix0+1; if(ix1>ixmax) {ix1=ixmax;}
     dx=dx-ix0;
-    if(dy<0) {dy=0;} else {if(dy>iymax) {dy=iymax;}}
+    if(!(dy>=0)) {dy=0;} else {if(dy>iymax) {dy=iymax;}}
     iy0=(int)dy; iy1=iy0+1; if(iy1>iymax) {iy1=iymax;}
     dy=dy-iy0;
     long index_x0y0=iy0+ix0*i_T, index_x0y1=iy1+ix0*i_T, index_x1y0=iy0+ix1*i_T, index_x1y1=iy1+ix1*i_T;

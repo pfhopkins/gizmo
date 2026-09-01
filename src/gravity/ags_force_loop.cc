@@ -83,15 +83,31 @@ void AgsForceSpec::populate_device_context(const neighbor_loop_args& args,
 
     /* Sticky single-int wakeup flag, lives across all subgroups of one
      * toplevel call. Lifecycle matches ags_density's need_wakeup_uvm. */
-    ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-    *ctx.need_wakeup_uvm = 0;
+    ctx.need_wakeup_uvm = NULL;
+#if defined(DM_SIDM)
+    ctx.geofactor_uvm = NULL;
+#endif
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
-
+    ctx.need_wakeup_uvm = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    /* Zeroed the moment it exists: cleanup_device_context reads it on every exit
+     * path, including the failure return below. */
+    if(ctx.need_wakeup_uvm) { *ctx.need_wakeup_uvm = 0; }
 #if defined(DM_SIDM)
     /* GeoFactorTable mirror for the SIDM probability lookup. ~8 KB total
      * (GEOFACTOR_TABLE_LENGTH doubles). */
-    ctx.geofactor_uvm = (MyDouble *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-        GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
+    ctx.geofactor_uvm = (MyDouble *) gizmo_gpu_alloc_shared(
+        GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble), NULL);
+    if(!ctx.geofactor_uvm) { ctx.populate_failed = 1; }
+#endif
+    if(!ctx.need_wakeup_uvm || ctx.populate_failed) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7723,
+            "adaptive-softening forces: could not stage the wakeup flag or scattering table; "
+            "the forces are not computed",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+#if defined(DM_SIDM)
     std::memcpy(ctx.geofactor_uvm, GeoFactorTable, GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
 #endif
 
@@ -185,65 +201,6 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     (void)accum; (void)i;
 }
 
-/* merge_accum — per-field op MUST match pair_kernel writes. Nothing checks
- * the two against each other at runtime, so drift between them is silent.
- * Adding a new accumulator field = ONE LINE under its physics flag's #ifdef. */
-void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field)         local_accum.field += peer_accum.field;
-#define ACCUM_ADD_ARRAY(field, N) for(int k = 0; k < (N); k++) local_accum.field[k] += peer_accum.field[k];
-#define ACCUM_MIN(field)         if(peer_accum.field < local_accum.field) local_accum.field = peer_accum.field;
-#define ACCUM_MAX(field)         if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
-#define ACCUM_MUL(field)         local_accum.field *= peer_accum.field;
-
-#if defined(DM_SIDM)
-    ACCUM_ADD_ARRAY(sidm_kick, 3)
-    ACCUM_MIN(dtime_sidm)
-    ACCUM_ADD(si_count)
-#endif
-#ifdef DM_FUZZY
-    ACCUM_ADD_ARRAY(acc, 3)
-    ACCUM_ADD(AGS_Dt_Numerical_QuantumPotential)
-#if (DM_FUZZY > 0)
-    ACCUM_ADD(AGS_Dt_Psi_Re)
-    ACCUM_ADD(AGS_Dt_Psi_Im)
-    ACCUM_ADD(AGS_Dt_Psi_Mass)
-#endif
-#endif
-#if defined(CBE_INTEGRATOR)
-    ACCUM_MAX(AGS_vsig)
-    for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
-        for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-            local_accum.CBE_basis_moments_dt[k1][k2]  += peer_accum.CBE_basis_moments_dt[k1][k2];
-            local_accum.CBE_basis_out_rate_dt[k1][k2] += peer_accum.CBE_basis_out_rate_dt[k1][k2];
-        }
-    }
-#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    ACCUM_MAX(cbe_face_residual_max)
-    ACCUM_ADD(cbe_face_residual_sum)
-    ACCUM_ADD(cbe_bracket_fail_count)
-    ACCUM_ADD(cbe_recon_rho_clamp_count)
-    ACCUM_ADD(cbe_recon_S_clamp_count)
-    ACCUM_ADD(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
-#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-    ACCUM_ADD(cbe_grad_nonfinite_count)
-#endif
-#endif
-#endif
-#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
-    ACCUM_ADD(Grain_DeltaCoagMass)
-    ACCUM_ADD_ARRAY(Grain_DeltaCoag_CompositionMass, GRAIN_NUM_SPECIES)
-    /* Multiplicative — peer factor composes with local factor. */
-    ACCUM_MUL(Grain_DeltaErosionFrac)
-#endif
-
-#undef ACCUM_ADD
-#undef ACCUM_ADD_ARRAY
-#undef ACCUM_MIN
-#undef ACCUM_MAX
-#undef ACCUM_MUL
-    (void)local_accum; (void)peer_accum;
-}
 
 /* ============================================================================
  * GHOST-WRITEBACK BUNDLE (generic ops; replaces the 164-line bespoke

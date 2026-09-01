@@ -20,14 +20,15 @@
  *           the shipped graph is self-contained (no sender indices in topology).
  *      4. let_exchange_nodes          -- MPI_Alltoall counts + MPI_Alltoallv payloads
  *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the foreign slot
- *           range [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes); rebase each
+ *           range [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+Numforeignnodes); rebase each
  *           wire index to slot_base+wire; map LET_WIRE_EXIT to the local topleaf's
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
  *           foreign subtree root.  No sender-index reconstruction on the receiver.
  *
- *  Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
- *  endrun() with the LETAllocFactor restart message.  A graceful-shrink
- *  fallback to the legacy export path is not implemented; add it only if
+ *  Buffer-overflow policy: an import that would exceed the foreign-node index
+ *  ceiling MaxForeignNodes is reported as retryable; force_treebuild raises the
+ *  ceiling to the demand and rebuilds.
+ *  A graceful-shrink fallback to the legacy export path is not implemented; add it only if
  *  practical memory limits ever require it.
  */
 
@@ -48,6 +49,7 @@
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
+#include "forcetree.h"          /* force_tree_grow_foreign_storage */
 
 
 /* Temporary EMIT-time encoding for a "last child of a level" sibling whose continuation index
@@ -117,8 +119,8 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
     {
         if(DomainTask[t] != ThisTask) continue;
         int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes)
-            my_tl_lookup[no - All.MaxPart] = t;
+        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes)
+            my_tl_lookup[no - All.TreeNodeIndexBase] = t;
     }
 
     /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
@@ -142,9 +144,9 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
         if(P[i].Mass <= 0) continue;
         int no = Father[i];
         int guard = 0;
-        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
+        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
         {
-            int tl = my_tl_lookup[no - All.MaxPart];
+            int tl = my_tl_lookup[no - All.TreeNodeIndexBase];
             if(tl >= 0)
             {
                 bitmap[tl >> 6] |= (1ULL << (tl & 63));
@@ -293,7 +295,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         if(DomainTask[i] != ThisTask) continue;
         if(active_bitmap && !let_bitmap_test(active_bitmap, i)) continue;
         int no = DomainNodeIndex[i];
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double cx = (double) Nodes[no].center[0];
         double cy = (double) Nodes[no].center[1];
         double cz = (double) Nodes[no].center[2];
@@ -336,7 +338,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     for(int t = 0; t < NTopleaves; t++)
     {
         int no = DomainNodeIndex[t];
-        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes) tl_lookup[no - All.MaxPart] = t;
+        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes) tl_lookup[no - All.TreeNodeIndexBase] = t;
     }
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
     g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
@@ -350,13 +352,21 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
 
+        /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
+         * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
+         * targets of this tree's walk, so they take no part in the receiver cover -- including them
+         * would over-import on their behalf. Trees built over a particle subset (the halo finder's
+         * group and candidate trees) are what produces them; a full tree holds every local particle,
+         * so nothing is skipped there. */
+        if(Father[i] < 0) continue;
+
         /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
          * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
          * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
         int tl = -1, no = Father[i], guard = 0;
-        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
+        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
         {
-            int cand = tl_lookup[no - All.MaxPart];
+            int cand = tl_lookup[no - All.TreeNodeIndexBase];
             if(cand >= 0) { tl = cand; break; }
             no = Nodes[no].u.d.father;
         }
@@ -591,7 +601,7 @@ static void let_build_cover_tree(int R)
     for(int k = (g_orphan_off ? g_orphan_off[R] : 0); k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
         int t  = g_orphan_all[k].topleaf;
         int no = (t >= 0 && t < NTopleaves) ? DomainNodeIndex[t] : -1;
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double h = 0.5 * (double) Nodes[no].len;
         struct LETCoverLeaf *L = &g_cover_leaves[nleaf++];
         for(int d = 0; d < 3; d++) { L->bmin[d] = (double) Nodes[no].center[d] - h; L->bmax[d] = (double) Nodes[no].center[d] + h; }
@@ -733,7 +743,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     memset(w, 0, sizeof(struct LETNodeWire));
 
     w->remote_id = -1 - p_idx;  /* negative encoding distinguishes synthesized particle leaves
-                                  * from real internal nodes (whose remote_id >= MaxPart).  Unpack
+                                  * from real internal nodes (whose remote_id >= TreeNodeIndexBase).  Unpack
                                   * uses remote_id < 0 to recognize synthesized leaves -- they
                                   * still get a foreign slot and remap entry, but their pointer
                                   * fields are simpler (no inbound references except from parent). */
@@ -915,8 +925,9 @@ static int let_realloc_fail_should_print(void)
     return 0;
 }
 
-/* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated/freed with the
- * foreign-node arena in force_treeallocate/force_treefree; memset-0 reset in let_run_exchange. */
+/* Foreign-leaf identity sidecar arrays (declared in let_data.h).  Allocated and zeroed with the
+ * foreign-node storage in force_tree_grow_foreign_storage, once the import has been counted, and
+ * freed in force_treefree.  NULL whenever no import has been sized yet. */
 int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
@@ -970,7 +981,7 @@ static void pack_recurse(int no, int sib_terminator,
                           struct LETNodeWire **buf, int *count, int *capacity)
 {
     /* Bounds: must be a local internal node */
-    if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) return;
+    if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) return;
 
     /* Check essential-for-R BEFORE shipping.  If not essential, the walk will
      * close at the parent; we don't need to ship this node either (parent's
@@ -1047,11 +1058,11 @@ static void pack_recurse(int no, int sib_terminator,
          * must consume it as a real foreign leaf.  Recover the underlying particle from the
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
-         * synthesized-leaf path.  Hard-check the child is a real particle (p < MaxPart); if not, the
+         * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeParticleSlots); if not, the
          * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
          * surfaces it rather than mis-routing a non-particle as a leaf. */
         int p = Nodes[no].u.d.nextnode;
-        if(p >= 0 && p < All.MaxPart)
+        if(p >= 0 && p < All.TreeParticleSlots)
         {
             struct particle_data *pa = &P[p];
             w->leaf_tag      = 1;
@@ -1079,10 +1090,10 @@ static void pack_recurse(int no, int sib_terminator,
 
     /* Multi-particle internal node: enumerate children via nextnode/sibling chain.
      * For each child:
-     *   - particle (< MaxPart): synthesize a leaf wire
+     *   - particle (< TreeParticleSlots): synthesize a leaf wire
      *   - internal node: recurse
-     *   - pseudo (>= MaxPart+MaxNodes+MaxForeignNodes): skip (R has its own access via S->R LET pack)
-     *   - foreign (in [MaxPart+MaxNodes, +MaxForeignNodes)): shouldn't appear during pack (we run before unpack)
+     *   - pseudo (>= TreeNodeIndexBase+MaxNodes+MaxForeignNodes): skip (R has its own access via S->R LET pack)
+     *   - foreign (in [TreeNodeIndexBase+MaxNodes, +MaxForeignNodes)): shouldn't appear during pack (we run before unpack)
      *
      * After processing all children, link them into a sibling chain in the WIRE buffer
      * by setting our nextnode to first-child wire-idx, and each child's sibling to
@@ -1095,7 +1106,7 @@ static void pack_recurse(int no, int sib_terminator,
         int next_child;
         int child_wire_idx = -1;
 
-        if(child < All.MaxPart)
+        if(child < All.TreeParticleSlots)
         {
             /* Particle leaf -- synthesize */
             grow_wire_buf(buf, *count + 1, capacity);
@@ -1104,7 +1115,17 @@ static void pack_recurse(int no, int sib_terminator,
             let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
         }
-        else if(child < All.MaxPart + MaxNodes)
+        else if(child < All.TreeNodeIndexBase)
+        {
+            /* Between the particle slots and the node index base lies no valid object: the tree is
+             * malformed.  Stop before Nodes[child] is read at a negative offset. */
+            printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
+                   child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
+            g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+                                   * the callers already test, so no truncated subtree is shipped */
+            return;
+        }
+        else if(child < All.TreeNodeIndexBase + MaxNodes)
         {
             /* Local internal node -- recurse */
             int child_sib = Nodes[child].u.d.sibling;
@@ -1116,7 +1137,7 @@ static void pack_recurse(int no, int sib_terminator,
             if(*count == child_wire_idx) child_wire_idx = -1;  /* nothing added */
             next_child = child_sib;
         }
-        else if(child < All.MaxPart + MaxNodes + MaxForeignNodes)
+        else if(child < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
         {
             /* Foreign node -- shouldn't happen during pack */
             next_child = Nodes[child].u.d.sibling;
@@ -1125,7 +1146,7 @@ static void pack_recurse(int no, int sib_terminator,
         else
         {
             /* Pseudo-particle -- skip */
-            next_child = Nextnode[child - MaxNodes - MaxForeignNodes];
+            next_child = Nextnode[All.TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             child_wire_idx = -1;
         }
 
@@ -1202,22 +1223,22 @@ static int let_resolve_continuation(int x, int topleaf_term,
         if(hit) return hit->wire;                                     /* shipped -> wire (incl synth leaf) */
         /* x is a non-shipped continuation; classify by EXPLICIT range (this is topology-repair
          * code -- an unclassifiable positive index must abort, never index Nodes[] blindly). */
-        if(x >= 0 && x < All.MaxPart)
+        if(x >= 0 && x < All.TreeParticleSlots)
         {
             printf("LET pack FATAL: particle %d referenced as a sibling continuation but not shipped "
                    "and not the subtree terminator (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000072);
             return LET_WIRE_EXIT;
         }
-        else if(x >= All.MaxPart && x < All.MaxPart + MaxNodes)
+        else if(x >= All.TreeNodeIndexBase && x < All.TreeNodeIndexBase + MaxNodes)
         {
             printf("LET pack FATAL: in-subtree internal node %d not shipped but referenced as a "
                    "sibling continuation (rank %d).\n", x, ThisTask); fflush(stdout); endrun(90000071);
             return LET_WIRE_EXIT;
         }
-        else if(x >= All.MaxPart + MaxNodes && x < All.MaxPart + MaxNodes + MaxForeignNodes)
+        else if(x >= All.TreeNodeIndexBase + MaxNodes && x < All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
             x = Nodes[x].u.d.sibling;                                 /* foreign: skip as the walk does */
-        else if(x >= All.MaxPart + MaxNodes + MaxForeignNodes)
-            x = Nextnode[x - MaxNodes - MaxForeignNodes];             /* pseudo: skip as the walk does */
+        else if(x >= All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes)
+            x = Nextnode[All.TreeParticleSlots + (x - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];             /* pseudo: skip as the walk does */
         else
         {
             printf("LET pack FATAL: unclassifiable continuation index %d (rank %d).\n",
@@ -1295,7 +1316,7 @@ extern "C" int let_pack_for_rank(int R,
     {
         if(DomainTask[i] != ThisTask) continue;
         int topleaf_no = DomainNodeIndex[i];
-        if(topleaf_no < All.MaxPart || topleaf_no >= All.MaxPart + MaxNodes) continue;
+        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
 
         int subtree_root = Nodes[topleaf_no].u.d.nextnode;
         if(subtree_root < 0) continue;  /* empty topleaf */
@@ -1318,7 +1339,7 @@ extern "C" int let_pack_for_rank(int R,
         {
             int next_child;
             int child_wire_idx = -1;
-            if(child < All.MaxPart)
+            if(child < All.TreeParticleSlots)
             {
                 /* Particle directly under topleaf -- synthesize leaf */
                 grow_wire_buf(out_buf, count + 1, out_capacity);
@@ -1328,7 +1349,18 @@ extern "C" int let_pack_for_rank(int R,
                 count++;
                 next_child = Nextnode[child];
             }
-            else if(child < All.MaxPart + MaxNodes)
+            else if(child < All.TreeNodeIndexBase)
+            {
+                /* Malformed: no valid object lives between the particle slots and the node index
+                 * base.  Stop before Nodes[child] is read at a negative offset; ship nothing. */
+                printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
+                       child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
+                g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+                                       * the callers already test, so the empty payload below is not
+                                       * mistaken for a successfully packed LET */
+                goto pack_oom_bail;
+            }
+            else if(child < All.TreeNodeIndexBase + MaxNodes)
             {
                 int child_sib = Nodes[child].u.d.sibling;
                 child_wire_idx = count;
@@ -1339,7 +1371,7 @@ extern "C" int let_pack_for_rank(int R,
             }
             else
             {
-                next_child = Nextnode[child - MaxNodes - MaxForeignNodes];
+                next_child = Nextnode[All.TreeParticleSlots + (child - All.TreeNodeIndexBase - MaxNodes - MaxForeignNodes)];
             }
             /* Link this child into the top-level sibling chain */
             if(child_wire_idx >= 0)
@@ -1418,23 +1450,125 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     MPI_Alltoall(send_counts_int, 1, MPI_INT, recv_counts_int, 1, MPI_INT, MPI_COMM_WORLD);
     MPI_Alltoall(send_hdr_counts, 1, MPI_INT, recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
-    int total_send = 0, total_recv = 0;
-    int total_hdr_send = 0, total_hdr_recv = 0;
-    for(int r = 0; r < NTask; r++) {
-        total_send += send_counts_int[r]; total_recv += recv_counts_int[r];
-        total_hdr_send += send_hdr_counts[r]; total_hdr_recv += recv_hdr_counts[r];
+    /* Only the receive total is needed here, to settle capacity before any window installs.
+     * Each window computes its own send and header totals from its windowed counts. */
+    int total_recv = 0;
+    for(int r = 0; r < NTask; r++) { total_recv += recv_counts_int[r]; }
+
+    /* The complete receive vector is in hand, so this rank now knows EXACTLY how many foreign
+     * nodes it is about to install -- and it knows it before a single one has been installed.
+     * That is what makes the foreign arena affordable: it is sized here, to this rank's own
+     * import, rather than at tree-allocation time to an index ceiling every rank shares.
+     *
+     * Two separate questions, in order.  First, does the import fit the INDEX range?  That is the
+     * retryable case and only this one: force_treebuild raises the ceiling and rebuilds, which
+     * genuinely fixes it.  It is a rank-local question whose answer is reduced before any rank
+     * returns, since a rank that left on its own would strand the others in a later collective. */
+    long long foreign_needed = (long long) Numforeignnodes + (long long) total_recv;
+    if(foreign_needed_out) *foreign_needed_out = foreign_needed;
+    int foreign_short_local = (foreign_needed > (long long) MaxForeignNodes) ? 1 : 0;
+    int foreign_short_any   = 0;
+    MPI_Allreduce(&foreign_short_local, &foreign_short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(foreign_short_any)
+    {
+        myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_counts_int); myfree(send_counts_int);
+        return LET_OVERFLOW_RETRYABLE;
+    }
+
+    /* Second, is the memory there?  Every rank asks -- one importing nothing asks for nothing --
+     * and the answers are reduced, because what follows is collective and because a rank whose
+     * tree cannot hold the import must not begin installing into it.  Unlike the ceiling this is
+     * not retryable: the ceiling can be raised, node memory cannot, so it joins the hard-failure
+     * statuses the caller already drains. */
+    int grow_failed_local = (force_tree_grow_foreign_storage(foreign_needed) != 0) ? 1 : 0;
+    int grow_failed_any   = 0;
+    MPI_Allreduce(&grow_failed_local, &grow_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(grow_failed_any)
+    {
+        myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_counts_int); myfree(send_counts_int);
+        return LET_FOREIGN_STORAGE_SHORT;
+    }
+
+    /* Where a sender's nodes land is a prefix sum over the receive counts, so each sender's slots
+     * follow from the counts alone rather than from how many senders have been installed already.
+     * Senders can therefore arrive in any order -- including the round order below -- and every
+     * foreign node still occupies the same slot, which keeps the walk order, and so the order the
+     * gravity sum is accumulated in, exactly as it is without rounds. */
+    int *slot_prefix = (int *) mymalloc("LET_slot_prefix", NTask * sizeof(int));
+    {
+        int acc = Numforeignnodes;
+        for(int r = 0; r < NTask; r++) { slot_prefix[r] = acc; acc += recv_counts_int[r]; }
+    }
+
+    /* The flattened buffers live in the Base arena, a fixed reservation this exchange cannot grow,
+     * so on a large run the whole exchange does not fit at once and has to go out in rounds.
+     *
+     * Rounds are groups of consecutive steps of the exchange pattern already used elsewhere in the
+     * code (pm_periodic, pm_nonperiodic): at step g a rank trades with the rank whose index differs
+     * from its own in exactly the bits of g.  Two properties make that the right pattern here.  It
+     * is SYMMETRIC -- at each step a rank sends to and receives from the SAME partner -- so a round's
+     * receive volume is as predictable to a rank as its send volume, from counts it already has; a
+     * rank can therefore size a round against BOTH sides before anything is exchanged.  And it pairs
+     * every two ranks exactly once, so walking every step ships everything.
+     *
+     * A round covers a range of steps that is the SAME on every rank.  How many steps fit differs
+     * per rank and differs with position in the walk, so the count is reduced to the smallest any
+     * rank can take, each round, and every rank then takes that many.  Partners with nothing to
+     * trade contribute zero counts and no copy, but must NOT be stepped over: skipping a step on one
+     * rank and not on another would leave the two disagreeing about which partners a round covers.
+     *
+     * With room the whole walk is one round, which is one exchange over every partner -- what this
+     * did before rounds existed.  Under pressure the rounds shorten, in the limit to a single pair,
+     * whose cost is one partner's traffic no matter how large the run's total. */
+    const size_t node_sz = sizeof(struct LETNodeWire);
+    const size_t hdr_sz  = sizeof(struct LETSubtreeHeader);
+
+    int pattern_bits = 0;
+    while((1 << pattern_bits) < NTask) pattern_bits++;
+    const int n_steps = (1 << pattern_bits);   /* steps 1..n_steps-1 cover every pair once */
+
+    /* Spend at most half of what is free on one round, so the round buffers cannot crowd out the
+     * scratch the install path still needs while they are held. */
+    long long round_budget = (long long) FreeBytes / 2;
+    if(round_budget < 1) round_budget = 1;
+
+    /* Bytes this rank trades at one step, both directions, nodes and headers. */
+    auto step_bytes = [&](int step) -> long long {
+        int peer = ThisTask ^ step;
+        if(peer >= NTask || peer == ThisTask) return 0;
+        return (long long) send_counts_int[peer] * (long long) node_sz
+             + (long long) recv_counts_int[peer] * (long long) node_sz
+             + (long long) send_hdr_counts[peer] * (long long) hdr_sz
+             + (long long) recv_hdr_counts[peer] * (long long) hdr_sz;
+    };
+
+    /* The heaviest single pair, over the WHOLE walk rather than however far the rounds got.  It is
+     * the floor on how short a round can be made, so it is what says whether pairing can still keep
+     * this inside the arena -- and it is wanted most precisely in the run that stops early, which is
+     * exactly the run that would not have scanned every step. */
+    long long largest_pair_bytes = 0;
+    for(int s = 1; s < n_steps; s++)
+    {
+        long long b = step_bytes(s);
+        if(b > largest_pair_bytes) largest_pair_bytes = b;
     }
 
     /* Refresh retention, sender half: remember WHAT was shipped to WHOM, in wire order.
      * plain malloc, not mymalloc: lifetime spans many steps and the LIFO stack cannot
      * bracket it. Previous retention (if any) is superseded wholesale. */
     let_refresh_invalidate();
+    /* The rounds rework dropped the whole-walk totals; retention still needs them, summed from
+     * the same per-peer count vectors the rounds are scheduled from. */
+    int rf_total_send = 0, rf_total_recv = 0;
+    for(int r = 0; r < NTask; r++) {rf_total_send += send_counts_int[r]; rf_total_recv += recv_counts_int[r];}
     g_rf_send_counts = (int *) malloc(NTask * sizeof(int));
     g_rf_send_offs   = (int *) malloc(NTask * sizeof(int));
     g_rf_recv_counts = (int *) malloc(NTask * sizeof(int));
     g_rf_recv_offs   = (int *) malloc(NTask * sizeof(int));
     g_rf_import_base = (int *) malloc(NTask * sizeof(int));
-    g_rf_export_ids  = (int *) malloc(((total_send > 0) ? total_send : 1) * sizeof(int));
+    g_rf_export_ids  = (int *) malloc(((rf_total_send > 0) ? rf_total_send : 1) * sizeof(int));
     if(g_rf_send_counts && g_rf_send_offs && g_rf_recv_counts && g_rf_recv_offs
        && g_rf_import_base && g_rf_export_ids)
     {
@@ -1449,8 +1583,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
                 g_rf_export_ids[off + j] = send_buf_per_rank[r][j].remote_id;
             off += send_counts_int[r];
         }
-        g_rf_send_total = total_send;
-        g_rf_recv_total = total_recv;
+        g_rf_send_total = rf_total_send;
+        g_rf_recv_total = rf_total_recv;
         int roff = 0;
         for(int r = 0; r < NTask; r++) {g_rf_recv_offs[r] = roff; roff += recv_counts_int[r];}
         g_rf_valid = 1;   /* provisional; cleared again if install fails/overflows */
@@ -1474,71 +1608,214 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     int *recv_offsets     = (int *) mymalloc("LET_recv_offsets",     NTask * sizeof(int));
     int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
     int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
+    int *round_send_counts     = (int *) mymalloc("LET_round_send_counts",     NTask * sizeof(int));
+    int *round_recv_counts     = (int *) mymalloc("LET_round_recv_counts",     NTask * sizeof(int));
+    int *round_send_hdr_counts = (int *) mymalloc("LET_round_send_hdr_counts", NTask * sizeof(int));
+    int *round_recv_hdr_counts = (int *) mymalloc("LET_round_recv_hdr_counts", NTask * sizeof(int));
 
-    int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
-    for(int r = 0; r < NTask; r++)
+    let_exchange_status_t unpack_status = LET_OK;
+    int step = 1;   /* next step of the exchange pattern; the same on every rank */
+    int rounds_done = 0;
+    long long largest_round_bytes = 0;
+
+    while(step < n_steps)
     {
-        send_offsets[r]     = s_off;
-        recv_offsets[r]     = r_off;
-        send_hdr_offsets[r] = hs_off;
-        recv_hdr_offsets[r] = hr_off;
-        s_off  += send_counts_int[r];
-        r_off  += recv_counts_int[r];
-        hs_off += send_hdr_counts[r];
-        hr_off += recv_hdr_counts[r];
+        /* How many further steps THIS rank could take within its budget.  At least one, always:
+         * a step that does not fit on its own is reported by the check below rather than skipped,
+         * and the walk has to keep moving or it would never finish. */
+        int steps_here = 0;
+        long long acc = 0;
+        for(int s = step; s < n_steps; s++)
+        {
+            long long add = step_bytes(s);
+            if(steps_here > 0 && acc + add > round_budget) break;
+            acc += add;
+            steps_here++;
+        }
+        if(steps_here < 1) steps_here = 1;
+
+        /* Every rank has to cover the same steps this round, so the round is as short as the
+         * shortest any rank can manage.  Reducing it costs one small collective that replaces the
+         * two count exchanges a round needed when the receive side was not predictable. */
+        int steps_this_round = 0;
+        MPI_Allreduce(&steps_here, &steps_this_round, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(steps_this_round < 1) steps_this_round = 1;
+        if(step + steps_this_round > n_steps) steps_this_round = n_steps - step;
+
+        for(int r = 0; r < NTask; r++)
+        {
+            round_send_counts[r]     = 0; round_recv_counts[r]     = 0;
+            round_send_hdr_counts[r] = 0; round_recv_hdr_counts[r] = 0;
+        }
+        /* Both directions of a step are the same partner, so this rank already knows what it will
+         * receive as well as what it will send -- no exchange is needed to find out.  A step whose
+         * partner does not exist, or has nothing to trade, simply contributes nothing. */
+        for(int s = step; s < step + steps_this_round; s++)
+        {
+            int peer = ThisTask ^ s;
+            if(peer >= NTask || peer == ThisTask) continue;
+            round_send_counts[peer]     = send_counts_int[peer];
+            round_send_hdr_counts[peer] = send_hdr_counts[peer];
+            round_recv_counts[peer]     = recv_counts_int[peer];
+            round_recv_hdr_counts[peer] = recv_hdr_counts[peer];
+        }
+        step += steps_this_round;
+
+        int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
+        for(int r = 0; r < NTask; r++)
+        {
+            send_offsets[r]     = s_off;
+            recv_offsets[r]     = r_off;
+            send_hdr_offsets[r] = hs_off;
+            recv_hdr_offsets[r] = hr_off;
+            s_off  += round_send_counts[r];
+            r_off  += round_recv_counts[r];
+            hs_off += round_send_hdr_counts[r];
+            hr_off += round_recv_hdr_counts[r];
+        }
+
+        /* Both directions have to fit in this rank's remaining arena, and a rank cannot answer that
+         * for itself alone: if any rank is short, they all stop together, here, before a byte is
+         * allocated.  Going ahead would hit the allocator's hard out-of-memory floor instead, which
+         * is not a stop this run could report or recover from.  This is NOT the retryable case --
+         * ratcheting the foreign arena neither shrinks these buffers nor enlarges the Base arena,
+         * so retrying would simply arrive back here. */
+        /* Ask the same question the allocator will ask, in the same units: the four buffers are
+         * taken one after another, so what has to hold is that their rounded sizes sum to no more
+         * than what is free.  Testing against anything stricter would refuse rounds the arena can
+         * actually serve, and turn runs that work today into stops. */
+        long long round_bytes = (long long) gizmo_mymalloc_rounded_size((size_t) s_off  * node_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) r_off  * node_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) hs_off * hdr_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) hr_off * hdr_sz + 1);
+        long long arena_room  = (long long) FreeBytes;
+        rounds_done++;
+        if(round_bytes > largest_round_bytes) largest_round_bytes = round_bytes;
+        /* Ask the allocator itself, so the four blocks are tested for the block table as well as
+         * for bytes: a request can fit by size and still exhaust the table, which lands on the same
+         * hard floor this check exists to keep the run away from. */
+        int short_local = gizmo_alloc_fits_this_rank((size_t) round_bytes, 4) ? 0 : 1;
+        int short_any   = 0;
+        MPI_Allreduce(&short_local, &short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(short_any)
+        {
+            if(short_local)
+            {
+                /* Two different shortages reach here: not enough bytes free, or no room left in the
+                 * arena's fixed table of live blocks.  Say which, because raising the arena size
+                 * answers the first and does nothing at all for the second. */
+                if(round_bytes > arena_room)
+                {
+                    printf("LET exchange: rank %d needs %g MB for one round of transport buffers but has "
+                           "%g MB of arena left. Raise Working_Mem_Pool_Per_Task_in_MB, or spread the run "
+                           "over more ranks. Stopping.\n",
+                           ThisTask, (double) round_bytes / (1024.0 * 1024.0),
+                           (double) arena_room / (1024.0 * 1024.0));
+                }
+                else
+                {
+                    printf("LET exchange: rank %d cannot take the 4 transport buffers for one round: the "
+                           "arena has %g MB free, so this is not a shortage of memory but of its table of "
+                           "live blocks. Something above is holding an unusual number of allocations. "
+                           "Stopping.\n",
+                           ThisTask, (double) arena_room / (1024.0 * 1024.0));
+                }
+                fflush(stdout);
+            }
+            unpack_status = LET_ARENA_SHORT;
+            break;
+        }
+
+        struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
+            (size_t) s_off * node_sz + 1);
+        struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
+            (size_t) r_off * node_sz + 1);
+        struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
+            (size_t) hs_off * hdr_sz + 1);
+        struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
+            (size_t) hr_off * hdr_sz + 1);
+
+        /* Concatenate this window's per-rank send buffers */
+        for(int r = 0; r < NTask; r++)
+        {
+            if(round_send_counts[r] > 0 && send_buf_per_rank[r])
+            {
+                memcpy(flat_send + send_offsets[r], send_buf_per_rank[r],
+                       (size_t) round_send_counts[r] * node_sz);
+            }
+            if(round_send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
+            {
+                memcpy(flat_hdr_send + send_hdr_offsets[r], send_hdr_per_rank[r],
+                       (size_t) round_send_hdr_counts[r] * hdr_sz);
+            }
+        }
+
+        /* MPI exchanges (parallel for nodes + headers). Counts and displacements
+         * are in element units, not bytes -- see system/mpi_alltoallv_typed.h. */
+        gizmo_mpi_alltoallv_typed(flat_send,     round_send_counts,     send_offsets,
+                                  flat_recv,     round_recv_counts,     recv_offsets,
+                                  node_sz, MPI_COMM_WORLD);
+        gizmo_mpi_alltoallv_typed(flat_hdr_send, round_send_hdr_counts, send_hdr_offsets,
+                                  flat_hdr_recv, round_recv_hdr_counts, recv_hdr_offsets,
+                                  hdr_sz, MPI_COMM_WORLD);
+
+        /* Install this window's senders while their buffers are still alive on the mymalloc stack.
+         * Each lands at its prefix slot, so the result does not depend on which window carried it. */
+        let_exchange_status_t st = let_unpack_and_install(flat_recv, round_recv_counts, r_off,
+                                flat_hdr_recv, round_recv_hdr_counts, hr_off, slot_prefix);
+        if(st != LET_OK) unpack_status = st;
+
+        myfree(flat_hdr_recv);
+        myfree(flat_hdr_send);
+        myfree(flat_recv);
+        myfree(flat_send);
     }
 
-    struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
-        (size_t)total_send * sizeof(struct LETNodeWire) + 1);
-    struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
-        (size_t)total_recv * sizeof(struct LETNodeWire) + 1);
-    struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
-        (size_t)total_hdr_send * sizeof(struct LETSubtreeHeader) + 1);
-    struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
-        (size_t)total_hdr_recv * sizeof(struct LETSubtreeHeader) + 1);
-
-    /* Concatenate per-rank send buffers */
-    int s_pos = 0, hs_pos = 0;
-    for(int r = 0; r < NTask; r++)
+    /* Report how the exchange was split, once per distinct round count.  The figures are reduced
+     * over ranks because the interesting ones belong to whichever rank is under most pressure, and
+     * that is never reliably rank 0: on one run rank 0's largest round was a quarter of the rank
+     * that ran out, on another it was two thirds. The largest single pair is the figure that says
+     * whether pairing can keep bounding this at all -- once one pair alone approaches the arena,
+     * rounds cannot get any shorter. */
     {
-        if(send_counts_int[r] > 0 && send_buf_per_rank[r])
+        long long local[3]  = {largest_round_bytes, largest_pair_bytes, (long long) FreeBytes};
+        long long global[3] = {0, 0, 0};
+        MPI_Reduce(local, global, 2, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local[2], &global[2], 1, MPI_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
         {
-            memcpy(flat_send + s_pos, send_buf_per_rank[r],
-                   (size_t)send_counts_int[r] * sizeof(struct LETNodeWire));
+            /* Report a changed round count, and also whenever the largest round has grown by a
+             * quarter since the last report -- the same growth gating the memory ledger uses.  A run
+             * that fits in one round the whole way would otherwise say this once, at its smallest,
+             * and never show the exchange growing toward the limit it eventually stops at. */
+            static int last_rounds_reported = -1;
+            static long long last_largest_reported = 0;
+            if(rounds_done != last_rounds_reported ||
+               global[0] > last_largest_reported + last_largest_reported / 4)
+            {
+                last_rounds_reported  = rounds_done;
+                last_largest_reported = global[0];
+                printf("LET exchange: %d round(s) over %d step(s); largest round %g MB, largest single "
+                       "pair %g MB, arena free on the tightest rank %g MB\n",
+                       rounds_done, n_steps - 1,
+                       (double) global[0] / (1024.0 * 1024.0),
+                       (double) global[1] / (1024.0 * 1024.0),
+                       (double) global[2] / (1024.0 * 1024.0));
+                fflush(stdout);
+            }
         }
-        if(send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
-        {
-            memcpy(flat_hdr_send + hs_pos, send_hdr_per_rank[r],
-                   (size_t)send_hdr_counts[r] * sizeof(struct LETSubtreeHeader));
-        }
-        s_pos  += send_counts_int[r];
-        hs_pos += send_hdr_counts[r];
     }
-
-    /* MPI exchanges (parallel for nodes + headers). Counts and displacements
-     * are in element units, not bytes — see system/mpi_alltoallv_typed.h. */
-    gizmo_mpi_alltoallv_typed(flat_send,     send_counts_int, send_offsets,
-                              flat_recv,     recv_counts_int, recv_offsets,
-                              sizeof(struct LETNodeWire), MPI_COMM_WORLD);
-    gizmo_mpi_alltoallv_typed(flat_hdr_send, send_hdr_counts, send_hdr_offsets,
-                              flat_hdr_recv, recv_hdr_counts, recv_hdr_offsets,
-                              sizeof(struct LETSubtreeHeader), MPI_COMM_WORLD);
-
-    /* Install foreign tree contents while flat_recv / flat_hdr_recv are
-     * still alive on the mymalloc stack. Capture the status so an unpack
-     * overflow propagates up to let_run_exchange. */
-    let_exchange_status_t unpack_status = let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
-                            flat_hdr_recv, recv_hdr_counts, total_hdr_recv, foreign_needed_out);
 
     /* Free everything in strict reverse-alloc order */
-    myfree(flat_hdr_recv);
-    myfree(flat_hdr_send);
-    myfree(flat_recv);
-    myfree(flat_send);
+    myfree(round_recv_hdr_counts);
+    myfree(round_send_hdr_counts);
+    myfree(round_recv_counts);
+    myfree(round_send_counts);
     myfree(recv_hdr_offsets);
     myfree(send_hdr_offsets);
     myfree(recv_offsets);
     myfree(send_offsets);
+    myfree(slot_prefix);
     myfree(recv_hdr_counts);
     myfree(send_hdr_counts);
     myfree(recv_counts_int);
@@ -1561,9 +1838,9 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
  *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
  *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
  *
- * Buffer-overflow policy: if Numforeignnodes would exceed MaxForeignNodes,
- * return LET_OVERFLOW_RETRYABLE without installing; the force_treebuild loop
- * ratchets the arena and retries.
+ * Buffer-overflow policy: if a sender's slots would run past the foreign storage
+ * allocated for this import, return LET_OVERFLOW_RETRYABLE without installing; the
+ * force_treebuild loop raises the index ceiling and retries.
  * ---------------------------------------------------------------------- */
 extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
@@ -1571,24 +1848,9 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
                                        const struct LETSubtreeHeader *recv_hdr_buf,
                                        const int *recv_hdr_count_per_rank,
                                        int recv_hdr_count_total,
-                                       long long *foreign_needed_out)
+                                       const int *foreign_slot_prefix)
 {
-    if(foreign_needed_out) *foreign_needed_out = 0;
     if(recv_count_total == 0) return LET_OK;
-
-    /* Capacity check (long long: capacity-bound, avoid int overflow on the sum).
-     * Report the full needed capacity (Numforeignnodes + recv_count_total -- the
-     * "+Numforeignnodes" is for a future per-sender/incremental install; today it
-     * is 0 at entry) and, on overflow, return a RETRYABLE status WITHOUT installing
-     * or aborting. force_treebuild ratchets RuntimeMinLETForeignNodes, rebuilds with
-     * a larger arena, and retries; all overflow messaging is owned by that loop. */
-    long long foreign_needed = (long long)Numforeignnodes + (long long)recv_count_total;
-    if(foreign_needed_out) *foreign_needed_out = foreign_needed;
-    if(foreign_needed > (long long)MaxForeignNodes)
-    {
-        let_refresh_invalidate();   /* nothing installed; retention must not outlive the retry */
-        return LET_OVERFLOW_RETRYABLE;
-    }
 
     int node_off = 0;     /* running offset into recv_buf (per-sender) */
     int hdr_off  = 0;     /* running offset into recv_hdr_buf (per-sender) */
@@ -1604,8 +1866,22 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             continue;
         }
 
-        int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
-        if(g_rf_valid && g_rf_import_base) {g_rf_import_base[r] = slot_base;}
+        /* This sender's slots come from the prefix over the receive counts, not from how many
+         * senders happen to have been installed already, so a sender occupies the same slots no
+         * matter which exchange round carried it.  The storage was sized from that same complete
+         * receive vector, so the last sender's slots end exactly where the storage does and this
+         * can only fail if the two disagree -- an internal inconsistency, not a shortfall a larger
+         * tree would fix.  Say so and stop, rather than rebuilding three times to the same size. */
+        if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) AllocatedForeignNodes)
+        {
+            printf("LET install FATAL: sender %d needs foreign slots up to %lld but only %d are allocated (rank %d).\n",
+                   r, (long long) foreign_slot_prefix[r] + (long long) rcount, AllocatedForeignNodes, ThisTask);
+            fflush(stdout);
+            let_refresh_invalidate();   /* retention recorded so far must not outlive a failed install */
+            return LET_UNPACK_INTERNAL;
+        }
+        int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
+        if(g_rf_valid && g_rf_import_base) {g_rf_import_base[r] = slot_base;}   /* moment-refresh retention: where this sender's slots landed */
 
         /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
          * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
@@ -1635,10 +1911,10 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
 
             /* Install the foreign-leaf identity sidecar at this slot's foreign_slot
-             * (= no - (MaxPart+MaxNodes), NOT the SoA index no-MaxPart). Non-leaf records carry
+             * (= no - (TreeNodeIndexBase+MaxNodes), NOT the SoA index no-TreeNodeIndexBase). Non-leaf records carry
              * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
-            int foreign_slot = abs_idx - (All.MaxPart + MaxNodes);
-            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < MaxForeignNodes)
+            int foreign_slot = abs_idx - (All.TreeNodeIndexBase + MaxNodes);
+            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < AllocatedForeignNodes)
             {
                 ForeignLeafTag[foreign_slot]  = recv_buf[node_off + j].leaf_tag;
                 ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
@@ -1664,7 +1940,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             if(wire_off < 0 || wire_cnt <= 0 || wire_off + wire_cnt > rcount) continue;
 
             int local_topleaf_no = DomainNodeIndex[topleaf_idx];
-            if(local_topleaf_no < All.MaxPart || local_topleaf_no >= All.MaxPart + MaxNodes) continue;
+            if(local_topleaf_no < All.TreeNodeIndexBase || local_topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
 
             int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
             int subtree_root    = slot_base + wire_off;
@@ -1716,9 +1992,8 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
 extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 {
     if(foreign_needed_out) *foreign_needed_out = 0;
-    /* Defensive no-op if no foreign-node headroom was allocated.  GPU builds
-     * reject LETAllocFactor<=0 during parameter validation because the legacy
-     * gravity export fallback is retired there. */
+    /* Defensive no-op if no foreign-node index range has been established yet -- before the
+     * first tree allocation, or from a restart file that carries none. */
     if(MaxForeignNodes <= 0) return LET_OK;
 
     g_let_pack_oom = 0;   /* fresh status for this exchange */
@@ -1732,18 +2007,11 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
-    /* Reset the foreign-leaf identity sidecar for the fresh exchange.  These host arrays are
-     * read only by host code (the CPU walk and gpu_scatter_foreign_to_soa); the GPU mirror lives in
-     * the tree SoA and is fully rewritten by the scatter after install.  let_run_exchange runs at
-     * tree-build time, after the previous step's gravity walk has fenced and returned, so no GPU
-     * walk is in flight against the old sidecar -- a device fence is not required for this host memset. */
-    if(ForeignLeafTag)  memset(ForeignLeafTag,  0, (size_t)MaxForeignNodes * sizeof(int));
-    if(ForeignLeafType) memset(ForeignLeafType, 0, (size_t)MaxForeignNodes * sizeof(int));
-    if(ForeignLeafZeta) memset(ForeignLeafZeta, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
-#ifdef HERMITE_INTEGRATION
-    if(ForeignLeafID) memset(ForeignLeafID, 0, (size_t)MaxForeignNodes * sizeof(MyIDType));
-#endif
-    if(ForeignLeafSoft) memset(ForeignLeafSoft, 0, (size_t)MaxForeignNodes * sizeof(MyFloat));
+    /* The foreign-leaf identity sidecar needs no reset here: this exchange's sidecar is allocated
+     * and zeroed by force_tree_grow_foreign_storage below, once the import has been counted, and
+     * it is allocated to exactly that count -- so every slot in it is written by the install.
+     * Clearing a previous exchange's arrays would in any case be clearing arrays that are about to
+     * be replaced. */
 
     /* All-local receiver cover (WHICH particles): the payload worst-case scalars
      * (min_OldAcc/soft/sink) still cover ALL of R's particles, not just active ones,
@@ -1972,9 +2240,9 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
  * ---------------------------------------------------------------------- */
 extern "C" void let_finalize_unredirected_foreign_topleaves(void)
 {
-    if(MaxForeignNodes <= 0) return;   /* non-GPU build: LET inactive */
+    if(MaxForeignNodes <= 0) return;   /* no foreign-node index range: nothing was imported */
 
-    const long long pseudo_lo = (long long)All.MaxPart + MaxNodes + MaxForeignNodes;
+    const long long pseudo_lo = (long long)All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes;
     const long long pseudo_hi = pseudo_lo + NTopleaves;
     int n_patched = 0;
 
@@ -1982,11 +2250,11 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
     {
         if(DomainTask[t] == ThisTask) continue;          /* local topleaf */
         int no = DomainNodeIndex[t];
-        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes)
+        if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes)
         {
             printf("LET finalize FATAL: foreign topleaf t=%d owner=%d has out-of-range "
                    "DomainNodeIndex=%d (local node range [%d,%d)).\n",
-                   t, DomainTask[t], no, All.MaxPart, All.MaxPart + MaxNodes);
+                   t, DomainTask[t], no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + MaxNodes);
             fflush(stdout); endrun(90000063); continue; /* soft bad-stop + skip this topleaf before the Nodes[no] deref; drains at gravtree:after_treebuild before the walk */
         }
         const long long nn = Nodes[no].u.d.nextnode;
@@ -2097,5 +2365,9 @@ extern "C" void let_refresh_moments(void)
     myfree(recvbuf);
     myfree(sendbuf);
 
-    if(Numforeignnodes > 0) {gpu_scatter_foreign_to_soa(All.MaxPart + MaxNodes, Numforeignnodes);}
+    /* Foreign slots are contiguous from the node-namespace base under the prefix layout
+     * (install: slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r]), so one
+     * scatter over the whole range re-mirrors every refreshed moment. MaxPart is no longer the
+     * node base -- see All.TreeNodeIndexBase. */
+    if(Numforeignnodes > 0) {gpu_scatter_foreign_to_soa(All.TreeNodeIndexBase + MaxNodes, Numforeignnodes);}
 }

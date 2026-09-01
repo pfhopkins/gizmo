@@ -87,6 +87,7 @@ void subfind_loctree_findExtent(int npart, struct unbind_data *mp);
 int subfind_locngb_treefind_variable(Vec3<double>& searchcenter, double hguess);
 size_t subfind_loctree_treeallocate(int maxnodes, int maxpart);
 void subfind_loctree_treefree(void);
+int subfind_loctree_is_allocated(void);   /* nonzero while the local halo-finder tree is standing */
 void subfind_find_nearesttwo(void);
 void subfind_density_modern(int j_in);
 void subfind_find_linkngb_modern(void);

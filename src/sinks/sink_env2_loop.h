@@ -218,7 +218,9 @@ struct SinkEnv2Spec {
         active.vel[1] = (double)dctx.P[i].Vel[1];
         active.vel[2] = (double)dctx.P[i].Vel[2];
         active.h_search = h_search;
-        const SinkEnv2PerActiveIn& src = dctx.per_active_in[active_slot];
+        const SinkEnv2PerActiveIn zero_in{};
+        const SinkEnv2PerActiveIn& src = dctx.per_active_in ? dctx.per_active_in[active_slot]
+                                                            : zero_in;
         active.Jgas[0]  = (double)src.Jgas[0];
         active.Jgas[1]  = (double)src.Jgas[1];
         active.Jgas[2]  = (double)src.Jgas[2];
@@ -263,7 +265,17 @@ struct SinkEnv2Spec {
                                         int active_slot, int i,
                                         const AccumData& accum);
 
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* Per-field merge (Mode B remote). sink_env2 has only two additive fields. */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
+
+        ACCUM_ADD(MgasBulge_in_Kernel)
+        ACCUM_ADD(MstarBulge_in_Kernel)
+
+#undef ACCUM_ADD
+    }
 
     /* ====================================================================
      * ENGINE APPARATUS

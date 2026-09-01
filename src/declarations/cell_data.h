@@ -573,7 +573,9 @@ extern struct gas_cell_data
 #ifdef EOS_GENERAL
         return SoundSpeed;
 #else
-        return sqrt(gamma_eos_value() * Pressure / density_for_energy());
+        double rho_for_soundspeed = density_for_energy(); /* pressure scales with density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */
+        if(rho_for_soundspeed > 0) {return sqrt(gamma_eos_value() * Pressure / rho_for_soundspeed);}
+        return thermal_soundspeed();
 #endif
     }
 

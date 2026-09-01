@@ -71,7 +71,7 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
         return 0;
     }
     
-    size_t count_limit = (((long long)All.BufferSize)*1024LL * 1024LL) / size_sendtype;
+    size_t count_limit = (((long long)All.CommChunkSize)*1024LL * 1024LL) / size_sendtype;
     size_t count_limit_intmax = INT_MAX;
     if(count_limit_intmax < count_limit) {count_limit = count_limit_intmax;}
     

@@ -346,7 +346,112 @@ struct DensitySpec {
                                                   const AccumData& accum,
                                                   double final_h,
                                                   const IterScratch& scratch);
-    static void merge_accum(AccumData& local, const AccumData& peer);
+    /* ====================================================================
+     * merge_accum — per-field combine for Mode B remote.
+     *
+     * Per-field op MUST match what pair_kernel writes. Sum for additive
+     * fields; MIN for the two sink fields. Mismatch = silent multi-rank
+     * corruption, surfacing only as a difference between rank counts.
+     *
+     * Gating mirrors AccumData declaration verbatim:
+     * Sink_TimeBinGasNeighbor under SINK_PARTICLES; Sink_dr_to_NearestGasNeighbor
+     * under (SINK_PARTICLES && (BH_ACCRETE_NEARESTFIRST||SINGLE_STAR_TIMESTEPPING)).
+     * The asymmetry between declaration gate (BH || SINGLE_STAR) and
+     * pair-body update gate (SINGLE_STAR only) is the legacy's; the merge
+     * follows the DECLARATION gate, so the field is correctly combined
+     * regardless of whether the pair body touched it this iter.
+     * ==================================================================== */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local, const AccumData& peer) {
+        /* Core (always ADD) */
+        local.Ngb              += peer.Ngb;
+        local.Rho              += peer.Rho;
+        local.DrkernNgb        += peer.DrkernNgb;
+        local.Particle_DivVel  += peer.Particle_DivVel;
+        local.NV_T             += peer.NV_T;
+        local.NV_T_face_weights[0] += peer.NV_T_face_weights[0];
+        local.NV_T_face_weights[1] += peer.NV_T_face_weights[1];
+        local.NV_T_face_weights[2] += peer.NV_T_face_weights[2];
+
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+        local.ParticleVel[0] += peer.ParticleVel[0];
+        local.ParticleVel[1] += peer.ParticleVel[1];
+        local.ParticleVel[2] += peer.ParticleVel[2];
+#endif
+
+#ifdef HYDRO_SPH
+        local.DrkernHydroSumFactor += peer.DrkernHydroSumFactor;
+#endif
+
+#ifdef RT_SOURCE_INJECTION
+        local.KernelSum_Around_RT_Source += peer.KernelSum_Around_RT_Source;
+#endif
+
+#ifdef HYDRO_PRESSURE_SPH
+        local.EgyRho += peer.EgyRho;
+#endif
+
+#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
+        for (int a = 0; a < 3; ++a) {
+            for (int b = 0; b < 3; ++b) {
+                local.NV_D[a][b] += peer.NV_D[a][b];
+                local.NV_A[a][b] += peer.NV_A[a][b];
+            }
+        }
+#endif
+
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+        local.GradRho[0] += peer.GradRho[0];
+        local.GradRho[1] += peer.GradRho[1];
+        local.GradRho[2] += peer.GradRho[2];
+#endif
+
+#if defined(SINK_PARTICLES)
+        /* MIN reduction: legacy `if(out->T > T_j) out->T = T_j` at
+         * density_functions.h:137. Sentinel init = TIMEBINS in zero_accum,
+         * so unset slots stay at TIMEBINS and lose to any peer that found
+         * a real neighbor. */
+        if (peer.Sink_TimeBinGasNeighbor < local.Sink_TimeBinGasNeighbor) {
+            local.Sink_TimeBinGasNeighbor = peer.Sink_TimeBinGasNeighbor;
+        }
+  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
+        /* MIN reduction: legacy `if(dr_eff_wtd < out->dr) out->dr = dr_eff_wtd`
+         * at density_functions.h:141. Sentinel init = MAX_REAL_NUMBER. */
+        if (peer.Sink_dr_to_NearestGasNeighbor < local.Sink_dr_to_NearestGasNeighbor) {
+            local.Sink_dr_to_NearestGasNeighbor = peer.Sink_dr_to_NearestGasNeighbor;
+        }
+  #endif
+#endif
+
+#if defined(TURB_DRIVING) || defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+        local.GasVel[0] += peer.GasVel[0];
+        local.GasVel[1] += peer.GasVel[1];
+        local.GasVel[2] += peer.GasVel[2];
+#endif
+
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
+        local.AmbientGasRho += peer.AmbientGasRho;
+        local.Gas_InternalEnergy += peer.Gas_InternalEnergy;
+  #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
+        local.Gas_B[0] += peer.Gas_B[0];
+        local.Gas_B[1] += peer.Gas_B[1];
+        local.Gas_B[2] += peer.Gas_B[2];
+  #endif
+  #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        for (int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; ++kv) {
+            local.Gas_VolatileSpecies[kv] += peer.Gas_VolatileSpecies[kv];
+        }
+  #endif
+#endif
+
+
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+        local.GradH_numer[0] += peer.GradH_numer[0];
+        local.GradH_numer[1] += peer.GradH_numer[1];
+        local.GradH_numer[2] += peer.GradH_numer[2];
+        local.GradH_denom    += peer.GradH_denom;
+#endif
+    }
 
 
 

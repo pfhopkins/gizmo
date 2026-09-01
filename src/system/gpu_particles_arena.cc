@@ -92,9 +92,41 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
     return p;
 }
 
-extern "C" void gpu_particles_uvm_free(void *p)
+/* Non-throwing allocation for the GPU transients, one entry point per memory space. Kokkos throws
+   when it cannot serve a request, and an exception leaving a dispatcher takes the rank down where it
+   stands, before the phase boundary that drains a controlled stop -- so one rank dies and the others
+   wait on it. Returning NULL instead lets the caller name what it could not get, ask for the stop and
+   return, and the run finishes the way every other failure does. Nothing is caught on success, so a
+   run that never exhausts memory pays nothing. The label is forwarded exactly as given, including
+   absent: the memory ledger buckets allocations by label prefix, so inventing one here would move a
+   call site into a different bucket. */
+extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label)
 {
-    if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+    try { return label ? Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, nbytes)
+                       : Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nbytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label)
+{
+    try { return label ? Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, nbytes)
+                       : Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(nbytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label)
+{
+    try { return label ? Kokkos::kokkos_malloc<Kokkos::HostSpace>(label, nbytes)
+                       : Kokkos::kokkos_malloc<Kokkos::HostSpace>(nbytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+extern "C" void gpu_particles_uvm_free(void *ptr)
+{
+    /* Paired with gpu_particles_uvm_alloc so a capacity change can allocate the replacement
+       buffer before releasing the old one. Lives here, not in allocate.cc, for the same reason
+       the alloc does: that TU must not include <Kokkos_Core.hpp>. */
+    if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);}
 }
 
 extern "C" struct particle_data *gpu_particles_arena_P(void)     {return arena_valid_ ? arena_P     : NULL;}

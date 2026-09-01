@@ -52,8 +52,7 @@ static double  drift_table_logTimeMax_   = 0.0;
 static int drift_table_refresh_(void)
 {
     if(!drift_table_dev_) {
-        drift_table_dev_ = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                DRIFT_TABLE_LENGTH * sizeof(double));
+        drift_table_dev_ = (double *) gizmo_gpu_alloc_shared(DRIFT_TABLE_LENGTH * sizeof(double), NULL);
         if(!drift_table_dev_) {
             printf("gpu_force_drift: drift_table_dev_ alloc failed\n");
             endrun(929701);
@@ -99,6 +98,18 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
     if(Numnodestree <= 0) {return 0;}
 
+    /* This sweep skips any node already at time1 and therefore also skips writing that
+     * node's SoA mirror. A host lazy drift advances Nodes[].Ti_current without touching
+     * the mirror, so if the host has already drifted to time1 the sweep would leave the
+     * walk reading pre-drift geometry. The routing keeps the two apart -- a step whose
+     * tree update runs on the host also walks on the host -- and this is the check that
+     * the two never disagree. The caller treats a nonzero return as a controlled stop
+     * taken by every rank at the next poll, so no rank exits a collective alone. */
+    if(force_host_lazy_drift_ti() == time1) {
+        printf("gpu_force_drift_nodes: task %d already drifted nodes on the host at this time; the device node mirror cannot be brought up to date by a sweep that skips them\n", ThisTask);
+        return 1;
+    }
+
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || !soa->len || !soa->s || !soa->node_vs || !soa->bitflags
             || !soa->hmax || !soa->vmax) {
@@ -111,7 +122,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * by a runtime restart. */
     if(drift_table_refresh_() != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch on NULL drift table */
 
-    int      MaxPart        = All.MaxPart;
+    int      tree_base        = All.TreeNodeIndexBase;
     int      n_local_nodes  = Numnodestree;
     int      n_foreign_nodes = Numforeignnodes;
     int      maxNodes_snap  = MaxNodes;               /* foreign-range base */
@@ -122,14 +133,13 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * with one All.SpecialParticle_Position_ForRefinement comparison per node
      * for SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM). The GPU kernel then just reads
      * dilation_dev[kk] -- no GPU-side host-only field access required. */
-    double *dilation_dev = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-                                (size_t)n_nodes * sizeof(double));
+    double *dilation_dev = (double *) gizmo_gpu_alloc_shared((size_t)n_nodes * sizeof(double), NULL);
     if(!dilation_dev) {printf("gpu_force_drift_nodes: dilation_dev alloc failed\n"); endrun(929702); return 1;}   /* soft bad-stop: skip the dilation omp loop on NULL; drains at next poll */
 #pragma omp parallel for schedule(static)
     for(int kk = 0; kk < n_nodes; kk++) {
         int no_kk;
-        if(kk < n_local_nodes) no_kk = MaxPart + kk;
-        else                   no_kk = MaxPart + maxNodes_snap + (kk - n_local_nodes);
+        if(kk < n_local_nodes) no_kk = tree_base + kk;
+        else                   no_kk = tree_base + maxNodes_snap + (kk - n_local_nodes);
         dilation_dev[kk] = return_node_timestep_dilation_factor(no_kk);
     }
 #endif
@@ -142,8 +152,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     double   logTMax        = drift_table_logTimeMax_;
     const double *dt_table  = drift_table_dev_;
 
-    /* Use the SHIFTED pointers (Nodes = Nodes_base - MaxPart, Extnodes = Extnodes_base - MaxPart)
-     * so that Nodes_uvm[MaxPart + k] == Nodes_base[k] for all k in [0, Numnodestree). */
+    /* Use the SHIFTED pointers (Nodes = Nodes_base - tree_base, Extnodes = Extnodes_base - tree_base)
+     * so that Nodes_uvm[tree_base + k] == Nodes_base[k] for all k in [0, Numnodestree). */
     struct NODE     *Nodes_uvm    = Nodes;
     struct extNODE  *Extnodes_uvm = Extnodes;
 
@@ -167,17 +177,17 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
          * [n_local_nodes, n_local_nodes + n_foreign_nodes) drives foreign
          * nodes installed by LET unpack (slot index in [0, Numforeignnodes)).
          * SoA index `k` differs from iteration index for foreign nodes:
-         *   local:    k_soa = kk          ; no = MaxPart + kk
+         *   local:    k_soa = kk          ; no = tree_base + kk
          *   foreign:  k_soa = maxNodes_snap + (kk - n_local_nodes)
-         *             no    = MaxPart + maxNodes_snap + (kk - n_local_nodes) */
+         *             no    = tree_base + maxNodes_snap + (kk - n_local_nodes) */
         int k, no;
         if(kk < n_local_nodes) {
             k  = kk;
-            no = MaxPart + kk;
+            no = tree_base + kk;
         } else {
             int slot = kk - n_local_nodes;
             k  = maxNodes_snap + slot;
-            no = MaxPart + maxNodes_snap + slot;
+            no = tree_base + maxNodes_snap + slot;
         }
         if(Nodes_uvm[no].Ti_current == ti_target) {return;}
 

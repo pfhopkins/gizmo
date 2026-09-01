@@ -30,7 +30,10 @@
 #include "gpu_neighbor_list.h"
 #include "gpu_dirty_tracker.h"
 #include "neighbor_list.h"
-#include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift */
+#include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift, ghost_get_num_local */
+#include "ghost_exchange_functions.h"   /* the shared accept predicates (canonical box wrap) */
+#include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, force_host_lazy_drift_ti */
+#include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
@@ -236,7 +239,7 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         sfc_tile_t *tile = &h_tiles[t];
         if(tile->count <= 0) continue;
         int j0 = h_pool[tile->first];
-        double dt0 = get_drift_factor_omp_safe(P_shared[j0].Ti_current, time1, j0, 0);
+        double dt0 = get_drift_factor(P_shared[j0].Ti_current, time1, j0, 0);
         double x0 = P_shared[j0].Pos[0] + P_shared[j0].Vel[0] * dt0;
         double y0 = P_shared[j0].Pos[1] + P_shared[j0].Vel[1] * dt0;
         double z0 = P_shared[j0].Pos[2] + P_shared[j0].Vel[2] * dt0;
@@ -257,7 +260,7 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         if(pos_buf) { pos_buf[j0*3+0] = x0; pos_buf[j0*3+1] = y0; pos_buf[j0*3+2] = z0; }
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
-            double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+            double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
             double x = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
             double y = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
             double z = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
@@ -361,10 +364,18 @@ static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
     sidx_rebuild_bvh_inplace(idx);
     sidx_stage_to_device(idx);
     sidx_refresh_compact_positions_device(idx);
+    idx->positions_stale_after_drift = 0;
 }
 
 void gpu_step_sidx_invalidate(void)
 {
+    /* No All-mirror belt here. Since the position refresh moved to the point of
+     * reuse, no path in this function launches a device kernel: the common path
+     * only sets a flag, and the rest free buffers. The kernels this file owns
+     * are reached through gpu_spatial_index_build and gpu_ngb_list_build, which
+     * carry their own belts, and the refresh now runs inside the
+     * latter. The leading fence the belt also provided before frees now lives
+     * inside gpu_spatial_index_free, with the release it protects. */
     struct particle_data *P_shared = gpu_particles_arena_P();
     if(!P_shared) {
         /* No arena -> no canonical particle storage; fall back to full free. */
@@ -386,7 +397,15 @@ void gpu_step_sidx_invalidate(void)
             gpu_spatial_index_free(idx);
             gpu_compact_xyzh_mark_h_dirty_all();
         } else {
-            sidx_refresh_after_drift(idx, P_shared);
+            /* Mark the positions stale rather than refreshing them here. The
+             * refresh happens at the point of reuse, in gpu_ngb_list_build, so
+             * a consumer that invalidates the index on count or epoch — and so
+             * rebuilds from current positions regardless — never pays for a
+             * refresh whose result it discards. Correctness is unchanged: the
+             * only paths that walk this index go through that build, which
+             * refreshes first and hard-aborts if it ever sees a stale one.
+             * The h component was already handled exactly this way. */
+            idx->positions_stale_after_drift = 1;
             /* h-dirty state intentionally left intact. drift_particle DOES
              * change KernelRadius (predict.cc:160,229) — those h updates are
              * marked into the per-cache dirty tracker (gpu_dirty_tracker) by
@@ -409,32 +428,62 @@ void gpu_step_sidx_invalidate_full(void)
 }
 
 
+/* An index that could not be built must not be left looking usable: the walk reads
+ * its tiles, BVH and compact positions directly. Release what was built and leave
+ * the index marked invalid, which is the signal every consumer already tests, so
+ * the caller can hand back an empty neighbour list. gpu_spatial_index_free fences
+ * before releasing device memory, so nothing is released under a running kernel.
+ * The three host build buffers are arena allocations, released in reverse order
+ * exactly as the success path does. */
+static void sidx_build_leave_invalid(gpu_spatial_index_t *idx, int num_total,
+                                     tile_bvh_node_t *h_bvh, sfc_tile_t *h_tiles, int *h_pool,
+                                     const char *what, size_t bytes)
+{
+    myfree(h_bvh);
+    myfree(h_tiles);
+    myfree(h_pool);
+    gpu_spatial_index_free(idx);
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "gpu_spatial_index_build: could not allocate %s (%.1f MB) for %d particles; "
+             "spatial index left unbuilt",
+             what, (double) bytes / (1024.0 * 1024.0), num_total);
+    gizmo_request_controlled_stop(7712, msg, __FILE__, __LINE__, __FUNCTION__);
+}
+
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              int type_bitmask, gpu_spatial_index_t *idx,
                              const char *caller_label,
                              mode_b_radius_policy_t radius_policy)
 {
-    /* Capture periodicity parameters */
-    idx->periodic_flags[0] = TILE_PERIODIC_X;
-    idx->periodic_flags[1] = TILE_PERIODIC_Y;
-    idx->periodic_flags[2] = TILE_PERIODIC_Z;
-    idx->box_sizes[0] = boxSize_X; idx->box_sizes[1] = boxSize_Y; idx->box_sizes[2] = boxSize_Z;
-    idx->box_halves[0] = boxHalf_X; idx->box_halves[1] = boxHalf_Y; idx->box_halves[2] = boxHalf_Z;
-    /* Hard guard: bbox_overlaps_sphere_gpu's periodic-wrap math goes pathological
-     * (every node "overlaps" every query, BVH degenerates to exhaustive scan)
-     * if box_sizes[k] is 0 while periodic_flags[k] is on. Fail loud at the
-     * call site so any regression in the per-TU AllDeviceMirror sync can never
-     * silently corrupt performance again. */
-    for(int k = 0; k < 3; k++) {
-        if(idx->periodic_flags[k] && !(idx->box_sizes[k] > 0.0)) {
-            printf("gpu_spatial_index_build: periodic_flags[%d]=1 but box_sizes[%d]=%g (caller='%s'). "
-                   "Likely cause: this TU's AllDeviceMirror not synced from host All. "
-                   "Confirm gizmo_gpu_sync_all() has run for this timestep.\n",
-                   k, k, idx->box_sizes[k], caller_label ? caller_label : "?");
-            fflush(stdout);
-            endrun(913004);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+#if defined(BOX_PERIODIC)
+    /* Hard guard on the box lengths the wrap depends on.  The device predicates
+     * image through the canonical macros, which read the boxSize_ and boxHalf_
+     * lengths from
+     * this TU's AllDeviceMirror; if that mirror is unsynced they read zero,
+     * every wrapped separation collapses, the per-axis prunes go dead and the
+     * BVH silently degenerates into an exhaustive scan.  Fail loud at the call
+     * site so a regression in the mirror sync can never quietly cost the index.
+     * (Previously this checked the per-axis flags/box_sizes copies; those are
+     * gone with that API, but the failure mode belongs to the globals and is
+     * unchanged, so the guard now reads them directly.) */
+    {
+        const double box_len[3] = { boxSize_X, boxSize_Y, boxSize_Z };
+        const int    wraps[3]   = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
+        for(int k = 0; k < 3; k++) {
+            if(wraps[k] && !(box_len[k] > 0.0)) {
+                printf("gpu_spatial_index_build: axis %d is periodic but its box length is %g "
+                       "(caller='%s'). Likely cause: this TU's AllDeviceMirror not synced from "
+                       "host All. Confirm gizmo_gpu_sync_all() has run for this timestep.\n",
+                       k, box_len[k], caller_label ? caller_label : "?");
+                fflush(stdout);
+                endrun(913004);
+            }
         }
     }
+#endif
 
     /* Build SFC tiles + BVH on CPU */
     sfc_tile_t *h_tiles;
@@ -461,9 +510,18 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     int bvh_size = (2 * ntiles - 1);
     if(bvh_size < 1) bvh_size = 1;
     int pool_size = (num_pool > 0) ? num_pool : 1;
-    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_tiles", ntiles * sizeof(sfc_tile_t));
-    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_bvh", bvh_size * sizeof(tile_bvh_node_t));
-    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_pool", pool_size * sizeof(int));
+    /* Sized to at least one element, as bvh_size and pool_size already are: a type
+     * mask that matches nothing would otherwise ask for zero bytes, and a request
+     * for none of something cannot be distinguished from a refusal. */
+    size_t sidx_tiles_bytes = (size_t)((ntiles > 0) ? ntiles : 1) * sizeof(sfc_tile_t);
+    size_t sidx_bvh_bytes   = (size_t) bvh_size * sizeof(tile_bvh_node_t);
+    size_t sidx_pool_bytes  = (size_t) pool_size * sizeof(int);
+    idx->d_tiles = (sfc_tile_t *) gizmo_gpu_alloc_device(sidx_tiles_bytes, "ngl_sidx_dev_tiles");
+    if(!idx->d_tiles) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile array", sidx_tiles_bytes); return;}
+    idx->d_bvh = (tile_bvh_node_t *) gizmo_gpu_alloc_device(sidx_bvh_bytes, "ngl_sidx_dev_bvh");
+    if(!idx->d_bvh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile BVH", sidx_bvh_bytes); return;}
+    idx->d_pool = (int *) gizmo_gpu_alloc_device(sidx_pool_bytes, "ngl_sidx_dev_pool");
+    if(!idx->d_pool) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device tile membership pool", sidx_pool_bytes); return;}
 
     /* Stage host buffers into device memory.  On non-CUDA builds DEVICE_SPACE
      * == SharedSpace and Kokkos::deep_copy reduces to a memcpy. */
@@ -486,7 +544,9 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
        ~64MB for 2M particles vs 800MB for full P_shared. h (slot 3) is a relative
        reach; kept double so the leaf accept stays consistent with the double opener.
        In DEVICE_SPACE so the BVH-walk kernels read from HBM directly. */
-    idx->d_compact_xyzh = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_compact_xyzh", num_total * 4 * sizeof(double));
+    size_t sidx_compact_bytes = (size_t)((num_total > 0) ? num_total : 1) * 4 * sizeof(double);
+    idx->d_compact_xyzh = (double *) gizmo_gpu_alloc_device(sidx_compact_bytes, "ngl_sidx_dev_compact_xyzh");
+    if(!idx->d_compact_xyzh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device compact position array", sidx_compact_bytes); return;}
     {
         double *compact = idx->d_compact_xyzh;
         double h_inflate = 1.0 + SIDX_H_SLACK; /* lazy-drift slack: see SIDX_H_SLACK comment */
@@ -517,11 +577,14 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * from being freed in LIFO order. The transient mymalloc'd h_tiles /
      * h_pool / h_bvh from build_sfc_tiles + build_tile_bvh are copied
      * out then myfree'd in proper LIFO order below. */
-    idx->h_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_tiles", ntiles * sizeof(sfc_tile_t));
+    idx->h_tiles = (sfc_tile_t *) gizmo_gpu_alloc_host(sidx_tiles_bytes, "ngl_sidx_host_tiles");
+    if(!idx->h_tiles) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile array", sidx_tiles_bytes); return;}
     memcpy(idx->h_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
-    idx->h_pool = (int *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_pool", pool_size * sizeof(int));
+    idx->h_pool = (int *) gizmo_gpu_alloc_host(sidx_pool_bytes, "ngl_sidx_host_pool");
+    if(!idx->h_pool) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile membership pool", sidx_pool_bytes); return;}
     memcpy(idx->h_pool, h_pool, num_pool * sizeof(int));
-    idx->h_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_bvh", bvh_size * sizeof(tile_bvh_node_t));
+    idx->h_bvh = (tile_bvh_node_t *) gizmo_gpu_alloc_host(sidx_bvh_bytes, "ngl_sidx_host_bvh");
+    if(!idx->h_bvh) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the retained host tile BVH", sidx_bvh_bytes); return;}
     memcpy(idx->h_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
     idx->h_bvh_nnodes = bvh_nnodes;
     idx->num_pool = num_pool;
@@ -534,8 +597,11 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
      * positions are never read by BVH queries (BVH only visits tiles, tiles
      * only contain pool members). */
     int pos_buf_count = (num_total > 0 ? num_total : 1);
-    idx->h_pos_buf = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>("ngl_host_pos_buf", 3 * pos_buf_count * sizeof(double));
-    idx->d_pos_buf = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dev_pos_buf", 3 * pos_buf_count * sizeof(double));
+    size_t sidx_pos_buf_bytes = (size_t) 3 * pos_buf_count * sizeof(double);
+    idx->h_pos_buf = (double *) gizmo_gpu_alloc_host(sidx_pos_buf_bytes, "ngl_sidx_host_pos_buf");
+    if(!idx->h_pos_buf) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the host position staging buffer", sidx_pos_buf_bytes); return;}
+    idx->d_pos_buf = (double *) gizmo_gpu_alloc_device(sidx_pos_buf_bytes, "ngl_sidx_dev_pos_buf");
+    if(!idx->d_pos_buf) {sidx_build_leave_invalid(idx, num_total, h_bvh, h_tiles, h_pool, "the device position staging buffer", sidx_pos_buf_bytes); return;}
 
 
     /* Free the transient mymalloc'd build buffers in proper LIFO order
@@ -551,6 +617,9 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->ghost_epoch_when_built = g_sidx_ghost_epoch;
     idx->pool_epoch_when_built  = g_sidx_pool_epoch;
     idx->valid = 1;
+    /* Built from current positions, so no refresh is outstanding for this index.
+     * Explicit because the struct may be a cached one being rebuilt in place. */
+    idx->positions_stale_after_drift = 0;
     /* Register this cache with the dirty tracker over [0, num_total). The
      * compact_xyzh build above wrote every row's h from the live P[] under this
      * cache's radius policy, and nothing between there and here can mutate it,
@@ -563,6 +632,16 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
 void gpu_spatial_index_free(gpu_spatial_index_t *idx)
 {
+    /* Ordering, not cleanup. kokkos_free does not synchronize, so releasing a
+     * device allocation while a kernel may still be reading it is a
+     * use-after-free. The fence lives HERE, with the release, so that no caller
+     * can omit it -- this function is reached from the step loop, the
+     * decomposition boundary and the cached-index staleness guard, and putting
+     * the rule in any one of those leaves the next caller free to reintroduce
+     * the hazard. Skipped when there is nothing device-side to release. */
+    if(idx->d_compact_xyzh || idx->d_pool || idx->d_bvh || idx->d_tiles || idx->d_pos_buf) {
+        Kokkos::fence();
+    }
     if(idx->d_compact_xyzh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_compact_xyzh); idx->d_compact_xyzh = NULL;}
     if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pool); idx->d_pool = NULL;}
     if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
@@ -587,6 +666,7 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     idx->cache_tbm = -1;
     idx->cache_radius_policy = MODE_B_RADIUS_DEFAULT;
     idx->valid = 0;
+    idx->positions_stale_after_drift = 0;  /* nothing left to refresh */
     if(idx->dirty_handle >= 0) {
         gpu_dirty_tracker_unregister(idx->dirty_handle);
         idx->dirty_handle = -1;
@@ -621,7 +701,7 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
     long n_dt_nonzero = 0;
     #pragma omp parallel for reduction(+:n_dt_nonzero) schedule(static)
     for(int j = 0; j < num_total; j++) {
-        double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+        double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
         if(dt != 0.0) n_dt_nonzero++;
         pos_dbl[j*3+0] = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
         pos_dbl[j*3+1] = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
@@ -633,6 +713,58 @@ static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int 
     *out_n_dt_nonzero = n_dt_nonzero;
 }
 
+
+/* Exhaustion is reported by returning NULL, so the checks below are live code and
+ * the run stops cleanly instead of aborting mid-flight. A zero-byte request is
+ * treated as nothing to allocate, which the callers here read as a refusal. */
+static void *ngl_alloc_shared(size_t bytes, const char *label)
+{
+    if(bytes == 0) {return NULL;}
+    return gizmo_gpu_alloc_shared(bytes, label);
+}
+static void *ngl_alloc_device(size_t bytes, const char *label)
+{
+    if(bytes == 0) {return NULL;}
+    return gizmo_gpu_alloc_device(bytes, label);
+}
+
+/* The per-active and per-pair arrays are the largest transients this loop asks for --
+ * the walk scratchpad alone is 512 int slots per active particle. When one cannot be
+ * had, the node is out of memory at the size this loop needs. Release the transients,
+ * leave a VALID EMPTY list (every active with zero neighbours) so that whatever runs
+ * between here and the stop draining walks nothing rather than reading a half-built
+ * list, and name the buffer that could not be had. */
+static void ngl_build_leave_empty(gpu_neighbor_list_t *gnl, int num_active,
+                                  double *d_radii, double *d_source_pos,
+                                  int *d_scratch, int *d_counts,
+                                  const char *what, size_t bytes)
+{
+    if(d_counts)     {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);}
+    if(d_scratch)    {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);}
+    if(d_source_pos) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);}
+    if(d_radii)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);}
+    /* The row offsets are what makes the empty list readable: every consumer walks
+     * offsets[aa]..offsets[aa+1] unconditionally, and only reaches the neighbour
+     * array when total_pairs > 0. So when the build fails before the offsets exist,
+     * this allocates them here rather than handing back a null row index. The
+     * request is (num_active+1) 8-byte slots -- orders of magnitude below the walk
+     * scratchpad and the pair list whose failure brings us here -- so it is served
+     * from what those releases just returned. Should even that fail, the consumer
+     * reads a null row index and dies where it would have died anyway; there is no
+     * smaller allocation left to fall back to. */
+    if(!gnl->offsets) {
+        gnl->offsets = (int64_t *) ngl_alloc_shared((size_t)(num_active + 1) * sizeof(int64_t),
+                                                    "ngl_pairs_offsets");
+    }
+    if(gnl->offsets) {for(int aa = 0; aa <= num_active; aa++) {gnl->offsets[aa] = 0;}}
+    gnl->total_pairs = 0;
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "gpu_ngb_list_build: could not allocate %s (%.1f MB) for %d active particles; "
+             "neighbour list left empty",
+             what, (double) bytes / (1024.0 * 1024.0), num_active);
+    gizmo_request_controlled_stop(7711, msg, __FILE__, __LINE__, __FUNCTION__);
+}
 
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
@@ -646,7 +778,17 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         double j_kernel_radius_scale,
                         mode_b_radius_policy_t radius_policy)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     gnl->num_active = num_active;
+    /* Everything this function hands back starts null, so a failure part-way through
+     * leaves a list whose unbuilt parts are recognisable rather than whatever the
+     * caller's struct happened to contain. Several callers declare it uninitialised,
+     * and the free path releases the spatial-index mirrors too, so those must be
+     * cleared here as well and not only where they are copied from a built index. */
+    gnl->d_active = NULL; gnl->offsets = NULL; gnl->neighbors = NULL; gnl->total_pairs = 0;
+    gnl->d_tiles = NULL; gnl->d_bvh = NULL; gnl->d_pool = NULL; gnl->d_compact_xyzh = NULL;
+    gnl->ntiles = 0; gnl->bvh_root = 0;
     double t_entry = my_second(); /* DIAG: entry */
     const double cpu_rows_child0 = CPU_ChildCharged;
     /* Defensive guard: a cached SIDX's compact_xyzh / pool only contains the
@@ -761,20 +903,23 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             gnl->d_compact_xyzh = idx_for_stubs->d_compact_xyzh;
             gnl->ntiles   = idx_for_stubs->ntiles;
             gnl->bvh_root = idx_for_stubs->bvh_root;
-            memcpy(gnl->periodic_flags, idx_for_stubs->periodic_flags, 3 * sizeof(int));
-            memcpy(gnl->box_sizes,      idx_for_stubs->box_sizes,      3 * sizeof(double));
-            memcpy(gnl->box_halves,     idx_for_stubs->box_halves,     3 * sizeof(double));
         } else {
             gnl->d_tiles = NULL; gnl->d_bvh = NULL; gnl->d_pool = NULL; gnl->d_compact_xyzh = NULL;
             gnl->ntiles = 0; gnl->bvh_root = 0;
-            memset(gnl->periodic_flags, 0, 3*sizeof(int));
-            memset(gnl->box_sizes,      0, 3*sizeof(double));
-            memset(gnl->box_halves,     0, 3*sizeof(double));
         }
-        gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_active_stub", sizeof(int));
-        gnl->offsets   = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_offsets_stub", sizeof(int64_t));
+        gnl->d_active  = (int *) ngl_alloc_shared(sizeof(int), "ngl_pairs_active_stub");
+        gnl->offsets   = (int64_t *) ngl_alloc_shared(sizeof(int64_t), "ngl_pairs_offsets_stub");
+        gnl->neighbors = (int *) ngl_alloc_device(sizeof(int), "ngl_pairs_neighbors_stub");
+        /* Single elements: failing these means the node has no memory left at all.
+         * The empty list is the same one every other exhausted allocation here
+         * hands back, so the callers need no separate case. */
+        if(!gnl->d_active || !gnl->offsets || !gnl->neighbors) {
+            ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL,
+                                  "the empty-list placeholders", sizeof(int64_t));
+            cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
+            return;
+        }
         gnl->offsets[0] = 0;
-        gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_neighbors_stub", sizeof(int));
         gnl->total_pairs = 0;
         cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
         return;
@@ -802,6 +947,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gpu_spatial_index_free(cached_idx);
     }
     if(cached_idx && cached_idx->valid) {
+        /* Reuse: settle the outstanding position refresh BEFORE the index becomes
+         * consumer-visible below. This is the only path on which a drift-time
+         * refresh is actually needed, which is why it waits until here. */
+        if(cached_idx->positions_stale_after_drift) {
+            /* Charged to the refresh bucket even though it runs here, so the
+             * bucket keeps naming the work it holds rather than the place the
+             * work happens; the enclosing list-build charge deducts it as a
+             * child. Without this a refresh running here would silently inflate the
+             * list-build row instead. */
+            const double t_refresh_start = my_second();
+            const double child0_refresh = CPU_ChildCharged;
+            sidx_refresh_after_drift(cached_idx, P_shared);
+            cpu_charge_child(CPU_SIDX_REFRESH,
+                             cpu_minus_children(timediff(t_refresh_start, my_second()), child0_refresh));
+        }
         idx = cached_idx;
     } else if(cached_idx) {
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label, radius_policy);
@@ -809,6 +969,31 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     } else {
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label, radius_policy);
         idx = &local_idx;
+    }
+    /* A build that ran out of memory leaves the index invalid and has already asked
+     * for the stop, naming the buffer. There is nothing to walk, so hand back the
+     * same empty list any other exhausted allocation here produces. */
+    if(!idx->valid) {
+        ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the spatial index", 0);
+        return;
+    }
+
+    /* Coordinate-staleness invariant, same class as the cache_tbm and
+     * radius_policy guards above: a walk over an index whose tile bboxes, BVH
+     * and compact positions predate the last drift silently misses neighbours.
+     * Every path reaching here has either rebuilt the index from current
+     * positions or refreshed it, so this can only fire if a future caller
+     * introduces a third path. Fail loudly at the right layer. */
+    if(idx->positions_stale_after_drift) {
+        fprintf(stderr,
+            "gpu_ngb_list_build FATAL: caller='%s' is about to walk a spatial index "
+            "whose positions predate the last drift. The tile bounding boxes, BVH and "
+            "compact positions describe where particles WERE, so the walk would miss "
+            "genuine neighbours without any error. Every consumer must either rebuild "
+            "the index or refresh it before use; a path that does neither has been "
+            "added.\n", caller_label ? caller_label : "?");
+        fflush(stderr);
+        endrun(913007);
     }
 
     /* Copy spatial index pointers to gnl for use by free */
@@ -818,9 +1003,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->d_compact_xyzh = idx->d_compact_xyzh;
     gnl->ntiles = idx->ntiles;
     gnl->bvh_root = idx->bvh_root;
-    memcpy(gnl->periodic_flags, idx->periodic_flags, 3 * sizeof(int));
-    memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
-    memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
     /* Refresh the h component of the compact array. Two modes (driven by the
      * per-cache gpu_dirty_tracker):
@@ -865,7 +1047,17 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
                 &dirty_host);
             int n_dirty = (int)dirty_host.size();
-            int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_dirty", n_dirty * sizeof(int));
+            size_t dirty_bytes = (size_t)((n_dirty > 0) ? n_dirty : 1) * sizeof(int);
+            int *d_dirty = (int *) ngl_alloc_device(dirty_bytes, "ngl_dirty");
+            /* The refresh cannot be skipped: the bits have already been consumed, so
+             * leaving them unwritten would let a later walk read stale reaches. Stop
+             * instead, and leave the list empty so nothing walks the index meanwhile. */
+            if(!d_dirty) {
+                ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL,
+                                      "the refreshed-particle index list", dirty_bytes);
+                cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
+                return;
+            }
             {
                 Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                     hv(dirty_host.data(), n_dirty);
@@ -887,14 +1079,18 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
 
     /* Active indices: always re-uploaded (changes per call) */
-    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_active", ((num_active > 0) ? num_active : 1) * sizeof(int));
+    size_t active_bytes = (size_t)((num_active > 0) ? num_active : 1) * sizeof(int);
+    gnl->d_active = (int *) ngl_alloc_shared(active_bytes, "ngl_pairs_active");
+    if(!gnl->d_active) {ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the active-index list", active_bytes); return;}
     memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
 
     /* Optional explicit per-active search radii (for loops with a different kernel
        than P[i].KernelRadius, e.g. KernelRadiusDM or AGS_Hsml). NULL → use P[i].KernelRadius. */
     double *d_radii = NULL;
     if(search_radii_host) {
-        d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_radii", ((num_active > 0) ? num_active : 1) * sizeof(double));
+        size_t radii_bytes = (size_t)((num_active > 0) ? num_active : 1) * sizeof(double);
+        d_radii = (double *) ngl_alloc_shared(radii_bytes, "ngl_pairs_radii");
+        if(!d_radii) {ngl_build_leave_empty(gnl, num_active, NULL, NULL, NULL, NULL, "the per-active search radii", radii_bytes); return;}
         memcpy(d_radii, search_radii_host, num_active * sizeof(double));
     }
 
@@ -903,12 +1099,16 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
        Layout in caller's array: source_positions_host[aa*3 + k] for axis k. */
     double *d_source_pos = NULL;
     if(source_positions_host) {
-        d_source_pos = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_source_pos", ((num_active > 0) ? num_active : 1) * 3 * sizeof(double));
+        size_t srcpos_bytes = (size_t)((num_active > 0) ? num_active : 1) * 3 * sizeof(double);
+        d_source_pos = (double *) ngl_alloc_shared(srcpos_bytes, "ngl_pairs_source_pos");
+        if(!d_source_pos) {ngl_build_leave_empty(gnl, num_active, d_radii, NULL, NULL, NULL, "the per-active source positions", srcpos_bytes); return;}
         memcpy(d_source_pos, source_positions_host, num_active * 3 * sizeof(double));
     }
 
     /* Allocate CSR offsets (64-bit row pointers) */
-    gnl->offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_offsets", (size_t)(num_active + 1) * sizeof(int64_t));
+    size_t offsets_bytes = (size_t)(num_active + 1) * sizeof(int64_t);
+    gnl->offsets = (int64_t *) ngl_alloc_shared(offsets_bytes, "ngl_pairs_offsets");
+    if(!gnl->offsets) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, NULL, NULL, "the CSR row offsets", offsets_bytes); return;}
 
     /* Per-particle scratchpad for fused single-pass build. Each active particle
      * gets a fixed stride (NGL_SCRATCH_STRIDE) of int slots in d_scratch; the BVH
@@ -919,8 +1119,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
-    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_scratch", na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
-    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_counts", na_safe * sizeof(int));
+    size_t scratch_bytes = na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int);
+    int *d_scratch = (int *) ngl_alloc_device(scratch_bytes, "ngl_pairs_scratch");
+    if(!d_scratch) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, NULL, NULL, "the neighbour-walk scratchpad", scratch_bytes); return;}
+    size_t counts_bytes = na_safe * sizeof(int);
+    int *d_counts  = (int *) ngl_alloc_device(counts_bytes, "ngl_pairs_counts");
+    if(!d_counts) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, d_scratch, NULL, "the per-active neighbour counts", counts_bytes); return;}
 
     /* Drain any prior async GPU work before the passes below. */
     Kokkos::fence();
@@ -935,9 +1139,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
-        int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
-        double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
-        double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
         double sr_fac = search_radius_factor;
         double j_rad_scale = j_kernel_radius_scale;
@@ -945,9 +1146,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *src_pos = d_source_pos;
         const double *compact_xyzh = gnl->d_compact_xyzh;
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
-            int pf[3] = {pf0, pf1, pf2};
-            double bs[3] = {bs0, bs1, bs2};
-            double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
             double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
             double pos_i[3];
@@ -957,8 +1155,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root,
                                                &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
-                                               NGL_SCRATCH_STRIDE,
-                                               pf, bs, bh);
+                                               NGL_SCRATCH_STRIDE);
             counts[aa] = cnt;
         });
         Kokkos::fence();
@@ -1067,7 +1264,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         double h_j = j_h_dbl[j] * j_rad_scale;
                         double cut = (h_i > h_j) ? h_i : h_j;
                         if(r < cut && !std::binary_search(prod.begin(), prod.end(), j)) {   /* physical neighbour, production missed */
-                            double dtj = get_drift_factor_omp_safe(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
+                            double dtj = get_drift_factor(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
                             printf("  [NGL_PRECISION_ORACLE rank=%d] miss caller=%s i.ID=%lld j.ID=%lld r=%.10g cutoff=%.10g margin=%.3g dt_j=%.3g "
                                    "compact_xyzh=(%.10g,%.10g,%.10g;%.6g) truth_xyzh=(%.10g,%.10g,%.10g;%.6g)\n",
                                    ThisTask, lbl, (long long)P_shared[i].ID, (long long)P_shared[j].ID, r, cut, r-cut, dtj,
@@ -1139,7 +1336,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->total_pairs = total;
 
     /* Allocate CSR neighbors array (length is 64-bit; element type stays int) */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>("ngl_neighbors", (size_t)((total > 0) ? total : 1) * sizeof(int));
+    size_t neighbors_bytes = (size_t)((total > 0) ? total : 1) * sizeof(int);
+    gnl->neighbors = (int *) ngl_alloc_device(neighbors_bytes, "ngl_pairs_neighbors");
+    if(!gnl->neighbors) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, d_scratch, d_counts, "the CSR neighbour list", neighbors_bytes); return;}
 
     /* Compact: copy from per-particle scratchpad into dense CSR neighbors[]. */
     {
@@ -1154,9 +1353,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
-        int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
-        double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
-        double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
         double sr_fac = search_radius_factor;
         double j_rad_scale = j_kernel_radius_scale;
         const double *radii = d_radii;
@@ -1170,9 +1366,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 for(int k = 0; k < n; k++) neighbors[dst + k] = scratch[src + k];
             } else {
                 /* Overflow path: re-walk BVH writing directly into neighbors[] */
-                int pf[3] = {pf0, pf1, pf2};
-                double bs[3] = {bs0, bs1, bs2};
-                double bh[3] = {bh0, bh1, bh2};
                 int i = active[aa];
                 double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
                 double pos_i[3];
@@ -1181,8 +1374,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i, j_rad_scale,
                                          tiles, ntiles, pool, smode,
                                          bvh, bvh_root,
-                                         &neighbors[dst], 0x7fffffff,
-                                         pf, bs, bh);
+                                         &neighbors[dst], 0x7fffffff);
             }
         });
         Kokkos::fence();
@@ -1246,6 +1438,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         ghost_write_detector_resnapshot_after_lazy_drift();
     }
 
+    /* An index built for this call alone is rebuilt from scratch on the next one, so
+     * once the list holds its four device arrays nothing reads the rest of it again:
+     * the host tile/pool/BVH mirrors only stage the build, and the position buffers
+     * only ever serve the drift refresh of a CACHED index. Hand those four to the list
+     * by clearing them here, then release the remainder through the index's own free,
+     * so a buffer added to the index later is covered without anyone recalling this
+     * site. Without this the host mirrors and position buffers outlive every caller
+     * that passes no cached index, which is what made the neighbour-list pool climb
+     * without bound across a long run. */
+    if(idx == &local_idx) {
+        local_idx.d_tiles = NULL; local_idx.d_bvh = NULL;
+        local_idx.d_pool  = NULL; local_idx.d_compact_xyzh = NULL;
+        gpu_spatial_index_free(&local_idx);
+    }
+
     /* Charge list-build wall, less any kernel time already charged inside it,
      * so the two rows never overlap. */
     cpu_charge_child(CPU_NGB_BUILD, cpu_minus_children(timediff(t_entry, my_second()), cpu_rows_child0));
@@ -1260,8 +1467,9 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
     /* Only free tiles/BVH/pool/compact_xyzh if they were NOT from the cached index.
      * Pointers may also be NULL (early-out path with no cache); guard each.
      * d_compact_xyzh in particular was previously leaked here for every
-     * non-cached call (~199 MB for an all-types pool, ~73 MB for gas-only),
-     * accumulating with each mech_fb/radfb_g/sink call that passes cached_idx=NULL. */
+     * non-cached call (~199 MB for an all-types pool, ~73 MB for gas-only).
+     * The callers that pass no cached index are merge_and_split_particles, the
+     * turbulent power spectra and the two-point correlation. */
     if(!cached_idx || !cached_idx->valid ||
        gnl->d_tiles != cached_idx->d_tiles) {
         if(gnl->d_compact_xyzh) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_compact_xyzh);
@@ -1393,6 +1601,545 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
     /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
     gpu_ngb_list_free(&gpu_nl, NULL);
 }
+
+
+/* ===================================================================== */
+/* Device receiver traversal for request-driven ghost discovery.          */
+/* ===================================================================== */
+/* The supply-rank half: each received envelope carries a peer's query plus the
+ * start nodes that peer's walk reached in THIS rank's tree, and the answer is
+ * the set of local particles the query admits.  The host does the same work in
+ * mode_b_walk_from_start_nodes + the accept loop that follows it; this is the
+ * device form of exactly that, and the two are required to produce the same set.
+ *
+ * Node geometry comes from the SoA mirror, never the managed Nodes[]/Extnodes[]
+ * arrays: streaming those from a kernel is memory-bound to the point of erasing
+ * the win.  Leaf fields are staged into a compact array first, for the same
+ * reason and because the walk-export path does not build the tile geometry that
+ * other device searches read.
+ *
+ * The device walk cannot drift a stale node the way the host walk does (that
+ * needs a lock).  It does not have to: it only runs when the node sweep has
+ * certified the whole tree current at this time AND no host lazy drift has
+ * happened since, which is the same pair of conditions the device gravity walk
+ * uses.  The certification is checked immediately before launch, because the
+ * discovery walks themselves arm the lazy-drift latch — a sender walk earlier in
+ * the same exchange can withdraw device legality.  Ordering violations therefore
+ * make the test fail and route to the host, never corrupt a result. */
+
+/* Per-leaf staged record.  `type` folds in the host's Mass > 0 test (negative =
+ * the host would have rejected this particle) and `pool` folds in both the
+ * NumPart-when-built bound and the pool-membership lookup (negative = not a
+ * supply candidate), so the kernel tests two integers where the host tests four
+ * conditions across two arrays. */
+struct gx_recv_leaf_t {
+    double pos[3];
+    int    type;
+    int    pool;
+};
+
+/* One envelope's traversal.  Returns the number of accepted pool slots, writing
+ * the first `cap` of them to `out` (the caller re-runs with the true count when
+ * a row overflows its scratch slot).  Mirrors mode_b_walk_impl's three index
+ * classes exactly; see mesh/mode_b_local_walker.cc for the host original.
+ *
+ * `anomaly` reports the one state the host treats as fatal: an index in the gap
+ * between the particle slots and the node base, which belongs to neither and
+ * means the tree is malformed.  The host stops the run there, so the device
+ * cannot simply stop walking -- that would silently truncate an envelope.  It
+ * records the state and the caller reproduces the host's stop. */
+KOKKOS_INLINE_FUNCTION
+static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
+                            unsigned int supply_mask,
+                            const Vec3<MyFloat> *node_center,
+                            const MyFloat *node_len,
+                            const int *node_sibling,
+                            const int *node_nextnode,
+                            const unsigned int *node_bitflags,
+                            const int *nextnode_aux,
+                            const struct gx_recv_leaf_t *leaves,
+                            int tree_base, int tree_slots, int node_capacity,
+                            int foreign_base, int pseudo_start, int num_local,
+                            int *anomaly, int *out, int cap)
+{
+    const double px = env.pos[0], py = env.pos[1], pz = env.pos[2];
+    const double h_q = env.h;
+    int n_found = 0;
+
+    for(int k = 0; k < env.n_nodes; k++) {
+        const int nl = env.nodes[k];
+        if(nl < 0) {break;}                                  /* -1 terminates the list */
+        if(nl < tree_base || nl >= pseudo_start) {continue;}  /* arrived over MPI: validate */
+        if(nl - tree_base >= node_capacity) {   /* precondition leaves this unreachable */
+            Kokkos::atomic_store(anomaly, 1);
+            break;
+        }
+        int no = node_nextnode[nl - tree_base];               /* open the exported node */
+
+        while(no >= 0) {
+            if(no >= tree_slots && no < tree_base) {
+                Kokkos::atomic_store(anomaly, 1);   /* malformed tree; caller stops the run */
+                break;
+            }
+            if(no < tree_slots) {
+                if(no < num_local) {
+                    /* The host filters a leaf twice -- once while walking, with
+                     * NEAREST_XYZ, and again in the accept pass, with
+                     * NGB_PERIODIC_BOX_LONG_*.  The two macro families differ only
+                     * in that the first keeps the sign of the wrapped separation
+                     * and the second takes its magnitude, so for any separation
+                     * the search can actually admit they give the same squared
+                     * distance and the accept form alone reproduces the pair.
+                     * The equivalence gate is what establishes that, per pair:
+                     * it expects the candidate sets to match exactly, and any
+                     * disagreement has to be shown to be a boundary case rather
+                     * than assumed to be one. */
+                    const struct gx_recv_leaf_t &lf = leaves[no];
+                    if(lf.type >= 0 && lf.pool >= 0 && (supply_mask & (1u << lf.type))) {
+                        if(gx_pair_accept_wrap_and_test(px - lf.pos[0], py - lf.pos[1], pz - lf.pos[2],
+                                                        h_q, 0.0, NGB_SEARCH_ONEWAY)) {
+                            if(n_found < cap) {out[n_found] = lf.pool;}
+                            n_found++;
+                        }
+                    }
+                }
+                no = nextnode_aux[no];
+            } else if(no < pseudo_start) {
+                const int kn = no - tree_base;
+                if(kn < 0 || kn >= node_capacity) {
+                    Kokkos::atomic_store(anomaly, 1);
+                    break;
+                }
+                /* Re-entering the top-level tree means this exported branch is
+                 * exhausted (the sender owns everything above it). */
+                if(node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
+                const double hw = 0.5 * (double)node_len[kn];
+                const int do_open =
+                    gx_extended_overlap_wrap_and_test((double)node_center[kn][0] - px,
+                                                      (double)node_center[kn][1] - py,
+                                                      (double)node_center[kn][2] - pz,
+                                                      hw, hw, hw, h_q);
+                if(do_open) {
+                    const int child = node_nextnode[kn];
+                    /* An imported foreign subtree holds no locally-owned
+                     * particles, so there is nothing below it to find. */
+                    no = (child >= foreign_base && child < pseudo_start)
+                             ? node_sibling[kn] : child;
+                } else {
+                    no = node_sibling[kn];
+                }
+            } else {
+                /* Pseudo-particle: another rank's subtree root, nothing local
+                 * below it.  Step past exactly as the host walk does. */
+                no = nextnode_aux[tree_slots + (no - pseudo_start)];
+            }
+        }
+    }
+    return n_found;
+}
+
+/* Envelopes are processed in fixed-size batches, and each batch's accepted pairs
+ * are emitted through one buffer of a fixed size, so neither the scratch nor the
+ * output footprint is set by however many envelopes arrived or how many pairs
+ * they admit.  Rows are independent and the answer is a set, so splitting
+ * changes nothing about the result. */
+static const long GX_RECV_BATCH  = 4096;   /* envelopes per walk launch */
+static const int  GX_RECV_STRIDE = 512;    /* per-row scratch slots before a re-walk */
+/* One budget serves the scratch and the emission buffer; a batch whose pairs do
+ * not fit is emitted in several passes rather than abandoned, because declining
+ * on a dense batch would send exactly the large-N case this exists to serve back
+ * to the host. */
+static const long GX_RECV_PAIR_FLOOR = GX_RECV_BATCH * (long)GX_RECV_STRIDE;
+
+/* Exhaustion is reported by returning NULL, so the caller's NULL check decides
+   what to do. */
+template <class T>
+static T *gx_recv_alloc(const char *label, size_t count)
+{
+    return (T *) gizmo_gpu_alloc_device(count * sizeof(T), label);
+}
+
+
+int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
+                            const int *envelope_peer,
+                            unsigned int supply_mask, int search_mode,
+                            mode_b_radius_policy_t radius_policy, double j_reach_scale,
+                            const int *j_to_pool, int npart_bound,
+                            int num_pool, char *matched)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    (void)radius_policy; (void)j_reach_scale;
+
+    /* Symmetric search needs the per-type node bands, which are not mirrored to
+     * the device yet; that is the next stage of this work.  Until then the host
+     * walk answers those callers. */
+    if(search_mode != NGB_SEARCH_ONEWAY) {return 1;}
+    if(n_env <= 0 || num_pool <= 0 || !matched) {return 1;}
+
+    const int num_local = ghost_get_num_local();
+    if(num_local <= 0) {return 1;}
+
+    /* DISPATCH FLOOR.  Staging the local leaves costs O(num_local) whatever the
+     * envelopes ask for, while the traversal it enables scales with the envelope
+     * count -- so on a step with little to answer the staging is pure overhead,
+     * and the corridor already loses the small and middle bins to fixed per-call
+     * costs of exactly this kind.  Requiring each envelope to cover a fixed
+     * number of staged particles keeps the device path out of that regime.
+     * Structural and rank-local: no caller identity, no tuning knob.
+     * The ratio is provisional and is what the pricing arm sets. */
+    const long GX_RECV_LEAVES_PER_ENVELOPE = 32;
+    if(n_env * GX_RECV_LEAVES_PER_ENVELOPE < (long)num_local) {return 1;}
+
+    /* A tree mirror is required, and it exists whenever a tree does: the build
+     * pipeline that fills it runs inside force_treebuild, which every
+     * configuration performs because neighbour search needs the tree. */
+    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->center || !soa->len || !soa->sibling || !soa->nextnode ||
+       !soa->bitflags || !soa->nextnode_aux ||
+       All.TreeNodeIndexBase <= 0 || Numnodestree <= 0) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("gx_device_receiver_walk: task %d has node geometry certified current but no usable tree mirror; answering on the host\n",
+                   ThisTask);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    const int tree_base     = All.TreeNodeIndexBase;
+    const int tree_slots    = All.TreeParticleSlots;
+    const int node_capacity = gpu_gravity_tree_capacity();
+    const int foreign_base  = tree_base + MaxNodes;
+    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
+    /* The walk may reach any foreign node that was installed, so the mirror has to
+     * cover the foreign slots that have storage behind them -- AllocatedForeignNodes,
+     * this rank's actual import, which is what the mirror is sized to.  NOT
+     * MaxForeignNodes: that is the shared INDEX ceiling used above to place the
+     * pseudo-particle region, it is the worst rank's import rather than this one's,
+     * and no node is ever installed in the gap between the two, so nothing points
+     * there.  Testing the ceiling would decline on every rank whose import is
+     * smaller than the largest, which is nearly all of them.  A short mirror is a
+     * precondition failure, not a malformed tree: decline, and the host answers --
+     * but say so, because a run that quietly answered everything on the host would
+     * otherwise look exactly like a run where the device did the work.  This says
+     * nothing about whether the geometry is current; that is established below. */
+    if(node_capacity < MaxNodes + AllocatedForeignNodes ||
+       soa->nextnode_aux_size < tree_slots + NTopleaves) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("gx_device_receiver_walk: task %d tree mirror covers %d nodes and %d particle links, short of the %d nodes and %d links the walk can reach; answering on the host\n",
+                   ThisTask, node_capacity, soa->nextnode_aux_size,
+                   MaxNodes + AllocatedForeignNodes, tree_slots + NTopleaves);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    /* The traversal reads node geometry, which drifts, so the nodes have to be
+     * current before it runs -- the host walk achieves that by drifting each
+     * stale node as it reaches it, under a lock, which a kernel cannot do.
+     *
+     * Requiring some earlier caller to have swept them is not enough: the sweep
+     * lives on the gravity path, so with self-gravity disabled nothing would
+     * ever perform it and this traversal could never run at all, on problems
+     * whose tree and mirror are perfectly valid.  Perform the sweep here when
+     * nothing else has.  It is the same work the host walk would do node by
+     * node, done once for the whole tree, and it is rank-local.
+     *
+     * The one case it cannot repair is a host lazy drift that has already
+     * advanced nodes to this time: the sweep skips nodes that are already
+     * current and so would leave their mirrors behind. Then, and only then, the
+     * host answers.
+     *
+     * Ask whether the geometry IS current, not whether the gravity walk happened
+     * to sweep it: a tree built at this time is current by construction, and
+     * gravity legitimately runs on the host whenever its own candidate count is
+     * small -- which under ADAPTIVE_TREEFORCE_UPDATE it routinely is, since the
+     * count that routing tests is taken after the needs-a-new-treeforce filter.
+     * Keying on the sweep therefore locked this traversal out of configurations
+     * whose tree and mirror were perfectly valid. */
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
+        /* The geometry is current by neither route -- no sweep certified it and
+         * this tree was not built at this time.  A host lazy drift at this time
+         * advanced nodes without their mirrors, and a sweep skips already-current
+         * nodes, so that state is unrepairable here and the host answers.
+         * A tree BUILT after such a drift never reaches this branch: the build
+         * rewrites every node and every mirror, and no later host walk can re-arm
+         * the latch at this time because force_drift_node returns early on a node
+         * that is already current. */
+        if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+#ifdef SELFGRAVITY_OFF
+        /* No gravity walk exists to sweep the nodes in this build, so without
+         * this the traversal could never run at all, however valid the tree and
+         * its mirror are. */
+        if(gpu_force_drift_nodes(All.Ti_Current) != 0) {return 1;}
+#else
+        /* Gravity owns the sweep. Sweeping here instead would drift the whole
+         * tree eagerly where the walks drift only what they touch, so leave the
+         * geometry alone and let the host answer. */
+        return 1;
+#endif
+    }
+
+    using DevSp = GIZMO_KOKKOS_DEVICE_SPACE;
+
+    /* One envelope's accepted pairs are distinct local particles, so a row can
+     * never exceed num_local.  Sizing the emission buffer to at least that lets
+     * every row fit whole, so no batch is ever abandoned for being dense and the
+     * decline paths all sit before anything is written. */
+    const long pair_cap = (GX_RECV_PAIR_FLOOR > (long)num_local) ? GX_RECV_PAIR_FLOOR : (long)num_local;
+
+    /* Device buffers.  Allocated once for the whole call and reused across every
+     * batch.  A failure here is reported as a decline, not an abort: the caller
+     * runs the host walk, and this window holds no collectives so no other rank
+     * needs to agree. */
+    /* Host buffers first: std::vector throws rather than returning null, and a
+     * throw escaping this function would take the rank down between the envelope
+     * exchange and the caller's reduction.  Reserving them here turns that into
+     * the same decline every other resource failure produces. */
+    std::vector<struct gx_recv_leaf_t>     leaf_h;
+    std::vector<struct gx_export_envelope_t> env_h;
+    std::vector<int>     counts_h;
+    std::vector<int64_t> offsets_h;
+    std::vector<int>     pairs_h;
+    try {
+        leaf_h.resize((size_t)num_local);
+        env_h.resize((size_t)GX_RECV_BATCH);
+        counts_h.resize((size_t)GX_RECV_BATCH);
+        offsets_h.resize((size_t)GX_RECV_BATCH);
+        pairs_h.resize((size_t)pair_cap);
+    } catch(const std::bad_alloc &) {
+        printf("gx_device_receiver_walk: task %d could not reserve host staging for %d local leaves; answering on the host\n",
+               ThisTask, num_local);
+        fflush(stdout);
+        return 1;
+    }
+
+    struct gx_recv_leaf_t *leaf_d = gx_recv_alloc<struct gx_recv_leaf_t>("gx_recv_leaf", (size_t)num_local);
+    struct gx_export_envelope_t *env_d = gx_recv_alloc<struct gx_export_envelope_t>("gx_recv_env", (size_t)GX_RECV_BATCH);
+    int     *scratch_d = gx_recv_alloc<int>("gx_recv_scratch", (size_t)GX_RECV_BATCH * GX_RECV_STRIDE);
+    int     *counts_d  = gx_recv_alloc<int>("gx_recv_counts",  (size_t)GX_RECV_BATCH);
+    int64_t *offsets_d = gx_recv_alloc<int64_t>("gx_recv_offsets", (size_t)GX_RECV_BATCH);
+    int     *pairs_d   = gx_recv_alloc<int>("gx_recv_pairs",   (size_t)pair_cap);
+    int     *anomaly_d = gx_recv_alloc<int>("gx_recv_anomaly", 1);
+
+    if(!leaf_d || !env_d || !scratch_d || !counts_d || !offsets_d || !pairs_d || !anomaly_d) {
+        printf("gx_device_receiver_walk: task %d could not reserve device buffers for %d local leaves; answering on the host\n",
+               ThisTask, num_local);
+        fflush(stdout);
+        if(leaf_d)    {Kokkos::kokkos_free<DevSp>(leaf_d);}
+        if(env_d)     {Kokkos::kokkos_free<DevSp>(env_d);}
+        if(scratch_d) {Kokkos::kokkos_free<DevSp>(scratch_d);}
+        if(counts_d)  {Kokkos::kokkos_free<DevSp>(counts_d);}
+        if(offsets_d) {Kokkos::kokkos_free<DevSp>(offsets_d);}
+        if(pairs_d)   {Kokkos::kokkos_free<DevSp>(pairs_d);}
+        if(anomaly_d) {Kokkos::kokkos_free<DevSp>(anomaly_d);}
+        return 1;
+    }
+
+    using UmHostI   = Kokkos::View<int*,     Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmHostI64 = Kokkos::View<int64_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmDevI    = Kokkos::View<int*,     DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+    using UmDevI64  = Kokkos::View<int64_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+    /* Stage the leaf fields the walk reads.  One pass over the local particles,
+     * host-side, into a compact record; the AoS is never touched from device. */
+    {
+#pragma omp parallel for schedule(static)
+        for(int j = 0; j < num_local; j++) {
+            struct gx_recv_leaf_t rec;
+            rec.pos[0] = (double)P[j].Pos[0];
+            rec.pos[1] = (double)P[j].Pos[1];
+            rec.pos[2] = (double)P[j].Pos[2];
+            rec.type   = (P[j].Mass > 0) ? (int)P[j].Type : -1;
+            int pool = -1;
+            if(j_to_pool && j < npart_bound) {
+                const int pp = j_to_pool[j];
+                if(pp >= 0 && pp < num_pool) {pool = pp;}
+            }
+            rec.pool = pool;
+            leaf_h[(size_t)j] = rec;
+        }
+        Kokkos::View<struct gx_recv_leaf_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            lh(leaf_h.data(), (size_t)num_local);
+        Kokkos::View<struct gx_recv_leaf_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            ld(leaf_d, (size_t)num_local);
+        Kokkos::deep_copy(ld, lh);
+    }
+
+    {   /* clear the malformed-tree report */
+        int zero = 0;
+        Kokkos::View<const int, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> zh(&zero);
+        Kokkos::View<int, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>> zd(anomaly_d);
+        Kokkos::deep_copy(zd, zh);
+    }
+
+    const Vec3<MyFloat>  *node_center   = soa->center;
+    const MyFloat        *node_len      = soa->len;
+    const int            *node_sibling  = soa->sibling;
+    const int            *node_nextnode = soa->nextnode;
+    const unsigned int   *node_bitflags = soa->bitflags;
+    const int            *nextnode_aux  = soa->nextnode_aux;
+
+    int status = 0;
+
+    for(long base = 0; base < n_env && status == 0; base += GX_RECV_BATCH) {
+        const int nb = (int)((n_env - base < GX_RECV_BATCH) ? (n_env - base) : GX_RECV_BATCH);
+        for(int b = 0; b < nb; b++) {env_h[(size_t)b] = envelopes[base + b];}
+        {
+            Kokkos::View<struct gx_export_envelope_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                eh(env_h.data(), (size_t)nb);
+            Kokkos::View<struct gx_export_envelope_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                ed(env_d, (size_t)nb);
+            Kokkos::deep_copy(ed, eh);
+        }
+
+        /* Walk: bounded write into the row's scratch slot, true count returned. */
+        {
+            const struct gx_export_envelope_t *env_v = env_d;
+            const struct gx_recv_leaf_t *leaf_v = leaf_d;
+            int *scratch_v = scratch_d; int *counts_v = counts_d; int *anom_v = anomaly_d;
+            const int stride = GX_RECV_STRIDE;
+            Kokkos::parallel_for("gx_recv_walk", nb, KOKKOS_LAMBDA(int b) {
+                counts_v[b] = gx_recv_walk_one(env_v[b], supply_mask,
+                                               node_center, node_len, node_sibling,
+                                               node_nextnode, node_bitflags, nextnode_aux,
+                                               leaf_v,
+                                               tree_base, tree_slots, node_capacity,
+                                               foreign_base, pseudo_start, num_local,
+                                               anom_v,
+                                               &scratch_v[(size_t)b * stride], stride);
+            });
+            Kokkos::fence();
+            gizmo_gpu_check_last_error("gx_recv_walk", nb);
+        }
+
+        int64_t batch_total = 0;
+        {
+            int *counts_v = counts_d; int64_t *offsets_v = offsets_d;
+            Kokkos::parallel_scan("gx_recv_scan", nb,
+                KOKKOS_LAMBDA(int b, int64_t &update, const bool final) {
+                    const int64_t v = (int64_t)counts_v[b];
+                    if(final) {offsets_v[b] = update;}
+                    update += v;
+                }, batch_total);
+            Kokkos::fence();
+        }
+        if(batch_total < 0) {
+            printf("gx_device_receiver_walk: task %d prefix sum over %d envelopes produced a negative pair count (%lld)\n",
+                   ThisTask, nb, (long long)batch_total);
+            fflush(stdout);
+            endrun(90001025);
+            status = 1; break;
+        }
+        if(batch_total == 0) {continue;}
+
+        Kokkos::deep_copy(UmHostI(counts_h.data(), (size_t)nb),  UmDevI(counts_d, (size_t)nb));
+        Kokkos::deep_copy(UmHostI64(offsets_h.data(), (size_t)nb), UmDevI64(offsets_d, (size_t)nb));
+
+        /* Emit in as many passes as the fixed output buffer needs.  Split points
+         * are row boundaries chosen from the counts already in hand, so every
+         * pass fits by construction and no batch is ever abandoned for being
+         * dense. */
+        int r0 = 0;
+        while(r0 < nb && status == 0) {
+            int r1 = r0; int64_t sub_total = 0;
+            while(r1 < nb && sub_total + (int64_t)counts_h[(size_t)r1] <= pair_cap) {
+                sub_total += (int64_t)counts_h[(size_t)r1];
+                r1++;
+            }
+            if(r1 == r0) {
+                /* The buffer holds num_local, and one envelope cannot admit a
+                 * local particle twice -- the exported subtrees are disjoint --
+                 * so a row this large means the traversal emitted a duplicate. */
+                printf("gx_device_receiver_walk: task %d envelope %ld admits %d pairs against %d local particles; the traversal has emitted a duplicate\n",
+                       ThisTask, base + r0, counts_h[(size_t)r0], num_local);
+                fflush(stdout);
+                endrun(90001026);
+                status = 1; break;
+            }
+            const int64_t sub_base = offsets_h[(size_t)r0];
+            {
+                const struct gx_export_envelope_t *env_v = env_d;
+                const struct gx_recv_leaf_t *leaf_v = leaf_d;
+                int *scratch_v = scratch_d; int *counts_v = counts_d;
+                int64_t *offsets_v = offsets_d; int *pairs_v = pairs_d; int *anom_v = anomaly_d;
+                const int stride = GX_RECV_STRIDE;
+                const int rr0 = r0;
+                Kokkos::parallel_for("gx_recv_compact", r1 - r0, KOKKOS_LAMBDA(int t) {
+                    const int b = rr0 + t;
+                    const int n = counts_v[b];
+                    if(n <= 0) {return;}
+                    const int64_t dst = offsets_v[b] - sub_base;
+                    if(n <= stride) {
+                        const size_t src = (size_t)b * stride;
+                        for(int c = 0; c < n; c++) {pairs_v[dst + c] = scratch_v[src + c];}
+                    } else {
+                        /* Overflowed its scratch slot: re-walk straight into the
+                         * final position. */
+                        gx_recv_walk_one(env_v[b], supply_mask,
+                                         node_center, node_len, node_sibling,
+                                         node_nextnode, node_bitflags, nextnode_aux,
+                                         leaf_v,
+                                         tree_base, tree_slots, node_capacity,
+                                         foreign_base, pseudo_start, num_local,
+                                         anom_v, &pairs_v[dst], n);
+                    }
+                });
+                Kokkos::fence();
+                gizmo_gpu_check_last_error("gx_recv_compact", r1 - r0);
+            }
+
+            Kokkos::deep_copy(UmHostI(pairs_h.data(), (size_t)sub_total),
+                              UmDevI(pairs_d, (size_t)sub_total));
+
+            /* Scatter into the bitmap.  It is MPI-facing host memory, and setting
+             * a bit twice is a no-op, so the host does it. */
+            for(int b = r0; b < r1; b++) {
+                const int t = envelope_peer[base + b];
+                if(t < 0 || t >= NTask || t == ThisTask) {continue;}
+                char *mf = matched + (size_t)t * (size_t)num_pool;
+                const int64_t off = offsets_h[(size_t)b] - sub_base;
+                const int n = counts_h[(size_t)b];
+                for(int c = 0; c < n; c++) {mf[pairs_h[(size_t)(off + c)]] = 1;}
+            }
+            r0 = r1;
+        }
+    }
+
+    int anomaly = 0;
+    {
+        Kokkos::View<int, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ah(&anomaly);
+        Kokkos::View<const int, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ad(anomaly_d);
+        Kokkos::deep_copy(ah, ad);
+    }
+
+    Kokkos::kokkos_free<DevSp>(leaf_d);
+    Kokkos::kokkos_free<DevSp>(env_d);
+    Kokkos::kokkos_free<DevSp>(scratch_d);
+    Kokkos::kokkos_free<DevSp>(counts_d);
+    Kokkos::kokkos_free<DevSp>(offsets_d);
+    Kokkos::kokkos_free<DevSp>(pairs_d);
+    Kokkos::kokkos_free<DevSp>(anomaly_d);
+
+    /* The host walk stops the run on this state, so reaching it here means the
+     * same thing.  Falling back would only hide a malformed tree: the host walk
+     * would meet it too. */
+    if(anomaly) {
+        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base; the tree is malformed\n",
+               ThisTask);
+        fflush(stdout);
+        endrun(90001024);
+        return 1;
+    }
+    /* Bits already set when a pass gave up need no undo: the caller falls back to
+     * the host walk, which sets exactly the same bits, and setting a bit twice is
+     * a no-op. */
+    return status;
+}
+
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */

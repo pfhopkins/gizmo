@@ -133,10 +133,19 @@ void AgsDensitySpec::populate_device_context(const neighbor_loop_args& /*args*/,
     /* Single-int UVM scratch — pair_kernel atomic_or-s a 1 here on any
      * wakeup write. Accumulates across all iters; cleanup_device_context
      * propagates to NeedToWakeupParticles_local once at runner exit. */
-    int *nw = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    ctx.need_wakeup_uvm = NULL;
+    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
+    int *nw = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    if(!nw) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7724,
+            "adaptive-softening density: could not stage the wakeup flag; "
+            "the kernel radii are not updated",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     *nw = 0;
     ctx.need_wakeup_uvm = nw;
-    ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
 }
 
 void AgsDensitySpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
@@ -176,39 +185,6 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     /* Intentionally empty — see banner. */
 }
 
-/* ============================================================================
- * MERGE_ACCUM — Mode B remote peer accumulator merge.
- *
- * Manifest pattern matching sink_feed_loop.cc::merge_accum. Per-field op
- * MUST match what pair_kernel writes (field parity was validated by the
- * retired two-binary route).
- *
- * AGS_vsig_max is MAX-merged (legacy ASSIGN_MAX in scatter); everything
- * else is ADD-merged. AGS_FACE NV_T fields are ADD-merged (each peer
- * contributes neighbor wk * dpos pairs that sum cleanly).
- * ========================================================================== */
-void AgsDensitySpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
-{
-#define ACCUM_ADD(field) local_accum.field += peer_accum.field;
-#define ACCUM_MAX(field) if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
-
-    ACCUM_ADD(Ngb)
-    ACCUM_ADD(DrkernNgb)
-    ACCUM_ADD(AGS_zeta)
-    ACCUM_ADD(Particle_DivVel)
-    ACCUM_MAX(AGS_vsig_max)
-#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    ACCUM_ADD(NV_T_00)
-    ACCUM_ADD(NV_T_01)
-    ACCUM_ADD(NV_T_02)
-    ACCUM_ADD(NV_T_11)
-    ACCUM_ADD(NV_T_12)
-    ACCUM_ADD(NV_T_22)
-#endif
-
-#undef ACCUM_ADD
-#undef ACCUM_MAX
-}
 
 /* ============================================================================
  * AFTER_ITER — per-active per-iter post-process + convergence test.

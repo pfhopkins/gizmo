@@ -112,22 +112,6 @@ void DMDispersionSpec::apply_active_writeback_iterative(
     aux->per_active_final_h[active_slot]     = final_h;
 }
 
-/* ============================================================================
- * merge_accum — Mode B remote peer merge (all fields additive).
- *
- * All five fields are simple sums; no MIN reductions (unlike density's
- * Sink_TimeBinGasNeighbor). Mismatch vs pair_kernel semantics = silent
- * multi-rank corruption, surfacing only as a difference between rank counts.
- * ========================================================================== */
-void DMDispersionSpec::merge_accum(AccumData& local, const AccumData& peer)
-{
-    local.Ngb        += peer.Ngb;
-    local.DM_Vx      += peer.DM_Vx;
-    local.DM_Vy      += peer.DM_Vy;
-    local.DM_Vz      += peer.DM_Vz;
-    local.DM_VelDisp += peer.DM_VelDisp;
-    local.DM_Rho     += peer.DM_Rho;
-}
 
 /* ============================================================================
  * after_iter — bisection convergence check + radius update.

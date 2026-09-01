@@ -39,7 +39,7 @@ extern "C" {
 #endif
 
 /* SoA view exposed to GPU kernels. All pointers live in SharedSpace; indices
- * match the AoS Nodes[] convention (callers index by [no - All.MaxPart] when
+ * match the AoS Nodes[] convention (callers index by [no - All.TreeNodeIndexBase] when
  * using the base array, or by absolute Nodes[] index after applying the
  * NTopnodes offset — the exact indexing convention is not yet finalized). */
 struct gpu_gravity_tree_soa_t {
@@ -63,19 +63,19 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat    *maxsoft;
     long           *N_part;
     /* Foreign-leaf identity sidecar (GPU mirror of the host ForeignLeaf* arrays).  Sized
-     * MaxForeignNodes and indexed by foreign_slot = no - (MaxPart+MaxNodes) == (node SoA idx) -
-     * MaxNodes -- a DIFFERENT index than every other array above (which use no - MaxPart).  The GPU
+     * AllocatedForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes) == (node SoA idx) -
+     * MaxNodes -- a DIFFERENT index than every other array above (which use no - TreeNodeIndexBase).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
      * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
     int            *foreign_leaf_tag;   /* 1 = real foreign single-particle leaf; 0 = node */
     int            *foreign_leaf_type;  /* source particle Type   -> ptype_sec */
     MyFloat        *foreign_leaf_zeta;  /* source particle AGS_zeta -> zeta_sec (double; preserves reciprocity) */
     MyFloat        *foreign_leaf_soft;  /* source particle ForceSoftening -> h_p (pure, NOT node maxsoft) */
-    int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== MaxForeignNodes) */
+    int             foreign_leaf_cap;   /* allocated length of the foreign_leaf_* arrays (== AllocatedForeignNodes) */
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
-     * lands on `no < MaxPart`, advance via nextnode_aux[no]. Sized for
-     * MaxPart + NTopnodes so the pseudo-particle region is addressable
+     * lands on `no < TreeParticleSlots`, advance via nextnode_aux[no]. Sized for
+     * TreeParticleSlots + NTopnodes so the pseudo-particle region is addressable
      * (though Tier-1 GPU walk aborts on pseudo-particle rather than
      * following it). */
     int            *nextnode_aux;
@@ -161,15 +161,26 @@ void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
 
+/* Grow the mirror to min_nodes slots while PRESERVING what it holds -- the counterpart to
+ * acquire() for the one point that runs after the build kernels: the LET exchange, which learns
+ * how many foreign nodes this rank receives only once the counts have been exchanged, and must
+ * add room for them without disturbing the local tree already in the mirror.  Transactional:
+ * on failure the previous arrays are still installed and valid.  Returns 1 on success, 0 on
+ * failure.  Callers: force_tree_grow_foreign_storage only. */
+int gpu_gravity_tree_grow_foreign(int min_nodes);
+
 /* Nextnode[] is allocated in SharedSpace by force_treeallocate
  * (forcetree.cc).  This setter aliases soa->nextnode_aux to that pointer; no
  * separate buffer, no per-walk memcpy.  Pass NULL/0 from force_treefree to
  * clear the alias before the underlying buffer is freed. */
 void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n);
 
-/* Free SharedSpace storage. Called at shutdown (and from force_treefree if
- * the tree is being torn down without a follow-up rebuild — but typically
- * force_treefree just invalidates and lets the next acquire reuse). */
+/* Free SharedSpace storage, plus the drift and moment-refresh pools keyed to it.
+ * Called from force_treefree(), so the mirror lives exactly as long as the AoS tree
+ * it derives from: it is reallocated once per tree epoch, not held for the run.
+ * Nothing may read the mirror between a release and the next build — acquire() marks
+ * the arrays valid without seeding them, so a read there sees uninitialized topology
+ * rather than the NULL a stale-pointer check would catch. */
 void gpu_gravity_tree_release(void);
 
 /* Accessors. Returns NULL pointers / 0 capacity when not held or stale. */
@@ -185,29 +196,43 @@ int gpu_gravity_tree_valid(void);
 int gpu_force_drift_nodes(integertime time1);
 void gpu_force_drift_release(void);
 
-/* L4 S2b-1: certify the SoA node geometry is drifted to `ti` (drifting if needed).
- * Returns 1 if certified current, 0 if UNAVAILABLE (SoA absent/unusable/undriftable
- * -> caller uses authoritative broadcast, never an alternate tree).  Owned here (the
- * SoA owner) so it is independent of the gravity force walk (works SELFGRAVITY_OFF
- * too when force_treebuild populated a usable SoA).  Stamp keyed on ti + treebuild
- * generation; invalidated on SoA realloc/free/rebuild. */
-int gpu_gravity_soa_ensure_drifted(integertime time1);
-
 /* Pure O(1) READ-ONLY query: is the SoA+AoS node geometry certified drifted to
  * `ti`?  Returns 1 iff the drift stamp matches (ti + current treebuild
  * generation), else 0.  Never launches a drift kernel and never loops over nodes
  * (two integer compares), so it is cheap to call on any step.  The stamp is set
- * by the drift sweep on success (gpu_force_drift_nodes /
- * gpu_gravity_soa_ensure_drifted) and invalidated on SoA realloc/free/rebuild.
+ * by the drift sweep on success (gpu_force_drift_nodes, via
+ * gpu_gravity_soa_mark_drift_certified) and invalidated on SoA realloc/free/rebuild.
  * A caller that has not run the sweep this step (before the first gravity walk,
  * or SELFGRAVITY_OFF) reads 0 and must drift any stale node it uses itself. */
 int gpu_gravity_soa_drift_certified(integertime time1);
 
 /* Record that the SoA+AoS node geometry is drifted to `ti` (snapshots the
  * current treebuild generation).  Called by the drift sweep on success so every
- * sweep caller records certification; sets the same stamp
- * gpu_gravity_soa_ensure_drifted already sets. */
+ * sweep caller records certification; it is the sole writer of the stamp that
+ * gpu_gravity_soa_drift_certified reads. */
 void gpu_gravity_soa_mark_drift_certified(integertime time1);
+
+/* Record that the tree was BUILT current at `ti` (snapshots the treebuild
+ * generation).  Called by the MAIN-STEP tree build only, after force_treebuild
+ * returns and only when a full drift has proven the particles reached `ti`.
+ * ⛔ Not from force_treebuild itself: that routine also builds group-local and
+ * subset trees (subfind), whose geometry must never certify the step's device
+ * consumers, and it cannot tell which kind of build it is being asked for. */
+void gpu_gravity_tree_mark_born_current(integertime ti);
+
+/* Retire both currency records.  Called by tree teardown: node arrays going
+ * away must not leave a record claiming their geometry is current. */
+void gpu_gravity_tree_invalidate_currency(void);
+
+/* THE question a device consumer of node geometry should ask: is that geometry
+ * current at `ti`?  True if the drift sweep certified it OR the tree was built
+ * current at it, AND the mirror those records describe still exists.  Asking
+ * gpu_gravity_soa_drift_certified() instead asks whether the GRAVITY WALK
+ * happened to sweep this step, which is false in many configurations where the
+ * geometry is perfectly current -- SELFGRAVITY_OFF, gravity routed to the host
+ * by GravityHostWalkBelowActive, or ADAPTIVE_TREEFORCE_UPDATE shrinking the
+ * candidate count that routing tests. */
+int gpu_gravity_tree_nodes_current_at(integertime ti);
 
 /* GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
@@ -215,24 +240,24 @@ void gpu_gravity_soa_mark_drift_certified(integertime time1);
  * device-local scratch and bulk seed of the SharedSpace SoA.
  *
  * After the kernel returns, the SoA is fully populated for nodes
- * [MaxPart, MaxPart+Numnodestree) AND the Nodes[]/Extnodes[] AoS arrays
+ * [TreeNodeIndexBase, TreeNodeIndexBase+Numnodestree) AND the Nodes[]/Extnodes[] AoS arrays
  * are written back so that the CPU pseudo-particle path
  * (force_exchange_pseudodata + force_treeupdate_pseudos) sees identical
  * values to what it would have produced.
  *
  * `active_root_node` reserved for a future subtree-hint optimization. Initial
- * callers pass -1 (= whole tree from MaxPart..MaxPart+Numnodestree).
+ * callers pass -1 (= whole tree from TreeNodeIndexBase..TreeNodeIndexBase+Numnodestree).
  *
  * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
 int gpu_moment_refresh(int active_root_node);
 
 /* Free the persistent gpu_moment_refresh scratch pools (source-input buffers +
- * Father mirror).  Attached to the existing gpu_gravity_tree_release() teardown
- * API.  (That API is not yet invoked before Kokkos::finalize; the GPU-pool
- * pre-finalize release plumbing is a pre-existing cross-subsystem cleanup.) */
+ * Father mirror).  Reached through gpu_gravity_tree_release(), so these pools
+ * follow the tree epoch: dropped when the tree is freed, regrown by the next
+ * refresh. */
 void gpu_moment_refresh_release(void);
 
-/* Bulk write SoA[k=0..n) back into Nodes[MaxPart+k] / Extnodes[MaxPart+k].
+/* Bulk write SoA[k=0..n) back into Nodes[TreeNodeIndexBase+k] / Extnodes[TreeNodeIndexBase+k].
  * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding
  * could call it directly. Caller must have a valid SoA acquired. */
 void gpu_moment_writeback_to_aos(int n);

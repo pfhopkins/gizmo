@@ -18,10 +18,8 @@ UnitMass_in_g                     1.989e33
 UnitVelocity_in_cm_per_s          1e7
 UnitMagneticField_in_gauss        1
 Box_Size_In_Code_Units            1
-Max_Memory_Per_MPI_Task_in_MB     5000
 TreeRebuild_ActiveFraction        1.e-2
 Initial_Metallicity               0.35
-MPI_Buffersize_in_MB              100
 SinkMaxAccretionRadius            100
 Effective_Kernel_NeighborNumber   32
 Output_Directory                  output

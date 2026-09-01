@@ -10,11 +10,37 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
+#include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"   /* shared walk helpers; here for hermite_ghost_entry */
 #include "let_data.h"                 /* let_refresh_moments: per-step imported-moment refresh */
 #include "./analytic_gravity.h"
+
+/*! Host-vs-device routing for the gravity walk and the dynamic tree update, keyed on the
+ *  RANK-LOCAL count of active gravity candidates. The device path must drift every node
+ *  in the tree before its parallel walk can be race-free, so its floor is set by the tree
+ *  size rather than by the active set; the host walk drifts each node only when it opens
+ *  it. Below the threshold the sweep costs more than the walk it enables.
+ *
+ *  The threshold is conservative against a crossover measured near 6e4 rank-local
+ *  candidates on 16-rank FIRE, where routing the whole tree walk to the host cut the
+ *  cost of steps with fewer than 1e4 global active elements by a third. Above it the
+ *  device path wins and the host walk's serial node drift becomes the bottleneck. */
+int gravity_walk_route_to_host(long long n_local_active)
+{
+    /* Once any node has been drifted lazily at this time, the host owns the rest of the
+     * time step: the device sweep skips nodes already at its target time, so it can no
+     * longer bring their mirror up to date, and a second gravity evaluation at the same
+     * time (a Hermite correction pass, a repeated walk for the opening criterion) would
+     * otherwise read that stale geometry.  A tree built after that drift is
+     * exempt: the build rewrote every node and every mirror, so the record of an
+     * earlier lazy drift no longer describes anything. */
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)
+            && force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+
+    return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
+}
 
 /*! \file gravtree.c
  *  \brief main driver routines for gravitational (short-range) force computation
@@ -151,7 +177,23 @@ void gravity_tree(void)
         rearrange_particle_sequence();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
+        /* The tree just built is current by construction: the build set every
+         * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
+         * local and foreign, from those nodes.  Record that here, at the call
+         * site that KNOWS this is the main step tree, rather than inside
+         * force_treebuild -- which is also used to build group-local and subset
+         * trees whose geometry must never be certified for the step's device
+         * consumers.  The full-drift test is the remaining precondition: it is
+         * what makes the node geometry describe this time rather than merely
+         * being freshly written, and move_particles above drifts only the active
+         * set.  Absent that proof nothing is recorded and consumers fall back to
+         * the host, which is correct but slower -- never wrong.
+         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+         * controlled stop during GPU finalize / LET / pseudo handling and still
+         * return, and a tree whose build asked to stop must never be recorded as
+         * current -- not even for the few statements before the poll exits. */
         gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
@@ -196,16 +238,16 @@ void gravity_tree(void)
 #if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-    size_t MyBufferSize = All.BufferSize;
-    /* DETECTOR buffer only: the gravity MPI export round-trip is retired (gravity now runs
-     * on the target-owning rank via the GPU pre-pass + LET). DataIndexTable/DataNodeList are
-     * no longer shipped -- they only record LET-incompleteness to raise Nexport. Sized off the
-     * surviving export-list structs (no gravdata_in/out payload). */
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist)));
+    /* These two tables only RECORD targets whose gravity the locally-built tree cannot supply:
+     * the MPI export round-trip is retired (gravity runs on the target-owning rank via the GPU
+     * pre-pass and the locally-essential tree), so nothing here is ever sent, and a single entry
+     * is enough to stop the run below. They are therefore held to a fixed small capacity rather
+     * than to the communication chunk size, which used to reserve ~100 MB per rank on every
+     * gravity call for something a healthy run never writes to at all. */
+    All.BunchSize = GRAVITY_LET_DETECTOR_ENTRIES;
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {if(ThisTask == 0) printf(" ..All.BunchSize=%ld\n", All.BunchSize);}
-    int k, ewald_max, diff, save_NextParticle, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
+    int k, ewald_max, diff, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
     Ewaldcount = 0; Costtotal = 0; N_nodesinlist = 0; ewald_max=0;
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
@@ -293,7 +335,7 @@ void gravity_tree(void)
         do /* primary point-element loop */
         {
             iter++;
-            BufferFullFlag = 0; Nexport = 0; save_NextParticle = NextParticle; tstart = my_second();
+            BufferFullFlag = 0; Nexport = 0; tstart = my_second();
 
 #ifdef _OPENMP
 #pragma omp parallel
@@ -319,19 +361,21 @@ void gravity_tree(void)
              * DataIndexTable/DataNodeList are no longer shipped -- the tree
              * walk only records LET-incompleteness into Nexport.
              *
-             * If Nexport > 0 a particle's gravity is not covered by LET --
-             * raise LETAllocFactor in params; we request a graceful
-             * controlled-stop here (drained at the all-rank poll below, no
-             * retry, no new collective).
+             * If Nexport > 0 a particle's gravity is not covered by LET, and
+             * we request a graceful controlled-stop here (drained at the
+             * all-rank poll below, no retry, no new collective).  It is not a
+             * capacity shortfall: an import too large for the foreign-node
+             * index range is reported by the exchange, which raises the range
+             * and rebuilds before this walk runs.
              * ============================================================ */
             if(Nexport > 0) {
-                printf("LET incomplete: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
+                printf("The locally essential tree did not cover the gravity of %ld particles on rank %d. Stopping.\n", Nexport, ThisTask);
                 fflush(stdout);
                 /* Graceful soft-stop: the export round-trip is retired, so we cannot service
                  * these particles -- but the same loop iteration reaches the all-rank
                  * MPI_Allreduce + gizmo_exit_bad_stop_if_requested poll below, which drains
                  * this flag cleanly (no retry, no new collective). */
-                gizmo_request_controlled_stop(914040, "gravtree: Nexport>0 -- particles need foreign gravity not covered by LET (raise LETAllocFactor)", __FILE__, __LINE__, __FUNCTION__);
+                gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover some targets' gravity", __FILE__, __LINE__, __FUNCTION__);
             }
 
             /* Export-back loop is retired under GPU offload, so the arena
@@ -354,6 +398,7 @@ void gravity_tree(void)
         }
         while(ndone < NTask);
     } /* Ewald_iter */
+
     myfree(DataNodeList); myfree(DataIndexTable);
 
     /* assign node cost to particles */
@@ -590,10 +635,13 @@ void gravity_tree(void)
     plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
-    CPU_Step[CPU_TREEWALK1] += timetree1; CPU_Step[CPU_TREEWALK2] += timetree2;
-    CPU_Step[CPU_TREESEND] += timecommsumm1; CPU_Step[CPU_TREERECV] += timecommsumm2;
-    CPU_Step[CPU_TREEWAIT1] += timewait1; CPU_Step[CPU_TREEWAIT2] += timewait2;
+    /* The span from the end of the build to here is the force walk.  Only the
+     * wait is separately measured inside it, so the walk row is the rest of the
+     * span; charging the remainder to `misc` instead reported the whole walk as
+     * unattributed.  The send/recv and second-walk timers this routine used to
+     * split out have no writer any more and are not charged. */
+    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
+    CPU_Step[CPU_TREEWAIT2] += timewait2;
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(ThisTask == 0)
     {
@@ -601,7 +649,7 @@ void gravity_tree(void)
         fprintf(FdTimings, "Nf= %d%09d  total-Nf= %d%09d  ex-frac= %g (%g) iter= %d\n", (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), (int) (All.TotNumOfForces / 1000000000), (int) (All.TotNumOfForces % 1000000000), n_exported / ((double) GlobNumForceUpdate), N_nodesinlist / ((double) n_exported + 1.0e-10), iter); /* note: on Linux, the 8-byte integer could be printed with the format identifier "%qd", but doesn't work on AIX */
         fprintf(FdTimings, "work-load balance: %g (%g %g) rel1to2=%g   max=%g avg=%g\n", maxt / (1.0e-6 + sumt / NTask), maxt1 / (1.0e-6 + sumt1 / NTask), maxt2 / (1.0e-6 + sumt2 / NTask), sumt1 / (1.0e-6 + sumt1 + sumt2), maxt, sumt / NTask);
         fprintf(FdTimings, "particle-load balance: %g\n", plb_max);
-        fprintf(FdTimings, "max. nodes: %d, filled: %g\n", maxnumnodes, maxnumnodes / (All.TreeAllocFactor * All.MaxPart + NTopnodes));
+        fprintf(FdTimings, "max. nodes: %d, filled: %g\n", maxnumnodes, maxnumnodes / ((double) MaxNodes));
         fprintf(FdTimings, "part/sec=%g | %g  ia/part=%g (%g)\n", GlobNumForceUpdate / (sumt + 1.0e-20), GlobNumForceUpdate / (1.0e-6 + maxt * NTask), ((double) (sum_costtotal)) / (1.0e-20 + GlobNumForceUpdate), ((double) ewaldtot) / (1.0e-20 + GlobNumForceUpdate)); fprintf(FdTimings, "\n");
         fflush(FdTimings);
     }
@@ -610,7 +658,11 @@ void gravity_tree(void)
     {
         for(i = 0; i < NumPart; i++) {costtotal_new += P[i].GravCost[TakeLevel];}
         MPI_Reduce(&costtotal_new, &sum_costtotal_new, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);} /* can be non-zero if THREAD_SAFE_COSTS is not used (and due to round-off errors). */
+        /* Both walks accumulate the same per-target interaction count into GravCost and
+         * into Costtotal, so the two totals describe the same quantity and this should be
+         * at round-off whichever path each target took. A non-negligible value means the
+         * two are no longer measuring the same thing. */
+        if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
 #endif
 #ifdef HERMITE_INTEGRATION
@@ -671,6 +723,13 @@ void *gravity_primary_loop(void *p)
             {
                 ret = force_treeevaluate(i, exportflag, exportnodecount, exportindex);
                 if(ret < 0) {buffer_full = 1; break;}
+                /* Work weight for the next domain decomposition: the count of
+                 * interactions this target performed. The device walk records the
+                 * same quantity (gpu_gravtree.cc), so a step whose walks are split
+                 * between the two paths feeds one consistent measure to
+                 * domain_particle_costfactor(). Each thread writes only its own
+                 * target, so no synchronization is needed. */
+                if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = ret;}
 #ifdef _OPENMP
 #pragma omp atomic
 #endif

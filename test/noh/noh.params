@@ -12,7 +12,6 @@ BoxSize                            6
 TimeBetSnapshot                    0.1
 DesNumNgb                          60
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         5000
 CourantFac                         0.1
 MaxSizeTimestep                    0.1
 ResubmitOn                         0

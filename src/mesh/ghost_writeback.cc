@@ -386,8 +386,10 @@ void ghost_write_detector_begin(const char *kernel_name)
                 kernel_name ? kernel_name : "(null)", gwd_kernel);
         endrun(91234);
     }
-    /* aligned: particle_data is alignof 32, malloc guarantees only 16 -- see gizmo_aligned_alloc */
-    gwd_P_snap = (struct particle_data *) gizmo_aligned_alloc(alignof(struct particle_data), n * sizeof(struct particle_data));
+    /* new[], not malloc: particle_data is over-aligned (32 bytes) and malloc
+     * cannot honour that. These cross function boundaries, so the LIFO arena is
+     * not an option; new[] aligns an over-aligned type on its own. */
+    gwd_P_snap = new struct particle_data[n];
     memcpy(gwd_P_snap, P + local, n * sizeof(struct particle_data));
     /* CellP=NULL guard: DM-only / sidm-only / CBE-only runs have no gas
      * particles and no CellP backing. The detector was added via the
@@ -395,7 +397,7 @@ void ghost_write_detector_begin(const char *kernel_name)
      * detector client that can fire with CellP unallocated. Leave
      * gwd_CellP_snap=NULL in that case; end() skips the CellP memcmp. */
     if(CellP != NULL) {
-        gwd_CellP_snap = (struct gas_cell_data *) gizmo_aligned_alloc(alignof(struct gas_cell_data), n * sizeof(struct gas_cell_data));
+        gwd_CellP_snap = new struct gas_cell_data[n];
         memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
     } else {
         gwd_CellP_snap = NULL;
@@ -476,8 +478,8 @@ void ghost_write_detector_end(void)
             endrun(91234);
         }
     }
-    free(gwd_P_snap);     gwd_P_snap = NULL;
-    free(gwd_CellP_snap); gwd_CellP_snap = NULL;
+    delete[] gwd_P_snap;     gwd_P_snap = NULL;
+    delete[] gwd_CellP_snap; gwd_CellP_snap = NULL;
     gwd_n_snap = 0;
     gwd_active = 0;
 }

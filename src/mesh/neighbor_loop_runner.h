@@ -44,9 +44,16 @@
  *       Reads ctx.P[i] / ctx.CellP[i] (UVM-resident, post-arena/drift)
  *       and combines with the host-staged h_search and CallScalars.
  *       Runner launches a tiny Kokkos parallel_for that fills
- *       ActiveData[num_active] in UVM. Mode A's pair-kernel launch reads
- *       this array; the Mode B walker calls the SAME function host-side
- *       per query. Same KOKKOS_INLINE_FUNCTION on both paths.
+ *       ActiveData[num_active]. Mode A's pair-kernel launch reads this
+ *       array; the Mode B walker calls the SAME function host-side per
+ *       query. Same KOKKOS_INLINE_FUNCTION on both paths.
+ *       ⚠ In Mode A that array is DEVICE-RESIDENT, not host-readable: it is
+ *       written by the staging kernel and read by the pair kernel, both on
+ *       the device. A Spec must not add host reads of it (a finite check, a
+ *       debug dump) -- those compile everywhere and work on a host-only
+ *       backend, where the device and shared spaces are the same type, then
+ *       fault on CUDA/HIP. Host-visible per-active state belongs in
+ *       AccumData, which stays host-readable for the writeback.
  *
  *   NeighborData is DEVICE-CALLABLE (and host-callable in Mode B):
  *     KOKKOS_INLINE_FUNCTION
@@ -336,6 +343,14 @@ struct NeighborLoopDeviceContextBase {
     struct gas_cell_data *CellP;
     int                   num_total;
 
+    /* Set by a Spec's populate_device_context when it could not obtain one of
+     * its buffers (the hook has already requested a controlled stop naming it,
+     * and left every pointer it owns null, which cleanup_device_context
+     * tolerates). The runner then skips this call's kernel work; the failing
+     * hook cannot do that itself, because it does not know which dispatch
+     * path is executing it. */
+    int populate_failed = 0;
+
     /* Path-correct accessor for particle Type. Reads through the ctx's own
      * P pointer (Mode A: arena-resident P_gpu; Mode B: request-driven local
      * slab — both assigned to ctx.P by the path-specific init paths).
@@ -502,6 +517,105 @@ constexpr ModeBEvalOMP nlr_spec_modeb_eval_omp() {
         return ModeBEvalOMP::SerialOnly;
     }
 }
+
+/* ============================================================================
+ * ModeAPairAssignment — how a Mode-A pair kernel divides one CSR row.
+ *
+ *   RowSerial      — one work item per active particle; that single work item
+ *                    walks the whole row. The original assignment.
+ *   TeamRowReduce  — one team per active particle; the team's lanes stride the
+ *                    row in parallel and combine their partial accumulators
+ *                    through Spec::merge_accum.
+ *
+ * The default is derived from ModeBEvalOMP, because both ask the same question
+ * of the pair kernel: can two workers evaluate different neighbors of the same
+ * active particle concurrently? SerialOnly -> RowSerial; BitwiseReadonly and
+ * EpsilonAtomic -> TeamRowReduce.
+ *
+ * The mapping is conservative in the right direction. modeb_eval_omp audits
+ * ACROSS-row threading while this is WITHIN-row lane parallelism, and a CSR row
+ * contains each neighbor exactly once, so two lanes of one team can never
+ * contend on the same j -- whereas cross-row contention already occurs today.
+ * SerialOnly -> RowSerial is therefore stricter than parity.
+ *
+ * A Spec may override with `static constexpr ModeAPairAssignment
+ * mode_a_pair_assignment`; an override MUST carry a comment naming the
+ * structural reason, matching the convention modeb_eval_omp declarations follow.
+ *
+ * The reduction invokes Spec::merge_accum WHOLESALE on the accumulator. It must
+ * never be decomposed field-wise: SinkFeedSpec merges a coupled
+ * min-with-payload (it takes the peer's position only when the peer's potential
+ * is lower), and a field-wise reducer would silently decouple value from
+ * payload.
+ * ========================================================================== */
+
+enum class ModeAPairAssignment : int {
+    RowSerial     = 0,
+    TeamRowReduce = 1,
+};
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_mode_a_pair_assignment : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_mode_a_pair_assignment<
+    Spec, std::void_t<decltype(Spec::mode_a_pair_assignment)>> : std::true_type {};
+
+template <typename Spec>
+constexpr ModeAPairAssignment nlr_mode_a_pair_policy() {
+    if constexpr (nlr_spec_has_mode_a_pair_assignment<Spec>::value) {
+        return Spec::mode_a_pair_assignment;
+    } else if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::SerialOnly) {
+        return ModeAPairAssignment::RowSerial;
+    } else {
+        return ModeAPairAssignment::TeamRowReduce;
+    }
+}
+
+/* Team widths for TeamRowReduce, in lanes per row.
+ *
+ * The two targets are properties of the neighbor-count physics, not of any
+ * device: a measured row-length census over FIRE, FIF and evrard put the
+ * symmetric corridor at a median of 102-144 neighbors per row with under 1% of
+ * rows below 64, and put 92.8% (FIRE) / 99.5% (FIF) of one-way density pair work
+ * in rows of at least 32.
+ *
+ * The fat-accumulator cap is a different kind of number and is deliberately not
+ * dressed up as anything else: it is a SPILL HEURISTIC, and a blunt one. A lane
+ * holds a private copy of AccumData for the duration of its strided walk, so a
+ * kilobyte-scale accumulator puts hundreds of registers per lane under pressure
+ * and spills to local memory.
+ *
+ * Be precise about what narrowing the team does and does not buy, because the
+ * obvious reading is wrong in two ways. Per-lane register footprint is
+ * sizeof(AccumData) whatever the width, so a narrower team does not reduce it.
+ * The team reduction's shared memory is four slots of sizeof(AccumData) -- it
+ * scales with the accumulator but NOT with the team size, so a narrower team
+ * does not reduce that either. What the cap actually bounds is the number of
+ * simultaneously-live private copies per team, and with it the whole-struct
+ * shuffle traffic the reduction performs. team_size_max cannot substitute for
+ * any of this: it is a launch-legality bound that does not move with
+ * sizeof(AccumData) at all.
+ *
+ * 16 lanes still cuts a 102-neighbor row from 102 sequential steps to 7.
+ *
+ * All four are internal compile-time constants. None is a physics knob, a
+ * parameterfile parameter, or an environment variable; changing one means
+ * editing this line and re-measuring. */
+#define NLR_TEAM_WIDTH_ONEWAY        32
+#define NLR_TEAM_WIDTH_SYMMETRIC     64
+#define NLR_TEAM_WIDTH_FAT_ACCUM     16
+#define NLR_TEAM_FAT_ACCUM_BYTES    512
+
+/* Below three dimensions a row is a handful of neighbours, not a hundred: the
+ * neighbour count a kernel radius encloses falls with the dimensionality, so
+ * the widths above -- fitted to three-dimensional censuses -- would be wider
+ * than the rows they divide. One narrow width covers both cases, with no
+ * one-way/symmetric split, because at these lengths the distinction between 32
+ * and 64 lanes is meaningless. Reduced geometries are test-problem shapes
+ * rather than the large-N production target, so there is nothing to win here
+ * and no reason to run a team wider than the work. */
+#define NLR_TEAM_WIDTH_LOWDIM         2
 
 /* Human-readable tier label for the GX_MODEB_EXPORT eval-threading audit field.
  * A resolved SerialOnly prints "(explicit)" vs "(missing_trait)" so justified
@@ -1548,8 +1662,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args);
  * ========================================================================== */
 template <typename Spec>
 struct NlrIterDriver {
-    /* Driver-owned for whole call. */
-    const neighbor_loop_args_iterative& args;
+    /* THE call's live argument view, owned by run_neighbor_loop_iterative and shared with
+     * it by reference: the runner's local copy and this member are two names for ONE object.
+     * A ghost import can move P[]/CellP[] mid-call (the particle capacity may be raised to
+     * fit an import), so the cached base pointers and count are refreshed HERE, in place,
+     * at the two points they can change.  There is deliberately no second, unrefreshed copy:
+     * a hook that reads a stale P[] reads freed storage, which is a machine-dependent crash
+     * on one path and a silent wrong answer on another.
+     * (Binding by reference makes the driver non-assignable, which it already is -- it is
+     * constructed once per call and never copied.) */
+    neighbor_loop_args_iterative& args;
     typename Spec::CallScalars          cs;          /* value-owned, NOT a reference */
 
     int iter_index;                                  /* 0-based; shared across all subgroups */
@@ -1628,14 +1750,6 @@ struct NlrIterDriver {
     std::vector<bool>                 mode_a_csr_valid;              /* [num_subgroups] */
 
 
-    /* effective_args: writable copy of the base
-     * neighbor_loop_args slice. Mode A iter mutates num_total/P/CellP after
-     * ghost import to reflect the imported-ghost pool (mirrors non-iter
-     * effective_args refresh at runner.cc:2046-2051). Mode B leaves it
-     * equal to the original base args (lazy-drift contract — Mode B reads
-     * owner-local args.P[j] directly). All per-iter dispatch helpers read
-     * effective_args.num_total / P / CellP, NOT args.num_total / P / CellP. */
-    neighbor_loop_args                effective_args;
 
     /* Constructor (runner-private; only invoked inside run_neighbor_loop_iterative<Spec>):
      *   - Resizes per-subgroup vectors to args.num_subgroups.
@@ -1646,7 +1760,7 @@ struct NlrIterDriver {
      *   - AccumData NOT zeroed here — runner zeros via Spec::zero_accum at the start of each iter.
      *   - DOES NOT touch ctx (path-dependent init via initialize_device_context_*).
      * Definition in mesh/neighbor_loop_runner.cc. */
-    explicit NlrIterDriver(const neighbor_loop_args_iterative& a,
+    explicit NlrIterDriver(neighbor_loop_args_iterative& a,
                            const typename Spec::CallScalars& s);
 
     /* Destructor frees all UVM allocations + cleans DeviceContext IF
@@ -1721,6 +1835,25 @@ struct AfterIterContext {
     const typename Spec::CallScalars& scalars;       /* driver-owned; whole-call lifetime */
     typename Spec::IterScratch&       scratch;       /* mutable; PERSISTS across iters (allocated/zeroed once at iter 0) */
 };
+
+/*! The argument view a loop is about to hand to a Spec hook or to a device context must
+ *  describe the storage that exists NOW.  A ghost import can raise the particle capacity
+ *  and move P[]/CellP[] part way through a call, and a view captured before that points at
+ *  released memory: reading it faults where the old pages were returned to the system and
+ *  quietly returns pre-import values where they were not, so the same defect shows up as a
+ *  crash on one machine and a wrong answer on another.  This is one comparison at a loop
+ *  boundary, never per particle.  CellP is absent by design in a run with no gas, and a
+ *  count above the live one is legal only after the ghost pool is released, so this belongs
+ *  before that point.
+ *  Reads the particle globals, so it relies on the caller's TU having pulled in
+ *  declarations/allvars.h -- the same dependency this header already carries. */
+static inline int nlr_args_view_is_live(const neighbor_loop_args& a)
+{
+    if(a.P != P) {return 0;}
+    if(a.num_total != NumPart) {return 0;}
+    if(a.CellP != nullptr && a.CellP != CellP) {return 0;}
+    return 1;
+}
 
 /* ============================================================================
  * SFINAE detectors for iterative Spec hooks.
@@ -1947,7 +2080,7 @@ struct NlrQueryEnvelope {
     int        n_nodes;
     /* Reserved, always zero. Holds the wire slot of a removed Mode-B probe
      * flag. Kept so sizeof(NlrQueryEnvelope) is unchanged: the envelope size
-     * divides All.BufferSize to set the streaming round boundary, and round
+     * divides All.CommChunkSize to set the streaming round boundary, and round
      * boundaries fix the order in which replies merge into accums_out. Dropping
      * the field would therefore shift floating-point summation order at large
      * active counts. Reuse this slot before growing the envelope. */

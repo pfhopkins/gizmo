@@ -16,7 +16,6 @@ MaxSizeTimestep                    1.0
 MinSizeTimestep                    1e-10
 DesNumNgb                          4
 MaxNumNgbDeviation                 1e-6
-MaxMemSize                         1000
 ErrTolIntAccuracy                  0.002
 CourantFac                         0.01
 MaxRMSDisplacementFac              0.05

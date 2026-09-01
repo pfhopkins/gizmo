@@ -313,8 +313,20 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
 
     /* Large-N GPU path: compact gather → kernel → scatter. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct gas_cell_data));
+    const size_t grain_stage_bytes = (size_t) num_active * (sizeof(struct particle_data)
+                                                            + sizeof(struct gas_cell_data));
+    struct particle_data *compact_P = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) num_active * sizeof(struct particle_data), NULL);
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) num_active * sizeof(struct gas_cell_data), NULL);
+    if(!compact_P || !compact_Cell) {
+        if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
+        if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "grain drag: could not stage %d grains (%.1f MB); no drag is applied",
+                 num_active, (double) grain_stage_bytes / (1024.0 * 1024.0));
+        gizmo_request_controlled_stop(7718, msg, __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
     /* compact_Cell is zeroed and stays zeroed: caller guarantees active_indices are
        all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them.
        The kernel reads CellP only via ThermalProperties(target=-1,...), which now

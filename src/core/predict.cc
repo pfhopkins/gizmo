@@ -286,6 +286,14 @@ static integertime g_last_full_drift_Ti = -1;
 
 extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
 
+/* Time of the most recent full-N drift on this rank; -1 if none has run.
+ * force_treebuild reads it to establish that the particles a tree is being
+ * built from had all reached that time, which is what makes the resulting
+ * node geometry current rather than merely freshly written. move_particles
+ * deliberately does not advance it (it drifts only the active set), so this
+ * is a proof and not a convention. */
+extern "C" integertime gizmo_full_drift_ti(void) { return g_last_full_drift_Ti; }
+
 /* Full-N drift to time1. Idempotent re-entry via g_last_full_drift_Ti cache.
  * Used by:
  *  - run.cc explicitly before each domain_Decomposition_* call so the decomp

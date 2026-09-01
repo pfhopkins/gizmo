@@ -37,6 +37,19 @@ static void as_append_str(char *buf, int cap, int *pos, const char *s)
     while(*s && *pos < cap) { buf[(*pos)++] = *s++; }
 }
 
+/* Append v as 0x-prefixed hex. Async-signal-safe. Addresses are far more use in
+ * hex than decimal: the magnitude alone separates a null-pointer offset from a
+ * wild index. */
+static void as_append_hex(char *buf, int cap, int *pos, unsigned long v)
+{
+    as_append_str(buf, cap, pos, "0x");
+    char tmp[20];
+    int n = 0;
+    if(v == 0) { tmp[n++] = '0'; }
+    while(v > 0 && n < (int)sizeof(tmp)) { const int d = (int)(v & 0xf); tmp[n++] = (char)(d < 10 ? ('0' + d) : ('a' + d - 10)); v >>= 4; }
+    while(n > 0 && *pos < cap) { buf[(*pos)++] = tmp[--n]; }
+}
+
 /* The single safe primitive both signal handlers and normal-context callers use.
  * STRICTLY async-signal-safe: one bounded stack buffer, write(2), then _exit(). */
 [[noreturn]] void gizmo_fatal_fast_exit(int code, const char *reason_static)
@@ -57,14 +70,25 @@ static void as_append_str(char *buf, int cap, int *pos, const char *s)
 
 /* --- fatal signal handler -------------------------------------------------- */
 
-static void gizmo_fatal_signal_handler(int sig)
+static void gizmo_fatal_signal_handler(int sig, siginfo_t *info, void *ucontext)
 {
-    char buf[128];
+    (void)ucontext;
+    char buf[192];
     int pos = 0;
     as_append_str(buf, (int)sizeof(buf), &pos, "GIZMO FATAL signal=");
     as_append_int(buf, (int)sizeof(buf), &pos, (long)sig);
     as_append_str(buf, (int)sizeof(buf), &pos, " rank=");
     as_append_int(buf, (int)sizeof(buf), &pos, (long)g_fatal_rank);
+    /* The faulting address, for the signals that carry one. Without it a
+     * segfault report says only that one happened; with it, the magnitude
+     * distinguishes a null dereference from an out-of-range index at a glance,
+     * which is the difference between one diagnostic run and several. */
+    if(info && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL || sig == SIGFPE)) {
+        as_append_str(buf, (int)sizeof(buf), &pos, " addr=");
+        as_append_hex(buf, (int)sizeof(buf), &pos, (unsigned long)info->si_addr);
+        as_append_str(buf, (int)sizeof(buf), &pos, " code=");
+        as_append_int(buf, (int)sizeof(buf), &pos, (long)info->si_code);
+    }
     as_append_str(buf, (int)sizeof(buf), &pos, " -- no cleanup, immediate _exit\n");
     ssize_t w = write(2, buf, (size_t)pos);
     (void)w;
@@ -77,9 +101,10 @@ void gizmo_install_fatal_signal_handlers(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = gizmo_fatal_signal_handler;
+    sa.sa_sigaction = gizmo_fatal_signal_handler;
     sigfillset(&sa.sa_mask);      /* block all other signals inside the handler */
-    sa.sa_flags = SA_RESETHAND;   /* a fault inside the handler re-raises the default disposition */
+    sa.sa_flags = SA_RESETHAND    /* a fault inside the handler re-raises the default disposition */
+                | SA_SIGINFO;     /* deliver siginfo_t so the handler can report the faulting address */
 
     /* Involuntary faults + the launcher's SIGTERM to survivors. On GH200 a clean
      * reap beats a final flush; a healthy time-limit stop is handled internally

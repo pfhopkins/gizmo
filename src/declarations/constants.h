@@ -1,10 +1,5 @@
 /* values of various constants to be parsed as part of global definitions */
 
-/* GIZMO_DEBUG_RT_COOLING: enable comprehensive RT/cooling/hydro diagnostics.
-   Prints per-particle and per-pair tracking for debugging GPU vs CPU divergence.
-   Uncomment to activate. See project memory for full list of diagnostic tags. */
-//#define GIZMO_DEBUG_RT_COOLING
-
 /* Minimum number of active particles for GPU offload to be worthwhile.
  * Below this threshold, the kernel launch + memory transfer overhead exceeds
  * the GPU compute benefit, so we fall back to the CPU (OpenMP) path.
@@ -28,7 +23,25 @@
 #endif
 #endif
 
+#define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
+
+#define TREE_ALLOC_FACTOR_START             0.45 /* tree nodes allocated per particle at startup, before the run ratchets it upward to fit the particle distribution.  Named here because the startup memory projection has to use it before init() assigns it */
+
+/* Cushion on the particle storage a rank holds for the coming epoch, as a fraction of the particles
+ * per rank.  It covers the amount by which the next epoch's worst ghost import may exceed the one
+ * just measured; on a galaxy-scale zoom that overshoot is a few percent of the per-rank count at the
+ * median and around an eighth of it at the ninetieth percentile, so this covers the common case with
+ * room to spare.  The rare import that exceeds it is met by growing the storage when it arrives. */
+#define DOMAIN_CAPACITY_SAFETY_FRACTION     0.15
+
+/* Releasing storage means migrating every particle array, so it is only worth doing for a saving that
+ * is a real proportion of the capacity AND a real amount of memory.  The second test is expressed
+ * against the particles per rank rather than as a slot count, so that it means the same thing on a
+ * small problem as on a large one; a fixed count would silently forbid ever releasing anything on a
+ * problem whose whole per-rank capacity is smaller than that count. */
+#define DOMAIN_CAPACITY_SHRINK_FRACTION     0.10
+#define DOMAIN_CAPACITY_SHRINK_MIN_FRAC     0.10
 
 /* these are tolerances for the slope-limiters. we define them here, because the gradient constraint routine needs to be sure to use the -same- values in both the gradients and reimann solver routines */
 #if MHD_CONSTRAINED_GRADIENT
@@ -69,6 +82,8 @@
 #define  NUMBER_OF_MEASUREMENTS_TO_RECORD  6  /* this is the number of past executions of a timebin that the reported average CPU-times average over */
 
 #define  NODELISTLENGTH      8
+
+#define  GRAVITY_LET_DETECTOR_ENTRIES  4096  /* how many targets the gravity walk can record as not covered by the locally-built tree. Recording even one stops the run, so this only has to be large enough to report what happened, with room for every thread to record at once */
 
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 
@@ -266,16 +281,16 @@
  * Slots marked "reserved" have no writer; they are kept so slot numbers, and
  * therefore the meaning of columns in existing logs, never shift. */
 #define CPU_NGB_BUILD         47  /* neighbor-list (CSR) construction, all callers */
-#define CPU_SIDX_REFRESH      48  /* reserved: never charged */
-#define CPU_LAZY_DRIFT        49  /* reserved: never charged */
+#define CPU_SIDX_REFRESH      48  /* post-drift spatial-index refresh (tile bboxes, BVH refit, device staging) */
+#define CPU_GHOSTIMPORT_SYMM  49  /* hydro-corridor SYMMETRIC ghost import (sub-row of ghost import) */
 #define CPU_GRAV_PRECOMP      50  /* reserved: never charged */
-#define CPU_FORCE_UPDATE_TREE 51  /* reserved: never charged */
+#define CPU_FORCE_UPDATE_TREE 51  /* dynamic tree update on reused-tree steps (node drift + top-node kick exchange) */
 #define CPU_SINK_ENV          52  /* sink_environment GPU kernel + scatter */
 #define CPU_SINK_FEEDSWK      53  /* sink_feed + sink_swallow_and_kick combined */
 #define CPU_PAIR_KERNEL       54  /* neighbor-loop pair-kernel launch + fence (runner only) */
 #define CPU_GHOSTIMPORT       55  /* imported-ghost exchange, all callers (hydro, gravity, sinks, feedback) */
-#define CPU_DUMMY09           56  /* reserved */
-#define CPU_DUMMY10           57  /* reserved */
+#define CPU_KICKS             56  /* first+second half-step kicks, Hermite predict/correct */
+#define CPU_LOGMSG            57  /* per-step statistics + log-file writes (a barrier-sync absorber) */
 
 #define CPU_PARTS          58  /* this gives the number of parts above (must be last) */
 

@@ -38,6 +38,27 @@ void *gravity_primary_loop(void *p);
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex);
 int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
+
+/*! Single home for the host-vs-device routing decision of the gravity walk and the
+ *  dynamic tree update. Two independent reasons to answer yes, and BOTH are part of the
+ *  contract:
+ *    - this rank has fewer than All.GravityHostWalkBelowActive active candidates, so the
+ *      host walk (which drifts nodes lazily as it opens them) is cheaper than the device
+ *      walk plus the all-node drift it requires;
+ *    - a host lazy drift has ALREADY happened at the current time, in which case the host
+ *      keeps ownership for the rest of the time step whatever the count says. The device
+ *      sweep skips nodes already at its target time and so cannot refresh their mirror,
+ *      so once any node is drifted lazily, no device walk may run at that time again.
+ *  The second clause is what keeps a repeated same-time evaluation (a Hermite correction
+ *  pass, the opening-criterion re-walk) from reading stale node geometry. */
+int gravity_walk_route_to_host(long long n_local_active);
+
+/*! Time at which a host lazy node drift was last actually performed on this rank
+ *  (-1 = never). The device node-drift sweep skips nodes already at its target time, so
+ *  it must never run at a time the host has already drifted to: it would leave those
+ *  nodes' SoA mirror holding pre-drift geometry. Read by gpu_force_drift_nodes as an
+ *  invariant check, not as a control input. */
+integertime force_host_lazy_drift_ti(void);
 void force_tree_discardpartials(void);
 void force_treeupdate_pseudos(int);
 void force_update_pseudoparticles(void);
@@ -59,7 +80,11 @@ int    force_getcost_single(void);
 int    force_getcost_quadru(void);
 void   force_resetcost(void);
 void   force_setupnonrecursive(int no);
-void   force_treeallocate(int maxnodes, int maxpart);
+/* foreign_node_slots_exact: LET foreign-node CAPACITY to allocate verbatim; negative derives it,
+ * which is what every normal caller wants.  Only the restart read passes a value: the node pointers
+ * it is about to deserialize encode the writer's capacity (pseudo-particles start at
+ * TreeNodeIndexBase + MaxNodes + MaxForeignNodes), so the reader has to reproduce it exactly. */
+void   force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact = -1);
 /* Conservative per-particle radius used to seed Extnodes[no].hmax_per_type[Type]
  * bands. Mode B SYMMETRIC tree-prune reads these bands as an upper bound on
  * any leaf-policy-selectable reach for that type, so the band must dominate
@@ -85,6 +110,32 @@ int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
+int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
+
+/*! Give the foreign-node range storage for the `foreign_needed` nodes this rank is about to
+ *  receive, once the LET exchange has counted them.  force_treeallocate leaves that storage
+ *  at zero because the count is not knowable when the tree is allocated.  Call once per tree
+ *  build, before the first foreign node is installed; a rank importing nothing passes 0 and
+ *  does nothing.  Leaves the tree untouched and returns nonzero if the memory is not there. */
+int    force_tree_grow_foreign_storage(long long foreign_needed);
+
+/*! Can a particle created at this index be carried by the tree that is standing right now?
+ *  Father[] and Nextnode[]'s particle segment span All.TreeParticleSlots entries and are NOT resized
+ *  between rebuilds, so a slot being available in P[] does not by itself mean the live tree can index
+ *  it: inserting past those arrays would write out of bounds, and every later pass that reads a
+ *  particle's parent would read out of bounds too.  Creation sites ask this in addition to their
+ *  existing capacity checks, and decline the way they already decline when storage is short.
+ *  A tree built by force_treeallocate sizes these arrays from All.MaxPartExpandable, the run's
+ *  ceiling on the particle capacity, so the answer is currently yes for every index P[] can hold and
+ *  this costs one comparison.  It is kept rather than deleted because it states the requirement at
+ *  the sites that depend on it: if the ceiling ever became something a capacity could reach, these
+ *  are exactly the places that must decline.  With no tree standing the answer is also yes, because
+ *  there is nothing to outgrow -- not a licence to insert into a tree that is not there, which
+ *  force_add_element_to_tree refuses on its own. */
+static inline int gizmo_particle_index_fits_live_tree(int index)
+{
+    return (!force_tree_is_allocated()) || (index < All.TreeParticleSlots);
+}
 void   force_update_node(int no, int flag);
 void   force_update_size_of_parent_node(int no);
 

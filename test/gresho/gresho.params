@@ -13,7 +13,6 @@ BoxSize                            1
 TimeBetSnapshot                    0.5
 DesNumNgb                          20
 MaxNumNgbDeviation                 0.1
-MaxMemSize                         1000
 ErrTolIntAccuracy                  0.001
 CourantFac                         0.1
 MaxRMSDisplacementFac              0.125

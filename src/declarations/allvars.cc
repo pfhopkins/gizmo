@@ -41,6 +41,7 @@ int PTask;			/*!< note: NTask = 2^PTask */
 double CPUThisRun;		/*!< Sums CPU time of current process */
 
 int NumForceUpdate;		/*!< number of active particles on local processor in current timestep  */
+int NumForceUpdateAtSyncPoint;	/*!< see allvars.h: sync-point snapshot of NumForceUpdate for pre-rollover routing */
 long long GlobNumForceUpdate;
 int NumGasUpdate;		/*!< number of active gas cells on local processor in current timestep  */
 
@@ -105,14 +106,30 @@ size_t AllocatedBytes;
 size_t HighMarkBytes;
 size_t FreeBytes;
 double CPU_Step[CPU_PARTS];
+/* Characters painted into the balance.txt work/imbalance map, one pair per
+ * CPU_Step bucket. write_cpu_log() lays both shares of every bucket into a
+ * single flat string, so a character must identify exactly one bucket AND one
+ * of the two shares.  A character may be reused by a second bucket: the map is
+ * painted in bucket order and each bucket's run is contiguous, so position
+ * separates two uses that sit far apart in the list.  Reusing one between
+ * neighbours is what makes a column unreadable. '#' (head marker) and '-'
+ * (unaccounted tail) are painted literally by the writer and are reserved.
+ *
+ * Only the 43 buckets that have a charge site can ever be painted (the writer
+ * skips any bucket with zero time), and 43 pairs plus the two reserved
+ * characters is the most that fits in printable ASCII. Buckets with no writer
+ * therefore carry the sentinel '_' rather than a plausible character that a
+ * reader would hunt for and never find; balance.txt names the sentinel in its
+ * legend. Charging one of those buckets means giving it a real character here,
+ * in BOTH arrays, checked unique against every other entry in both. */
 char CPU_Symbol[CPU_PARTS] = {
-    '-', '*', '=', ';', '<', '[', '^', ':', '.', '~', '|', '+', '"', '/',  '`', ',', '>', '@', '#', '&',
-    '$', ']', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
-    'Y', 'X', 'U', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',  'n', 'o'};//, 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y, 'z',
+    '_', '*', '_', '_', '<', '_', '_', ':', '.', '~', '|', '+', '"', '_',  '`', ',', '_', '_', '_', '&',
+    '$', '_', '(', '?', ')', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\\', '%', '{', '}', 'Z',
+    '_', '_', '_', 'a', '_', '_', 'd', 'e', 'q', ']', '_', '!', 'j', 'k', 'l', 'm',  '/', '@'};
 char CPU_SymbolImbalance[CPU_PARTS] = {
-    'a', 't', 'u', 'v', 'b', 'w', 'd', 'r', 'h', 'm', 'n', 'l', 'o', 'p',  's', 'f', 'i', 'g', 'c', 'e', // 20 columns here
-    'x', 'y', 'z', 'A', 'I', 'W', 'T', 'V', 'B', 'C', 'D', 'E', 'F', 'G', 'H',  'I', 'J', 'K', 'L', 'Q',
-    'R', 'S', 'T', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',  'N', 'O'};//, 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'};
+    '_', 't', '_', '_', 'b', '_', '_', 'r', 'h', 'B', 'n', 'C', 'o', '_',  's', 'f', '_', '_', '_', 'D', // 20 columns here
+    'x', '_', 'z', 'E', 'I', 'W', 'T', 'V', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N',  'O', 'P', 'Q', 'R',
+    '_', '_', '_', 'S', '_', '_', 'U', 'X', 'Y', '\'', '_', 'y', 'c', 'g', 'i', 'p',  '>', '='};
 char CPU_String[CPU_STRING_LEN + 1];
 double WallclockTime;		/*!< This holds the last wallclock time measurement for timings measurements */
 double CPU_ChildCharged;
@@ -358,15 +375,16 @@ int NextJ;
 int TimerFlag;
 
 struct NODE *Nodes_base,	/*!< points to the actual memory allocated for the nodes */
-*Nodes;			            /*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.MaxPart] gives the first allocated node */
+*Nodes;			            /*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.TreeNodeIndexBase] gives the first allocated node */
 struct extNODE *Extnodes, *Extnodes_base;
 
 
 int MaxNodes;			/*!< maximum allowed number of internal nodes */
 int Numnodestree;		/*!< number of (internal) nodes in each tree */
-int MaxForeignNodes = 0;        /*!< LET: foreign-node capacity; set in force_treeallocate. */
+int MaxForeignNodes = 0;        /*!< LET: ceiling of the foreign-node index range; set in force_treeallocate. */
+int AllocatedForeignNodes = 0;  /*!< LET: foreign-node slots that actually have storage; raised once per tree build to this rank's exact import. */
 int Numforeignnodes = 0;        /*!< LET: foreign nodes currently installed; reset on each LET exchange. */
-long long RuntimeMinLETForeignNodes = 0;  /*!< adaptive lower bound on MaxForeignNodes; ratcheted up by force_treebuild on a retryable LET overflow. Not a parameter; not restart-persisted. */
+long long RuntimeMinLETForeignNodes = 0;  /*!< adaptive lower bound on MaxForeignNodes; ratcheted up by force_treebuild on a retryable LET overflow. Not a parameter; restart-persisted. */
 long long Numforeignnodes_highwater = 0;  /*!< since-start peak of Numforeignnodes actually installed (diagnostic; memory ledger foreign-used). */
 
 

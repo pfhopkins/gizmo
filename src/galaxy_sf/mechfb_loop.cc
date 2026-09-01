@@ -277,13 +277,22 @@ void MechFBSpec::populate_device_context(const neighbor_loop_args& args,
      * before every iter; zero-init here is defensive (covers the unlikely
      * case where iter 0 reads before reset fires). */
     const int N = args.num_active;
+    ctx.per_active_local = nullptr;
     if (N > 0) {
         MechFBLocalIn *uvm = (MechFBLocalIn *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(MechFBLocalIn));
+            gizmo_gpu_alloc_shared((size_t) N * sizeof(MechFBLocalIn), NULL);
+        if (!uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "mechanical feedback: could not stage %d active sources (%.1f MB); "
+                     "no feedback is deposited",
+                     N, (double)((size_t) N * sizeof(MechFBLocalIn)) / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7731, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
         std::memset(uvm, 0, N * sizeof(MechFBLocalIn));
         ctx.per_active_local = uvm;
-    } else {
-        ctx.per_active_local = nullptr;
     }
 }
 
@@ -326,15 +335,6 @@ void MechFBSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     /* Intentionally empty — see banner. */
 }
 
-/* merge_accum — Mode B remote peer accumulator merge. M_coupled adds;
- * Area_weighted_sum[] adds per element. Mirrors the legacy device-side
- * accumulation in mechanical_fb_pair_kernel (myout.Area_weighted_sum[k] +=). */
-void MechFBSpec::merge_accum(AccumData& local, const AccumData& peer) {
-    local.M_coupled += peer.M_coupled;
-    for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
-        local.Area_weighted_sum[k] += peer.Area_weighted_sum[k];
-    }
-}
 
 /* after_iter — STATUS-ONLY.
  *
@@ -706,34 +706,6 @@ void MechFBSpec::reset_per_iter_device_context(
  * Toplevel helpers — entry points for mechanical_fb.cc (non-GPU TU).
  * ========================================================================== */
 
-struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas) {
-    const int n = (n_gas > 0) ? n_gas : 1;
-    return (struct MechFBGasDelta *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(struct MechFBGasDelta));
-}
-
-void mechfb_free_local_gas_delta(struct MechFBGasDelta *p) {
-    if (p) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);
-}
-
-/* mechfb_zero_local_gas_delta — zero the gas-only portion of the SharedSpace
- * buffer (avoid std::memset on SharedSpace from a non-GPU TU; route through
- * Kokkos so the backend semantic is explicit).
- *
- * Mirrors the legacy zero loop in mechanical_fb.cc:275 — only entries where
- * P[j].Type == 0 are zeroed; non-gas entries are left untouched (saves work
- * on tiny-N steps). Runs on the host because the loop reads global P[]
- * (Type filter), which is not device-resident here. SharedSpace is
- * host-readable so a direct write is correct. */
-void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas) {
-    if (!p || n_gas <= 0) return;
-    Kokkos::fence();  /* ensure any prior device writes are visible */
-    for (int j = 0; j < n_gas; ++j) {
-        if (P[j].Type == 0) std::memset(&p[j], 0, sizeof(struct MechFBGasDelta));
-    }
-    Kokkos::fence();  /* ensure host zero is visible to the next device launch */
-}
-
 /* Persistent capacity-managed gas-delta buffer (grow-only). Replaces the per-step
  * alloc + O(N_gas) zero + free. Invariant (upheld by the caller): the buffer is
  * all-zero between mechfb steps -- verify_and_assign_local_mechfb_integrals
@@ -746,8 +718,23 @@ struct MechFBGasDelta *mechfb_get_persistent_gas_delta(int n_gas) {
     const int n = (n_gas > 0) ? n_gas : 1;
     if (n > s_cap) {
         if (s_buf) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(s_buf);
-        s_buf = (struct MechFBGasDelta *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("mechfb_gas_delta", n * sizeof(struct MechFBGasDelta));
+        const size_t want_bytes = (size_t) n * sizeof(struct MechFBGasDelta);
+        s_buf = (struct MechFBGasDelta *) gizmo_gpu_alloc_shared(want_bytes, "mechfb_gas_delta");
+        /* The old buffer is gone either way, so a refusal leaves none at all.
+         * The caller cannot proceed alone -- peers deposit into this buffer
+         * through the feedback exchange -- so it agrees collectively with the
+         * other ranks to skip the loop, and the stop drains at the next phase
+         * boundary. */
+        if (!s_buf) {
+            s_cap = 0;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "mechanical feedback: could not grow the per-cell deposit buffer to "
+                     "%d cells (%.1f MB); no feedback is deposited",
+                     n, (double) want_bytes / (1024.0 * 1024.0));
+            gizmo_request_controlled_stop(7731, msg, __FILE__, __LINE__, __FUNCTION__);
+            return nullptr;
+        }
         Kokkos::fence();
         for (int j = 0; j < n; ++j) mechfb_writeback_detail::mechfb_gas_delta_zero(&s_buf[j]);
         Kokkos::fence();
@@ -777,6 +764,8 @@ void mechfb_reset_one_gas_delta(struct MechFBGasDelta *p, int j) {
 void mechfb_run_iterative(int *active_list, int num_active,
                           struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                           int n_gas) {
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
      * global_num_active == 0 case. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's

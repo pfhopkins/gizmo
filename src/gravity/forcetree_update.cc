@@ -6,6 +6,7 @@
 #include <time.h>
 #include <cstring>
 #include <cstdint>
+#include <algorithm>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "force_node_drift_sync.h"
@@ -38,11 +39,124 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
  * Mike Grudic has also made major revisions to code the Hermitian calculations and binary timestepping.
  */
 
+
+/* Time of the last host lazy node drift on this rank; see force_host_lazy_drift_ti(). */
+static integertime host_lazy_drift_ti = -1;
+
+integertime force_host_lazy_drift_ti(void)
+{
+    return __atomic_load_n(&host_lazy_drift_ti, __ATOMIC_RELAXED);
+}
+
+
+/*! Propagate the momentum kicks accumulated in P[i].dp since the last tree update up
+ *  each active element's chain of parent nodes, so the existing tree can be reused for
+ *  another step instead of rebuilt. Two paths compute the same thing:
+ *
+ *  host: walk the chain and drift each parent node at the moment it is touched, so the
+ *        cost is set by how many nodes the active set actually reaches.
+ *  device: drift every node in one parallel sweep first, then walk the chains in a
+ *        kernel. The sweep is what makes the parallel walk race-free (force_drift_node
+ *        is serial by construction), and it costs O(all nodes) whether or not the step
+ *        touches them, which is why small steps take the host path.
+ *
+ *  This runs before the active list is rebuilt for the coming step, so the list it walks
+ *  is the one whose kicks have just been closed out — the correct set for this point in
+ *  the KDK sequence, and the quantity that sizes the work here.
+ *
+ *  Two counts therefore enter the route, for two different reasons:
+ *    - ActiveParticleList.size() sizes THIS work, so it decides whether the host walk is
+ *      the cheaper way to do it;
+ *    - the coming step's count decides whether the gravity walk that follows the rebuild
+ *      wants the device. Taking the host path here drifts nodes lazily, which hands the
+ *      rest of the time step to the host (see gravity_walk_route_to_host), so a small
+ *      update must not force a large gravity walk off the device behind it. That count is
+ *      taken before the walk's own candidacy filter, so it is an upper bound on what the
+ *      walk will route on: the pairing errs towards keeping this update on the device.
+ *  Host only when both are small; anything else stays on the device path. */
 void force_update_tree(void)
 {
-    /* GPU path is the only path — CPU fallback retired. */
-    gpu_force_update_tree();
-    return;
+    /* The update tolerates a larger active count on the host than the walk does,
+     * so its own term is tested against a multiple of the same threshold rather
+     * than a separate control: the two are one judgement about where work
+     * belongs, and a second knob would imply they can drift apart. What the
+     * device buys here is avoiding the all-node drift sweep, whose cost does not
+     * depend on how many elements are active, so the host walk has to grow much
+     * further before it costs as much as the walk's own crossover. The second
+     * term is deliberately NOT scaled: it is what guarantees that a host-lazy
+     * drift is never followed by a device walk reading the mirror it staled. */
+    const long long TREE_UPDATE_HOST_ACTIVE_FACTOR = 20;
+    const long long n_kick = (long long) ActiveParticleList.size();
+    const int to_host = (gravity_walk_route_to_host(n_kick / TREE_UPDATE_HOST_ACTIVE_FACTOR)
+                         && gravity_walk_route_to_host(NumForceUpdateAtSyncPoint));
+
+    if(!to_host) {gpu_force_update_tree();}
+    else
+    {
+        PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
+        GlobFlag++;
+        DomainNumChanged = 0;
+        DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
+        for(int i : ActiveParticleList)
+        {
+            force_kick_node(i, P[i].dp);
+            P[i].dp = {};
+        }
+        force_finish_kick_nodes();
+        myfree(DomainList);
+        DomainList = NULL;
+        PRINT_STATUS(" ..Tree has been updated dynamically");
+    }
+
+}
+
+
+/*! Add element i's momentum kick to every parent node above it, drifting each node as it
+ *  is reached. Serial by construction: force_drift_node is not thread-safe. Mirrors the
+ *  device kick kernel in gpu_force_update.cc field for field; the difference is that the
+ *  device version relies on the preceding all-node drift sweep and therefore uses atomics
+ *  where this accumulates directly. */
+void force_kick_node(int i, Vec3<MyDouble>& dp)
+{
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    double lum[N_RT_FREQ_BINS];
+    Vec3<MyDouble> rt_source_lum_dp = rt_get_source_luminosity(i, -1, lum, P, CellP) ? dp : Vec3<MyDouble>{};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
+#endif
+
+    MyFloat vmax = 0;
+    for(int j = 0; j < 3; j++) {MyFloat v = (MyFloat)fabs((double)P[i].Vel[j]); if(v > vmax) {vmax = v;}}
+
+    int no = Father[i];
+    while(no >= 0)
+    {
+        force_drift_node(no, All.Ti_Current);
+
+        Extnodes[no].dp += dp;
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Extnodes[no].rt_source_lum_dp += rt_source_lum_dp;
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Extnodes[no].dp_dm += dp_dm;
+#endif
+        if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
+        Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
+        Extnodes[no].Ti_lastkicked = All.Ti_Current;
+
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))    /* top-level node reached: the rest of the chain is shared with other ranks and is handled by the exchange in force_finish_kick_nodes */
+        {
+            if(Extnodes[no].Flag != GlobFlag)
+            {
+                Extnodes[no].Flag = GlobFlag;
+                DomainList[DomainNumChanged++] = no;
+            }
+            break;
+        }
+
+        no = Nodes[no].u.d.father;
+    }
 }
 
 
@@ -52,14 +166,14 @@ void force_update_tree(void)
 
 
 
-/* Packed per-changed-node kick record for the single fused Allgatherv in
- * force_finish_kick_nodes (replaces the 2-5 separate field Allgathervs). Fixed
- * layout is identical on every rank, so an MPI_BYTE exchange is field-equivalent
- * (any padding bytes are transmitted but ignored). TU-local. */
+/* The kick a top-level node receives: summed momentum, maximum speed. Neither
+ * depends on the order its contributions arrive in, which is what lets the apply
+ * below total a node's whole subtree once instead of once per contributing node.
+ * The sum is therefore reassociated relative to a per-record walk, so it rounds
+ * differently in the last bits while describing the same momentum. TU-local. */
 namespace {
-struct DomainKickPacked
+struct TopNodeKick
 {
-  int node;
   MyDouble dp[3];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
   MyDouble rt_dp[3];
@@ -72,6 +186,57 @@ struct DomainKickPacked
 #endif
   MyFloat vmax;
 };
+
+inline void kick_accumulate(struct TopNodeKick& into, const struct TopNodeKick& from)
+{
+  for(int k = 0; k < 3; k++) {into.dp[k] += from.dp[k];}
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+  for(int k = 0; k < 3; k++) {into.rt_dp[k] += from.rt_dp[k];}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+  for(int k = 0; k < 3; k++) {into.dp_dm[k] += from.dp_dm[k];}
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  for(int k = 0; k < 3; k++) {into.sink_dp[k] += from.sink_dp[k];}
+#endif
+  if(into.vmax < from.vmax) {into.vmax = from.vmax;}
+}
+
+/* One changed top-level node as it crosses the fused Allgatherv. Fixed layout is
+ * identical on every rank, so an MPI_BYTE exchange is field-equivalent (any
+ * padding bytes are transmitted but ignored). */
+struct DomainKickPacked
+{
+  int node;
+  struct TopNodeKick kick;
+};
+
+/* The apply below keeps per-node scratch indexed by a node's offset within the
+ * replicated top-level tree, so every node it handles must lie in that range:
+ * the records arrive from other ranks, and the chain above each one is followed
+ * through father links. Both of the two questions asked about a node -- is it in
+ * range, and has this call already seen it -- are asked here, because the mark
+ * alone does not bound the offset. */
+inline int top_level_node_in_range(int no)
+{
+  return (no >= All.TreeNodeIndexBase) && (no - All.TreeNodeIndexBase < NTopnodes);
+}
+
+inline void report_node_out_of_top_level_range(int no)
+{
+  printf("Task=%d force_finish_kick_nodes: node %d outside the top-level range [%d,%d)\n",
+         ThisTask, no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + NTopnodes);
+  fflush(stdout);
+  endrun(91562);
+}
+
+/* Scratch slot of an already-seen top-level node, or -1 if it is neither. */
+inline int marked_top_level_slot(const int *node_slot, int no)
+{
+  if(!top_level_node_in_range(no)) {return -1;}
+  if(Extnodes[no].Flag != GlobFlag) {return -1;}
+  return node_slot[no - All.TreeNodeIndexBase];
+}
 }  /* anonymous namespace */
 
 void force_finish_kick_nodes(void)
@@ -96,6 +261,7 @@ void force_finish_kick_nodes(void)
   for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
     totDomainNumChanged += counts[ta];
 
+
   if(totDomainNumChanged == 0)
     {   /* no rank changed a top-level node: nothing to pack/exchange/apply */
       myfree(offset_dp);
@@ -115,25 +281,25 @@ void force_finish_kick_nodes(void)
       {
         no = DomainList[i];
         rec_loc[i].node = no;
-        rec_loc[i].dp[0] = Extnodes[no].dp[0];
-        rec_loc[i].dp[1] = Extnodes[no].dp[1];
-        rec_loc[i].dp[2] = Extnodes[no].dp[2];
+        rec_loc[i].kick.dp[0] = Extnodes[no].dp[0];
+        rec_loc[i].kick.dp[1] = Extnodes[no].dp[1];
+        rec_loc[i].kick.dp[2] = Extnodes[no].dp[2];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        rec_loc[i].rt_dp[0] = Extnodes[no].rt_source_lum_dp[0];
-        rec_loc[i].rt_dp[1] = Extnodes[no].rt_source_lum_dp[1];
-        rec_loc[i].rt_dp[2] = Extnodes[no].rt_source_lum_dp[2];
+        rec_loc[i].kick.rt_dp[0] = Extnodes[no].rt_source_lum_dp[0];
+        rec_loc[i].kick.rt_dp[1] = Extnodes[no].rt_source_lum_dp[1];
+        rec_loc[i].kick.rt_dp[2] = Extnodes[no].rt_source_lum_dp[2];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        rec_loc[i].dp_dm[0] = Extnodes[no].dp_dm[0];
-        rec_loc[i].dp_dm[1] = Extnodes[no].dp_dm[1];
-        rec_loc[i].dp_dm[2] = Extnodes[no].dp_dm[2];
+        rec_loc[i].kick.dp_dm[0] = Extnodes[no].dp_dm[0];
+        rec_loc[i].kick.dp_dm[1] = Extnodes[no].dp_dm[1];
+        rec_loc[i].kick.dp_dm[2] = Extnodes[no].dp_dm[2];
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
-        rec_loc[i].sink_dp[0] = Extnodes[no].sink_dp[0];
-        rec_loc[i].sink_dp[1] = Extnodes[no].sink_dp[1];
-        rec_loc[i].sink_dp[2] = Extnodes[no].sink_dp[2];
+        rec_loc[i].kick.sink_dp[0] = Extnodes[no].sink_dp[0];
+        rec_loc[i].kick.sink_dp[1] = Extnodes[no].sink_dp[1];
+        rec_loc[i].kick.sink_dp[2] = Extnodes[no].sink_dp[2];
 #endif
-        rec_loc[i].vmax = Extnodes[no].vmax;
+        rec_loc[i].kick.vmax = Extnodes[no].vmax;
       }
     /* byte counts/offsets for the fixed-size records (reuse counts_dp/offset_dp;
      * counts[] is still the raw per-rank node count here) */
@@ -147,39 +313,94 @@ void force_finish_kick_nodes(void)
         mymalloc("fut_rec_all", totDomainNumChanged * sizeof(struct DomainKickPacked));
     MPI_Allgatherv(rec_loc, DomainNumChanged * (int) sizeof(struct DomainKickPacked), MPI_BYTE,
                    rec_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+    /* Apply every rank's records to this rank's copy of the top-level tree. A
+     * node's total is its own records plus everything its children received, so
+     * each record is added once at its own node and the sums are carried upward
+     * in a single sweep -- rather than each record walking its whole chain to
+     * the root, which repeats the shared upper part of the chain once per
+     * record. Every node reached here is top-level (force_flag_localnodes marks
+     * the entire ancestor chain of each top leaf), and the top-level tree is
+     * built parent-first from the tree's node index base, so descending node
+     * index orders children before their parents. */
+    int *uniq = (int *) mymalloc("fut_uniq", (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
+    /* Slot of a node in uniq[], indexed by the node's offset within the
+     * top-level tree. Entries for nodes this call did not reach are never read
+     * -- marked_top_level_slot() is the only reader and it range-checks first --
+     * so the array needs no initialization. */
+    int *node_slot = (int *) mymalloc("fut_node_slot", (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
+    int nuniq = 0;
+
+    GlobFlag++;
     for(i = 0; i < totDomainNumChanged; i++)
       {
+        /* every node is range-checked BEFORE it is used to read anything: the
+         * record comes from another rank, and the chain above it is followed
+         * through father links */
         no = rec_all[i].node;
+        if(!top_level_node_in_range(no)) {report_node_out_of_top_level_range(no); rec_all[i].node = -1; continue;}
         if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))
-          no = Nodes[no].u.d.father;
+          no = Nodes[no].u.d.father;   /* already applied to this node by the local kick */
+        rec_all[i].node = no;          /* resolved once here; the scatter below reuses it */
         while(no >= 0)
           {
-            force_drift_node(no, All.Ti_Current);
-            Extnodes[no].dp[0] += rec_all[i].dp[0];
-            Extnodes[no].dp[1] += rec_all[i].dp[1];
-            Extnodes[no].dp[2] += rec_all[i].dp[2];
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-            Extnodes[no].rt_source_lum_dp[0] += rec_all[i].rt_dp[0];
-            Extnodes[no].rt_source_lum_dp[1] += rec_all[i].rt_dp[1];
-            Extnodes[no].rt_source_lum_dp[2] += rec_all[i].rt_dp[2];
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-            Extnodes[no].dp_dm[0] += rec_all[i].dp_dm[0];
-            Extnodes[no].dp_dm[1] += rec_all[i].dp_dm[1];
-            Extnodes[no].dp_dm[2] += rec_all[i].dp_dm[2];
-#endif
-#ifdef SINK_NODE_MOTION_TRACKED
-            Extnodes[no].sink_dp[0] += rec_all[i].sink_dp[0];
-            Extnodes[no].sink_dp[1] += rec_all[i].sink_dp[1];
-            Extnodes[no].sink_dp[2] += rec_all[i].sink_dp[2];
-#endif
-            if(Extnodes[no].vmax < rec_all[i].vmax)
-              Extnodes[no].vmax = rec_all[i].vmax;
-            Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
-            Extnodes[no].Ti_lastkicked = All.Ti_Current;
+            if(!top_level_node_in_range(no))
+              {   /* the chain left the top-level tree: stop walking it, and stop the run */
+                report_node_out_of_top_level_range(no);
+                break;
+              }
+            if(Extnodes[no].Flag == GlobFlag) {break;}   /* this call already took the rest of the chain */
+            Extnodes[no].Flag = GlobFlag;
+            uniq[nuniq++] = no;
             no = Nodes[no].u.d.father;
           }
       }
+
+    std::sort(uniq, uniq + nuniq, [](int a, int b) {return a > b;});
+
+    struct TopNodeKick *acc = (struct TopNodeKick *)
+        mymalloc("fut_acc", (nuniq > 0 ? nuniq : 1) * sizeof(struct TopNodeKick));
+    for(int k = 0; k < nuniq; k++) {node_slot[uniq[k] - All.TreeNodeIndexBase] = k; acc[k] = {};}
+
+    for(i = 0; i < totDomainNumChanged; i++)
+      {
+        const int slot = marked_top_level_slot(node_slot, rec_all[i].node);
+        if(slot >= 0) {kick_accumulate(acc[slot], rec_all[i].kick);}
+      }
+
+    for(int k = 0; k < nuniq; k++)
+      {
+        no = uniq[k];
+        force_drift_node(no, All.Ti_Current);
+        Extnodes[no].dp[0] += acc[k].dp[0];
+        Extnodes[no].dp[1] += acc[k].dp[1];
+        Extnodes[no].dp[2] += acc[k].dp[2];
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Extnodes[no].rt_source_lum_dp[0] += acc[k].rt_dp[0];
+        Extnodes[no].rt_source_lum_dp[1] += acc[k].rt_dp[1];
+        Extnodes[no].rt_source_lum_dp[2] += acc[k].rt_dp[2];
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Extnodes[no].dp_dm[0] += acc[k].dp_dm[0];
+        Extnodes[no].dp_dm[1] += acc[k].dp_dm[1];
+        Extnodes[no].dp_dm[2] += acc[k].dp_dm[2];
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp[0] += acc[k].sink_dp[0];
+        Extnodes[no].sink_dp[1] += acc[k].sink_dp[1];
+        Extnodes[no].sink_dp[2] += acc[k].sink_dp[2];
+#endif
+        if(Extnodes[no].vmax < acc[k].vmax)
+          Extnodes[no].vmax = acc[k].vmax;
+        Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
+        Extnodes[no].Ti_lastkicked = All.Ti_Current;
+
+        const int father_slot = marked_top_level_slot(node_slot, Nodes[no].u.d.father);
+        if(father_slot >= 0) {kick_accumulate(acc[father_slot], acc[k]);}
+      }
+
+    myfree(acc);
+    myfree(node_slot);
+    myfree(uniq);
     myfree(rec_all);
     myfree(rec_loc);
   }
@@ -285,6 +506,12 @@ void force_drift_node(int no, integertime time1)
             }
         }
     }
+    /* Record that this rank has now drifted at least one node to time1 without
+     * updating that node's device SoA mirror. Relaxed: every caller passes
+     * All.Ti_Current, so concurrent writers store the same value, and the only reader
+     * is the device sweep's invariant check, which runs between phases. */
+    __atomic_store_n(&host_lazy_drift_ti, time1, __ATOMIC_RELAXED);
+
     /* Release store: publishes Ti_current after all geometry/Extnodes writes so a
      * threaded walk's acquire-load fast path sees fresh Ti => fresh geometry. */
     force_drift_node_publish_current(no, time1);

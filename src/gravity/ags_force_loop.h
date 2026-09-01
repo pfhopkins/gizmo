@@ -324,7 +324,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
             short int wakeup_val = (short int)(active.TimeBin + 1);
             Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
-            Kokkos::atomic_store(need_wakeup, 1);
+            if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
             if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
         }
     }
@@ -335,7 +335,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
 #endif
 
 #if defined(DM_SIDM)
-    {
+    if(neighbor.geofactor) {
         SidmScatterResult sidm_r = sidm_core_flux_compute_pair(
             local, j, P_base, kernel, accum,
             neighbor.geofactor, active.scalars.TimeBinActive,
@@ -344,7 +344,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             if(sidm_r.set_wakeup_j) {
                 short int wakeup_val = (short int)(active.TimeBin + 1);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
-                Kokkos::atomic_store(need_wakeup, 1);
+                if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
                 if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
             }
             /* The kick lands on Pj.Vel immediately, mid-loop, so a later pair
@@ -652,7 +652,66 @@ struct AgsForceSpec {
                                         int active_slot, int i,
                                         const AccumData& accum);
 
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* merge_accum — per-field op MUST match pair_kernel writes. Nothing checks
+     * the two against each other at runtime, so drift between them is silent.
+     * Adding a new accumulator field = ONE LINE under its physics flag's #ifdef. */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)         local_accum.field += peer_accum.field;
+#define ACCUM_ADD_ARRAY(field, N) for(int k = 0; k < (N); k++) local_accum.field[k] += peer_accum.field[k];
+#define ACCUM_MIN(field)         if(peer_accum.field < local_accum.field) local_accum.field = peer_accum.field;
+#define ACCUM_MAX(field)         if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
+#define ACCUM_MUL(field)         local_accum.field *= peer_accum.field;
+
+#if defined(DM_SIDM)
+        ACCUM_ADD_ARRAY(sidm_kick, 3)
+        ACCUM_MIN(dtime_sidm)
+        ACCUM_ADD(si_count)
+#endif
+#ifdef DM_FUZZY
+        ACCUM_ADD_ARRAY(acc, 3)
+        ACCUM_ADD(AGS_Dt_Numerical_QuantumPotential)
+#if (DM_FUZZY > 0)
+        ACCUM_ADD(AGS_Dt_Psi_Re)
+        ACCUM_ADD(AGS_Dt_Psi_Im)
+        ACCUM_ADD(AGS_Dt_Psi_Mass)
+#endif
+#endif
+#if defined(CBE_INTEGRATOR)
+        ACCUM_MAX(AGS_vsig)
+        for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
+            for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
+                local_accum.CBE_basis_moments_dt[k1][k2]  += peer_accum.CBE_basis_moments_dt[k1][k2];
+                local_accum.CBE_basis_out_rate_dt[k1][k2] += peer_accum.CBE_basis_out_rate_dt[k1][k2];
+            }
+        }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+        ACCUM_MAX(cbe_face_residual_max)
+        ACCUM_ADD(cbe_face_residual_sum)
+        ACCUM_ADD(cbe_bracket_fail_count)
+        ACCUM_ADD(cbe_recon_rho_clamp_count)
+        ACCUM_ADD(cbe_recon_S_clamp_count)
+        ACCUM_ADD(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
+#if defined(CBE_INTEGRATOR_WITHGRADIENTS)
+        ACCUM_ADD(cbe_grad_nonfinite_count)
+#endif
+#endif
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+        ACCUM_ADD(Grain_DeltaCoagMass)
+        ACCUM_ADD_ARRAY(Grain_DeltaCoag_CompositionMass, GRAIN_NUM_SPECIES)
+        /* Multiplicative — peer factor composes with local factor. */
+        ACCUM_MUL(Grain_DeltaErosionFrac)
+#endif
+
+#undef ACCUM_ADD
+#undef ACCUM_ADD_ARRAY
+#undef ACCUM_MIN
+#undef ACCUM_MAX
+#undef ACCUM_MUL
+        (void)local_accum; (void)peer_accum;
+    }
 
     /* ====================================================================
      * ENGINE APPARATUS

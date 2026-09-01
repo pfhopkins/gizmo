@@ -117,7 +117,7 @@ struct SinkFeedLocalIn {
     Vec3<MyFloat> Jgas_in_Kernel;
 #endif
 #ifdef SINK_THERMALFEEDBACK
-    MyFloat thermal_energy;     /* precomputed: sink_lum_bol(Mdot, Sink_Mass, -1) * Dt */
+    MyFloat thermal_energy;     /* precomputed: sink_lum_bol(Mdot, Sink_Mass, i) * Dt */
 #endif
 };
 
@@ -616,8 +616,8 @@ struct SinkFeedSpec {
                                    double h_search,
                                    const CallScalars& scalars)
     {
-        ActiveData active;
-        active.local            = dctx.per_active_local[active_slot];
+        ActiveData active{};
+        if(dctx.per_active_local) { active.local = dctx.per_active_local[active_slot]; }
         /* Runner-facing top-level fields (Mode B walker reads pos/h_search
          * directly). Copy from the host-staged local so post-drift Mode B
          * walks use the same per-active position the host-fill captured. */
@@ -656,7 +656,11 @@ struct SinkFeedSpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-        neighbor.binary_merge_eligible = dctx.binary_merge_eligible[j];
+        /* Absent when the table could not be staged: the run is already stopping,
+         * and no star is a merge candidate without it. Read defensively because
+         * the multi-rank responder walk reaches here for peers' queries even on a
+         * rank that has no actives of its own. */
+        neighbor.binary_merge_eligible = dctx.binary_merge_eligible ? dctx.binary_merge_eligible[j] : (unsigned char)0;
 #endif
         return neighbor;
     }
@@ -685,7 +689,39 @@ struct SinkFeedSpec {
 
     /* Per-field merge — manifest in sink_feed_loop.cc. mass_markedswallow_scratch
      * is intentionally NOT in the manifest (per-i scratch, not aggregable). */
-    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum);
+    /* Per-field merge of a peer's contribution (Mode B remote). Per-field op
+     * MUST match the pair_kernel writes. mass_markedswallow_scratch is
+     * intentionally NOT in the manifest — per-i scratch, not aggregable
+     * across peers. Nothing checks this manifest against pair_kernel at runtime,
+     * so drift between them is silent.
+     *
+     * Adding a new accumulator field for this loop = ONE LINE under the
+     * appropriate physics flag's #ifdef. */
+    KOKKOS_INLINE_FUNCTION
+    static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+    {
+#define ACCUM_ADD(field)                local_accum.field += peer_accum.field;
+#define ACCUM_ADD_VEC3(field)           for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
+#define ACCUM_MIN_PAIR(value, pos)                                              \
+        do {                                                                        \
+            if(peer_accum.value < local_accum.value) {                              \
+                local_accum.value = peer_accum.value;                               \
+                for(int k = 0; k < 3; k++) local_accum.pos[k] = peer_accum.pos[k];  \
+            }                                                                       \
+        } while(0);
+
+#ifdef SINK_CALC_LOCAL_ANGLEWEIGHTS
+        ACCUM_ADD(Sink_angle_weighted_kernel_sum)
+#endif
+#ifdef SINK_REPOSITION_ON_POTMIN
+        ACCUM_MIN_PAIR(Sink_PotentialMinimumOfNeighbors,
+                       Sink_PotentialMinimumOfNeighborsPos)
+#endif
+
+#undef ACCUM_ADD
+#undef ACCUM_ADD_VEC3
+#undef ACCUM_MIN_PAIR
+    }
 
     /* ====================================================================
      * ENGINE APPARATUS

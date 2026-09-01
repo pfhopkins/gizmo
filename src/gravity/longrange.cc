@@ -40,6 +40,28 @@ void long_range_init(void)
 }
 
 
+/*! Memory the long-range gravity will want from the arena, asked of whichever mesh routines this
+ *  run actually uses, and separated into what is held for the whole run and what a single force
+ *  needs. The branches match long_range_init above exactly, so a run that sets up two meshes is
+ *  sized for both. */
+void long_range_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force)
+{
+  size_t always = 0, per_force = 0, a = 0, f = 0;
+#ifdef BOX_PERIODIC
+  pm_periodic_estimated_arena_bytes(npart_per_rank, &a, &f);
+  always += a; per_force += f;
+#ifdef PM_PLACEHIGHRESREGION
+  pm_nonperiodic_estimated_arena_bytes(npart_per_rank, &a, &f);
+  always += a; per_force += f;
+#endif
+#else
+  pm_nonperiodic_estimated_arena_bytes(npart_per_rank, &a, &f);
+  always += a; per_force += f;
+#endif
+  *held_always = always; *held_per_force = per_force;
+}
+
+
 void long_range_init_regionsize(void)
 {
 #ifdef BOX_PERIODIC

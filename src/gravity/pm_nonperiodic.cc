@@ -88,6 +88,50 @@ static struct part_slab_data
 static int *part_sortindex;
 
 
+/*! Memory this module will want from the arena, worked out before the arena exists so that it can
+ *  be sized to hold it. The real allocations are still checked when they happen, against the true
+ *  grid size the FFT library reports; this is only an estimate made early, and errs high.
+ *
+ *  Split the same way as the periodic case, but the mesh is GRIDBOOST times finer and more of it
+ *  is permanent: the convolution kernels are built once at setup and used for the rest of the run,
+ *  one per region that has one, doubled again when screening is compiled in.
+ */
+void pm_nonperiodic_estimated_arena_bytes(long long npart_per_rank, size_t *held_always, size_t *held_per_force)
+{
+  long long slabs = ((long long) GRID + (long long) NTask - 1) / (long long) NTask;
+  if(slabs < 1) {slabs = 1;}
+  long long gridcells = slabs * (long long) GRID * 2 * ((long long) GRID / 2 + 1);
+  size_t grid_bytes = (size_t) gridcells * sizeof(d_fftw_real);
+
+  int n_permanent_grids = 1;             /* rhogrid */
+#if !defined(BOX_PERIODIC)
+  n_permanent_grids += 1;                /* kernel[0] */
+#ifdef DM_SCALARFIELD_SCREENING
+  n_permanent_grids += 1;                /* kernel_scalarfield[0] */
+#endif
+#endif
+#if defined(PM_PLACEHIGHRESREGION)
+  n_permanent_grids += 1;                /* kernel[1] */
+#ifdef DM_SCALARFIELD_SCREENING
+  n_permanent_grids += 1;                /* kernel_scalarfield[1] */
+#endif
+#endif
+
+  if(npart_per_rank < 0) {npart_per_rank = 0;}
+
+  *held_always = (size_t) n_permanent_grids * grid_bytes + (size_t) NTask * 2 * sizeof(ptrdiff_t);
+
+  *held_per_force = grid_bytes           /* forcegrid */
+                  + (size_t) (8 * npart_per_rank) * (sizeof(struct part_slab_data) + sizeof(int))
+                  + (size_t) (8 * npart_per_rank) * (sizeof(large_array_offset) + sizeof(d_fftw_real))
+                  + (size_t) NTask * (size_t) NTask * sizeof(int)
+                  + (size_t) NTask * sizeof(int);
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+  *held_per_force += grid_bytes;         /* tidal_workspace */
+#endif
+}
+
+
 /*! This function determines the particle extension of all particles, and for
  *  those types selected with PM_PLACEHIGHRESREGION if this is used, and then
  *  determines the boundaries of the non-periodic FFT-mesh that can be placed

@@ -94,11 +94,24 @@ GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
                                               DeviceContext& ctx)
 {
-    ctx.TimeBinActive_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
-    for(int k = 0; k < TIMEBINS; k++) { ctx.TimeBinActive_uvm[k] = TimeBinActive[k]; }
-    ctx.need_wakeup_uvm = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
-    *ctx.need_wakeup_uvm = 0;
+    /* All owned pointers null before the first request, so a failure part-way
+     * leaves nothing indeterminate for cleanup_device_context to release. */
+    ctx.TimeBinActive_uvm = NULL; ctx.need_wakeup_uvm = NULL;
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
+    ctx.ismdc_uvm = nullptr;
+#endif
     ctx.wakeup_dirty_base = WakeupDirty;   /* global UVM sidecar base; kernel marks WakeupDirty[j] on wakeup */
+    ctx.TimeBinActive_uvm = (int *) gizmo_gpu_alloc_shared(TIMEBINS * sizeof(int), NULL);
+    ctx.need_wakeup_uvm = (int *) gizmo_gpu_alloc_shared(sizeof(int), NULL);
+    if(!ctx.TimeBinActive_uvm || !ctx.need_wakeup_uvm) {
+        ctx.populate_failed = 1;
+        gizmo_request_controlled_stop(7722,
+            "hydro forces: could not stage the timebin table; the forces are not computed",
+            __FILE__, __LINE__, __FUNCTION__);
+        return;
+    }
+    for(int k = 0; k < TIMEBINS; k++) { ctx.TimeBinActive_uvm[k] = TimeBinActive[k]; }
+    *ctx.need_wakeup_uvm = 0;
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* Host-precompute per-active ISMDustChem passive-scalar diffusion values.
@@ -117,12 +130,20 @@ void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
                         ii, ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + ki, 0, CellP);
             }
         }
-        ctx.ismdc_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-            (size_t)args.num_active * n_ismdc * sizeof(double));
-        memcpy(ctx.ismdc_uvm, ismdc_host, (size_t)args.num_active * n_ismdc * sizeof(double));
+        const size_t ismdc_bytes = (size_t)args.num_active * n_ismdc * sizeof(double);
+        ctx.ismdc_uvm = (double *) gizmo_gpu_alloc_shared(ismdc_bytes, NULL);
+        if(ctx.ismdc_uvm) { memcpy(ctx.ismdc_uvm, ismdc_host, ismdc_bytes); }
         delete[] ismdc_host;
-    } else {
-        ctx.ismdc_uvm = nullptr;
+        if(!ctx.ismdc_uvm) {
+            ctx.populate_failed = 1;
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "hydro forces: could not stage the dust-chemistry diffusion species "
+                     "(%.1f MB) for %d active cells; the forces are not computed",
+                     (double) ismdc_bytes / (1024.0 * 1024.0), args.num_active);
+            gizmo_request_controlled_stop(7722, msg, __FILE__, __LINE__, __FUNCTION__);
+            return;
+        }
     }
 #endif
 }
@@ -356,82 +377,6 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * fold composes correctly.
  * ========================================================================== */
 
-void HydroForceSpec::merge_accum(AccumData& dst, const AccumData& src)
-{
-#define MERGE_ADD_VEC3(field) do { for(int kv = 0; kv < 3; kv++) dst.field[kv] += src.field[kv]; } while(0)
-#define MERGE_ADD(field)      do { dst.field += src.field; } while(0)
-#define MERGE_MAX(field)      do { if(src.field > dst.field) dst.field = src.field; } while(0)
-
-    for(int kv = 0; kv < 3; kv++) { dst.Acc[kv] += src.Acc[kv]; }
-    MERGE_ADD(DtInternalEnergy);
-#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
-    MERGE_ADD(DtInternalEnergy_FromConduction);
-#endif
-    MERGE_MAX(MaxSignalVel);
-#ifdef OUTPUT_SHOCK_MACH_NUMBER
-    MERGE_MAX(MaxShockMachNumber);
-#endif
-#ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
-    MERGE_MAX(MaxKineticEnergyNgb);
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    MERGE_ADD(DtMass);
-    MERGE_ADD(dMass);
-    for(int kv = 0; kv < 3; kv++) { dst.GravWorkTerm[kv] += src.GravWorkTerm[kv]; }
-#endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) { dst.Dyield[k] += src.Dyield[k]; }
-#endif
-#ifdef CHIMES_TURB_DIFF_IONS
-    for(int k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) { dst.ChimesIonsYield[k] += src.ChimesIonsYield[k]; }
-#endif
-#if defined(RT_SOLVER_EXPLICIT)
-#if defined(RT_EVOLVE_ENERGY)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) { dst.Dt_Rad_E_gamma[k] += src.Dt_Rad_E_gamma[k]; }
-#endif
-#if defined(RT_EVOLVE_FLUX)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) { for(int kv = 0; kv < 3; kv++) { dst.Dt_Rad_Flux[k][kv] += src.Dt_Rad_Flux[k][kv]; } }
-#endif
-#if defined(RT_INFRARED)
-    MERGE_ADD(Dt_Rad_E_gamma_T_weighted_IR);
-#endif
-#if defined(RT_EVOLVE_INTENSITIES)
-    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
-        for(int k_dir = 0; k_dir < N_RT_INTENSITY_BINS; k_dir++) { dst.Dt_Rad_Intensity[k][k_dir] += src.Dt_Rad_Intensity[k][k_dir]; }
-    }
-#endif
-#endif
-#if defined(MAGNETIC)
-    for(int kv = 0; kv < 3; kv++) { dst.Face_Area[kv] += src.Face_Area[kv]; }
-    for(int kv = 0; kv < 3; kv++) { dst.DtB[kv] += src.DtB[kv]; }
-    MERGE_ADD(divB);
-#if defined(DIVBCLEANING_DEDNER)
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    MERGE_ADD(DtPhi);
-#endif
-    for(int kv = 0; kv < 3; kv++) { dst.DtB_PhiCorr[kv] += src.DtB_PhiCorr[kv]; }
-#endif
-#endif
-#ifdef COSMIC_RAY_FLUID
-    MERGE_ADD(Face_DivVel_ForAdOps);
-#if defined(CRFLUID_INJECTION_AT_SHOCKS)
-    MERGE_ADD(DtCREgyNewInjectionFromShocks);
-#endif
-    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
-        dst.DtCosmicRayEnergy[k] += src.DtCosmicRayEnergy[k];
-#if defined(CRFLUID_EVOLVE_SPECTRUM)
-        dst.DtCosmicRay_Number_in_Bin[k] += src.DtCosmicRay_Number_in_Bin[k];
-#endif
-#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-        for(int kAlf = 0; kAlf < 2; kAlf++) { dst.DtCosmicRayAlfvenEnergy[k][kAlf] += src.DtCosmicRayAlfvenEnergy[k][kAlf]; }
-#endif
-    }
-#endif
-
-#undef MERGE_ADD_VEC3
-#undef MERGE_ADD
-#undef MERGE_MAX
-}
 
 /* ============================================================================
  * Toplevel: hydro_force
