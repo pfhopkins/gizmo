@@ -1297,7 +1297,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
          * finalization, or it leaves a non-candidate's GravAccel fresh-written but raw.
          * ProcessedFlag is intentionally left unset on a candidacy skip here (matches
          * the CPU primary walk: a cached/extrapolated particle is finalized later). */
-        if(!gravity_treewalk_candidate_prewalk(i)) {continue;}
+        if(!gravity_treewalk_candidate_prewalk(i, a)) {continue;}
         idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
@@ -1610,19 +1610,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
-    /* Import-completeness guard.  A foreign node the sender shipped as a childless multipole,
-     * which this walk's predicate now wants to descend, means the import no longer covers what the
-     * walk asks of it.  Accepting the multipole instead would drop the sub-node structure the target
-     * resolves -- silently, and asymmetrically between ranks.  Until a repair path exists (export the
-     * target to the node's owner, which holds the full subtree), this is a controlled stop. */
-    if(g_inv_fterm_aggregate > 0) {
-        printf("[LET INCOMPLETE rank=%d] GPU gravity walk needed to descend %lld foreign nodes that "
-               "were imported as multipoles with no children: the sender's opening test closed on them, "
-               "these targets' opening test opens them, so their forces are not computable from the "
-               "import in hand. Stopping.\n", ThisTask, g_inv_fterm_aggregate);
-        fflush(stdout);
-        endrun(90000087);
-    }
+    /* Import-completeness record.  A foreign node the sender shipped as a childless multipole, which
+     * this walk's predicate now wants to descend, means the import no longer covers what the walk
+     * asks of it.  Counted in the kernel and folded into the shared ledger here; gravity_tree()
+     * reduces it across ranks and decides collectively whether to rebuild and redo, or stop. */
+    gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
@@ -2019,7 +2011,7 @@ extern "C" int gpu_ewald_walk_primary(void)
         if(ProcessedFlag[i]) continue;
         /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce):
          * parity with the CPU primary loop + finalization (see primary walk). */
-        if(!gravity_treewalk_candidate_prewalk(i)) continue;
+        if(!gravity_treewalk_candidate_prewalk(i, a)) continue;
         idx_host[num_active++] = i;
     }
     if(num_active == 0) { myfree(idx_host); return 0; }
@@ -2072,17 +2064,10 @@ extern "C" int gpu_ewald_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gpu_ewald_walk_primary", num_active);
-    /* Import-completeness guard, same contract and same disposition as the primary walk: a foreign
-     * node the sender shipped as a childless multipole, which this walk has to resolve below, means
-     * the import no longer covers what the walk asks of it. */
-    if(g_inv_fterm_aggregate > 0) {
-        printf("[LET INCOMPLETE rank=%d] GPU Ewald-correction walk needed to descend %lld foreign nodes that "
-               "were imported as multipoles with no children: the sender's opening test closed on them, "
-               "this walk has to resolve below them, so their correction is not computable from the import "
-               "in hand. Stopping.\n", ThisTask, g_inv_fterm_aggregate);
-        fflush(stdout);
-        endrun(90000087);
-    }
+    /* Import-completeness record, same contract and same ledger as the primary walk: a foreign node
+     * the sender shipped as a childless multipole, which this walk has to resolve below, means the
+     * import no longer covers what the walk asks of it. */
+    gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
 
     int nsucceeded = 0;
     for(int a = 0; a < num_active; a++) {

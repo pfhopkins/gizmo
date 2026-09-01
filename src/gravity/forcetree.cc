@@ -1431,16 +1431,21 @@ void force_add_element_to_tree(int iparent, int ichild)
  *  memory-access panelty (which reduces cache performance) incurred by the
  *  table.
  */
-/* Import-completeness record for the gravity walk.
+/* Import-completeness record for the gravity walks.
  *
  * A walk that opens a foreign node the sender shipped multipole-only has outrun its import: the
  * force for that target is not computable from the nodes in hand.  The walk cannot report this
  * where it happens -- it runs threaded over targets, one incompleteness can involve many nodes,
- * and endrun() only REQUESTS a stop and returns, so the walk keeps going.  So the walk records,
- * and gravity_report_incomplete_import() speaks once for the whole pass with the first case as
- * the example. */
+ * and endrun() only REQUESTS a stop and returns, so the walk keeps going.  So every walk records
+ * here instead, host and device, and the caller speaks once for the whole pass.
+ *
+ * The count is read before the pass is resolved, because whether this is repairable is a
+ * collective question: gravity_tree() reduces it across ranks and only then decides between
+ * rebuilding the tree and redoing the evaluation, or stopping.  The host walks also keep the first
+ * case as an example; the device walks can only count, so an example is not guaranteed. */
 static long long IncompleteImportCount = 0;
 static int    IncompleteImportNode = -1, IncompleteImportType = -1;
+static int    IncompleteImportHaveExample = 0;
 static unsigned long long IncompleteImportID = 0;
 static double IncompleteImportLen = 0, IncompleteImportMass = 0;
 
@@ -1450,32 +1455,46 @@ void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, 
 #pragma omp critical(_incomplete_import_)
 #endif
     {
-        if(IncompleteImportCount == 0)
+        if(!IncompleteImportHaveExample)
         {
             IncompleteImportNode = node; IncompleteImportID = id; IncompleteImportType = ptype;
             IncompleteImportLen = len;   IncompleteImportMass = mass;
+            IncompleteImportHaveExample = 1;
         }
         IncompleteImportCount++;
     }
 }
 
-/* Reports and clears.  Returns the count so the caller can decide what to do about it. */
-long long gravity_report_incomplete_import(void)
+/* For the device walks, which count inside the kernel and have no per-node detail to carry out. */
+void gravity_note_incomplete_import_count(long long n)
 {
-    long long n = IncompleteImportCount;
-    if(n > 0)
+    if(n <= 0) {return;}
+#ifdef _OPENMP
+#pragma omp critical(_incomplete_import_)
+#endif
     {
-        printf("The gravity walk needed to descend %lld imported node(s) that arrived without children on rank %d, "
-               "so the force on those targets is not computable from the imported tree. The import is pruned when the "
-               "tree is built, against where the particles were then; by now they have moved far enough that the walk "
-               "resolves structure the import no longer carries. First case: node %d, target ID=%llu type=%d, node size "
-               "%g mass %g. Building the tree more often avoids this -- lower TreeDomainUpdateFrequency.\n",
-               n, ThisTask, IncompleteImportNode, IncompleteImportID, IncompleteImportType,
-               IncompleteImportLen, IncompleteImportMass);
-        fflush(stdout);
+        IncompleteImportCount += n;
     }
+}
+
+long long gravity_incomplete_import_count(void) {return IncompleteImportCount;}
+
+/* One example of what this rank could not descend, for the single line the caller prints.  Returns
+ * whether there is one: the device walks can only count, so a rank may have a shortfall and no
+ * example, and the caller picks a rank that has one. */
+int gravity_incomplete_import_example(char *buf, int buflen)
+{
+    if(!IncompleteImportHaveExample || buflen <= 0) {return 0;}
+    snprintf(buf, (size_t) buflen, "node %d, target ID=%llu type=%d, node size %g mass %g.",
+             IncompleteImportNode, IncompleteImportID, IncompleteImportType,
+             IncompleteImportLen, IncompleteImportMass);
+    return 1;
+}
+
+void gravity_clear_incomplete_import(void)
+{
     IncompleteImportCount = 0;
-    return n;
+    IncompleteImportHaveExample = 0;
 }
 
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)

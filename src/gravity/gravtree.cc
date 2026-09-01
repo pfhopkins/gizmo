@@ -84,6 +84,29 @@ int Ewald_iter;			/* global in file scope, for simplicity */
  *  still stands, and its opening decisions must be covered by the same import.  For a particle
  *  whose walk measured nothing new this rewrites the identical value.
  */
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+/*! The one needs_new_treeforce() answer for this gravity_tree() call, indexed by position in
+ *  ActiveParticleList.  Frozen before any walk runs, because the walk writes the fields that
+ *  predicate reads; see the call site for what disagrees if it is asked twice.  Sized to the
+ *  active set, not to NumPart, so a step with few actives pays for few actives. */
+static std::vector<unsigned char> TreeforceCandidateFrozen;
+
+void gravity_freeze_treeforce_candidates(void)
+{
+    TreeforceCandidateFrozen.assign(ActiveParticleList.size(), 0);
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        if(needs_new_treeforce(ActiveParticleList[ii])) {TreeforceCandidateFrozen[ii] = 1;}
+    }
+}
+
+int gravity_treeforce_candidate_frozen(int ii)
+{
+    if(ii < 0 || ii >= (int)TreeforceCandidateFrozen.size()) {return 1;}  /* not a member of this call's active set */
+    return TreeforceCandidateFrozen[ii];
+}
+#endif
+
 void refresh_old_acceleration_for_tree_opening(void)
 {
     /* OldAcc is overloaded on a 2lpt start: the IC reader leaves the particle masses in it, and
@@ -242,18 +265,37 @@ void gravity_tree(void)
         for(i = 0; i < NumPart; i++) { P[i].GravCost[TakeLevel] = 0; }
     } /* re-zero the cost [will be re-summed] */
 
-    /* cache which particles need a new tree force BEFORE the tree walk runs: the tree walk can modify
-       quantities like Min_Sink_FeedbackTime that needs_new_treeforce() depends on, so re-calling it
-       in the post-processing loop could give a different answer, causing a particle that was computed
-       by the tree walk (raw GravAccel, raw GravJerk) to incorrectly take the jerk-skip path (which
-       expects G-multiplied GravAccel/GravJerk from a previous step). */
+    /* Decide which particles need a new tree force BEFORE any walk runs, ONCE for the whole call,
+       and let every consumer read that one answer. The walk MUTATES the inputs -- it writes
+       Min_Sink_FeedbackTime, which needs_new_treeforce() compares against -- so asking again after a
+       walk can give a different answer for the same particle. Three things ask: the walk dispatchers
+       (via gravity_treewalk_candidate_prewalk), and the finalization loop below, which must take the
+       jerk-skip path for exactly the particles the walk skipped. If they disagree, a particle the
+       walk computed raw is finalized as though it carried a previous step's G-multiplied values, or
+       one the walk never touched is multiplied by G a second time.
+       The walk asks more than once per call in two ways that are both real: the Ewald-correction
+       pass re-selects after the primary pass has already written those fields, and an import repair
+       redoes both passes. */
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-    std::vector<int> treeforce_skip_flag(ActiveParticleList.size(), 0);
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {
-        int i = ActiveParticleList[ii];
-        if(!needs_new_treeforce(i)) {treeforce_skip_flag[ii] = 1;}
-    }
+    gravity_freeze_treeforce_candidates();
 #endif
+
+    /* Import-completeness repair.  The import is pruned when the tree is built, against where the
+     * particles were then; the target positions and node centres it was pruned against keep moving
+     * while the tree is reused, so a walk can come to resolve structure the import no longer
+     * carries.  That cannot be frozen the way the opening scale can -- it is the physical support
+     * of the force law, not an estimator -- so it is detected and repaired instead: rebuild the
+     * tree and its import against the current positions, and redo this evaluation against them.
+     *
+     * The whole Ewald_iter loop is redone, in order, because the primary walk ASSIGNS its outputs
+     * (so the redo is its own reset) while the Ewald correction ADDS to them, and both run before
+     * the finalization below mutates GravAccel in place.
+     *
+     * ONE repair.  A shortfall that survives a rebuild against current positions is not the tree
+     * falling behind the particles, and rebuilding again would not address it. */
+    const int gravity_let_repair_max = 1;
+    int gravity_let_repair_attempts = 0;
+gravity_walk_attempt:
 
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
     for(Ewald_iter = 0; Ewald_iter <= ewald_max; Ewald_iter++)
@@ -308,14 +350,9 @@ void gravity_tree(void)
              * index range is reported by the exchange, which raises the range
              * and rebuilds before this walk runs.
              * ============================================================ */
-            /* Import completeness.  The walk records rather than reports: it runs threaded over
-             * targets, one incompleteness can involve many nodes, and a stop request only takes
-             * effect at the poll below.  Speak once for the pass here, then ask for that stop --
-             * the forces on those targets were computed from an import that did not cover them. */
-            if(gravity_report_incomplete_import() > 0) {
-                gizmo_request_controlled_stop(90000087, "gravtree: the imported tree did not carry the structure the walk resolved",
-                                              __FILE__, __LINE__, __FUNCTION__);
-            }
+            /* Import completeness is NOT resolved here.  Every walk of this pass records into one
+             * ledger; whether the shortfall is repairable is a collective question, so it is
+             * reduced across ranks and answered once after the pass, below the Ewald_iter loop. */
 
             if(Nexport > 0) {
                 printf("The locally essential tree did not cover the gravity of %ld particles on rank %d. Stopping.\n", Nexport, ThisTask);
@@ -347,6 +384,102 @@ void gravity_tree(void)
         }
         while(ndone < NTask);
     } /* Ewald_iter */
+
+    /* Resolve this pass's import completeness.  Every rank left the loop above only once all of
+     * them were done, so they arrive here together and reduce the same question; the decision is
+     * taken from the reduced value alone, so every rank takes the same branch and the rebuild
+     * below stays collective. */
+    {
+        long long shortfall_local = gravity_incomplete_import_count();
+        long long tally[2] = {shortfall_local, (shortfall_local > 0) ? 1 : 0}, total[2] = {0, 0};
+        MPI_Allreduce(tally, total, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(total[0] > 0)
+        {
+            int repairing = (gravity_let_repair_attempts < gravity_let_repair_max);
+            /* One line for the whole repair, not one per rank: the decision is collective and every
+             * rank that saw a shortfall would otherwise say the same thing about it.  Pick the
+             * lowest-numbered rank that actually has an example -- a rank whose shortfall came only
+             * from a device walk has a count but nothing to show -- and let it supply the example. */
+            char example[256]; example[0] = '\0';
+            int have = gravity_incomplete_import_example(example, (int) sizeof(example));
+            int pick[2] = {have ? ThisTask : NTask, ThisTask}, chosen[2] = {NTask, 0};
+            MPI_Allreduce(pick, chosen, 1, MPI_2INT, MPI_MINLOC, MPI_COMM_WORLD);
+            if(chosen[0] < NTask) {MPI_Bcast(example, (int) sizeof(example), MPI_CHAR, chosen[0], MPI_COMM_WORLD);}
+            else {example[0] = '\0';}
+            if(ThisTask == 0)
+            {
+                if(repairing) {
+                    printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, on "
+                           "%lld of %d ranks. The import is pruned when the tree is built, against where the particles "
+                           "were then, and they have since moved far enough that the walk resolves structure it no "
+                           "longer carries.%s%s Rebuilding the tree and redoing this evaluation against it. Frequent "
+                           "repairs mean the tree is being reused too long -- lower TreeDomainUpdateFrequency.\n",
+                           total[0], total[1], NTask, example[0] ? " First case: " : "", example);
+                } else {
+                    printf("The gravity walk still needed to descend %lld imported node(s) that arrived without "
+                           "children, on %lld of %d ranks, after the tree and its import were rebuilt against the "
+                           "current particle positions.%s%s That is not the tree falling behind the particles, so "
+                           "rebuilding again would not fix it -- the receiver cover, the wire format or the import "
+                           "install is not shipping what this walk opens. Stopping.\n",
+                           total[0], total[1], NTask, example[0] ? " First case: " : "", example);
+                }
+                fflush(stdout);
+            }
+            gravity_clear_incomplete_import();
+            if(!repairing)
+            {
+                /* Drain here rather than letting this fall through.  Every rank reaches this on the
+                 * same reduced value, so the poll is symmetric, and the finalization below would
+                 * otherwise run its in-place mutation of GravAccel, the potential and the RT fields
+                 * over a pass that has just been declared not computable. */
+                gizmo_request_controlled_stop(90000087, "gravtree: the imported tree did not carry the structure the walk resolved, and rebuilding it did not help",
+                                              __FILE__, __LINE__, __FUNCTION__);
+                gizmo_exit_bad_stop_if_requested("gravtree:let_repair_exhausted");
+            }
+            else
+            {
+                const double t_repair_start = my_second();
+                const double child0_repair = CPU_ChildCharged;
+                gravity_let_repair_attempts++;
+
+                /* The detector tables were allocated after the tree, so they sit above it in the
+                 * arena.  force_treebuild frees and reallocates the tree when it has to grow the
+                 * node arena or the foreign-node range, and the arena is LIFO -- so hand those two
+                 * back first and take them again afterwards. */
+                myfree(DataNodeList); myfree(DataIndexTable);
+
+                /* Same build the start of this call would have done, minus the drift and
+                 * re-sequencing: the particles are already at All.Ti_Current, and re-sequencing
+                 * here would move indices under the active list this walk is iterating.  The
+                 * rebuild flags are deliberately NOT cleared -- this repair does not satisfy
+                 * whatever else asked for a rebuild, and TreeReconstructFlag in particular buys a
+                 * full domain decomposition in run.cc that nothing here has asked for. */
+                refresh_old_acceleration_for_tree_opening();
+                gizmo_exit_bad_stop_if_requested("gravtree:before_repair_treebuild");
+                force_treebuild(NumPart, NULL);
+                gizmo_exit_bad_stop_if_requested("gravtree:after_repair_treebuild");
+                if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
+                TreeMomentsStaleFlag = 0;   /* the build just refreshed every moment */
+
+                All.BunchSize = GRAVITY_LET_DETECTOR_ENTRIES;
+                DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
+                DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
+
+                /* The redone pass re-counts its own work, so drop what the abandoned one counted.
+                 * GravCost is not just a diagnostic -- it is the per-particle weight the next
+                 * domain decomposition balances on.  Only the active set can have been written, so
+                 * only the active set is cleared: a step with few actives must not pay for NumPart. */
+                Costtotal = 0; Ewaldcount = 0; N_nodesinlist = 0;
+                if(TakeLevel >= 0) {for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {P[ActiveParticleList[ii]].GravCost[TakeLevel] = 0;}}
+
+                /* The repair goes through the same build and the same walks as any other, so its
+                 * cost belongs in the same rows; charge the build here so the walk row it sits
+                 * inside does not absorb it. */
+                cpu_charge_child(CPU_TREEBUILD, cpu_minus_children(timediff(t_repair_start, my_second()), child0_repair));
+                goto gravity_walk_attempt;
+            }
+        }
+    }
 
     myfree(DataNodeList); myfree(DataIndexTable);
 
@@ -382,7 +515,7 @@ void gravity_tree(void)
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i, P);
-        if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
+        if(!gravity_treeforce_candidate_frozen(ii)) { // the one decision this call froze before any walk ran, the same one the walk dispatchers used
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;
@@ -612,15 +745,17 @@ void *gravity_primary_loop(void *p)
 #endif
     while(1)
     {
-        int batch[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_count = 0;
+        /* The active-list position travels with the particle: the frozen candidacy this call
+         * decided is keyed by it, and the batch would otherwise carry only the particle index. */
+        int batch[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_pos[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_count = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistgravprim_)
 #endif
         {
             while(batch_count < GRAVITY_PRIMARY_LOOP_BATCH_SIZE && BufferFullFlag == 0 && NextParticle < (int)ActiveParticleList.size())
             {
-                int idx = ActiveParticleList[NextParticle]; NextParticle++;
-                if(!ProcessedFlag[idx]) {batch[batch_count++] = idx;}
+                int pos = NextParticle, idx = ActiveParticleList[NextParticle]; NextParticle++;
+                if(!ProcessedFlag[idx]) {batch_pos[batch_count] = pos; batch[batch_count++] = idx;}
             }
         }
         if(batch_count == 0) {break;}
@@ -630,7 +765,7 @@ void *gravity_primary_loop(void *p)
             i = batch[b];
             /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce);
              * non-candidates are marked done so the finalization loop skips them. */
-            if(!gravity_treewalk_candidate_prewalk(i)) {ProcessedFlag[i]=1; continue;}
+            if(!gravity_treewalk_candidate_prewalk(i, batch_pos[b])) {ProcessedFlag[i]=1; continue;}
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             if(Ewald_iter)
@@ -755,14 +890,16 @@ int needs_new_treeforce(int n){
  * already filtered it; the primary walks relied on the active-list builder and the
  * device early-return). ProcessedFlag is NOT part of candidacy -- it is per-walk
  * done-bookkeeping each caller keeps separately. */
-int gravity_treewalk_candidate_prewalk(int i)
+int gravity_treewalk_candidate_prewalk(int i, int ii)
 {
     if(P[i].Mass <= 0) {return 0;}
 #ifdef HERMITE_INTEGRATION
     if(HermiteOnlyFlag && !eligible_for_hermite(i)) {return 0;}
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-    if(!needs_new_treeforce(i)) {return 0;}
+    if(!gravity_treeforce_candidate_frozen(ii)) {return 0;}
+#else
+    (void) ii;
 #endif
     return 1;
 }

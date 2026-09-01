@@ -65,7 +65,11 @@ void do_hermite_correction(void);
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
 #endif
-int gravity_treewalk_candidate_prewalk(int i); /* SSOT: active particle i will receive a real gravity tree walk this step (LET consumer) */
+int gravity_treewalk_candidate_prewalk(int i, int ii); /* SSOT: active particle i (at position ii in ActiveParticleList) will receive a real gravity tree walk this step (LET consumer) */
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+void gravity_freeze_treeforce_candidates(void); /* freeze needs_new_treeforce() for the whole gravity_tree() call, before any walk mutates its inputs */
+int gravity_treeforce_candidate_frozen(int ii);
+#endif
 void find_timesteps(void);
 #ifdef GALSF
 void compute_stellar_feedback(void);
@@ -893,7 +897,10 @@ GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, stru
 void gravity_tree(void);
 void refresh_old_acceleration_for_tree_opening(void);
 void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, double len, double mass);
-long long gravity_report_incomplete_import(void);
+void gravity_note_incomplete_import_count(long long n);
+long long gravity_incomplete_import_count(void);
+int gravity_incomplete_import_example(char *buf, int buflen);
+void gravity_clear_incomplete_import(void);
 void hydro_force(void);
 void init(void);
 GIZMO_GPU_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
