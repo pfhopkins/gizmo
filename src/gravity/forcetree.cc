@@ -2267,6 +2267,12 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
     {
         while(no >= 0)
         {
+            /* What the imported tree allows this walk to do with the node.  Set once per node, above
+             * every branch that could descend it, exactly as the primary walk does: this walk runs on
+             * the same installed tree and reaches the same imported nodes, so it owes the same
+             * terminal-node contract (see let_data.h).  A particle leaf never reaches the branches
+             * that read it, so a local node is the right default. */
+            grav_node_kind_t node_kind = GRAV_NODE_LOCAL;
             if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
              * malformed; stop rather than read a side array or Nodes[] out of bounds. */
                 endrun(90001024); no = -1; continue;}
@@ -2341,12 +2347,34 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                 }
 
                 nop = &Nodes[no];
+                /* The wire tag is the authority on whether this node's children were shipped.  Read
+                 * it here, before either descent below, so neither can follow a continuation pointer
+                 * into children that were never sent.  Only the tag is needed: the Ewald correction
+                 * depends on mass and separation alone, so a foreign leaf carries no identity this
+                 * walk has to restore. */
+                {
+                    int in_foreign = (no >= All.TreeNodeIndexBase + MaxNodes &&
+                                      no <  All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes);
+                    int fl_tag = 0;
+                    if(in_foreign && ForeignLeafTag)
+                    {
+                        int fs = no - (All.TreeNodeIndexBase + MaxNodes);
+                        if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
+                    }
+                    node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+                }
 
                 //if(nop->N_part <= 1) /* open cell */
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
-                    no = nop->u.d.nextnode;
-                    continue;
+                    /* Only a local node, or a foreign one shipped WITH its children, has anything
+                     * below it.  A terminal foreign node holds a single particle whose multipole is
+                     * that particle exactly, so fall through and use it where it stands. */
+                    if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE)
+                    {
+                        no = nop->u.d.nextnode;
+                        continue;
+                    }
                 }
                 if(nop->Ti_current != All.Ti_Current)
                 {
@@ -2404,44 +2432,37 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
 
                 if(openflag)
                 {
-                    /* now we check if we can avoid opening the cell */
-
-                    u = nop->center[0] - pos[0];
-                    if(u > boxhalf) {u -= boxsize;}
-                    if(u < -boxhalf) {u += boxsize;}
-                    if(fabs(u) > 0.5 * (boxsize - nop->len))
+                    /* The multipole may still stand in for the whole node, but only if the node lies
+                     * wholly on one side of every periodic boundary -- otherwise its daughters map to
+                     * different nearest images and the correction has to be resolved below it -- and
+                     * only if it is small compared with the box. */
+                    int must_refine = 0;
+                    for(int kdim = 0; kdim < 3 && !must_refine; kdim++)
                     {
-                        no = nop->u.d.nextnode;
-                        continue;
+                        u = nop->center[kdim] - pos[kdim];
+                        if(u > boxhalf) {u -= boxsize;}
+                        if(u < -boxhalf) {u += boxsize;}
+                        if(fabs(u) > 0.5 * (boxsize - nop->len)) {must_refine = 1;}
                     }
+                    if(!must_refine && nop->len > 0.20 * boxsize) {must_refine = 1;} /* cell is too large */
 
-                    u = nop->center[1] - pos[1];
-                    if(u > boxhalf) {u -= boxsize;}
-                    if(u < -boxhalf) {u += boxsize;}
-                    if(fabs(u) > 0.5 * (boxsize - nop->len))
+                    if(must_refine)
                     {
-                        no = nop->u.d.nextnode;
-                        continue;
-                    }
-
-                    u = nop->center[2] - pos[2];
-                    if(u > boxhalf) {u -= boxsize;}
-                    if(u < -boxhalf) {u += boxsize;}
-                    if(fabs(u) > 0.5 * (boxsize - nop->len))
-                    {
-                        no = nop->u.d.nextnode;
-                        continue;
-                    }
-                    
-                    /* if the cell is too large, we need to refine it further */
-                    if(nop->len > 0.20 * boxsize)
-                    {
-                        /* cell is too large */
-                        no = nop->u.d.nextnode;
-                        continue;
+                        /* Only a node shipped with its children can be resolved below.  A foreign
+                         * leaf is a single particle, so refining it would change nothing and using
+                         * it is exact.  A truncated aggregate is neither: the import no longer
+                         * carries the structure this walk resolves, so record it -- the count is
+                         * reported once and drained after the walk (gravtree.cc), for the same
+                         * reason as the primary walk's, this one being threaded over targets too. */
+                        if(!grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
+                        if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED)
+                        {
+                            gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, P[target].Type,
+                                                           (double) nop->len, (double) nop->u.d.mass);
+                        }
                     }
                 }
-                
+
                 no = nop->u.d.sibling;    /* ok, node can be used */
             }
             
@@ -2518,6 +2539,10 @@ int subfind_force_treeevaluate_potential(int target)
 
     while(no >= 0)
     {
+        /* What the imported tree allows this walk to do with the node; set once per node, above every
+         * branch that could descend it (see let_data.h).  Particle leaves never reach the branches
+         * that read it, so a local node is the right default. */
+        grav_node_kind_t node_kind = GRAV_NODE_LOCAL;
         if(no >= All.TreeParticleSlots && no < All.TreeNodeIndexBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
              * malformed; stop rather than read a side array or Nodes[] out of bounds. */
             endrun(90001024); no = -1; continue;}
@@ -2540,9 +2565,25 @@ int subfind_force_treeevaluate_potential(int target)
 
             nop = &Nodes[no];
             mass = nop->u.d.mass;
+            /* Same terminal-node contract as the gravity walks: this walk runs on the same installed
+             * tree, so the wire tag decides whether a node's children are here to descend into. */
+            {
+                int in_foreign = (no >= All.TreeNodeIndexBase + MaxNodes &&
+                                  no <  All.TreeNodeIndexBase + MaxNodes + MaxForeignNodes);
+                int fl_tag = 0;
+                if(in_foreign && ForeignLeafTag)
+                {
+                    int fs = no - (All.TreeNodeIndexBase + MaxNodes);
+                    if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
+                }
+                node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+            }
             if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
             {
-                if(mass) {no = nop->u.d.nextnode; continue;}    /* open cell */
+                /* A terminal foreign node holds one particle; its multipole is that particle, so use
+                 * it where it stands rather than following a pointer past the subtree. */
+                if(mass && (node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE))
+                {no = nop->u.d.nextnode; continue;}    /* open cell */
             }
 
             dx = nop->u.d.s[0] - pos_x;
@@ -2560,7 +2601,16 @@ int subfind_force_treeevaluate_potential(int target)
             double ErrTolThetaSubfind = All.ErrTolTheta;
             if(nop->len * nop->len > r2 * ErrTolThetaSubfind * ErrTolThetaSubfind)
             {
-                if(mass) {no = nop->u.d.nextnode; continue;}    /* open cell */
+                /* A terminal foreign node has nothing below it to resolve, so it is consumed where
+                 * it stands: a leaf IS the single particle, and an aggregate the sender shipped
+                 * multipole-only is used as that multipole.  Unlike the gravity walks, this does not
+                 * stop the run.  This potential is an unbinding estimate, not a force the run
+                 * integrates, and its opening test is not the one the import was pruned against, so
+                 * the aggregate would be refused far more often than the import is genuinely short.
+                 * Its multipole is bounded by the accuracy the sender pruned to, which is better
+                 * than what following the continuation pointer would do -- leave the node's mass out
+                 * of the potential altogether. */
+                if(mass && !grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}    /* open cell */
             }
             no = nop->u.d.sibling;    /* node can be used */
         }

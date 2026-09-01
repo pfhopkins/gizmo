@@ -258,7 +258,10 @@ static_assert(sizeof(struct LETNodeWire) % 8 == 0,
  * the exact import, the install writes every slot.  The GPU mirror lives in the tree SoA
  * (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
  * ---------------------------------------------------------------------- */
-extern int     *ForeignLeafTag;   /* 1 = real foreign single-particle leaf; 0 = node/multipole */
+extern int     *ForeignLeafTag;   /* one of LET_LEAF_TAG_* above: NODE (descendable), REAL_LEAF, or
+                                   * TRUNCATED_AGGREGATE.  Read it through grav_classify_node -- the
+                                   * last two are both terminal but mean different things, so a bare
+                                   * nonzero test would consume a truncated aggregate as a leaf. */
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
