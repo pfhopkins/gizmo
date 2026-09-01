@@ -1242,6 +1242,58 @@ integertime get_timestep(int p,		/*!< particle index */
             PRINT_WARNING("Part-ID=%llu  dt_desired=%g dt_Accel=%g\n accel_tot=%g accel_gravTree=%g accel_gravPM=%g  mass=%g pos_xyz=(%g|%g|%g) vel_xyz=(%g|%g|%g) soft=%g type=%d\n",
                           (unsigned long long) P[p].ID, dt, sqrt(2*All.ErrTolIntAccuracy*All.cf_atime*ForceSoftening_KernelRadius(p) / ac)*All.cf_hubble_a,
                           ac, agrav, agrav_pm, P[p].Mass, P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0], P[p].Vel[1], P[p].Vel[2], ForceSoftening_KernelRadius(p), P[p].Type);
+#ifdef SINGLE_STAR_TIMESTEPPING
+            /* Rich failure record for the sink dt collapse: everything get_timestep read to
+             * produce this dt, at full precision, so one hit reconstructs the whole decision
+             * without a reproducible run (at OMP threads>1 these runs are not reproducible, so
+             * the record must be complete the first time). Prints only on the failure path. */
+            if(P[p].Type == 5)
+            {
+                double diag_tap = P[p].Min_Sink_Approach_Time, diag_tff = P[p].Min_Sink_Freefall_time;
+                double diag_dt2b = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR
+                                   / (1./diag_tap + 1./diag_tff);
+                PRINT_WARNING("SINKDT-DIAG ID=%llu bin=%d ti_beg=%lld ti_cur=%lld pos=(%.17g|%.17g|%.17g) vel=(%.17g|%.17g|%.17g)\n"
+                              " SINKDT-TREE Min_Sink_Approach_Time=%.17g Min_Sink_Freefall_time=%.17g dt_2body=%.17g KernelRadius=%.17g Sink_TimeBinGasNeighbor=%d\n",
+                              (unsigned long long) P[p].ID, P[p].TimeBin, (long long) P[p].Ti_begstep, (long long) P[p].Ti_current,
+                              P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0], P[p].Vel[1], P[p].Vel[2],
+                              diag_tap, diag_tff, diag_dt2b, (double) P[p].KernelRadius, (int) P[p].Sink_TimeBinGasNeighbor);
+#ifdef SINK_CALC_DISTANCES
+                PRINT_WARNING("SINKDT-PROX Min_Distance_to_Sink=%.17g Sink_dr_to_NearestGasNeighbor=%.17g\n",
+                              (double) P[p].Min_Distance_to_Sink, (double) P[p].Sink_dr_to_NearestGasNeighbor);
+#endif
+#ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
+                PRINT_WARNING("SINKDT-RAD SinkRadius=%.17g\n", (double) P[p].SinkRadius);
+#endif
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+                PRINT_WARNING("SINKDT-DENS DensityAroundParticle=%.17g\n", (double) P[p].DensityAroundParticle);
+#endif
+#ifdef HERMITE_INTEGRATION
+                PRINT_WARNING("SINKDT-HERM eligible=%d OldPos=(%.17g|%.17g|%.17g) OldVel=(%.17g|%.17g|%.17g) Hermite_OldAcc=(%.17g|%.17g|%.17g) OldJerk=(%.17g|%.17g|%.17g)\n",
+                              eligible_for_hermite(p),
+                              (double) P[p].OldPos[0], (double) P[p].OldPos[1], (double) P[p].OldPos[2],
+                              (double) P[p].OldVel[0], (double) P[p].OldVel[1], (double) P[p].OldVel[2],
+                              (double) P[p].Hermite_OldAcc[0], (double) P[p].Hermite_OldAcc[1], (double) P[p].Hermite_OldAcc[2],
+                              (double) P[p].OldJerk[0], (double) P[p].OldJerk[1], (double) P[p].OldJerk[2]);
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+                PRINT_WARNING("SINKDT-JERK GravJerk=(%.17g|%.17g|%.17g)\n",
+                              P[p].GravJerk[0], P[p].GravJerk[1], P[p].GravJerk[2]);
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                PRINT_WARNING("SINKDT-TIDE |T|=%.17g\n", (double) P[p].tidal_tensorps.frobenius_norm());
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES) || (SINGLE_STAR_TIMESTEPPING > 0)
+                PRINT_WARNING("SINKDT-BIN is_in_a_binary=%d comp_Mass=%.17g comp_dx=(%.17g|%.17g|%.17g) comp_dv=(%.17g|%.17g|%.17g)\n",
+                              P[p].is_in_a_binary, (double) P[p].comp_Mass,
+                              (double) P[p].comp_dx[0], (double) P[p].comp_dx[1], (double) P[p].comp_dx[2],
+                              (double) P[p].comp_dv[0], (double) P[p].comp_dv[1], (double) P[p].comp_dv[2]);
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+                PRINT_WARNING("SINKDT-FB MaxFeedbackVel=%.17g Min_Sink_FeedbackTime=%.17g\n",
+                              (double) P[p].MaxFeedbackVel, (double) P[p].Min_Sink_FeedbackTime);
+#endif
+            }
+#endif // SINGLE_STAR_TIMESTEPPING
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
