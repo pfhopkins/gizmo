@@ -346,6 +346,23 @@ extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
 #endif
 }
 
+extern "C" void gizmo_gpu_prepare_shared_for_device(void *ptr, size_t bytes)
+{
+    if(!ptr || bytes == 0) {return;}
+#if defined(KOKKOS_ENABLE_HIP)
+    int dev = -1;
+    if(hipGetDevice(&dev) != hipSuccess) {hipGetLastError(); return;}
+    /* One bulk call, not a loop over pages: touching the pages individually was
+     * measured not to work on the release path, and there is no reason to expect
+     * the read path to differ.  A migration that fails clears the error and leaves
+     * the span where it was; it costs speed, not accuracy. */
+    if(hipMemPrefetchAsync(ptr, bytes, dev, 0) != hipSuccess) {hipGetLastError(); return;}
+    hipDeviceSynchronize();
+#else
+    (void)ptr; (void)bytes;
+#endif
+}
+
 extern "C" void *gpu_tree_alloc_bytes(size_t bytes, const char *label)
 {
     if(bytes == 0) {return NULL;}

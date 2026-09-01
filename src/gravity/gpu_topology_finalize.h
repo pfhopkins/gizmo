@@ -81,6 +81,13 @@ void  gpu_tree_free_bytes(void *p);        /* matching free */
 void  gizmo_gpu_prepare_shared_for_free(void *ptr);
 void  gizmo_gpu_shared_track(void *ptr, size_t bytes);
 
+/*! The mirror of the call above, aimed the other way: put a shared-space span into
+ *  the state a DEVICE read is cheapest from, in one bulk call, immediately before a
+ *  kernel reads it.  Length is passed in and must already be clamped by the caller
+ *  to the allocation's capacity.  Where shared space is ordinary host memory there is
+ *  nothing to migrate and this does nothing. */
+void  gizmo_gpu_prepare_shared_for_device(void *ptr, size_t bytes);
+
 #ifdef __cplusplus
 }
 #endif

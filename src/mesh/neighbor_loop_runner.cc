@@ -42,6 +42,7 @@
 #include "gpu_neighbor_list.h"
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
+#include "../gravity/gpu_topology_finalize.h"  /* gizmo_gpu_prepare_shared_for_device */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
 #include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_tree_nodes_current_at (node-currency diagnostic) */
@@ -3788,6 +3789,73 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             int     *d_active_arr  = drv.mode_a_cached_gnl[sg].d_active;
             int64_t *offsets       = drv.mode_a_cached_gnl[sg].offsets;
             int     *neighbors     = drv.mode_a_cached_gnl[sg].neighbors;
+
+            /* Prepare the particle arrays this iteration is about to read.
+             *
+             * Both phases below read P[] and CellP[] through scattered indices, and
+             * on a backend whose shared space migrates, the first reader of a span
+             * pays for moving it.  Left alone, that bill lands inside whichever
+             * kernel happens to touch a page first, and it lands unevenly: the rank
+             * whose neighbour set spans the most of the array pays the most, while
+             * the rest wait for it at the convergence reduction below.
+             *
+             * Two preparations, because the two phases read differently and one does
+             * not cover the other.  The active-side read is dense -- it walks this
+             * subgroup's actives -- and a single bulk migration of the cell array
+             * suits it.  The neighbour-side read is sparse and reaches every
+             * neighbour of every active, including imported ones, so it is prepared
+             * by reading exactly what the pair loop will read, in the order it will
+             * read it.  Measured on a FIRE zoom, doing only the first leaves the
+             * second slower than before it was added.
+             *
+             * Only on the first iteration of a call: later iterations re-read the
+             * same particles, so the work is already prepared and repeating it
+             * would pay the span again for nothing.
+             *
+             * The gate is a ratio, not a size.  What is staged scales with the
+             * active count but what is migrated scales with the array, so a gate on
+             * the staged size would let a handful of actives drag the whole thing.
+             * Requiring the actives to be a large enough fraction keeps the migrated
+             * bytes amortised and keeps this off every step whose active set is
+             * small -- which is the case that must never pay a whole-array cost. */
+            if(drv.iter_index == 0) {
+                const int num_total = drv.ctx.num_total;
+                if(num_total > 0 && (long long)n_compacted * 8 >= (long long)num_total) {
+                    /* Clamp to what was allocated: P and CellP are sized independently
+                     * (MaxPart and MaxPartGas) and both are resized during a run, so
+                     * the particle count is not a safe extent for either. */
+                    const struct global_data_all_processes *hall = nlr_host_all_ptr();
+                    const int n_cell = (num_total < hall->MaxPartGas) ? num_total : hall->MaxPartGas;
+                    if(dctx_local.CellP && n_cell > 0) {
+                        gizmo_gpu_prepare_shared_for_device(
+                            (void *) dctx_local.CellP,
+                            (size_t) n_cell * sizeof(struct gas_cell_data));
+                    }
+                    int64_t warm = 0;
+                    Kokkos::parallel_reduce("nlr_iter_prepare_neighbors", n_compacted,
+                        KOKKOS_LAMBDA(int k, int64_t& acc) {
+                            const int row = csr_lookup[active_set_arr[k]];
+                            for(int64_t nn = offsets[row]; nn < offsets[row + 1]; nn++) {
+                                const int j = neighbors[nn];
+                                /* Position first: the pair loop tests distance on every
+                                 * neighbour before any other gate, so these are the
+                                 * lines it reads most. */
+                                acc += (dctx_local.P[j].Pos[0] != 0.0) ? 1 : 0;
+                                acc += (dctx_local.P[j].Pos[1] != 0.0) ? 1 : 0;
+                                acc += (dctx_local.P[j].Pos[2] != 0.0) ? 1 : 0;
+                                acc += (int64_t) dctx_local.P[j].Type;
+                                acc += (dctx_local.P[j].Mass > 0) ? 1 : 0;
+                                if(dctx_local.CellP) {
+                                    acc += (dctx_local.CellP[j].VelPred[0] != 0.0) ? 1 : 0;
+                                    acc += (dctx_local.CellP[j].VelPred[1] != 0.0) ? 1 : 0;
+                                    acc += (dctx_local.CellP[j].VelPred[2] != 0.0) ? 1 : 0;
+                                }
+                            }
+                        }, warm);
+                    Kokkos::fence();
+                    (void) warm;   /* the reads are the point; the sum only keeps them */
+                }
+            }
 
             gizmo_gpu_kernel_launch("nlr_iter_stage_active", n_compacted, KOKKOS_LAMBDA(int k) {
                 int slot = active_set_arr[k];
