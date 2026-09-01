@@ -246,7 +246,6 @@ KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess,
 #else
 #define KOKKOS_INLINE_FUNCTION
 #endif
-#define COOLING_FUNCTIONS_OWNER
 #include "cooling_functions.h"
 
 #if !defined(CHIMES)

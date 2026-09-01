@@ -535,43 +535,11 @@ double convert_u_to_temp_impl(double u, double rho, int target, double *ne_guess
 #endif /* EOS_SUBSTELLAR_ISM vs default */
 
 
-/* ================================================================
-   ThermalProperties — get temperature and ionization state from u
-   ================================================================ */
-/* Reads the thermochemical state the cooling solver saved on the cell. It does not
-   solve anything, reach a table, or write to the cell: the values it hands back are
-   the ones the last cooling update determined for this gas. A source with no cell of
-   its own (target < 0) has no such state, so the call reports nothing and returns 0 --
-   build the estimate you need locally instead. Helium is deliberately absent: nothing
-   outside the cooling solver consumed it, and it is not saved. */
-KOKKOS_INLINE_FUNCTION
-double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    if(target < 0) {*ne_guess = 0; *nH0_guess = 0; *nHp_guess = 0; *mu_guess = 1; return 0;}
-#ifdef HYDRO_MULTIFLUID_DM
-    /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
-    if(pp[target].FluidType == FLUID_DM) {
-        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *mu_guess = 1.0;
-        return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
-               * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
-    }
-#endif
-#if defined(CHIMES)
-    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
-    double temp = ChimesGasVars[target].temperature;
-#else
-    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
-    double temp = cell[target].gas_temperature_from_u(u);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    /* gas inside an HII region is held ionized by the local source, which the saved state
-       only picks up once the cell next cools */
-    if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
-#endif
-#endif
-    *mu_guess = cell[target].MeanMolecularWeight;
-    return temp;
-}
+/* ThermalProperties now lives in eos/eos_functions.h, beside yhelium and the EOS body
+   that calls it. It reads saved cell state and needs nothing from this header; keeping
+   it here forced eos_functions.h to reach it by external linkage, which a device TU
+   outside cooling.cc cannot resolve. This header includes eos_functions.h, so every
+   consumer of this file still sees it. */
 
 
 #endif /* !CHIMES */

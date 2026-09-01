@@ -392,6 +392,51 @@ KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct 
 #endif
 
 
+#if defined(COOLING) && !defined(CHIMES)
+/* ================================================================
+   ThermalProperties — get temperature and ionization state from u
+   ================================================================ */
+/* Reads the thermochemical state the cooling solver saved on the cell. It does not
+   solve anything, reach a table, or write to the cell: the values it hands back are
+   the ones the last cooling update determined for this gas. A source with no cell of
+   its own (target < 0) has no such state, so the call reports nothing and returns 0 --
+   build the estimate you need locally instead. Helium is deliberately absent: nothing
+   outside the cooling solver consumed it, and it is not saved. */
+KOKKOS_INLINE_FUNCTION
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(target < 0) {*ne_guess = 0; *nH0_guess = 0; *nHp_guess = 0; *mu_guess = 1; return 0;}
+#ifdef HYDRO_MULTIFLUID_DM
+    /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
+    if(pp[target].FluidType == FLUID_DM) {
+        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *mu_guess = 1.0;
+        return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
+               * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
+    }
+#endif
+#if defined(CHIMES)
+    /* Unreachable: the enclosing guard is !defined(CHIMES), so under CHIMES this
+       function does not exist at all. Kept because it records what the CHIMES
+       state would be read from, and it is inert either way -- CHIMES needs
+       SUNDIALS, which does not build for the device. */
+    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
+    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+    double temp = ChimesGasVars[target].temperature;
+#else
+    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+    double temp = cell[target].gas_temperature_from_u(u);
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+    /* gas inside an HII region is held ionized by the local source, which the saved state
+       only picks up once the cell next cools */
+    if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
+#endif
+#endif
+    *mu_guess = cell[target].MeanMolecularWeight;
+    return temp;
+}
+#endif /* COOLING && !CHIMES */
+
+
 /* ==========================================================================
  * set_eos_pressure_impl — compute pressure and soundspeed from EOS.
  *
@@ -399,11 +444,15 @@ KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct 
  * public host symbol `set_eos_pressure` in eos.cc is now a one-line wrapper
  * that calls this function.
  *
- * Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
- * linkage.  This header does NOT include cooling_functions.h — doing so creates
- * __host__ non-inline strong symbols for ThermalProperties/convert_u_to_temp/
- * find_abundances_and_rates that override cooling.cc's inline versions at link
- * time, producing wrong results on CUDA (confirmed by bisection).
+ * Calls ThermalProperties, which is defined ABOVE in this header.  It used to live
+ * in cooling_functions.h and be reached by external linkage; that worked only for
+ * callers inside cooling.cc, because a device TU cannot resolve an external device
+ * call.  It reads saved cell state and needs nothing from the cooling solver, so it
+ * moved here beside yhelium and this body.
+ * ⚠ This header still must NOT include cooling_functions.h: that would emit non-inline
+ * strong symbols for convert_u_to_temp / find_abundances_and_rates competing with
+ * cooling.cc's, which reads a different per-TU All mirror and gives wrong results on
+ * CUDA only (confirmed by bisection).
  *
  * Branches that call host-only TABLE LOOKUPS (eos_compute under EOS_HELMHOLTZ,
  * aneos_compute under EOS_ANEOS) are guarded by !defined(__CUDA_ARCH__) &&

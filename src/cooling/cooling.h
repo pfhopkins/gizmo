@@ -18,6 +18,7 @@
 /* Reader of the state the cooling solver saved on the cell -- no tables, no solve.
    One form, callable from anywhere. */
 struct PhysicsTablesView;
+/* defined inline in eos/eos_functions.h; declared here for host callers that do not include it */
 GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
