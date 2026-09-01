@@ -86,6 +86,13 @@ int Ewald_iter;			/* global in file scope, for simplicity */
  */
 void refresh_old_acceleration_for_tree_opening(void)
 {
+    /* OldAcc is overloaded on a 2lpt start: the IC reader leaves the particle masses in it, and
+     * init.cc deliberately does not zero it for that reason.  Nothing has been staged yet either,
+     * so promoting here would replace those masses with zeros before the first evaluation is done
+     * with them.  The same condition suppresses the staging site after the walk; the walk that
+     * follows this build does not read OldAcc anyway, because the criterion stays Barnes-Hut for
+     * exactly this case. */
+    if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0) {return;}
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
