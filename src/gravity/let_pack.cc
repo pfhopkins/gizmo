@@ -992,20 +992,19 @@ static void pack_recurse(int no, int sib_terminator,
     w->node.u.d.nextnode = LET_WIRE_EXIT;
     w->node.u.d.father = -1;  /* foreign nodes have no local father */
 
-    if(!is_essential)
-    {
-        /* Multipole-only: no target in the receiver's cover opens this node under the predicate we
-         * evaluated, so its children are not shipped.  Tag it TRUNCATED so the receiver can tell a
-         * node it may descend from one it may not -- if a later walk there does open it, the import
-         * is incomplete and the walk must say so rather than quietly accept the multipole. */
-        w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
-        return;
-    }
-
     /* Single-particle leaf in source tree: bitflag=0 means walk would skip
      * to nextnode (a particle).  We can't ship the particle, so override
      * bitflag to MULTIPLEPARTICLES so receiver uses our multipole.  Exact
-     * for single particle. */
+     * for single particle.
+     *
+     * Decided BEFORE the essentiality prune below, because what the tag records is whether the
+     * node can be descended, which is a property of the node, not of whether the sender expected
+     * anyone to descend it.  A node holding one particle has nothing underneath to resolve and its
+     * multipole IS that particle, so it is a real leaf whether or not it was found essential.
+     * Tagging a pruned one TRUNCATED instead would put an exactly-representable node in the class
+     * that means "the import is short", and would ship it without the leaf identity the receiver
+     * restores -- so the same particle would be softened and AGS-symmetrized differently depending
+     * on which side of the prune it fell. */
     if(!(Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))
     {
         /* This single-particle source-tree node is shipped as a multipole, so the receiver
@@ -1038,6 +1037,16 @@ static void pack_recurse(int no, int sib_terminator,
         }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
         return;  /* no children to recurse into */
+    }
+
+    if(!is_essential)
+    {
+        /* Multipole-only: no target in the receiver's cover opens this node under the predicate we
+         * evaluated, so its children are not shipped.  Tag it TRUNCATED so the receiver can tell a
+         * node it may descend from one it may not -- if a later walk there does open it, the import
+         * is incomplete and the walk must say so rather than quietly accept the multipole. */
+        w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
+        return;
     }
 
     /* Multi-particle internal node: enumerate children via nextnode/sibling chain.
