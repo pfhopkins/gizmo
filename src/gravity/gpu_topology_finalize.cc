@@ -226,6 +226,13 @@ extern "C" int gpu_node_reset_ephemeral(int n)
 #ifdef DM_SCALARFIELD_SCREENING
         Extnodes_uvm[k].dp_dm          = {};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        /* Same contract as the CPU build (forcetree.cc): sink_pos/sink_vel are set fresh by the
+         * moment pass, so there is no pending sink kick to carry. The UVM arena is not zeroed at
+         * allocation, so omitting this leaves garbage that the first sink_dp fold divides into
+         * sink_vel -- and from there into the sink timestep criteria. */
+        Extnodes_uvm[k].sink_dp        = {};
+#endif
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("node_reset_ephemeral", n);

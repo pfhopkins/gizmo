@@ -233,12 +233,27 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
                 Extnodes_uvm[no].dp_dm[j] = 0;
 #endif
             }
+#ifdef SINK_NODE_MOTION_TRACKED
+            /* Mirror the CPU fold (forcetree_update.cc): sink_vel is normalised by sink_mass,
+             * not mass, and sink_dp must be consumed before the kicked bitflag is cleared. */
+            {
+                double fac_sink = ((double)Nodes_uvm[no].sink_mass > 0) ? (1.0 / (double)Nodes_uvm[no].sink_mass) : 0.0;
+                for(int j = 0; j < 3; j++) {
+                    Nodes_uvm[no].sink_vel[j] = (MyFloat)((double)Nodes_uvm[no].sink_vel[j] + fac_sink * (double)Extnodes_uvm[no].sink_dp[j]);
+                    Extnodes_uvm[no].sink_dp[j] = 0;
+                }
+            }
+#endif
             Nodes_uvm[no].u.d.bitflags &= (~(1u << BITFLAG_NODEHASBEENKICKED));
         }
 
         /* Apply drift to s, len, hmax. */
         for(int j = 0; j < 3; j++) {
             Nodes_uvm[no].u.d.s[j] = (MyFloat)((double)Nodes_uvm[no].u.d.s[j] + (double)Extnodes_uvm[no].vs[j] * dt_drift);
+#ifdef SINK_NODE_MOTION_TRACKED
+            /* sink_pos must stay on the same clock as u.d.s (see forcetree_update.cc). */
+            Nodes_uvm[no].sink_pos[j] = (MyFloat)((double)Nodes_uvm[no].sink_pos[j] + (double)Nodes_uvm[no].sink_vel[j] * dt_drift);
+#endif
 #ifdef DM_SCALARFIELD_SCREENING
             Nodes_uvm[no].s_dm[j]  = (MyFloat)((double)Nodes_uvm[no].s_dm[j]  + (double)Extnodes_uvm[no].vs_dm[j] * dt_drift);
 #endif
