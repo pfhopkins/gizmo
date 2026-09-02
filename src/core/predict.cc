@@ -148,11 +148,7 @@ extern "C" integertime gizmo_full_drift_ti(void) { return g_last_full_drift_Ti; 
 void gizmo_full_drift_to(integertime time1)
 {
     if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
-    int i;
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
+    drift_particles_batch(NULL, NumPart, time1);
     g_last_full_drift_Ti = time1;
     /* drift_particle just multiplied KernelRadius by exp(divv_fac/N) for every
      * particle (predict.cc:160,229). Mark the whole pool h-dirty so the next
@@ -196,10 +192,10 @@ void move_particles(integertime time1)
     std::vector<int> active_idx;
     active_idx.reserve(ActiveParticleList.size());
     for(int i : ActiveParticleList) {
-        drift_particle(i, time1);
         active_idx.push_back(i);
         n_active++;
     }
+    drift_particles_batch(active_idx.data(), (int) active_idx.size(), time1);
     /* drift_particle just multiplied KernelRadius for each active particle
      * (predict.cc:160,229). Mark h-dirty for both GPU SIDX tracker and host
      * glt cache via the SSOT helper. */

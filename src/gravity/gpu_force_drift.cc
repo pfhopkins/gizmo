@@ -47,41 +47,11 @@
  * drift kernel reads the cached value. */
 
 /* --- Drift/GravKick table mirror (cosmological only) ---------------------
- * Mirrors DriftTable and GravKickTable (2 x DRIFT_TABLE_LENGTH doubles, 16 KB) into
- * SharedSpace for the kernel, refreshed on every top-level call so the mirror cannot
- * disagree with the host tables. The refresh is deliberately unconditional: init() runs
- * before init_drift_table() in begrun, so a device drift issued during startup would
- * otherwise cache the still-zeroed tables and never recover. 16 KB per call is in the
- * noise next to the sweep it serves.
- * On a non-cosmological run the tables are never built and never read, so nothing is
- * allocated and the elapsed-time branch of the interpolator is used instead. */
+ * The storage is per-TU because a device symbol cannot be shared between
+ * translation units without relocatable device code; the allocate-and-fill policy
+ * lives in the arena so this path and the batched particle drift build the view the
+ * same way. See drift_kick_table_mirror_refresh. */
 static double *drift_kick_table_dev_ = NULL;   /* SharedSpace, 2 * DRIFT_TABLE_LENGTH doubles */
-
-/* Fills 'view' with whatever the drift and kick factors need on the device. Returns
- * nonzero if the mirror could not be provided, in which case the caller must not
- * launch. */
-static int drift_kick_table_view_refresh_(struct DriftKickTableView *view)
-{
-    *view = drift_kick_table_view(NULL, NULL, 0.0, 0.0, All.Timebase_interval,
-                                  All.ComovingIntegrationOn ? 1 : 0);
-    if(!view->comoving) {return 0;}   /* tables never built; the elapsed-time branch needs none of them */
-
-    if(!drift_kick_table_dev_) {
-        drift_kick_table_dev_ = (double *) gizmo_gpu_alloc_shared(2 * DRIFT_TABLE_LENGTH * sizeof(double), NULL);
-        if(!drift_kick_table_dev_) {
-            printf("gpu_force_drift: drift_kick_table_dev_ alloc failed\n");
-            endrun(929701);
-            return 1;   /* soft bad-stop: caller skips the drift kernel; drains at next poll */
-        }
-    }
-    for(int i = 0; i < DRIFT_TABLE_LENGTH; i++) {
-        drift_kick_table_dev_[i]                      = DriftTable[i];
-        drift_kick_table_dev_[DRIFT_TABLE_LENGTH + i] = GravKickTable[i];
-    }
-    *view = drift_kick_table_view(drift_kick_table_dev_, drift_kick_table_dev_ + DRIFT_TABLE_LENGTH,
-                                  DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, 1);
-    return 0;
-}
 
 /* --- dispatcher ---------------------------------------------------------- */
 
@@ -114,7 +84,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * bounds from current All.*, so a restart that moved TimeMax cannot leave the
      * mirror describing the old span. */
     struct DriftKickTableView table_view;
-    if(drift_kick_table_view_refresh_(&table_view) != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch without the tables */
+    if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &table_view) != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch without the tables */
 
     int      tree_base        = All.TreeNodeIndexBase;
     int      n_local_nodes  = Numnodestree;

@@ -22,6 +22,7 @@
 
 struct particle_data;
 struct gas_cell_data;
+struct DriftKickTableView;
 
 #include <stddef.h>  /* size_t */
 
@@ -114,7 +115,10 @@ void gpu_particles_arena_set_site(const char *site);
  * nothing and costs it on every rank at once.
  *
  * CellP holds only All.MaxPartGas entries while an index list may run over every
- * particle type, so a cell is staged only for the gas subset. The gather partitions
+ * particle type, so a cell is staged only for the gas subset. `cell` may be null when
+ * the run has no gas at all -- a legal configuration that allocates no gas cell
+ * storage -- and staging then proceeds with gas_count == 0; gas slots with a null
+ * `cell` are refused instead. The gather partitions
  * the slots so gas comes first and reports how many there are: slot j always has a
  * particle, and has a cell exactly while j < gas_count -- the same condition every
  * cell access in the drift and cooling bodies is already guarded by. */
@@ -167,6 +171,28 @@ int particle_staging_gather(struct ParticleStagingBatch *batch, const int *idx, 
  * the gather read. Threaded for the same reason. */
 void particle_staging_scatter(struct ParticleStagingBatch *batch,
                               struct particle_data *pp, struct gas_cell_data *cell);
+
+/* Device-visible mirror of the drift and gravitational-kick tables.
+ *
+ * The interpolator in core/timestep_functions.h reads the tables through a view of
+ * plain pointers, so a device kernel needs the table bytes somewhere it can read.
+ * Without relocatable device code a device symbol cannot be shared between
+ * translation units, so the storage is per-TU: each caller keeps its own pointer and
+ * passes it here, and this owns the allocate-and-fill policy so the two device drift
+ * paths cannot drift apart in how they build the view.
+ *
+ * The refresh is unconditional by design: init() runs before init_drift_table() in
+ * begrun, so a device drift issued during startup would otherwise cache the
+ * still-zeroed tables and never recover. Two tables of DRIFT_TABLE_LENGTH doubles is
+ * 16 KB, which is in the noise next to the work it serves.
+ *
+ * On a non-cosmological run the tables are never built and never read: nothing is
+ * allocated, and the view selects the elapsed-time branch of the interpolator.
+ *
+ * `storage` is the caller's own pointer, zero-initialised before first use and left
+ * owned by the caller. Returns nonzero if the mirror could not be provided, in which
+ * case the caller must not launch; a controlled stop has already been requested. */
+int drift_kick_table_mirror_refresh(double **storage, struct DriftKickTableView *view);
 
 /* Free all SharedSpace storage. Called at shutdown. */
 void gpu_particles_arena_release(void);

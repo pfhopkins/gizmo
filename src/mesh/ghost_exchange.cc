@@ -853,10 +853,7 @@ static void gx_certify_send_list_current(const int *home_idx, int n_slots, integ
 
     const int n_behind = (int)behind.size();
     const int *behind_idx = behind.data();
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for(int e = 0; e < n_behind; e++) {drift_particle(behind_idx[e], t_now);}
+    drift_particles_batch(behind_idx, n_behind, t_now);
 
     gizmo_mark_kernel_radius_dirty_indices(behind_idx, n_behind);
 }

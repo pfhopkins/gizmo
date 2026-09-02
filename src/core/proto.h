@@ -380,6 +380,11 @@ int compare_densities_for_sort(const void *a, const void *b);
 int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
 void drift_particle(int i, integertime time1);
+/* Drift a list of particles to time1, or the contiguous range [0, n_idx) when idx is
+   null. Compacts to those not already there and runs them on the device when there
+   are enough to be worth it, otherwise on the host; either way every particle in the
+   list is drifted. */
+void drift_particles_batch(const int *idx, int n_idx, integertime time1);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);

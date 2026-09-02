@@ -1474,10 +1474,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         {
             const int n_behind = (int)pool_behind.size();
             const int *behind_idx = pool_behind.data();
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-            for(int e = 0; e < n_behind; e++) {drift_particle(behind_idx[e], time1);}
+            drift_particles_batch(behind_idx, n_behind, time1);
         }
         /* Lazy drift just called drift_particle on each j in ngb_host.
          * drift_particle mutates Ti_current, Pos, AND KernelRadius
