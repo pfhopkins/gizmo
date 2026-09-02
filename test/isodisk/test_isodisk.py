@@ -57,8 +57,10 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     #center = boxsize / 2.0
     center = 0.
 
-    # Plot face-on view of the disk using Meshoid slice interpolation
-    M = Meshoid(pos_f, boxsize=boxsize)
+    # Plot face-on view of the disk using Meshoid slice interpolation.
+    # No boxsize: BOX_PERIODIC is off and the disk is centred on the origin, so half the
+    # coordinates are negative and a periodic KDTree rejects them outright.
+    M = Meshoid(pos_f)
     disk_center = np.array([center, center, center])
     rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=disk_center, size=60., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
