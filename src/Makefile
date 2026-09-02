@@ -578,6 +578,19 @@ KOKKOS_INCL = -I$(KOKKOS_PATH)/include
 KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
 KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
 KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+## hypre, for MHD_MODIFIED_GRADIENT's AMG-preconditioned solver. There is no hypre module on
+## Rusty and neither petsc ships one, so this points at a local build; scripts/build_hypre_rusty.sh
+## makes one. Same resolution order as KOKKOS_PATH above, and for the same reason -- line ~98's
+## unconditional "HYPRE_INCL =" leaves the variable defined but empty, so "?=" would never fire.
+## Harmless when the prefix does not exist: only a config that actually includes HYPRE.h cares.
+ifeq ($(strip $(HYPRE_PATH)),)
+HYPRE_PATH := $(shell echo $$HYPRE_PATH)
+endif
+ifeq ($(strip $(HYPRE_PATH)),)
+HYPRE_PATH := $(HOME)/opt/hypre
+endif
+HYPRE_INCL = -I$(HYPRE_PATH)/include
+HYPRE_LIBS = -L$(HYPRE_PATH)/lib -L$(HYPRE_PATH)/lib64 -Xlinker -R -Xlinker $(HYPRE_PATH)/lib -Xlinker -R -Xlinker $(HYPRE_PATH)/lib64 -lHYPRE
 GPU_CXX    = mpicxx -std=c++20
 GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
 GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
