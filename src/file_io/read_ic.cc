@@ -162,6 +162,18 @@ void read_ic(char *fname)
              * starting capacity already carries the user's imbalance allowance, so a wide
              * multiple of it is far above anything a run reaches while still being finite. */
             long long cap = 16LL * (long long) All.MaxPart;
+            /* Ghost sufficiency floor.  The multiple above scales with the LOCAL count, while
+             * ghost-import demand scales with the domain surface, and the two diverge without
+             * bound as ranks are added (9:1 ghost:local on evrard at 48 ranks, 34:1 on
+             * gmc_cooling_rt).  A rank can never need more than its own particles plus a copy
+             * of every other one, so MaxPart + TotNumPart bounds any ghost import.  Applied
+             * before the memory clamps below, so large problems are still held to node memory;
+             * this only lifts the small-N/many-rank corner, where the resize refusal otherwise
+             * kills adaptive-softening runs whose neighbour loops import surface ghosts. */
+            {
+                long long ghost_floor = (long long) All.MaxPart + (long long) All.TotNumPart;
+                if(cap < ghost_floor) {cap = ghost_floor;}
+            }
             if(mem_total_kb > 0 && mem_total_kb != LLONG_MAX)
             {
                 const long long share = mem_total_kb * 1024 / ranks_per_node;
