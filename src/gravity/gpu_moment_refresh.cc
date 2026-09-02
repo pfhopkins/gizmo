@@ -906,16 +906,25 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     /* ---------------- Kernel 4: bottom-up walk via father chain -------- */
+    /* The pending protocol hands a node to the LAST arriving thread, which then plain-loads the
+     * children's accumulated payloads. Kokkos atomics are relaxed: on CUDA the decrement orders
+     * nothing, so without fences the winner can read payload values that predate the losers'
+     * contributions (their atomic adds resolve in L2; plain loads can be served stale). x86/OpenMP
+     * gets acquire/release for free from TSO, which is why only the CUDA backend miscounted.
+     * Fences make it explicit: release before signalling a parent, acquire after winning one. */
     Kokkos::parallel_for("mr_walk_up", n, KOKKOS_LAMBDA(int k0) {
         if(Kokkos::atomic_fetch_sub(&scr.pending(k0), 1) != 1) {return;}
+        Kokkos::memory_fence();   /* acquire: children's payload writes visible before we read them */
         int curr = k0;
         while(true) {
             int f = father_soa[curr];
             if(f < tree_base || f >= tree_base + n) {return;}
             int kp = f - tree_base;
             mr_propagate_to_parent_(scr, curr, kp);
+            Kokkos::memory_fence();   /* release: our contribution visible before the count can hand kp to its winner */
             int prev = Kokkos::atomic_fetch_sub(&scr.pending(kp), 1);
             if(prev != 1) {return;}
+            Kokkos::memory_fence();   /* acquire: all of kp's children visible before the next lap reads kp */
             curr = kp;
         }
     });
