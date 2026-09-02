@@ -62,7 +62,7 @@ static const int GPU_DRIFT_BATCH_SIZE = 32768;
 static void drift_particles_host_(const int *idx, int n_idx, integertime time1)
 {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 256)
+#pragma omp parallel for schedule(dynamic, 256) if(n_idx >= 16)
 #endif
     for(int k = 0; k < n_idx; k++) {drift_particle(idx[k], time1);}
 }
@@ -79,12 +79,16 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
        way to do nothing. At the full-drift site this pass is O(NumPart) at a site that
        is already O(NumPart) by definition; the other sites filter a list they hold. */
     std::vector<int> needs_drift;
+    needs_drift.reserve((size_t) n_idx);
 #ifdef _OPENMP
-    /* Threaded: the full-drift site hands over every particle, and reading Ti_current
-       out of the particle array is a strided pass over the whole of it -- serial, that
-       is a large fraction of what this rung is trying to remove. Each thread collects
-       its own contiguous static range and the ranges are concatenated in thread order,
-       so the compacted list is the same list, in the same order, on any thread count. */
+    /* Threaded above a handful of indices: the full-drift site hands over every
+       particle, and reading Ti_current out of the particle array is a strided pass
+       over the whole of it, which is a large part of what running the drift in bulk
+       is meant to remove. Each thread collects its own contiguous static range and
+       the ranges are concatenated in thread order, so the compacted list is the same
+       list, in the same order, whatever the thread count. Below that a parallel
+       region and its per-thread vectors cost more than the scan they divide. */
+    if(n_idx >= 16)
     {
         const int n_threads = omp_get_max_threads();
         std::vector<std::vector<int> > per_thread(n_threads);
@@ -93,30 +97,31 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
             std::vector<int> &mine = per_thread[omp_get_thread_num()];
             mine.reserve((size_t) n_idx / n_threads + 16);
 #pragma omp for schedule(static)
-            for(int k = 0; k < n_idx; k++) {
+            for(int k = 0; k < n_idx; k++)
+            {
                 const int i = idx ? idx[k] : k;
                 if(P[i].Ti_current != time1) {mine.push_back(i);}
             }
         }
-        size_t total = 0;
-        for(int t = 0; t < n_threads; t++) {total += per_thread[t].size();}
-        needs_drift.reserve(total);
-        for(int t = 0; t < n_threads; t++) {
+        for(int t = 0; t < n_threads; t++)
+        {
             needs_drift.insert(needs_drift.end(), per_thread[t].begin(), per_thread[t].end());
         }
     }
-#else
-    needs_drift.reserve((size_t) n_idx);
-    for(int k = 0; k < n_idx; k++) {
-        const int i = idx ? idx[k] : k;
-        if(P[i].Ti_current != time1) {needs_drift.push_back(i);}
-    }
+    else
 #endif
+    {
+        for(int k = 0; k < n_idx; k++)
+        {
+            const int i = idx ? idx[k] : k;
+            if(P[i].Ti_current != time1) {needs_drift.push_back(i);}
+        }
+    }
     const int n_need = (int) needs_drift.size();
     if(n_need <= 0) {return;}
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. */
-    if(n_need < GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+    if(n_need < GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
         return;
     }
