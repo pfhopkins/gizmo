@@ -446,7 +446,7 @@ void force_drift_node(int no, integertime time1)
     
 
     Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
-  Nodes[no].len += 2 * Extnodes[no].vmax * dt_drift;
+  Nodes[no].len += TREE_DRIFT_VELOCITY_PREFAC * Extnodes[no].vmax * dt_drift;
 
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;

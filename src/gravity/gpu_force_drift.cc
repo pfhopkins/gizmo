@@ -247,7 +247,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
                                                 + (double)Extnodes_uvm[no].rt_source_lum_vs[j] * dt_drift);
 #endif
         }
-        Nodes_uvm[no].len = (MyFloat)((double)Nodes_uvm[no].len + 2.0 * (double)Extnodes_uvm[no].vmax * dt_drift);
+        Nodes_uvm[no].len = (MyFloat)((double)Nodes_uvm[no].len
+                                      + TREE_DRIFT_VELOCITY_PREFAC * (double)Extnodes_uvm[no].vmax * dt_drift);
 
         {
             double exp_arg = (double)Extnodes_uvm[no].divVmax * dt_drift_hmax / (double)NUMDIMS;
