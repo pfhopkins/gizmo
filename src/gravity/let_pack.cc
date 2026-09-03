@@ -1013,7 +1013,8 @@ static void pack_recurse(int no, int sib_terminator,
      * approximates the softening-proximity force-open that the shared predicate omits under
      * Barnes-Hut -- that test lives in the ErrTolTheta `else` and so never runs (upstream is the
      * same; upstream is immune only because it exports to the owner instead of accepting a foreign
-     * multipole). Cost measured by GIZMO_LET_MARGIN_PROBE: +8.1% essential nodes at 1.0 x soft. */
+     * multipole). Cost, measured with a since-removed counting probe: +8.1% essential nodes at
+     * 1.0 x soft. */
     double let_margin = 0.0;
 #ifdef GIZMO_LET_MOTION_MARGIN
     let_margin = ((double) GIZMO_LET_MOTION_MARGIN) * All.ForceSoftening[1];
