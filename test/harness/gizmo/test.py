@@ -256,8 +256,12 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    if num_openmp_threads > 0:
-        environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
+    # Always set it. Left unset, the OpenMP runtime gives every rank the whole node:
+    # main.cc's omp_get_num_threads() then reports all cores, so soundwave[8-0] ran 8 ranks x
+    # 96 threads on a 96-core node and timed out, while pinning.cc reads the same unset
+    # variable and lays out cpusets assuming one thread per rank. "No OpenMP requested" has to
+    # mean one thread, not all of them.
+    environ["OMP_NUM_THREADS"] = str(num_openmp_threads if num_openmp_threads > 0 else 1)
     # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
     # in MHD_MODIFIED_GRADIENT) don't introduce nondeterministic/non-reproducible
     # results that get amplified by the divergence-cleaning feedback loop.
