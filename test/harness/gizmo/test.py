@@ -1,7 +1,7 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
 import subprocess
-from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
+from os import system, environ, path, chdir, cpu_count, remove, makedirs
 from urllib.request import urlretrieve, HTTPError
 from shutil import move, rmtree
 from glob import glob
@@ -341,15 +341,24 @@ def write_params_with_overrides(paramsfile: str, overrides: dict) -> str:
 _BASELINE_STASH = "__output_baseline_stash__"
 
 
-def _require_repo_root(test_name: str, caller: str):
-    """The stash/variant moves below are all relative to the repo root. Called from the test
-    directory instead, every path misses, nothing moves, and the baseline is left stashed with
-    the variant's output standing in for it -- so refuse rather than silently do nothing."""
-    if not path.isdir(f"test/{test_name}"):
-        raise RuntimeError(
-            f"{caller}('{test_name}') called from {getcwd()}, where 'test/{test_name}' does not "
-            "exist. Restore the working directory before calling this (see build_and_run_test)."
-        )
+def _test_dir(test_name: str, caller: str):
+    """Absolute path to test/<name>, resolved against the repo root rather than the caller's
+    working directory.
+
+    The stash/variant moves below must not depend on cwd: ~25 tests chdir into their own
+    directory and call finalize_variant_output() from a finally block, and any raise inside
+    that block skips the chdir back. run_test() raises exactly that way when GIZMO exceeds
+    GIZMO_TEST_TIMEOUT, so a timed-out variant reached the finally from the test directory,
+    where every relative path missed. That turned a clean skip into a RuntimeError and, worse,
+    would have left the baseline stashed with the variant's output standing in for it.
+
+    __file__ is test/harness/gizmo/test.py, so the repo root is four dirnames up (same
+    derivation as get_cooling_tables)."""
+    repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
+    d = path.join(repo_root, "test", test_name)
+    if not path.isdir(d):
+        raise RuntimeError(f"{caller}('{test_name}'): no such test directory {d}")
+    return d
 
 
 def stash_baseline_output(test_name: str, extra_config_flags=()):
@@ -357,9 +366,9 @@ def stash_baseline_output(test_name: str, extra_config_flags=()):
     run doesn't clobber it. Returns True if a stash was made."""
     if not variant_suffix(extra_config_flags):
         return False
-    _require_repo_root(test_name, "stash_baseline_output")
-    plain = f"test/{test_name}/output"
-    stash = f"test/{test_name}/{_BASELINE_STASH}"
+    tdir = _test_dir(test_name, "stash_baseline_output")
+    plain = path.join(tdir, "output")
+    stash = path.join(tdir, _BASELINE_STASH)
     if path.isdir(plain):
         if path.isdir(stash):
             rmtree(stash)
@@ -373,10 +382,10 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
     baseline stash (if any). Idempotent and safe to call in a finally block."""
     if not variant_suffix(extra_config_flags):
         return
-    _require_repo_root(test_name, "finalize_variant_output")
-    plain = f"test/{test_name}/output"
-    stash = f"test/{test_name}/{_BASELINE_STASH}"
-    dst = variant_output_dir(test_name, extra_config_flags)
+    tdir = _test_dir(test_name, "finalize_variant_output")
+    plain = path.join(tdir, "output")
+    stash = path.join(tdir, _BASELINE_STASH)
+    dst = path.join(tdir, "output" + variant_suffix(extra_config_flags))
     if path.isdir(plain):
         if path.isdir(dst):
             rmtree(dst)
