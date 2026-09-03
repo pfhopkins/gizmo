@@ -128,6 +128,10 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
+    /* Built on the host, captured by value: the owners are host globals and a
+       kernel that reached for one would read host memory silently. */
+    struct EosTableView eos_tables = eos_tables_view();
+
     struct DriftKickTableView tables;
     if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &tables) != 0) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
@@ -160,7 +164,7 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
         struct particle_data *kp = batch.dev_P;
         struct gas_cell_data *kc = batch.dev_Cell;
         gizmo_gpu_kernel_launch("drift_particles", batch.count, KOKKOS_LAMBDA(int j) {
-            drift_particle_impl(j, time1, kp, kc, &tables);
+            drift_particle_impl(j, time1, kp, kc, &tables, &eos_tables);
         }, batch_start);
 
         /* Synchronous by construction: the results are home before this returns, so

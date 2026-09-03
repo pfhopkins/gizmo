@@ -13,6 +13,12 @@
    (instead of running serial #ifdef blocks that would double-stomp). */
 
 #include "../GIZMO_config.h"
+/* GIZMO_GPU_FUNCTION comes from here rather than from whatever an includer
+   happened to pull in first. Every current include path reaches this header
+   after macros.h, so nothing changes today, but a header whose bodies only
+   compile in that order is a defect its two siblings in this module were just
+   hardened against. */
+#include "../declarations/macros.h"
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
 

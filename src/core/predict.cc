@@ -326,7 +326,8 @@ void drift_particle(int i, integertime time1)
        them here would put two libm calls on every drifted particle. */
     struct DriftKickTableView tables = drift_kick_table_view(DriftTable, GravKickTable,
             DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
-    drift_particle_impl(i, time1, P, CellP, &tables);
+    struct EosTableView eos_tables = eos_tables_view();
+    drift_particle_impl(i, time1, P, CellP, &tables, &eos_tables);
 }
 
 

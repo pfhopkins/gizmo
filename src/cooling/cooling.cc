@@ -86,9 +86,7 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
  * hydrogen_molecule chain), doubling the device stack depth and causing CUDA OOM
  * on the H200. Both are instead routed into a separate post_cooling_tail
  * device kernel:
- *   - set_eos_pressure_impl runs in the device tail when
- *     POST_COOLING_DEVICE_EOS_SUPPORTED (otherwise the GPU-path scatter loop
- *     calls the host wrapper).
+ *   - set_eos_pressure_impl runs in the device tail, in every configuration.
  *   - dust + molecfrac + DelayTimeHII run in the device tail when
  *     GALSF_ISMDUSTCHEM_MODEL. Their host wrapper
  *     finish_cooling_host_deferred_dust_updates is no longer invoked from the
@@ -441,10 +439,8 @@ void cooling_parent_routine(void)
 
         /* Post-cooling tail device kernel. Three blocks, each independently
          * #ifdef-gated:
-         *   - POST_COOLING_DEVICE_EOS_SUPPORTED -> set_eos_pressure_impl
-         *     (defined iff EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/
-         *     HYDRO_GENERATE_TARGET_MESH are all inactive; see
-         *     declarations/precompiler_logic.h).
+         *   - set_eos_pressure_impl, unconditionally: the equation of state is
+         *     device-callable for every configuration, tabulated ones included.
          *   - GALSF_ISMDUSTCHEM_MODEL -> update_dust_processes + (gated)
          *     update_explicit_molecular_fraction + (gated) DelayTimeHII
          *     countdown. The outer GALSF_ISMDUSTCHEM_MODEL gate is coupling
@@ -458,27 +454,22 @@ void cooling_parent_routine(void)
          *     byte-for-byte so the GPU path and the CPU OMP fallback (below)
          *     compute the same physics for every supported Config (multi-path
          *     principle).
-         * Kernel launches whenever EITHER family is active. The GPU-path
-         * scatter loop below skips finish_cooling_host_deferred_dust_updates
-         * (the device kernel above did it) and skips set_eos_pressure when
-         * POST_COOLING_DEVICE_EOS_SUPPORTED (likewise). Solid-EOS+dust builds
-         * still get device dust here AND host set_eos_pressure in the scatter
-         * loop -- the two gates are orthogonal by design.
+         * The scatter loop below therefore runs neither the dust tail nor
+         * set_eos_pressure: the kernel above has done both.
          * Separate kernel from the cooling loop above to keep per-launch
          * device stack depth bounded -- set_eos_pressure_impl and
          * update_dust_processes each call ThermalProperties (->
          * convert_u_to_temp -> hydrogen_molecule chain), which the cooling
          * loop already exercises; nesting would double the stack at the
          * H200 OOM limit. */
-#if defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL)
         {
             struct particle_data *kp = batch.dev_P;
             struct gas_cell_data *kc = batch.dev_Cell;
             double               *kdt = compact_dtime;
+            /* Host-built, captured by value -- see eos_tables_view. */
+            struct EosTableView eos_tables = eos_tables_view();
             gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
-#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
-                set_eos_pressure_impl(j, kp, kc);
-#endif
+                set_eos_pressure_impl(j, kp, kc, &eos_tables);
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
                     update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
@@ -500,26 +491,14 @@ void cooling_parent_routine(void)
 #endif /* GALSF_ISMDUSTCHEM_MODEL */
             }, batch_start);
         }
-#endif
 
-        /* Scatter batch back:
-         *   - set_eos_pressure runs on host ONLY when POST_COOLING_DEVICE_EOS_SUPPORTED
-         *     is undefined (solid-EOS or HYDRO_GENERATE_TARGET_MESH builds).
-         *     Otherwise the device tail kernel above already ran it.
-         *   - The deferred dust+molecfrac+DelayTimeHII tail now runs on device
-         *     inside the post_cooling_tail kernel above; no host call here.
-         *     The CPU OMP fallback (below) still calls
-         *     finish_cooling_host_deferred_dust_updates host-side. */
+        /* Scatter batch back. The equation of state has already run, in the
+         * device tail kernel above, for every configuration -- there is no
+         * longer a build in which it has to be finished here on the host. The
+         * dust, molecular-fraction and DelayTimeHII updates that the cooling
+         * solve hands to that tail run there too. The CPU OMP fallback further
+         * below still does its own dust tail host-side. */
         particle_staging_scatter(&batch, P, CellP);
-#ifndef POST_COOLING_DEVICE_EOS_SUPPORTED
-        /* Builds where the equation of state is not device-callable finish it here,
-           on cells that are now back in P and CellP. Each cell is independent, and the
-           tables these read are filled at init and read-only afterwards. */
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-        for(int j = 0; j < batch.count; j++) {set_eos_pressure(batch.index[j], P, CellP);}
-#endif
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 

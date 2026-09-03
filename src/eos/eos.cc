@@ -72,24 +72,18 @@
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h.
-   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES turns on the EOS_HELMHOLTZ and
-   EOS_ANEOS branches inside set_eos_pressure_impl — those branches call host-only routines
-   (eos_compute under EOS_HELMHOLTZ, aneos_compute under EOS_ANEOS; Tillotson and
-   the target-mesh helpers are device-callable now) and must not be parsed by
-   device-side includers (cooling.cc).  Only this TU enables them so the
-   host external symbol behaves exactly as the pre-refactor function. */
+   Every branch of set_eos_pressure_impl is device-callable now, so there is
+   nothing for this TU to enable that others must not see. */
 #undef KOKKOS_INLINE_FUNCTION
 #ifdef GIZMO_GPU_COMPILER
 /* HD (not host-only): these eos_functions.h symbols are also called from device
  * kernels, and clang rejects an HD proto.h decl re-declared host-only here (nvcc
- * merged silently). Same pattern cooling.cc uses. The host-only EOS branches are
- * guarded out of the device pass separately (EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
- * + !device). Non-GPU builds keep the plain host strong symbol. */
+ * merged silently). Same pattern cooling.cc uses.
+ * Non-GPU builds keep the plain host strong symbol. */
 #define KOKKOS_INLINE_FUNCTION __host__ __device__
 #else
 #define KOKKOS_INLINE_FUNCTION
 #endif
-#define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
 #ifdef KOKKOS_ENABLE_OPENMPTARGET
@@ -113,7 +107,8 @@
    silent CUDA-only result. Both were bisected empirically. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    set_eos_pressure_impl(i, pp, cell);
+    struct EosTableView eos_tables = eos_tables_view();
+    set_eos_pressure_impl(i, pp, cell, &eos_tables);
 }
 
 

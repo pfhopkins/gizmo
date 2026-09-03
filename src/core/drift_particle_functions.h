@@ -75,7 +75,8 @@ void drift_extra_physics_P(int i, integertime tstart, integertime tend, double d
 
 KOKKOS_INLINE_FUNCTION
 void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
-                         struct gas_cell_data *cell, const struct DriftKickTableView *tables)
+                         struct gas_cell_data *cell, const struct DriftKickTableView *tables,
+                         const struct EosTableView *eos_tables)
 {
     int j __attribute__((unused)); double dt_drift; integertime time0 = pp[i].Ti_current;
     if(time1 < time0)
@@ -224,7 +225,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
 #endif
             drift_extra_physics_P(i, time0, time1, dt_entr, pp, cell);
 
-            set_eos_pressure_impl(i, pp, cell);
+            set_eos_pressure_impl(i, pp, cell, eos_tables);
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
