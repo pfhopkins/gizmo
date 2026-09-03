@@ -508,33 +508,21 @@ void cooling_parent_routine(void)
   } else
 #endif
   { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
-    /* Allocate these from the arena, not with malloc. The cooling chain is
-     * compiled against the alignment the arena gives P[] and CellP[], and the
-     * compiler vectorizes parts of it into 32-byte aligned loads on hosts with
-     * AVX. malloc only promises 16 bytes on x86-64, so a step that takes this
-     * fallback path faults inside the cooling kernel on the first such load,
-     * with a fault address of zero and nothing wrong with the index. The arena
-     * also reports exhaustion rather than handing back a null that nothing here
-     * checks. */
-    struct particle_data *compact_P    = (struct particle_data *) mymalloc("cool_compact_P", N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("cool_compact_Cell", N_active * sizeof(struct gas_cell_data));
-    for(int j = 0; j < N_active; j++)
-    {
-        compact_P[j] = P[cool_indices[j]];
-        compact_Cell[j] = CellP[cool_indices[j]];
-    }
+    /* Cooled in place. do_the_cooling_for_particle reads and writes only element i
+     * of the arrays it is handed, so the host has nothing to gain from compacting
+     * first: the copy in and the copy back are pure overhead here. The device path
+     * above still stages, because there the compaction is what puts the elements
+     * somewhere the kernel can read. */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(int j = 0; j < N_active; j++)
     {
-        do_the_cooling_for_particle(j, compact_P, compact_Cell);
+        do_the_cooling_for_particle(cool_indices[j], P, CellP);
     }
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
-        CellP[i] = compact_Cell[j];
-        P[i] = compact_P[j];
         set_eos_pressure(i, P, CellP);
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         double dtime = get_particle_timestep_in_physical(i, P);
@@ -544,8 +532,6 @@ void cooling_parent_routine(void)
         if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
 #endif
     }
-    myfree(compact_Cell);
-    myfree(compact_P);
   } /* end CPU/GPU path selection */
 
 
