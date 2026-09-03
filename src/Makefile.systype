@@ -14,3 +14,5 @@ SYSTYPE="MacBookCellar_Kokkos"
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"
 #SYSTYPE="RUSTY"
+#SYSTYPE="Frontier"       # OLCF, MI250X via the Kokkos HIP backend
+#SYSTYPE="Frontier_CPU"   # OLCF, same source dispatched to the Kokkos OpenMP backend
