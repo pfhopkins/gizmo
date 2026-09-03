@@ -152,9 +152,15 @@
 
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
 #define GALSF_FB_FIRE_STELLAREVOLUTION (FIRE_PHYSICS_DEFAULTS) /*! turns on default FIRE processes+lookup tables including gas return, SNe, R-process, etc. this carries a number matching the defaults set you choose */
+#if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
+/* Sub-grid FIRE RT modules: only enabled when no explicit RT solver is active. When a real RT
+   method is on, photoionization / local radiation pressure / long-range starlight propagation
+   are handled by the explicit solver -- enabling both produces duplicate symbols and
+   double-counted physics. */
 #define GALSF_FB_FIRE_RT_HIIHEATING         /*! gas within HII regions around young stars is photo-heated to 10^4 K - local stromgren approximation */
 #define GALSF_FB_FIRE_RT_LOCALRP            /*! turn on local radiation pressure coupling to gas - account for local multiple-scattering and isotropic local absorption */
 #define GALSF_FB_FIRE_RT_LONGRANGE          /*! continuous acceleration from starlight (uses luminosity tree) to propagate FIRE RT */
+#endif
 #define GALSF_FB_FIRE_AGE_TRACERS 16        /*! tracks a set of passive scalars corresponding to stellar ages for chemical evolution model postprocessing */
 
 #if !(defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL))
@@ -171,7 +177,9 @@
 #define COOL_MOLECFRAC_NONEQM
 #define OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_COOLRATE
-#define RT_USE_GRAVTREE_SAVE_RAD_FLUX
+#if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
+#define RT_USE_GRAVTREE_SAVE_RAD_FLUX  /* LEBRON-style gravtree flux save; mutex with explicit RT solvers (same reasoning as the GALSF_FB_FIRE_RT_* / SINK_*_HEATING blocks) */
+#endif
 #define OUTPUT_POTENTIAL
 #define GALSF_SFR_CRITERION (0+1+2+64) // 0=density threshold, 1=virial criterion (strict), 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024='catch' for un-resolvable densities
 #define ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (0.1/UNIT_LENGTH_IN_KPC)
@@ -239,9 +247,15 @@
 #if !defined(SINK_ALPHADISK_ACCRETION)
 #define SINK_ALPHADISK_ACCRETION (1.e10) /* smooth out accretion + allow super-eddington capture with alpha-disk model */
 #endif
+#if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
+/* AGN-source counterparts of the FIRE sub-grid stellar RT modules. They share the
+   LEBRON/gravity-tree numerical infrastructure (RT_USE_GRAVTREE,
+   valid_gas_particle_for_rt accumulators, etc.) and are therefore mutually exclusive
+   with explicit RT solvers, exactly as their stellar GALSF_FB_FIRE_RT_* counterparts. */
 #define SINK_PHOTONMOMENTUM           /* allow AGN radiation pressure */
 #define SINK_COMPTON_HEATING          /* allow Compton heating from AGN spectrum */
 #define SINK_HII_HEATING              /* allow photo-ionization heating from AGN spectrum */
+#endif
 #define SINK_FB_COLLIMATED            /* BHFB directed along collimated axis following BH ang. mom */
 #define SINK_WIND_SPAWN (2)           /* spawn module: N=min num spawned/step */
 #define MAINTAIN_TREE_IN_REARRANGE    /* avoid constant domain decompositions in bottom timebin each time a spawn occurs */
@@ -266,6 +280,18 @@
 
 #endif // FIRE_PHYSICS_DEFAULTS clauses
 
+
+/* SINK_COMPTON_HEATING shares the per-sink angle-weighted luminosity tree infrastructure
+ * (mass_sinklumwt_forradfb, NODE::sink_lum / sink_lum_grad, pseudo-node aggregation) with
+ * SINK_PHOTONMOMENTUM -- the Compton incident flux IS the same angle-weighted luminosity the
+ * rad-pressure module reads. Legacy code carried this implication; it was incorrectly dropped
+ * during refactor. The rad-pressure momentum-kick term itself remains independently
+ * disable-able at runtime via All.PhotonMomentum_Coupled_Fraction, so a Compton-only physics
+ * setup is still expressible. Placed OUTSIDE the FIRE_PHYSICS_DEFAULTS clauses block so it
+ * fires for any Config that explicitly enables SINK_COMPTON_HEATING. */
+#if defined(SINK_COMPTON_HEATING) && !defined(SINK_PHOTONMOMENTUM)
+#define SINK_PHOTONMOMENTUM
+#endif
 
 
 #ifdef GALSF_SFR_CRITERION // flag for pure cross-compatibility [identical functionality, just ease-of-use for galaxy simulators here]

@@ -2559,7 +2559,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("SeedSinkMassSigma",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to a uniform sink seed mass (=%g) \n",tag[i],alternate_tag[i],All.SeedSinkMassSigma); continue;}
                 if(strcmp("SeedSinkMinRedshift",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to allow seed creation at all times (=%g) \n",tag[i],alternate_tag[i],All.SeedSinkMinRedshift); continue;}
                 if(strcmp("SeedReservoirMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to sinks beginning their existence without an active accretion disk (=%g) \n",tag[i],alternate_tag[i],All.SeedReservoirMass); continue;}
+#ifdef SINK_PHOTONMOMENTUM /* Sink_Rad_MomentumFactor only exists with this on; FIRE_BHS no longer implies it (mutex with explicit RT solvers) */
                 if(strcmp("Sink_FluxMomentumFactor",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to using actual AGN spectrum for radiative feedback (=%g) \n",tag[i],alternate_tag[i],All.Sink_Rad_MomentumFactor); continue;}
+#endif
                 if(strcmp("Sink_accreted_fraction",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s (%s) not set in parameter file: defaulting to assume equal sink accretion and outflow rate intrinsically (=%g) \n",tag[i],alternate_tag[i],All.Sink_accreted_fraction); continue;}
                 if(strcmp("Sink_outflow_velocity",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s (%s) not set in parameter file: defaulting to assume mechanical outflow with 1e4 km/s assuming km/s code units (=%g) \n",tag[i],alternate_tag[i],All.Sink_outflow_velocity); continue;}
 #if defined(SINK_WIND_SPAWN)
