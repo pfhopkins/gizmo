@@ -928,7 +928,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* Use cached spatial index if available, otherwise build fresh.
      * If caller provided a cached_idx but it's not yet built, populate it (this
      * enables persistent caching across calls — caller controls invalidation). */
-    gpu_spatial_index_t local_idx = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, NULL, 0, 0};
+    /* Value-initialise: the positional form listed fewer entries than the struct has members and
+     * put them in the wrong slots, so it overrode the members that carry a non-zero default --
+     * dirty_handle (-1 = not registered), cache_tbm (-1 = no build yet) and cache_radius_policy.
+     * A zero dirty_handle passes the `>= 0` test that guards gpu_dirty_tracker_unregister, so an
+     * index that had never registered anything would unregister handle 0, which belongs to
+     * whoever did register first. */
+    gpu_spatial_index_t local_idx = {};
     gpu_spatial_index_t *idx;
     /* Invalidate the cached SIDX unless it still describes the same particles.
      * num_total: the compact_xyzh and pool arrays were sized for the old count,
