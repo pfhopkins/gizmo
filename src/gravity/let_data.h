@@ -53,7 +53,11 @@
                                              * send.  Terminal like the above, and NOT repairable -- the
                                              * condition is topological, so rebuilding reproduces it
                                              * exactly.  The two must not share a tag: the repair would
-                                             * spend a full tree+LET rebuild and then stop anyway. */
+                                             * spend a full tree+LET rebuild and then stop anyway.
+                                             * A malformed singleton (a one-particle node whose child is
+                                             * not a particle) is also marked with this, but no walk ever
+                                             * sees it: that is local tree corruption, and the pack stops
+                                             * the run collectively once every rank has packed. */
 
 typedef enum {
     GRAV_NODE_LOCAL = 0,        /* not imported: ordinary local tree node */

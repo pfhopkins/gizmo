@@ -1103,6 +1103,9 @@ static void pack_recurse(int no, int sib_terminator,
              * receiver would only be re-deriving what the sender already knows.  Count it and let
              * the collective check at the end of the exchange stop every rank together, which is
              * how this file already handles the other tree-corruption case. */
+            printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); the local tree "
+                   "is malformed -- the exchange stops once every rank has packed.\n", no, p, ThisTask);
+            fflush(stdout);
             g_let_malformed_singleton++;
             if(g_let_malformed_singleton_first < 0) {g_let_malformed_singleton_first = no;}
             w->leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;   /* not a real leaf, and not descendable */
@@ -2135,18 +2138,6 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * merely drifted under a FOREIGN topleaf is NOT unbucketable -- it is handled above as a drift-orphan
      * cover extension. This guard is the real-corruption backstop, NOT a fold-into-every-leaf downgrade. */
     {
-        long long malformed_max = 0;
-        MPI_Allreduce(&g_let_malformed_singleton, &malformed_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-        if(malformed_max > 0)
-        {
-            if(g_let_malformed_singleton > 0)
-                printf("LET pack: rank=%d found %lld single-particle node(s) (first node index %d) whose "
-                       "child is not a particle -- the local tree is malformed. Stopping.\n",
-                       ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
-            fflush(stdout);
-            endrun(90000093);
-        }
-
         long long unbuck_max = 0;
         MPI_Allreduce(&g_let_unbucketable, &unbuck_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
         if(unbuck_max > 0)
@@ -2195,6 +2186,23 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
      * local pack OOM (failed ranks carry zero send counts) so the Alltoallv stays
      * matched; the nonzero status drains via the caller after this returns. */
+    /* Every rank has now packed, so the malformed-singleton counts are final.  Reduced here rather
+     * than earlier: the only writer is pack_recurse, which runs in the loop above, and a check that
+     * precedes its writer reads zero forever. */
+    {
+        long long malformed_max = 0;
+        MPI_Allreduce(&g_let_malformed_singleton, &malformed_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(malformed_max > 0)
+        {
+            if(g_let_malformed_singleton > 0)
+                printf("LET pack: rank=%d found %lld single-particle node(s) (first node index %d) whose "
+                       "child is not a particle -- the local tree is malformed. Stopping.\n",
+                       ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
+            fflush(stdout);
+            endrun(90000093);
+        }
+    }
+
     let_exchange_status_t exch_status = let_exchange_nodes(send_per_rank, send_count,
                        send_hdr_per_rank, send_hdr_count, foreign_needed_out);
 

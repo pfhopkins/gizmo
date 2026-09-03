@@ -402,7 +402,8 @@ gravity_walk_attempt:
              * reason: the same pack against current positions reaches the same conclusion, so the
              * repair would cost a full tree and exchange and then stop here anyway.  Say so at the
              * first pass instead of at the second. */
-            int repairing = (gravity_let_repair_attempts < gravity_let_repair_max) && (total[2] == 0);
+            int all_unrepairable = (total[2] >= total[0]);
+            int repairing = (gravity_let_repair_attempts < gravity_let_repair_max) && !all_unrepairable;
             /* One line for the whole repair, not one per rank: the decision is collective and every
              * rank that saw a shortfall would otherwise say the same thing about it.  Pick the
              * lowest-numbered rank that actually has an example -- a rank whose shortfall came only
@@ -422,11 +423,11 @@ gravity_walk_attempt:
                            "longer carries.%s%s Rebuilding the tree and redoing this evaluation against it. Frequent "
                            "repairs mean the tree is being reused too long -- lower TreeDomainUpdateFrequency.\n",
                            total[0], total[1], NTask, example[0] ? " First case: " : "", example);
-                } else if(total[2] > 0) {
+                } else if(all_unrepairable) {
                     printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, "
                            "on %lld of %d ranks, and %lld of them are subtrees the sending rank never owned: every "
                            "child was a pseudo-particle or another rank's foreign node, so no rank could have "
-                           "shipped them whole.%s%s Rebuilding would reproduce that exactly, so it is not attempted. "
+                           "shipped them whole.%s%s Rebuilding reproduces that exactly. "
                            "Reaching this means a target opens a node whose contents live on a third rank, which "
                            "the one-shot import does not express. Stopping.\n",
                            total[0], total[1], NTask, total[2], example[0] ? " First case: " : "", example);
