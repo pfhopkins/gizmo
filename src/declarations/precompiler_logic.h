@@ -793,33 +793,6 @@
 #define GIZMO_TRACK_ELECTRON_STATE
 #endif
 
-/* POST_COOLING_DEVICE_EOS_SUPPORTED — narrow compile-time gate for the
-   post-cooling-kernel set_eos_pressure call site (audit-E1 follow-up, 2026-05-20).
-   When defined: the device post-cooling kernel calls set_eos_pressure_impl on the
-   compact arrays, and the host scatter loop does NOT call set_eos_pressure.
-   When undefined: the device post-cooling kernel skips set_eos_pressure, and the
-   host scatter loop calls set_eos_pressure on the global P/CellP arrays (current
-   behavior, unchanged).
-
-   Builds that use host-only branches inside set_eos_pressure_impl must keep
-   the host path (gate undefined). Specifically:
-     EOS_HELMHOLTZ  -- calls eos_compute()         (host-only table lookup)
-     EOS_TILLOTSON  -- calls calculate_tillotson_eos() (inline but not GPU-marked)
-     EOS_ANEOS      -- calls aneos_compute()       (host-only table lookup)
-     HYDRO_GENERATE_TARGET_MESH -- calls return_user_desired_target_pressure/density
-                                   (host-only refinement helpers)
-
-   NOTHING ELSE in the post-cooling kernel keys off this macro — dust, molecfrac,
-   DelayTimeHII have their own independent gates (GALSF_ISMDUSTCHEM_MODEL,
-   COOL_MOLECFRAC_NONEQM, GALSF_FB_FIRE_RT_HIIHEATING).
-
-   HYDRO_MULTIFLUID_DM is intentionally NOT in this disable set: its
-   set_eos_pressure_impl early return calls set_dark_eos_pressure which is
-   KOKKOS_INLINE_FUNCTION (sidm/dm_fluid_functions.h), so the device kernel
-   path is fully supported under DM builds. */
-#if !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(HYDRO_GENERATE_TARGET_MESH)
-#define POST_COOLING_DEVICE_EOS_SUPPORTED
-#endif
 
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC

@@ -120,8 +120,12 @@ extern struct global_data_all_processes All;
 #endif
 
 #if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
-extern short int special_boundary_condition_xyz_def_reflect[3];
-extern short int special_boundary_condition_xyz_def_outflow[3];
+/* These live in All so device code can read them: the boundary check runs inside
+   the drift, which is moving to the GPU, and a free-standing global is not visible
+   there. Aliased so every existing reader and the begrun initialization are
+   unchanged -- same treatment as Shearing_Box_*_Offset above. */
+#define special_boundary_condition_xyz_def_reflect (All.special_boundary_condition_xyz_def_reflect)
+#define special_boundary_condition_xyz_def_outflow (All.special_boundary_condition_xyz_def_outflow)
 #endif
 
 template<typename T> GIZMO_GPU_FUNCTION inline void nearest_xyz(Vec3<T>& v, int sign=1) { NEAREST_XYZ(v[0], v[1], v[2], sign); }
@@ -365,6 +369,8 @@ extern FILE *FdSinkWindDetails;
 
 extern double DriftTable[DRIFT_TABLE_LENGTH]; /*! table for the cosmological drift factors */
 extern double GravKickTable[DRIFT_TABLE_LENGTH]; /*! table for the cosmological kick factor for gravitational forces */
+extern double DriftTable_logTimeBegin; /*! log of the scale factor the two tables above start at */
+extern double DriftTable_logTimeMax;   /*! log of the scale factor they end at */
 extern void *CommBuffer;    /*!< points to communication buffer, which is used at a few places */
 
 

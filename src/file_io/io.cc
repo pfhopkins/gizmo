@@ -337,9 +337,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #elif (COOL_GRACKLE_CHEMISTRY > 0)
                     *fp++ = (MyOutputFloat) CellP[pindex].grHI;
 #else
-                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy); // needs to be in code units
-                    temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
-                    *fp++ = (MyOutputFloat) nh0;
+                    *fp++ = (MyOutputFloat) CellP[pindex].HI; /* saved by the cooling solver, and read back by read_ic */
 #endif
                     n++;
                 }
@@ -845,9 +843,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #if defined(COOL_MOLECFRAC_NONEQM)
                     *fp++ = (MyOutputFloat) CellP[pindex].MolecularMassFraction_perNeutralH; /* more useful to output this particular value, rather than fH2 */
 #else
-                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy); // needs to be in code units
-                    temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
-                    *fp++ = (MyOutputFloat) CellP[pindex].MolecularMassFraction; /* we call the subroutine above to make sure this quantity is as up-to-the-moment updated as possible, going into our next routine */
+                    *fp++ = (MyOutputFloat) CellP[pindex].MolecularMassFraction; /* as the cooling solver last left it */
 #endif
                     n++;
                 }

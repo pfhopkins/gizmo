@@ -852,10 +852,7 @@ void find_next_sync_point_and_drift(void)
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {_drift_marked.push_back(i);}}}
   const int n_drift = (int)_drift_marked.size();
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 256)
-#endif
-  for(int k = 0; k < n_drift; k++) {drift_particle(_drift_marked[k], All.Ti_Current);}
+  drift_particles_batch(_drift_marked.data(), n_drift, All.Ti_Current);
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }

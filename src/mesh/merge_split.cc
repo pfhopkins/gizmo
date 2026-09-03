@@ -51,10 +51,6 @@ int does_particle_need_to_be_merged(int i)
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
-    if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
-#endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     return 0;
 #endif
@@ -106,10 +102,6 @@ int does_particle_need_to_be_split(int i)
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
-    if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
-#endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4) {return 0;}
 #endif
@@ -294,6 +286,14 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
     }
 
+    /* Indices flagged for a merge or a split, appended in the order the candidate
+     * loop below visits them, which is ascending particle index. The apply loop
+     * walks this instead of every local particle: only a flagged index does any
+     * work there, and the flags can only be set on candidates. This substitution
+     * visits the same indices in the same order, so it does not itself change
+     * which merges and splits are applied, or in what sequence. */
+    std::vector<int> ms_flagged;
+
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
      * merge_particles_ij/split_particle_i operate on local P[] indices only.
      * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
@@ -302,8 +302,19 @@ void merge_and_split_particles(void)
     {
         std::vector<int> ms_src_idx;
         std::vector<double> ms_src_radii;
+        /* Which of the two criteria admitted each candidate, recorded where it is
+         * first evaluated so the arbitration below can use the same answer instead
+         * of asking again. Asking twice was not only wasted work. Where a minimum
+         * time between refinements is enforced, the wait an element must clear is
+         * randomised, so that elements do not all become eligible together on the
+         * same periodicity; re-deriving it meant an element had to clear a freshly
+         * drawn wait twice over, which skewed exactly the spread of first
+         * activations that the randomisation exists to produce. One evaluation per
+         * candidate per step is the intended behaviour. 1 = merge, 2 = split. */
+        std::vector<unsigned char> ms_src_kind;
         ms_src_idx.reserve(64);
         ms_src_radii.reserve(64);
+        ms_src_kind.reserve(64);
 
         int merge_split_types_mask = (1 << 0) /* gas */
 #if defined(GALSF)
@@ -311,6 +322,39 @@ void merge_and_split_particles(void)
 #endif
                                    ;
 
+#ifdef _OPENMP
+        int ms_nthreads = omp_get_max_threads();
+#else
+        int ms_nthreads = 1;
+#endif
+        if (ms_nthreads < 1) {ms_nthreads = 1;}
+        std::vector<std::vector<int> > ms_idx_thread((size_t)ms_nthreads);
+        std::vector<std::vector<double> > ms_rad_thread((size_t)ms_nthreads);
+        std::vector<std::vector<unsigned char> > ms_kind_thread((size_t)ms_nthreads);
+        /* One chunk per thread, sized explicitly: with a chunk size given, chunks go to
+         * threads in order of thread number, so each thread takes one contiguous block
+         * of ascending indices. */
+        const int ms_chunk = (NumPart + ms_nthreads - 1) / ms_nthreads;
+#pragma omp parallel
+    {
+#ifdef _OPENMP
+        const int tid = omp_get_thread_num();
+#else
+        const int tid = 0;
+#endif
+        /* The criteria below may draw from the rank's random stream, which only one
+         * thread at a time may advance. Which thread draws which number carries no
+         * meaning here, so each thread works from a stream of its own, held privately
+         * so that neighbouring threads do not share the cache line it lives on. The
+         * seed fixes the draws for a given rank, step and thread count. */
+        gizmo_rng_t ms_rng;
+        gizmo_rng_init(&ms_rng, ((uint64_t)All.NumCurrentTiStep * 1000003ULL
+                                 + (uint64_t)ThisTask * 10007ULL
+                                 + (uint64_t)tid) ^ 0x6d5391a7ULL);
+        std::vector<int> ms_idx_priv;
+        std::vector<double> ms_rad_priv;
+        std::vector<unsigned char> ms_kind_priv;
+#pragma omp for schedule(static, ms_chunk)
         for (int ip = 0; ip < NumPart; ip++) {
             if (P[ip].Mass <= 0) continue;
 #if defined(GALSF)
@@ -318,13 +362,55 @@ void merge_and_split_particles(void)
 #else
             if (!((P[ip].Type==0) && TimeBinActive[P[ip].TimeBin])) continue;
 #endif
-            if (!(does_particle_need_to_be_merged(ip) || does_particle_need_to_be_split(ip))) continue;
-            if (P[ip].KernelRadius <= 0) continue;
-            ms_src_idx.push_back(ip);
-            ms_src_radii.push_back(P[ip].KernelRadius);
+            if (P[ip].KernelRadius <= 0) continue;   /* a necessary condition for candidacy
+                                                      * either way, and cheap, so testing it
+                                                      * before the far more expensive criteria
+                                                      * cannot by itself admit or reject
+                                                      * anything -- it only avoids asking. Note
+                                                      * those criteria may draw from a random
+                                                      * stream, so asking fewer of them
+                                                      * does change which elements draw and
+                                                      * therefore the realised candidate set.
+                                                      * That is accepted here: the visit order
+                                                      * is already arbitrary and only the
+                                                      * statistics of this routine are meant to
+                                                      * be reproducible. */
+#ifndef PREVENT_PARTICLE_MERGE_SPLIT
+            /* The gates both criteria share, applied once. They used to sit inside each
+             * criterion, so an element that was not a merger went on to be asked a second
+             * time as a possible split -- and where a minimum time between refinements is
+             * enforced, that second question draws a fresh randomised wait. Today the two
+             * criteria are mutually exclusive and only one answer is ever acted on, so
+             * the extra draw is discarded rather than compounding; asking once here keeps
+             * that true without depending on it. */
+            if (P[ip].Type == 0 && CellP[ip].recent_refinement_flag == 1) continue;
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+            if (check_if_sufficient_mergesplit_time_has_passed(ip, &ms_rng) == 0) continue;
+#endif
+#endif
+            const int want_merge = does_particle_need_to_be_merged(ip);
+            const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip);
+            if (!(want_merge || want_split)) continue;
+            ms_idx_priv.push_back(ip);
+            ms_rad_priv.push_back(P[ip].KernelRadius);
+            ms_kind_priv.push_back(want_merge ? 1 : 2);
+        }
+        /* Published once each, after the loop, rather than grown in place: the per-thread
+         * headers sit next to one another and every growth would write to them. */
+        ms_idx_thread[tid].swap(ms_idx_priv);
+        ms_rad_thread[tid].swap(ms_rad_priv);
+        ms_kind_thread[tid].swap(ms_kind_priv);
+    }
+        /* Concatenating in thread order restores the ascending index order the serial
+         * scan produced. */
+        for (int t = 0; t < ms_nthreads; t++) {
+            ms_src_idx.insert(ms_src_idx.end(), ms_idx_thread[t].begin(), ms_idx_thread[t].end());
+            ms_src_radii.insert(ms_src_radii.end(), ms_rad_thread[t].begin(), ms_rad_thread[t].end());
+            ms_src_kind.insert(ms_src_kind.end(), ms_kind_thread[t].begin(), ms_kind_thread[t].end());
         }
 
         int num_src = (int)ms_src_idx.size();
+        ms_flagged.reserve((size_t)num_src);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
@@ -348,9 +434,15 @@ void merge_and_split_particles(void)
 
         for (int aa = 0; aa < num_src; aa++) {
             i = ms_src_idx[aa];
+            /* A particle already claimed as somebody's merge target must not also
+             * merge or split away itself in the same pass: its mass is about to
+             * change, and whoever claimed it chose it on the mass it has now.
+             * Testing this once here also avoids evaluating either criterion for a
+             * particle that cannot act on the answer. */
+            if (Ptmp[i].flag != 0) {continue;}
             int64_t nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
 
-            if (does_particle_need_to_be_merged(i)) {
+            if (ms_src_kind[aa] == 1) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
@@ -397,9 +489,10 @@ void merge_and_split_particles(void)
                 }
                 if (target_for_merger >= 0) {
                     Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
+                    ms_flagged.push_back(i);
                 }
             }
-            else if (does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
+            else if (ms_src_kind[aa] == 2) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
@@ -416,6 +509,7 @@ void merge_and_split_particles(void)
                 if (target_for_merger >= 0) {
                     Ptmp[i].flag = 2;
                     Ptmp[i].target_index = target_for_merger;
+                    ms_flagged.push_back(i);
                 }
             }
         }
@@ -428,7 +522,8 @@ void merge_and_split_particles(void)
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
-    for (i = 0; i < NumPart; i++) {
+    for (size_t aa_apply = 0; aa_apply < ms_flagged.size(); aa_apply++) {
+        i = ms_flagged[aa_apply];
         if (Ptmp[i].flag == 1) { // merge this particle
             int did_merge = merge_particles_ij(i, Ptmp[i].target_index);
             if(did_merge == 1) {n_particles_merged++;}
@@ -908,6 +1003,28 @@ int merge_particles_ij(int i, int j)
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
+    CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
+    CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
+/* the electron and neutral fractions are part of the same cached composition and mix the same way. each
+   is declared by whichever of the cooling and photo-ionization modules owns it, so each line carries that
+   field's own existence condition; they differ because only the neutral fraction is declared when the
+   photo-ionization module runs alongside the CHIMES chemistry. */
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION) && !defined(COOLING))
+    CellP[j].Ne = wt_j*CellP[j].Ne + wt_i*CellP[i].Ne;
+#endif
+#if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
+    CellP[j].HI = wt_j*CellP[j].HI + wt_i*CellP[i].HI;
+#endif
+#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+    /* the ionization states are a partition of the same nuclei as the neutral fraction above, so they
+       have to mix with it or the merged cell holds fractions that no longer sum correctly */
+    CellP[j].HII = wt_j*CellP[j].HII + wt_i*CellP[i].HII;
+#ifdef RT_CHEM_PHOTOION_HE
+    CellP[j].HeI = wt_j*CellP[j].HeI + wt_i*CellP[i].HeI;
+    CellP[j].HeII = wt_j*CellP[j].HeII + wt_i*CellP[i].HeII;
+    CellP[j].HeIII = wt_j*CellP[j].HeIII + wt_i*CellP[i].HeIII;
+#endif
+#endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
     P[j].Pos = pos_new; // center-of-mass conserving //
@@ -1406,13 +1523,13 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 /* subroutine to check if too little time has passed since the last merge-split, in which case we won't allow it again */
-int check_if_sufficient_mergesplit_time_has_passed(int i)
+int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng)
 {
     double N_timesteps_fac = 300.; // require > N timesteps before next merge/split, default was 100, but can be more aggressive - something between 10-100 works well in practice [definitely shorter than 10 can cause problems]
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 2) || defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
     N_timesteps_fac = 30.;
 #endif
-    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
+    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * gizmo_rng_uniform(rng);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
     double dt_incodescale = (get_particle_timestep_in_physical(i, P) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit

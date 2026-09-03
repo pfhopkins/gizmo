@@ -11,6 +11,7 @@
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 #include "../mesh/kernel.h"
 #include "../gravity/gravtree_force_kernel.h" /* shared weight-function SSOT (grav_weight_function_for_weighted_motion_smoothing) */
+#include "../gravity/binary_functions.h" /* odeint_super_timestep (SINGLE_STAR_TIMESTEPPING) */
 
 /*! Routines for the drift/predict step */
 
@@ -105,163 +106,6 @@ void reconstruct_timebins(void)
 
 
 
-void drift_particle(int i, integertime time1)
-{
-    int j __attribute__((unused)); double dt_drift; integertime time0 = P[i].Ti_current;
-    if(time1 < time0)
-    {
-        printf("no prediction into past allowed: i=%d time0=%lld time1=%lld (task=%d)\n", i, (long long)time0, (long long)time1, ThisTask); fflush(stdout);
-        endrun(90001004);
-        return;   /* graceful: skip the drift; bad-stop drains at the next phase poll */
-    }
-    if(time1 == time0) {return;}
-    
-    dt_drift = get_drift_factor(time0, time1, i, 0);
-        
-#if !defined(FREEZE_HYDRO)
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    if(P[i].Type==0) {advect_mesh_point(i,dt_drift);} else {P[i].Pos += P[i].Vel * dt_drift;}
-#elif (SINGLE_STAR_TIMESTEPPING > 0)
-    Vec3<double> fewbody_drift_dx, fewbody_kick_dv; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
-    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) )
-    {
-        Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
-        P[i].Pos += COM_Vel * dt_drift; //center of mass drift
-        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1); // do_fewbody_drift
-        P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
-        P[i].Pos += fewbody_drift_dx; //Keplerian evolution
-        P[i].Vel += fewbody_kick_dv; //move on binary.orbit
-    } else {
-       P[i].Pos += P[i].Vel * dt_drift;
-    }
-#else
-    P[i].Pos += P[i].Vel * dt_drift;
-#endif
-#endif // FREEZE_HYDRO clause
-#if (NUMDIMS==1)
-    P[i].Pos[1]=P[i].Pos[2]=0; // force zero-ing
-#endif
-#if (NUMDIMS==2)
-    P[i].Pos[2]=0; // force zero-ing
-#endif
-
-#ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-    double dilation = timestep_dilation_factor(i, P); /* f = 1/a <= 1 */
-    if(dilation < 1.) {
-        /* the drift above advanced the particle over only the fraction f of the raw interval, since
-           dt_drift already carries the f. add back the bulk motion over the remaining (1-f) of the
-           raw interval, so that only the motion relative to the surroundings is dilated */
-        double cfac = dt_drift * (1./dilation - 1.);
-        P[i].Pos += P[i].vel_of_nearest_special * cfac;
-    }
-#endif
-
-    double divv_fac = P[i].Particle_DivVel * dt_drift;
-    double divv_fac_max = 0.3; //1.5; // don't allow KernelRadius to change too much in predict-step //
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive(i) && P[i].Type>0) {divv_fac_max=4;} // can [should] allow larger changes when using adapting soft for all
-#endif
-    if(divv_fac > +divv_fac_max) divv_fac = +divv_fac_max;
-    if(divv_fac < -divv_fac_max) divv_fac = -divv_fac_max;
-    
-#ifdef GRAIN_FLUID
-    if((1 << P[i].Type) & (GRAIN_PTYPES))
-    {
-        P[i].KernelRadius *= exp((double)divv_fac / ((double)NUMDIMS));
-        if(P[i].KernelRadius < All.MinKernelRadius) {P[i].KernelRadius = All.MinKernelRadius;}
-        if(P[i].KernelRadius > All.MaxKernelRadius) {P[i].KernelRadius = All.MaxKernelRadius;}
-    }
-#endif
-
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive(i) && (dt_drift>0)) /* particle is AGS-active */
-    {
-        double minsoft = ags_return_minsoft(i), maxsoft = ags_return_maxsoft(i);
-        P[i].AGS_KernelRadius *= exp((double)divv_fac / ((double)NUMDIMS));
-        if(P[i].AGS_KernelRadius < minsoft) {P[i].AGS_KernelRadius = minsoft;}
-        if(P[i].AGS_KernelRadius > maxsoft) {P[i].AGS_KernelRadius = maxsoft;}
-    } else {P[i].AGS_KernelRadius = ForceSoftening_KernelRadius(i);} /* non-AGS-active particles use fixed softening */
-#endif
-    
-#ifdef DM_FUZZY
-    do_dm_fuzzy_drift_kick(i, dt_drift, 1);
-#endif
-
-#ifdef CBE_INTEGRATOR
-    /* CBE-moment predictor SUPPRESSED: the implemented per-basis CBE-moment
-     * drift-prediction degraded accuracy (it damped the harmonic breathing test
-     * more than leaving it off), so the do_cbe_predict_drift() call is removed
-     * pending a corrected revival (separate future work). The general
-     * AGS_KernelRadius / gas VelPred prediction is unaffected; do_cbe_predict_drift()
-     * remains defined (currently unused) as a placeholder for that revival. */
-#endif
-
-    if((P[i].Type == 0) && (P[i].Mass > 0))
-        {
-            double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
-            dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i, P);
-            dt_gravkick = get_gravkick_factor(time0, time1, i, 0);
-            
-#ifdef PMGRID
-            dt_gravkick_pm = get_gravkick_factor(time0, time1, -1, 0);
-            CellP[i].VelPred += P[i].GravAccel*dt_gravkick + P[i].GravPM*dt_gravkick_pm + CellP[i].HydroAccel*(dt_hydrokick*All.cf_atime); /* make sure v is in code units */
-#else
-            CellP[i].VelPred += P[i].GravAccel * dt_gravkick + CellP[i].HydroAccel * (dt_hydrokick*All.cf_atime); /* make sure v is in code units */
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {CellP[i].VelPred += fewbody_kick_dv;}
-#endif	    
-            
-#if defined(TURB_DRIVING)
-            CellP[i].VelPred += CellP[i].TurbAccel * dt_gravkick;
-#endif
-#ifdef RT_RAD_PRESSURE_OUTPUT
-            CellP[i].VelPred += CellP[i].Rad_Accel * (All.cf_atime * dt_hydrokick);
-#endif
-            
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            P[i].Mass = DMAX(P[i].Mass + CellP[i].DtMass * dt_entr, 0.5 * CellP[i].MassTrue); CellP[i].Mass = P[i].Mass;
-#endif
-            
-            CellP[i].Density *= exp(-divv_fac);
-            double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
-#if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
-            int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
-            if(erad_tot > 0)
-            {
-                int_e_min=0.025*CellP[i].InternalEnergyPred; tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
-                enew=DMAX(erad_tot/rsol_fac+etmp*P[i].Mass,tot_e_min); etmp=(enew-erad_tot/rsol_fac)/P[i].Mass; if(etmp<int_e_min) {dErad=rsol_fac*(etmp-int_e_min); etmp=int_e_min;}
-                if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergyPred = etmp; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma_Pred[kfreq] *= 1 + dErad/erad_tot;}
-            } else {
-                if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
-            }
-#else
-            if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
-#endif
-            if(CellP[i].InternalEnergyPred<All.MinEgySpec) CellP[i].InternalEnergyPred=All.MinEgySpec;
-            
-#ifdef HYDRO_PRESSURE_SPH
-            CellP[i].EgyWtDensity *= exp(-divv_fac);
-#endif
-            
-#if (HYDRO_FIX_MESH_MOTION > 0)
-            P[i].KernelRadius *= exp((double)divv_fac / ((double)NUMDIMS));
-            if(P[i].KernelRadius < All.MinKernelRadius) {P[i].KernelRadius = All.MinKernelRadius;}
-            if(P[i].KernelRadius > All.MaxKernelRadius) {P[i].KernelRadius = All.MaxKernelRadius;}
-#ifdef ADAPTIVE_GRAVSOFT_FORALL
-            if(1 & ADAPTIVE_GRAVSOFT_FORALL) {P[i].AGS_KernelRadius = P[i].KernelRadius;} /* gas is AGS-active, so needs to be set here to match updated KernelRadius */
-#endif
-#endif
-            drift_extra_physics(i, time0, time1, dt_entr);
-
-            set_eos_pressure(i, P, CellP);
-        }
-    
-    /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
-    apply_special_boundary_conditions(i,P[i].Mass,0);
-
-    P[i].Ti_current = time1;
-}
 
 
 
@@ -304,11 +148,7 @@ extern "C" integertime gizmo_full_drift_ti(void) { return g_last_full_drift_Ti; 
 void gizmo_full_drift_to(integertime time1)
 {
     if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
-    int i;
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
+    drift_particles_batch(NULL, NumPart, time1);
     g_last_full_drift_Ti = time1;
     /* drift_particle just multiplied KernelRadius by exp(divv_fac/N) for every
      * particle (predict.cc:160,229). Mark the whole pool h-dirty so the next
@@ -352,10 +192,10 @@ void move_particles(integertime time1)
     std::vector<int> active_idx;
     active_idx.reserve(ActiveParticleList.size());
     for(int i : ActiveParticleList) {
-        drift_particle(i, time1);
         active_idx.push_back(i);
         n_active++;
     }
+    drift_particles_batch(active_idx.data(), (int) active_idx.size(), time1);
     /* drift_particle just multiplied KernelRadius for each active particle
      * (predict.cc:160,229). Mark h-dirty for both GPU SIDX tracker and host
      * glt cache via the SSOT helper. */
@@ -366,38 +206,6 @@ void move_particles(integertime time1)
 
 
 
-void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_entr)
-{
-#ifdef MAGNETIC
-    double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
-    CellP[i].BPred += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
-#ifdef DIVBCLEANING_DEDNER
-    double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
-    double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * CellP[i].DtPhi;
-    CellP[i].PhiPred += dtphi_code  * dt_entr;
-    double t_damp = Get_Gas_PhiField_DampingTimeInv(i);
-    if((t_damp>0) && (!isnan(t_damp)))
-    {
-        CellP[i].PhiPred *= exp( -dt_entr * t_damp );
-    }
-#endif
-#ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
-    CellP[i].B = CellP[i].BPred;
-#ifdef DIVBCLEANING_DEDNER
-    CellP[i].Phi=CellP[i].PhiPred;
-#endif
-#endif
-#endif
-#ifdef COSMIC_RAY_FLUID
-    CosmicRay_Update_DriftKick(i, dt_entr, 1, P, CellP);
-#endif
-#ifdef RADTRANSFER
-    rt_update_driftkick(i, dt_entr, 1, P, CellP);
-#endif
-#ifdef EOS_ELASTIC
-    elastic_body_update_driftkick(i,dt_entr,1);
-#endif
-}
 
 
 
@@ -496,6 +304,32 @@ void do_box_wrapping(void)
 #define KOKKOS_INLINE_FUNCTION
 #include "predict_functions.h"
 
+/* The drift body itself lives in drift_particle_functions.h so that one copy serves the
+ * host and, once the drift is offloaded, the device. It is included HERE, below the block
+ * above, for two reasons: that block must stay the FIRST inclusion of predict_functions.h
+ * or its external symbols silently vanish, and the headers below must NOT be taken with
+ * the blanked macro or this file would emit strong copies of symbols core/timestep.cc
+ * already owns. Undefining the macro lets each header fall back to plain inline. */
+#undef KOKKOS_INLINE_FUNCTION
+#include "drift_particle_functions.h"
+
+void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_entr)
+{
+    drift_extra_physics_P(i, tstart, tend, dt_entr, P, CellP);
+}
+
+void drift_particle(int i, integertime time1)
+{
+    /* Same view the cosmological table factors are built from elsewhere; on a
+       non-cosmological run the tables are never filled and never read. */
+    /* The bounds are the cached ones init_drift_table() built the tables over; recomputing
+       them here would put two libm calls on every drifted particle. */
+    struct DriftKickTableView tables = drift_kick_table_view(DriftTable, GravKickTable,
+            DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+    struct EosTableView eos_tables = eos_tables_view();
+    drift_particle_impl(i, time1, P, CellP, &tables, &eos_tables);
+}
+
 
 
 
@@ -542,67 +376,9 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
 
 
 #ifdef DIVBCLEANING_DEDNER
-double INLINE_FUNC Get_Gas_PhiField(int i_particle_id)
-{
-    //return CellP[i_particle_id].PhiPred * CellP[i_particle_id].Density / P[i_particle_id].Mass; // volumetric phy-flux (requires extra term compared to mass-based flux)
-    return CellP[i_particle_id].PhiPred / P[i_particle_id].Mass; // mass-based phi-flux
-}
+double INLINE_FUNC Get_Gas_PhiField(int i_particle_id) { return Get_Gas_PhiField_P(i_particle_id, P, CellP); }
 
-double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
-{
-    /* this timescale should always be returned as a -physical- time */
-#ifdef HYDRO_SPH
-    /* PFH: add simple damping (-phi/tau) term */
-    double damping_tinv = 0.5 * All.DivBcleanParabolicSigma * (CellP[i_particle_id].MaxSignalVel / (All.cf_atime*P[i_particle_id].Get_Particle_Size()));
-#else
-    double damping_tinv;
-#ifdef SELFGRAVITY_OFF
-    damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveSpeed / (All.cf_atime*P[i_particle_id].Get_Particle_Size()); // fastest wavespeed has units of [vphys]
-    //double damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveDecay * All.cf_a2inv; // no improvement over fastestwavespeed; decay has units [vphys/rphys]
-#else
-    // only see a small performance drop from fastestwavespeed above to maxsignalvel below, despite the fact that below is purely local (so allows more flexible adapting to high dynamic range)
-    damping_tinv = 0.0;
-    
-    if(P[i_particle_id].KernelRadius > 0)
-    {
-        double h_eff = P[i_particle_id].Get_Particle_Size();
-        double vsig2 = 0.5 * fabs(CellP[i_particle_id].MaxSignalVel);
-        double phi_B_eff = 0.0;
-        if(vsig2 > 0) {phi_B_eff = Get_Gas_PhiField(i_particle_id) / (All.cf_atime * vsig2);}
-        double vsig1 = 0.0;
-        if(CellP[i_particle_id].Density > 0)
-        {
-            vsig1 = sqrt( CellP[i_particle_id].effective_soundspeed()*CellP[i_particle_id].effective_soundspeed() +
-                 (1. / All.cf_atime) *
-                 (CellP[i_particle_id].Bfield().norm_sq() +
-                  phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );
-        }
-        vsig1 = DMAX(vsig1, vsig2);
-        vsig2 = 0.0;
-        vsig2 = CellP[i_particle_id].Gradients.Velocity.frobenius_norm();
-        vsig2 = 3.0 * h_eff * DMAX( vsig2, fabs(P[i_particle_id].Particle_DivVel)) / All.cf_atime;
-        double prefac_fastest = 0.1;
-        double prefac_tinv = 0.5;
-        double area_0 = 0.1;
-#ifdef MHD_CONSTRAINED_GRADIENT
-        prefac_fastest = 1.0;
-        prefac_tinv = 2.0;
-        area_0 = 0.05;
-        vsig2 *= 5.0;
-        if(CellP[i_particle_id].FlagForConstrainedGradients <= 0) prefac_tinv *= 30;
-#endif
-        prefac_tinv *= sqrt(1. + CellP[i_particle_id].ConditionNumber/100.);
-        double area = fabs(CellP[i_particle_id].Face_Area[0]) + fabs(CellP[i_particle_id].Face_Area[1]) + fabs(CellP[i_particle_id].Face_Area[2]);
-        area /= Get_Particle_Expected_Area(P[i_particle_id].KernelRadius);
-        prefac_tinv *= (1. + area/area_0)*(1. + area/area_0);
-        
-        double vsig_max = DMAX( DMAX(vsig1,vsig2) , prefac_fastest * All.FastestWaveSpeed );
-        damping_tinv = prefac_tinv * All.DivBcleanParabolicSigma * (vsig_max / (All.cf_atime * h_eff));
-    }
-#endif
-#endif
-    return damping_tinv;
-}
+double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id) { return Get_Gas_PhiField_DampingTimeInv_P(i_particle_id, P, CellP); }
 
 #endif // dedner
 #endif // magnetic
@@ -620,55 +396,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 /* time-step the positions of the mesh points. this is trivial except if we are evolving the mesh points in non-cartesian coordinates
     (cylindrical or spherical) based on assumed fixed initial velocities (if HYDRO_FIX_MESH_MOTION=2 or 3),
     in which case we have to convert back and forth. */
-void advect_mesh_point(int i, double dt)
-{
-#if (HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3) // cylindrical or spherical coordinates
-    // define the location relative to the origin (needed in these coordinate systems)
-    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // assume center is at coordinate origin
-#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // unless we use a special anchor, to define the center
-    dp_offset = P[i].Pos - P[i].Min_xyz_to_Sink;
-#elif defined(BOX_PERIODIC) // or if periodic, the box mid-point is instead the center
-#if (NUMDIMS==1)
-    dp_offset[0] = -boxHalf_X;
-#elif (NUMDIMS==2)
-    dp_offset[0] = -boxHalf_X; dp_offset[1] = -boxHalf_Y;
-#else
-    dp_offset = Vec3<double>{-boxHalf_X, -boxHalf_Y, -boxHalf_Z};
-#endif
-#endif
-    dp += dp_offset;
-#if (HYDRO_FIX_MESH_MOTION == 2) // cylindrical
-    double r2=dp[0]*dp[0]+dp[1]*dp[1], r=sqrt(r2), c0=dp[0]/r, s0=dp[1]/r, z=dp[2]; // get r, sin/cos theta, z
-    double vr=c0*CellP[i].ParticleVel[0] + s0*CellP[i].ParticleVel[1], vt=s0*CellP[i].ParticleVel[0] - c0*CellP[i].ParticleVel[1], vz=CellP[i].ParticleVel[2]; // velocities in these directions
-    double r_n=r+vr*dt, z_n=z+vz*dt, c_n=c0-s0*(vt/r)*dt, s_n=s0+c0*(vt/r)*dt; // updated cylindrical values
-    dp[0] = c_n*r_n; dp[1] = s_n*r_n; dp[2] = z_n; // back to coordinates
-    CellP[i].ParticleVel[0] = c_n*vr + s_n*vt; // re-set velocities in these coordinates //
-    CellP[i].ParticleVel[1] = s_n*vr - c_n*vt;
-    CellP[i].ParticleVel[2] = vz;
-    return;
-#elif (HYDRO_FIX_MESH_MOTION == 3) // spherical
-    Vec3<double> v = CellP[i].ParticleVel; double r2=dp.norm_sq(); // assume center is at coordinate origin
-    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=dot(dp,v)/r; // updated r is easy
-    double ct = 1./sqrt(1.+dp[1]*dp[1]/(dp[0]*dp[0])), st = (dp[1]/dp[0])*ct; // cos and sin theta
-    double cp = sqrt(1.-dp[2]*dp[2]/(r*r)), sp = dp[2]/r; // cos and sin phi
-    double t_dot = (v[0]*dp[1]-v[1]*dp[0])/(rxy*rxy), p_dot = (dp[2]*(dp[0]*v[0]+dp[1]*v[1])-rxy*rxy*v[2])/(r*r*rxy); // theta, phi derivatives
-    double r_n=r+vr*dt, ct_n=ct-st*t_dot, st_n=st+ct*t_dot, cp_n=cp-sp*t_dot, sp_n=sp+cp*t_dot; // updated angles and positions in spherical
-    dp[0] = r_n * ct_n * cp_n; dp[1] = r_n * st_n * cp_n; dp[2] = r_n * sp_n; // back to coordinates
-    rxy = sqrt(dp[0]*dp[0] + dp[1]*dp[1]); // updated rxy
-    CellP[i].ParticleVel[0] = (dp[0]/r_n) * vr + dp[1] * t_dot + dp[0]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[1] = (dp[1]/r_n) * vr - dp[0] * t_dot + dp[1]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[2] = (dp[2]/r_n) * vr - rxy * p_dot; // back to cartesian velocities
-    return;
-#endif
-    // ok now have the updated x/y/z positions relative to the origin, convert these back to the simulation coordinate frame
-    P[i].Pos = dp - dp_offset;
-#endif // ok done with cylindrical/spherical coordinates
-    
-    
-    // ok anything else ('normal' coordinates), does down here
-    P[i].Pos += CellP[i].ParticleVel * dt; // for standard grid velocities, this is trivial //
-    return;
-}
+void advect_mesh_point(int i, double dt) { advect_mesh_point_P(i, dt, P, CellP); }
 
 
 

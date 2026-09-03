@@ -20,6 +20,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
+#include "../core/timestep_functions.h"
 #include "gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h"
 
@@ -67,6 +68,158 @@ extern "C" void gpu_particles_arena_refresh_from_host(int min_capacity,
                                                      const char *site)
 {
     (void)min_capacity; (void)P_host; (void)CellP_host; (void)site;
+}
+
+/* ---- compact staging buffers (see the contract in gpu_particles_arena.h) ---- */
+
+extern "C" int particle_staging_acquire(struct ParticleStagingBatch *batch, int capacity)
+{
+    if(!batch) {return 0;}
+    /* Free anything the batch is already holding, so re-acquiring cannot strand the
+       previous buffers. Requires the caller to have zero-initialised it once. */
+    particle_staging_release(batch);
+    if(capacity <= 0) {capacity = 1;}
+    /* new[] rather than malloc for the host side: particle_data is over-aligned (32
+       bytes, measured, against a max_align_t of 8) and only the C++ allocator honours
+       that; malloc'd storage faults on the aligned vector moves the compiler emits. */
+    try {
+        batch->host_P    = new struct particle_data[(size_t)capacity];
+        batch->host_Cell = new struct gas_cell_data[(size_t)capacity];
+        batch->index     = new int[(size_t)capacity];
+    }
+    catch(const std::exception &) { particle_staging_release(batch); return 0; }
+    batch->dev_P    = (struct particle_data *) gizmo_gpu_alloc_device(
+                          (size_t)capacity * sizeof(struct particle_data), "particle_staging_P");
+    batch->dev_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_device(
+                          (size_t)capacity * sizeof(struct gas_cell_data), "particle_staging_Cell");
+    if(!batch->host_P || !batch->host_Cell || !batch->index || !batch->dev_P || !batch->dev_Cell)
+        { particle_staging_release(batch); return 0; }
+    batch->capacity = capacity;
+    return 1;
+}
+
+extern "C" void particle_staging_release(struct ParticleStagingBatch *batch)
+{
+    if(!batch) {return;}
+    delete[] batch->host_P;    batch->host_P    = NULL;
+    delete[] batch->host_Cell; batch->host_Cell = NULL;
+    delete[] batch->index;     batch->index     = NULL;
+    if(batch->dev_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(batch->dev_P);    batch->dev_P    = NULL;}
+    if(batch->dev_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(batch->dev_Cell); batch->dev_Cell = NULL;}
+    batch->capacity = batch->count = batch->gas_count = 0;
+}
+
+using UmHostP = Kokkos::View<struct particle_data*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+using UmHostC = Kokkos::View<struct gas_cell_data*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+using UmDevP  = Kokkos::View<struct particle_data*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+using UmDevC  = Kokkos::View<struct gas_cell_data*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+extern "C" int particle_staging_gather(struct ParticleStagingBatch *batch, const int *idx, int n,
+                                       struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(!batch) {return 0;}
+    batch->count = batch->gas_count = 0;
+    if(!idx || !pp || n <= 0) {return 0;}
+    if(n > batch->capacity) {
+        /* Stage nothing. Staging a prefix and letting the caller keep driving its own
+           loops would feed the kernel slots that were never written, and scatter back
+           through index entries that were never written -- an out-of-bounds write into
+           the particle arrays, which can land before the controlled stop drains. */
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "particle staging: asked to stage %d elements into %d slots",
+                 n, batch->capacity);
+        gizmo_request_controlled_stop(7718, msg, __FILE__, __LINE__, __FUNCTION__);
+        return 0;
+    }
+
+    /* Order the slots so the gas comes first. The physics touches a cell only for gas,
+       and CellP is not allocated beyond the gas particles, so this is what makes the
+       cell staging both correct and a contiguous copy. Reordering is free of
+       consequence here: the drift and cooling bodies act on one particle each, with no
+       pair coupling and no random draws. */
+    int n_gas = 0, tail = n, k;
+    for(k = 0; k < n; k++)
+    {
+        if(pp[idx[k]].Type == 0) {batch->index[n_gas++] = idx[k];}
+        else                     {batch->index[--tail]  = idx[k];}
+    }
+    /* CellP is null when the run has no gas at all, which is a legal configuration
+       (a pure N-body run allocates no gas cell storage). Nothing here needs it in that
+       case: the partition found no gas slots, and the drift body reaches a cell only
+       under its Type==0 guard. Gas with no CellP to read is a different thing -- an
+       inconsistency the caller cannot recover from -- so that one is refused. */
+    if(n_gas > 0 && !cell) {
+        gizmo_request_controlled_stop(7719, "particle staging: gas particles staged but CellP is null",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return 0;
+    }
+
+    batch->count     = n;
+    batch->gas_count = n_gas;
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int j = 0; j < n; j++)
+    {
+        const int i = batch->index[j];
+        batch->host_P[j] = pp[i];
+        if(j < n_gas) {batch->host_Cell[j] = cell[i];}
+    }
+
+    Kokkos::deep_copy(UmDevP(batch->dev_P, (size_t)n), UmHostP(batch->host_P, (size_t)n));
+    if(n_gas > 0) {Kokkos::deep_copy(UmDevC(batch->dev_Cell, (size_t)n_gas), UmHostC(batch->host_Cell, (size_t)n_gas));}
+    return 1;
+}
+
+extern "C" void particle_staging_scatter(struct ParticleStagingBatch *batch,
+                                        struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(!batch || !pp || batch->count <= 0) {return;}
+    const int n = batch->count, n_gas = batch->gas_count;
+    if(n_gas > 0 && !cell) {return;}   /* gather refuses this state; never reached */
+
+    Kokkos::deep_copy(UmHostP(batch->host_P, (size_t)n), UmDevP(batch->dev_P, (size_t)n));
+    if(n_gas > 0) {Kokkos::deep_copy(UmHostC(batch->host_Cell, (size_t)n_gas), UmDevC(batch->dev_Cell, (size_t)n_gas));}
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int j = 0; j < n; j++)
+    {
+        const int i = batch->index[j];
+        pp[i] = batch->host_P[j];
+        if(j < n_gas) {cell[i] = batch->host_Cell[j];}
+    }
+}
+
+/* See the header for why the storage is per-caller and why the refresh is
+   unconditional. */
+extern "C" int drift_kick_table_mirror_refresh(double **storage, struct DriftKickTableView *view)
+{
+    if(!storage || !view) {return 1;}
+
+    *view = drift_kick_table_view(NULL, NULL, 0.0, 0.0, All.Timebase_interval,
+                                  All.ComovingIntegrationOn ? 1 : 0);
+    if(!view->comoving) {return 0;}   /* tables never built; the elapsed-time branch needs none of them */
+
+    if(!*storage) {
+        *storage = (double *) gizmo_gpu_alloc_shared(2 * DRIFT_TABLE_LENGTH * sizeof(double), NULL);
+        if(!*storage) {
+            gizmo_request_controlled_stop(929701, "drift/gravkick table mirror allocation failed",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            return 1;
+        }
+    }
+    for(int i = 0; i < DRIFT_TABLE_LENGTH; i++) {
+        (*storage)[i]                      = DriftTable[i];
+        (*storage)[DRIFT_TABLE_LENGTH + i] = GravKickTable[i];
+    }
+    *view = drift_kick_table_view(*storage, *storage + DRIFT_TABLE_LENGTH,
+                                  DriftTable_logTimeBegin, DriftTable_logTimeMax,
+                                  All.Timebase_interval, 1);
+    return 0;
 }
 
 extern "C" void gpu_particles_arena_release(void)

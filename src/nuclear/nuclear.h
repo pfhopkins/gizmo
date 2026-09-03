@@ -142,16 +142,11 @@ KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *p
 /* Ye/Abar computation from mass fractions — used by all solvers */
 KOKKOS_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES], double *Ye_out, double *Abar_out);
 
-#ifdef NUCLEAR_NETWORK_NEUTRINOS
-/* Neutrino emission estimate from thermal processes (pair, plasmon). Pure function. */
-KOKKOS_FUNCTION void nuclear_neutrino_emission(double rho_cgs, double T9, double Ye,
-                               double nu_lum[3], double nu_emean[3]);
-/* Neutrino opacity for RT bands */
-double nuclear_neutrino_opacity(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-double nuclear_neutrino_absorb_frac(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-/* Ye feedback from neutrino absorption after RT kick */
-void nuclear_neutrino_ye_feedback(int i, double dt_code, struct particle_data *pp, struct gas_cell_data *cell);
-#endif
+/* The neutrino routines (emission, opacity, absorbed fraction, Ye feedback) are
+   defined inline in nuclear_physics_functions.h so they are callable from device
+   code; include that header to use them. No prototypes here — a declaration
+   visible without the definition would make the compiler emit an external device
+   call that has no device-side symbol to resolve against. */
 
 /* ---------------------------------------------------------------------------
    Solver-specific entry points (dispatched by CallNuclearNetwork)

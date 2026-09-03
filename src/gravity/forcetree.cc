@@ -102,10 +102,11 @@ double compute_force_softening_kernel_radius(int p)
 
 /* Public accessor: returns the cached value populated by compute_all_force_softening().
  * Both CPU and GPU walks read this same value, so the softening logic above lives in
- * exactly one place. */
+ * exactly one place. The body is ForceSoftening_KernelRadius_P in core/proto.h, which
+ * device code calls directly. */
 double ForceSoftening_KernelRadius(int p)
 {
-    return P[p].ForceSoftening;
+    return ForceSoftening_KernelRadius_P(p, P);
 }
 
 /* Refresh the per-particle ForceSoftening cache.  Called from gravity_tree() at

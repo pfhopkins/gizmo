@@ -40,7 +40,7 @@ struct dm_cooling_tables_t DMCoolTables = {-1.0, 9.0, 0, nullptr, nullptr, nullp
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
-GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 /* Forward decls for symbols called by eos_functions.h / rt_functions.h under
    various FIRE / COOL_MOLECFRAC / SINGLE_STAR flag combinations.  Must be declared
    before the including headers so overload resolution inside their inline bodies
@@ -86,9 +86,7 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
  * hydrogen_molecule chain), doubling the device stack depth and causing CUDA OOM
  * on the H200. Both are instead routed into a separate post_cooling_tail
  * device kernel:
- *   - set_eos_pressure_impl runs in the device tail when
- *     POST_COOLING_DEVICE_EOS_SUPPORTED (otherwise the GPU-path scatter loop
- *     calls the host wrapper).
+ *   - set_eos_pressure_impl runs in the device tail, in every configuration.
  *   - dust + molecfrac + DelayTimeHII run in the device tail when
  *     GALSF_ISMDUSTCHEM_MODEL. Their host wrapper
  *     finish_cooling_host_deferred_dust_updates is no longer invoked from the
@@ -110,12 +108,14 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
  *   and massively modified/extended for GIZMO, primarily by Phil Hopkins, Mike Grudic, and Alex Richings.
  */
 
-#ifdef COOLING
-
 /* Cooling tables consolidated into a single struct (cooling_tables.h).
    With GPU offload: __managed__ so device kernels can access directly.
-   Without: plain static. Pointer members point to separately allocated memory. */
+   Without: plain static. Pointer members point to separately allocated memory.
+   Included unconditionally: builds without cooling still define the empty view
+   this file hands out, and that definition needs the complete type. */
 #include "cooling_tables.h"
+
+#ifdef COOLING
 
 #if !defined(CHIMES)
 #if defined(GIZMO_GPU_COMPILER)
@@ -127,6 +127,22 @@ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NUL
 /* CoolTables fields are accessed directly as CoolTables.Tmin, CoolTables.gJH0, etc.
    No convenience aliases — they caused linker symbol ownership bugs on CUDA. */
 #endif /* !CHIMES */
+
+/* Hand out the tables owned by this file, as data. Everything outside this
+   file reaches them this way; nothing outside declares the instances. Call it
+   on the host immediately before a dispatch, so the view carries whatever the
+   tables hold at that moment. */
+struct PhysicsTablesView gizmo_physics_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+#if !defined(CHIMES)
+    view.cooling = &CoolTables;
+#endif
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+    view.dm_cooling = &DMCoolTables;
+#endif
+    return view;
+}
 
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
 /* DMCoolTables OWNER's builder bodies. The __managed__ instance is defined
@@ -228,8 +244,63 @@ KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess,
 #else
 #define KOKKOS_INLINE_FUNCTION
 #endif
-#define COOLING_FUNCTIONS_OWNER
 #include "cooling_functions.h"
+
+#if !defined(CHIMES)
+/* Host-facing entry points, and the ones this file's own kernels use.
+   The bodies live in cooling_functions.h and take the tables as data; this
+   file owns the tables, so it is the one place allowed to name them. Every
+   caller elsewhere -- on the host through these symbols, on the device by
+   passing its own view -- goes through that single set of bodies. */
+KOKKOS_INLINE_FUNCTION
+struct PhysicsTablesView cooling_owner_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+    view.cooling = &CoolTables;
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+    view.dm_cooling = &DMCoolTables;
+#endif
+    return view;
+}
+
+KOKKOS_INLINE_FUNCTION
+double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return return_local_gammamultiplier_impl(target, cell, &tables_view);
+}
+
+KOKKOS_INLINE_FUNCTION
+double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return find_abundances_and_rates_impl(logT, rho, target, shieldfac, return_cooling_mode, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, LambdaExc_return, LambdaIon_return, LambdaRec_return, LambdaFF_return, pp, cell, &tables_view);
+}
+
+#if defined(EOS_SUBSTELLAR_ISM)
+KOKKOS_INLINE_FUNCTION
+double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_temp_to_u_impl(temp, rho, target, cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell, &tables_view);
+}
+
+KOKKOS_INLINE_FUNCTION
+double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_u_to_temp_impl(u, rho, target, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell, &tables_view);
+}
+#else
+KOKKOS_INLINE_FUNCTION
+double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    struct PhysicsTablesView tables_view = cooling_owner_tables_view();
+    return convert_u_to_temp_impl(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell, &tables_view);
+}
+#endif /* EOS_SUBSTELLAR_ISM */
+
+#endif /* !CHIMES */
 #ifdef TWO_TEMPERATURE_PLASMA
 #include "two_temperature_functions.h"
 #endif
@@ -288,27 +359,7 @@ void cooling_parent_routine(void)
         cool_indices.push_back(i);
     }
     int N_active = (int) cool_indices.size();
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-    /* ORACLE accumulators -- hoisted above the early-return and outside the
-     * GPU/CPU branch decision so the MPI_Allreduce below is reached by every
-     * rank, regardless of local N_active or whether the GPU offload threshold
-     * is met. Neutral init (zeros) so ranks that take the CPU path or the
-     * early-return contribute MPI_MAX-neutral / MPI_SUM-neutral values. */
-    double oracle_max_rel_Press = 0.0, oracle_max_rel_Temp = 0.0, oracle_max_rel_Gamma = 0.0, oracle_max_rel_Cs = 0.0;
-    double oracle_max_rel_DustMetal = 0.0, oracle_max_rel_DustSource = 0.0, oracle_max_rel_DustSpecies = 0.0;
-    double oracle_max_rel_DustNumberInBin = 0.0, oracle_max_rel_DustSlopeInBin = 0.0;
-    double oracle_max_rel_CinCO = 0.0, oracle_max_rel_DenseMolFrac = 0.0, oracle_max_rel_DelayTimeSputt = 0.0;
-    double oracle_max_rel_MolFrac = 0.0, oracle_max_rel_MolFracNeutH = 0.0;
-    double oracle_max_rel_DelayTimeHII = 0.0;
-    long long oracle_n_mismatch = 0;
-    unsigned long long oracle_first_mismatch_ID = 0ULL;
-    long long oracle_n_compared = 0; /* cells actually device-vs-host compared; <= N_active */
-    const double oracle_tol = 1.0e-10;
-    /* DO NOT early-return when N_active==0 under ORACLE -- must reach the
-     * MPI_Allreduce below. Dispatch loop is a no-op for N_active==0. */
-#else
     if(N_active == 0) {return;}
-#endif
 
     /* Steps 2-4: Gather / Dispatch / Scatter in batches.
      *
@@ -328,14 +379,18 @@ void cooling_parent_routine(void)
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
-    struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct particle_data), NULL);
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(struct gas_cell_data), NULL);
-    /* Per-particle dtime captured at gather time (host) so the device
-     * post_cooling_tail kernel can drive update_dust_processes /
-     * update_explicit_molecular_fraction / DelayTimeHII countdown.
-     * get_particle_timestep_in_physical is host-only and not worth porting. */
+    /* Whole-struct staging is shared with the other batched device loops: plain host
+       buffers filled in parallel, one explicit copy each way, and device memory the
+       kernel actually reads. */
+    struct ParticleStagingBatch batch = {};
+    int staged = particle_staging_acquire(&batch, batch_cap);
+    /* dtime is captured on the host at gather time because
+       get_particle_timestep_in_physical is host-only. It is the one deliberate
+       exception to staging through host-then-device memory: at 8 bytes an element
+       against 3080 for the structs, a third buffer plus a third copy would cost more
+       than the shared-memory read it saves. */
     double *compact_dtime = (double *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(double), NULL);
-    if(!compact_P || !compact_Cell || !compact_dtime) {
+    if(!staged || !compact_dtime) {
         /* No batch buffers means this rank cools nothing this step. The count is
          * zeroed rather than returning, so the loop below runs zero batches and
          * any collective past it is still reached by every rank. */
@@ -351,21 +406,21 @@ void cooling_parent_routine(void)
         N_active = 0;
     }
 
-    /* ORACLE accumulators are hoisted to function scope above for MPI
-     * collective correctness (see comment near N_active early-return). */
-
     for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
     {
         int batch_n = N_active - batch_start;
         if(batch_n > GPU_COOL_BATCH_SIZE) {batch_n = GPU_COOL_BATCH_SIZE;}
 
         /* Gather batch */
-        for(int j = 0; j < batch_n; j++)
+        if(!particle_staging_gather(&batch, cool_indices.data() + batch_start, batch_n, P, CellP)) {break;}
+        /* Every index here is gas by construction (the eligibility loop above skips
+           Type != 0), so the staging leaves the order alone and every slot has a cell. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(int j = 0; j < batch.count; j++)
         {
-            int i = cool_indices[batch_start + j];
-            compact_P[j]    = P[i];
-            compact_Cell[j] = CellP[i];
-            double dt = get_particle_timestep_in_physical(i, P);
+            double dt = get_particle_timestep_in_physical(batch.index[j], P);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
             dt *= All.Transport_Subcycle_dt_fraction; /* cooling fires N times in the subcycle loop, each with dt/N */
 #endif
@@ -374,9 +429,9 @@ void cooling_parent_routine(void)
 
         /* Dispatch batch to GPU */
         {
-            struct particle_data *kp = compact_P;
-            struct gas_cell_data *kc = compact_Cell;
-            gizmo_gpu_kernel_launch("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
+            struct particle_data *kp = batch.dev_P;
+            struct gas_cell_data *kc = batch.dev_Cell;
+            gizmo_gpu_kernel_launch("cooling_loop", batch.count, KOKKOS_LAMBDA(int j) {
                 do_the_cooling_for_particle(j, kp, kc);
             }, batch_start);
         }
@@ -384,10 +439,8 @@ void cooling_parent_routine(void)
 
         /* Post-cooling tail device kernel. Three blocks, each independently
          * #ifdef-gated:
-         *   - POST_COOLING_DEVICE_EOS_SUPPORTED -> set_eos_pressure_impl
-         *     (defined iff EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/
-         *     HYDRO_GENERATE_TARGET_MESH are all inactive; see
-         *     declarations/precompiler_logic.h).
+         *   - set_eos_pressure_impl, unconditionally: the equation of state is
+         *     device-callable for every configuration, tabulated ones included.
          *   - GALSF_ISMDUSTCHEM_MODEL -> update_dust_processes + (gated)
          *     update_explicit_molecular_fraction + (gated) DelayTimeHII
          *     countdown. The outer GALSF_ISMDUSTCHEM_MODEL gate is coupling
@@ -401,35 +454,22 @@ void cooling_parent_routine(void)
          *     byte-for-byte so the GPU path and the CPU OMP fallback (below)
          *     compute the same physics for every supported Config (multi-path
          *     principle).
-         * Kernel launches whenever EITHER family is active. The GPU-path
-         * scatter loop below skips finish_cooling_host_deferred_dust_updates
-         * (the device kernel above did it) and skips set_eos_pressure when
-         * POST_COOLING_DEVICE_EOS_SUPPORTED (likewise). Solid-EOS+dust builds
-         * still get device dust here AND host set_eos_pressure in the scatter
-         * loop -- the two gates are orthogonal by design.
+         * The scatter loop below therefore runs neither the dust tail nor
+         * set_eos_pressure: the kernel above has done both.
          * Separate kernel from the cooling loop above to keep per-launch
          * device stack depth bounded -- set_eos_pressure_impl and
          * update_dust_processes each call ThermalProperties (->
          * convert_u_to_temp -> hydrogen_molecule chain), which the cooling
          * loop already exercises; nesting would double the stack at the
          * H200 OOM limit. */
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-        /* ORACLE: snapshot compact arrays BEFORE the device tail kernel so we
-         * can re-run the host wrapper(s) on the same inputs and diff afterwards. */
-        struct particle_data *oracle_P_scratch = (struct particle_data *) mymalloc("cool_oracle_P", batch_n * sizeof(struct particle_data));
-        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) mymalloc("cool_oracle_Cell", batch_n * sizeof(struct gas_cell_data));
-        memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
-        memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
-#endif
-#if defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL)
         {
-            struct particle_data *kp = compact_P;
-            struct gas_cell_data *kc = compact_Cell;
+            struct particle_data *kp = batch.dev_P;
+            struct gas_cell_data *kc = batch.dev_Cell;
             double               *kdt = compact_dtime;
-            gizmo_gpu_kernel_launch("post_cooling_tail", batch_n, KOKKOS_LAMBDA(int j) {
-#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
-                set_eos_pressure_impl(j, kp, kc);
-#endif
+            /* Host-built, captured by value -- see eos_tables_view. */
+            struct EosTableView eos_tables = eos_tables_view();
+            gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
+                set_eos_pressure_impl(j, kp, kc, &eos_tables);
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
                     update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
@@ -451,138 +491,19 @@ void cooling_parent_routine(void)
 #endif /* GALSF_ISMDUSTCHEM_MODEL */
             }, batch_start);
         }
-#endif
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-        /* ORACLE: re-run the public host wrapper(s) on the scratch arrays.
-         * Match the device kernel's gate structure (         * "oracle covers the whole tail, not just EOS"): set_eos_pressure runs
-         * when POST_COOLING_DEVICE_EOS_SUPPORTED; finish_cooling_host_deferred_dust_updates
-         * runs when GALSF_ISMDUSTCHEM_MODEL (with the same dtime + Mass + Type
-         * guard the kernel uses). Wrappers are the host reference path; matching
-         * the wrapper, not the inline impl, is what we want. */
-        for(int j = 0; j < batch_n; j++) {
-#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
-            set_eos_pressure(j, oracle_P_scratch, oracle_Cell_scratch);
-#endif
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-            if((compact_dtime[j] > 0) && (oracle_Cell_scratch[j].Mass > 0) && (oracle_P_scratch[j].Type == 0)) {
-                finish_cooling_host_deferred_dust_updates(j, compact_dtime[j], oracle_P_scratch, oracle_Cell_scratch);
-            }
-#endif
-        }
-        /* Diff every field the post_cooling_tail kernel can write -- EOS
-         * scalars, dust scalars + arrays, molecfrac scalars, DelayTimeHII --
-         * accumulating bounded per-class max-rel summaries plus a global
-         * mismatch count above oracle_tol and the first offending particle ID.
-         * No per-particle output ("oracle covers
-         * the whole tail"). Per-class maxima keep the oracle line bounded
-         * regardless of array length / particle count. */
-        for(int j = 0; j < batch_n; j++) {
-            #define POSTCOOL_ORACLE_CMP(a_val, b_val, accum) do { \
-                double dn = fabs((a_val) - (b_val)); \
-                double dd = fabs(b_val) + 1.0e-300; \
-                double rd = dn / dd; \
-                if(rd > (accum)) (accum) = rd; \
-                if(rd > oracle_tol) { \
-                    oracle_n_mismatch++; \
-                    if(oracle_first_mismatch_ID == 0ULL) oracle_first_mismatch_ID = (unsigned long long)compact_P[j].ID; \
-                } \
-            } while(0)
-            #define POSTCOOL_ORACLE_CMP_ARR(a_arr, b_arr, n, accum) do { \
-                for(int _k = 0; _k < (n); _k++) { \
-                    POSTCOOL_ORACLE_CMP((a_arr)[_k], (b_arr)[_k], (accum)); \
-                } \
-            } while(0)
-            #define POSTCOOL_ORACLE_CMP_2D(a_arr, b_arr, n1, n2, accum) do { \
-                for(int _k1 = 0; _k1 < (n1); _k1++) for(int _k2 = 0; _k2 < (n2); _k2++) { \
-                    POSTCOOL_ORACLE_CMP((a_arr)[_k1][_k2], (b_arr)[_k1][_k2], (accum)); \
-                } \
-            } while(0)
-#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].Pressure,    oracle_Cell_scratch[j].Pressure,    oracle_max_rel_Press);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].Temperature, oracle_Cell_scratch[j].Temperature, oracle_max_rel_Temp);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].Gamma,       oracle_Cell_scratch[j].Gamma,       oracle_max_rel_Gamma);
-#ifdef EOS_GENERAL
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].SoundSpeed,  oracle_Cell_scratch[j].SoundSpeed,  oracle_max_rel_Cs);
-#endif
-#endif /* POST_COOLING_DEVICE_EOS_SUPPORTED */
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-            /* Dust arrays always present under ISMDUSTCHEM_MODEL */
-            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Metal,
-                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Metal,
-                                    NUM_ISMDUSTCHEM_ELEMENTS, oracle_max_rel_DustMetal);
-            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Source,
-                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Source,
-                                    NUM_ISMDUSTCHEM_SOURCES, oracle_max_rel_DustSource);
-            POSTCOOL_ORACLE_CMP_ARR(compact_Cell[j].ISMDustChem_Dust_Species,
-                                    oracle_Cell_scratch[j].ISMDustChem_Dust_Species,
-                                    NUM_ISMDUSTCHEM_SPECIES, oracle_max_rel_DustSpecies);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_DelayTimeSNeSputtering,
-                                oracle_Cell_scratch[j].ISMDustChem_DelayTimeSNeSputtering, oracle_max_rel_DelayTimeSputt);
-            /* C_in_CO + MassFractionInDenseMolecular and the grain-bin arrays
-             * are mutually exclusive in cell_data.h (lines 65-73): GRAINSIZEEVO
-             * builds carry the grain bins instead of the dense-MC C-tracking
-             * scalars. Gate the oracle comparisons accordingly. */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-            POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_NumberInBin,
-                                   oracle_Cell_scratch[j].ISMDustChem_Dust_NumberInBin,
-                                   NUM_ISMDUSTCHEM_SPECIES, NUM_ISMDUSTCHEM_SIZE_BINS, oracle_max_rel_DustNumberInBin);
-            POSTCOOL_ORACLE_CMP_2D(compact_Cell[j].ISMDustChem_Dust_SlopeInBin,
-                                   oracle_Cell_scratch[j].ISMDustChem_Dust_SlopeInBin,
-                                   NUM_ISMDUSTCHEM_SPECIES, NUM_ISMDUSTCHEM_SIZE_BINS, oracle_max_rel_DustSlopeInBin);
-#else
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_C_in_CO,
-                                oracle_Cell_scratch[j].ISMDustChem_C_in_CO, oracle_max_rel_CinCO);
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].ISMDustChem_MassFractionInDenseMolecular,
-                                oracle_Cell_scratch[j].ISMDustChem_MassFractionInDenseMolecular, oracle_max_rel_DenseMolFrac);
-#endif /* GALSF_ISMDUSTCHEM_GRAINSIZEEVO */
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING)
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].DelayTimeHII, oracle_Cell_scratch[j].DelayTimeHII, oracle_max_rel_DelayTimeHII);
-#endif
-#endif /* GALSF_ISMDUSTCHEM_MODEL */
-#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM)
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].MolecularMassFraction,
-                                oracle_Cell_scratch[j].MolecularMassFraction, oracle_max_rel_MolFrac);
-#endif
-#if defined(COOL_MOLECFRAC_NONEQM)
-            POSTCOOL_ORACLE_CMP(compact_Cell[j].MolecularMassFraction_perNeutralH,
-                                oracle_Cell_scratch[j].MolecularMassFraction_perNeutralH, oracle_max_rel_MolFracNeutH);
-#endif
-            #undef POSTCOOL_ORACLE_CMP_2D
-            #undef POSTCOOL_ORACLE_CMP_ARR
-            #undef POSTCOOL_ORACLE_CMP
-        }
-        myfree(oracle_Cell_scratch); myfree(oracle_P_scratch);
-        oracle_n_compared += batch_n;
-#endif
 
-        /* Scatter batch back:
-         *   - set_eos_pressure runs on host ONLY when POST_COOLING_DEVICE_EOS_SUPPORTED
-         *     is undefined (solid-EOS or HYDRO_GENERATE_TARGET_MESH builds).
-         *     Otherwise the device tail kernel above already ran it.
-         *   - The deferred dust+molecfrac+DelayTimeHII tail now runs on device
-         *     inside the post_cooling_tail kernel above; no host call here.
-         *     The CPU OMP fallback (below) still calls
-         *     finish_cooling_host_deferred_dust_updates host-side. */
-        for(int j = 0; j < batch_n; j++)
-        {
-            int i = cool_indices[batch_start + j];
-            CellP[i] = compact_Cell[j];
-            P[i]     = compact_P[j];
-#ifndef POST_COOLING_DEVICE_EOS_SUPPORTED
-            set_eos_pressure(i, P, CellP);
-#endif
-        }
+        /* Scatter batch back. The equation of state has already run, in the
+         * device tail kernel above, for every configuration -- there is no
+         * longer a build in which it has to be finished here on the host. The
+         * dust, molecular-fraction and DelayTimeHII updates that the cooling
+         * solve hands to that tail run there too. The CPU OMP fallback further
+         * below still does its own dust tail host-side. */
+        particle_staging_scatter(&batch, P, CellP);
     }
     gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
+    particle_staging_release(&batch);
     if(compact_dtime) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);}
-    if(compact_Cell)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
-    if(compact_P)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
-
-    /* ORACLE MPI_Allreduce + print HOISTED OUT of the GPU branch (below both
-     * branches close) so that every rank reaches it, even when N_active is 0
-     * or the rank takes the CPU path. See comment near function-entry oracle
-     * accumulators for the collective-correctness rationale. */
 
   } else
 #endif
@@ -627,52 +548,6 @@ void cooling_parent_routine(void)
     myfree(compact_P);
   } /* end CPU/GPU path selection */
 
-#if defined(GIZMO_POSTCOOL_ORACLE) && (defined(POST_COOLING_DEVICE_EOS_SUPPORTED) || defined(GALSF_ISMDUSTCHEM_MODEL))
-    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d +
-     * Phase 2 chunk 2 extension for the deferred-tail fields). Hoisted to this
-     * post-branches location so all ranks reach it -- ranks that took the early
-     * return (N_active==0), the CPU path, or didn't accumulate any oracle data
-     * contribute neutral zeros to MPI_MAX / MPI_SUM, which is correct.
-     *
-     * Reported N_compared is the GLOBAL SUM of cells actually device-vs-host
-     * compared (only the GPU branch fills it), NOT the local rank's N_active
-     * (which can include cells dispatched via the CPU fallback path that has
-     * no host-vs-device comparison). the label must
-     * reflect what was actually compared so the oracle output stays honest. */
-    double local_max[15] = {
-        /* 0-3 EOS */            oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs,
-        /* 4-6 dust arrays */    oracle_max_rel_DustMetal, oracle_max_rel_DustSource, oracle_max_rel_DustSpecies,
-        /* 7-9 dust scalars */   oracle_max_rel_CinCO, oracle_max_rel_DenseMolFrac, oracle_max_rel_DelayTimeSputt,
-        /* 10-11 grain bins */   oracle_max_rel_DustNumberInBin, oracle_max_rel_DustSlopeInBin,
-        /* 12-13 molecfrac */    oracle_max_rel_MolFrac, oracle_max_rel_MolFracNeutH,
-        /* 14 HII countdown */   oracle_max_rel_DelayTimeHII
-    };
-    double global_max[15];
-    MPI_Allreduce(local_max, global_max, 15, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    long long global_n_mismatch = 0;
-    MPI_Allreduce(&oracle_n_mismatch, &global_n_mismatch, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    unsigned long long global_first_ID = 0ULL;
-    MPI_Allreduce(&oracle_first_mismatch_ID, &global_first_ID, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-    long long global_n_compared = 0;
-    MPI_Allreduce(&oracle_n_compared, &global_n_compared, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    if(ThisTask == 0) {
-        printf("[POSTCOOL_ORACLE] step=%lld N_compared=%lld tol=%.1e   max_rel: "
-               "Press=%.3e Temp=%.3e Gamma=%.3e Cs=%.3e   "
-               "DustMetal=%.3e DustSource=%.3e DustSpecies=%.3e "
-               "CinCO=%.3e DenseMolFrac=%.3e DelayTimeSputt=%.3e "
-               "DustNumberInBin=%.3e DustSlopeInBin=%.3e "
-               "MolFrac=%.3e MolFracNeutH=%.3e DelayTimeHII=%.3e   "
-               "mismatches=%lld first_ID=%llu\n",
-            (long long)All.NumCurrentTiStep, global_n_compared, oracle_tol,
-            global_max[0], global_max[1], global_max[2], global_max[3],
-            global_max[4], global_max[5], global_max[6],
-            global_max[7], global_max[8], global_max[9],
-            global_max[10], global_max[11],
-            global_max[12], global_max[13], global_max[14],
-            global_n_mismatch, global_first_ID);
-        fflush(stdout);
-    }
-#endif
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
@@ -700,7 +575,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
      * this file alongside CoolTables), so this is device-clean. */
     if(pp[i].FluidType == FLUID_DM) {
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
-        do_dark_cooling_for_particle(i, pp, cell);
+        struct PhysicsTablesView dm_tables_view = cooling_owner_tables_view();
+        do_dark_cooling_for_particle(i, pp, cell, &dm_tables_view);
 #endif
         return;
     }
@@ -715,11 +591,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
-        double uion=HIIRegion_Temp/(0.59*(5./3.-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
+        double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
-            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
+            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+            cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
             }
 #endif
 #endif
@@ -774,6 +651,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             if(unew<uion) {unew=uion; if(cell[i].DtInternalEnergy<0) cell[i].DtInternalEnergy=0;}
 #ifndef CHIMES
             cell[i].Ne = 1.0 + 2.0*yhelium(i, pp); /* fully ionized. note that this gives Ne as free electron fraction per H */
+#ifndef COOL_GRACKLE
+            cell[i].HI = 0; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* fully ionized, as assumed for the ionized-energy floor above */
+            cell[i].Temperature = cell[i].gas_temperature_from_u(unew);
+#endif
 #endif
         }
 #endif
@@ -910,18 +791,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                                                        n_e_phys, n_i_phys, rho_phys, dt_phys);
             cell[i].u_e_cell = u_e_new;
             cell[i].T_e_cell = two_temp_T_e_from_u_e(u_e_new, rho_phys, n_e_phys);
-#ifdef GIZMO_DEBUG_TWO_TEMP
-            if(pp[i].ID == 1 || pp[i].ID == 1000) {
-                const double T_total = (2./3.) * rho_phys * cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS
-                                     / ((n_e_phys + n_i_phys) * BOLTZMANN_CGS);
-                const double nu_eq = two_temp_nu_eq(T_e_before, n_e_phys);
-                const double alpha_dt = (1. + n_e_phys/n_i_phys) * nu_eq * dt_phys;
-                printf("[2T_DIAG] t=%.6e ID=%llu n_e=%.3e T_total=%.3e T_e_postrad=%.3e T_e_after=%.3e alpha*dt=%.3e du_rad/du_tot=%.3e\n",
-                       All.Time, (unsigned long long)pp[i].ID, n_e_phys, T_total, T_e_before, cell[i].T_e_cell, alpha_dt,
-                       (du_total_code != 0) ? du_rad_code/du_total_code : 0.);
-                fflush(stdout);
-            }
-#endif
         }
 #endif
 
@@ -1096,16 +965,27 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     }
 
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
-    cell[target].Ne = *ne_eval;
+    /* solve the chemical state once at the converged energy, outside the iteration: this is the key
+       chemistry update, and it is the saved thermochemistry that the equation of state, the radiation
+       modules and the dust chemistry read back instead of re-solving it themselves. u and rho are cgs
+       here. the values carried through the iteration are the initial guess. every saved field comes
+       from this one evaluation, so they describe the same state as the energy actually returned:
+       the electron fraction left by the last rate evaluation is at a trial energy, not this one */
+    {
+        double mu_final = 1, ne_final = *ne_eval, nHI = cell[target].HI, nHII = DMAX(0, 1. - nHI), nHeI = 1, nHeII = 0, nHeIII = 0;
+        double temp_final = convert_u_to_temp(u, rho, target, &ne_final, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, &mu_final, pp, cell);
+        *ne_eval = ne_final; /* what the caller saves, and what seeds the next step */
+        cell[target].Ne = ne_final; cell[target].HI = nHI;
+        cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
+        cell[target].Temperature = temp_final;
+        cell[target].Gamma = cell[target].gamma_eos_value(); /* the other half, so the pair describes this solve rather than the previous equation-of-state call */
 #ifdef RT_CHEM_PHOTOION
-    /* set variables used by RT routines; this must be set only -outside- of iteration, since this is the key chemistry update */
-    double u_in=specific_energy_codeunits_toreturn, rho_in=cell[target].Density*All.cf_a3inv, mu=1, temp, ne=1, nHI=cell[target].HI, nHII=cell[target].HII, nHeI=1, nHeII=0, nHeIII=0;
-    temp = ThermalProperties(u_in, rho_in, target, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, pp, cell);
-    cell[target].HI = nHI; cell[target].HII = nHII;
+        cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE
-    cell[target].HeI = nHeI; cell[target].HeII = nHeII; cell[target].HeIII = nHeIII;
+        cell[target].HeI = nHeI; cell[target].HeII = nHeII; cell[target].HeIII = nHeIII;
 #endif
 #endif
+    }
 
     /* safe return */
     return specific_energy_codeunits_toreturn;
@@ -1482,7 +1362,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     {
         /* at high T (fully ionized); only free-free and Compton cooling are present.  Assumes no heating. */
         Heat = LambdaExc = LambdaExcH0 = LambdaExcHep = LambdaIon = LambdaIonH0 = LambdaIonHe0 = LambdaIonHep = LambdaRec = LambdaRecHp = LambdaRecHep = LambdaRecHepp = LambdaRecHepd = 0;
-        nHp = 1.0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
+        nH0 = 0; nHp = 1.0; nHe0 = 0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
         *n_elec_eval = n_elec; /* save this value for the output cycle */
 
         LambdaFF = 1.42e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - logT) * (5.5 - logT) / 3)) * (nHp + 4 * nHepp) * n_elec * (1. + sqrt(T/0.4e10)); // free-free (with simplified relativistic correction)
@@ -2198,8 +2078,12 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 #ifdef COOL_MOLECFRAC_NONEQM
     // first define a number of environmental variables that are fixed over this update step
     double fH2_initial = cell[i].MolecularMassFraction_perNeutralH; // initial molecular fraction per H atom, entering this subroutine, needed for update below
-    double xn_e=1, nh0=0, nHe0, nHepp, nhp, nHep, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergy;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &xn_e, &nh0, &nhp, &nHe0, &nHep, &nHepp, pp, cell); // get thermodynamic properties [will assume fixed value of fH2 at previous update value]
+    double xn_e=1, nh0=0, nHe0=1, nHepp=0, nhp=0, nHep=0, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergy;
+    /* this runs inside the cooling solver, where the helium ionization state is wanted at full
+       accuracy for the molecular rates below, so solve for it here as this always has [assumes a
+       fixed value of fH2 at the previous update value] */
+    xn_e = cell[i].Ne; nh0 = cell[i].HI;
+    temperature = convert_u_to_temp(u0*UNIT_SPECEGY_IN_CGS, rho*UNIT_DENSITY_IN_CGS, i, &xn_e, &nh0, &nhp, &nHe0, &nHep, &nHepp, &mu_meanwt, pp, cell);
     double T=1, f_dustgas_solar=1, urad_G0=1, xH0=1, x_e=0, nH_cgs=rho*UNIT_DENSITY_IN_NHCGS; // initialize definitions of some variables used below to prevent compiler warnings
     f_dustgas_solar=1; urad_G0=1; // initialize metal/dust and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef RT_ISRF_BACKGROUND
@@ -2964,3 +2848,16 @@ void gizmo_gpu_sync_all(void) {
 #endif
     Kokkos::fence();
 }
+
+#ifndef COOLING
+/* Builds without the tables still need this symbol, so that code taking a view
+   reads the same in every configuration and no call site has to ask which one
+   it is in. The view is empty; the physics that would consult it is compiled
+   out alongside the tables. A CHIMES build is NOT one of these: it still
+   compiles the definition above, whose body is what the CHIMES gate empties. */
+struct PhysicsTablesView gizmo_physics_tables_view(void)
+{
+    struct PhysicsTablesView view = {};
+    return view;
+}
+#endif

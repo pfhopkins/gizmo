@@ -64,31 +64,23 @@ integertime force_host_lazy_drift_ti(void)
  *  is the one whose kicks have just been closed out — the correct set for this point in
  *  the KDK sequence, and the quantity that sizes the work here.
  *
- *  Two counts therefore enter the route, for two different reasons:
- *    - ActiveParticleList.size() sizes THIS work, so it decides whether the host walk is
- *      the cheaper way to do it;
- *    - the coming step's count decides whether the gravity walk that follows the rebuild
- *      wants the device. Taking the host path here drifts nodes lazily, which hands the
- *      rest of the time step to the host (see gravity_walk_route_to_host), so a small
- *      update must not force a large gravity walk off the device behind it. That count is
- *      taken before the walk's own candidacy filter, so it is an upper bound on what the
- *      walk will route on: the pairing errs towards keeping this update on the device.
- *  Host only when both are small; anything else stays on the device path. */
+ *  The route therefore keys on the COMING step's count, not on how many kicks are being
+ *  propagated. Taking the host path here drifts nodes lazily, which hands the rest of the
+ *  time step to the host (see gravity_walk_route_to_host); so the only thing the route has
+ *  to protect is that a host-lazy drift is never followed by a device walk reading the
+ *  mirror it staled. The coming step's count settles exactly that, because it is the same
+ *  count the walk itself routes on, taken before the walk's own candidacy filter and so an
+ *  upper bound on it. When it says host, the walk that follows is on the host too and the
+ *  device sweep would buy no safety -- only the cost of drifting every node in the tree to
+ *  serve however few elements are active. */
 void force_update_tree(void)
 {
-    /* The update tolerates a larger active count on the host than the walk does,
-     * so its own term is tested against a multiple of the same threshold rather
-     * than a separate control: the two are one judgement about where work
-     * belongs, and a second knob would imply they can drift apart. What the
-     * device buys here is avoiding the all-node drift sweep, whose cost does not
-     * depend on how many elements are active, so the host walk has to grow much
-     * further before it costs as much as the walk's own crossover. The second
-     * term is deliberately NOT scaled: it is what guarantees that a host-lazy
-     * drift is never followed by a device walk reading the mirror it staled. */
-    const long long TREE_UPDATE_HOST_ACTIVE_FACTOR = 20;
-    const long long n_kick = (long long) ActiveParticleList.size();
-    const int to_host = (gravity_walk_route_to_host(n_kick / TREE_UPDATE_HOST_ACTIVE_FACTOR)
-                         && gravity_walk_route_to_host(NumForceUpdateAtSyncPoint));
+    /* One test, on the count the following gravity walk will itself route on. The
+     * device path must drift every node in the tree before its parallel walk is
+     * race-free, and that sweep is sized by the tree, not by how much work this call
+     * has to do; so it is worth paying only when a device walk follows and needs the
+     * nodes current. When this says host, none does. */
+    const int to_host = gravity_walk_route_to_host(NumForceUpdateAtSyncPoint);
 
     if(!to_host) {gpu_force_update_tree();}
     else

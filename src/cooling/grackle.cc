@@ -120,6 +120,23 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             CellP[target].grHeI   = HeI_density   / density;
             CellP[target].grHeII  = HeII_density  / density;
             CellP[target].grHeIII = HeIII_density / density;
+
+            /* save the state other modules read back, from the species grackle just solved. the
+               gr* fields above are fractions of the TOTAL density; the electron and neutral
+               fractions the rest of the code uses are per hydrogen nucleus, hence the 1/X_H. the
+               temperature follows from the energy and the mean molecular weight those fractions
+               imply -- no chemical network is consulted, since grackle has already done that work */
+            {
+            double y_helium = (1.-HYDROGEN_MASSFRAC) / (4.*HYDROGEN_MASSFRAC);
+            double x_elec = (ne_density / density) / HYDROGEN_MASSFRAC;
+            double x_HI   = (HI_density / density) / HYDROGEN_MASSFRAC;
+            double mu_from_species = (1. + 4.*y_helium) / (1. + y_helium + x_elec);
+            CellP[target].Ne = x_elec;
+            CellP[target].HI = DMAX(0, DMIN(1, x_HI));
+            CellP[target].Gamma = GAMMA_DEFAULT; /* grackle is called with this index; keep the cached pair consistent with it */
+            CellP[target].MeanMolecularWeight = mu_from_species;
+            CellP[target].Temperature = mu_from_species * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
+            }
             
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
             CellP[target].grH2I   = H2I_density   / density;
@@ -240,18 +257,28 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                  * drains at the next cooling-phase poll. */
                 return (mode == 0) ? u_old : 0.0;
             }
-            double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu, temp; nH0_guess = DMAX(0,DMIN(1,1.-ne_guess/1.2));
-            temp = convert_u_to_temp(energy, rho, target, &ne_guess, &nH0_guess, &nHp_guess, &nHe0_guess, &nHep_guess, &nHepp_guess, &mu); //need to update *ne_guess for tabular!!, this may be wrong
-            CellP[i].Ne = ne_guess; /* update this value with the new values from the cycle here */
-#ifdef RT_CHEM_PHOTOION
-            if(target >= 0)
+            /* PLACEHOLDER, NOT A THERMOCHEMISTRY SOLVE. The tabular tables solve their own
+               chemistry and hand back no species, so there is no free electron or neutral
+               fraction here to save. What other modules read is therefore a documented guess:
+               an ionized-gas temperature straight from the energy, and a simple collisional
+               ionization fraction. This deliberately does NOT call the chemical network in
+               cooling.cc -- that is a different network from the one the tables just solved,
+               so its answer would not describe this gas. Use a chemistry mode if you need
+               real abundances. */
             {
-                CellP[target].HI = nH0_guess; CellP[target].HII = nHp_guess;
-#ifdef RT_CHEM_PHOTOION_HE
-                CellP[target].HeI = nHe0_guess; CellP[target].HeII = nHep_guess; CellP[target].HeIII = nHepp_guess;
+            double f_ion_guess = 0; double temp = temperature_from_u_nongas(energy); /* only to decide whether the gas is warm enough to ionize */
+            if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
+            double mu_guess = 1./(0.80125 + f_ion_guess);
+            CellP[target].Gamma = GAMMA_DEFAULT;
+            CellP[target].MeanMolecularWeight = mu_guess;
+            CellP[target].Temperature = mu_guess * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy; /* from the weight stored above, so the pair agrees */
+            CellP[target].Ne = f_ion_guess;
+            CellP[target].HI = DMAX(0, 1. - f_ion_guess);
+#ifdef RT_CHEM_PHOTOION
+            /* helium is not available from the tables at all, so it is left as it stands */
+            if(target >= 0) {CellP[target].HII = f_ion_guess;}
 #endif
             }
-#endif
             returnval = energy;
             break;
         case 1:  //cooling time (table)

@@ -26,9 +26,93 @@
 
 /* Requires the caller to have already included mesh/kernel.h (provides
  * kernel_main) and declarations/allvars.h (provides All.DesNumNgb).
- * NOT included here because mesh/kernel.h has no include guard and would
- * cause "redefinition" errors when this header is pulled in by hydro_functions.h
- * (which has already included kernel.h via its own include chain). */
+ * NOT included here because hydro_functions.h has already included it via its
+ * own include chain, so this header does not need to repeat it. (kernel.h has
+ * carried a #pragma once since the drift-helper work; it is safe either way.) */
+
+
+#ifdef EOS_ELASTIC
+/* apply_drucker_prager / damage_update_grady_kipp, used by the stress update below
+   under the EOS_DAMAGE_POROSITY bits. Safe to include here: it carries an include
+   guard and does not pull in Kokkos. */
+#include "damage_porosity_functions.h"
+
+/* routine to update the deviatoric stress tensor */
+KOKKOS_INLINE_FUNCTION
+void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
+                                     struct particle_data *pp, struct gas_cell_data *cell)
+{
+    int j,k,l,NDim=NUMDIMS;
+    double dv0[3][3], R[3][3], S[3][3], S_new[3][3], dS=0, mu, Y0, J2=0, I1=0;
+#ifdef EOS_TILLOTSON
+    mu = All.Tillotson_EOS_params[cell[i].CompositionType][10]; Y0 = All.Tillotson_EOS_params[cell[i].CompositionType][11]; // set for composition
+#else
+    mu = All.Tillotson_EOS_params[0][10]; Y0 = All.Tillotson_EOS_params[0][11];  // set to universal constants
+#endif
+
+    if(mode < 2) // drift or kick operation
+    {
+        for(j=0;j<NDim;j++) {
+            for(k=0;k<NDim;k++) {
+                // determine which variable we are updating (mode=0/1 is kick/drift)
+                if(mode==0) {S_new[j][k]=cell[i].Elastic_Stress_Tensor[j][k];} else {S_new[j][k]=cell[i].Elastic_Stress_Tensor_Pred[j][k];}
+                S_new[j][k] += dt_entr * cell[i].Dt_Elastic_Stress_Tensor[j][k]; // apply time evolution
+                if(k==j) {I1 += S_new[j][k];} // first invariant of the tensor
+                J2 += 0.5 * S_new[j][k]*S_new[j][k]; // second invariant of the tensor
+            }}
+        // now apply the yield criterion (von Mises by default; Drucker-Prager
+        // extension Y_eff = Y0 + mu_DP * P_hydro under EOS_DAMAGE_POROSITY bit 1)
+        double Y_eff = Y0;
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_DRUCKER_PRAGER
+        Y_eff = apply_drucker_prager(Y0, cell[i].Pressure, cell[i].CompositionType);
+#endif
+        if(J2 > 0)
+        {
+            double f_Y = Y_eff*Y_eff/(NDim*J2);
+            if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
+        }
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
+        /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
+        if(mode == 0)
+        {
+            double D_new, A_new;
+            damage_update_grady_kipp(cell[i].Damage, cell[i].ActiveCracks,
+                                     J2, mu, cell[i].SoundSpeed, dt_entr,
+                                     cell[i].CompositionType,
+                                     &D_new, &A_new);
+            cell[i].Damage       = (MyFloat)D_new;
+            cell[i].ActiveCracks = (MyFloat)A_new;
+        }
+#endif
+        // write out to variable //
+        for(j=0;j<NDim;j++) {
+            for(k=0;k<NDim;k++) {
+                if(mode==0) {cell[i].Elastic_Stress_Tensor[j][k]=S_new[j][k];} else {cell[i].Elastic_Stress_Tensor_Pred[j][k]=S_new[j][k];}
+            }}
+
+    } else {
+
+        // ok all below is for mode = 2, which is the actual calculation of the time derivative of the stress tensor
+        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {dv0[j][k] = cell[i].Gradients.Velocity[j][k];}}
+        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S[j][k] = cell[i].Elastic_Stress_Tensor_Pred[j][k];}}
+        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {R[j][k] = 0.5*(dv0[j][k] - dv0[k][j]);}}
+        double trace_vel=0; for(j=0;j<NDim;j++) {trace_vel += dv0[j][j];}
+        for(j=0;j<NDim;j++) // velocity index
+        {
+            for(k=0;k<NDim;k++) // gradient index
+            {
+                dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
+                if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
+                for(l=0;l<NDim;l++) {dS += S[j][l]*R[l][k] - R[j][l]*S[l][k];} // rotation components
+                cell[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
+            }
+        }
+
+    }
+
+    return; // all done here
+}
+#endif /* EOS_ELASTIC */
 
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 /* routine to get and define the correction factor needed to prevent tensile instability for negative pressures, for arbitrary kernels & dimensions */

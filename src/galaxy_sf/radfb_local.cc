@@ -412,7 +412,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
     if(All.HIIRegion_fLum_Coupled<=0) {return;}
     if(All.Time<=0) {return;}
     PRINT_STATUS("Local HII-Region photo-heating/ionization calculation");
-    double uion = HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3 */
+    double uion = HIIRegion_Temp / (MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3 */
 
     HIIStats stats = {};
     std::vector<HIISourcePrep> src;
@@ -533,7 +533,7 @@ int do_the_local_ionization(int target, double dt, int source)
 #else
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) 
-    CellP[target].InternalEnergy = DMAX(CellP[target].InternalEnergy , HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS)); /* assume fully-ionized gas with gamma=5/3 */
+    CellP[target].InternalEnergy = DMAX(CellP[target].InternalEnergy , HIIRegion_Temp / (MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS)); /* assume fully-ionized gas with gamma=5/3 */
     CellP[target].InternalEnergyPred = CellP[target].InternalEnergy; /* full reset of the internal energy */
 #else
     double delta_U_of_ionization = (20.-13.6) * ((ELECTRONVOLT_IN_ERGS / PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS) * (1.-DMAX(0.,DMIN(1.,CellP[target].Ne/1.5))); /* energy injected per unit mass, in code units, by ionization, assuming each atom absorbs, and mean energy of absorbed photons is given by x=18 eV here (-13.6 for energy of ionization) */
@@ -545,7 +545,7 @@ int do_the_local_ionization(int target, double dt, int source)
 #endif
 #endif
     double t4_eqm = DMIN( 1.5*Theat_star , 3.85/DMAX(log(DMAX(390.*Z_sol/Theat_star,1.001)),0.01) ); // equilibrium H2 region temperature in 1e4 K: 1.5*Theat = eqm temp for pure-H region, while second expression assumes eqm cooling with O+C, etc, but breaks down at low-Z when metals don't dominate cooling.
-    double u_eqm = (t4_eqm * HIIRegion_Temp) / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); // converted to specific internal energy, assuming full ionization
+    double u_eqm = (t4_eqm * HIIRegion_Temp) / (MEAN_MOLECULAR_WEIGHT_IONIZED * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS); // converted to specific internal energy, assuming full ionization
     double u_post_ion_no_cooling = CellP[target].InternalEnergy + delta_U_of_ionization; // energy after ionization, before any cooling
     double u_final = DMIN( u_post_ion_no_cooling , u_eqm ); // don't heat to higher temperature than intial energy of ionization allows
     CellP[target].InternalEnergy = u_final; CellP[target].InternalEnergyPred = u_final; /* add it */

@@ -25,19 +25,6 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 
-/* Include cooling_functions.h for ThermalProperties (used when COOLING + GRAIN_LORENTZFORCE
-   + GRAIN_EPSTEIN_STOKES are all active). Must come after allvars.h for struct definitions.
-   Need CoolTables accessible; use the same pattern as eos.cc. */
-#if defined(COOLING) && !defined(CHIMES)
-#include "../cooling/cooling_tables.h"
-#if defined(GIZMO_GPU_COMPILER)
-extern __managed__ struct cooling_tables_t CoolTables;
-#else
-extern struct cooling_tables_t CoolTables;
-#endif
-/* cooling_functions.h now uses CoolTables.fieldname directly — no aliases needed */
-#include "../cooling/cooling_functions.h"
-#endif
 
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/gpu_error_check.h"
@@ -103,7 +90,8 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
     if((grain_subtype <= 2) && (dt > 0) && (pp[idx].Gas_Density > 0) && (vgas_mag > 0))
     {
         double gamma_eff = GAMMA_DEFAULT;
-        double cs = sqrt((gamma_eff*(gamma_eff-1)) * pp[idx].Gas_InternalEnergy);
+        double mu_gas = molecular_weight_estimator_for_gas_around_grain(pp[idx].Gas_Temperature, pp[idx].Gas_fion);
+        double cs = sqrt(gamma_eff * pp[idx].Gas_Temperature / (mu_gas * U_TO_TEMP_UNITS));
         double rho_gas = pp[idx].Gas_Density * All.cf_a3inv;
         double x0 = 0.469993*sqrt(gamma_eff) * vgas_mag/cs;
         double tstop_inv = MAX_REAL_NUMBER;
@@ -124,10 +112,12 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         double Z_grain = -DMAX(1./(1. + sqrt(1.0e-3/tau_draine_sutin)), 2.5*tau_draine_sutin);
         if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
 #endif
+/* The temperature and ionized fraction of the gas the grain is coupled to are interpolated onto it
+   by the density loop, so the blocks below read them rather than guessing from a sound speed. */
 #ifdef GRAIN_EPSTEIN_STOKES
         if(grain_subtype == 0 || grain_subtype == 1)
         {
-            double mu = 2.3*PROTONMASS_CGS, temperature = (mu/PROTONMASS_CGS) * (1.4-1.) * U_TO_TEMP_UNITS * pp[idx].Gas_InternalEnergy;
+            double mu = mu_gas*PROTONMASS_CGS, temperature = pp[idx].Gas_Temperature;
             double cross_section = GRAIN_EPSTEIN_STOKES * 2.0e-15 * (1. + 70./temperature);
             cross_section /= UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS;
             double n_mol = rho_gas * UNIT_MASS_IN_CGS / mu, mean_free_path = 1 / (n_mol * cross_section);
@@ -142,14 +132,9 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
             double tstop_Coulomb_inv = 0.797885/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code);
             tstop_Coulomb_inv /= (1. + a_Coulomb*(vgas_mag/cs)*(vgas_mag/cs)*(vgas_mag/cs)) * sqrt(1.+x0*x0);
             tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.;
-            double T_Kelvin = (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (1.3807e-16 * gamma_eff), f_ion_to_use = 0;
-            if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);}
-#ifdef COOLING
-            double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
-            u_tmp = T_Kelvin / (2.3 * U_TO_TEMP_UNITS);
-            temp_tmp = ThermalProperties(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, pp, cellp);
-            f_ion_to_use = DMIN(ne_tmp, 1.);
-#endif
+            double T_Kelvin = pp[idx].Gas_Temperature, f_ion_to_use;
+            if(pp[idx].Gas_fion >= 0) {f_ion_to_use = DMAX(0., DMIN(1., pp[idx].Gas_fion));}
+            else {f_ion_to_use = (T_Kelvin > 1000.) ? exp(-15000./T_Kelvin) : 0;} /* no chemistry in this configuration */
             tstop_Coulomb_inv *= f_ion_to_use;
             tstop_inv += tstop_Coulomb_inv;
         }
@@ -328,9 +313,9 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
         return;
     }
     /* compact_Cell is zeroed and stays zeroed: caller guarantees active_indices are
-       all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them.
-       The kernel reads CellP only via ThermalProperties(target=-1,...), which now
-       safely handles target=-1 throughout the call stack. */
+       all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them, and
+       the kernel reads none -- every gas quantity it needs is interpolated onto the
+       grain itself in the density loop. */
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < num_active; j++)
         compact_P[j] = P_host[active_indices[j]];
