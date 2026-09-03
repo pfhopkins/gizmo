@@ -474,32 +474,44 @@ let_build_attempt:
      * with All.TotNumPart. A particle inserted under a top node owned by another task gets detached and
      * then appears in NO rank's tree: absent from every multipole moment, and otherwise completely
      * silent. Integer, not mass -- node masses are MyFloat, so one lost particle in ~1e6 sits below the
-     * accumulated summation error and a mass check would miss it. Whole-tree builds only; FOF/SUBFIND
-     * build over subsets. Zero-mass particles (swallowed sinks awaiting cleanup) are legitimately
-     * uncounted when they occupy a subtree alone, since internal nodes only propagate N_part when
-     * mass > 0, so they are allowed for. Warn rather than abort: a false positive must not kill a long
-     * run, and a warning is enough to stop this being silent. Root N_part is live on both paths --
-     * gpu_moment_refresh mirrors it for NTask==1, gpu_topnode_moment_resum for NTask>1.
-     * npart == NumPart as well as mp == NULL: SUBFIND's collective path calls
-     * force_treebuild(NumPartGroup, NULL) -- a subset build with no unbind_data -- so the
-     * mp test alone is not enough, and comparing a group-sized tree against the global
-     * TotNumPart reported a spurious deficit (seen in test/fof_subfind: 216 vs 264). */
-    if(mp == NULL && npart == NumPart)
+     * accumulated summation error and a mass check would miss it. Zero-mass particles (swallowed sinks
+     * awaiting cleanup) are legitimately uncounted when they occupy a subtree alone, since internal
+     * nodes only propagate N_part when mass > 0, so they are allowed for. Warn rather than abort: a
+     * false positive must not kill a long run, and a warning is enough to stop this being silent.
+     * Root N_part is live on both paths -- gpu_moment_refresh mirrors it for NTask==1,
+     * gpu_topnode_moment_resum for NTask>1.
+     *
+     * The check applies to whole-tree builds only; FOF/SUBFIND build over subsets, and comparing a
+     * group-sized tree against the global TotNumPart reports a spurious deficit (216 vs 264 in
+     * test/fof_subfind). But that test must NOT gate the reduction: mp == NULL && npart == NumPart is
+     * rank-local, and SUBFIND's collective path calls force_treebuild(NumPartGroup, NULL) after a
+     * domain exchange that leaves NumPart unequal across ranks -- 108 vs 156 in test/fof_subfind on
+     * two ranks, with NumPartGroup 108 on both. Gating it meant the rank where the two happened to
+     * match posted an Allreduce its peer skipped, offsetting every subsequent collective by one and
+     * deadlocking SUBFIND's neighbour search: the peer's next Allreduce matched this stray one, so it
+     * ran on and blocked in the following Allgather while this rank waited for a partner that had
+     * already moved past. So reduce unconditionally and carry the whole-tree test along as a veto. */
     {
-        long long n_zero_loc = 0, n_zero_tot = 0;
-        for(int i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
-        MPI_Allreduce(&n_zero_loc, &n_zero_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;   /* root node; node ids start at TreeNodeIndexBase, not MaxPart */
-        long long deficit = (long long) All.TotNumPart - in_tree;
-        if(deficit > n_zero_tot || deficit < 0)
+        long long chk_loc[2], chk_tot[2];
+        chk_loc[0] = (mp == NULL && npart == NumPart) ? 0 : 1;   /* nonzero from any rank vetoes */
+        chk_loc[1] = 0;
+        for(int i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {chk_loc[1]++;}}
+        MPI_Allreduce(chk_loc, chk_tot, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(chk_tot[0] == 0)   /* uniform: every rank agrees this is a whole-tree build */
         {
-            if(ThisTask == 0)
+            long long n_zero_tot = chk_tot[1];
+            long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;   /* root; node ids start at TreeNodeIndexBase */
+            long long deficit = (long long) All.TotNumPart - in_tree;
+            if(deficit > n_zero_tot || deficit < 0)
             {
-                printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
-                       "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
-                       "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
-                       in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
-                fflush(stdout);
+                if(ThisTask == 0)
+                {
+                    printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
+                           "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
+                           "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
+                           in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
+                    fflush(stdout);
+                }
             }
         }
     }
