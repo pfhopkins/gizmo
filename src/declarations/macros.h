@@ -263,6 +263,21 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #endif
 
 
+/* A drifted tree node's size grows to bound the particles it may now contain: the node is widened
+ * by this factor times its maximum member speed times the drift interval.  The gravity walk applies
+ * it when it drifts a reused node, and the LET pack must predict the SAME growth when it decides
+ * what to ship, so the two are kept here rather than written out at each site. */
+#define TREE_DRIFT_VELOCITY_PREFAC 2.0
+
+/* How far ahead the LET pack assumes the tree it is building will be reused.  The rebuild cadence
+ * gives a point estimate of that lifetime; the estimate can fall short, and the opening rules grow
+ * monotonically with node size, so a sender that prunes against an under-estimate under-ships and
+ * the walk then resolves structure its import does not carry.  This factor buys headroom on the
+ * estimate.  It is not a proof of sufficiency -- the incomplete-import detector remains the
+ * backstop for the rare miss -- but a run of the cosmological and nuclear-zoom problems needed a
+ * repair on 1 step in ~3000 with it, against 1 in 4 without any allowance at all. */
+#define LET_TREE_LIFETIME_PAD_FACTOR 2
+
 /* macro name concatenation for our modular precompiler method of writing new loops easily */
 
 #define MACRO_NAME_CONCATENATE(A, B) MACRO_NAME_CONCATENATE_(A, B)

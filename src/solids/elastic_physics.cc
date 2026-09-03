@@ -59,83 +59,8 @@ void tillotson_eos_init(void)
 
 
 
-#ifdef EOS_ELASTIC
-/* routine to update the deviatoric stress tensor */
-void elastic_body_update_driftkick(int i, double dt_entr, int mode)
-{
-    int j,k,l,NDim=NUMDIMS;
-    double dv0[3][3], R[3][3], S[3][3], S_new[3][3], dS=0, mu, Y0, J2=0, I1=0;
-#ifdef EOS_TILLOTSON
-    mu = All.Tillotson_EOS_params[CellP[i].CompositionType][10]; Y0 = All.Tillotson_EOS_params[CellP[i].CompositionType][11]; // set for composition
-#else
-    mu = All.Tillotson_EOS_params[0][10]; Y0 = All.Tillotson_EOS_params[0][11];  // set to universal constants
-#endif
-
-    if(mode < 2) // drift or kick operation
-    {
-        for(j=0;j<NDim;j++) {
-            for(k=0;k<NDim;k++) {
-                // determine which variable we are updating (mode=0/1 is kick/drift)
-                if(mode==0) {S_new[j][k]=CellP[i].Elastic_Stress_Tensor[j][k];} else {S_new[j][k]=CellP[i].Elastic_Stress_Tensor_Pred[j][k];}
-                S_new[j][k] += dt_entr * CellP[i].Dt_Elastic_Stress_Tensor[j][k]; // apply time evolution
-                if(k==j) {I1 += S_new[j][k];} // first invariant of the tensor
-                J2 += 0.5 * S_new[j][k]*S_new[j][k]; // second invariant of the tensor
-            }}
-        // now apply the yield criterion (von Mises by default; Drucker-Prager
-        // extension Y_eff = Y0 + mu_DP * P_hydro under EOS_DAMAGE_POROSITY bit 1)
-        double Y_eff = Y0;
-#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_DRUCKER_PRAGER
-        Y_eff = apply_drucker_prager(Y0, CellP[i].Pressure, CellP[i].CompositionType);
-#endif
-        if(J2 > 0)
-        {
-            double f_Y = Y_eff*Y_eff/(NDim*J2);
-            if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
-        }
-#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
-        /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
-        if(mode == 0)
-        {
-            double D_new, A_new;
-            damage_update_grady_kipp(CellP[i].Damage, CellP[i].ActiveCracks,
-                                     J2, mu, CellP[i].SoundSpeed, dt_entr,
-                                     CellP[i].CompositionType,
-                                     &D_new, &A_new);
-            CellP[i].Damage       = (MyFloat)D_new;
-            CellP[i].ActiveCracks = (MyFloat)A_new;
-        }
-#endif
-        // write out to variable //
-        for(j=0;j<NDim;j++) {
-            for(k=0;k<NDim;k++) {
-                if(mode==0) {CellP[i].Elastic_Stress_Tensor[j][k]=S_new[j][k];} else {CellP[i].Elastic_Stress_Tensor_Pred[j][k]=S_new[j][k];}
-            }}
-
-    } else {
-
-        // ok all below is for mode = 2, which is the actual calculation of the time derivative of the stress tensor
-        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {dv0[j][k] = CellP[i].Gradients.Velocity[j][k];}}
-        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S[j][k] = CellP[i].Elastic_Stress_Tensor_Pred[j][k];}}
-        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {R[j][k] = 0.5*(dv0[j][k] - dv0[k][j]);}}
-        double trace_vel=0; for(j=0;j<NDim;j++) {trace_vel += dv0[j][j];}
-        for(j=0;j<NDim;j++) // velocity index
-        {
-            for(k=0;k<NDim;k++) // gradient index
-            {
-                dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
-                if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
-                for(l=0;l<NDim;l++) {dS += S[j][l]*R[l][k] - R[j][l]*S[l][k];} // rotation components
-                CellP[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
-            }
-        }
-
-    }
-    
-    return; // all done here
-}
-#endif
-
-
+/* elastic_body_update_driftkick: body is elastic_body_update_driftkick_P in
+   elastic_physics_functions.h; the host wrapper is below the include block. */
 
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 /* get_negative_pressure_tensilecorrfac body moved to elastic_physics_functions.h
@@ -147,4 +72,16 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
 #undef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION
 #include "elastic_physics_functions.h"
+#endif
+
+
+#ifdef EOS_ELASTIC
+/* routine to update the deviatoric stress tensor. Sits after the include block
+   above so that block stays the FIRST inclusion of the header in this file and
+   still emits the non-inline host symbols; an earlier include would make it a
+   #pragma once no-op. */
+void elastic_body_update_driftkick(int i, double dt_entr, int mode)
+{
+    elastic_body_update_driftkick_P(i, dt_entr, mode, P, CellP);
+}
 #endif

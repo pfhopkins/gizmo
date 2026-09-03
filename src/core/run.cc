@@ -95,7 +95,6 @@ void energy_budget_gravity_report(void)
  */
 
 
-/* RT_STEP_DIAG: checksum function for bisecting RT divergence */
 /* Forward declarations for cpu.txt force-print flag (defined below near
  * write_cpu_log; called from the step loop in run() above). */
 extern "C" void gizmo_cpu_log_request_force_print(void);
@@ -279,7 +278,6 @@ void run(void)
             break;
         }
 
-        /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
         int TreeReconstructFlag_local = TreeReconstructFlag;
         /* Auto-rebuild guardrail.  force_add_element_to_tree
          * insertions stale the LET / pseudo-particle moments shipped on
@@ -344,7 +342,7 @@ void run(void)
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(HERMITE_INTEGRATION)
         if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
         /* Pick up a rebuild raised since the local copy was taken above. The drift/output in between
@@ -962,10 +960,7 @@ void find_next_sync_point_and_drift(void)
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {_drift_marked.push_back(i);}}}
   const int n_drift = (int)_drift_marked.size();
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 256)
-#endif
-  for(int k = 0; k < n_drift; k++) {drift_particle(_drift_marked[k], All.Ti_Current);}
+  drift_particles_batch(_drift_marked.data(), n_drift, All.Ti_Current);
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }

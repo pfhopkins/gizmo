@@ -2,14 +2,15 @@
  *
  * These functions were extracted from cooling.cc to enable cross-TU device
  * calls (required for density postloop GPU port and cooling scatter GPU port).
- * They access cooling tables via the global CoolTables struct (cooling_tables.h).
+ * They take the cooling tables as data, through the view in cooling_tables.h,
+ * so they can be compiled into a kernel from any translation unit.
  *
  * Functions included (dependency order, leaves first):
- *   return_local_gammamultiplier
+ *   return_local_gammamultiplier_impl
  *   return_uvb_shieldfac
- *   find_abundances_and_rates
- *   convert_temp_to_u (EOS_SUBSTELLAR_ISM only)
- *   convert_u_to_temp
+ *   find_abundances_and_rates_impl
+ *   convert_temp_to_u_impl (EOS_SUBSTELLAR_ISM only)
+ *   convert_u_to_temp_impl
  *   ThermalProperties
  *
  * All are KOKKOS_INLINE_FUNCTION for device callability from any TU.
@@ -32,25 +33,28 @@
 #define NUM_SPECIES_IN_EOS 5
 #endif
 
-/* CoolTables access: cooling.cc defines #define aliases (CoolTables.gJH0 -> CoolTables.gJH0, etc.)
-   BEFORE including this header, so bare names work there. Other TUs must define their
-   own extern CoolTables and aliases before including this header. The functions below
-   use bare names (CoolTables.Tmin, CoolTables.gJH0, CoolTables.BetaH0, etc.) which resolve via the caller's aliases. */
+/* Table access: the functions below take the tables as data, through the view
+   declared in cooling_tables.h, and never name the global instance. That is what
+   lets them be compiled into a kernel from any translation unit -- a device
+   symbol cannot be shared across translation units in this build, so a function
+   that reached for the instance by name would read storage nobody fills, and do
+   it silently. Each entry point here has a matching host wrapper in cooling.cc,
+   which owns the tables, so callers on the host are unaffected. */
 
 
 /* ================================================================
    return_local_gammamultiplier — local UVB multiplier from RT
    ================================================================ */
 KOKKOS_INLINE_FUNCTION
-double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
+double return_local_gammamultiplier_impl(int target, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
-    if((target >= 0) && (CoolTables.gJH0 > 0))
+    if((target >= 0) && (tables->cooling->gJH0 > 0))
     {
         double local_gammamultiplier = cell[target].Rad_Flux_EUV * 2.29e-10;
-        local_gammamultiplier = 1.0 + local_gammamultiplier / CoolTables.gJH0;
+        local_gammamultiplier = 1.0 + local_gammamultiplier / tables->cooling->gJH0;
         if(!isfinite(local_gammamultiplier)) {local_gammamultiplier=1;}
-        return DMAX(1., DMIN(2./CoolTables.gJH0, DMIN(1.e20, local_gammamultiplier)));
+        return DMAX(1., DMIN(2./tables->cooling->gJH0, DMIN(1.e20, local_gammamultiplier)));
     }
 #endif
     return 1;
@@ -83,27 +87,27 @@ double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double lo
    find_abundances_and_rates — ionization equilibrium solver
    ================================================================ */
 KOKKOS_INLINE_FUNCTION
-double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
+double find_abundances_and_rates_impl(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
                                  double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
-                                 struct particle_data *pp, struct gas_cell_data *cell)
+                                 struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     int j, jp, niter;
     double Tlow, Thi, flow, fhi, t, gJH0ne, gJHe0ne, gJHepne, logT_input, rho_input, ne_input, neold, nenew;
     double bH0, bHep, bff, aHp, aHep, aHepp, ad, geH0, geHe0, geHep, EPSILON_SMALL=1.e-40;
     double n_elec, nH0, nHe0, nHp, nHep, nHepp;
     logT_input = logT; rho_input = rho; ne_input = *ne_guess;
-    if(!isfinite(logT)) {logT=CoolTables.Tmin;}
-    if(!isfinite(rho)) {logT=CoolTables.Tmin;}
+    if(!isfinite(logT)) {logT=tables->cooling->Tmin;}
+    if(!isfinite(rho)) {logT=tables->cooling->Tmin;}
 
-    if(logT <= CoolTables.Tmin)
+    if(logT <= tables->cooling->Tmin)
     {
         nH0 = 1.0; nHe0 = yhelium(target, pp); nHp = 0; nHep = 0; nHepp = 0; n_elec = 1.e-22;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
         *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 0, target, pp, cell);
         return 0;
     }
-    if(logT >= CoolTables.Tmax)
+    if(logT >= tables->cooling->Tmax)
     {
         nH0 = 0; nHe0 = 0; nHp = 1.0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
@@ -111,17 +115,17 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         return 0;
     }
 
-    t = (logT - CoolTables.Tmin) / CoolTables.deltaT;
+    t = (logT - tables->cooling->Tmin) / tables->cooling->deltaT;
     j = (int) t;
     if(j<0) {j=0;}
     if(j>NCOOLTAB){
-        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g CoolTables.Tmin %g CoolTables.deltaT %g \n",j,t,CoolTables.Tmin+CoolTables.deltaT*j,CoolTables.Tmin+CoolTables.deltaT*(j+1),logT,CoolTables.Tmin,CoolTables.deltaT);
+        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,tables->cooling->Tmin+tables->cooling->deltaT*j,tables->cooling->Tmin+tables->cooling->deltaT*(j+1),logT,tables->cooling->Tmin,tables->cooling->deltaT);
         j=NCOOLTAB;
     }
     jp = j + 1;
     if(jp > NCOOLTAB) {jp=NCOOLTAB;}
-    Tlow = CoolTables.Tmin + CoolTables.deltaT * j;
-    Thi = Tlow + CoolTables.deltaT;
+    Tlow = tables->cooling->Tmin + tables->cooling->deltaT * j;
+    Thi = Tlow + tables->cooling->deltaT;
     fhi = t - j;
     flow = 1 - fhi;
     if(*ne_guess == 0)
@@ -130,9 +134,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         if(logT < 3.8) {*ne_guess = 0.1;}
         if(logT < 2) {*ne_guess = 1.e-10;}
     }
-    double local_gammamultiplier = return_local_gammamultiplier(target, cell);
+    double local_gammamultiplier = return_local_gammamultiplier_impl(target, cell, tables);
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;
-    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*CoolTables.gJH0/1.0e-12, nHcgs, logT, cell);}
+    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*tables->cooling->gJH0/1.0e-12, nHcgs, logT, cell);}
     n_elec = *ne_guess; if(!isfinite(n_elec)) {n_elec=1;}
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.;
@@ -158,28 +162,28 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     {
         niter++;
 
-        aHp = flow * CoolTables.AlphaHp[j] + fhi * CoolTables.AlphaHp[jp];
-        aHep = flow * CoolTables.AlphaHep[j] + fhi * CoolTables.AlphaHep[jp];
-        aHepp = flow * CoolTables.AlphaHepp[j] + fhi * CoolTables.AlphaHepp[jp];
-        ad = flow * CoolTables.Alphad[j] + fhi * CoolTables.Alphad[jp];
-        geH0 = flow * CoolTables.GammaeH0[j] + fhi * CoolTables.GammaeH0[jp];
+        aHp = flow * tables->cooling->AlphaHp[j] + fhi * tables->cooling->AlphaHp[jp];
+        aHep = flow * tables->cooling->AlphaHep[j] + fhi * tables->cooling->AlphaHep[jp];
+        aHepp = flow * tables->cooling->AlphaHepp[j] + fhi * tables->cooling->AlphaHepp[jp];
+        ad = flow * tables->cooling->Alphad[j] + fhi * tables->cooling->Alphad[jp];
+        geH0 = flow * tables->cooling->GammaeH0[j] + fhi * tables->cooling->GammaeH0[jp];
         geH0 = DMAX(geH0, EPSILON_SMALL);
-        geHe0 = flow * CoolTables.GammaeHe0[j] + fhi * CoolTables.GammaeHe0[jp];
+        geHe0 = flow * tables->cooling->GammaeHe0[j] + fhi * tables->cooling->GammaeHe0[jp];
         geHe0 = DMAX(geHe0, EPSILON_SMALL);
-        geHep = flow * CoolTables.GammaeHep[j] + fhi * CoolTables.GammaeHep[jp];
+        geHep = flow * tables->cooling->GammaeHep[j] + fhi * tables->cooling->GammaeHep[jp];
         geHep = DMAX(geHep, EPSILON_SMALL);
         fac_noneq_cgs = (dt * UNIT_TIME_IN_CGS) * (necgs + 1.e-30*nHcgs);
-        if(necgs <= 1.e-25 || CoolTables.J_UV == 0)
+        if(necgs <= 1.e-25 || tables->cooling->J_UV == 0)
         {
             gJH0ne = gJHe0ne = gJHepne = 0;
         }
         else
         {
-            gJH0ne = CoolTables.gJH0 * local_gammamultiplier / necgs * shieldfac;
+            gJH0ne = tables->cooling->gJH0 * local_gammamultiplier / necgs * shieldfac;
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;}
-            gJHe0ne = CoolTables.gJHe0 * local_gammamultiplier / necgs * shieldfac;
+            gJHe0ne = tables->cooling->gJHe0 * local_gammamultiplier / necgs * shieldfac;
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
-            gJHepne = CoolTables.gJHep * local_gammamultiplier / necgs * shieldfac;
+            gJHepne = tables->cooling->gJHep * local_gammamultiplier / necgs * shieldfac;
             gJHepne = DMAX(gJHepne, EPSILON_SMALL); if(!isfinite(gJHepne)) {gJHepne=0;}
         }
 #if defined(RT_DISABLE_UV_BACKGROUND)
@@ -190,7 +194,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         {
             int k;
             c_light_ne = C_LIGHT_CGS / ((MIN_REAL_NUMBER + necgs) * UNIT_LENGTH_IN_CGS);
-            double gJH0ne_0=CoolTables.gJH0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHe0ne_0=CoolTables.gJHe0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHepne_0=CoolTables.gJHep * local_gammamultiplier / (MIN_REAL_NUMBER + necgs);
+            double gJH0ne_0=tables->cooling->gJH0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHe0ne_0=tables->cooling->gJHe0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHepne_0=tables->cooling->gJHep * local_gammamultiplier / (MIN_REAL_NUMBER + necgs);
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;}
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
             gJHepne = DMAX(gJHepne, EPSILON_SMALL); if(!isfinite(gJHepne)) {gJHepne=0;}
@@ -311,15 +315,15 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 
     if(niter >= MAXITER) {printf("failed to converge in find_abundances_and_rates(): logT_input=%g  rho_input=%g  ne_input=%g target=%d ID=%ld shieldfac=%g cooling_return=%d", logT_input, rho_input, ne_input, target, (long)(long long)target, shieldfac, return_cooling_mode); endrun(13);}
 
-    bH0 = flow * CoolTables.BetaH0[j] + fhi * CoolTables.BetaH0[jp];
-    bHep = flow * CoolTables.BetaHep[j] + fhi * CoolTables.BetaHep[jp];
-    bff = flow * CoolTables.Betaff[j] + fhi * CoolTables.Betaff[jp];
+    bH0 = flow * tables->cooling->BetaH0[j] + fhi * tables->cooling->BetaH0[jp];
+    bHep = flow * tables->cooling->BetaHep[j] + fhi * tables->cooling->BetaHep[jp];
+    bff = flow * tables->cooling->Betaff[j] + fhi * tables->cooling->Betaff[jp];
     *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
-    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), target, pp, cell);
+    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(tables->cooling->gJH0/2.29e-10), target, pp, cell);
     if(target >= 0)
     {
 #if defined(OUTPUT_MOLECULAR_FRACTION)
-        cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), pp, cell);
+        cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(tables->cooling->gJH0/2.29e-10), pp, cell);
 #endif
     }
 
@@ -356,9 +360,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
    ================================================================ */
 #if defined(EOS_SUBSTELLAR_ISM)
 KOKKOS_INLINE_FUNCTION
-double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+double convert_temp_to_u_impl(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables) {
     double dummy;
-    find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell);
+    find_abundances_and_rates_impl(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell, tables);
     double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol = 0;
 #ifdef METALS
     if (target >= 0) {
@@ -416,17 +420,17 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
    ================================================================ */
 #if defined(EOS_SUBSTELLAR_ISM)
 KOKKOS_INLINE_FUNCTION
-double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+double convert_u_to_temp_impl(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
-    double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,CoolTables.Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,CoolTables.Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
-    if(target >= 0) { temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS); }
+    double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,tables->cooling->Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,tables->cooling->Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
+    if(target >= 0) { temp = cell[target].gas_temperature_from_u(u / UNIT_SPECEGY_IN_CGS); } /* same relation, taken from the cache that owns it */
     else            { temp = u * PROTONMASS_CGS / BOLTZMANN_CGS; }
     temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;
     double dummy;
     int iter = 0, bisection = 0;
     do {
-        u_from_temp = convert_temp_to_u(temp, rho, target, &cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell);
+        u_from_temp = convert_temp_to_u_impl(temp, rho, target, &cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell, tables);
         du_old = du;
         du = u_from_temp - u;
         if(du > 0 && temp <= temp_min){return temp_min;}
@@ -456,7 +460,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
 #else /* !EOS_SUBSTELLAR_ISM: default convert_u_to_temp */
 
 KOKKOS_INLINE_FUNCTION
-double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
+double convert_u_to_temp_impl(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables)
 {
     int iter = 0;
     double temp, temp_old, temp_old_old = 0, temp_new, prefac_fun_old, prefac_fun, fac, err_old, err_new, T_bracket_errneg = 0, T_bracket_errpos = 0, T_bracket_min = 0, T_bracket_max = 1.e20, bracket_sign = 0, Lambda_filler = 0;
@@ -474,7 +478,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     {
         prefac_fun_old = prefac_fun;
         err_old = err_new;
-        find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler, pp, cell);
+        find_abundances_and_rates_impl(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler, pp, cell, tables);
         gamma_minus1 = (target >= 0 ? cell[target].gamma_eos_value() : GAMMA_DEFAULT) - 1.;
         prefac_fun = gamma_minus1 * (*mu_guess);
         temp_old = temp;
@@ -524,63 +528,29 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 #endif
     if(iter >= MAXITER) {printf("failed to converge in convert_u_to_temp(): u_input= %g rho_input=%g n_elec_input=%g target=%d ID=%ld\n", u_input, rho_input, *ne_guess, target, (long)(long long)target); endrun(12);}
 
-    if(temp<=0) temp=pow(10.0,CoolTables.Tmin);
-    if(log10(temp)<CoolTables.Tmin) temp=pow(10.0,CoolTables.Tmin);
+    if(temp<=0) temp=pow(10.0,tables->cooling->Tmin);
+    if(log10(temp)<tables->cooling->Tmin) temp=pow(10.0,tables->cooling->Tmin);
     return temp;
 }
 #endif /* EOS_SUBSTELLAR_ISM vs default */
 
 
-/* ================================================================
-   ThermalProperties — get temperature and ionization state from u
-   ================================================================ */
-KOKKOS_INLINE_FUNCTION
-double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#ifdef HYDRO_MULTIFLUID_DM
-    /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
-    if(target >= 0 && pp[target].FluidType == FLUID_DM) {
-        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0;
-        *nHe0_guess = 1; *nHep_guess = 0; *nHepp_guess = 0;
-        *mu_guess = 1.0;
-        return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
-               * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
-    }
-#endif
-#if defined(CHIMES)
-    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];
-    *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
-    double temp = ChimesGasVars[target].temperature;
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-    return temp;
-#else
-    if(target >= 0) {*ne_guess=cell[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}
-    rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;
-    double temp = convert_u_to_temp(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; nHe0_guess=0;}}
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-#endif
-    return temp;
-#endif
-}
+/* ThermalProperties now lives in eos/eos_functions.h, beside yhelium and the EOS body
+   that calls it. It reads saved cell state and needs nothing from this header; keeping
+   it here forced eos_functions.h to reach it by external linkage, which a device TU
+   outside cooling.cc cannot resolve. This header includes eos_functions.h, so every
+   consumer of this file still sees it. */
 
 
 #endif /* !CHIMES */
 #endif /* COOLING — end of cooling-specific functions */
 
 
-/* The host wrapper `set_eos_pressure` (declared in proto.h) remains in
-   eos/eos.cc — NOT inlined here. nvcc inlining of the wrapper with
-   __managed__ All_dev context produces wrong results on CUDA. Non-GPU TUs
-   link against eos.cc's host symbol via proto.h declaration.
-   NOTE: the device-callable `set_eos_pressure_impl` (in eos/eos_functions.h)
-   IS called from the post-cooling device kernel when
-   POST_COOLING_DEVICE_EOS_SUPPORTED is defined — see cooling/cooling.cc:465
-   and declarations/precompiler_logic.h:767-787. This comment is about the
-   host wrapper specifically; it is not a statement that EOS computation is
-   pinned to host in general. */
+/* The host wrapper `set_eos_pressure` stays in eos/eos.cc and is not inlined here;
+   the reason it and its body must remain separate is recorded beside the definition
+   there. The device-callable `set_eos_pressure_impl` is a different thing and IS
+   called from the post-cooling device kernel, so none of this says the equation of
+   state is pinned to the host. */
 
 
 #endif /* COOLING_FUNCTIONS_H */

@@ -24,30 +24,12 @@
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-/*! this pair of functions: 'return_user_desired_target_density' and 'return_user_desired_target_pressure' should be used
- together with 'HYDRO_GENERATE_TARGET_MESH'. This will attempt to move the mesh and mass
- towards the 'target' pressure profile. Use this to build your ICs.
- The 'desired' pressure and density as a function of particle properties (most commonly, position) should be provided in the function below */
-double return_user_desired_target_density(int i)
-{
-    return 1; // uniform density everywhere -- will try to generate a glass //
-    /*
-     // this example would initialize a constant-density (density=rho_0) spherical cloud (radius=r_cloud) with a smooth density 'edge' (width=interp_width) surrounded by an ambient medium of density =rho_0/rho_contrast //
-     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
-     double rho_0=1, r_cloud=0.5*boxHalf_X, interp_width=0.1*r_cloud, rho_contrast=10.;
-     return rho_0 * ((1.-1./rho_contrast)*0.5*erfc(2.*(r-r_cloud)/interp_width) + 1./rho_contrast);
-     */
-}
-double return_user_desired_target_pressure(int i)
-{
-    return 1; // uniform pressure everywhere -- will try to generate a constant-pressure medium //
-    /*
-     // this example would initialize a radial pressure gradient corresponding to a self-gravitating, spherically-symmetric, infinite power-law
-     //   density profile rho ~ r^(-b) -- note to do this right, you need to actually set that power-law for density, too, in 'return_user_desired_target_density' above
-     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
-     double b = 2.; return 2.*M_PI/fabs((3.-b)*(1.-b)) * pow(return_user_desired_target_density(i),2) * r*r;
-     */
-}
+/*! 'return_user_desired_target_density' and 'return_user_desired_target_pressure',
+ used together with 'HYDRO_GENERATE_TARGET_MESH', are the USER EDIT POINT for the
+ target profile the mesh and mass are driven towards. Their bodies are now in
+ eos/eos_functions.h so set_eos_pressure_impl can call them from the device pass;
+ edit them there. The host symbols are still emitted from this file, by the
+ #undef KOKKOS_INLINE_FUNCTION block below. */
 
 /* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
 #ifdef KOKKOS_ENABLE_OPENMPTARGET
@@ -62,9 +44,9 @@ double return_user_desired_target_pressure(int i)
     this subroutine needs to set the value of the 'press' variable (pressure), which you can see from the
     templates below can follow an arbitrary equation-of-state. for more general equations-of-state you want to specifically set the soundspeed
     variable as well. */
-/* set_eos_pressure: definition moved to cooling/cooling_functions.h for cross-TU GPU callability.
-   eos.cc includes cooling_functions.h (below) so the inline definition is available to callers
-   that link against eos.o. */
+/* set_eos_pressure: the host symbol is defined further down in this file; its body is
+   set_eos_pressure_impl in eos/eos_functions.h. See the note beside the definition for why
+   the two are separate and must stay that way. */
 
 
 /* Get_Gas_Ionized_Fraction: definition now in eos_functions.h */
@@ -90,46 +72,43 @@ double return_user_desired_target_pressure(int i)
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h.
-   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES turns on the
-   EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/HYDRO_GENERATE_TARGET_MESH branches
-   inside set_eos_pressure_impl — those branches call host-only routines
-   (eos_compute, aneos_compute, calculate_tillotson_eos,
-   return_user_desired_target_pressure/density) and must not be parsed by
-   device-side includers (cooling.cc).  Only this TU enables them so the
-   host external symbol behaves exactly as the pre-refactor function. */
+   Every branch of set_eos_pressure_impl is device-callable now, so there is
+   nothing for this TU to enable that others must not see. */
 #undef KOKKOS_INLINE_FUNCTION
 #ifdef GIZMO_GPU_COMPILER
 /* HD (not host-only): these eos_functions.h symbols are also called from device
  * kernels, and clang rejects an HD proto.h decl re-declared host-only here (nvcc
- * merged silently). Same pattern cooling.cc uses. The host-only EOS branches are
- * guarded out of the device pass separately (EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
- * + !device). Non-GPU builds keep the plain host strong symbol. */
+ * merged silently). Same pattern cooling.cc uses.
+ * Non-GPU builds keep the plain host strong symbol. */
 #define KOKKOS_INLINE_FUNCTION __host__ __device__
 #else
 #define KOKKOS_INLINE_FUNCTION
 #endif
-#define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
 #ifdef KOKKOS_ENABLE_OPENMPTARGET
 #pragma omp end declare target
 #endif
 
-/* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
-   as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl.
-   This preserves public API and external linkage exactly: existing host
-   callers (kicks/predict/sfr_eff/merge_split/init/density/density_loop/cooling-
-   scatter-fallback) continue to call this symbol unchanged.  The header pattern
-   matches the established Get_Gas_Molecular_Mass_Fraction / yhelium etc. setup
-   (single source of truth in eos_functions.h, external host symbol generated
-   in eos.cc via the `#undef KOKKOS_INLINE_FUNCTION` mechanism in this TU).
-   Do NOT include cooling_functions.h here — doing so creates __host__ non-inline
-   strong symbols for ThermalProperties/convert_u_to_temp/find_abundances_and_rates
-   that override cooling.cc's inline versions at link time, producing wrong results
-   on CUDA (bisected empirically). */
+/* set_eos_pressure — the host symbol. Its body is set_eos_pressure_impl in
+   eos/eos_functions.h, and the two are deliberately separate.
+
+   DO NOT COLLAPSE THEM INTO ONE. The body reads All in fifteen places, and in a GPU
+   translation unit All resolves to that unit's own managed mirror. Keeping one
+   non-inline host symbol here means every host caller shares a single mirror, while
+   the translation units that genuinely need the body on the device instantiate the
+   inline form themselves. Merging the two would inline it against a different mirror
+   in each unit, which links cleanly and returns wrong temperatures only on CUDA -- a
+   build with no device pass cannot see it.
+
+   For the same reason, do NOT include cooling_functions.h in this file: that creates
+   non-inline host symbols for ThermalProperties/convert_u_to_temp/
+   find_abundances_and_rates which override cooling.cc's at link time, with the same
+   silent CUDA-only result. Both were bisected empirically. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    set_eos_pressure_impl(i, pp, cell);
+    struct EosTableView eos_tables = eos_tables_view();
+    set_eos_pressure_impl(i, pp, cell, &eos_tables);
 }
 
 
@@ -146,14 +125,12 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
     double m_ion = 24.3; // Mg dominates ions in dense gas [where this is relevant]; this is ion mass in units of proton mass
     double zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell); // cosmic ray ionization rate (fixed as constant for non-CR runs)
 #ifdef COOLING
-    double T_eff_atomic = 1.23 * (5./3.-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; /* we'll use this to make a quick approximation to the actual mean molecular weight here */
-    double nH_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, T_transition=DMIN(8000.,nH_cgs), f_mol=1./(1. + T_eff_atomic*T_eff_atomic/(T_transition*T_transition));
-    mean_molecular_weight = 4. / (1. + (3. + 4.*cell[i].Ne - 2.*f_mol) * HYDROGEN_MASSFRAC);
+    mean_molecular_weight = cell[i].MeanMolecularWeight; /* the composition the cooling solve determined, rather than a local estimate from Ne */
 #endif
 #ifdef METALS
     f_dustgas = 0.5 * pp[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // appropriate dust-to-metals ratio
 #endif
-    double temperature = mean_molecular_weight * (cell[i].gamma_eos_value()-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
+    double temperature = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]

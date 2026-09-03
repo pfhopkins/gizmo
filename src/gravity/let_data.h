@@ -22,6 +22,76 @@
 #include <stdint.h>
 #include "../declarations/allvars.h"
 
+/* Device-callable without forcing a Kokkos dependency on host-only includers. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
+
+
+/* How a foreign (imported) node was shipped, carried per node on the LET wire and mirrored into
+ * the receiver's ForeignLeafTag sidecar.  This is what makes "can this node be descended?" an
+ * explicit property of the import rather than something the walk infers from pointer values.
+ *
+ * The sender prunes the import against its own evaluation of the opening predicate: a node no
+ * target on the receiving rank would open is shipped WITHOUT its children.  Any later walk that
+ * evaluates the predicate STRICTER than the sender did can then ask to descend a node whose
+ * children were never sent.  Inferring that from `nextnode < 0` catches it only under the last
+ * topleaf, where the subtree's exit resolves to "end of walk"; under every other topleaf the exit
+ * resolves to a VALID SIBLING, so the walk steps out of the foreign subtree and drops that node's
+ * mass with no diagnostic at all.  Tagging the truncation where it happens makes the test exact
+ * for every topleaf. */
+#define LET_LEAF_TAG_NODE                0  /* interior node; its children were shipped -> descendable */
+#define LET_LEAF_TAG_REAL_LEAF           1  /* single-particle leaf; terminal, consume with leaf semantics */
+#define LET_LEAF_TAG_TRUNCATED_AGGREGATE 2  /* aggregate shipped multipole-only because the sender's cover
+                                             * closed on it; terminal, NOT descendable.  A rebuild against
+                                             * current positions re-runs that cover test, so a walk that
+                                             * opens one of these is asking for a tree that is merely
+                                             * stale -- repairable. */
+#define LET_LEAF_TAG_UNSHIPPABLE_SUBTREE 3  /* aggregate the sender found ESSENTIAL but could not ship
+                                             * whole: every child was a pseudo-particle or another rank's
+                                             * foreign node, so the children are not this sender's to
+                                             * send.  Terminal like the above, and NOT repairable -- the
+                                             * condition is topological, so rebuilding reproduces it
+                                             * exactly.  The two must not share a tag: the repair would
+                                             * spend a full tree+LET rebuild and then stop anyway.
+                                             * A malformed singleton (a one-particle node whose child is
+                                             * not a particle) is also marked with this, but no walk ever
+                                             * sees it: that is local tree corruption, and the pack stops
+                                             * the run collectively once every rank has packed. */
+
+typedef enum {
+    GRAV_NODE_LOCAL = 0,        /* not imported: ordinary local tree node */
+    GRAV_NODE_FOREIGN_OPENABLE, /* imported with its children -> may be descended */
+    GRAV_NODE_FOREIGN_LEAF,     /* imported single-particle leaf: terminal, leaf semantics */
+    GRAV_NODE_FOREIGN_TRUNCATED,/* imported multipole-only: terminal, and opening it means the import is short */
+    GRAV_NODE_FOREIGN_UNSHIPPABLE /* terminal, and opening it means the import is short in a way no
+                                   * rebuild can fix -- the sender never owned the children */
+} grav_node_kind_t;
+
+/* Classify a node ONCE, before any decision that might descend it.  Both walks call this ahead of
+ * the single-particle branch AND the acceptance predicate, so the wire tag is the single authority
+ * on descendability and no path can reach `nextnode` on a node whose children were never sent.
+ * The nextnode<0 sentinel is kept as a backstop: a node the packer failed to tag is still treated
+ * as terminal rather than followed. */
+KOKKOS_INLINE_FUNCTION
+grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode)
+{
+    if(!in_foreign) {return GRAV_NODE_LOCAL;}
+    if(leaf_tag == LET_LEAF_TAG_REAL_LEAF) {return GRAV_NODE_FOREIGN_LEAF;}
+    if(leaf_tag == LET_LEAF_TAG_UNSHIPPABLE_SUBTREE) {return GRAV_NODE_FOREIGN_UNSHIPPABLE;}
+    if(leaf_tag == LET_LEAF_TAG_TRUNCATED_AGGREGATE || nextnode < 0) {return GRAV_NODE_FOREIGN_TRUNCATED;}
+    return GRAV_NODE_FOREIGN_OPENABLE;
+}
+
+/* A terminal node is consumed where it stands; only these two kinds may reach the accept path
+ * after the predicate says OPEN. */
+KOKKOS_INLINE_FUNCTION
+int grav_node_is_terminal(grav_node_kind_t k)
+{
+    return (k == GRAV_NODE_FOREIGN_LEAF || k == GRAV_NODE_FOREIGN_TRUNCATED
+            || k == GRAV_NODE_FOREIGN_UNSHIPPABLE);
+}
+
 /* ----------------------------------------------------------------------
  * Per-rank payload (LET pack input)
  *
@@ -149,7 +219,11 @@ struct LETCoverLeaf {
  * ---------------------------------------------------------------------- */
 struct LETNodeWire {
     int    remote_id;      /* sender's Nodes_base index (identity/debug only; NOT topology) */
-    int    leaf_tag;       /* 1 = real foreign single-particle leaf source; 0 = node/multipole.
+    int    leaf_tag;       /* LET_LEAF_TAG_* (gravtree_opening.h): 0 = node whose children were
+                            * shipped, 1 = real single-particle leaf, 2 = aggregate shipped
+                            * multipole-only because the sender's opening test closed on it --
+                            * terminal and NOT descendable, which the receiver's walk must know
+                            * explicitly rather than infer from a continuation pointer.
                             * A foreign singleton (one particle, shipped as a synthesized terminal
                             * multipole) must be consumed with PARTICLE-LEAF secondary-source
                             * semantics, not node semantics -- see the leaf-identity sidecar below
@@ -210,7 +284,10 @@ static_assert(sizeof(struct LETNodeWire) % 8 == 0,
  * the exact import, the install writes every slot.  The GPU mirror lives in the tree SoA
  * (foreign_leaf_*), scattered from these in gpu_scatter_foreign_to_soa.
  * ---------------------------------------------------------------------- */
-extern int     *ForeignLeafTag;   /* 1 = real foreign single-particle leaf; 0 = node/multipole */
+extern int     *ForeignLeafTag;   /* one of LET_LEAF_TAG_* above: NODE (descendable), REAL_LEAF, or
+                                   * TRUNCATED_AGGREGATE.  Read it through grav_classify_node -- the
+                                   * last two are both terminal but mean different things, so a bare
+                                   * nonzero test would consume a truncated aggregate as a leaf. */
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */

@@ -174,6 +174,10 @@ struct global_data_all_processes
   MyDouble Shearing_Box_Vel_Offset; /*!< shearing box velocity offset (in All for GPU access) */
   MyDouble Shearing_Box_Pos_Offset; /*!< shearing box position offset (in All for GPU access) */
 #endif
+#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
+  short int special_boundary_condition_xyz_def_reflect[3]; /*!< per-axis reflecting-boundary code (in All for GPU access) */
+  short int special_boundary_condition_xyz_def_outflow[3]; /*!< per-axis outflow-boundary code (in All for GPU access) */
+#endif
 
   /* Code options */
   int ComovingIntegrationOn;	/*!< flags that comoving integration is enabled */

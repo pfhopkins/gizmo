@@ -45,7 +45,7 @@ int does_particle_need_to_be_merged(int i);
 int does_particle_need_to_be_split(int i);
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key);
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-int check_if_sufficient_mergesplit_time_has_passed(int i);
+int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng);
 int is_particle_a_special_zoom_target(int i);
 #endif
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
@@ -65,7 +65,11 @@ void do_hermite_correction(void);
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
 #endif
-int gravity_treewalk_candidate_prewalk(int i); /* SSOT: active particle i will receive a real gravity tree walk this step (LET consumer) */
+int gravity_treewalk_candidate_prewalk(int i, int ii); /* SSOT: active particle i (at position ii in ActiveParticleList) will receive a real gravity tree walk this step (LET consumer) */
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+void gravity_freeze_treeforce_candidates(void); /* freeze needs_new_treeforce() for the whole gravity_tree() call, before any walk mutates its inputs */
+int gravity_treeforce_candidate_frozen(int ii);
+#endif
 void find_timesteps(void);
 #ifdef GALSF
 void compute_stellar_feedback(void);
@@ -115,6 +119,38 @@ GIZMO_GPU_FUNCTION static inline double MINMOD(double a, double b) {return (a>0)
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
 
+/* Thermal soundspeed squared, and temperature, for a specific internal energy carried by something
+   that is NOT a gas cell: a grain moving through gas, or a sink reporting on the gas around it.
+   These callers hold an energy but have no cell of their own, so there is no composition to read,
+   and an ideal fully-ionized gas is assumed. Do NOT reach for the gas-cell versions with a non-gas
+   index -- the cell entry for such a particle is never filled, so its composition is meaningless. */
+GIZMO_GPU_FUNCTION static inline double soundspeed2_from_u_nongas(double u) {return GAMMA_DEFAULT * (GAMMA_DEFAULT - 1.) * u;}
+GIZMO_GPU_FUNCTION static inline double temperature_from_u_nongas(double u) {return MEAN_MOLECULAR_WEIGHT_DEFAULT * (GAMMA_DEFAULT - 1.) * U_TO_TEMP_UNITS * u;}
+
+/* Approximate mean molecular weight of the gas surrounding a grain. A grain has no cell of its own,
+   so this stands in for the composition a cell would carry.
+   Without chemistry there is nothing to estimate from, and the value must instead MATCH the one the
+   gas cells themselves were given, or the soundspeed rebuilt from the interpolated temperature will
+   not agree with the gas it came from. So that case returns MEAN_MOLECULAR_WEIGHT_DEFAULT, the same
+   constant the cells use, and the two cancel exactly whatever the user sets it to.
+   With chemistry, the interpolated temperature and ionized fraction give a real estimate. The
+   molecular fraction is a crude temperature scaling, which is ample here: this feeds drag
+   coefficients and sputtering rates, not a thermodynamic solve. The coefficients reproduce the
+   standard solar-composition limits -- 1.25 neutral atomic, 0.56 fully ionized, 2.32 fully
+   molecular. A negative f_ion means no fraction was available and returns the molecular value. */
+GIZMO_GPU_FUNCTION static inline double molecular_weight_estimator_for_gas_around_grain(double gas_temperature, double f_ion)
+{
+#if !defined(COOLING)
+   return MEAN_MOLECULAR_WEIGHT_DEFAULT; /* in this case return the default constant value in the code, as the functions below only make sense for runs with the COOLING physics enabled */
+#else
+    if(!(f_ion >= 0)) {return MEAN_MOLECULAR_WEIGHT_MOLECULAR;}
+    double f_i = DMAX(0., DMIN(1., f_ion));
+    double f_mol = exp(-DMIN(40., DMAX(0., gas_temperature) / 100.));
+    f_mol = DMIN(f_mol, 1. - f_i); /* molecular and ionized are exclusive; the fit is only sensible where they do not overlap */
+    return 1. / DMAX(0.1, 0.80125 + f_i - 0.37 * f_mol);
+#endif
+}
+
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)
     return C_LIGHT_CODE;
@@ -124,6 +160,11 @@ static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, 
 }
 static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
+/* Gravitational softening kernel radius of particle p: the value cached by
+ * compute_all_force_softening(). The _P form is the single source of truth and is
+ * callable from device code; the host entry point in gravity/forcetree.cc forwards
+ * to it so the ~40 existing call sites are unchanged. */
+GIZMO_GPU_FUNCTION inline double ForceSoftening_KernelRadius_P(int p, struct particle_data *pp) {return pp[p].ForceSoftening;}
 double ForceSoftening_KernelRadius(int p);
 double compute_force_softening_kernel_radius(int p); /* internal: source-of-truth softening computation */
 void   compute_all_force_softening(int mode);        /* mode=0 active-only; mode=1 all NumPart (init/restart) */
@@ -176,9 +217,14 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #if (SINGLE_STAR_TIMESTEPPING > 0)
 #endif
 
-void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
-double return_user_desired_target_density(int i);
-double return_user_desired_target_pressure(int i);
+void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef HYDRO_GENERATE_TARGET_MESH
+/* Declared under the same flag the definitions in eos/eos_functions.h carry: they
+   used to be defined unconditionally in eos.cc, so an unguarded declaration would
+   now name a symbol that does not exist in builds without the flag. */
+GIZMO_GPU_FUNCTION double return_user_desired_target_density(int i, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double return_user_desired_target_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
 #ifdef EOS_TILLOTSON
 void tillotson_eos_init(void);
 #endif
@@ -338,6 +384,11 @@ int compare_densities_for_sort(const void *a, const void *b);
 int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
 void drift_particle(int i, integertime time1);
+/* Drift a list of particles to time1, or the contiguous range [0, n_idx) when idx is
+   null. Compacts to those not already there and runs them on the device when there
+   are enough to be worth it, otherwise on the host; either way every particle in the
+   list is drifted. */
+void drift_particles_batch(const int *idx, int n_idx, integertime time1);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
@@ -363,7 +414,7 @@ void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, cons
 /* Get_Particle_Expected_Area moved to core/predict_functions.h as
  * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 GIZMO_GPU_FUNCTION double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
-double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -378,10 +429,10 @@ GIZMO_GPU_FUNCTION double Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct g
 GIZMO_GPU_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy);
 void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
-double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
 double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);
@@ -561,6 +612,11 @@ void ghost_exchange_cleanup(void);
  * do not infer liveness from ghost_get_num_ghosts()==0, which also holds for a live
  * zero-ghost pool. */
 int ghost_pool_is_live(void);
+/* Time every particle in the live ghost pool is current to, or -1 when there is
+ * no such guarantee. Established only when the owners advanced their particles
+ * before packing them; a consumer that reads -1 must keep testing each ghost's
+ * own Ti_current. */
+integertime ghost_pool_current_ti(void);
 /* Largest ghost import this rank has completed over the current and previous domain epoch, and
  * the roll that ends an epoch.  The epoch sizing reads the first and calls the second. */
 int ghost_get_epoch_high_water(void);
@@ -900,6 +956,14 @@ GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct partic
 GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp);
 
 void gravity_tree(void);
+void refresh_old_acceleration_for_tree_opening(void);
+void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, double len, double mass);
+void gravity_note_incomplete_import_count(long long n);
+long long gravity_incomplete_import_count(void);
+void gravity_note_unshippable_import(long long n);
+long long gravity_unshippable_import_count(void);
+int gravity_incomplete_import_example(char *buf, int buflen);
+void gravity_clear_incomplete_import(void);
 void hydro_force(void);
 void init(void);
 GIZMO_GPU_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1082,7 +1146,7 @@ GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, str
 }
 #endif
 GIZMO_GPU_FUNCTION void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
-void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef RT_SOURCE_INJECTION
 void rt_source_injection(void);
@@ -1257,14 +1321,12 @@ void DMGrad_gradient_calc(void);
 #endif
 
 
-#ifdef SINGLE_STAR_TIMESTEPPING
-void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-double gravfac(double r, double mass);
-double gravfac2(double r, double mass);
-void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
-double eccentric_anomaly(double mean_anomaly, double ecc);
-#endif
+/* The binary-orbit integrators (kepler_timestep, odeint_super_timestep, gravfac,
+   gravfac2, grav_accel_jerk, eccentric_anomaly) are defined inline in
+   gravity/binary_functions.h so they are callable from device code; include that
+   header to use them. No prototypes here — a declaration visible without the
+   definition would make the compiler emit an external device call that has no
+   device-side symbol to resolve against. */
 
 /* Kokkos/GPU lifecycle and sync functions (defined in cooling/cooling.cc).
    Declared unconditionally — the call sites in main.cc/begrun.cc/run.cc are

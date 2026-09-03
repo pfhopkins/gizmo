@@ -344,15 +344,97 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #ifdef CHIMES
   return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
 #else
-    double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties
-    double f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
+    double ne = cell[i].Ne, nh0 = cell[i].HI; // saved by the cooling solver; no need to re-solve the chemistry to answer this
+    double f_ion = DMIN(DMAX(DMAX(1-nh0, ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
     if((!isfinite(f_ion)) || (f_ion<0)) {f_ion=0;}
     return f_ion;
 #endif
 #endif
     return 1;
 }
+
+
+#ifdef HYDRO_GENERATE_TARGET_MESH
+/* ==========================================================================
+ * USER EDIT POINT for HYDRO_GENERATE_TARGET_MESH.  EDIT THESE TWO BODIES.
+ *
+ * This pair of functions gives the 'target' density and pressure the mesh is
+ * driven towards, as a function of particle properties (most commonly
+ * position).  Use it to build ICs: the code moves mesh and mass towards the
+ * profile you return here.
+ *
+ * They live in this header rather than in eos.cc because set_eos_pressure_impl
+ * calls them from the device pass; eos.cc still emits the host symbols through
+ * its usual #undef KOKKOS_INLINE_FUNCTION block, so host callers are unchanged.
+ * Write ordinary arithmetic on pp[i] / cell[i] and All.*; anything calling a
+ * host-only library here would put that library on the device path.
+ * ========================================================================== */
+KOKKOS_INLINE_FUNCTION double return_user_desired_target_density(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    return 1; // uniform density everywhere -- will try to generate a glass //
+    /*
+     // this example would initialize a constant-density (density=rho_0) spherical cloud (radius=r_cloud) with a smooth density 'edge' (width=interp_width) surrounded by an ambient medium of density =rho_0/rho_contrast //
+     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
+     double rho_0=1, r_cloud=0.5*boxHalf_X, interp_width=0.1*r_cloud, rho_contrast=10.;
+     return rho_0 * ((1.-1./rho_contrast)*0.5*erfc(2.*(r-r_cloud)/interp_width) + 1./rho_contrast);
+     */
+}
+KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    return 1; // uniform pressure everywhere -- will try to generate a constant-pressure medium //
+    /*
+     // this example would initialize a radial pressure gradient corresponding to a self-gravitating, spherically-symmetric, infinite power-law
+     //   density profile rho ~ r^(-b) -- note to do this right, you need to actually set that power-law for density, too, in 'return_user_desired_target_density' above
+     double dx=pp[i].Pos[0]-boxHalf_X, dy=pp[i].Pos[1]-boxHalf_Y, dz=pp[i].Pos[2]-boxHalf_Z, r=sqrt(dx*dx+dy*dy+dz*dz);
+     double b = 2.; return 2.*M_PI/fabs((3.-b)*(1.-b)) * pow(return_user_desired_target_density(i, pp, cell),2) * r*r;
+     */
+}
+#endif
+
+
+#if defined(COOLING) && !defined(CHIMES)
+/* ================================================================
+   ThermalProperties — get temperature and ionization state from u
+   ================================================================ */
+/* Reads the thermochemical state the cooling solver saved on the cell. It does not
+   solve anything, reach a table, or write to the cell: the values it hands back are
+   the ones the last cooling update determined for this gas. A source with no cell of
+   its own (target < 0) has no such state, so the call reports nothing and returns 0 --
+   build the estimate you need locally instead. Helium is deliberately absent: nothing
+   outside the cooling solver consumed it, and it is not saved. */
+KOKKOS_INLINE_FUNCTION
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(target < 0) {*ne_guess = 0; *nH0_guess = 0; *nHp_guess = 0; *mu_guess = 1; return 0;}
+#ifdef HYDRO_MULTIFLUID_DM
+    /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
+    if(pp[target].FluidType == FLUID_DM) {
+        *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *mu_guess = 1.0;
+        return (GAMMA_DEFAULT - 1.0) * (*mu_guess) * (PROTONMASS_CGS / BOLTZMANN_CGS)
+               * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
+    }
+#endif
+#if defined(CHIMES)
+    /* Unreachable: the enclosing guard is !defined(CHIMES), so under CHIMES this
+       function does not exist at all. Kept because it records what the CHIMES
+       state would be read from, and it is inert either way -- CHIMES needs
+       SUNDIALS, which does not build for the device. */
+    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
+    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+    double temp = ChimesGasVars[target].temperature;
+#else
+    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+    double temp = cell[target].gas_temperature_from_u(u);
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+    /* gas inside an HII region is held ionized by the local source, which the saved state
+       only picks up once the cell next cools */
+    if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
+#endif
+#endif
+    *mu_guess = cell[target].MeanMolecularWeight;
+    return temp;
+}
+#endif /* COOLING && !CHIMES */
 
 
 /* ==========================================================================
@@ -362,20 +444,28 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  * public host symbol `set_eos_pressure` in eos.cc is now a one-line wrapper
  * that calls this function.
  *
- * Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
- * linkage.  This header does NOT include cooling_functions.h — doing so creates
- * __host__ non-inline strong symbols for ThermalProperties/convert_u_to_temp/
- * find_abundances_and_rates that override cooling.cc's inline versions at link
- * time, producing wrong results on CUDA (confirmed by bisection).
+ * Calls ThermalProperties, which is defined ABOVE in this header.  It used to live
+ * in cooling_functions.h and be reached by external linkage; that worked only for
+ * callers inside cooling.cc, because a device TU cannot resolve an external device
+ * call.  It reads saved cell state and needs nothing from the cooling solver, so it
+ * moved here beside yhelium and this body.
+ * ⚠ This header still must NOT include cooling_functions.h: that would emit non-inline
+ * strong symbols for convert_u_to_temp / find_abundances_and_rates competing with
+ * cooling.cc's, which reads a different per-TU All mirror and gives wrong results on
+ * CUDA only (confirmed by bisection).
  *
- * Branches that call host-only routines (eos_compute, aneos_compute,
- * calculate_tillotson_eos, return_user_desired_target_pressure/density) are
- * guarded by !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__) so the
- * device compilation pass instantiates a no-op for those branches.  The
- * POST_COOLING_DEVICE_EOS_SUPPORTED gate in precompiler_logic.h prevents the
- * device kernel from CALLING set_eos_pressure_impl in builds where any of
- * those branches are active — so the no-op device path is never reached on
- * those builds and the host wrapper remains the single source of truth.
+ * Every branch runs wherever this body runs. The tabulated equations of state
+ * used to be the exception: EOS_HELMHOLTZ and EOS_ANEOS reached table-lookup
+ * routines that only existed on the host, so those two branches were fenced out
+ * of the device pass and a compile-time gate stopped the device kernel calling
+ * this function at all in such builds. Both tables now live in memory the
+ * device can read and both evaluation chains are header bodies, so the fence,
+ * the gate and the split have gone -- there is no configuration in which this
+ * function computes less than the whole equation of state.
+ *
+ * The tables are passed in, never fetched here. Their owners are host globals,
+ * and a device body that reached for one would read host memory and say
+ * nothing; the caller builds an EosTableView on the host and hands it over.
  * ========================================================================== */
 
 /* set_eos_pressure_impl below calls Get_Gas_CosmicRayPressure under
@@ -397,15 +487,292 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 /* HYDRO_MULTIFLUID_DM: dark-fluid early-return into set_dark_eos_pressure.
    set_dark_eos_pressure is KOKKOS_INLINE_FUNCTION in sidm/dm_fluid_functions.h
    (pure arithmetic on macro constants + device-callable cell_data accessors),
-   so we dispatch into it unconditionally under HYDRO_MULTIFLUID_DM — no
-   __CUDA_ARCH__ exclusion needed. */
+   so we dispatch into it unconditionally under HYDRO_MULTIFLUID_DM. */
 #ifdef HYDRO_MULTIFLUID_DM
 #include "../declarations/multifluid_helpers.h"
 #include "../sidm/dm_fluid_functions.h"
 #endif
 
+/* Solid-EOS dispatch: eos_branch_of keys the switch below on CompositionType and
+   is pure arithmetic, so it is GPU-marked and the switch runs on either pass.
+   The functions here are `static inline`, i.e. internal linkage, so eos.cc's
+   non-inline re-include of this header cannot duplicate a strong symbol. */
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+#include "composition_registry.h"
+#endif
+
+/* The tabulated equations of state. Their evaluation routines are header
+   bodies so that a device kernel can call them -- without relocatable device
+   code, a call that crosses a translation unit has nothing to resolve to. Each
+   include is gated exactly as its call site inside set_eos_pressure_impl is, so
+   a build that does not use one never parses it. */
+#ifdef EOS_ANEOS
+#include "aneos.h"
+#endif
+#ifdef EOS_HELMHOLTZ
+#include "helmholtz/helmholtz.h"
+#endif
+
+/* The tables a call to set_eos_pressure_impl may need, as data.
+
+   The fields are gated once, here, and the struct itself always exists, so the
+   routines that take it keep one signature in every configuration. It is built
+   on the host immediately before a dispatch and captured by value; a device
+   body must never fetch it, because the owners are host globals and reading one
+   from a kernel gives the wrong memory with nothing to say so -- which is
+   exactly the defect the blocker survey caught when an earlier cut of this rung
+   called the accessor from inside the body instead of passing the result in. */
+struct EosTableView
+{
+#ifdef EOS_HELMHOLTZ
+    const HelmTable *helm;
+#endif
+#ifdef EOS_ANEOS
+    const struct aneos_table *aneos;
+#endif
+};
+
+/* Fill a view from the live tables.
+
+   ⚠ HOST ONLY, AND THAT IS A CONTRACT THE COMPILER CANNOT ENFORCE. It names the
+   owning globals, so calling it from a device body reads host memory and says
+   nothing -- the same silent-wrong-answer class the table pointers exist to
+   prevent. It is deliberately NOT device-annotated, but an unmarked function is
+   callable from an unmarked caller, so the guarantee rests on nothing being
+   allowed to call it from inside a KOKKOS_INLINE_FUNCTION body or a
+   KOKKOS_LAMBDA. The rule is easy to state and easy to check: the two
+   device-callable bodies that take an EosTableView -- set_eos_pressure_impl
+   and drift_particle_impl -- must not mention this function or either table
+   owner anywhere in their bodies.
+
+   It is also the single place a view is assembled -- call sites take the
+   result, they never build their own, because a hand-built view at four sites
+   is four places for a gated field to be forgotten. */
+inline struct EosTableView eos_tables_view(void)
+{
+    struct EosTableView view = {};
+#ifdef EOS_HELMHOLTZ
+    view.helm = helm_table_view();
+#endif
+#ifdef EOS_ANEOS
+    view.aneos = ANEOS_Tables;
+#endif
+    return view;
+}
+
+#ifdef EOS_HELMHOLTZ
+/* The Helmholtz router: unit conversion, range validation with 0th-order
+   clamping, the Newton inversion, and the ideal-gas fallback for a solve that
+   fails even after clamping. Moved here verbatim from eos/eos_interface.cc,
+   which now owns only the table's lifetime. Every routine takes the table
+   explicitly: a body that reached for the file-scope instance would read host
+   memory from a kernel, silently. */
+
+#define BITMASK_SET_FLAG(BITMASK,FLAG)      (BITMASK) |= (FLAG)
+#define BITMASK_SET_ALL_FLAGS(BITMASK)      (BITMASK = ~(0))
+#define BITMASK_UNSET_FLAG(BITMASK,FLAG)    (BITMASK) &= ~(FLAG)
+#define BITMASK_UNSET_ALL_FLAGS(BITMASK)    (BITMASK) = 0
+#define BITMASK_CHECK_FLAG(BITMASK,FLAG)    (((BITMASK) & (FLAG)) == (FLAG))
+
+#define EOS_ERR_VALID         0
+#define EOS_ERR_RHO_LT_RHOMIN 1
+#define EOS_ERR_RHO_GT_RHOMAX 2
+#define EOS_ERR_EPS_LT_EPSMIN 4
+#define EOS_ERR_EPS_GT_EPSMAX 8
+#define EOS_ERR_COMPOSITION   16
+
+static KOKKOS_INLINE_FUNCTION int eos_input_to_cgs(struct eos_input * vars)
+{
+  vars->rho *= UNIT_DENSITY_IN_CGS;
+  vars->eps *= UNIT_SPECEGY_IN_CGS;
+  return 0;
+}
+
+static KOKKOS_INLINE_FUNCTION int eos_output_from_cgs(struct eos_output * vars)
+{
+  vars->press  /= UNIT_PRESSURE_IN_CGS;
+  vars->csound /= UNIT_VEL_IN_CGS;
+  return 0;
+}
+
+static KOKKOS_INLINE_FUNCTION int eos_validate(const HelmTable *tab, struct eos_input const * vars, struct eos_input * vars_adj, int * bitmask)
+{
+  *bitmask = EOS_ERR_VALID;
+  memcpy(vars_adj, vars, sizeof(*vars));
+
+#ifdef EOS_HELMHOLTZ
+  if(vars->Ye < 0)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_COMPOSITION);
+    vars_adj->Ye = 0;
+  }
+  if(vars->Ye > 1)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_COMPOSITION);
+    vars_adj->Ye = 1;
+  }
+  if(vars->Abar < 1)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_COMPOSITION);
+    vars_adj->Abar = 1;
+  }
+
+  double rho_ye_min, rho_ye_max;
+  helm_get_rhoye_range(tab, &rho_ye_min, &rho_ye_max);
+  if(vars->rho * vars_adj->Ye < rho_ye_min)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_LT_RHOMIN);
+    vars_adj->rho = rho_ye_min / vars_adj->Ye;
+  }
+  if(vars->rho * vars_adj->Ye > rho_ye_max)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_GT_RHOMAX);
+    vars_adj->rho = rho_ye_max / vars_adj->Ye;
+  }
+
+  /* check energy range by evaluating at table T boundaries */
+  HelmInput hin;
+  HelmResult hout;
+  hin.rho  = vars_adj->rho;
+  hin.abar = vars_adj->Abar;
+  hin.ye   = vars_adj->Ye;
+
+  double tmin, tmax;
+  helm_get_temp_range(tab, &tmin, &tmax);
+
+  hin.temp = tmin;
+  if (helm_eos_from_temp(tab, &hin, &hout)) return 1;
+  double eps_min = hout.etot;
+
+  hin.temp = tmax;
+  if (helm_eos_from_temp(tab, &hin, &hout)) return 1;
+  double eps_max = hout.etot;
+
+  if(vars->eps < eps_min)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_EPS_LT_EPSMIN);
+    vars_adj->eps = eps_min;
+  }
+  if(vars->eps > eps_max)
+  {
+    BITMASK_SET_FLAG(*bitmask, EOS_ERR_EPS_GT_EPSMAX);
+    vars_adj->eps = eps_max;
+  }
+#endif
+
+  return 0;
+}
+
+static KOKKOS_INLINE_FUNCTION int eos_compute_from_valid(const HelmTable *tab, struct eos_input const * in, struct eos_output * out)
+{
+#ifdef EOS_HELMHOLTZ
+  /* use Newton iteration to invert for T given (rho, eps, abar, ye) */
+  double temp_guess = in->temp;
+  double tmin, tmax;
+  helm_get_temp_range(tab, &tmin, &tmax);
+  if (temp_guess < tmin || temp_guess > tmax) {
+    /* initial guess from gamma=5/3 electron gas */
+    temp_guess = (2.0/3.0) * in->Abar * in->eps * helm_constants::me / helm_constants::kerg;
+  }
+
+  HelmResult hout;
+  int ierr = helm_eos_from_energy(tab, in->rho, in->eps,
+                                  in->Abar, in->Ye, temp_guess, &hout);
+  if (ierr) {
+    printf("%s:%d unexpected EOS failure!\n", __FILE__, __LINE__);
+    return 1;
+  }
+
+  out->press  = hout.ptot;
+  out->csound = hout.csound;
+  out->temp   = hout.temp;
+#ifdef EOS_PROVIDES_ENTROPY
+  out->entropy = hout.stot;
+#endif
+#ifdef EOS_PROVIDES_CV
+  out->cv = hout.cv;
+#endif
+#endif
+
+  return 0;
+}
+
 KOKKOS_INLINE_FUNCTION
-void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell)
+int eos_compute_P(const HelmTable *tab, struct eos_input const * in_, struct eos_output * out_)
+{
+  struct eos_input in, in_adj;
+  memcpy(&in, in_, sizeof(in));
+#ifdef EOS_USES_CGS
+  eos_input_to_cgs(&in);
+#endif
+
+  int bitmask = 0;
+  int ierr = eos_validate(tab, &in, &in_adj, &bitmask);
+  if(ierr) {endrun(920903);}
+  if(bitmask != EOS_ERR_VALID)
+  {
+    /* One call carrying the same flags, rather than the chain of partial writes
+       this used to assemble. The body is compiled for the device now, where
+       stderr does not exist; and even on the host, concurrent work items
+       interleaved the pieces into unreadable lines. The condition and the
+       information are unchanged. */
+    printf("EOS ERROR:%s%s%s%s%s\n",
+           BITMASK_CHECK_FLAG(bitmask, EOS_ERR_COMPOSITION)   ? "/invalid composition" : "",
+           BITMASK_CHECK_FLAG(bitmask, EOS_ERR_RHO_LT_RHOMIN) ? "/density too low"     : "",
+           BITMASK_CHECK_FLAG(bitmask, EOS_ERR_RHO_GT_RHOMAX) ? "/density too large"   : "",
+           BITMASK_CHECK_FLAG(bitmask, EOS_ERR_EPS_LT_EPSMIN) ? "/temperature too low" : "",
+           BITMASK_CHECK_FLAG(bitmask, EOS_ERR_EPS_GT_EPSMAX) ? "/temperature too high": "");
+
+#ifdef EOS_USES_CGS
+    char const * unit_dens = "g/cm^3";
+    char const * unit_ene  = "erg/g";
+#else
+    char const * unit_dens = "";
+    char const * unit_ene  = "";
+#endif
+
+    printf("  rho  = %.19e %s\n", in.rho, unit_dens);
+    printf("  eps  = %.19e %s\n", in.eps, unit_ene);
+#ifdef EOS_CARRIES_YE
+    printf("  Ye   = %.19e\n", in.Ye);
+#endif
+#ifdef EOS_CARRIES_ABAR
+    printf("  Abar = %.19e\n", in.Abar);
+#endif
+    printf("Using 0th order extrapolation\n");
+    memcpy(&in, &in_adj, sizeof(in));
+  }
+  struct eos_output out;
+  ierr = eos_compute_from_valid(tab, &in, &out);
+  if (ierr) {
+    /* EOS evaluation failed even after clamping — use a fallback ideal gas estimate
+       rather than crashing. This can happen at extreme conditions during initialization. */
+    double gamma = 5.0/3.0;
+    out.press = (gamma - 1.0) * in.rho * in.eps;
+    out.csound = sqrt(gamma * out.press / in.rho);
+    out.temp = in.temp > 0 ? in.temp : 1.0e6;
+#ifdef EOS_PROVIDES_ENTROPY
+    out.entropy = 0;
+#endif
+#ifdef EOS_PROVIDES_CV
+    out.cv = in.eps / (out.temp + 1.0e-30);
+#endif
+    ierr = 0;
+  }
+#ifdef EOS_USES_CGS
+  ierr = eos_output_from_cgs(&out);
+  if(ierr) {endrun(920904);}
+#endif
+  memcpy(out_, &out, sizeof(out));
+
+  return 0;
+}
+
+#endif /* EOS_HELMHOLTZ */
+
+KOKKOS_INLINE_FUNCTION
+void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell,
+                           const struct EosTableView *eos_tables)
 {
 #ifdef HYDRO_MULTIFLUID_DM
     if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
@@ -419,19 +786,23 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
 #endif
-    if(All.Time <= All.TimeBegin) {
-        temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; /* use whatever was initialized already, because this hasn't been fully iterated in the cooling routine yet */
-    } else {
-        double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-        temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
+    {
+        /* the composition is seeded at initialization and owned by the cooling solve thereafter, so it is
+           read here rather than re-established: the first timestep calls this routine several times, and
+           overwriting the cache would discard the solve that has already run */
+        double ne=1, nh0=0, nhp=0, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
+        temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
         cell[i].Gamma = cell[i].gamma_eos_value();
 #ifdef GIZMO_TRACK_ELECTRON_STATE
         ne_battery_save = ne;
 #endif
     }
 #else
-    temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
+    cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; /* no chemistry solved here, so the fallback composition */
+    temp = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
 #endif
+    /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the
+       cell holds right now. anything wanting another energy derives it with gas_temperature_from_u */
     cell[i].Temperature = temp;
 
 #ifdef GIZMO_TRACK_ELECTRON_STATE
@@ -541,16 +912,11 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(cell[i].Density*All.cf_a3inv >= All.PhysDensThresh) {press = All.FactorForSofterEQS * press + (1 - All.FactorForSofterEQS)  * (gamma_eos_index-1) * cell[i].Density * All.InitGasU;}
 #endif
 
-#if defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
-    /* Host-only EOS branches: call into table-lookup routines (eos_compute,
-       aneos_compute) and the Tillotson inline that is not GPU-marked.  These
-       are compiled IN only when eos.cc declares EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
-       before including this header — keeping cooling.cc and any other device-side
-       includer free of dependency on eos_compute/aneos_compute/eos_branch_of
-       headers.  POST_COOLING_DEVICE_EOS_SUPPORTED at the device kernel's call
-       site ensures the device kernel never reaches set_eos_pressure_impl in
-       builds where these branches are active. */
 #ifdef EOS_HELMHOLTZ
+    /* Tabulated EOS: a Newton inversion over table lookups, run wherever this
+       body runs. It used to be fenced off from the device pass because the
+       tables were host-only; they are not any more, so there is nothing left to
+       fence and no configuration in which this branch is skipped. */
     struct eos_input eos_in;
     struct eos_output eos_out;
     eos_in.rho  = cell[i].Density;
@@ -558,12 +924,26 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     eos_in.Ye   = cell[i].Ye;
     eos_in.Abar = cell[i].Abar;
     eos_in.temp = cell[i].Temperature;
-    int ierr = eos_compute(&eos_in, &eos_out);
-    assert(!ierr);
+    /* A null table means eos_init failed. That already asked for a controlled
+       stop, but the request only drains at the next phase boundary, so this code
+       still runs -- and dereferencing the table would turn a clean shutdown into
+       a segfault, on the device with nothing to read afterwards. Nothing here can
+       recover the physics; the only job is to reach the drain intact. The view
+       itself is checked before it is followed: every caller today passes the
+       address of a stack view, but a guard that dereferences the thing it is
+       guarding is not a guard. */
+    if(!eos_tables || !eos_tables->helm) {endrun(920905);}
+    else {
+    /* eos_compute_P clamps out-of-range input and falls back to an ideal gas if
+       the solve still fails, so it has no failure return; the check is kept
+       because that is a property of the routine rather than of this call. */
+    int ierr = eos_compute_P(eos_tables->helm, &eos_in, &eos_out);
+    if(ierr) {endrun(920901);}
     press      = eos_out.press;
     soundspeed = eos_out.csound;
     cell[i].Temperature = eos_out.temp;
-#endif
+    }
+#endif /* EOS_HELMHOLTZ */
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
     /* Per-particle solid-EOS dispatch keyed on CompositionType. With a
@@ -580,15 +960,26 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
 #ifdef EOS_ANEOS
         case EOS_BRANCH_ANEOS: {
+            /* Same reasoning as the Helmholtz branch above: a null descriptor
+               array means the tables never loaded, the stop is already requested,
+               and reading through it would replace a clean shutdown with a fault.
+               The view is checked before it is followed, for the same reason. */
+            if(!eos_tables || !eos_tables->aneos) {endrun(920906); break;}
             int aneos_mat = aneos_subindex(cell[i].CompositionType);
             double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
             double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
             double aneos_T_guess = cell[i].Temperature;
             double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
             int aneos_phase;
-            int aneos_ierr = aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
+            int aneos_ierr = aneos_compute_P(eos_tables->aneos, aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
                           &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
-            assert(!aneos_ierr); /* bad/unloaded table or inversion failure -- mirrors the Helmholtz path above */
+            /* The cell's CompositionType names a material whose table was never
+               loaded: a setup error, and the same for every cell of that type, so
+               there is nothing to recover to. endrun requests a controlled stop on
+               the host and records the error for the host to see on the device --
+               where the assert this replaces would have been a trap, and where an
+               ideal-gas substitute would be silently wrong physics. */
+            if(aneos_ierr) {endrun(920902); break;}
             press      = aneos_P / UNIT_PRESSURE_IN_CGS;
             soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
             cell[i].Temperature = aneos_T_guess;
@@ -600,7 +991,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             break;
     }
 #endif
-#endif /* !device for EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS */
 
 #ifdef EOS_MHD_CORE_BAROTROPIC
     press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.));
@@ -677,14 +1067,13 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(xJeans>press) press=xJeans;
 #endif
 
-#if defined(EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
 #if defined(HYDRO_GENERATE_TARGET_MESH)
-    /* Host-only: return_user_desired_target_pressure/density are not device-callable
-       and live in eos.cc.  Only compiled in eos.cc's TU per the gate above. */
-    press = return_user_desired_target_pressure(i) * (cell[i].Density / return_user_desired_target_density(i));
-    cell[i].InternalEnergy = cell[i].InternalEnergyPred = return_user_desired_target_pressure(i) / ((gamma_eos_index-1) * cell[i].Density);
+    /* Device-callable: the two user-edit bodies are KOKKOS_INLINE_FUNCTION earlier in
+       this header, so this branch runs on either pass and no longer needs the
+       host-only guard. */
+    press = return_user_desired_target_pressure(i, pp, cell) * (cell[i].Density / return_user_desired_target_density(i, pp, cell));
+    cell[i].InternalEnergy = cell[i].InternalEnergyPred = return_user_desired_target_pressure(i, pp, cell) / ((gamma_eos_index-1) * cell[i].Density);
 #endif
-#endif /* host-only branch for HYDRO_GENERATE_TARGET_MESH */
 
 #ifdef EOS_GENERAL
     if(soundspeed == 0) {double rho_for_soundspeed = cell[i].density_for_energy(); /* every pressure term assembled above scales with the density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */

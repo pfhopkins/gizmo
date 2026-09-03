@@ -41,6 +41,7 @@
 #include "let_data.h"   /* ForeignLeafID sidecar (SharedSpace; passed into the walk for the Hermite ghost table) */
 #include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
 #include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
+#include "let_data.h"             /* LET_LEAF_TAG_* + grav_classify_node (import topology vocabulary) */
 
 #include "../mesh/kernel.h"
 #include "gravtree_force_kernel.h"  /* shared CPU/GPU accepted-source contribution physics (SSOT) */
@@ -115,8 +116,10 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
  * Vista nvcc compile (#20096-D: address of a host variable in device code). */
 #if defined(GIZMO_GPU_COMPILER)
 static __managed__ long long g_inv_fterm_aggregate = 0;   /* predicate-OPEN foreign terminal, NOT a leaf -> illegal */
+static __managed__ long long g_unship_aggregate = 0;      /* ... of which the sender could never have shipped */
 #else
 static long long g_inv_fterm_aggregate = 0;
+static long long g_unship_aggregate = 0;
 #endif
 
 /* The device replicas of weight_function_for_weighted_motion_smoothing and
@@ -745,7 +748,6 @@ gpu_gravtree_walk_one(int target,
              * the while(no >= 0) walk, skipping this node's force contribution.
              * Force multipole treatment instead. */
             int in_foreign_n = (no >= treeBase + maxNodes);
-            int foreign_force_multipole = (in_foreign_n && (tree_soa->nextnode[idx] < 0));
 
             /* Foreign-leaf identity lookup.  foreign_slot = no-(treeBase+MaxNodes) = idx-maxNodes
              * -- the foreign-only sidecar index, EXPLICIT and bounds-checked so it can never be
@@ -768,17 +770,20 @@ gpu_gravtree_walk_one(int target,
                 }
             }
 
-            /* empty-node skip (mirrors forcetree.cc:2165): a zero-mass node contributes no
-             * force -> advance to the sibling. Not gated on foreign_force_multipole (a skip
-             * is never converted to a forced multipole); also avoids descending empty nodes. */
+            /* empty-node skip: a zero-mass node contributes no force -> advance to the sibling.
+             * Never converted to a forced multipole; also avoids descending empty nodes. */
             if(mass_node <= 0) { no = tree_soa->sibling[idx]; continue; }
 
-            /* single-particle node -> open to its leaf for an exact force (mirrors
-             * forcetree.cc:2171). A foreign single-particle node with nextnode<0 must instead
-             * be used as a multipole (opening it would exit the walk and drop its contribution),
-             * so gate on foreign_force_multipole, matching the LET-sentinel guard above. */
+            /* Classify BEFORE anything that could descend, so the wire tag is the one authority on
+             * whether this node's children were shipped (mirrors forcetree.cc). */
+            grav_node_kind_t node_kind = grav_classify_node(in_foreign_n, fl_tag, tree_soa->nextnode[idx]);
+
+            /* single-particle node -> open to its leaf for an exact force.  Only a local node, or a
+             * foreign node shipped WITH its children, has anything below it: a foreign node reaching
+             * here with the multi-particle bit clear was shipped multipole-only, so its nextnode is
+             * the continuation past the subtree and following it would skip the node's mass. */
             if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
-                if(!foreign_force_multipole) { no = tree_soa->nextnode[idx]; continue; }
+                if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE) { no = tree_soa->nextnode[idx]; continue; }
             }
 
             /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home for
@@ -809,29 +814,21 @@ gpu_gravtree_walk_one(int target,
                     r2, cen0, cen1, cen2, soft, h, aold, ptype,
                     (double)len_node, (double)mass_node, (double)msoft_node,
                     pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
-                /* Foreign LET policy.  A foreign tagged leaf (fl_tag==1) is a TERMINAL leaf source:
-                 * its nextnode is the DFS CONTINUATION after the leaf, NOT a child to descend.  So a
-                 * predicate OPEN on it cannot mean "descend" (there is nowhere to descend) -- it must
-                 * mean "accept this already-leaf source with leaf semantics" (the identity lookup
-                 * above supplies the leaf identity at the payload load below).  foreign_force_multipole (the nextnode<0 sentinel
-                 * case) is the other terminal that must be accepted, not descended.  Both fall through to
-                 * the accept path; only a genuine descendable node takes nextnode.  (Pre-fix the descend
-                 * guard keyed on foreign_force_multipole alone, so a tagged leaf whose continuation
-                 * resolved to a valid >=0 slot was OPENED -> advanced to its continuation -> its mass
-                 * was never summed; the dropped foreign-leaf mass is rank-asymmetric, breaking force
-                 * reciprocity / momentum conservation at np>=2 under adaptive softening.) */
-                int foreign_real_leaf = (in_foreign_n && fl_tag == 1);
-                int must_accept_foreign_terminal = foreign_force_multipole || foreign_real_leaf;
+                /* Foreign LET policy (mirrors forcetree.cc).  A terminal foreign node -- a tagged
+                 * single-particle leaf, or an aggregate the sender shipped multipole-only -- has no
+                 * children here: its nextnode is the continuation PAST the subtree.  A predicate OPEN
+                 * on a leaf means "accept it with leaf semantics" (identity restored at the payload
+                 * load below); on a truncated aggregate it means the import no longer covers what this
+                 * walk asks of it.  Only a node shipped WITH its children takes nextnode. */
                 if(pred == GRAV_SKIP_NODE) { no = tree_soa->sibling[idx]; continue; }
-                if(pred == GRAV_OPEN_NODE && !must_accept_foreign_terminal) { no = tree_soa->nextnode[idx]; continue; }
-                /* Permanent invariant guard (predicate-keyed): an OPEN that must_accept a foreign
-                 * terminal is LEGAL when the terminal is a tagged real leaf (fl_tag==1) -- routed
-                 * through particle-leaf semantics at the payload load below.  The ILLEGAL case is an
-                 * untagged forced multipole (foreign_force_multipole && !fl_tag): a non-particle foreign
-                 * terminal accepted as a multipole in leaf-sensitive support -- a silent physics
-                 * downgrade the host controlled-stops on after the walk. */
-                if(pred == GRAV_OPEN_NODE && must_accept_foreign_terminal && fl_tag != 1) {
+                if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(node_kind)) { no = tree_soa->nextnode[idx]; continue; }
+                /* Import-completeness guard: counted on device, reported once by the host after the
+                 * walk (the host cannot print from inside the kernel, and one incompleteness can
+                 * involve many nodes). */
+                if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
+                                              || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE)) {
                     Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL);
+                    if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {Kokkos::atomic_add(&g_unship_aggregate, 1LL);}
                 }
             }
 
@@ -1395,7 +1392,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
          * finalization, or it leaves a non-candidate's GravAccel fresh-written but raw.
          * ProcessedFlag is intentionally left unset on a candidacy skip here (matches
          * the CPU primary walk: a cached/extrapolated particle is finalized later). */
-        if(!gravity_treewalk_candidate_prewalk(i)) {continue;}
+        if(!gravity_treewalk_candidate_prewalk(i, a)) {continue;}
         idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
@@ -1717,7 +1714,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
     /* Invariant guard: reset the per-walk counter. */
-    g_inv_fterm_aggregate = 0;
+    g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1757,18 +1754,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
-    /* Permanent invariant guard.  An untagged predicate-OPEN foreign terminal is an unopenable
-     * aggregate that would silently downgrade leaf-sensitive physics to a multipole; until an
-     * owner-continuation path exists this hard-surfaces as a controlled stop.
- */
-    if(g_inv_fterm_aggregate > 0) {
-        printf("[GRAV-INVARIANT VIOLATION rank=%d] %lld predicate-OPEN foreign-terminal nodes accepted "
-               "as multipoles but NOT tagged real leaves (unopenable aggregates in leaf-sensitive "
-               "support) -- silently downgrades adaptive-softening/zeta physics; C2/owner-continuation "
-               "required. Stopping.\n", ThisTask, g_inv_fterm_aggregate);
-        fflush(stdout);
-        endrun(90000087);
-    }
+    /* Import-completeness record.  A foreign node the sender shipped as a childless multipole, which
+     * this walk's predicate now wants to descend, means the import no longer covers what the walk
+     * asks of it.  Counted in the kernel and folded into the shared ledger here; gravity_tree()
+     * reduces it across ranks and decides collectively whether to rebuild and redo, or stop. */
+    gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
+    gravity_note_unshippable_import(g_unship_aggregate);
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
@@ -2003,6 +1994,10 @@ gpu_ewald_walk_one(int target,
         Vec3<double> dr = {0.0, 0.0, 0.0};
         int is_leaf = 0;
         int idx = 0;
+        /* What the imported tree allows this walk to do with the node; set once per node, above every
+         * branch that could descend it, exactly as the primary walk does (see let_data.h).  Particle
+         * leaves never reach the branches that read it, so a local node is the right default. */
+        grav_node_kind_t node_kind = GRAV_NODE_LOCAL;
         if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU Ewald walk's guard stops loudly */
         if(no < treeParticleSlots) /* particle leaf */
         {
@@ -2019,10 +2014,26 @@ gpu_ewald_walk_one(int target,
         else /* internal node */
         {
             idx = no - treeBase;
-            /* skip single-particle node (open it to its daughter chain) */
+            /* The wire tag is the authority on whether this node's children were shipped.  Read it
+             * before either descent below.  Only the tag is needed: the Ewald correction depends on
+             * mass and separation alone, so a foreign leaf carries no identity to restore. */
+            {
+                int in_foreign_n = (no >= treeBase + maxNodes);
+                int fl_tag = 0;
+                if(in_foreign_n && tree_soa->foreign_leaf_tag) {
+                    int fs = idx - maxNodes;
+                    if(fs >= 0 && fs < tree_soa->foreign_leaf_cap) {fl_tag = tree_soa->foreign_leaf_tag[fs];}
+                }
+                node_kind = grav_classify_node(in_foreign_n, fl_tag, tree_soa->nextnode[idx]);
+            }
+            /* skip single-particle node (open it to its daughter chain).  A terminal foreign node
+             * holds one particle whose multipole is that particle exactly, and its nextnode is the
+             * continuation past the subtree, so use it where it stands instead. */
             if(!(tree_soa->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
-                no = tree_soa->nextnode[idx];
-                continue;
+                if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE) {
+                    no = tree_soa->nextnode[idx];
+                    continue;
+                }
             }
             mass  = tree_soa->mass[idx];
             dr[0] = tree_soa->s[idx][0] - pos[0];
@@ -2061,16 +2072,26 @@ gpu_ewald_walk_one(int target,
                 }
             }
             if(openflag) {
-                /* short-cut: if the node is entirely on one side of the periodic
-                 * boundary along any axis, we can safely skip it without opening */
-                double ux = tree_soa->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
-                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
-                double uy = tree_soa->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
-                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
-                double uz = tree_soa->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
-                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = tree_soa->nextnode[idx]; continue; }
-                /* cell too large → must refine */
-                if(len > 0.20 * boxsize) { no = tree_soa->nextnode[idx]; continue; }
+                /* The multipole may still stand in for the whole node, but only if the node lies
+                 * wholly on one side of every periodic boundary -- otherwise its daughters map to
+                 * different nearest images -- and only if it is small compared with the box. */
+                int must_refine = 0;
+                for(int kdim = 0; kdim < 3 && !must_refine; kdim++) {
+                    double uk = tree_soa->center[idx][kdim] - pos[kdim];
+                    if(uk >  boxhalf) {uk -= boxsize;} else if(uk < -boxhalf) {uk += boxsize;}
+                    if(((uk < 0) ? -uk : uk) > 0.5*(boxsize - len)) { must_refine = 1; }
+                }
+                if(!must_refine && len > 0.20 * boxsize) { must_refine = 1; }  /* cell too large */
+                if(must_refine) {
+                    /* Only a node shipped with its children can be resolved below.  A foreign leaf is
+                     * a single particle, so refining it would change nothing.  A truncated aggregate
+                     * is neither: counted on device, reported once by the host after the walk. */
+                    if(!grav_node_is_terminal(node_kind)) { no = tree_soa->nextnode[idx]; continue; }
+                    if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {
+                        Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL);
+                        if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {Kokkos::atomic_add(&g_unship_aggregate, 1LL);}
+                    }
+                }
             }
             no = tree_soa->sibling[idx];
         }
@@ -2140,7 +2161,7 @@ extern "C" int gpu_ewald_walk_primary(void)
         if(ProcessedFlag[i]) continue;
         /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce):
          * parity with the CPU primary loop + finalization (see primary walk). */
-        if(!gravity_treewalk_candidate_prewalk(i)) continue;
+        if(!gravity_treewalk_candidate_prewalk(i, a)) continue;
         idx_host[num_active++] = i;
     }
     if(num_active == 0) { myfree(idx_host); return 0; }
@@ -2173,6 +2194,9 @@ extern "C" int gpu_ewald_walk_primary(void)
     const int is_first_step_snap = (All.Ti_Current == 0 && RestartFlag != 1);
 #endif
 
+    /* Import-completeness guard: reset the per-walk counter (see the primary walk). */
+    g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
+
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
@@ -2190,6 +2214,11 @@ extern "C" int gpu_ewald_walk_primary(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gpu_ewald_walk_primary", num_active);
+    /* Import-completeness record, same contract and same ledger as the primary walk: a foreign node
+     * the sender shipped as a childless multipole, which this walk has to resolve below, means the
+     * import no longer covers what the walk asks of it. */
+    gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
+    gravity_note_unshippable_import(g_unship_aggregate);
 
     int nsucceeded = 0;
     for(int a = 0; a < num_active; a++) {

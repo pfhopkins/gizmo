@@ -237,6 +237,7 @@ extern struct gas_cell_data
 #endif
 #ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
+    MyFloat HI;  /*!< neutral hydrogen fraction (neutral H nuclei per H nucleus), saved by the cooling solver so other modules can read it instead of re-solving the chemistry */
 #endif
 #endif
 #ifdef GALSF
@@ -390,7 +391,9 @@ extern struct gas_cell_data
 #endif
 #endif
 #ifdef RT_CHEM_PHOTOION
-    MyFloat HI;                  /* HI fraction */
+#if !defined(COOLING) || defined(CHIMES)
+    MyFloat HI;                  /* HI fraction [declared above with Ne when the cooling module owns it] */
+#endif
     MyFloat HII;                 /* HII fraction */
 #ifndef COOLING
     MyFloat Ne;               /* electron fraction */
@@ -431,8 +434,16 @@ extern struct gas_cell_data
     MyFloat SubGrid_CosmicRayEnergyDensity;
 #endif
     
+    /* Temperature, Gamma and MeanMolecularWeight are the cached thermodynamic state. Gamma and
+       MeanMolecularWeight describe the COMPOSITION, which only the cooling/chemistry solver (or a
+       table equation of state) changes, so they stay valid as the energy moves. Temperature is a
+       convenience value refreshed at the equation-of-state and cooling boundaries, where it is set
+       to the temperature implied by InternalEnergyPred at that moment. Code that needs the
+       temperature for any other energy -- InternalEnergy, or a trial value -- must derive it with
+       gas_temperature_from_u() below rather than reading Temperature. */
     MyFloat Temperature;                  /* Temperature */
     MyFloat Gamma;                        /* First adiabatic index */
+    MyFloat MeanMolecularWeight;          /* mean molecular weight in units of the proton mass */
 
 #ifdef EOS_GENERAL
     MyFloat SoundSpeed;                   /* Sound speed */
@@ -544,7 +555,15 @@ extern struct gas_cell_data
     }
 
     inline double pressure() const {return Pressure;} /*!< gas pressure */
-    inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
+    GIZMO_GPU_FUNCTION inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
+    /*!< gas temperature implied by a given specific internal energy, at the cached composition.
+         this is the general way to ask for a temperature: it costs two multiplies and stays
+         consistent with whichever energy the caller is actually working with.
+         it reads the STORED Gamma, and must never call gamma_eos_value(), which reads the stored
+         Temperature -- going through that would close a loop between the two caches. */
+    GIZMO_GPU_FUNCTION inline double gas_temperature_from_u(double u) const {
+        return (Gamma - 1.) * MeanMolecularWeight * U_TO_TEMP_UNITS * u;
+    }
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]. Under battery-only it equals gas T (cached in eos.cc). Under TWO_TEMPERATURE_PLASMA it is the independently evolved value (derived from u_e_cell, cached after each cooling step). Consumers read through this accessor unchanged. */
     GIZMO_GPU_FUNCTION inline double n_e() const {return n_e_cell;} /*!< electron number density [physical cgs]; populated by the cooling pass. */
@@ -649,7 +668,7 @@ extern struct gas_cell_data
     }
 
 #ifdef EOS_TILLOTSON
-    inline double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
+    GIZMO_GPU_FUNCTION double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
         int type = CompositionType;
         double a=All.Tillotson_EOS_params[type][0], b=All.Tillotson_EOS_params[type][1],
         u0=All.Tillotson_EOS_params[type][2], rho0=All.Tillotson_EOS_params[type][3],

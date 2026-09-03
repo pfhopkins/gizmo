@@ -75,13 +75,9 @@ std::vector<int> PrevInTimeBin;
 size_t HighMark_run, HighMark_domain, HighMark_gravtree,
   HighMark_pmperiodic, HighMark_pmnonperiodic, HighMark_gasdensity, HighMark_hydro, HighMark_GasGrad;
 
-/* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] / Shearing_Box_*_Offset
-   are macros into All.* — see declarations/allvars.h.  Step 5 Phase E0. */
-
-#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
-short int special_boundary_condition_xyz_def_reflect[3];
-short int special_boundary_condition_xyz_def_outflow[3];
-#endif
+/* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] / Shearing_Box_*_Offset and
+   special_boundary_condition_xyz_def_{reflect,outflow} are macros into All.* —
+   see declarations/allvars.h. */
 
 #ifdef TURB_DRIVING
 size_t HighMark_turbpower;
@@ -277,6 +273,10 @@ double DriftTable[DRIFT_TABLE_LENGTH];
 
 /*! table for the cosmological kick factor for gravitational forces */
 double GravKickTable[DRIFT_TABLE_LENGTH];
+
+/*! log-time bounds the two tables above were built over */
+double DriftTable_logTimeBegin;
+double DriftTable_logTimeMax;
 
 void *CommBuffer;		/*!< points to communication buffer, which is used at a few places */
 

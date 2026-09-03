@@ -18,6 +18,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
+#include "gpu_topology_finalize.h"   /* gizmo_gpu_prepare_shared_for_free */
 #include "forcetree.h"   /* force_treebuild_generation() — SoA-drift stamp invalidation key */
 
 
@@ -62,6 +63,14 @@ extern "C" void gpu_gravity_tree_invalidate_currency(void)
     gpu_gravity_soa_invalidate_born_stamp_();
 }
 
+/* Release one mirror array, migrating it home first so the release is cheap.  Named so
+ * the field list below reads the same as it always did. */
+static inline void gizmo_gpu_tree_soa_release(void *ptr)
+{
+    gizmo_gpu_prepare_shared_for_free(ptr);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);
+}
+
 static void free_arrays_(void)
 {
     /* SSOT: freeing any SoA buffer invalidates BOTH currency records — covers
@@ -70,76 +79,76 @@ static void free_arrays_(void)
      * it describes would be a stale certification waiting for the first grow. */
     gpu_gravity_soa_invalidate_drift_stamp_();
     gpu_gravity_soa_invalidate_born_stamp_();
-    if(soa_.center)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.center);   soa_.center   = NULL;}
-    if(soa_.len)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.len);      soa_.len      = NULL;}
-    if(soa_.s)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.s);        soa_.s        = NULL;}
-    if(soa_.mass)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.mass);     soa_.mass     = NULL;}
-    if(soa_.sibling)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sibling);  soa_.sibling  = NULL;}
-    if(soa_.nextnode) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode); soa_.nextnode = NULL;}
-    if(soa_.father)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.father);   soa_.father   = NULL;}
-    if(soa_.bitflags) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.bitflags); soa_.bitflags = NULL;}
-    if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
-    if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
-    if(soa_.foreign_leaf_tag)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_tag);  soa_.foreign_leaf_tag  = NULL;}
-    if(soa_.foreign_leaf_type) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_type); soa_.foreign_leaf_type = NULL;}
-    if(soa_.foreign_leaf_zeta) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_zeta); soa_.foreign_leaf_zeta = NULL;}
-    if(soa_.foreign_leaf_soft) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.foreign_leaf_soft); soa_.foreign_leaf_soft = NULL;}
+    if(soa_.center)   {gizmo_gpu_tree_soa_release(soa_.center);   soa_.center   = NULL;}
+    if(soa_.len)      {gizmo_gpu_tree_soa_release(soa_.len);      soa_.len      = NULL;}
+    if(soa_.s)        {gizmo_gpu_tree_soa_release(soa_.s);        soa_.s        = NULL;}
+    if(soa_.mass)     {gizmo_gpu_tree_soa_release(soa_.mass);     soa_.mass     = NULL;}
+    if(soa_.sibling)  {gizmo_gpu_tree_soa_release(soa_.sibling);  soa_.sibling  = NULL;}
+    if(soa_.nextnode) {gizmo_gpu_tree_soa_release(soa_.nextnode); soa_.nextnode = NULL;}
+    if(soa_.father)   {gizmo_gpu_tree_soa_release(soa_.father);   soa_.father   = NULL;}
+    if(soa_.bitflags) {gizmo_gpu_tree_soa_release(soa_.bitflags); soa_.bitflags = NULL;}
+    if(soa_.maxsoft)  {gizmo_gpu_tree_soa_release(soa_.maxsoft);  soa_.maxsoft  = NULL;}
+    if(soa_.N_part)   {gizmo_gpu_tree_soa_release(soa_.N_part);   soa_.N_part   = NULL;}
+    if(soa_.foreign_leaf_tag)  {gizmo_gpu_tree_soa_release(soa_.foreign_leaf_tag);  soa_.foreign_leaf_tag  = NULL;}
+    if(soa_.foreign_leaf_type) {gizmo_gpu_tree_soa_release(soa_.foreign_leaf_type); soa_.foreign_leaf_type = NULL;}
+    if(soa_.foreign_leaf_zeta) {gizmo_gpu_tree_soa_release(soa_.foreign_leaf_zeta); soa_.foreign_leaf_zeta = NULL;}
+    if(soa_.foreign_leaf_soft) {gizmo_gpu_tree_soa_release(soa_.foreign_leaf_soft); soa_.foreign_leaf_soft = NULL;}
     soa_.foreign_leaf_cap = 0;
     /* nextnode_aux is an alias to Nextnode[] (UVM, owned by
      * forcetree.cc).  Do NOT free or clear here — the alias persists across
      * SoA realloc cycles and is set/cleared exclusively by
      * gpu_gravity_tree_alias_nextnode().  free_arrays_ runs whenever capacity
      * changes, but the alias outlives that. */
-    if(soa_.suns_backup)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.suns_backup);  soa_.suns_backup  = NULL;}
+    if(soa_.suns_backup)  {gizmo_gpu_tree_soa_release(soa_.suns_backup);  soa_.suns_backup  = NULL;}
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    if(soa_.gasmass)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.gasmass);        soa_.gasmass        = NULL;}
+    if(soa_.gasmass)        {gizmo_gpu_tree_soa_release(soa_.gasmass);        soa_.gasmass        = NULL;}
 #endif
 #ifdef RT_USE_GRAVTREE
-    if(soa_.stellar_lum)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.stellar_lum);    soa_.stellar_lum    = NULL;}
+    if(soa_.stellar_lum)    {gizmo_gpu_tree_soa_release(soa_.stellar_lum);    soa_.stellar_lum    = NULL;}
 #ifdef CHIMES_STELLAR_FLUXES
-    if(soa_.chimes_stellar_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.chimes_stellar_lum_G0);  soa_.chimes_stellar_lum_G0  = NULL;}
-    if(soa_.chimes_stellar_lum_ion) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.chimes_stellar_lum_ion); soa_.chimes_stellar_lum_ion = NULL;}
+    if(soa_.chimes_stellar_lum_G0)  {gizmo_gpu_tree_soa_release(soa_.chimes_stellar_lum_G0);  soa_.chimes_stellar_lum_G0  = NULL;}
+    if(soa_.chimes_stellar_lum_ion) {gizmo_gpu_tree_soa_release(soa_.chimes_stellar_lum_ion); soa_.chimes_stellar_lum_ion = NULL;}
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    if(soa_.rt_source_lum_s)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.rt_source_lum_s);  soa_.rt_source_lum_s  = NULL;}
-    if(soa_.rt_source_lum_vs) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.rt_source_lum_vs); soa_.rt_source_lum_vs = NULL;}
+    if(soa_.rt_source_lum_s)  {gizmo_gpu_tree_soa_release(soa_.rt_source_lum_s);  soa_.rt_source_lum_s  = NULL;}
+    if(soa_.rt_source_lum_vs) {gizmo_gpu_tree_soa_release(soa_.rt_source_lum_vs); soa_.rt_source_lum_vs = NULL;}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    if(soa_.sink_lum)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_lum);       soa_.sink_lum       = NULL;}
-    if(soa_.sink_lum_grad)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_lum_grad);  soa_.sink_lum_grad  = NULL;}
+    if(soa_.sink_lum)       {gizmo_gpu_tree_soa_release(soa_.sink_lum);       soa_.sink_lum       = NULL;}
+    if(soa_.sink_lum_grad)  {gizmo_gpu_tree_soa_release(soa_.sink_lum_grad);  soa_.sink_lum_grad  = NULL;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    if(soa_.cr_injection)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.cr_injection);   soa_.cr_injection   = NULL;}
+    if(soa_.cr_injection)   {gizmo_gpu_tree_soa_release(soa_.cr_injection);   soa_.cr_injection   = NULL;}
 #endif
 #ifdef SINK_CALC_DISTANCES
-    if(soa_.sink_mass)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_mass);      soa_.sink_mass      = NULL;}
-    if(soa_.sink_pos)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_pos);       soa_.sink_pos       = NULL;}
+    if(soa_.sink_mass)      {gizmo_gpu_tree_soa_release(soa_.sink_mass);      soa_.sink_mass      = NULL;}
+    if(soa_.sink_pos)       {gizmo_gpu_tree_soa_release(soa_.sink_pos);       soa_.sink_pos       = NULL;}
 #ifdef SINK_NODE_MOTION_TRACKED
-    if(soa_.sink_vel)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_vel);       soa_.sink_vel       = NULL;}
+    if(soa_.sink_vel)       {gizmo_gpu_tree_soa_release(soa_.sink_vel);       soa_.sink_vel       = NULL;}
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    if(soa_.sink_acc)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_acc);       soa_.sink_acc       = NULL;}
+    if(soa_.sink_acc)       {gizmo_gpu_tree_soa_release(soa_.sink_acc);       soa_.sink_acc       = NULL;}
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
-    if(soa_.N_SINK)         {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_SINK);         soa_.N_SINK         = NULL;}
+    if(soa_.N_SINK)         {gizmo_gpu_tree_soa_release(soa_.N_SINK);         soa_.N_SINK         = NULL;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    if(soa_.MaxFeedbackVel) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
+    if(soa_.MaxFeedbackVel) {gizmo_gpu_tree_soa_release(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
 #endif
 #endif
     /* Unconditional Extnodes mirrors. */
-    if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
-    if(soa_.hmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.hmax);           soa_.hmax           = NULL;}
-    if(soa_.vmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vmax);           soa_.vmax           = NULL;}
-    if(soa_.divVmax)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.divVmax);        soa_.divVmax        = NULL;}
+    if(soa_.node_vs)        {gizmo_gpu_tree_soa_release(soa_.node_vs);        soa_.node_vs        = NULL;}
+    if(soa_.hmax)           {gizmo_gpu_tree_soa_release(soa_.hmax);           soa_.hmax           = NULL;}
+    if(soa_.vmax)           {gizmo_gpu_tree_soa_release(soa_.vmax);           soa_.vmax           = NULL;}
+    if(soa_.divVmax)        {gizmo_gpu_tree_soa_release(soa_.divVmax);        soa_.divVmax        = NULL;}
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    if(soa_.tidal_tensorps) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.tidal_tensorps); soa_.tidal_tensorps = NULL;}
+    if(soa_.tidal_tensorps) {gizmo_gpu_tree_soa_release(soa_.tidal_tensorps); soa_.tidal_tensorps = NULL;}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    if(soa_.mass_dm)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.mass_dm);        soa_.mass_dm        = NULL;}
-    if(soa_.s_dm)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.s_dm);           soa_.s_dm           = NULL;}
-    if(soa_.vs_dm)          {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vs_dm);          soa_.vs_dm          = NULL;}
+    if(soa_.mass_dm)        {gizmo_gpu_tree_soa_release(soa_.mass_dm);        soa_.mass_dm        = NULL;}
+    if(soa_.s_dm)           {gizmo_gpu_tree_soa_release(soa_.s_dm);           soa_.s_dm           = NULL;}
+    if(soa_.vs_dm)          {gizmo_gpu_tree_soa_release(soa_.vs_dm);          soa_.vs_dm          = NULL;}
 #endif
     soa_.nnodes = 0;
     /* Do NOT touch nextnode_aux / nextnode_aux_size here — the
@@ -153,7 +162,11 @@ static void free_arrays_(void)
  * include proto.h, and a GPU TU should not take that dependency for one call. */
 static void *tree_soa_alloc(size_t bytes)
 {
-    try { return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", bytes); }
+    /* The mirror is about half the shared-space bytes a tree build releases, so it takes
+     * the same treatment as the node arrays: its length is recorded here and used to
+     * migrate it home before it is released. */
+    try { void *ptr = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_tree_soa", bytes);
+          gizmo_gpu_shared_track(ptr, bytes); return ptr; }
     catch(const std::exception &) { return NULL; }
 }
 

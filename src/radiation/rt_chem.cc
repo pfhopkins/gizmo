@@ -31,8 +31,7 @@ double rt_photoion_chem_return_temperature(int i, double internal_energy, struct
 #ifdef RT_ILIEV_TEST1
     return 1e4; // use a fixed temp if this special flag for numerical testing is enabled
 #endif
-    double mol_wt = 4 / (1 + 3 * HYDROGEN_MASSFRAC + 4 * HYDROGEN_MASSFRAC * cell[i].Ne);
-    return mol_wt * (cell[i].gamma_eos_value()-1) * internal_energy * U_TO_TEMP_UNITS;
+    return cell[i].gas_temperature_from_u(internal_energy); /* composition from the cooling solve, rather than a local estimate from Ne */
 }
 
 

@@ -128,3 +128,4 @@ merge_tests-*.out
 merge_tests-*.err
 merger_control-*.out
 merger_control-*.err
+.claude_required_reading.txt

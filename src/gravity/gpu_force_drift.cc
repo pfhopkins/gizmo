@@ -8,15 +8,16 @@
  *   - has zero CPU-side AoS->SoA reseed (the entire dirty_[]/seed_dirty_/
  *     seed_node_/mark_dirty machinery is retired by this commit).
  *
- * Drift factor: trivial closed-form for non-cosmological; cosmological reads
- * a SharedSpace mirror of DriftTable[] populated lazily from host on each
- * top-level call.  The mirror is 1000 doubles (DRIFT_TABLE_LENGTH) so the
- * refresh cost is in the noise.
+ * Drift factor: the same interpolator the host uses (core/timestep_functions.h).
+ * Non-cosmological is a trivial closed form; cosmological reads a SharedSpace mirror
+ * of DriftTable and GravKickTable, refreshed from the host on each top-level call.
+ * The mirror is 2 x DRIFT_TABLE_LENGTH doubles so the refresh cost is in the noise.
  *
- * Timestep-dilation policy: GPU drift supports all configurations.  For
- * SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM and SPECIAL_POINT_WEIGHTED_MOTION the
- * per-node dilation_dev cache (populated by gpu_force_update_tree) is used;
- * all other configs are provably dilation==1 and skip the cache lookup.
+ * Timestep dilation: under USE_TIMESTEP_DILATION_FOR_ZOOMS the dispatcher below
+ * fills a per-node dilation_dev cache on the host before the launch; all other
+ * configs are provably dilation==1 and skip the cache entirely. Note the node
+ * factor itself has a standing gap under SPECIAL_POINT_WEIGHTED_MOTION, where
+ * nodes drift undilated -- see return_node_timestep_dilation_factor_P.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -32,6 +33,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/timestep_functions.h"
 #include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
@@ -44,51 +46,12 @@
  * on the host using return_node_timestep_dilation_factor(no), then the GPU
  * drift kernel reads the cached value. */
 
-/* --- DriftTable mirror (cosmological only) ------------------------------- */
-static double *drift_table_dev_ = NULL;   /* SharedSpace, length DRIFT_TABLE_LENGTH */
-static double  drift_table_logTimeBegin_ = 0.0;
-static double  drift_table_logTimeMax_   = 0.0;
-
-static int drift_table_refresh_(void)
-{
-    if(!drift_table_dev_) {
-        drift_table_dev_ = (double *) gizmo_gpu_alloc_shared(DRIFT_TABLE_LENGTH * sizeof(double), NULL);
-        if(!drift_table_dev_) {
-            printf("gpu_force_drift: drift_table_dev_ alloc failed\n");
-            endrun(929701);
-            return 1;   /* soft bad-stop: caller skips the drift kernel; drains at next poll */
-        }
-    }
-    for(int i = 0; i < DRIFT_TABLE_LENGTH; i++) {drift_table_dev_[i] = DriftTable[i];}
-    drift_table_logTimeBegin_ = log(All.TimeBegin);
-    drift_table_logTimeMax_   = log(All.TimeMax);
-    return 0;
-}
-
-/* --- inline drift-factor helper, GPU-callable ---------------------------- */
-KOKKOS_INLINE_FUNCTION
-double gpu_node_drift_factor_(integertime time0, integertime time1,
-                              const double *table,
-                              double logTBegin, double logTMax,
-                              int comoving, double timebase_interval)
-{
-    if(!comoving) {
-        return (double)(time1 - time0) * timebase_interval;
-    }
-    /* cosmological: linear interpolation in DriftTable. */
-    double a1 = logTBegin + (double)time0 * timebase_interval;
-    double a2 = logTBegin + (double)time1 * timebase_interval;
-    double span = (logTMax > logTBegin) ? (logTMax - logTBegin) : 1.0;
-    double u1 = (logTMax > logTBegin) ? (a1 - logTBegin) / span * (double)DRIFT_TABLE_LENGTH : 0.0;
-    double u2 = (logTMax > logTBegin) ? (a2 - logTBegin) / span * (double)DRIFT_TABLE_LENGTH : 0.0;
-    int i1 = (int) u1; if(i1 >= DRIFT_TABLE_LENGTH) {i1 = DRIFT_TABLE_LENGTH - 1;}
-    int i2 = (int) u2; if(i2 >= DRIFT_TABLE_LENGTH) {i2 = DRIFT_TABLE_LENGTH - 1;}
-    double df1 = (i1 <= 1) ? u1 * table[0]
-                           : table[i1 - 1] + (table[i1] - table[i1 - 1]) * (u1 - (double)i1);
-    double df2 = (i2 <= 1) ? u2 * table[0]
-                           : table[i2 - 1] + (table[i2] - table[i2 - 1]) * (u2 - (double)i2);
-    return df2 - df1;
-}
+/* --- Drift/GravKick table mirror (cosmological only) ---------------------
+ * The storage is per-TU because a device symbol cannot be shared between
+ * translation units without relocatable device code; the allocate-and-fill policy
+ * lives in the arena so this path and the batched particle drift build the view the
+ * same way. See drift_kick_table_mirror_refresh. */
+static double *drift_kick_table_dev_ = NULL;   /* SharedSpace, 2 * DRIFT_TABLE_LENGTH doubles */
 
 /* --- dispatcher ---------------------------------------------------------- */
 
@@ -117,10 +80,11 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
         return 1;
     }
 
-    /* Refresh DriftTable mirror unconditionally (cheap; 8 KB).  Recomputes
-     * logTimeBegin / logTimeMax from current All.* in case TimeMax was bumped
-     * by a runtime restart. */
-    if(drift_table_refresh_() != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch on NULL drift table */
+    /* Refresh the table mirror unconditionally (cheap; 16 KB) and take the log-time
+     * bounds from current All.*, so a restart that moved TimeMax cannot leave the
+     * mirror describing the old span. */
+    struct DriftKickTableView table_view;
+    if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &table_view) != 0) {return 1;}   /* soft bad-stop propagated: no kernel launch without the tables */
 
     int      tree_base        = All.TreeNodeIndexBase;
     int      n_local_nodes  = Numnodestree;
@@ -146,11 +110,6 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
 
     integertime ti_target   = time1;
-    int      comoving       = (All.ComovingIntegrationOn ? 1 : 0);
-    double   timebase_int   = All.Timebase_interval;
-    double   logTBegin      = drift_table_logTimeBegin_;
-    double   logTMax        = drift_table_logTimeMax_;
-    const double *dt_table  = drift_table_dev_;
 
     /* Use the SHIFTED pointers (Nodes = Nodes_base - tree_base, Extnodes = Extnodes_base - tree_base)
      * so that Nodes_uvm[tree_base + k] == Nodes_base[k] for all k in [0, Numnodestree). */
@@ -198,11 +157,9 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
         double dilation = 1.0;
 #endif
 
-        /* Drift factor matches CPU get_drift_factor(.., .., no, 1). */
-        double dt_drift = gpu_node_drift_factor_(Nodes_uvm[no].Ti_current,
-                                                 ti_target, dt_table,
-                                                 logTBegin, logTMax, comoving,
-                                                 timebase_int) * dilation;
+        /* Same value as the host get_drift_factor(.., .., no, 1): one interpolator, one view. */
+        double dt_drift = get_drift_factor_impl(Nodes_uvm[no].Ti_current, ti_target,
+                                                dilation, &table_view);
         double dt_drift_hmax = dt_drift;
 
         /* If node has been kicked, fold dp into vs and clear dp. */
@@ -262,7 +219,8 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
                                                 + (double)Extnodes_uvm[no].rt_source_lum_vs[j] * dt_drift);
 #endif
         }
-        Nodes_uvm[no].len = (MyFloat)((double)Nodes_uvm[no].len + 2.0 * (double)Extnodes_uvm[no].vmax * dt_drift);
+        Nodes_uvm[no].len = (MyFloat)((double)Nodes_uvm[no].len
+                                      + TREE_DRIFT_VELOCITY_PREFAC * (double)Extnodes_uvm[no].vmax * dt_drift);
 
         {
             double exp_arg = (double)Extnodes_uvm[no].divVmax * dt_drift_hmax / (double)NUMDIMS;
@@ -333,9 +291,9 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
 extern "C" void gpu_force_drift_release(void)
 {
-    if(drift_table_dev_) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(drift_table_dev_);
-        drift_table_dev_ = NULL;
+    if(drift_kick_table_dev_) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(drift_kick_table_dev_);
+        drift_kick_table_dev_ = NULL;
     }
 }
 

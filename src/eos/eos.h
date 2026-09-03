@@ -54,6 +54,12 @@ int eos_init(char const * eos_table_fname);
 int eos_cleanup();
 #endif
 
-int eos_compute(struct eos_input const * in, struct eos_output * out);
+/* Evaluating the EOS is eos_compute_P in eos/eos_functions.h -- a header body,
+   because it has to be callable from a device kernel and a call cannot cross a
+   translation unit without relocatable device code. It takes the table
+   explicitly; eos/eos_interface.cc owns the table and hands it out through
+   helm_table_view(), declared beside the HelmTable type in helmholtz.h.
+   This header stays free of that type so that allvars.h, which includes it,
+   does not pull the table definition into every translation unit. */
 
 #endif

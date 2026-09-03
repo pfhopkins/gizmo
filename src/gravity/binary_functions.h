@@ -1,22 +1,42 @@
-#include <mpi.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+/* Two-body (binary) orbit integration for single-star timestepping.
+ *
+ * Bodies live here rather than in a .cc so they are callable from device code:
+ * drift_particle reaches odeint_super_timestep, and the drift is being given a
+ * device execution path. Everything here is pure arithmetic on Vec3 plus reads of
+ * All.*; the only particle state touched is the binary companion data on the
+ * particle array, which is passed in explicitly rather than reached as a global.
+ *
+ * Two integrators are provided. Hermite (grav_accel_jerk -> hermite_step ->
+ * odeint_super_timestep) is the default and the one the drift calls. The Kepler
+ * path (wrap_angle -> eccentric_anomaly -> kepler_timestep) is an alternative
+ * scheme, kept available to swap in at the marked point in odeint_super_timestep.
+ *
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ */
+#ifndef BINARY_FUNCTIONS_H
+#define BINARY_FUNCTIONS_H
+
+/* Plain `inline` for host-only TUs; GPU TUs pull the real Kokkos expansion from
+ * upstream. Never include <Kokkos_Core.hpp> here — it breaks host TUs compiled
+ * without the GPU compiler. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
+
 #include "../declarations/allvars.h"
-#include "../core/proto.h"
-#include "../mesh/kernel.h"
+#include "../mesh/kernel.h"   /* kernel_gravity */
 
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-// wraps around angle to the interval [0, 2pi)
-double wrap_angle(double angle){
+
+/* wraps around angle to the interval [0, 2pi) */
+KOKKOS_INLINE_FUNCTION double wrap_angle(double angle){
     if (angle > 2*M_PI)	return fmod(angle, 2*M_PI);
     else if (angle < 0) return 2*M_PI + fmod(angle, 2*M_PI);
     else return angle;
 }
 
-// Solve Kepler's equation to convert mean anomaly into eccentric anomaly
-double eccentric_anomaly(double mean_anomaly, double ecc){
+/* Solve Kepler's equation to convert mean anomaly into eccentric anomaly */
+KOKKOS_INLINE_FUNCTION double eccentric_anomaly(double mean_anomaly, double ecc){
     double x0 = mean_anomaly;
     double err = 1e100;
     int iterations = 0;
@@ -37,24 +57,24 @@ mode 0 - Just fill out the particle's kick and drift for the timestep, without d
 mode 1 - Actually update the binary separation and relative velocity. This should be done on the full-step drift.
 */
 
-void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode){
-    double dr = P[i].comp_dx.norm();
-    double dv = P[i].comp_dv.norm();
+KOKKOS_INLINE_FUNCTION void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode, struct particle_data *pp){
+    double dr = pp[i].comp_dx.norm();
+    double dv = pp[i].comp_dv.norm();
 
-    Vec3<double> dx_normalized = P[i].comp_dx / dr;
+    Vec3<double> dx_normalized = pp[i].comp_dx / dr;
     Vec3<double> dx_new, dv_new;
     double norm, true_anomaly, mean_anomaly, ecc_anomaly, cos_true_anomaly,sin_true_anomaly;
     double x = 0, y =0, vx =0, vy = 0; // Coordinates in the frame aligned with the binary
-    double Mtot = P[i].Mass + P[i].comp_Mass;
+    double Mtot = pp[i].Mass + pp[i].comp_Mass;
 
     double specific_energy = .5*dv*dv - All.G * Mtot / dr;
     double semimajor_axis = -All.G * Mtot / (2*specific_energy);
 
-    Vec3<double> h = cross(P[i].comp_dx, P[i].comp_dv); // specific angular momentum vector
+    Vec3<double> h = cross(pp[i].comp_dx, pp[i].comp_dv); // specific angular momentum vector
 
     double h2 = h.norm_sq();
     double ecc = sqrt(1 + 2 * specific_energy * h2 / (All.G*All.G*Mtot*Mtot));
-    Vec3<double> n_x = cross(P[i].comp_dv, h) - All.G * Mtot * dx_normalized; // LRL vector: dv x h - GM dx/r
+    Vec3<double> n_x = cross(pp[i].comp_dv, h) - All.G * Mtot * dx_normalized; // LRL vector: dv x h - GM dx/r
 
     norm = n_x.norm();
     n_x /= norm; // direction should be so that x points from periapsis to apoapsis
@@ -62,16 +82,14 @@ void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drif
     Vec3<double> n_y = cross(n_x, h) / sqrt(h2); // cross product of n_x with angular momentum to get a vector along the minor axis
 
     // Transform to coordinates in the plane of the ellipse
-    x = dot(P[i].comp_dx, n_x);
-    y = dot(P[i].comp_dx, n_y);
-    //printf("Kepler transform stuff x %g y %g nx %g %g %g ny %g %g %g h %g %g %g\n", x,y,n_x[0],n_x[1],n_x[2],n_y[0],n_y[1],n_y[2],h[0],h[1],h[2]);
+    x = dot(pp[i].comp_dx, n_x);
+    y = dot(pp[i].comp_dx, n_y);
 
     true_anomaly = wrap_angle(atan2(y,x));
     ecc_anomaly = wrap_angle(atan2(sqrt(1 - ecc*ecc) * sin(true_anomaly), ecc + cos(true_anomaly)));
     mean_anomaly = wrap_angle(ecc_anomaly - ecc * sin(ecc_anomaly));
-    //printf("Kepler x %g y %g dr orig %g dv orig %g ecc_anomaly %g mean_anomaly %g true anomaly %g change in mean anomaly %g ID %d \n", x, y, dr, dv, ecc_anomaly, mean_anomaly, true_anomaly, (dt/P[i].Min_Sink_OrbitalTime * 2 * M_PI),P[i].ID);
     //Changes mean anomaly as time passes
-    mean_anomaly -= dt/P[i].Min_Sink_OrbitalTime * 2 * M_PI;
+    mean_anomaly -= dt/pp[i].Min_Sink_OrbitalTime * 2 * M_PI;
     mean_anomaly = wrap_angle(mean_anomaly);
     //Get eccentric anomaly for new position
     ecc_anomaly = eccentric_anomaly(mean_anomaly, ecc);
@@ -94,20 +112,19 @@ void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drif
     vy = v_phi * (x/dr) + v_r * y/dr;
 
     // transform back to global coordinates
-    double two_body_factor=-P[i].comp_Mass/Mtot;
-    //printf("Kepler comp_dx %g %g %g  comp_dv %g %g %g ID %d \n", P[i].comp_dx[0],P[i].comp_dx[1],P[i].comp_dx[2],P[i].comp_dv[0],P[i].comp_dv[1], P[i].comp_dv[2], P[i].ID);
+    double two_body_factor=-pp[i].comp_Mass/Mtot;
     dx_new = x * n_x + y * n_y;
     dv_new = vx * n_x + vy * n_y;
-    drift_dx = (dx_new - P[i].comp_dx) * two_body_factor;
-    kick_dv = (dv_new - P[i].comp_dv) * two_body_factor;
+    drift_dx = (dx_new - pp[i].comp_dx) * two_body_factor;
+    kick_dv = (dv_new - pp[i].comp_dv) * two_body_factor;
     if(mode==1){ // if we want to do the actual self-consistent binary update
-        P[i].comp_dx = dx_new;
-        P[i].comp_dv = dv_new;
+        pp[i].comp_dx = dx_new;
+        pp[i].comp_dv = dv_new;
     }
 }
 
 // Quantity needed for gravitational acceleration and jerk; mass / r^3 in Newtonian gravity
-double gravfac(double r, double mass){
+KOKKOS_INLINE_FUNCTION double gravfac(double r, double mass){
     if(r < SinkParticle_GravityKernelRadius) {
 	double u = r / SinkParticle_GravityKernelRadius;
 	double h_inv = 1. / SinkParticle_GravityKernelRadius;
@@ -116,21 +133,21 @@ double gravfac(double r, double mass){
 }
 
 // quantity needed for the jerk, 3* mass/r^5 in Newtonian gravity
-double gravfac2(double r, double mass)
+KOKKOS_INLINE_FUNCTION double gravfac2(double r, double mass)
 {
     double hinv = 1. / SinkParticle_GravityKernelRadius;
     return mass * kernel_gravity(r*hinv, hinv, hinv*hinv*hinv, 2);
 }
 
 // Computes the gravitational acceleration of a body at separation dx from a mass, accounting for softening
-void grav_accel(double mass, Vec3<double>& dx, Vec3<double>& accel){
+KOKKOS_INLINE_FUNCTION void grav_accel(double mass, Vec3<double>& dx, Vec3<double>& accel){
     double r = dx.norm();
     double fac = gravfac(r, mass); // mass / r^3 for Newtonian gravity
     accel = -dx * fac;
 }
 
 // Computes the gravitational acceleration and time derivative of acceleration (the jerk) of a body at separation dx and relative velocity dv from a mass, accounting for softening
-void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk){
+KOKKOS_INLINE_FUNCTION void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk){
     double r = dx.norm();
     double dv_dot_dx = dot(dv, dx);
     double fac = gravfac(r, mass); // mass / r^3 for Newtonian gravity
@@ -140,7 +157,7 @@ void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<doubl
 }
 
 // Perform a 4th order Hermite timestep for the softened Kepler problem, evolving the orbital separation dx and relative velocity dv
-void hermite_step(double mass, Vec3<double>& dx, Vec3<double>& dv, double dt){
+KOKKOS_INLINE_FUNCTION void hermite_step(double mass, Vec3<double>& dx, Vec3<double>& dv, double dt){
     Vec3<double> old_accel, old_jerk, old_dx, old_dv, accel, jerk;
     double dt2 = dt*dt, dt3 = dt2 * dt;
     grav_accel_jerk(mass, dx, dv, old_accel, old_jerk);
@@ -162,11 +179,10 @@ Advances the binary by timestep dt
 mode 0 - Just fill out the particle's kick and drift for the timestep, without doing the update
 mode 1 - Actually update the binary separation and relative velocity. This should be done on the full-step drift.
 */
-void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode)
+KOKKOS_INLINE_FUNCTION void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode, struct particle_data *pp)
 {
-    double t = 0, total_mass = P[i].comp_Mass + P[i].Mass, dt;
-    Vec3<double> dx_old = P[i].comp_dx, dv_old = P[i].comp_dv;
-    Vec3<double> dx = -P[i].comp_dx, dv = -P[i].comp_dv; // note sign change from comp_dx to the effective 1-body problem
+    double t = 0, total_mass = pp[i].comp_Mass + pp[i].Mass, dt;
+    Vec3<double> dx = -pp[i].comp_dx, dv = -pp[i].comp_dv; // note sign change from comp_dx to the effective 1-body problem
 
     while(t < dt_super){
 	// Determine timestep adaptively; tuned here to give 1% energy error over 10^5 orbits for a 0.9 eccentricty binary
@@ -180,15 +196,16 @@ void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<d
 	t += dt;
     }
 
-    double two_body_factor=-P[i].comp_Mass/total_mass;
+    double two_body_factor=-pp[i].comp_Mass/total_mass;
 
-    drift_dx = (-dx - P[i].comp_dx) * two_body_factor;
-    kick_dv = (-dv - P[i].comp_dv) * two_body_factor;
+    drift_dx = (-dx - pp[i].comp_dx) * two_body_factor;
+    kick_dv = (-dv - pp[i].comp_dv) * two_body_factor;
     if(mode==1){ // if we want to do the actual self-consistent binary update
-        P[i].comp_dx = -dx;
-        P[i].comp_dv = -dv;
+        pp[i].comp_dx = -dx;
+        pp[i].comp_dv = -dv;
     }
 
 }
 
-#endif
+#endif /* SINGLE_STAR_TIMESTEPPING > 0 */
+#endif /* BINARY_FUNCTIONS_H */

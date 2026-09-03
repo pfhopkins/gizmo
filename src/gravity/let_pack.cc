@@ -45,11 +45,73 @@
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "let_data.h"
+
 #include "gravtree_opening.h"   /* shared opening predicate (cell/AABB variant) */
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
+
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 #include "forcetree.h"          /* force_tree_grow_foreign_storage */
+
+/* How long the tree being built here is expected to stand, as an INTEGER time interval.
+ *
+ * The gravity walk widens a reused node as it drifts it (force_drift_node, and its device twin),
+ * and every opening rule grows monotonically with node size.  So a sender that prunes the import
+ * against the node's size AT BUILD TIME is answering a different question from the one the walk
+ * will ask later, and it prunes nodes the walk goes on to open -- an import the walk cannot
+ * resolve.  The pack therefore tests against the size the node may REACH, which needs a horizon.
+ *
+ * The rebuild cadence supplies it: walking the timebins from the smallest up, the first whose
+ * cumulative occupancy crosses the update-frequency threshold is the bin that will trigger the
+ * next rebuild, and its timestep is how long this tree is expected to last.  Computed once per
+ * build, collectively, because the occupancies are global. */
+static integertime g_let_tree_lifetime_dti = 0;
+
+static void let_compute_tree_lifetime(void)
+{
+    long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
+    for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
+    MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    double rebuild_threshold = All.TreeDomainUpdateFrequency * (double) All.TotNumPart;
+    long long cumulative = 0, occupied_total = 0;
+    int trigger_bin = -1, highest_occupied = -1;
+    for(int bin = 0; bin < TIMEBINS; bin++)
+    {
+        occupied_total += global_bin_count[bin];
+        if(global_bin_count[bin] > 0) {highest_occupied = bin;}
+        cumulative += global_bin_count[bin];
+        if(trigger_bin < 0 && (double) cumulative > rebuild_threshold) {trigger_bin = bin;}
+    }
+    /* The builds that run before any timestep has been assigned see empty bins.  Nothing has been
+     * drifted at that point and the tree is fresh, so the honest horizon is zero -- and reaching for
+     * All.HighestOccupiedTimeBin here would read a value this run has not written yet (on a restart,
+     * the PREVIOUS run's, which pads maximally for no reason). */
+    if(occupied_total <= 0) {g_let_tree_lifetime_dti = 0; return;}
+    /* Nothing crosses the threshold: the system steps as a whole, so the coarsest occupied bin is
+     * the interval that matters.  Taken from the counts just reduced, not from global state. */
+    if(trigger_bin < 0) {trigger_bin = highest_occupied;}
+
+    g_let_tree_lifetime_dti = LET_TREE_LIFETIME_PAD_FACTOR * GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
+    /* The horizon is only ever used as an offset from the current time, so it must not run off the
+     * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
+     * index only after forming it. */
+    integertime remaining = TIMEBASE - All.Ti_Current;
+    if(remaining < 0) {remaining = 0;}
+    if(g_let_tree_lifetime_dti > remaining) {g_let_tree_lifetime_dti = remaining;}
+}
+
+/* The node size the walk may reach before this tree is rebuilt.  The growth rule is the walk's own
+ * (TREE_DRIFT_VELOCITY_PREFAC * vmax * drift factor), evaluated over the tree's expected lifetime,
+ * and the drift factor is taken per node because it carries that node's timestep dilation.  Used
+ * ONLY to decide essentiality: the node itself ships at its true build-time size, and the receiver
+ * widens it the ordinary way. */
+static double let_node_len_over_tree_lifetime(int no, double len)
+{
+    if(g_let_tree_lifetime_dti <= 0) {return len;}
+    double dt_lifetime = get_drift_factor(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti, no, 1);
+    return len + TREE_DRIFT_VELOCITY_PREFAC * (double) Extnodes[no].vmax * dt_lifetime;
+}
 
 
 /* Temporary EMIT-time encoding for a "last child of a level" sibling whose continuation index
@@ -170,6 +232,11 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
  * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf loses its coverage
  * (a real under-import hazard) -> LOUD count + collective controlled stop in let_run_exchange.
  * ---------------------------------------------------------------------- */
+/* Malformed singletons found while packing (a one-particle node whose child is not a particle):
+ * local tree corruption, reduced and reported collectively at the end of the exchange. */
+static long long g_let_malformed_singleton = 0;
+static int g_let_malformed_singleton_first = -1;
+
 static struct LETCoverLeaf *g_my_clusters = NULL;
 static int g_my_clusters_n = 0, g_my_clusters_cap = 0;
 static struct LETCoverLeaf *g_cluster_all = NULL;
@@ -242,10 +309,14 @@ static int *g_orphan_off = NULL;
 static int g_orphan_off_cap = 0;
 
 /* Merge one local orphan target's opening scalars into an orphan record (same worst-case ops as the
- * per-topleaf table: min OldAcc, max soft-by-type, min soft, OR has_sink). */
+ * per-topleaf table: min OldAcc, max soft-by-type, min soft, OR has_sink).  The OldAcc
+ * reduction is a TRUE minimum including zero: the walk forms aold = ErrTolForceAcc*OldAcc with
+ * no positivity test, so a target with OldAcc==0 has aold==0 and its relative criterion opens
+ * EVERY node with mass.  Excluding zero from this minimum therefore certified nodes as
+ * non-essential that such a target does open, and the import lost them. */
 static inline void let_orphan_merge(struct LETOrphanRecord *r, double oa, double soft, int ptype)
 {
-    if(oa > 0 && oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
+    if(oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
     if(soft > r->s.max_soft_by_type[ptype]) r->s.max_soft_by_type[ptype] = soft;
     if(soft < r->s.min_soft) r->s.min_soft = soft;
     if(ptype == 5) r->s.has_sink = 1;
@@ -401,7 +472,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         }
         /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
          * empty-owned-topleaf fallback baked in below stays a true worst case. */
-        if(oa > 0 && oa < out->min_OldAcc) out->min_OldAcc = oa;
+        if(oa < out->min_OldAcc) out->min_OldAcc = oa;
         if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
         if(soft < out->min_soft) out->min_soft = soft;
         if(t == 5) out->has_sink = 1;
@@ -427,7 +498,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
 
     /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave), then
      * each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max scalars
-     * (max soft-by-type, min soft, min positive OldAcc, OR has_sink). An empty owned topleaf collected no
+     * (max soft-by-type, min soft, min OldAcc including zero, OR has_sink). An empty owned topleaf collected no
      * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
      * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
     g_my_clusters_n = 0;
@@ -449,7 +520,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
                 struct LETClusterMember *m = &g_cl_members[r];
                 for(int d = 0; d < 3; d++) { if(m->pos[d] < c.bmin[d]) c.bmin[d] = m->pos[d]; if(m->pos[d] > c.bmax[d]) c.bmax[d] = m->pos[d]; }
                 if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
-                if(m->oldacc > 0 && m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
+                if(m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
                 if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
                 if(m->type == 5) c.s.has_sink = 1;
             }
@@ -719,7 +790,8 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
  *
  * Sets BITFLAG_MULTIPLEPARTICLES (forced after finalize) so the receiver's
  * walk uses the synthesized multipole directly (exact for a single particle)
- * instead of skipping to a non-existent source-side particle.
+ * instead of skipping to a non-existent source-side particle, and tags the wire
+ * LET_LEAF_TAG_REAL_LEAF so the receiver consumes it with leaf semantics.
  *
  * Two payloads differ from the previous hand-inlined form, both for a
  * single-particle leaf and both matching the live GPU venues + the CPU
@@ -882,7 +954,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
      * moment already carries every other source field (and for a singleton equals the particle
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
      * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
-    w->leaf_tag      = 1;
+    w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
     w->leaf_type     = pa->Type;
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
@@ -1000,26 +1072,17 @@ static void pack_recurse(int no, int sib_terminator,
     node_nsink = Nodes[no].N_SINK;
 #endif
     /* Motion margin (GIZMO_LET_MOTION_MARGIN, a multiple of the softening support radius; 0 or
-     * undefined reproduces the historical decision exactly).
-     *
-     * The cover boxes are built from receiver positions at PACK time, but the LET they produce is
-     * reused until the next rebuild. A target that drifts closer afterwards can want resolution
-     * that was never shipped, and the walk then falls back to the coarse multipole the (now stale)
-     * predicate approved. Inflating the boxes makes the test provision for the LET's lifetime
-     * rather than the instant it is packed.
-     *
-     * One softening is the natural scale, for two reasons that coincide: it covers the largest
-     * displacement over a rebuild interval (measured at 61% of a softening over two steps), and it
-     * approximates the softening-proximity force-open that the shared predicate omits under
-     * Barnes-Hut -- that test lives in the ErrTolTheta `else` and so never runs (upstream is the
-     * same; upstream is immune only because it exports to the owner instead of accepting a foreign
-     * multipole). Cost, measured with a since-removed counting probe: +8.1% essential nodes at
+     * undefined adds nothing).  The lifetime term below covers node-side motion (vmax over the
+     * tree's lifetime); the margin remains as an opt-in receiver-side allowance and as an
+     * approximation of the softening-proximity force-open the shared predicate omits under
+     * Barnes-Hut.  Cost, measured with a since-removed counting probe: +8.1% essential nodes at
      * 1.0 x soft. */
     double let_margin = 0.0;
 #ifdef GIZMO_LET_MOTION_MARGIN
     let_margin = ((double) GIZMO_LET_MOTION_MARGIN) * All.ForceSoftening[1];
 #endif
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, node_nsink, let_margin);
+    double len_decide = let_node_len_over_tree_lifetime(no, len);
+    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len_decide, mass, maxsoft, node_nsink, let_margin);
 
 
     /* Always ship the node (parent expects it).  If not essential, ship as
@@ -1029,7 +1092,7 @@ static void pack_recurse(int no, int sib_terminator,
     int my_idx = (*count)++;
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
-    w->leaf_tag = 0; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+    w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
 #ifdef HERMITE_INTEGRATION
     w->leaf_id = 0;
 #endif
@@ -1042,17 +1105,19 @@ static void pack_recurse(int no, int sib_terminator,
     w->node.u.d.nextnode = LET_WIRE_EXIT;
     w->node.u.d.father = -1;  /* foreign nodes have no local father */
 
-    if(!is_essential)
-    {
-        /* Multipole-only: receiver's walk will close on this node (their criterion
-         * matches our worst-case bound), so they never descend.  No recursion. */
-        return;
-    }
-
     /* Single-particle leaf in source tree: bitflag=0 means walk would skip
      * to nextnode (a particle).  We can't ship the particle, so override
      * bitflag to MULTIPLEPARTICLES so receiver uses our multipole.  Exact
-     * for single particle. */
+     * for single particle.
+     *
+     * Decided BEFORE the essentiality prune below, because what the tag records is whether the
+     * node can be descended, which is a property of the node, not of whether the sender expected
+     * anyone to descend it.  A node holding one particle has nothing underneath to resolve and its
+     * multipole IS that particle, so it is a real leaf whether or not it was found essential.
+     * Tagging a pruned one TRUNCATED instead would put an exactly-representable node in the class
+     * that means "the import is short", and would ship it without the leaf identity the receiver
+     * restores -- so the same particle would be softened and AGS-symmetrized differently depending
+     * on which side of the prune it fell. */
     if(!(Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))
     {
         /* This single-particle source-tree node is shipped as a multipole, so the receiver
@@ -1060,13 +1125,13 @@ static void pack_recurse(int no, int sib_terminator,
          * ORIGINAL Nodes[no] (its nextnode is that particle; w->node is a copy whose nextnode was
          * already overwritten to LET_WIRE_EXIT) and tag the wire with the same leaf identity as the
          * synthesized-leaf path.  Hard-check the child is a real particle (p < TreeParticleSlots); if not, the
-         * tree is malformed -- leave the record untagged so the receiver's predicate-keyed guard
-         * surfaces it rather than mis-routing a non-particle as a leaf. */
+         * tree is malformed -- ship it as a truncated aggregate so the receiver treats it as
+         * terminal and surfaces it, rather than mis-routing a non-particle as a leaf. */
         int p = Nodes[no].u.d.nextnode;
         if(p >= 0 && p < All.TreeParticleSlots)
         {
             struct particle_data *pa = &P[p];
-            w->leaf_tag      = 1;
+            w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
 #ifdef HERMITE_INTEGRATION
@@ -1081,12 +1146,30 @@ static void pack_recurse(int no, int sib_terminator,
         }
         else
         {
-            printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); "
-                   "shipping untagged (receiver guard will surface it).\n", no, p, ThisTask);
+            /* A one-particle node whose child is not a particle is a malformed local tree, not an
+             * import question: no tag the receiver could carry would render it meaningful, and the
+             * receiver would only be re-deriving what the sender already knows.  Count it and let
+             * the collective check at the end of the exchange stop every rank together, which is
+             * how this file already handles the other tree-corruption case. */
+            printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); the local tree "
+                   "is malformed -- the exchange stops once every rank has packed.\n", no, p, ThisTask);
             fflush(stdout);
+            g_let_malformed_singleton++;
+            if(g_let_malformed_singleton_first < 0) {g_let_malformed_singleton_first = no;}
+            w->leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;   /* not a real leaf, and not descendable */
         }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
         return;  /* no children to recurse into */
+    }
+
+    if(!is_essential)
+    {
+        /* Multipole-only: no target in the receiver's cover opens this node under the predicate we
+         * evaluated, so its children are not shipped.  Tag it TRUNCATED so the receiver can tell a
+         * node it may descend from one it may not -- if a later walk there does open it, the import
+         * is incomplete and the walk must say so rather than quietly accept the multipole. */
+        w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
+        return;
     }
 
     /* Multi-particle internal node: enumerate children via nextnode/sibling chain.
@@ -1182,8 +1265,14 @@ static void pack_recurse(int no, int sib_terminator,
                 (sib_terminator < 0) ? LET_WIRE_EXIT : LET_EDGE_SENTINEL_ENCODE(sib_terminator);
         }
     }
-    /* else: no children shipped (e.g., all were particles outside essential range);
-     *       nextnode stays LET_WIRE_EXIT; receiver will treat as multipole-leaf. */
+    else
+    {
+        /* No children shipped (every child was a pseudo/foreign slot this pack skips), so nextnode
+         * stays LET_WIRE_EXIT and there is nothing to descend into.  Same terminal status as the
+         * pruned case above, reached by a different route -- tag it the same way.  Re-fetch by index:
+         * grow_wire_buf may have moved the buffer during the child recursion. */
+        (*buf)[my_idx].leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;
+    }
 }
 
 /* ----------------------------------------------------------------------
@@ -2007,6 +2096,10 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
+    g_let_malformed_singleton = 0; g_let_malformed_singleton_first = -1;
+
+    /* One collective, once per build: the horizon the import is pruned against. */
+    let_compute_tree_lifetime();
 
     /* The foreign-leaf identity sidecar needs no reset here: this exchange's sidecar is allocated
      * and zeroed by force_tree_grow_foreign_storage below, once the import has been counted, and
@@ -2182,6 +2275,23 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
      * local pack OOM (failed ranks carry zero send counts) so the Alltoallv stays
      * matched; the nonzero status drains via the caller after this returns. */
+    /* Every rank has now packed, so the malformed-singleton counts are final.  Reduced here rather
+     * than earlier: the only writer is pack_recurse, which runs in the loop above, and a check that
+     * precedes its writer reads zero forever. */
+    {
+        long long malformed_max = 0;
+        MPI_Allreduce(&g_let_malformed_singleton, &malformed_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(malformed_max > 0)
+        {
+            if(g_let_malformed_singleton > 0)
+                printf("LET pack: rank=%d found %lld single-particle node(s) (first node index %d) whose "
+                       "child is not a particle -- the local tree is malformed. Stopping.\n",
+                       ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
+            fflush(stdout);
+            endrun(90000093);
+        }
+    }
+
     let_exchange_status_t exch_status = let_exchange_nodes(send_per_rank, send_count,
                        send_hdr_per_rank, send_hdr_count, foreign_needed_out);
 

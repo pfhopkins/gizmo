@@ -67,7 +67,8 @@ struct gpu_gravity_tree_soa_t {
      * MaxNodes -- a DIFFERENT index than every other array above (which use no - TreeNodeIndexBase).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
      * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
-    int            *foreign_leaf_tag;   /* 1 = real foreign single-particle leaf; 0 = node */
+    int            *foreign_leaf_tag;   /* LET_LEAF_TAG_* : 0 = descendable node, 1 = real
+                                         * single-particle leaf, 2 = truncated aggregate */
     int            *foreign_leaf_type;  /* source particle Type   -> ptype_sec */
     MyFloat        *foreign_leaf_zeta;  /* source particle AGS_zeta -> zeta_sec (double; preserves reciprocity) */
     MyFloat        *foreign_leaf_soft;  /* source particle ForceSoftening -> h_p (pure, NOT node maxsoft) */

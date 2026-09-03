@@ -841,6 +841,10 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_NH:        /* neutral hydrogen fraction */
 #if defined(RT_CHEM_PHOTOION)
             for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}
+#elif defined(COOLING) && !defined(CHIMES) && !(COOL_GRACKLE_CHEMISTRY > 0)
+            /* the cooling solver saves this field, and io.cc writes it out for cooling runs with no
+               photo-ionization chemistry, so restore it here rather than dropping it */
+            for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}
 #endif
             break;
             

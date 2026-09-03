@@ -35,7 +35,15 @@ extern ALIGN(32) struct particle_data
 #ifdef PMGRID
     Vec3<MyFloat> GravPM;           /*!< particle acceleration due to long-range PM gravity force */
 #endif
-    MyFloat OldAcc;                    /*!< magnitude of old gravitational force. Used in relative opening criterion */
+    MyFloat OldAcc;                    /*!< acceleration scale the relative tree-opening criterion is measured against:
+                                            the magnitude of the previous gravity-tree (+Ewald+PM) acceleration, in the
+                                            non-G units the predicate expects. Refreshed ONLY when the tree is built, from
+                                            OldAcc_LatestWalk, because the imported ghost tree is pruned against this value
+                                            and every walk living on that tree must open exactly what the import covers. */
+    MyFloat OldAcc_LatestWalk;         /*!< the same quantity as measured by the most recent gravity walk, held here until
+                                            the next tree build promotes it into OldAcc. Captured before the radiation,
+                                            analytic-gravity and companion terms enter GravAccel, so it stays a property of
+                                            the force the tree computes rather than of everything acting on the particle. */
 #ifdef SPECIAL_POINT_MOTION
     Vec3<MyFloat> Acc_Total_PrevStep;  /*!< old total acceleration on a given cell/particle */
 #endif
@@ -142,7 +150,12 @@ extern ALIGN(32) struct particle_data
     MyFloat Grain_Size;
 #endif
     MyFloat Gas_Density;
-    MyFloat Gas_InternalEnergy;
+    MyFloat Gas_Temperature;  /* kernel-weighted temperature of the surrounding gas. carried rather than the internal
+                                 energy because a grain has no cell, and so no composition with which to convert one to
+                                 the other; the modules that want a soundspeed rebuild it from this and the estimated
+                                 mean molecular weight */
+    MyFloat Gas_fion;         /* kernel-weighted ionized fraction of the surrounding gas, or negative where the
+                                 configuration solves no chemistry to supply one */
     Vec3<MyFloat> Gas_Velocity;
     MyFloat Grain_AccelTimeMin;
 #if defined(GRAIN_BACKREACTION)
@@ -159,7 +172,7 @@ extern ALIGN(32) struct particle_data
     MyFloat Composition[GRAIN_NUM_SPECIES];
 #if (GRAIN_EVOLUTION & (32|64))
     /* Kernel-weighted local gas-phase volatile mass fractions, populated by the
-     * density loop (mirrors Gas_InternalEnergy). Read by the condensation/
+     * density loop (mirrors Gas_Temperature). Read by the condensation/
      * sublimation operator inside grain_drag_kernel to compute exchange rates. */
     MyFloat Gas_VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
     /* Per-step accumulators for grain->gas back-reaction from COND/SUBL.

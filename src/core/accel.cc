@@ -47,8 +47,10 @@ void compute_grav_accelerations(void)
   {
     gravity_tree();		/* computes gravity accel. */
 
-    /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy */
-    if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {gravity_tree();}
+    /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy.
+       The estimator this seeds is refreshed only when the tree is built, and the import is pruned against it,
+       so the repeat pass has to rebuild -- otherwise it walks the first pass's tree and seeds nothing. */
+    if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {TreeReconstructFlag = 1; gravity_tree();}
   }
 
   PRINT_STATUS(" ..gravity force computation done");

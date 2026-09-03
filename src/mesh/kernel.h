@@ -1,4 +1,9 @@
 /* this file contains the definitions for the kernel functions */
+#pragma once
+/* Guarded so headers that need the kernels can include them directly without
+   colliding when a translation unit also includes this file itself. KERNEL_FUNCTION
+   is selected in Config.sh (i.e. on the compile line), never between inclusions, so
+   there is no case where re-reading this file was meant to produce a different kernel. */
 /*!
  * This file was originally part of the GADGET3 code developed by
  * Volker Springel. The code has been rewritten almost completely

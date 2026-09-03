@@ -16,6 +16,39 @@
 #ifndef WAKEUP /* may be set in Config.sh, e.g. WAKEUP=2.1 for a stricter limiter: this is Saitoh &
                   Makino (2009) f=2, which their Table 1 shows conserves energy slightly better than
                   f=4 (7.6e-4 vs 5.9e-3 on Sedov) at roughly twice the cost. */
+/* Minimum number of particles needing a drift for the batched drift to run on the
+ * device. The drift needs its own threshold rather than the shared one above: its
+ * per-element work is far smaller than cooling's, while it stages the same whole
+ * structs, so the two want opposite policies and the shared constant is read by
+ * seven translation units.
+ *
+ * Set beyond any per-rank count so the drift runs on the host by default. Measured
+ * on a 64-rank galaxy run, comparing clean builds with and without the batched path
+ * at matched simulation time: the device path won modestly between roughly 4k and
+ * 64k particles needing a drift per rank (-0.6 s and -0.7 s), and lost above that
+ * (+9.5 s), as a uniform per-step increase rather than a few expensive steps. The
+ * loss tracks the number of elements staged, which points at the cost of copying
+ * whole particle and cell structs both ways rather than at launch overhead.
+ *
+ * ⚠ That measurement is for a configuration whose equation of state is cheap. It is
+ * NOT a general verdict on running the drift on the device, and must not be read as
+ * one. What decides the question is the work done per element against the bytes
+ * staged for it: the drift loses here because an ideal-gas pressure update is trivial
+ * beside copying whole particle and cell structs both ways, whereas cooling wins
+ * comfortably on the same staging because its per-element solve is large. Under a
+ * tabulated or solid equation of state the drift moves to the second camp -- the
+ * per-particle pressure update becomes a Newton root-find over table lookups, with a
+ * bisection fallback and an iteration cap in the tens -- so the same staging is
+ * amortised over far more arithmetic and the balance can invert.
+ *
+ * Lower it to re-enable the device path once the staged set is narrowed to the fields
+ * the drift actually writes, to select the band above if that is measured to be worth
+ * the dispatch complexity, or per-configuration once the tabulated equations of state
+ * are themselves device-callable. */
+#ifndef GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD
+#define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 2000000000
+#endif
+
 #if (SLOPE_LIMITER_TOLERANCE > 0)
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
@@ -158,6 +191,9 @@
 #define UNIT_FLUX_IN_HABING     (((UNIT_FLUX_IN_CGS)/HABING_FLUX_CGS))
 #define UNIT_EGY_DENSITY_IN_HABING ((UNIT_PRESSURE_IN_CGS)/(HABING_FLUX_CGS / C_LIGHT_CGS))
 #define U_TO_TEMP_UNITS         ((PROTONMASS_CGS/BOLTZMANN_CGS)*((UNIT_ENERGY_IN_CGS)/(UNIT_MASS_IN_CGS))) /* units to convert specific internal energy to temperature. needs to be multiplied by dimensionless factor=mean_molec_weight_in_amu*(gamma_eos-1) */
+#define MEAN_MOLECULAR_WEIGHT_IONIZED (0.59) /* mean molecular weight of fully-ionized primordial gas, in units of the proton mass. use this where the gas is genuinely ionized by construction, e.g. inside an HII region; where a run simply solves no chemistry, MEAN_MOLECULAR_WEIGHT_DEFAULT is the value to use, and a user can set that one */
+#define MEAN_MOLECULAR_WEIGHT_ATOMIC (1.28) /* mean molecular weight of fully-atomic solar metallicity gas */
+#define MEAN_MOLECULAR_WEIGHT_MOLECULAR (2.3) /* mean molecular weight of fully-molecular solar metallicity gas */
 #ifndef C_LIGHT_CODE
 #define C_LIGHT_CODE            ((C_LIGHT_CGS/UNIT_VEL_IN_CGS)) /* pure convenience function, speed-of-light in code units */
 #endif
@@ -311,3 +347,8 @@
 
 #define CUBE_EDGEFACTOR_1 0.366025403785    /* CUBE_EDGEFACTOR_1 = 0.5 * (sqrt(3)-1) */
 #define CUBE_EDGEFACTOR_2 0.86602540        /* CUBE_EDGEFACTOR_2 = 0.5 * sqrt(3) */
+
+
+#if !defined(MEAN_MOLECULAR_WEIGHT_DEFAULT)
+#define MEAN_MOLECULAR_WEIGHT_DEFAULT (MEAN_MOLECULAR_WEIGHT_IONIZED) /* default to ionized value but allow user-setting */
+#endif
