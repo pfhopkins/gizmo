@@ -782,11 +782,6 @@ void domain_Decomposition_light(int UseAllTimeBins)
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1, multipledomains);
 
-#if (DOMAIN_TIMEBINS == 1)
-    if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
-    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
-#endif
-
     int status = domain_check_memory_bound(multipledomains);
     if(status != 0)
     {
@@ -795,6 +790,16 @@ void domain_Decomposition_light(int UseAllTimeBins)
         status = domain_check_memory_bound(multipledomains);
         if(status != 0) {if(ThisTask == 0) {printf("Lightweight repartition: memory bound violated.\n");}}
     }
+
+#if (DOMAIN_TIMEBINS == 1)
+    /* Freed only after the retry above, which calls domain_assign_load_or_work_balanced() a
+       second time and reads these arrays. Freeing before it dereferences NULL -- and the
+       per-timebin scheme expands to whatever PartAllocFactor ceiling it is given, so the memory
+       bound is always violated and the retry always runs. Raising PartAllocFactor moves the
+       wall, it does not avoid it. (Port of starforge_dev f151124c.) */
+    if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
+    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+#endif
 
     /* flag particles that need to move */
     for(i = 0; i < NumPart; i++)
@@ -1091,11 +1096,6 @@ int domain_decompose(void)
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1,multipledomains);
 
-#if (DOMAIN_TIMEBINS == 1)
-    free(domainBinHydroCost); free(domainBinGravCost);
-    domainBinHydroCost = domainBinGravCost = NULL;
-#endif
-
     status = domain_check_memory_bound(multipledomains);
 
     if(status != 0)		/* the optimum balanced solution violates memory constraint, let's try something different */
@@ -1153,10 +1153,22 @@ int domain_decompose(void)
            * already reduced across all of them, so the stop can be requested and drained on the spot
            * rather than continuing into the exchange with an assignment that does not fit.  Anything
            * rank-local added to that check would break this and hang the poll below. */
+#if (DOMAIN_TIMEBINS == 1)
+          free(domainBinHydroCost); free(domainBinGravCost);
+          domainBinHydroCost = domainBinGravCost = NULL;
+#endif
           endrun(90000022);
           gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
     }
+#if (DOMAIN_TIMEBINS == 1)
+    /* Freed here, after the memory-bound retry above: that retry calls
+       domain_assign_load_or_work_balanced() a second time and reads these arrays. Freeing before
+       it dereferences NULL. Same defect existed in domain_Decomposition_light(). (Port of
+       starforge_dev f151124c.) */
+    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+    if(domainBinGravCost)  {free(domainBinGravCost);  domainBinGravCost  = NULL;}
+#endif
 
     if(ThisTask == 0)
     {

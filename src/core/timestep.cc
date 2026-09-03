@@ -484,9 +484,42 @@ integertime get_timestep(int p,		/*!< particle index */
  * coefficients were tuned for. */
 #define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
 
+/* Coefficient on dt_tidal, calibrated so the tidal criterion delivers the same energy error as the
+ * acceleration criterion. The stated 0.5 equivalence was for an optimally-softened Plummer sphere;
+ * on a Hernquist sphere it is ~70x worse than the acceleration criterion in secular energy drift,
+ * and that gap is a timestep-selection defect, not a resolution one: over a 250x range of
+ * ErrTolForceAcc (4.3x more force work) the drift moves 0.7% and the substep count 0.8%, while
+ * over a 16x range of ErrTolIntAccuracy it falls 42x.
+ *
+ * NOT applied when the symmetrized 2-body criteria are active. There dt_tidal must stay long
+ * enough that the symmetric 2-body criterion binds for both members of a bound pair -- see the
+ * SINK_TIMESTEP_SAFETY_FACTOR note above. Tightening it here would reintroduce exactly the
+ * asymmetric splitting that factor exists to prevent, since dt_tidal keys on the COMPANION mass
+ * and differs between unequal members by sqrt(m1/m2). (Port of starforge_dev fbf9fe60.) */
+#if !defined(TIDAL_TIMESTEP_PREFAC)
+#if defined(SINGLE_STAR_TIMESTEPPING)
+#define TIDAL_TIMESTEP_PREFAC (0.5)   /* leave alone: 2-body criterion must bind for binaries */
+#else
+/* 0.10 measured on test/hernquist_convergence at ErrTolIntAccuracy = 0.01 -- the tolerance that
+ * matters: GIZMO's documented recommendation, what production runs, and what most parameter files
+ * in the suite use. At its historical 0.5 the criterion is 142x worse than the acceleration
+ * criterion in drift rate and 215x in |dE/E0|; 0.10 brings both inside parity (0.0x / 0.6x).
+ * 0.15 does not (2.9x / 4.7x) and 0.25 is far outside (20.9x / 31.5x).
+ *
+ * The price is steep and deliberate: substeps rise 2306 -> 14302, i.e. 6.2x the uncalibrated
+ * criterion and 12.4x the acceleration criterion. Hernquist is the published worst case for this
+ * criterion -- the cusp makes the tidal tensor vary sharply where |a| is already well behaved --
+ * so calibrating here guarantees it cannot degrade accuracy in easier setups, and the cost is
+ * paid in steps rather than in silent error. A finer scan between 0.10 and 0.15 could recover
+ * some of that, but the sensitivity is severe (a 1.5x change in the coefficient moves the error
+ * 8x), so a value nearer the limit would be fragile. */
+#define TIDAL_TIMESTEP_PREFAC (0.10)
+#endif
+#endif
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = 0.5 * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double dt_tidal = TIDAL_TIMESTEP_PREFAC * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);
