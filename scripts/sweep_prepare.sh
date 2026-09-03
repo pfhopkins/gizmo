@@ -82,19 +82,30 @@ fi
 # carried forward. run_one.sh resolves the full node id on the compute node, where it is right.
 # A directory whose collection fails (import error, missing optional dep) falls back to a single
 # whole-directory task rather than vanishing from the sweep.
+# ONE collect for the whole suite, not one per directory: each pytest start re-imports h5py,
+# matplotlib and astropy, so 69 of them cost ~7 minutes against 18 seconds for a single pass.
+# --continue-on-collection-errors so one unimportable test file does not blank the sweep.
 PY="${GIZMO_TEST_PYTHON:-/mnt/home/mgrudic/python_work/bin/python}"
-: > "$SWEEP/tasks.txt"
-while read -r d; do
-    ids=$( cd "$TREE" && "$PY" -m pytest "test/$d" --collect-only -q 2>/dev/null \
-             | sed -n 's|^test/[^[]*\[\(.*\)\]$|\1|p' \
-             | awk -F- 'NF>2 {for(i=1;i<=NF-2;i++) printf "%s%s", $i, (i<NF-2?"-":"\n")}' \
-             | sort -u )
-    if [ -z "$ids" ]; then
-        echo "$d" >> "$SWEEP/tasks.txt"                    # unparametrised, or collection failed
-    else
-        while read -r v; do echo "$d $v" >> "$SWEEP/tasks.txt"; done <<< "$ids"
-    fi
-done < "$SWEEP/testdirs.txt"
+echo "=== collecting variants ..."
+( cd "$TREE" && "$PY" -m pytest test/ --collect-only -q --continue-on-collection-errors 2>/dev/null ) \
+  | "$PY" -c '
+import sys, re
+want = set(open(sys.argv[1]).read().split())
+seen, out = set(), []
+for line in sys.stdin:
+    m = re.match(r"^test/([^/]+)/.*?(?:\[(.*)\])?$", line.strip())
+    if not m or m.group(1) not in want: continue
+    d, br = m.group(1), m.group(2)
+    # The id is [<variant>-<omp>-<ranks>]; the last two come from cpu_count() on whatever
+    # machine collects, so keep only the variant. No brackets = unparametrised.
+    v = "-".join(br.split("-")[:-2]) if br and len(br.split("-")) > 2 else ""
+    key = (d, v)
+    if key in seen: continue
+    seen.add(key); out.append(f"{d} {v}".rstrip())
+for d in sorted(want - {k[0] for k in seen}):   # collection failed: whole-directory fallback
+    out.append(d)
+print("\n".join(sorted(out)))
+' "$SWEEP/testdirs.txt" > "$SWEEP/tasks.txt"
 NTASK=$(wc -l < "$SWEEP/tasks.txt")
 NVAR=$(awk 'NF>1' "$SWEEP/tasks.txt" | wc -l)
 echo "=== $NTASK tasks from $(wc -l < "$SWEEP/testdirs.txt") directories ($NVAR are per-variant)"
