@@ -45,13 +45,20 @@ echo "$HEAD_SHA" > "$SWEEP/HEAD_SHA"
 echo "=== seed staged: $(du -sh "$SWEEP/seed" 2>/dev/null | cut -f1)"
 
 # ---------------------------------------------------------------- task list
-# One task per test directory. Not per pytest item: variants inside a directory share the
-# directory's ICs and output paths, and splitting them would have two nodes writing the
-# same test/<name>/ tree.
+# One task per (test directory, VARIANT). Splitting variants is what keeps the sweep short:
+# 67% of node-time sits in multi-variant tests that would otherwise run their variants
+# sequentially inside one task, so one engine grinds through hernquist's 8 variants (2h45m)
+# while other nodes idle. Per-variant tasks drop the critical path from the longest TEST
+# (3.0h) to the longest VARIANT (1.5h).
+#
+# Safe because each engine rsyncs its own private tree and variant_output_dir() separates
+# outputs within it, so two variants on different engines never touch the same files. The
+# earlier "variants share the directory's ICs and output paths" concern applied to running
+# them concurrently in ONE tree, which never happens here.
 #
 # SWEEP_TESTS restricts the run to a subset -- a file of directory names, or the names inline.
 # Used to re-run only what a fix could plausibly change, rather than paying 8 nodes to watch
-# known failures fail again.
+# known failures fail again. It selects DIRECTORIES; all of a directory's variants come along.
 ( cd "$TREE" && ls test/*/test_*.py ) | sed 's|test/\([^/]*\)/.*|\1|' | sort -u \
     > "$SWEEP/alldirs.txt"
 
@@ -69,23 +76,49 @@ if [ -n "${SWEEP_TESTS:-}" ]; then
 else
     cp "$SWEEP/alldirs.txt" "$SWEEP/testdirs.txt"
 fi
-NTASK=$(wc -l < "$SWEEP/testdirs.txt")
+# Enumerate the variants of each selected directory. The pytest id is
+# test_X[<variant>-<omp>-<ranks>], and the trailing two components come from cpu_count() on
+# whatever machine collects -- 16 ranks here, 48 on a Genoa node -- so only the VARIANT name is
+# carried forward. run_one.sh resolves the full node id on the compute node, where it is right.
+# A directory whose collection fails (import error, missing optional dep) falls back to a single
+# whole-directory task rather than vanishing from the sweep.
+PY="${GIZMO_TEST_PYTHON:-/mnt/home/mgrudic/python_work/bin/python}"
+: > "$SWEEP/tasks.txt"
+while read -r d; do
+    ids=$( cd "$TREE" && "$PY" -m pytest "test/$d" --collect-only -q 2>/dev/null \
+             | sed -n 's|^test/[^[]*\[\(.*\)\]$|\1|p' \
+             | awk -F- 'NF>2 {for(i=1;i<=NF-2;i++) printf "%s%s", $i, (i<NF-2?"-":"\n")}' \
+             | sort -u )
+    if [ -z "$ids" ]; then
+        echo "$d" >> "$SWEEP/tasks.txt"                    # unparametrised, or collection failed
+    else
+        while read -r v; do echo "$d $v" >> "$SWEEP/tasks.txt"; done <<< "$ids"
+    fi
+done < "$SWEEP/testdirs.txt"
+NTASK=$(wc -l < "$SWEEP/tasks.txt")
+NVAR=$(awk 'NF>1' "$SWEEP/tasks.txt" | wc -l)
+echo "=== $NTASK tasks from $(wc -l < "$SWEEP/testdirs.txt") directories ($NVAR are per-variant)"
 
 # Written out in full rather than via #DISBATCH PREFIX: the prefix is textually prepended
 # with no separator, which is one missing trailing space away from silent nonsense.
-sed "s|^|bash $SWEEP/run_one.sh |" "$SWEEP/testdirs.txt" > "$SWEEP/tasks.db"
+sed "s|^|bash $SWEEP/run_one.sh |" "$SWEEP/tasks.txt" > "$SWEEP/tasks.db"
 
 # ---------------------------------------------------------------- per-task runner
 cat > "$SWEEP/run_one.sh" <<'RUNONE'
 #!/bin/bash
-# One test directory, in this engine's private tree. disBatch runs one of these at a
-# time per node (-t 1), so each test gets the whole node and its own default rank count.
+# One (test directory, variant) in this engine's private tree. disBatch runs one of these at
+# a time per node (-t 1), so each gets the whole node and its own default rank count.
+#
+#   run_one.sh <testdir>            whole directory (unparametrised tests)
+#   run_one.sh <testdir> <variant>  one variant of it
 set -uo pipefail
 SWEEP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTDIR="$1"
+VARIANT="${2:-}"
 RANK="${DISBATCH_ENGINE_RANK:-0}"
 TREE="$SWEEP/tree_${RANK}"
-LOG="$SWEEP/logs/${TESTDIR}.log"
+TAG="$TESTDIR${VARIANT:+__$VARIANT}"
+LOG="$SWEEP/logs/${TAG}.log"
 
 # First task on this node materialises the tree. -t 1 means no concurrent task can race
 # us, and the marker distinguishes "finished copying" from "died halfway".
@@ -129,13 +162,32 @@ fi
 
 PY=/mnt/home/mgrudic/python_work/bin/python
 t0=$SECONDS
+
+# Resolve the pytest node id HERE rather than carrying it from prepare time. The id embeds
+# omp/rank counts from cpu_count(), which differ between the machine that staged the sweep and
+# this one (16 vs 48), so a pre-computed id would select nothing. Matching on "[<variant>-"
+# is exact: variant names use underscores, so subcycle_rt- cannot also match
+# subcycle_rt_cooling-.
+TARGET="test/$TESTDIR"
+if [ -n "$VARIANT" ]; then
+    TARGET=$("$PY" -m pytest "test/$TESTDIR" --collect-only -q 2>/dev/null \
+               | grep -F "[${VARIANT}-" | head -1)
+    if [ -z "$TARGET" ]; then
+        echo "FATAL: variant '$VARIANT' did not resolve to a pytest id in test/$TESTDIR" | tee "$LOG"
+        printf '%-40s rc=%-3s %6ss  %-14s %s\n' "$TAG" 90 0 "$(hostname)" "UNRESOLVED VARIANT" \
+            > "$SWEEP/results/${TAG}.rc"
+        exit 90
+    fi
+fi
+
 # A SUBSHELL, not a brace group: braces do not fork, so the `exit` below would end
 # run_one.sh outright and the result file after it would never be written.
 (
-    echo "=== $TESTDIR  node $(hostname)  engine $RANK  cores $(nproc)  $(date '+%F %T')"
-    "$PY" -u -m pytest "test/$TESTDIR" -ra -s -v --tb=short
+    echo "=== $TAG  node $(hostname)  engine $RANK  cores $(nproc)  $(date '+%F %T')"
+    echo "=== target: $TARGET"
+    "$PY" -u -m pytest "$TARGET" -ra -s -v --tb=short
     rc=$?
-    echo "=== $TESTDIR rc=$rc elapsed=$((SECONDS - t0))s"
+    echo "=== $TAG rc=$rc elapsed=$((SECONDS - t0))s"
     exit $rc
 ) > "$LOG" 2>&1
 rc=$?
@@ -145,9 +197,9 @@ rc=$?
 summary=$(grep -aoE '[0-9]+ (passed|failed|skipped|error)[^=]*' "$LOG" | tail -1 | tr -s ' ')
 # One result file per test, not a shared append: O_APPEND is not atomic across hosts on
 # Ceph, and a lost line there is a lost failure. The sbatch collates these at the end.
-printf '%-32s rc=%-3s %6ss  %-14s %s\n' \
-    "$TESTDIR" "$rc" "$((SECONDS - t0))" "$(hostname)" "${summary:-NO SUMMARY}" \
-    > "$SWEEP/results/${TESTDIR}.rc"
+printf '%-40s rc=%-3s %6ss  %-14s %s\n' \
+    "$TAG" "$rc" "$((SECONDS - t0))" "$(hostname)" "${summary:-NO SUMMARY}" \
+    > "$SWEEP/results/${TAG}.rc"
 exit $rc
 RUNONE
 chmod +x "$SWEEP/run_one.sh"

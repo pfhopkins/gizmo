@@ -78,6 +78,10 @@ grep -a "skipped" "$SWEEP/RESULTS.txt" | grep . || echo "  none"
 # A test directory with no .rc never finished: node ran out of walltime, or the task died
 # outside pytest. Silence here would read as a pass.
 echo "=== no result at all ==="
-comm -23 <(sort "$SWEEP/testdirs.txt") <(awk '{print $1}' "$SWEEP/RESULTS.txt" | sort) \
+# Compare against tasks.txt (one line per test,variant), not testdirs.txt: since variants became
+# separate tasks the two differ, and using the directory list would report every variant of every
+# multi-variant test as missing.
+comm -23 <(awk '{print $1 (NF>1 ? "__" $2 : "")}' "$SWEEP/tasks.txt" | sort) \
+         <(awk '{print $1}' "$SWEEP/RESULTS.txt" | sort) \
     | sed 's/^/  /' | grep . || echo "  none"
 exit $rc
