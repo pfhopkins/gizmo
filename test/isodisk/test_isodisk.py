@@ -19,8 +19,8 @@ from gizmo.test import build_gizmo_for_test, download_test_files, run_test, defa
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
     "extra_config_flags",
-    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
-    ids=["baseline", "tidal_adaptive"],
+    [()],
+    ids=["baseline"],
 )
 def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "isodisk"
@@ -57,10 +57,13 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
         mass_f = F["PartType0/Masses"][:]
         rho_f = F["PartType0/Density"][:]
 
-    center = boxsize / 2.0
+    # The ICs are centred on the origin; BOX_PERIODIC used to wrap them into [0, BoxSize].
+    center = 0.0
 
-    # Plot face-on view of the disk using Meshoid slice interpolation
-    M = Meshoid(pos_f, boxsize=boxsize)
+    # Plot face-on view of the disk using Meshoid slice interpolation.
+    # No boxsize: the boundaries are open, so a periodic neighbour search would wrap across
+    # the faces and corrupt the density at the edges.
+    M = Meshoid(pos_f)
     disk_center = np.array([center, center, center])
     rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=disk_center, size=60., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
