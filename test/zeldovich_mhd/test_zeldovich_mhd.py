@@ -28,25 +28,32 @@ def test_zeldovich_mhd(num_mpi_ranks, num_omp_threads):
 
     # Load initial and final snapshots
     with h5py.File(snaps[1], "r") as F:
-        B0 = F["PartType0/MagneticField"][:]
-        rho0 = F["PartType0/Density"][:]
+        atime = F["Header"].attrs["Time"]
+        B0 = F["PartType0/MagneticField"][:]*atime*atime # need to compensate for adiabatic evolution
+        rho0 = F["PartType0/Density"][:]*atime*atime*atime
     with h5py.File(snaps[-1], "r") as F:
-        Bf = F["PartType0/MagneticField"][:]
-        rho_f = F["PartType0/Density"][:]
-        pos_f = F["PartType0/Coordinates"][:]
+        atime = F["Header"].attrs["Time"]
+        Bf = F["PartType0/MagneticField"][:]*atime*atime # this is z=0
+        rho_f = F["PartType0/Density"][:]*atime*atime*atime
+        pos_f = F["PartType0/Coordinates"][:]*atime
         mass_f = F["PartType0/Masses"][:]
         boxsize = F["Header"].attrs["BoxSize"]
 
     # Plot density and |B| vs x
     x = pos_f[:, 0]
+    x += 0.5
+    x[(x>=1.)]-=1.
+    x -= 0.5
     Bmag = np.sqrt(np.sum(Bf**2, axis=1))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     order = x.argsort()
     axes[0].semilogy(x[order], rho_f[order], ".", markersize=1)
+    axes[0].set_xlim(-0.2,0.2)
     axes[0].set_xlabel("x")
     axes[0].set_ylabel("Density")
     axes[0].set_title("Density")
     axes[1].semilogy(x[order], Bmag[order], ".", markersize=1)
+    axes[1].set_xlim(-0.2,0.2)
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("|B|")
     axes[1].set_title("Magnetic Field")
