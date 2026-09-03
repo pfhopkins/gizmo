@@ -899,6 +899,8 @@ void refresh_old_acceleration_for_tree_opening(void);
 void gravity_note_incomplete_import(int node, unsigned long long id, int ptype, double len, double mass);
 void gravity_note_incomplete_import_count(long long n);
 long long gravity_incomplete_import_count(void);
+void gravity_note_unshippable_import(long long n);
+long long gravity_unshippable_import_count(void);
 int gravity_incomplete_import_example(char *buf, int buflen);
 void gravity_clear_incomplete_import(void);
 void hydro_force(void);

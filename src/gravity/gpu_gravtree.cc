@@ -115,8 +115,10 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
  * Vista nvcc compile (#20096-D: address of a host variable in device code). */
 #if defined(GIZMO_GPU_COMPILER)
 static __managed__ long long g_inv_fterm_aggregate = 0;   /* predicate-OPEN foreign terminal, NOT a leaf -> illegal */
+static __managed__ long long g_unship_aggregate = 0;      /* ... of which the sender could never have shipped */
 #else
 static long long g_inv_fterm_aggregate = 0;
+static long long g_unship_aggregate = 0;
 #endif
 
 /* The device replicas of weight_function_for_weighted_motion_smoothing and
@@ -754,8 +756,10 @@ gpu_gravtree_walk_one(int target,
                 /* Import-completeness guard: counted on device, reported once by the host after the
                  * walk (the host cannot print from inside the kernel, and one incompleteness can
                  * involve many nodes). */
-                if(pred == GRAV_OPEN_NODE && node_kind == GRAV_NODE_FOREIGN_TRUNCATED) {
+                if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
+                                              || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE)) {
                     Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL);
+                    if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {Kokkos::atomic_add(&g_unship_aggregate, 1LL);}
                 }
             }
 
@@ -1574,7 +1578,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
     /* Invariant guard: reset the per-walk counter. */
-    g_inv_fterm_aggregate = 0;
+    g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1615,6 +1619,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * asks of it.  Counted in the kernel and folded into the shared ledger here; gravity_tree()
      * reduces it across ranks and decides collectively whether to rebuild and redo, or stop. */
     gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
+    gravity_note_unshippable_import(g_unship_aggregate);
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
@@ -1938,8 +1943,9 @@ gpu_ewald_walk_one(int target,
                      * a single particle, so refining it would change nothing.  A truncated aggregate
                      * is neither: counted on device, reported once by the host after the walk. */
                     if(!grav_node_is_terminal(node_kind)) { no = tree_soa->nextnode[idx]; continue; }
-                    if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED) {
+                    if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {
                         Kokkos::atomic_add(&g_inv_fterm_aggregate, 1LL);
+                        if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {Kokkos::atomic_add(&g_unship_aggregate, 1LL);}
                     }
                 }
             }
@@ -2045,7 +2051,7 @@ extern "C" int gpu_ewald_walk_primary(void)
 #endif
 
     /* Import-completeness guard: reset the per-walk counter (see the primary walk). */
-    g_inv_fterm_aggregate = 0;
+    g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -2068,6 +2074,7 @@ extern "C" int gpu_ewald_walk_primary(void)
      * the sender shipped as a childless multipole, which this walk has to resolve below, means the
      * import no longer covers what the walk asks of it. */
     gravity_note_incomplete_import_count(g_inv_fterm_aggregate);
+    gravity_note_unshippable_import(g_unship_aggregate);
 
     int nsucceeded = 0;
     for(int a = 0; a < num_active; a++) {

@@ -391,11 +391,18 @@ gravity_walk_attempt:
      * below stays collective. */
     {
         long long shortfall_local = gravity_incomplete_import_count();
-        long long tally[2] = {shortfall_local, (shortfall_local > 0) ? 1 : 0}, total[2] = {0, 0};
-        MPI_Allreduce(tally, total, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long unshippable_local = gravity_unshippable_import_count();
+        long long tally[3] = {shortfall_local, (shortfall_local > 0) ? 1 : 0, unshippable_local};
+        long long total[3] = {0, 0, 0};
+        MPI_Allreduce(tally, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if(total[0] > 0)
         {
-            int repairing = (gravity_let_repair_attempts < gravity_let_repair_max);
+            /* A shortfall is worth a rebuild only if a rebuild could answer it.  Where the walk
+             * opened a subtree the sender never owned, the import is short for a topological
+             * reason: the same pack against current positions reaches the same conclusion, so the
+             * repair would cost a full tree and exchange and then stop here anyway.  Say so at the
+             * first pass instead of at the second. */
+            int repairing = (gravity_let_repair_attempts < gravity_let_repair_max) && (total[2] == 0);
             /* One line for the whole repair, not one per rank: the decision is collective and every
              * rank that saw a shortfall would otherwise say the same thing about it.  Pick the
              * lowest-numbered rank that actually has an example -- a rank whose shortfall came only
@@ -415,6 +422,14 @@ gravity_walk_attempt:
                            "longer carries.%s%s Rebuilding the tree and redoing this evaluation against it. Frequent "
                            "repairs mean the tree is being reused too long -- lower TreeDomainUpdateFrequency.\n",
                            total[0], total[1], NTask, example[0] ? " First case: " : "", example);
+                } else if(total[2] > 0) {
+                    printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, "
+                           "on %lld of %d ranks, and %lld of them are subtrees the sending rank never owned: every "
+                           "child was a pseudo-particle or another rank's foreign node, so no rank could have "
+                           "shipped them whole.%s%s Rebuilding would reproduce that exactly, so it is not attempted. "
+                           "Reaching this means a target opens a node whose contents live on a third rank, which "
+                           "the one-shot import does not express. Stopping.\n",
+                           total[0], total[1], NTask, total[2], example[0] ? " First case: " : "", example);
                 } else {
                     printf("The gravity walk still needed to descend %lld imported node(s) that arrived without "
                            "children, on %lld of %d ranks, after the tree and its import were rebuilt against the "
@@ -432,7 +447,7 @@ gravity_walk_attempt:
                  * same reduced value, so the poll is symmetric, and the finalization below would
                  * otherwise run its in-place mutation of GravAccel, the potential and the RT fields
                  * over a pass that has just been declared not computable. */
-                gizmo_request_controlled_stop(90000087, "gravtree: the imported tree did not carry the structure the walk resolved, and rebuilding it did not help",
+                gizmo_request_controlled_stop(90000087, "gravtree: the imported tree did not carry the structure the walk resolved",
                                               __FILE__, __LINE__, __FUNCTION__);
                 gizmo_exit_bad_stop_if_requested("gravtree:let_repair_exhausted");
             }

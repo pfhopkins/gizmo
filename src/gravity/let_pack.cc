@@ -232,6 +232,11 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
  * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf loses its coverage
  * (a real under-import hazard) -> LOUD count + collective controlled stop in let_run_exchange.
  * ---------------------------------------------------------------------- */
+/* Malformed singletons found while packing (a one-particle node whose child is not a particle):
+ * local tree corruption, reduced and reported collectively at the end of the exchange. */
+static long long g_let_malformed_singleton = 0;
+static int g_let_malformed_singleton_first = -1;
+
 static struct LETCoverLeaf *g_my_clusters = NULL;
 static int g_my_clusters_n = 0, g_my_clusters_cap = 0;
 static struct LETCoverLeaf *g_cluster_all = NULL;
@@ -1093,10 +1098,14 @@ static void pack_recurse(int no, int sib_terminator,
         }
         else
         {
-            printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); "
-                   "shipping as a truncated aggregate (receiver guard will surface it).\n", no, p, ThisTask);
-            fflush(stdout);
-            w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;   /* not a real leaf, and not descendable */
+            /* A one-particle node whose child is not a particle is a malformed local tree, not an
+             * import question: no tag the receiver could carry would render it meaningful, and the
+             * receiver would only be re-deriving what the sender already knows.  Count it and let
+             * the collective check at the end of the exchange stop every rank together, which is
+             * how this file already handles the other tree-corruption case. */
+            g_let_malformed_singleton++;
+            if(g_let_malformed_singleton_first < 0) {g_let_malformed_singleton_first = no;}
+            w->leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;   /* not a real leaf, and not descendable */
         }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
         return;  /* no children to recurse into */
@@ -1211,7 +1220,7 @@ static void pack_recurse(int no, int sib_terminator,
          * stays LET_WIRE_EXIT and there is nothing to descend into.  Same terminal status as the
          * pruned case above, reached by a different route -- tag it the same way.  Re-fetch by index:
          * grow_wire_buf may have moved the buffer during the child recursion. */
-        (*buf)[my_idx].leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
+        (*buf)[my_idx].leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;
     }
 }
 
@@ -1995,6 +2004,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
+    g_let_malformed_singleton = 0; g_let_malformed_singleton_first = -1;
 
     /* One collective, once per build: the horizon the import is pruned against. */
     let_compute_tree_lifetime();
@@ -2125,6 +2135,18 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * merely drifted under a FOREIGN topleaf is NOT unbucketable -- it is handled above as a drift-orphan
      * cover extension. This guard is the real-corruption backstop, NOT a fold-into-every-leaf downgrade. */
     {
+        long long malformed_max = 0;
+        MPI_Allreduce(&g_let_malformed_singleton, &malformed_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(malformed_max > 0)
+        {
+            if(g_let_malformed_singleton > 0)
+                printf("LET pack: rank=%d found %lld single-particle node(s) (first node index %d) whose "
+                       "child is not a particle -- the local tree is malformed. Stopping.\n",
+                       ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
+            fflush(stdout);
+            endrun(90000093);
+        }
+
         long long unbuck_max = 0;
         MPI_Allreduce(&g_let_unbucketable, &unbuck_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
         if(unbuck_max > 0)

@@ -1444,6 +1444,10 @@ void force_add_element_to_tree(int iparent, int ichild)
  * rebuilding the tree and redoing the evaluation, or stopping.  The host walks also keep the first
  * case as an example; the device walks can only count, so an example is not guaranteed. */
 static long long IncompleteImportCount = 0;
+/* Counted separately because it answers a different question: not "is the import short" but "can a
+ * rebuild fix it".  An essential subtree whose children the sender never owned is short for a
+ * topological reason, so rebuilding reproduces it and the repair would only burn a build. */
+static long long UnshippableImportCount = 0;
 static int    IncompleteImportNode = -1, IncompleteImportType = -1;
 static int    IncompleteImportHaveExample = 0;
 static unsigned long long IncompleteImportID = 0;
@@ -1477,6 +1481,20 @@ void gravity_note_incomplete_import_count(long long n)
     }
 }
 
+/* For both host and device walks: how many of the shortfalls were of the unrepairable kind. */
+void gravity_note_unshippable_import(long long n)
+{
+    if(n <= 0) {return;}
+#ifdef _OPENMP
+#pragma omp critical(_incomplete_import_)
+#endif
+    {
+        UnshippableImportCount += n;
+    }
+}
+
+long long gravity_unshippable_import_count(void) {return UnshippableImportCount;}
+
 long long gravity_incomplete_import_count(void) {return IncompleteImportCount;}
 
 /* One example of what this rank could not descend, for the single line the caller prints.  Returns
@@ -1493,6 +1511,7 @@ int gravity_incomplete_import_example(char *buf, int buflen)
 
 void gravity_clear_incomplete_import(void)
 {
+    UnshippableImportCount = 0;
     IncompleteImportCount = 0;
     IncompleteImportHaveExample = 0;
 }
@@ -1928,10 +1947,12 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                      * node per target from inside the threaded walk, and endrun() only REQUESTS a stop
                      * and returns, so printing here would bury the run in interleaved lines.  The count
                      * is reported once and drained after the walk (gravtree.cc). */
-                    if(pred == GRAV_OPEN_NODE && node_kind == GRAV_NODE_FOREIGN_TRUNCATED)
+                    if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
+                                                  || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE))
                     {
                         gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, ptype,
                                                        (double) nop->len, (double) nop->u.d.mass);
+                        if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {gravity_note_unshippable_import(1);}
                     }
                 }
 
@@ -2474,10 +2495,11 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                          * reported once and drained after the walk (gravtree.cc), for the same
                          * reason as the primary walk's, this one being threaded over targets too. */
                         if(!grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
-                        if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED)
+                        if(node_kind == GRAV_NODE_FOREIGN_TRUNCATED || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE)
                         {
                             gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, P[target].Type,
                                                            (double) nop->len, (double) nop->u.d.mass);
+                            if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {gravity_note_unshippable_import(1);}
                         }
                     }
                 }

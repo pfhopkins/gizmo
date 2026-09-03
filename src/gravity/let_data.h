@@ -42,13 +42,26 @@
  * for every topleaf. */
 #define LET_LEAF_TAG_NODE                0  /* interior node; its children were shipped -> descendable */
 #define LET_LEAF_TAG_REAL_LEAF           1  /* single-particle leaf; terminal, consume with leaf semantics */
-#define LET_LEAF_TAG_TRUNCATED_AGGREGATE 2  /* aggregate shipped multipole-only; terminal, NOT descendable */
+#define LET_LEAF_TAG_TRUNCATED_AGGREGATE 2  /* aggregate shipped multipole-only because the sender's cover
+                                             * closed on it; terminal, NOT descendable.  A rebuild against
+                                             * current positions re-runs that cover test, so a walk that
+                                             * opens one of these is asking for a tree that is merely
+                                             * stale -- repairable. */
+#define LET_LEAF_TAG_UNSHIPPABLE_SUBTREE 3  /* aggregate the sender found ESSENTIAL but could not ship
+                                             * whole: every child was a pseudo-particle or another rank's
+                                             * foreign node, so the children are not this sender's to
+                                             * send.  Terminal like the above, and NOT repairable -- the
+                                             * condition is topological, so rebuilding reproduces it
+                                             * exactly.  The two must not share a tag: the repair would
+                                             * spend a full tree+LET rebuild and then stop anyway. */
 
 typedef enum {
     GRAV_NODE_LOCAL = 0,        /* not imported: ordinary local tree node */
     GRAV_NODE_FOREIGN_OPENABLE, /* imported with its children -> may be descended */
     GRAV_NODE_FOREIGN_LEAF,     /* imported single-particle leaf: terminal, leaf semantics */
-    GRAV_NODE_FOREIGN_TRUNCATED /* imported multipole-only: terminal, and opening it means the import is short */
+    GRAV_NODE_FOREIGN_TRUNCATED,/* imported multipole-only: terminal, and opening it means the import is short */
+    GRAV_NODE_FOREIGN_UNSHIPPABLE /* terminal, and opening it means the import is short in a way no
+                                   * rebuild can fix -- the sender never owned the children */
 } grav_node_kind_t;
 
 /* Classify a node ONCE, before any decision that might descend it.  Both walks call this ahead of
@@ -61,6 +74,7 @@ grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode)
 {
     if(!in_foreign) {return GRAV_NODE_LOCAL;}
     if(leaf_tag == LET_LEAF_TAG_REAL_LEAF) {return GRAV_NODE_FOREIGN_LEAF;}
+    if(leaf_tag == LET_LEAF_TAG_UNSHIPPABLE_SUBTREE) {return GRAV_NODE_FOREIGN_UNSHIPPABLE;}
     if(leaf_tag == LET_LEAF_TAG_TRUNCATED_AGGREGATE || nextnode < 0) {return GRAV_NODE_FOREIGN_TRUNCATED;}
     return GRAV_NODE_FOREIGN_OPENABLE;
 }
@@ -70,7 +84,8 @@ grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode)
 KOKKOS_INLINE_FUNCTION
 int grav_node_is_terminal(grav_node_kind_t k)
 {
-    return (k == GRAV_NODE_FOREIGN_LEAF || k == GRAV_NODE_FOREIGN_TRUNCATED);
+    return (k == GRAV_NODE_FOREIGN_LEAF || k == GRAV_NODE_FOREIGN_TRUNCATED
+            || k == GRAV_NODE_FOREIGN_UNSHIPPABLE);
 }
 
 /* ----------------------------------------------------------------------
