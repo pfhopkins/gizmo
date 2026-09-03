@@ -76,7 +76,7 @@
  *      semantic change.
  *   2. Add typed wrappers: ghost_exchange_for_hydro_density(),
  *      ghost_exchange_for_sinks(), ghost_exchange_for_stellar_fb().
- *   3. Replace one caller at a time in lifecycle.h + galaxy_sf/* + sinks/*.
+ *   3. Replace one caller at a time in lifecycle.h and under galaxy_sf and sinks.
  *   4. Each replacement validated via single-rank smoke + 2-rank tiny-N
  *      perf check (target: hydro ghost count drops 50000→<1000).
  *   5. Once all hydro callers migrated, the all-types path is only used

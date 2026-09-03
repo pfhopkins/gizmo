@@ -83,7 +83,7 @@ static constexpr uint64_t AGS_FORCE_RNG_SALT = gizmo_loop_rng_salt("ags_force");
 /* ============================================================================
  * Per-pair physics types. PascalCase Spec-level typedefs re-export them.
  * Kept compatible with the (LocalT, KernelT, OutT) templates in
- * sidm/*_flux_functions.h so the SSOT flux bodies plug in unchanged.
+ * the sidm flux_functions headers so the SSOT flux bodies plug in unchanged.
  * ========================================================================== */
 
 /* Per-active local fill, mirrors the legacy ags_force_local_t in
