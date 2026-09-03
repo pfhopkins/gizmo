@@ -263,11 +263,6 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     # results that get amplified by the divergence-cleaning feedback loop.
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
-    # Silence Kokkos "OMP_PROC_BIND not set" warnings.  `false` is the documented
-    # unit-testing value; for production runs on a managed cluster the launcher
-    # (e.g. ibrun on TACC) pins ranks to cpusets, so binding is already handled.
-    environ.setdefault("OMP_PROC_BIND", "false")
-    environ.setdefault("OMP_PLACES", "threads")
     paramsfile = f"{test_name}.params"
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
@@ -276,14 +271,51 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     # run we have validated (build_kokkos_rusty.sh + run_merge_tests_genoa.sh, Genoa nodes)
     # went through mpirun, and switching launcher would be an untested change to the one
     # configuration the suite is currently green on.
-    cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus"]
+    cmd = ["mpirun", "-np", str(num_mpi_ranks)]
     if num_openmp_threads > 0:
-        cmd += ["--bind-to", "none"]
+        # Give each rank its own set of num_openmp_threads cores and keep that rank's threads
+        # inside it. The obvious alternative, --bind-to none, leaves every rank's affinity mask
+        # covering the whole node and hands placement to the OS; measured on test/mri at 48x2 on
+        # a Genoa node, same binary back to back, that costs 34% (0.1260 vs 0.0832 s/step). It is
+        # also why mri missed the sweep's 5400s cap at 5807s -- bound it projects to ~3830s.
+        #
+        # PE=n needs ranks*threads <= cores, which the defaults satisfy exactly
+        # (default_mpi_ranks() is cpu_count()/2 and default_omp_threads() is 2). A test asking
+        # for more than the machine has would fail to LAUNCH rather than merely run slowly, so
+        # fall back to the unbound flags there.
+        #
+        # OMP_PROC_BIND is assigned, not setdefault: callers export it (the sweep runner sets
+        # `false` to avoid rank stacking under --bind-to none), and that value would otherwise
+        # win and undo the placement this branch is buying.
+        if num_mpi_ranks * num_openmp_threads <= (cpu_count() or 1):
+            # No --use-hwthread-cpus here: OpenMPI refuses PE=n together with it ("a request
+            # for multiple cpus-per-proc was given, but a conflicting binding policy was
+            # specified ... type of cpus: use-hwthreads-as-cpus ... binding policy given:
+            # CORE"). The 34% was measured without it too, so this is the geometry that was
+            # actually timed rather than one assembled from it.
+            cmd += ["--map-by", f"slot:PE={num_openmp_threads}", "--bind-to", "core"]
+            environ["OMP_PROC_BIND"] = "close"
+            environ["OMP_PLACES"] = "cores"
+        else:
+            cmd += ["--use-hwthread-cpus", "--bind-to", "none"]
+            environ["OMP_PROC_BIND"] = "false"
+            environ["OMP_PLACES"] = "threads"
+    else:
+        cmd += ["--use-hwthread-cpus"]
+        # Silence Kokkos "OMP_PROC_BIND not set" warnings. `false` is the documented
+        # unit-testing value; single-threaded ranks need no placement of their own.
+        environ.setdefault("OMP_PROC_BIND", "false")
+        environ.setdefault("OMP_PLACES", "threads")
     cmd += ["./GIZMO", paramsfile, "0"]
 
     effective_timeout = _resolve_test_timeout(timeout)
     outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"
     with open(outfile, "w") as out, open(errfile, "w") as err:
+        # Record how the run was actually launched. Rank/thread counts and binding policy are
+        # decided here from cpu_count(), so without this the only evidence of the geometry a
+        # given result came from is gone the moment the process exits.
+        out.write("# launch: " + " ".join(cmd) + "\n")
+        out.flush()
         try:
             proc = subprocess.run(cmd, stdout=out, stderr=err, timeout=effective_timeout, check=False)
         except subprocess.TimeoutExpired:
