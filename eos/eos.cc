@@ -240,6 +240,20 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
 }
 
 
+/* Calculates the coefficient for gas-dust collisional heat transfer, such that LambdaDust = gas_dust_heating_coeff * (T-Tdust) in erg cm^3 s^-1.
+    Lives here rather than in cooling.cc, whose contents are entirely inside #ifdef COOLING: RT_INFRARED calls this from rt_utilities.cc under no
+    such guard, so an RT_INFRARED build without COOLING failed to link. It is a closed-form fit needing only the dust-to-metals ratio above. */
+double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double Z_sol=1;
+#ifdef METALS
+    if(i>=0) {Z_sol = pp[i].Metallicity[0]/All.SolarAbundances[0];}
+#endif
+    double fdust = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell); // accounting for dust destruction; we avoid calling the function for this because it can create a circular dependency
+    return 1.116e-32 * sqrt(T)*(1.-0.8*exp(-75./T)) * Z_sol * fdust;  // Meijerink & Spaans 2005; Hollenbach & McKee 1979,1989. Assumes 10 Angstrom minimum grain size.
+}
+
+
 /* return an estimate of the Hydrogen molecular fraction of gas, intended for simulations of e.g. molecular clouds, galaxies, and star formation */
 double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
 {

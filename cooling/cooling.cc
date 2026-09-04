@@ -2234,16 +2234,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 
 
 
-/* Calculates the coefficient for gas-dust collisional heat transfer, such that LambdaDust = gas_dust_heating_coeff * (T-Tdust) in erg cm^3 s^-1. */
-double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell) 
-{
-    double Z_sol=1;
-#ifdef METALS
-    if(i>=0) {Z_sol = pp[i].Metallicity[0]/All.SolarAbundances[0];}
-#endif
-    double fdust = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell); // accounting for dust destruction; we avoid calling the function for this because it can create a circular dependency
-    return 1.116e-32 * sqrt(T)*(1.-0.8*exp(-75./T)) * Z_sol * fdust;  // Meijerink & Spaans 2005; Hollenbach & McKee 1979,1989. Assumes 10 Angstrom minimum grain size.
-}
+/* gas_dust_heating_coeff() moved to eos/eos.cc: RT_INFRARED calls it without requiring COOLING. */
 
 /* Computes the normalized FUV flux in Habing units G0 
 
