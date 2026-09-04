@@ -1732,7 +1732,6 @@ struct gx_recv_leaf_t {
 struct GxRecvEmitPairs {
     const struct gx_recv_leaf_t *leaves;
     unsigned int supply_mask;
-    int          num_local;
     int         *out;
     int          cap;
     int          n_found;
@@ -1740,7 +1739,6 @@ struct GxRecvEmitPairs {
     KOKKOS_INLINE_FUNCTION
     void visit(int j, double qx, double qy, double qz, double reach)
     {
-        if(j >= num_local) {return;}   /* appended ghosts are not local supply */
         const struct gx_recv_leaf_t &lf = leaves[j];
         if(lf.type < 0 || lf.pool < 0) {return;}
         if(!(supply_mask & (1u << lf.type))) {return;}
@@ -1775,6 +1773,7 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     tree.nextnode_aux   = nextnode_aux;
     tree.node_base      = tree_base;
     tree.particle_slots = tree_slots;
+    tree.local_particle_slots = num_local;
     tree.node_capacity  = node_capacity;
     tree.foreign_base   = foreign_base;
     tree.pseudo_start   = pseudo_start;
@@ -1782,7 +1781,6 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     GxRecvEmitPairs emit;
     emit.leaves      = leaves;
     emit.supply_mask = supply_mask;
-    emit.num_local   = num_local;
     emit.out         = out;
     emit.cap         = cap;
     emit.n_found     = 0;
@@ -2181,7 +2179,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * same thing.  Falling back would only hide a malformed tree: the host walk
      * would meet it too. */
     if(anomaly) {
-        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base; the tree is malformed\n",
+        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base, or was handed an incompletely filled tree view; either way the walk cannot answer\n",
                ThisTask);
         fflush(stdout);
         endrun(90001024);
