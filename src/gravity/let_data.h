@@ -244,6 +244,13 @@ struct LETNodeWire {
                             * that injects momentum under adaptive softening.  Carry the pure value. */
     int     leaf_type;     /* source particle Type -> ptype_sec */
     int     _pad1;         /* explicit tail pad to keep the record 8B-aligned */
+#ifdef HERMITE_INTEGRATION
+    MyIDType leaf_id;      /* source particle ID -> key into the per-Hermite-pass ghost source
+                            * table (HermiteGhostTab). A foreign leaf carries no Old* state, so
+                            * the walk cannot re-predict it the way it does a local inactive
+                            * source; the ID lets it look up the owner-side predicted state
+                            * instead. 0 for non-leaf records. */
+#endif
 };
 #ifdef __cplusplus
 #include <cstddef>
@@ -284,6 +291,40 @@ extern int     *ForeignLeafTag;   /* one of LET_LEAF_TAG_* above: NODE (descenda
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
+#ifdef HERMITE_INTEGRATION
+extern MyIDType *ForeignLeafID;   /* source particle ID for a foreign leaf (-> HermiteGhostTab key) */
+#endif
+
+/* ----------------------------------------------------------------------
+ * Per-step refresh of imported foreign moments.
+ *
+ * The LET ships a build-time snapshot; between rebuilds the OWNER's copies of the same
+ * physical nodes are continuously maintained (drifted, kick-updated vs) while the imports
+ * only drift with pack-time vs and can never be opened deeper than shipped. Measured on
+ * hernquist (32k, one crossing): np=2 drifts 45x worse than np=1 and secularly, at ANY
+ * rebuild cadence at np=1 -- the staleness is specifically the imported state. The refresh
+ * re-sends (s, vs) [+ sink moments] for every already-shipped record each step, keyed by
+ * nothing: both sides replay the exchange's flat wire ORDER (sender retains remote_id per
+ * record; receiver retains per-sender slot ranges). Granularity stays frozen -- that is the
+ * remaining "owner-continuation" channel, not addressed here.
+ * ---------------------------------------------------------------------- */
+struct LETRefreshRec {
+    MyFloat s[3];        /* node CoM (or particle Pos for a synthesized leaf), drifted to now */
+    MyFloat vs[3];       /* node mass-weighted velocity (or particle Vel) */
+#ifdef SINK_NODE_MOTION_TRACKED
+    MyFloat sink_pos[3];
+    MyFloat sink_vel[3];
+#endif
+};
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void let_refresh_moments(void);     /* collective; no-op until a valid exchange exists */
+void let_refresh_invalidate(void);  /* call when the tree/slots die (force_treefree) */
+#ifdef __cplusplus
+}
+#endif
 
 /* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
  * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to

@@ -397,10 +397,15 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
             out.accreted_Sink_Mass_reservoir += (double)neighbor_particle.Sink_Mass_Reservoir;
 #endif
 #ifdef SINK_WIND_SPAWN
-#ifdef SINK_ALPHADISK_ACCRETION
-            out.accreted_Sink_Mass_reservoir += (double)neighbor_particle.unspawned_wind_mass;
+#ifdef SINGLE_STAR_FB_JETS
+            const double swallowed_unspawned = (double)neighbor_particle.unspawned_wind_mass + (double)neighbor_particle.unspawned_jet_mass; // fold the swallowed sink's jet reservoir back in too, so a merger can't strand or lose it
 #else
-            out.accreted_Sink_Mass          += (double)neighbor_particle.unspawned_wind_mass;
+            const double swallowed_unspawned = (double)neighbor_particle.unspawned_wind_mass;
+#endif
+#ifdef SINK_ALPHADISK_ACCRETION
+            out.accreted_Sink_Mass_reservoir += swallowed_unspawned;
+#else
+            out.accreted_Sink_Mass          += swallowed_unspawned;
 #endif
 #endif
 #ifdef SINK_COUNTPROGS

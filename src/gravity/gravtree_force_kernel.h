@@ -37,6 +37,49 @@
 /* Length of the TreePM short-range truncation tables (forcetree.cc NTAB). */
 #define GRAVTREE_SHORTRANGE_NTAB 1000
 
+#ifdef HERMITE_INTEGRATION
+/* Ghost-source state for the Hermite-only passes.
+ *
+ * A LOCAL inactive Hermite source is re-predicted from its Old* state in the walk (forcetree.cc
+ * single-particle branch / the gpu_hermite_src_pred_t prefill). A FOREIGN leaf has no Old* state
+ * on this rank -- the LET ships a build-time moment snapshot, drifted by force_drift_node -- so
+ * during a Hermite pass a ghost source is seen at the wrong position AND, worse, with the
+ * mass-weighted node vs standing in for its velocity: exactly the jerk corruption that made
+ * fewbody fail 48/48 at 2 ranks while passing at 1.
+ *
+ * The fix mirrors what upstream's export-based evaluation gets for free (a target exported to the
+ * source's owner is evaluated against LIVE owner data): each Hermite pass, every rank allgathers
+ * {ID, pos, vel} for its local HERMITE_INTEGRATION-bitmask particles with OWNER-SIDE semantics --
+ * live drifted state for active/ineligible sources, the Old*-prediction for inactive eligible
+ * ones. The walks then override a foreign Hermite-type leaf's (dr, dv) by ID lookup. Sorted by
+ * ID; consulted only when HermiteOnlyFlag is set; the KDK pass is untouched (measured
+ * bit-identical to direct summation already). */
+struct hermite_ghost_entry {
+    MyIDType id;
+    Vec3<MyFloat> pos;
+    Vec3<MyFloat> vel;
+};
+
+/* Binary search by ID. Returns the entry index or -1. Device-safe: plain code over a
+ * SharedSpace array passed by pointer. */
+KOKKOS_INLINE_FUNCTION int hermite_ghost_lookup(const struct hermite_ghost_entry *tab, int n, MyIDType id)
+{
+    int lo = 0, hi = n - 1;
+    while(lo <= hi)
+    {
+        int mid = lo + ((hi - lo) >> 1);
+        if(tab[mid].id == id) {return mid;}
+        if(tab[mid].id < id) {lo = mid + 1;} else {hi = mid - 1;}
+    }
+    return -1;
+}
+
+/* Host globals (defined in gravtree.cc): the current pass's table. The CPU walk reads them
+ * directly; the GPU walk receives a SharedSpace copy by kernel parameter, never these. */
+extern struct hermite_ghost_entry *HermiteGhostTab;
+extern int NHermiteGhost;
+#endif
+
 
 /* ------------------------------------------------------------------------------------------
  * Shared source/target formula helpers (single home for bodies that previously existed as
@@ -956,7 +999,10 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
         }
 #ifdef SINGLE_STAR_TIMESTEPPING
     Vec3<double> sink_dv = src.motion.vel - target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.sink_mass+target.pmass, r2soft;
-    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
+    /* sink_r2, not r2: these timestep limiters want the distance to the sink itself, not to the
+     * node's center of mass. The particle-source variant above uses r2 correctly, because there
+     * r2 IS the sink distance. */
+    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft;
     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     if(target.ptype == 0) {

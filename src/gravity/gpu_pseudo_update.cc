@@ -232,7 +232,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
                 soa->sink_pos[k]  = {(MyGravFloat) Nodes[no].sink_pos[0],
                                       (MyGravFloat) Nodes[no].sink_pos[1],
                                       (MyGravFloat) Nodes[no].sink_pos[2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                 soa->N_SINK[k]    = Nodes[no].N_SINK;
                 soa->sink_vel[k]  = {(MyGravFloat) Nodes[no].sink_vel[0],
                                       (MyGravFloat) Nodes[no].sink_vel[1],
@@ -307,7 +307,7 @@ static moment_node_accum<MyFloat> topnode_child_accum_(const struct gpu_gravity_
 #ifdef SINK_CALC_DISTANCES
     c.sink_mass = (MyFloat) soa->sink_mass[pk];
     c.sink_pos  = Vec3<MyFloat>{(MyFloat)soa->sink_pos[pk][0], (MyFloat)soa->sink_pos[pk][1], (MyFloat)soa->sink_pos[pk][2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     c.N_SINK   = soa->N_SINK[pk];
     c.sink_vel = Vec3<MyFloat>{(MyFloat)soa->sink_vel[pk][0], (MyFloat)soa->sink_vel[pk][1], (MyFloat)soa->sink_vel[pk][2]};
 #endif
@@ -374,7 +374,7 @@ static void topnode_resum_node_(int no_abs,
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass = 0;
     Vec3<MyFloat> sink_pos = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Vec3<MyFloat> sink_vel = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
@@ -433,7 +433,7 @@ static void topnode_resum_node_(int no_abs,
 #ifdef SINK_CALC_DISTANCES
     acc_ref.sink_mass = &sink_mass;
     acc_ref.sink_pos  = &sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     acc_ref.N_SINK   = &N_SINK;
     acc_ref.sink_vel = &sink_vel;
 #endif
@@ -535,7 +535,7 @@ static void topnode_resum_node_(int no_abs,
     soa->sink_mass[no_k] = (MyGravFloat) sink_mass;
     if(sink_mass > 0) {
         soa->sink_pos[no_k] = {(MyGravFloat)sink_pos[0], (MyGravFloat)sink_pos[1], (MyGravFloat)sink_pos[2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         soa->N_SINK[no_k] = N_SINK;
         soa->sink_vel[no_k] = {(MyGravFloat)sink_vel[0], (MyGravFloat)sink_vel[1], (MyGravFloat)sink_vel[2]};
 #ifdef SPECIAL_POINT_MOTION
@@ -599,7 +599,7 @@ static void topnode_resum_node_(int no_abs,
     Nodes[no_abs].sink_mass = sink_mass;
     if(sink_mass > 0) {
         Nodes[no_abs].sink_pos = sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no_abs].N_SINK   = N_SINK;
         Nodes[no_abs].sink_vel = sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -752,7 +752,7 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         soa->sink_pos[k]  = {(MyGravFloat) Nodes[no].sink_pos[0],
                               (MyGravFloat) Nodes[no].sink_pos[1],
                               (MyGravFloat) Nodes[no].sink_pos[2]};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         soa->N_SINK[k]    = Nodes[no].N_SINK;
         soa->sink_vel[k]  = {(MyGravFloat) Nodes[no].sink_vel[0],
                               (MyGravFloat) Nodes[no].sink_vel[1],

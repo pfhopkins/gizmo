@@ -173,6 +173,9 @@ struct TopNodeKick
 #ifdef DM_SCALARFIELD_SCREENING
   MyDouble dp_dm[3];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  MyDouble sink_dp[3];
+#endif
   MyFloat vmax;
 };
 
@@ -184,6 +187,9 @@ inline void kick_accumulate(struct TopNodeKick& into, const struct TopNodeKick& 
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
   for(int k = 0; k < 3; k++) {into.dp_dm[k] += from.dp_dm[k];}
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  for(int k = 0; k < 3; k++) {into.sink_dp[k] += from.sink_dp[k];}
 #endif
   if(into.vmax < from.vmax) {into.vmax = from.vmax;}
 }
@@ -280,6 +286,11 @@ void force_finish_kick_nodes(void)
         rec_loc[i].kick.dp_dm[1] = Extnodes[no].dp_dm[1];
         rec_loc[i].kick.dp_dm[2] = Extnodes[no].dp_dm[2];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        rec_loc[i].kick.sink_dp[0] = Extnodes[no].sink_dp[0];
+        rec_loc[i].kick.sink_dp[1] = Extnodes[no].sink_dp[1];
+        rec_loc[i].kick.sink_dp[2] = Extnodes[no].sink_dp[2];
+#endif
         rec_loc[i].kick.vmax = Extnodes[no].vmax;
       }
     /* byte counts/offsets for the fixed-size records (reuse counts_dp/offset_dp;
@@ -365,6 +376,11 @@ void force_finish_kick_nodes(void)
         Extnodes[no].dp_dm[1] += acc[k].dp_dm[1];
         Extnodes[no].dp_dm[2] += acc[k].dp_dm[2];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp[0] += acc[k].sink_dp[0];
+        Extnodes[no].sink_dp[1] += acc[k].sink_dp[1];
+        Extnodes[no].sink_dp[2] += acc[k].sink_dp[2];
+#endif
         if(Extnodes[no].vmax < acc[k].vmax)
           Extnodes[no].vmax = acc[k].vmax;
         Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
@@ -431,6 +447,15 @@ void force_drift_node(int no, integertime time1)
       Extnodes[no].vs_dm += fac_dm * Extnodes[no].dp_dm;
       Extnodes[no].dp_dm = {};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+      /* sink_vel lives in Nodes rather than Extnodes, but is updated exactly as vs/vs_dm are.
+         Normalised by sink_mass, not mass: it is the mass-weighted mean velocity of the sinks alone. */
+      {
+          double fac_sink = (Nodes[no].sink_mass > 0) ? (1.0 / Nodes[no].sink_mass) : 0.0;
+          Nodes[no].sink_vel += fac_sink * Extnodes[no].sink_dp;
+          Extnodes[no].sink_dp = {};
+      }
+#endif
       Nodes[no].u.d.bitflags &= (~(1 << BITFLAG_NODEHASBEENKICKED));
     }
 
@@ -442,6 +467,12 @@ void force_drift_node(int no, integertime time1)
 
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    /* else the sink COM stays frozen at its last-treebuild value while the sinks move, and the
+       nearest-sink distance, sink timestep criteria, and (under SINGLE_STAR_DIRECT_GRAVITY) the
+       monopole subtraction all read a stale position on a different clock from u.d.s. */
+    Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
 #endif
 
 

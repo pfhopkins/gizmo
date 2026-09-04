@@ -1105,6 +1105,17 @@ void fof_finish_group_properties(void)
 
 void fof_save_groups(int num)
 {
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+  /* (sub)group positions are written outside fill_write_buffer and are never un-shifted, so a
+   * catalogue saved in a randomized frame would have wrong positions -- refuse rather than emit
+   * it silently. Group-finding for sink/BH seeding never reaches here, and postprocessing runs
+   * have RandomShift==0. */
+  if(All.RandomShift[0] != 0 || All.RandomShift[1] != 0 || All.RandomShift[2] != 0)
+    {
+      if(ThisTask == 0) {printf("FATAL: fof_save_groups() in a RANDOMIZE_GRAVTREE frame (RandomShift=%g,%g,%g): group positions are not un-shifted. Run group-finding in postprocessing on snapshots.\n", All.RandomShift[0], All.RandomShift[1], All.RandomShift[2]);}
+      endrun(561001);
+    }
+#endif
   int i, j, start, lenloc, nprocgroup, primaryTask, groupTask, ngr, totlen;
   long long totNids;
   char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
@@ -1534,6 +1545,9 @@ void fof_make_sink_particles(void)
 #endif
 #ifdef SINK_WIND_SPAWN
         P[import_indices[n]].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+        P[import_indices[n]].unspawned_jet_mass = 0; /* slots are reused, so zero-at-alloc is not enough */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
         P[import_indices[n]].Sink_CountProgs = 1;

@@ -259,7 +259,7 @@ void spawn_sink_wind_feedback(void)
         if((NumPart+n_particles_split+(int)(2.*(SINK_WIND_SPAWN+0.1)) < nmax) && (ptype_can_spawn==1)) // basic condition: particle is a 'spawner' (sink), and code can handle the event safely without crashing.
         {
             int sink_eligible_to_spawn = 0; // flag to check eligibility for spawning
-            if(P[i].unspawned_wind_mass >= (SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)) {sink_eligible_to_spawn=1;} // have 'enough' mass to spawn
+            if(*active_unspawned_mass_ptr(i) >= (SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)) {sink_eligible_to_spawn=1;} // have 'enough' mass to spawn, in whichever reservoir (jet or wind) currently holds the discrete-spawn channel
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
             if(P[i].Type==5) {if((P[i].Mass <= 3.5*P[i].Sink_Formation_Mass) || (P[i].Sink_Mass*UNIT_MASS_IN_SOLAR < 0.01)) {sink_eligible_to_spawn=0;}}  // spawning causes problems in these modules for low-mass sinks, so arbitrarily restrict to this, since it's roughly a criterion on the minimum particle mass. and for <0.01 Msun, in pre-collapse phase, no jets
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
@@ -500,9 +500,53 @@ void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<doubl
 
 
 /*! this code copies what was used in merge_split.c for the gas particle split case */
+/*! Choose the orthonormal basis {jx,jy,jz} shared by every element spawned in one event.
+    jz is the polar/launch axis, so this alone sets the outflow direction for collimated
+    spawning (mode 1). Factored out of sink_spawn_particle_wind_shell so it can be seen
+    and overridden independently of the spawning itself. */
+void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz)
+{
+    jz={0,0,1}; jy={0,1,0}; jx={1,0,0}; /* default coordinate system if we have no other information */
+
+#ifdef JET_DIRECTION_FIXED_Z
+    /* TESTING ONLY: keep the default basis, skipping angular-momentum reorientation and
+       precession, so the launch geometry can be validated against a known axis. Real jets
+       follow the disk/spin axis, so this is not physical for production. */
+    return;
+#endif
+#ifdef SINK_FOLLOW_ACCRETED_ANGMOM  /* use local angular momentum to estimate preferred directions/coordinates for spawning */
+    if(mode==1){ // set up so that the z axis is the angular momentum vector
+#ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK // Jgas stores total angmom in COM frame of sink-gas system; use this for direction
+        double Jtot=P[i].Jgas_in_Kernel.norm_sq();
+        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Jgas_in_Kernel * Jtot;}
+#else
+        double Jtot=P[i].Sink_Specific_AngMom.norm_sq();
+        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Sink_Specific_AngMom * Jtot;}
+#endif
+        Jtot=jz[1]*jz[1]+jz[2]*jz[2]; if(Jtot>0) {Jtot=1/sqrt(Jtot); jy={0, jz[2]*Jtot, -jz[1]*Jtot};} else {jy={0, 1, 0};}
+        jx = cross(jz, jy);
+    }
+#endif
+    if(mode == 3){ // if doing an angular grid, need some fixed coordinates to orient it, but want to switch em up each time to avoid artifacts
+        get_random_orthonormal_basis(P[i].ID_generation, jx, jy, jz);
+    }
+#ifdef SINK_WIND_SPAWN_SET_JET_PRECESSION /* rotate the jet angle according to the explicitly-included precession parameters */
+    double degree = All.Sink_jet_precess_degree, period = All.Sink_jet_precess_period/UNIT_TIME_IN_GYR; Vec3<double> new_dir;
+    new_dir[0]= jx[0]*cos(degree/180.*M_PI)-jx[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jx[1]; new_dir[2]= jx[0]*sin(degree/180.*M_PI)+jx[2]*cos(degree/180.*M_PI);
+    jx[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jx[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jx[2]= new_dir[2];
+
+    new_dir[0]= jy[0]*cos(degree/180.*M_PI)-jy[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jy[1]; new_dir[2]= jy[0]*sin(degree/180.*M_PI)+jy[2]*cos(degree/180.*M_PI);
+    jy[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jy[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jy[2]= new_dir[2];
+
+    new_dir[0]= jz[0]*cos(degree/180.*M_PI)-jz[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jz[1]; new_dir[2]= jz[0]*sin(degree/180.*M_PI)+jz[2]*cos(degree/180.*M_PI);
+    jz[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jz[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jz[2]= new_dir[2];
+#endif
+}
+
 int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_already_spawned )
 {
-    double total_mass_in_winds = P[i].unspawned_wind_mass;
+    double *unspawned_mass_ptr = active_unspawned_mass_ptr(i); // whichever reservoir (jet or wind) currently holds the discrete-spawn channel for this particle
+    double total_mass_in_winds = *unspawned_mass_ptr;
 
     int n_particles_split   = (int) floor( total_mass_in_winds / target_mass_for_wind_spawning(i) ); /* if we set SINK_WIND_SPAWN we presumably wanted to do this in an exactly-conservative manner, which means we want to have an even number here. */
     int k=0, j;   /* j is a particle index bounded by NumPart (int); was 'long' here pre-port — mismatched gizmo_mark_kernel_radius_dirty_indices(const int*) signature, masked by the sink_env1 #error until that was lifted. */
@@ -515,7 +559,8 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             if(P[i].Sink_Mass <= m_relic) { // last batch to be spawned
                 n_particles_split = SINGLE_STAR_FB_SNE_N_EJECTA; // we are going to spawn a bunch of low mass particles to take the last bit of mass away
                 printf("Spawning last SN ejecta of star %llu with %g mass and %d particles \n",(unsigned long long) P[i].ID,total_mass_in_winds,n_particles_split);
-                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c) if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c)
+                if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} // was lost to the end of the comment above, so the sync never ran
 #ifdef SINK_ALPHADISK_ACCRETION
                 P[i].Sink_Mass_Reservoir = 0; // just to be safe
 #endif
@@ -626,34 +671,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 
     // based on the mode we're in, let's pick a fixed orthonormal basis that all spawned elements are aware of
-    Vec3<double> jz={0,0,1},jy={0,1,0},jx={1,0,0};  /* set up a coordinate system [xyz if we don't have any other information */
-#ifdef SINK_FOLLOW_ACCRETED_ANGMOM  /* use local angular momentum to estimate preferred directions/coordinates for spawning */
-    if(mode==1){ // set up so that the z axis is the angular momentum vector
-#ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK // Jgas stores total angmom in COM frame of sink-gas system; use this for direction
-        double Jtot=P[i].Jgas_in_Kernel.norm_sq();
-        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Jgas_in_Kernel * Jtot;}
-#else
-        double Jtot=P[i].Sink_Specific_AngMom.norm_sq();
-        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Sink_Specific_AngMom * Jtot;}
-#endif
-        Jtot=jz[1]*jz[1]+jz[2]*jz[2]; if(Jtot>0) {Jtot=1/sqrt(Jtot); jy={0, jz[2]*Jtot, -jz[1]*Jtot};} else {jy={0, 1, 0};}
-        jx = cross(jz, jy);
-    }
-#endif
-    if(mode == 3){ // if doing an angular grid, need some fixed coordinates to orient it, but want to switch em up each time to avoid artifacts
-        get_random_orthonormal_basis(P[i].ID_generation, jx, jy, jz);
-    }
-#ifdef SINK_WIND_SPAWN_SET_JET_PRECESSION /* rotate the jet angle according to the explicitly-included precession parameters */
-    double degree = All.Sink_jet_precess_degree, period = All.Sink_jet_precess_period/UNIT_TIME_IN_GYR; Vec3<double> new_dir;
-    new_dir[0]= jx[0]*cos(degree/180.*M_PI)-jx[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jx[1]; new_dir[2]= jx[0]*sin(degree/180.*M_PI)+jx[2]*cos(degree/180.*M_PI);
-    jx[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jx[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jx[2]= new_dir[2];
-
-    new_dir[0]= jy[0]*cos(degree/180.*M_PI)-jy[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jy[1]; new_dir[2]= jy[0]*sin(degree/180.*M_PI)+jy[2]*cos(degree/180.*M_PI);
-    jy[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jy[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jy[2]= new_dir[2];
-
-    new_dir[0]= jz[0]*cos(degree/180.*M_PI)-jz[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jz[1]; new_dir[2]= jz[0]*sin(degree/180.*M_PI)+jz[2]*cos(degree/180.*M_PI);
-    jz[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jz[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jz[2]= new_dir[2];
-#endif    
+    Vec3<double> jz,jy,jx; set_spawn_orthonormal_basis(i, mode, jx, jy, jz);
 
     /* create the  new particles to be added to the end of the particle list :
         i is the sink particle tag, j is the new "spawed" particle's location, dummy_cell_i_to_clone is a dummy gas cell's tag to be used to init the wind particle */
@@ -803,7 +821,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
         P[i].dp -= P[j].Mass * P[i].Vel; /* track momentum change from mass loss for tree node update */
         P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */ if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
-        P[i].unspawned_wind_mass -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass */
+        *unspawned_mass_ptr -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass (jet or wind reservoir, whichever is active) */
 
 #if defined(METALS) && (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) || defined(SNE_NONSINK_SPAWN) || (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
         double yields[NUM_METAL_SPECIES]={0}; get_jet_yields(yields,i); // default to jet-type
@@ -897,6 +915,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         CellP[j].InternalEnergyPred = CellP[j].InternalEnergy;
         CellP[j].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; CellP[j].Gamma = GAMMA_DEFAULT; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
         CellP[j].Temperature = CellP[j].gas_temperature_from_u(CellP[j].InternalEnergy);
+#ifdef GIZMO_EOS_ANCHOR_MIN
+        CellP[j].u_anchor = CellP[j].InternalEnergy;
+#endif
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);
@@ -918,7 +939,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
         force_add_element_to_tree(i0, j);// (buggy) /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
     }
-    if(P[i].unspawned_wind_mass < 0) {P[i].unspawned_wind_mass=0;}
+    if(*unspawned_mass_ptr < 0) {*unspawned_mass_ptr=0;}
     return n_particles_split;
 }
 #endif
@@ -979,6 +1000,26 @@ void special_rt_feedback_injection(void)
 #endif
 
 
+#ifdef SINK_WIND_SPAWN
+/* which reservoir currently feeds discrete spawning. Must agree with the channel that
+   target_mass_for_wind_spawning() below prices cells for, or mass banks at one resolution and spawns at
+   another. SNe ejecta always uses unspawned_wind_mass; at MS, winds use it only while they hold the
+   channel (wind_mode==1); everything else (pre-MS, or MS with jets dominant) uses unspawned_jet_mass. */
+double* active_unspawned_mass_ptr(int i)
+{
+#ifdef SINGLE_STAR_FB_JETS
+    if(P[i].Type==5) {
+#if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+        if(P[i].ProtoStellarStage == 6) {return &P[i].unspawned_wind_mass;}
+        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode == 1)) {return &P[i].unspawned_wind_mass;}
+#endif
+        return &P[i].unspawned_jet_mass; // jets are the only (or currently dominant) discrete-spawn channel
+    }
+#endif
+    return &P[i].unspawned_wind_mass;
+}
+#endif
+
 /* simple routine that evaluates the target cell mass for the spawning subroutine */
 double target_mass_for_wind_spawning(int i)
 {
@@ -1001,7 +1042,7 @@ double target_mass_for_wind_spawning(int i)
         if((All.Cell_Spawn_Mass_ratio_MS>0.0)&&(P[i].ProtoStellarStage == 5)&&(P[i].wind_mode==1)) {return All.Cell_Spawn_Mass_ratio_MS * P[i].Sink_Formation_Mass;} //use different (probably lower) mass for winds than for jets (will also reduce it for MS jets, but that should be fine)
         else {return All.Sink_outflow_particlemass * P[i].Sink_Formation_Mass;}
 #else // we specify the absolute value
-        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode==1)) {return All.Cell_Spawn_Mass_ratio_MS;} // specified absolute mass resolution for stellar winds
+        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode == 1)) {return (All.Cell_Spawn_Mass_ratio_MS > 0) ? All.Cell_Spawn_Mass_ratio_MS : All.Sink_outflow_particlemass;} // winds hold the discrete-spawn channel: specified absolute mass resolution for stellar winds; fall back to Sink_outflow_particlemass if not set. If jets hold the channel instead (wind_mode!=1), even at MS, fall through below to the jet mass.
         else if(P[i].ProtoStellarStage == 6) {return P[i].Sink_Formation_Mass;} // If supernova, use the nominal "average" mass resolution
 #endif
     }

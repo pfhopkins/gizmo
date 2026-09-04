@@ -524,6 +524,86 @@ HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
+#----------------------------
+# Rusty AMD Genoa -- 96 cores/node. Run: --constraint=genoa.
+# Ported from starforge_dev_integration (1e0d05fc). Differs from "RUSTY" above in ways that
+# matter for this tree: CXX is set (the Kokkos sources are C++ and the generic block leaves it
+# at the make default), FC is set, GSL paths are given explicitly, znver4 replaces -march=native,
+# and OPT_EXTRA is honoured so callers can add e.g. -flto without editing the Makefile.
+ifeq ($(SYSTYPE),"RUSTY_GENOA")
+CC       =   mpicc
+CXX      =   mpicxx -std=c++20
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+## -O2, NO -ffast-math, NO -march=znver4 -- deliberately conservative, matching every Kokkos
+## systype this branch is actually validated on (Vista, Vista_CPU, Frontier, Frontera_Kokkos are
+## all plain -O2). The first version of this block copied -O3 -ffast-math -march=znver4 from the
+## RUSTY_GENOA block on starforge_dev_integration, which was wrong to import here:
+##   * -ffast-math is the documented cause of position->key divergence between translation units
+##     in this codebase (it let domain.cc contract the mapping to fma() while forcetree.cc emitted
+##     a call, so the two disagreed about which top node owns a particle). On starforge_dev that
+##     is safe only because 0614e00a routes every caller through one noinline domain_peano_key().
+##     THAT CONSOLIDATION IS NOT PORTED HERE YET -- domain_double_to_int is still duplicated across
+##     six files (domain.cc, proto.h, peano.cc, gpu_morton.cc/.h, gpu_morton_functions.h), so
+##     turning on fast-math is enabling exactly the optimization that makes the duplication bite.
+##   * -march=znver4 also permits FP contraction under GCC's default -ffp-contract=fast, which can
+##     reach the mantissa bits the key extraction reads.
+## Revisit once the host-side key consolidation lands and a run at high rank count with clustered
+## ICs is clean; OPT_EXTRA is there for experiments in the meantime.
+OPTIMIZE =  -O2 -funroll-loops -g -Wall $(OPT_EXTRA)
+## Kokkos OpenMP backend needs -fopenmp regardless of the OPENMP Config flag, because the
+## GPU_OBJS translation units below are Kokkos even in a CPU-only build.
+OPTIMIZE += -fopenmp   # remember --cpu-bind=none on srun when oversubscribing threads
+## Kokkos. There is no kokkos module on Rusty as of 2026-08 -- `module keyword kokkos` returns
+## only trilinos, and trilinos/mpi-16.0.0 ships the Tpetra/Sacado adapter headers
+## (KokkosCompat_*, Kokkos_DynRankView_Fad) WITHOUT Kokkos_Core.hpp or libkokkoscore. So point
+## KOKKOS_PATH at a local build; scripts/build_kokkos_rusty.sh makes one. Override on the make
+## command line or in the environment if you have your own.
+## Resolution order: make command line > environment > default. This cannot be a plain "?=":
+## line ~83 above does an unconditional "KOKKOS_PATH =", which both clobbers the environment
+## value and leaves the variable *defined but empty*, so "?=" would never fire. The $(shell echo)
+## recovers the environment value that assignment discarded. This matters because the test
+## harness builds with a bare "make clean && make -j8" (test/harness/gizmo/test.py), passing
+## nothing on the command line -- without a self-contained default every pytest build fails at
+## "Kokkos_Core.hpp: No such file or directory" even though a manual build works.
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-openmp
+endif
+KOKKOS_INCL = -I$(KOKKOS_PATH)/include
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+## hypre, for MHD_MODIFIED_GRADIENT's AMG-preconditioned solver. There is no hypre module on
+## Rusty and neither petsc ships one, so this points at a local build; scripts/build_hypre_rusty.sh
+## makes one. Same resolution order as KOKKOS_PATH above, and for the same reason -- line ~98's
+## unconditional "HYPRE_INCL =" leaves the variable defined but empty, so "?=" would never fire.
+## Harmless when the prefix does not exist: only a config that actually includes HYPRE.h cares.
+ifeq ($(strip $(HYPRE_PATH)),)
+HYPRE_PATH := $(shell echo $$HYPRE_PATH)
+endif
+ifeq ($(strip $(HYPRE_PATH)),)
+HYPRE_PATH := $(HOME)/opt/hypre
+endif
+HYPRE_INCL = -I$(HYPRE_PATH)/include
+HYPRE_LIBS = -L$(HYPRE_PATH)/lib -L$(HYPRE_PATH)/lib64 -Xlinker -R -Xlinker $(HYPRE_PATH)/lib -Xlinker -R -Xlinker $(HYPRE_PATH)/lib64 -lHYPRE
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
 
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
@@ -562,6 +642,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/pm_nonperiodic.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
+                gravity/star_direct_gravity.o \
                 gravity/let_pack.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \

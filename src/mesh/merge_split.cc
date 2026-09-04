@@ -43,11 +43,47 @@
 #endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 
 
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+#ifndef SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST
+#define SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST (1.0)
+#endif
+#endif
+
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#ifndef MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION
+#define MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION (0.5) /* veto once KE_com exceeds E_light */
+#endif
+/*! Fraction of the energy involved in a candidate merger which is kinetic, KE_com/(KE_com+E_light).
+    Merging conserves momentum but not energy: it thermalizes KE_com = (1/2)*mu*|dv|^2 (mu = reduced
+    mass), which cooling then radiates away. Where that dominates, the merger is an unresolved shock
+    and is vetoed so the solver follows the shock instead. Normalized to the thermal+magnetic energy of
+    the LIGHTER cell (the one destroyed); normalizing to the pair total would let the heavier target
+    dominate and weaken the test by ~1/q. Equivalent to a magnetosonic Mach test on the lighter cell. */
+static inline double merge_kinetic_dissipation_fraction(int i, int j)
+{
+    double mi = P[i].Mass, mj = P[j].Mass; if((mi <= 0) || (mj <= 0)) {return 0;}
+    Vec3<MyDouble> dvel = P[i].Vel; dvel -= P[j].Vel;
+    double ke_com = 0.5 * (mi*mj/(mi+mj)) * dvel.norm_sq() * All.cf_a2inv; /* physical; what the merge dissipates */
+    if(!(ke_com > 0)) {return 0;}
+    int l = (mi <= mj) ? i : j; double m_l = (mi <= mj) ? mi : mj; /* lighter cell = the one destroyed */
+    double vA_l = CellP[l].Alfven_speed(); /* E_B = (1/2)*v_A^2*m since v_A^2 = B^2/rho; =0 without MAGNETIC */
+    double e_light = m_l * (CellP[l].InternalEnergyPred + 0.5*vA_l*vA_l);
+    if(!(e_light > 0)) {return 1;} /* nothing to compare against: purely kinetic */
+    return ke_com / (ke_com + e_light);
+}
+#endif
+
+
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
     when particles fall below some minimum mass threshold */
 int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
+#ifdef PREVENT_PARTICLE_MERGE
+    /* disable merging but still allow splitting (cf. PREVENT_PARTICLE_MERGE_SPLIT, which disables
+       both): the diffusion-free, finest-resolution reference case. */
+    return 0;
+#endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
@@ -445,6 +481,29 @@ void merge_and_split_particles(void)
             if (ms_src_kind[aa] == 1) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
+                /* Characterize the ambient medium around a spawned cell, so retirement is judged
+                   against the bulk flow rather than whichever single neighbor is picked as target.
+                   Spawned cells excluded: a jet cell among jet cells is still resolving the outflow.
+                   Same body as the starforge_dev original; only the iteration differs, since kokkos
+                   supplies a prebuilt CSR neighbor list rather than Ngblist/numngb_inbox. */
+                const int is_spawned_i = (P[i].ID==All.SpawnedWindCellID && P[i].Type==0);
+                Vec3<double> v_ambient = {0,0,0}; double m_ambient = 0, cs_ambient = 0, lnU_ambient = 0;
+                if (is_spawned_i) {
+                    for (int64_t na = nl_start; na < nl_end; na++) {
+                        int j_amb = gnl_neighbors[na];
+                        if ((j_amb < 0) || (j_amb == i) || (j_amb >= local_count)) {continue;}
+                        if ((P[j_amb].Type != 0) || (P[j_amb].Mass <= 0)) {continue;}
+                        if (P[j_amb].ID == All.SpawnedWindCellID) {continue;} /* ambient = non-spawned gas only */
+                        double w = P[j_amb].Mass;
+                        for (int k = 0; k < 3; k++) {v_ambient[k] += w * P[j_amb].Vel[k];}
+                        cs_ambient += w * CellP[j_amb].effective_soundspeed(); m_ambient += w;
+                        double uj = CellP[j_amb].InternalEnergyPred;
+                        if (uj > 0) {lnU_ambient += w * log(uj);}
+                    }
+                    if (m_ambient > 0) {v_ambient /= m_ambient; cs_ambient /= m_ambient; lnU_ambient /= m_ambient;}
+                }
+#endif
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
                     j = gnl_neighbors[nn];
                     if (j >= local_count) continue; /* skip ghosts (local-only merge) */
@@ -480,6 +539,53 @@ void merge_and_split_particles(void)
                         }}
 #endif
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+                    /* Retire a spawned cell only once it has actually joined the ambient medium,
+                       rather than as soon as its relative velocity dips below one neighbor's sound
+                       speed. Target must be normal gas, never another spawned cell (restores the
+                       restriction 22c755df disabled for STARFORGE), and the cell must be subsonic
+                       w.r.t. the mass-weighted mean velocity of non-spawned gas in its kernel. */
+                    if (is_spawned_i && do_allow_merger) {
+                        if (P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;}
+                        if (!(m_ambient > 0)) {do_allow_merger = 0;} /* still inside the outflow */
+                        else {
+                            Vec3<double> dv_amb; for (int k=0;k<3;k++) {dv_amb[k] = P[i].Vel[k] - v_ambient[k];}
+                            if (dv_amb.norm()*sqrt(All.cf_a2inv) > cs_ambient) {do_allow_merger = 0;}
+                            /* ...and only once thermally equilibrated with it too. Subsonic is not
+                               enough: a contact discontinuity is by definition in pressure equilibrium
+                               with no velocity jump, so outflow material sitting at the contact passes
+                               every kinematic test while remaining a distinct phase.
+                               Compares specific internal energy, NOT an entropic function. A=P/rho^gamma
+                               is only a state function for a single-gamma ideal gas; with gamma varying
+                               by composition and temperature equal P/rho^gamma does not mean equal
+                               entropy, so that test would be ill-founded, not merely imprecise. u needs
+                               no EOS assumption and is what the merge actually averages. A state of this
+                               cell against its own kernel, not a property of a candidate pair: a pairwise
+                               test is evaded by picking another target or retrying next step. */
+                            if (do_allow_merger) {
+                                double ui_ = CellP[i].InternalEnergyPred;
+                                if (ui_ > 0) {
+                                    double dlnU = fabs(log(ui_) - lnU_ambient);
+                                    if (dlnU > SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST) {do_allow_merger = 0;}
+                                }
+                            }
+                        }
+                    }
+#endif
+#ifdef SINK_SPAWN_NO_MERGE
+                    /* never merge a spawned cell in either direction, holding the spawned population
+                       fixed so merged and unmerged outflows can be compared directly */
+                    if ((P[i].ID==All.SpawnedWindCellID && P[i].Type==0) ||
+                        (P[j].ID==All.SpawnedWindCellID && P[j].Type==0)) {do_allow_merger=0;}
+#endif
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+                    /* Placed after every other module clause so it cannot be overridden, including
+                       the SINK_RIAF timestep escape above. */
+                    if (do_allow_merger && (P[i].Type==0) && (P[j].Type==0) && (P[j].Mass>0) && (j>=0) && (j!=i))
+                    {
+                        if (merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
+                    }
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
 #ifdef HYDRO_MULTIFLUID
@@ -1001,6 +1107,23 @@ int merge_particles_ij(int i, int j)
 #endif
 
 
+#ifdef MERGE_SPLIT_CONSERVE_ENERGY
+    /* Same accounting for the PREDICTED state, which carries its own (VelPred, InternalEnergyPred) pair
+       and is mass-weighted separately below -- so the true-state residual does not balance it. The hydro
+       builds its fluxes from the predicted state, so that error propagates. Must be captured here, before
+       the assignments below overwrite VelPred/InternalEnergyPred. GravAccel has no predicted variant, so
+       the work terms are the same ones. */
+    double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
+    egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_j * dot(dr_j, P[j].GravAccel) * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_i * dot(dr_i, P[i].GravAccel) * All.cf_a2inv;
+#ifdef PMGRID
+    egy_old_pred -= mtot*wt_j * dot(dr_j, P[j].GravPM) * All.cf_a2inv;
+    egy_old_pred -= mtot*wt_i * dot(dr_i, P[i].GravPM) * All.cf_a2inv;
+#endif
+#endif
+
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
@@ -1051,7 +1174,18 @@ int merge_particles_ij(int i, int j)
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
-    //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
+#ifdef MERGE_SPLIT_CONSERVE_ENERGY
+    /* The merge sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy
+       (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat makes the operation
+       energy-conserving. Without this the residual is computed and then discarded -- the line below had
+       been commented out (marked '//???') since the earliest revision, so every merge silently destroyed
+       that energy. Measured in the adiabatic wind test, where E_kin+E_th = L*t exactly, that loss is ~23%
+       of the injected energy by t=0.1. MERGE_SPLIT_DISCARD_ENERGY opts back out. */
+    double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
+    if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
+    CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
+#endif
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
 
 

@@ -491,6 +491,9 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef SINK_WIND_SPAWN
                         P[i].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                        P[i].unspawned_jet_mass = 0; /* slots are reused, so zero-at-alloc is not enough */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
                         P[i].Sink_CountProgs = 1;
@@ -579,6 +582,9 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef SINK_WIND_SPAWN
                         P[i_star].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                        P[i_star].unspawned_jet_mass = 0; /* slots are reused, so zero-at-alloc is not enough */
+#endif
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
                         P[i_star].StarParticleEffectiveSize = DMIN(ForceSoftening_KernelRadius(i) , All.ForceSoftening[4]); // assign an initial effective size here, which corresponds to the minimum of the gas force softening or the stellar constant assignment //
@@ -595,9 +601,6 @@ void star_formation_parent_routine(void)
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
                             P[i_star].Sink_Formation_Mass = P[i_star].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
-#ifdef HERMITE_INTEGRATION
-                            P[i_star].AccretedThisTimestep = 0;
-#endif
 #ifdef GRAIN_FLUID
                             P[i_star].Sink_Dust_Mass = 0;
 #endif

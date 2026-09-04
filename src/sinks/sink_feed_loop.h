@@ -313,13 +313,23 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 
     /* ---- sink-sink merger check ---- */
     if(neighbor_particle.Type == 5) {
-        if(((local.ID != neighbor_particle.ID) || (r2 > 0)) &&
-           (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
+        /* most massive sink swallows the other, which keeps the result unique and order-independent. The
+            comparison must break exact ties: with a strict '<' neither direction passes, so the block
+            below -- including its own equal-mass tie-breaker on ID -- is unreachable and the pair can
+            never merge. Ties are not exotic; every cell in a glass/grid IC has identical mass, so two
+            sinks that have not yet accreted have bit-identical Sink_Mass. Break on ID in the same sense
+            as the inner check (higher ID swallows) so the two agree. */
+        if(((local.ID != neighbor_particle.ID) || (r2 > 0)) && (SwallowID_j == 0) &&
+           ((neighbor_particle.Sink_Mass < local.Sink_Mass) ||
+            ((neighbor_particle.Sink_Mass == local.Sink_Mass) && (neighbor_particle.ID < local.ID)))) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
              * const-prop bug on int gate vars assigned conditionally —
              * "allow_sink_merger" is a named known-vulnerable case). */
             volatile int allow_sink_merger = 1;
+#ifdef DISABLE_SINK_MERGERS
+            allow_sink_merger = 0;
+#endif
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
             if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
@@ -350,11 +360,34 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                            vrel, vesc, r, sink_radius)) allow_sink_merger = 0;
 #endif
             if(r >= max_rmerge)                  allow_sink_merger = 0;
-            if(neighbor_particle.Mass > max_mmerge) allow_sink_merger = 0;
+            /* !(<=) rather than (>) so a non-finite ceiling blocks the merger instead of
+             * admitting it: every comparison against NaN is false, so the plain form
+             * silently disables this mass limit entirely. Belt-and-braces only -- the
+             * NaN source is fixed in init.cc (MeanGasParticleMass with no gas), and this
+             * form is not reliable under -ffast-math, where NaN folding is unspecified. */
+            if(!(neighbor_particle.Mass <= max_mmerge)) allow_sink_merger = 0;
             if(allow_sink_merger == 1)
 #endif
             {
-                if(vrel < vesc) { SwallowID_j = local.ID; }
+                if(vrel < vesc) {
+                    SwallowID_j = local.ID;
+                    /* mirrors the legacy CPU print; r/max_rmerge included because a merger
+                     * firing outside the sink radius is otherwise invisible in the log.
+                     * max_rmerge and Min_Distance_to_Sink only exist under
+                     * SINGLE_STAR_SINK_DYNAMICS, but this block compiles either way. */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+                    printf(" ..Sink-Sink Merger: ID=%llu to be swallowed by id=%llu"
+                           " (r=%g, max_rmerge=%g, heff_j=%g, min_dist=%g, vrel=%g, vesc=%g)\n",
+                           (unsigned long long)neighbor_particle.ID,
+                           (unsigned long long)local.ID, r, max_rmerge, heff_j,
+                           (double)neighbor_particle.Min_Distance_to_Sink, vrel, vesc);
+#else
+                    printf(" ..Sink-Sink Merger: ID=%llu to be swallowed by id=%llu"
+                           " (r=%g, heff_j=%g, vrel=%g, vesc=%g)\n",
+                           (unsigned long long)neighbor_particle.ID,
+                           (unsigned long long)local.ID, r, heff_j, vrel, vesc);
+#endif
+                }
             }
         }
     }

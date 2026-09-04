@@ -287,6 +287,20 @@ static inline void let_cluster_push(const struct LETCoverLeaf *c)
  *   g_orphan_all      -- every rank's records, concatenated by rank (post-Allgatherv).
  *   g_orphan_off      -- prefix-sum offsets: rank R's records = g_orphan_all[off[R], off[R+1]).
  * Process-lifetime scratch (like g_topleaf_scalars / the g_cover* arrays); grow-only. */
+/* Refresh retention (see LETRefreshRec in let_data.h). Sender: remote_id per shipped record,
+ * flat in the exchange's send layout. Receiver: per-sender installed slot ranges. Both replay
+ * the SAME wire order at refresh time, so no per-record identity is exchanged again. Rebuilt
+ * by every successful let_run_exchange; dies with the tree (let_refresh_invalidate). */
+static int  *g_rf_export_ids   = NULL;   /* [g_rf_send_total] remote_id per sent record */
+static int  *g_rf_send_counts  = NULL;   /* [NTask] */
+static int  *g_rf_send_offs    = NULL;   /* [NTask] */
+static int   g_rf_send_total   = 0;
+static int  *g_rf_recv_counts  = NULL;   /* [NTask] */
+static int  *g_rf_recv_offs    = NULL;   /* [NTask] */
+static int  *g_rf_import_base  = NULL;   /* [NTask] absolute slot base per sender */
+static int   g_rf_recv_total   = 0;
+static int   g_rf_valid        = 0;
+
 static struct LETOrphanRecord *g_my_orphans = NULL;
 static int g_my_orphans_n = 0, g_my_orphans_cap = 0;
 static struct LETOrphanRecord *g_orphan_all = NULL;
@@ -684,10 +698,15 @@ static void let_build_cover_tree(int R)
  * circuits at the first LEAF topleaf that opens. Iterative (balanced tree depth
  * <= ~log2(NTopleaves) < 40; the 64-slot stack cannot overflow for a balanced
  * build, and the guarded conservative return keeps it correct if it ever could). */
+/* `margin` inflates R's cover boxes before the test. The cover boxes are built from receiver
+ * positions AT PACK TIME, but the resulting LET is reused until the next rebuild -- so a target
+ * that drifts closer afterwards can want resolution that was never shipped. margin=0 reproduces
+ * the historical decision EXACTLY (the boxes are passed through untouched, no arithmetic), which
+ * is what every caller outside the probe uses. */
 static int let_cover_opens(double cx, double cy, double cz,
                            double sx, double sy, double sz,
                            double len, double mass, double maxsoft, int node_nsink,
-                           double rcut, double rcut2, int is_first_step)
+                           double rcut, double rcut2, int is_first_step, double margin)
 {
     if(g_cover_n <= 0) return 0;
     int stack[64]; int sp = 0; stack[sp++] = 0;   /* root */
@@ -699,8 +718,14 @@ static int let_cover_opens(double cx, double cy, double cz,
         double t_soft_max = 0.0;
         for(int t = 0; t < 6; t++) if(cn->max_soft_by_type[t] > t_soft_max) t_soft_max = cn->max_soft_by_type[t];
         double t_aold_min = cn->min_OldAcc * All.ErrTolForceAcc;
+        const double *bmin_use = cn->bmin, *bmax_use = cn->bmax;
+        double bmin_m[3], bmax_m[3];
+        if(margin > 0) {
+            for(int d3 = 0; d3 < 3; d3++) {bmin_m[d3] = cn->bmin[d3] - margin; bmax_m[d3] = cn->bmax[d3] + margin;}
+            bmin_use = bmin_m; bmax_use = bmax_m;
+        }
         gravtree_open_t d = gravtree_open_decision_cell(cx, cy, cz, sx, sy, sz, len, mass, maxsoft,
-            node_nsink, cn->bmin, cn->bmax,
+            node_nsink, bmin_use, bmax_use,
             t_soft_max, cn->min_soft, t_aold_min, cn->has_sink, rcut, rcut2, is_first_step);
         if(d != GRAV_OPEN_NODE) continue;         /* aggregate doesn't open -> prune this subtree */
         if(cn->c0 < 0) return 1;                  /* a real topleaf opens -> essential */
@@ -729,7 +754,7 @@ static int let_cover_opens(double cx, double cy, double cz,
 static int let_node_essential_for_rank(double cx, double cy, double cz,
                                        double sx, double sy, double sz,
                                        double len, double mass, double maxsoft,
-                                       int n_sink)
+                                       int n_sink, double margin)
 {
     double rcut = 0.0, rcut2 = 0.0;
 #ifdef PMGRID
@@ -748,7 +773,7 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
      * domain / rank-wide scalar extrema and so never let the PM/theta/relative cull prune);
      * the opening predicate itself is untouched. */
     return let_cover_opens(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
-                           rcut, rcut2, is_first_step);
+                           rcut, rcut2, is_first_step, margin);
 }
 
 /* ----------------------------------------------------------------------
@@ -887,7 +912,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
 #ifdef SINK_CALC_DISTANCES
     ref.sink_mass = &w->node.sink_mass;
     ref.sink_pos  = &w->node.sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     ref.N_SINK   = &w->node.N_SINK;
     ref.sink_vel = &w->node.sink_vel;
 #endif
@@ -933,6 +958,9 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     w->leaf_type     = pa->Type;
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = pa->ID;
+#endif
     w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
     if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
@@ -975,6 +1003,9 @@ static int let_realloc_fail_should_print(void)
 int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
+#ifdef HERMITE_INTEGRATION
+MyIDType *ForeignLeafID = NULL;
+#endif
 MyFloat *ForeignLeafSoft = NULL;
 
 static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
@@ -1040,8 +1071,19 @@ static void pack_recurse(int no, int sib_terminator,
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
     node_nsink = Nodes[no].N_SINK;
 #endif
+    /* Motion margin (GIZMO_LET_MOTION_MARGIN, a multiple of the softening support radius; 0 or
+     * undefined adds nothing).  The lifetime term below covers node-side motion (vmax over the
+     * tree's lifetime); the margin remains as an opt-in receiver-side allowance and as an
+     * approximation of the softening-proximity force-open the shared predicate omits under
+     * Barnes-Hut.  Cost, measured with a since-removed counting probe: +8.1% essential nodes at
+     * 1.0 x soft. */
+    double let_margin = 0.0;
+#ifdef GIZMO_LET_MOTION_MARGIN
+    let_margin = ((double) GIZMO_LET_MOTION_MARGIN) * All.ForceSoftening[1];
+#endif
     double len_decide = let_node_len_over_tree_lifetime(no, len);
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len_decide, mass, maxsoft, node_nsink);
+    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len_decide, mass, maxsoft, node_nsink, let_margin);
+
 
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
@@ -1051,6 +1093,9 @@ static void pack_recurse(int no, int sib_terminator,
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
     w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = 0;
+#endif
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     w->extnode = Extnodes[no];
     /* Edge pointers default to the subtree-exit marker; EMIT overwrites sibling with a
@@ -1089,6 +1134,9 @@ static void pack_recurse(int no, int sib_terminator,
             w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
+#ifdef HERMITE_INTEGRATION
+            w->leaf_id       = pa->ID;
+#endif
             w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
             if(pa->Type == 0) { w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta; }
@@ -1597,6 +1645,42 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         if(b > largest_pair_bytes) largest_pair_bytes = b;
     }
 
+    /* Refresh retention, sender half: remember WHAT was shipped to WHOM, in wire order.
+     * plain malloc, not mymalloc: lifetime spans many steps and the LIFO stack cannot
+     * bracket it. Previous retention (if any) is superseded wholesale. */
+    let_refresh_invalidate();
+    /* The rounds rework dropped the whole-walk totals; retention still needs them, summed from
+     * the same per-peer count vectors the rounds are scheduled from. */
+    int rf_total_send = 0, rf_total_recv = 0;
+    for(int r = 0; r < NTask; r++) {rf_total_send += send_counts_int[r]; rf_total_recv += recv_counts_int[r];}
+    g_rf_send_counts = (int *) malloc(NTask * sizeof(int));
+    g_rf_send_offs   = (int *) malloc(NTask * sizeof(int));
+    g_rf_recv_counts = (int *) malloc(NTask * sizeof(int));
+    g_rf_recv_offs   = (int *) malloc(NTask * sizeof(int));
+    g_rf_import_base = (int *) malloc(NTask * sizeof(int));
+    g_rf_export_ids  = (int *) malloc(((rf_total_send > 0) ? rf_total_send : 1) * sizeof(int));
+    if(g_rf_send_counts && g_rf_send_offs && g_rf_recv_counts && g_rf_recv_offs
+       && g_rf_import_base && g_rf_export_ids)
+    {
+        int off = 0;
+        for(int r = 0; r < NTask; r++)
+        {
+            g_rf_send_counts[r] = send_counts_int[r];
+            g_rf_send_offs[r]   = off;
+            g_rf_recv_counts[r] = recv_counts_int[r];
+            g_rf_import_base[r] = -1;   /* filled by let_unpack_and_install */
+            for(int j = 0; j < send_counts_int[r]; j++)
+                g_rf_export_ids[off + j] = send_buf_per_rank[r][j].remote_id;
+            off += send_counts_int[r];
+        }
+        g_rf_send_total = rf_total_send;
+        g_rf_recv_total = rf_total_recv;
+        int roff = 0;
+        for(int r = 0; r < NTask; r++) {g_rf_recv_offs[r] = roff; roff += recv_counts_int[r];}
+        g_rf_valid = 1;   /* provisional; cleared again if install fails/overflows */
+    }
+    else {let_refresh_invalidate();}
+
     /* Allocate offsets for both exchanges (in units of struct elements, NOT
      * bytes), then flat_send / flat_recv for both data streams. All
      * temporaries are freed in strict reverse order at the end of this
@@ -1883,9 +1967,11 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
             printf("LET install FATAL: sender %d needs foreign slots up to %lld but only %d are allocated (rank %d).\n",
                    r, (long long) foreign_slot_prefix[r] + (long long) rcount, AllocatedForeignNodes, ThisTask);
             fflush(stdout);
+            let_refresh_invalidate();   /* retention recorded so far must not outlive a failed install */
             return LET_UNPACK_INTERNAL;
         }
         int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
+        if(g_rf_valid && g_rf_import_base) {g_rf_import_base[r] = slot_base;}   /* moment-refresh retention: where this sender's slots landed */
 
         /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
          * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
@@ -1924,6 +2010,9 @@ extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire
                 ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
                 ForeignLeafZeta[foreign_slot] = recv_buf[node_off + j].leaf_ags_zeta;
                 ForeignLeafSoft[foreign_slot] = recv_buf[node_off + j].leaf_force_softening;
+#ifdef HERMITE_INTEGRATION
+                if(ForeignLeafID) {ForeignLeafID[foreign_slot] = recv_buf[node_off + j].leaf_id;}
+#endif
             }
         }
 
@@ -2306,3 +2395,90 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
     }
 }
 
+
+
+/* ----------------------------------------------------------------------
+ * Per-step refresh of imported foreign moments (see LETRefreshRec, let_data.h).
+ *
+ * Collective. Sender replays its retained export lists in wire order, shipping each
+ * record's CURRENT (s, vs) -- node moments drifted to All.Ti_Current for real nodes,
+ * live Pos/Vel for synthesized single-particle leaves. Receiver overwrites the installed
+ * slots in the same order and stamps them current, then re-mirrors the foreign range to
+ * the GPU SoA wholesale (gpu_scatter_foreign_to_soa: everything else it copies -- mass,
+ * topology, softening -- is unchanged, so the re-copy is idle but harmless).
+ * ---------------------------------------------------------------------- */
+extern "C" void let_refresh_invalidate(void)
+{
+    free(g_rf_export_ids);  g_rf_export_ids  = NULL;
+    free(g_rf_send_counts); g_rf_send_counts = NULL;
+    free(g_rf_send_offs);   g_rf_send_offs   = NULL;
+    free(g_rf_recv_counts); g_rf_recv_counts = NULL;
+    free(g_rf_recv_offs);   g_rf_recv_offs   = NULL;
+    free(g_rf_import_base); g_rf_import_base = NULL;
+    g_rf_send_total = g_rf_recv_total = 0;
+    g_rf_valid = 0;
+}
+
+extern "C" void let_refresh_moments(void)
+{
+    /* Validity is collective: retention is (in)validated at the same points on every rank
+     * inside the collective exchange, so this early-out cannot desynchronize the Alltoallv. */
+    if(!g_rf_valid || NTask <= 1) {return;}
+
+    struct LETRefreshRec *sendbuf = (struct LETRefreshRec *)
+        mymalloc("LET_refresh_send", ((g_rf_send_total > 0) ? g_rf_send_total : 1) * sizeof(struct LETRefreshRec));
+    struct LETRefreshRec *recvbuf = (struct LETRefreshRec *)
+        mymalloc("LET_refresh_recv", ((g_rf_recv_total > 0) ? g_rf_recv_total : 1) * sizeof(struct LETRefreshRec));
+
+    for(int k = 0; k < g_rf_send_total; k++)
+    {
+        struct LETRefreshRec *rec = &sendbuf[k];
+        int rid = g_rf_export_ids[k];
+        if(rid >= 0)
+        {
+            if(Nodes[rid].Ti_current != All.Ti_Current) {force_drift_node(rid, All.Ti_Current);}
+            for(int d = 0; d < 3; d++) {rec->s[d] = Nodes[rid].u.d.s[d]; rec->vs[d] = Extnodes[rid].vs[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {rec->sink_pos[d] = Nodes[rid].sink_pos[d]; rec->sink_vel[d] = Nodes[rid].sink_vel[d];}
+#endif
+        }
+        else
+        {
+            int pi = -1 - rid;   /* synthesized single-particle leaf: ship the live particle */
+            if(P[pi].Ti_current != All.Ti_Current) {drift_particle(pi, All.Ti_Current);}
+            for(int d = 0; d < 3; d++) {rec->s[d] = P[pi].Pos[d]; rec->vs[d] = P[pi].Vel[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {rec->sink_pos[d] = P[pi].Pos[d]; rec->sink_vel[d] = P[pi].Vel[d];}
+#endif
+        }
+    }
+
+    gizmo_mpi_alltoallv_typed(sendbuf, g_rf_send_counts, g_rf_send_offs,
+                              recvbuf, g_rf_recv_counts, g_rf_recv_offs,
+                              sizeof(struct LETRefreshRec), MPI_COMM_WORLD);
+
+    for(int r = 0; r < NTask; r++)
+    {
+        int base = g_rf_import_base[r];
+        if(base < 0 || g_rf_recv_counts[r] == 0) {continue;}
+        const struct LETRefreshRec *seg = recvbuf + g_rf_recv_offs[r];
+        for(int j = 0; j < g_rf_recv_counts[r]; j++)
+        {
+            int no = base + j;
+            for(int d = 0; d < 3; d++) {Nodes[no].u.d.s[d] = seg[j].s[d]; Extnodes[no].vs[d] = seg[j].vs[d];}
+#ifdef SINK_NODE_MOTION_TRACKED
+            for(int d = 0; d < 3; d++) {Nodes[no].sink_pos[d] = seg[j].sink_pos[d]; Nodes[no].sink_vel[d] = seg[j].sink_vel[d];}
+#endif
+            Nodes[no].Ti_current = All.Ti_Current;   /* stamped current: force_drift_node no-ops until the next step */
+        }
+    }
+
+    myfree(recvbuf);
+    myfree(sendbuf);
+
+    /* Foreign slots are contiguous from the node-namespace base under the prefix layout
+     * (install: slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r]), so one
+     * scatter over the whole range re-mirrors every refreshed moment. MaxPart is no longer the
+     * node base -- see All.TreeNodeIndexBase. */
+    if(Numforeignnodes > 0) {gpu_scatter_foreign_to_soa(All.TreeNodeIndexBase + MaxNodes, Numforeignnodes);}
+}

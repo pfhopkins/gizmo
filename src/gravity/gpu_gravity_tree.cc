@@ -124,13 +124,13 @@ static void free_arrays_(void)
 #ifdef SINK_CALC_DISTANCES
     if(soa_.sink_mass)      {gizmo_gpu_tree_soa_release(soa_.sink_mass);      soa_.sink_mass      = NULL;}
     if(soa_.sink_pos)       {gizmo_gpu_tree_soa_release(soa_.sink_pos);       soa_.sink_pos       = NULL;}
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     if(soa_.sink_vel)       {gizmo_gpu_tree_soa_release(soa_.sink_vel);       soa_.sink_vel       = NULL;}
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     if(soa_.sink_acc)       {gizmo_gpu_tree_soa_release(soa_.sink_acc);       soa_.sink_acc       = NULL;}
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     if(soa_.N_SINK)         {gizmo_gpu_tree_soa_release(soa_.N_SINK);         soa_.N_SINK         = NULL;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)

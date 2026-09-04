@@ -174,7 +174,18 @@ int eligible_for_hermite(int i)
 #endif
 #if defined(SINK_PARTICLES) || defined(GALSF)
     if(P[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, P)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
-    if(P[i].AccretedThisTimestep) {return 0;}
+    /* An accreting sink STAYS Hermite-integrated. It used to fall back to KDK for the step
+       ("for stability reasons"), but that decision is per-particle, so when one member of a hard
+       pair accreted and the other did not, the two were integrated by different schemes in the
+       same step and the forces between them stopped being reciprocal. Measured on a 116.6+39.3
+       Msun pair at 20 AU: the members disagreed on 4.5% of steps, per-step sink momentum change
+       jumped 232x on exactly those steps, and total momentum drifted 131 Msun km/s in one sync
+       interval -- a hard failure of the conservation check.
+       What the fallback was really compensating for is fixed at the source instead: accretion now
+       shifts the Hermite carry state along with Pos/Vel (see sinks/sink.cc), so the predictor no
+       longer works from a stale base. Coupling eligibility across a pair was rejected: demotion
+       shortens the step 3.3x (see SINK_TIMESTEP_SAFETY_FACTOR in core/timestep.cc), a one-way
+       ratchet on the hierarchy. */
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[i].SuperTimestepFlag >= 2) {return 0;}

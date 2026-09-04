@@ -75,7 +75,11 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
 #endif
     if(gas_density > 0) {
         if((kp_j.Get_Particle_Size() > sink_radius * 1.396263) && (kp_j.Type == 0)) { return 0; }
-#if defined(COOLING)
+/* Must match the sink-FORMATION side in sfr_eff.cc: both ask whether the run resolves
+ * the opacity limit, and a barotropic EOS answers yes just as COOLING does. Mismatched,
+ * a barotropic run can form a sink that this capture test then disqualifies, stranding it
+ * at seed mass forever. Mirrors sink.cc's CPU copy (b11de9e5). */
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || kp_j.Type != 0)) {
             double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density;

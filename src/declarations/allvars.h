@@ -134,9 +134,9 @@ template<typename T> GIZMO_GPU_FUNCTION inline void nearest_xyz(Vec3<T>& v, int 
 #ifdef CHIMES
 extern struct gasVariables *ChimesGasVars;
 extern struct globalVariables ChimesGlobalVars;
-extern char ChimesDataPath[256];
-extern char ChimesEqAbundanceTable[196];
-extern char ChimesPhotoIonTable[196];
+extern char ChimesDataPath[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+extern char ChimesEqAbundanceTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+extern char ChimesPhotoIonTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 extern double chimes_rad_field_norm_factor;
 extern double shielding_length_factor;
 extern double cr_rate;
@@ -622,6 +622,8 @@ enum iofields
   IO_POT,
   IO_ACCEL,
   IO_HYDROACCEL,
+  IO_HERMITE_POS,
+  IO_HERMITE_VEL,
   IO_HII,
   IO_HeI,
   IO_HeII,
@@ -829,13 +831,13 @@ extern ALIGN(32) struct NODE
 #ifdef SINK_CALC_DISTANCES
   MyFloat sink_mass;      /*!< holds the sink mass in the node.  Used for calculating tree based dist to closest sink */
   Vec3<MyFloat> sink_pos;    /*!< holds the mass-weighted position of the the actual sink particles within the node */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Vec3<MyFloat> sink_vel;    /*!< holds the mass-weighted avg. velocity of sink particles in the node. Gate matches N_SINK and every sink_vel reader/writer. */
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     Vec3<MyFloat> sink_acc; /*!< holds the mass-weighted avg. acceleration of sink particles in the node */
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
   int N_SINK;             /*!< holds the number of sink particles in the node. Used for refinement/search criteria */
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
@@ -856,6 +858,22 @@ extern ALIGN(32) struct NODE
  *Nodes;			/*!< this is a pointer used to access the nodes which is shifted such that Nodes[All.TreeNodeIndexBase] gives the first allocated node */
 
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+/* every star in the simulation, replicated on every task, for the exact star-star sum in
+   gravity/star_direct_gravity.cc. Rebuilt each time gravity is evaluated; sized O(N_star). */
+extern struct star_direct_data
+{
+    Vec3<MyDouble> Pos;
+    Vec3<MyFloat> Vel;
+    MyFloat Mass;
+    MyFloat Soft;
+    MyIDType ID;
+}
+ *StarDirect;
+extern int N_StarDirect;
+#endif
+
+
 extern struct extNODE
 {
   Vec3<MyDouble> dp;
@@ -866,6 +884,10 @@ extern struct extNODE
 #ifdef DM_SCALARFIELD_SCREENING
   Vec3<MyDouble> dp_dm;
   Vec3<MyFloat> vs_dm;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  Vec3<MyDouble> sink_dp;   /*!< momentum change of the sinks in this node, folded into Nodes[].sink_vel on the
+                                 next drift (mirrors dp/dp_dm; the velocity itself lives in Nodes, not here) */
 #endif
   Vec3<MyFloat> vs;
   MyFloat vmax;

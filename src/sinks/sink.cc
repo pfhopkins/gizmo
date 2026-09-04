@@ -131,7 +131,12 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
     if(gas_density > 0)
     {
         if((P[j].Get_Particle_Size() > sink_radius*1.396263) && (P[j].Type == 0)) {return 0;} // particle volume should be less than sink volume, enforcing a minimum spatial resolution around the sink
-#if defined(COOLING)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
+        /* this guard must match the sink-formation side in sfr_eff.cc, which caps the effective support speed above the same
+            n_H=1e13 threshold so first-core thermal energy cannot veto formation. Both ask whether the run resolves the
+            opacity limit, and a barotropic EOS answers yes just as COOLING does. Gating on COOLING alone compiled this out
+            for barotropic runs, leaving a newly-formed sink with v_esc set by its own single-cell mass while the surrounding
+            first-core gas carries c_s of several km/s: nothing was accretable, so the sink could never grow out of it. */
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || P[j].Type != 0)) {double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density; vesc = DMAX(sqrt(2*All.G * m_eff / dr_code), vesc);} // assume an isothermal sphere interior, for Shu-type solution, and re-estimate vesc using self-gravity of the gas
 #endif
@@ -733,7 +738,12 @@ void sink_final_operations(void)
         if(update_sink_moments)
         {
 #ifdef HERMITE_INTEGRATION
-            P[n].AccretedThisTimestep = 1;
+            /* Accretion moves Pos and Vel discontinuously below (SINK_FOLLOW_ACCRETED_MOMENTUM /
+               _COM). OldPos/OldVel are the step-start base that do_hermite_prediction() and
+               do_hermite_correction() integrate from, and they are written at the START of the
+               step (do_the_kick, mode 0) -- before sink_accretion() runs. Capture the pre-
+               accretion state so the base can be shifted by the same delta below. */
+            Vec3<double> hermite_pre_vel = P[n].Vel, hermite_pre_pos = P[n].Pos;
 #endif
             double m_new; m_new = P[n].Mass + SinkTempInfo[i].accreted_Mass;
 #if (SINK_FOLLOW_ACCRETED_ANGMOM == 1) /* in this case we are only counting this if its coming from BH particles */
@@ -769,10 +779,16 @@ void sink_final_operations(void)
 #ifdef RT_REINJECT_ACCRETED_PHOTONS
 	    P[n].Sink_accreted_photon_energy += SinkTempInfo[i].accreted_photon_energy;
 #endif
-        } // if(masses > 0) check
 #ifdef HERMITE_INTEGRATION
-        else { P[n].AccretedThisTimestep = 0; }
+            /* Keep the carry state on the post-accretion trajectory. Without this the prediction
+               that runs later in the same step recomputes Pos/Vel from the stale base and the
+               accretion kick is silently discarded -- measured on test/shu1977 as a 20x COM-drift
+               regression (1.8e-3 vs 8.4e-5) when accreting sinks were simply left Hermite-eligible
+               without this shift. */
+            P[n].OldVel += P[n].Vel - hermite_pre_vel;
+            P[n].OldPos += P[n].Pos - hermite_pre_pos;
 #endif
+        } // if(masses > 0) check
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
         if(All.ComovingIntegrationOn) {P[n].SinkRadius = DMIN(P[n].SinkRadius, SinkParticle_GravityKernelRadius);} // update sink radius if simulation has it dynamically evolving.
 #endif
@@ -806,7 +822,7 @@ void sink_final_operations(void)
         dm_wind = DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.) * dt; /* wind mass loss rate from the alpha disk */
 #endif
 #ifdef SINGLE_STAR_FB_JETS
-        if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || P[n].Mass < 3.5*P[n].Sink_Formation_Mass) {dm_wind = 0;} // no jets launched yet if <0.01 msun or if we haven't accreted enough to get a reliable jet direction
+        dm_wind = single_star_jet_mdot(n) * dt; // same rate the wind_mode momentum comparison uses, so the two cannot disagree
 #endif
         if(dm_wind > P[n].Mass) {dm_wind = P[n].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION)
@@ -817,13 +833,23 @@ void sink_final_operations(void)
         if(dm_wind > P[n].Sink_Mass) {dm_wind = P[n].Sink_Mass;}
         P[n].Sink_Mass -= dm_wind;
 #endif
+#ifdef SINGLE_STAR_FB_JETS
+        /* accretion-tied jet mass always banks in its own reservoir, regardless of whether jets currently hold
+           the discrete-spawn channel. If they don't, this mass simply waits here -- there is no continuous-
+           injection fallback for jets, unlike winds below. Zero dm_wind so the generic add at the bottom (used
+           for the no-jets fallback, and for SNe ejecta which overwrites dm_wind below) doesn't double-count
+           this into unspawned_wind_mass. */
+        P[n].unspawned_jet_mass += dm_wind; dm_wind = 0;
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_WINDS)
        if(P[n].ProtoStellarStage == 5) {
-           if(P[n].wind_mode == 1) {
-                dm_wind = single_star_wind_mdot(n,0) * dt;
-                P[n].Sink_Mass -= dm_wind;
-            }
+           if(P[n].wind_mode == 1) { // winds hold the discrete-spawn channel: compute and bank the physical MS wind mass loss here
+                double dm_wind_star = single_star_wind_mdot(n,0) * dt;
+                P[n].Sink_Mass -= dm_wind_star;
+                P[n].unspawned_wind_mass += dm_wind_star;
+                dm_wind = 0; // discard the generic/jet-formula value from above (already banked into unspawned_jet_mass if jets are compiled in, irrelevant otherwise) so the unconditional add at the bottom doesn't stack it on top of dm_wind_star
+            } // else: jets hold the channel, so wind mass loss is handled entirely by the continuous mechanical_fb injection, which independently computes the same rate and debits Sink_Mass there -- doing nothing here avoids debiting twice for the same mass loss
         } // wind loss rate previously calculated in stellar_evolution at the end of the previous timestep: remove mass lost via winds
 #endif
 #if defined(SINGLE_STAR_FB_SNE)
@@ -847,11 +873,16 @@ void sink_final_operations(void)
                 TreeMomentsStaleFlag = 1; /* sink mass changed: refresh moments, tree structure maintained by MAINTAIN_TREE_IN_REARRANGE */
                 Max_Unspawned_MassUnits_fromSink = DMAX(2, Max_Unspawned_MassUnits_fromSink); // a high enough number to ensure that we do spawn winds
             }
+#ifdef SINGLE_STAR_FB_JETS
+            P[n].unspawned_wind_mass += P[n].unspawned_jet_mass; P[n].unspawned_jet_mass = 0; // past the MS jets/winds competition: fold anything still waiting in the jet reservoir into the (now solely SNe-ejecta) wind reservoir so it isn't stranded
+#endif
         }
 #endif
 #endif
         P[n].unspawned_wind_mass += dm_wind;
-        double n_unspawned = P[n].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
+        /* same pair of calls the eligibility test in spawn_sink_wind_feedback() makes, so the two cannot
+           disagree; pairing one reservoir with the other channel's cell mass overstates this by the mass ratio */
+        double n_unspawned = *active_unspawned_mass_ptr(n) / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
         if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
 #endif
 

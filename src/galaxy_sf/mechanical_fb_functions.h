@@ -258,9 +258,6 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     if(P_arr[i].AgeDeposition_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 3) return 1; }
 #endif
 #endif
-#if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
-    if(P_arr[i].wind_mode != 2 || P_arr[i].ProtoStellarStage != 5) return 0;
-#endif
     return 0;
 }
 

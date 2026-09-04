@@ -271,8 +271,8 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt)
         double fire_wind_rel_mass_res = 1e-4; /* relative mass resolution of winds, essentially the wind will get spawned in packets of fire_wind_rel_mass_res*(gas_mass_resolution) mass */
         D_RETURN_FRAC = (fire_wind_rel_mass_res * P[i].Sink_Formation_Mass) / P[i].Mass;
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION /* for 'fancy' multi-stage modules, have a separate subroutine to compute this */
-        if(P[i].wind_mode != 2) {return;} /* only some eligible particles have winds in this module */
-        p = single_star_wind_mdot(i,0) * dt / P[i].Mass; /* actual mdot from its own subroutine, given in code units */
+        if(P[i].wind_mode == 1) {return;} /* winds hold the discrete-spawn channel already (see single_star_wind_mdot); nothing to inject continuously here. Jets do NOT get a continuous-injection fallback -- while winds dominate, jet (accretion) mass just banks in its own reservoir (unspawned_jet_mass, sink.cc) and waits, it is not spawned or injected until jets dominate again. */
+        p = single_star_wind_mdot(i,0) * dt / P[i].Mass; /* jets hold the discrete-spawn channel, so wind mass loss instead comes out here as continuous injection; actual mdot from its own subroutine, given in code units */
 #else /* otherwise use standard scaling from e.g. Castor, Abbot, & Klein */
         double m_sol=P[i].Mass*UNIT_MASS_IN_SOLAR, l_sol=sink_lum_bol(0,P[i].Mass,i)*UNIT_LUM_IN_SOLAR; /* luminosity in solar */
         double gam=DMIN(0.5,3.2e-5*l_sol/m_sol), alpha=0.5+0.4/(1.+16./m_sol), q0=(1.-alpha)*gam/(1.-gam), k0=1./30.; // Eddington factor (~L/Ledd for winds), capped at 1/2 for sanity reasons, approximate scaling for alpha factor with stellar type (weak effect)
@@ -658,6 +658,21 @@ double single_star_jet_velocity(int n)
     return (All.Sink_outflow_jetlaunchvelscaling * sqrt(All.G * P[n].Sink_Mass / (10. / UNIT_LENGTH_IN_SOLAR))); // we use the flag as a multiplier times the Kepler velocity at the protostellar radius. Really we'd want v_kick = v_kep * m_accreted / m_kicked to get the right momentum; without a better guess, assume fiducial protostellar radius of 10*Rsun, as in Federrath 2014
 #endif
 }
+
+
+/* rate at which accretion is diverted into the jet channel, in code units. The single definition of it:
+   sink.cc banks this*dt, and single_star_wind_mdot() weighs it against the wind rate to pick the spawning
+   channel. Unclamped -- the caller applies any mass-availability limits. */
+double single_star_jet_mdot(int n)
+{
+    if(P[n].Type != 5) {return 0;}
+    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;} // no jets below 0.01 msun, or before we have accreted enough for a reliable jet direction
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.); // mass loss rate from the alpha disk
+#else
+    return (1.-All.Sink_accreted_fraction) / All.Sink_accreted_fraction * P[n].Sink_Mdot;
+#endif
+}
 #endif
 
 
@@ -939,6 +954,9 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
     logmdot_wind = DMAX(logmdot_wind, logmdot_wind_high);
 #endif
     wind_mass_loss_rate = pow(10.0,logmdot_wind) / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); //reducing the rate to be more in line with observations, see Nathan Smith 2014, conversion to code units from Msun/yr
+#ifdef WIND_MDOT
+    wind_mass_loss_rate = WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); /* hard-code Mdot [Msun/yr], for controlled wind tests */
+#endif
 
     // let's deal with the case of undefined wind mode (just promoted to MS or restart from snapshot)
     if ( set_mode && (wind_mass_loss_rate>0) ) {
@@ -948,20 +966,30 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
         double N_wind = wind_mass_loss_rate * t_wind / target_mass_for_wind_spawning(n);
 
         int old_wind_mode = P[n].wind_mode;
-        if (N_wind >= n_particles_for_discrete_wind_spawn){
-            P[n].wind_mode = 1; // we can spawn enough particles per wind time
-        } else{
-            P[n].wind_mode = 2; // we can't spawn enough particles per wind time, switching to FIRE wind module to reduce burstiness
-        }
+#ifdef SINGLE_STAR_WIND_MODE
+        P[n].wind_mode = SINGLE_STAR_WIND_MODE; /* pin the mode, so a test can exercise one injection path deterministically */
+#else
+        /* jets and MS winds compete for the same discrete-spawn channel: whichever has the larger momentum
+           injection rate gets to spawn particles; the other is instead deposited via continuous injection
+           (mechanical_fb_calculate_eventrates_Winds/particle2in_addFB_winds pick the matching formula the
+           same way, off of this same wind_mode flag). Winds only get the discrete channel if they also
+           produce enough mass per wind-time to be resolved as discrete events (N_wind); otherwise jets keep
+           the discrete channel by default even if winds nominally 'dominate'. */
+        double wind_mom_inj = v_wind * wind_mass_loss_rate;
 #ifdef SINGLE_STAR_FB_JETS
-        double spawning_min_wind_jet_mom_ratio = 10.0; // if winds are much more powerful than jets ( (wind momentum injection/jet momentum injection) > this value) then we can safely spawn the winds and neglect the jets if we want to
-        if ( (P[n].wind_mode == 1) && (P[n].Sink_Mdot>0) ){ // we want to spawn winds but we have jets too
-            double jet_mom_inj = single_star_jet_velocity(n) * P[n].Sink_Mdot;
-            double wind_mom_inj = v_wind * wind_mass_loss_rate;
-            if (spawning_min_wind_jet_mom_ratio < (spawning_min_wind_jet_mom_ratio * jet_mom_inj) ){ P[n].wind_mode = 2;} //w e switch back to the FIRE wind injection so that we can spawn the jet and have winds at the same time
-        }
+        double jet_mom_inj = single_star_jet_velocity(n) * single_star_jet_mdot(n);
+#else
+        double jet_mom_inj = 0; // no jets compiled in: nothing for winds to compete with
+#endif
+        int desired_wind_mode = 2; // default: jets (or nothing) hold the discrete-spawn channel, winds go continuous
+        if((wind_mom_inj > jet_mom_inj) && (N_wind >= n_particles_for_discrete_wind_spawn)) {desired_wind_mode = 1;} // winds dominate AND are resolvable: winds take the discrete channel, jets go continuous instead
+        /* hysteresis: only switch mode after at least 8 spawn events have elapsed since the last change */
+        double N_spawn_since_change = (wind_mass_loss_rate > 0) ? (All.Time - P[n].wind_mode_time) * wind_mass_loss_rate / target_mass_for_wind_spawning(n) : 0;
+        if((desired_wind_mode != old_wind_mode) && (old_wind_mode != 0) && (N_spawn_since_change < 8)) {desired_wind_mode = old_wind_mode;} // not enough time has elapsed; keep current mode
+        P[n].wind_mode = desired_wind_mode;
 #endif
         if (old_wind_mode != P[n].wind_mode){
+            P[n].wind_mode_time = All.Time;
             printf("Wind mode change for star %llu to %d at %g. Mdot_wind %g\n",(unsigned long long)P[n].ID,P[n].wind_mode,All.Time, wind_mass_loss_rate);
         }
     }
@@ -977,6 +1005,9 @@ double singlestar_WR_lifetime_Gyr(int n) { // calculate lifetime for star in Wol
 
 
 double single_star_wind_velocity(int n) { /* Let's get the wind velocity for MS stars */
+#if defined(WIND_MDOT) && defined(WIND_LUMINOSITY)
+    return sqrt(2*WIND_LUMINOSITY/UNIT_LUM_IN_CGS/(WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR))); /* v_w from L_w=(1/2)Mdot v_w^2, for controlled wind tests */
+#endif
     double T_eff = 5814.33 * pow( P[n].StarLuminosity_Solar/(P[n].ProtoStellarRadius_inSolar*P[n].ProtoStellarRadius_inSolar), 0.25 ); // effective temperature in K
     double v_esc = single_star_escape_speed(n); // surface escape velocity - wind escape velocity should be O(1) factor times this, factor given below
     if(T_eff < 1.25e4){ return 0.7 * v_esc;}  // Lamers 1995
@@ -993,9 +1024,10 @@ double single_star_escape_speed(int n){
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 /* Computes the maximum signal velocity of _any_ feedback mechanism emanating from a star (jets, winds, radiation, SNe), as a worst-case for e.g. timestepping stability purposes */
 double single_star_feedback_velocity_fortimestep(int n) {
-#ifdef SELFGRAVITY_OFF
-    return 0; 
-#endif    
+    /* No SELFGRAVITY_OFF early-out: the feedback signal speed still has to bound gas timesteps
+       without self-gravity, and returning 0 here silently disables the whole
+       SINGLE_STAR_FB_TIMESTEPLIMIT chain -- MaxFeedbackVel=0 propagates into the node moments,
+       so Min_Sink_FeedbackTime comes back at ~sqrt(MAX_REAL_NUMBER) and never limits anything. */
     if(P[n].Type != 5) {return 0;}
     double v_fb, force, h, rho, v_shell; v_fb=0; force=0; h=P[n].Get_Particle_Size(); rho=P[n].DensityAroundParticle; v_shell=0;
 #ifdef SINGLE_STAR_FB_WINDS

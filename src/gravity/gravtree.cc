@@ -13,6 +13,8 @@
 #include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"   /* shared walk helpers; here for hermite_ghost_entry */
+#include "let_data.h"                 /* let_refresh_moments: per-step imported-moment refresh */
 #include "./analytic_gravity.h"
 
 /*! Host-vs-device routing for the gravity walk and the dynamic tree update, keyed on the
@@ -69,6 +71,75 @@ int Ewald_iter;			/* global in file scope, for simplicity */
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
  *  tree is used.  Elements are only exported to other processors when needed. */
+#ifdef HERMITE_INTEGRATION
+/* Ghost-source table for the Hermite-only passes (see gravtree_force_kernel.h for the why).
+ * Built fresh at the top of every Hermite-pass gravity_tree() call and freed at the bottom:
+ * the owner-side predicted state changes between passes, and unlike the LET (exchanged only at
+ * tree build) it must never go stale. Plain malloc, not mymalloc: the table's lifetime brackets
+ * the walk's LIFO allocations and a stack allocator would deadlock the ordering. The GPU walk
+ * takes a SharedSpace copy at kernel launch (shortrange-table pattern). */
+struct hermite_ghost_entry *HermiteGhostTab = NULL;
+int NHermiteGhost = 0;
+
+static int hermite_ghost_cmp(const void *a, const void *b)
+{
+    MyIDType ia = ((const struct hermite_ghost_entry *) a)->id;
+    MyIDType ib = ((const struct hermite_ghost_entry *) b)->id;
+    return (ia > ib) - (ia < ib);
+}
+
+/* Allgather {ID, pos, vel} of every local HERMITE_INTEGRATION-bitmask particle with OWNER-SIDE
+ * semantics: live drifted state for active or ineligible sources, the Old* prediction for
+ * inactive eligible ones -- exactly what force_treeevaluate presents for a LOCAL source, and
+ * exactly what upstream's export-based remote evaluation sees. Sorted by ID for the walks'
+ * binary search. */
+static void hermite_ghost_table_build(void)
+{
+    NHermiteGhost = 0; HermiteGhostTab = NULL;
+    if(NTask <= 1) {return;}
+    int n_local = 0, i;
+    for(i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {n_local++;}}
+
+    int *counts = (int *) malloc(NTask * sizeof(int));
+    int *displs = (int *) malloc(NTask * sizeof(int));
+    MPI_Allgather(&n_local, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+    int n_tot = 0;
+    for(i = 0; i < NTask; i++) {displs[i] = n_tot * (int) sizeof(struct hermite_ghost_entry); n_tot += counts[i]; counts[i] *= (int) sizeof(struct hermite_ghost_entry);}
+    if(n_tot == 0) {free(displs); free(counts); return;}
+
+    struct hermite_ghost_entry *sendbuf = (struct hermite_ghost_entry *) malloc(((n_local > 0) ? n_local : 1) * sizeof(struct hermite_ghost_entry));
+    int k = 0;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(!((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}
+        sendbuf[k].id  = P[i].ID;
+        sendbuf[k].pos = P[i].Pos;
+        sendbuf[k].vel = P[i].Vel;
+        if(!TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
+        {
+            double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
+            sendbuf[k].pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;
+            sendbuf[k].vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/2)) * hD;
+        }
+        k++;
+    }
+
+    HermiteGhostTab = (struct hermite_ghost_entry *) malloc(n_tot * sizeof(struct hermite_ghost_entry));
+    MPI_Allgatherv(sendbuf, n_local * (int) sizeof(struct hermite_ghost_entry), MPI_BYTE,
+                   HermiteGhostTab, counts, displs, MPI_BYTE, MPI_COMM_WORLD);
+    free(sendbuf); free(displs); free(counts);
+    qsort(HermiteGhostTab, n_tot, sizeof(struct hermite_ghost_entry), hermite_ghost_cmp);
+    NHermiteGhost = n_tot;
+}
+
+static void hermite_ghost_table_free(void)
+{
+    if(HermiteGhostTab) {free(HermiteGhostTab); HermiteGhostTab = NULL;}
+    NHermiteGhost = 0;
+}
+#endif
+
 /*! Promote the staged tree-opening acceleration scale into the value the criterion reads.
  *
  *  Runs ONCE per tree build, immediately before the tree (and with it the imported ghost tree) is
@@ -146,11 +217,13 @@ void gravity_tree(void)
     compute_all_force_softening(0);
 
     /* construct tree if needed */
+    int tree_built_this_call = 0;
 #ifdef HERMITE_INTEGRATION
     if(!HermiteOnlyFlag)
 #endif
     if(TreeReconstructFlag)
     {
+        tree_built_this_call = 1;
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
@@ -197,8 +270,26 @@ void gravity_tree(void)
         }
     }
 
+    /* Refresh imported foreign moments to the current time (collective; no-op at NTask==1 or
+       when the exchange just ran inside this call's rebuild). Between rebuilds the imports
+       only coast on pack-time vs while the owners' copies are kick-updated every step --
+       measured as the secular hernquist np=2 energy drift (45x np=1 at one crossing). The
+       Hermite passes inherit the refreshed state; refreshing again there would be redundant
+       (their sink LEAF states come from the ghost table, which is per-pass exact). */
+    if(!tree_built_this_call
+#ifdef HERMITE_INTEGRATION
+       && !HermiteOnlyFlag
+#endif
+      ) {let_refresh_moments();}
+
+#ifdef HERMITE_INTEGRATION
+    /* Ghost-source table for this Hermite pass -- after any tree build / moment refresh, before
+       ANY walk (primary GPU, CPU fallback, or imported-target evaluation). */
+    if(HermiteOnlyFlag) {hermite_ghost_table_build();}
+#endif
+
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second(); double child0_span = CPU_ChildCharged;
-#ifndef SELFGRAVITY_OFF
+#if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
     /* These two tables only RECORD targets whose gravity the locally-built tree cannot supply:
@@ -520,6 +611,18 @@ gravity_walk_attempt:
      * criterion and is not valid for the next walk. Rebuild the tree+LET before it is reused. */
     if(errtol_before != 0 && All.ErrTolTheta == 0) { TreeReconstructFlag = 1; }
 #endif
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+    /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
+       the tree's own contributions are complete (imports included) but not yet multiplied by All.G
+       in the loop below, and the direct sum is in those same G-free units. */
+    CPU_Step[CPU_TREEMISC] += measure_time();
+    star_direct_gravity_build_table();
+    star_direct_gravity_compute();
+    star_direct_gravity_free_table();
+    CPU_Step[CPU_TREEWALK1] += measure_time();
+#endif
+
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -687,7 +790,24 @@ gravity_walk_attempt:
     /* Arena mirror-update is a no-op under UVM-canonical (arena_P
      * aliases host P[]); the post-loop above already wrote canonical state. */
 
-#endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
+#else /* SELFGRAVITY_OFF, and none of the exceptions above apply: the tree walk that would normally
+         zero-then-accumulate GravAccel/GravJerk/Potential never runs, so without this, those fields
+         are left holding whatever was in that mymalloc slot before this particle claimed it -- not a
+         computed zero, arbitrary leftover bytes. "No gravity" should mean zero force, not undefined
+         force: consumers such as HERMITE_INTEGRATION's do_the_kick() unconditionally copy GravAccel/
+         GravJerk into Hermite_OldAcc/OldJerk every step regardless of whether gravity is compiled in. */
+    for(int i : ActiveParticleList)
+    {
+        P[i].GravAccel = {};
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+        P[i].GravJerk = {};
+#endif
+#ifdef EVALPOTENTIAL
+        P[i].Potential = 0;
+#endif
+    }
+
+#endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
@@ -741,6 +861,9 @@ gravity_walk_attempt:
          * two are no longer measuring the same thing. */
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
+#endif
+#ifdef HERMITE_INTEGRATION
+    hermite_ghost_table_free();   /* no-op outside the Hermite passes */
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }
@@ -885,6 +1008,9 @@ void subtract_companion_gravity(int i)
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){
+#ifdef HERMITE_INTEGRATION
+    if((1 << P[n].Type) & HERMITE_INTEGRATION) {return 1;} // Hermite-integrated particles must always get a fresh tree force; the lazy-cache path is incompatible with the predictor-corrector sub-stepping
+#endif
     if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
         return 1;
     } else {

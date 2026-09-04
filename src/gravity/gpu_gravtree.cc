@@ -38,6 +38,7 @@
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
 #include "forcetree.h"
+#include "let_data.h"   /* ForeignLeafID sidecar (SharedSpace; passed into the walk for the Hermite ghost table) */
 #include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
 #include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
 #include "let_data.h"             /* LET_LEAF_TAG_* + grav_classify_node (import topology vocabulary) */
@@ -158,6 +159,22 @@ struct gpu_rt_walk_data_t {
 struct gpu_cr_walk_data_t {
     MyFloat *cr_inject;       /* [NumPart] */
     double   t_max_cr;        /* scalar, in code time units */
+};
+#endif
+
+/* HERMITE_INTEGRATION source-prediction payload. During the Hermite-only passes an INACTIVE
+ * Hermite-integrated source sits at its KDK-drifted position (O(dt^2) wrong mid-step) with a
+ * whole-step-kicked Vel (O(dt) wrong for the jerk); the walk must instead see the source
+ * re-predicted from its own Old* state, as the CPU walk does inline (forcetree.cc). The
+ * predicate and prediction (TimeBinActive, eligible_for_hermite, get_gravkick_factor) are not
+ * GPU-callable, so both are hoisted into a per-source host prefill -- same formula, same
+ * double arithmetic, so the two walks agree bit-for-bit. [NumPart] in SharedSpace; allocated
+ * only when HermiteOnlyFlag is set, NULL otherwise. */
+#ifdef HERMITE_INTEGRATION
+struct gpu_hermite_src_pred_t {
+    Vec3<MyFloat> pos;        /* Old*-predicted position at this pass's Ti_Current */
+    Vec3<MyFloat> vel;        /* Old*-predicted velocity */
+    int predict;              /* 1 = inactive Hermite-eligible source: use pos/vel above */
 };
 #endif
 
@@ -337,6 +354,12 @@ gpu_gravtree_walk_one(int target,
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                       const struct gpu_cr_walk_data_t *cr_data,
+#endif
+#ifdef HERMITE_INTEGRATION
+                      const struct gpu_hermite_src_pred_t *herm_src,   /* non-NULL only during the Hermite-only passes */
+                      const struct hermite_ghost_entry *herm_ghost,    /* SharedSpace copy of this pass's ghost table; NULL outside Hermite passes */
+                      int n_herm_ghost,
+                      const MyIDType *foreign_leaf_id,                 /* ForeignLeafID sidecar (SharedSpace), indexed by foreign_slot */
 #endif
                       bool use_lazy_source,   /* evaluate the source payload on-device at each local open (no dense eager arrays; d_src_lum/d_bh_lum/d_cr_inject are NULL) */
                       const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
@@ -533,6 +556,11 @@ gpu_gravtree_walk_one(int target,
         if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU walk's guard stops loudly */
         if(no < treeParticleSlots) /* particle leaf */
         {
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+               here as well would double every such force. Mirrors the CPU walk in forcetree.cc. */
+            if((ptype == 5) && (P_dev[no].Type == 5)) {no = tree_soa->nextnode_aux[no]; continue;}
+#endif
             dr = P_dev[no].Pos - pos;
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
@@ -563,6 +591,20 @@ gpu_gravtree_walk_one(int target,
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
             dv = P_dev[no].Vel - vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+            /* Hermite-only passes: replace an inactive Hermite source's KDK-drifted state with
+             * its Old*-predicted state (host-prefilled; see gpu_hermite_src_pred_t). Mirrors the
+             * CPU walk in forcetree.cc; nothing is written back. */
+            if(herm_src && herm_src[no].predict)
+            {
+                dr = herm_src[no].pos - pos;
+                gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
+                r2 = dr.norm_sq();
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+                dv = herm_src[no].vel - vel;
+#endif
+            }
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             m_j_eff_for_df = mass;
@@ -674,6 +716,27 @@ gpu_gravtree_walk_one(int target,
             MyFloat mass_node = tree_soa->mass[idx];
             Vec3<MyFloat> center_node = tree_soa->center[idx];
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* A star target must take no star mass from the tree: star_direct_gravity_compute()
+               supplies every star-star pair exactly, so taking them here too would double them.
+               The tree carries monopoles only, so removing the sinks is exact -- drop their mass and
+               shift the node's center of mass to that of what is left. Both terms are on the same
+               clock, since SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as s is
+               drifted with vs. Pure-star nodes have nothing left and are skipped. Mirrors the CPU
+               walk in forcetree.cc; mass_node is reduced before the opening criteria below so they
+               judge the node on the mass actually being used. */
+            if((ptype == 5) && (tree_soa->sink_mass[idx] > 0))
+            {
+                MyFloat sm = (MyFloat) tree_soa->sink_mass[idx];
+                if(mass_node - sm <= 0) { no = tree_soa->sibling[idx]; continue; } /* pure-star node */
+                Vec3<MyFloat> sp = Vec3<MyFloat>{(MyFloat)tree_soa->sink_pos[idx][0],
+                                                 (MyFloat)tree_soa->sink_pos[idx][1],
+                                                 (MyFloat)tree_soa->sink_pos[idx][2]};
+                MyFloat mass_nosink = mass_node - sm;
+                for(int k = 0; k < 3; k++) {s_node[k] = (s_node[k]*mass_node - sp[k]*sm) / mass_nosink;}
+                mass_node = mass_nosink;
+            }
+#endif
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
@@ -691,6 +754,9 @@ gpu_gravtree_walk_one(int target,
              * confused with the per-node SoA index idx (= no-treeBase). */
             int    fl_tag = 0, fl_type = -1;
             double fl_zeta = 0.0, fl_soft = 0.0;
+#ifdef HERMITE_INTEGRATION
+            MyIDType fl_id = 0;
+#endif
             if(in_foreign_n && tree_soa->foreign_leaf_tag) {
                 int fs = idx - maxNodes;
                 if(fs >= 0 && fs < tree_soa->foreign_leaf_cap) {
@@ -698,6 +764,9 @@ gpu_gravtree_walk_one(int target,
                     fl_type = tree_soa->foreign_leaf_type[fs];
                     fl_zeta = (double) tree_soa->foreign_leaf_zeta[fs];
                     fl_soft = (double) tree_soa->foreign_leaf_soft[fs];
+#ifdef HERMITE_INTEGRATION
+                    if(foreign_leaf_id) {fl_id = foreign_leaf_id[fs];}
+#endif
                 }
             }
 
@@ -797,6 +866,28 @@ gpu_gravtree_walk_one(int target,
             dv[0] = (double) tree_soa->node_vs[idx][0] - vel[0];
             dv[1] = (double) tree_soa->node_vs[idx][1] - vel[1];
             dv[2] = (double) tree_soa->node_vs[idx][2] - vel[2];
+#endif
+#ifdef HERMITE_INTEGRATION
+            /* Hermite-only passes: override a foreign Hermite-type leaf's (dr, dv) with the
+             * owner-side state from this pass's ghost table -- mirrors the CPU walk in
+             * forcetree.cc (see gravtree_force_kernel.h for the design). */
+            if(herm_ghost && fl_tag == 1 && ((1 << fl_type) & HERMITE_INTEGRATION))
+            {
+                int gi = hermite_ghost_lookup(herm_ghost, n_herm_ghost, fl_id);
+                if(gi >= 0)
+                {
+                    dr[0] = (double) herm_ghost[gi].pos[0] - pos[0];
+                    dr[1] = (double) herm_ghost[gi].pos[1] - pos[1];
+                    dr[2] = (double) herm_ghost[gi].pos[2] - pos[2];
+                    gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
+                    r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2];
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+                    dv[0] = (double) herm_ghost[gi].vel[0] - vel[0];
+                    dv[1] = (double) herm_ghost[gi].vel[1] - vel[1];
+                    dv[2] = (double) herm_ghost[gi].vel[2] - vel[2];
+#endif
+                }
+            }
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             {
@@ -1366,6 +1457,43 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
 #endif
 
+#ifdef HERMITE_INTEGRATION
+    /* Host prefill of the per-source Old*-predicted state for the Hermite-only passes (see
+     * gpu_hermite_src_pred_t). Also hoists eligible_for_hermite() out of the walk's inner
+     * loop: it depends only on the source, so it is evaluated once per particle here rather
+     * than per (target, source) pair as the CPU walk does. */
+    struct gpu_hermite_src_pred_t *d_herm_src = NULL;
+    /* SharedSpace copy of this pass's ghost table (host global built in gravity_tree; the
+     * shortrange-table pattern). ForeignLeafID itself is already SharedSpace. */
+    struct hermite_ghost_entry *d_herm_ghost = NULL;
+    int n_herm_ghost_snap = 0;
+    const MyIDType *foreign_leaf_id_snap = ForeignLeafID;
+    if(HermiteOnlyFlag && NHermiteGhost > 0 && HermiteGhostTab)
+    {
+        long szg = (long)NHermiteGhost * sizeof(struct hermite_ghost_entry);
+        d_herm_ghost = (struct hermite_ghost_entry *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szg);
+        if(!d_herm_ghost) {printf("gpu_gravtree_walk_primary: herm_ghost alloc failed\n"); endrun(913213); myfree(idx_host); return 1;}
+        memcpy(d_herm_ghost, HermiteGhostTab, szg);
+        n_herm_ghost_snap = NHermiteGhost;
+    }
+    if(HermiteOnlyFlag)
+    {
+        long szh = (long)NumPart * sizeof(struct gpu_hermite_src_pred_t);
+        d_herm_src = (struct gpu_hermite_src_pred_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("gravity_walk", szh);
+        if(!d_herm_src) {printf("gpu_gravtree_walk_primary: herm_src alloc failed\n"); endrun(913212); myfree(idx_host); return 1;}
+        for(int p = 0; p < NumPart; p++)
+        {
+            d_herm_src[p].predict = (!TimeBinActive[P[p].TimeBin] && eligible_for_hermite(p)) ? 1 : 0;
+            if(d_herm_src[p].predict)
+            {
+                double hD = get_gravkick_factor(P[p].Ti_begstep, All.Ti_Current, p, 0);
+                d_herm_src[p].pos = P[p].OldPos + (P[p].OldVel + (P[p].Hermite_OldAcc + P[p].OldJerk * (hD/3)) * (hD/2)) * hD;
+                d_herm_src[p].vel = P[p].OldVel + (P[p].Hermite_OldAcc + P[p].OldJerk * (hD/2)) * hD;
+            }
+        }
+    }
+#endif
+
 #ifdef RT_USE_GRAVTREE
     MyFloat *d_src_lum = NULL;
 #ifdef CHIMES_STELLAR_FLUXES
@@ -1529,6 +1657,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     /* shortrange_table is a host global (forcetree.cc); the SharedSpace mirror the
      * kernel reads is seeded once per run, not per call. */
     if(gpu_shortrange_tables_acquire() != 0) {
+#ifdef HERMITE_INTEGRATION
+        if(d_herm_ghost) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_ghost);}
+        if(d_herm_src) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_src);}
+#endif
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
         release_payload_buffers();
         myfree(idx_host);
@@ -1569,6 +1701,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(gpu_ewald_acquire_pot_data(&ewald_pot_snap) != 0) {
         printf("gpu_gravtree_walk_primary: Ewald potential-correction table unavailable; EVALPOTENTIAL periodic build requires it\n");
         endrun(913212);
+#ifdef HERMITE_INTEGRATION
+        if(d_herm_ghost) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_ghost);}
+        if(d_herm_src) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_src);}
+#endif
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
         release_payload_buffers();
         myfree(idx_host);   /* LIFO mymalloc cleanup; do not launch the walk with the term disabled */
@@ -1599,6 +1735,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                                         &cr_data_dev,
+#endif
+#ifdef HERMITE_INTEGRATION
+                                        d_herm_src,
+                                        d_herm_ghost, n_herm_ghost_snap, foreign_leaf_id_snap,
 #endif
                                         use_lazy_source,
                                         &ewald_pot_dev,
@@ -1754,6 +1894,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * stale-Ti_current nodes via gpu_force_drift_nodes (UVM AoS + SoA in one
      * kernel).  No host-side reseed scaffolding remains. */
 
+#ifdef HERMITE_INTEGRATION
+    if(d_herm_ghost) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_ghost);}
+    if(d_herm_src) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_herm_src);}
+#endif
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
     release_payload_buffers();
     myfree(idx_host);

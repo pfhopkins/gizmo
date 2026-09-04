@@ -396,6 +396,7 @@ void find_particles_and_save_them(int num);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
 void x86_fix(void) ;
 
+void *gizmo_aligned_alloc(size_t alignment, size_t nbytes); /* over-aligned scratch outside the arena; free() with free(). see mymalloc.cc */
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
 void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const char *func, const char *file, int line);
 
@@ -511,6 +512,7 @@ double INLINE_FUNC hubble_function_external(double a);
 
 void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
+void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz);
 void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
 double get_spawned_cell_launch_speed(int i, struct particle_data *pp);
@@ -790,8 +792,15 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 void update_stellarnumber_and_timedistribofstarformation(void);
 #endif
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+void star_direct_gravity_build_table(void);
+void star_direct_gravity_compute(void);
+void star_direct_gravity_free_table(void);
+#endif
+
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
+double single_star_jet_mdot(int n);
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 double single_star_feedback_velocity_fortimestep(int n);
@@ -1327,3 +1336,20 @@ void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
 void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 void gizmo_gpu_sync_all(void);
+
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. */
+void energy_budget_sync_report(void);
+#define EB_SYNC_REPORT() energy_budget_sync_report()
+#ifdef EVALPOTENTIAL
+/* Kinetic+gravitational energy over all types at full synchronization -- the conserved quantity
+   for a collisionless self-gravitating run, which the gas-only report above cannot see. */
+void energy_budget_gravity_report(void);
+#define EB_GRAV_REPORT() energy_budget_gravity_report()
+#else
+#define EB_GRAV_REPORT()
+#endif
+#else
+#define EB_SYNC_REPORT()
+#define EB_GRAV_REPORT()
+#endif

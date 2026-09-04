@@ -137,7 +137,6 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
-    const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
     const int    bits = BITS_PER_DIMENSION;
 
     /* Zero topleaf bucket counters. */
@@ -155,9 +154,17 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
         int real = stp ? stp[i] : i;
-        double fx = (P_dev[real].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[real].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[real].Pos[2] - dc2) * inv_dlen;
+        /* DIVISION by DomainLen, bit-identical to domain.cc's exchange-side key
+         * ((Pos - Corner) / DomainLen): a reciprocal multiply differs in the last ulp,
+         * and a particle whose quotient straddles a topleaf boundary then keys into a
+         * DIFFERENT task's topleaf than the one the exchange assigned it to -- the build
+         * detaches it and it exerts no gravity that step (the root-N_part integrity
+         * warning is the only trace). Measured on fewbody p028 at np=2: 15 such steps in
+         * 17k, each a whole-star force error during an encounter. The two computations
+         * must stay arithmetic-identical (same expression shape, no fast-math). */
+        double fx = (P_dev[real].Pos[0] - dc0) / dlen;
+        double fy = (P_dev[real].Pos[1] - dc1) / dlen;
+        double fz = (P_dev[real].Pos[2] - dc2) / dlen;
         if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
         if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
         if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
@@ -176,6 +183,79 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
+
+#ifdef GIZMO_GPU_KEY_AUDIT
+    /* Does the device encode a particle to the same topleaf the host does?
+     *
+     * The tree-integrity check reports particles detached from the build (root N_part short of
+     * TotNumPart). Detachment happens when a particle's build-side topleaf disagrees with the
+     * topleaf the domain exchange assigned it to, so the two candidate causes are: the encode
+     * itself differs between host and device, or the encode agrees and the build loses the link
+     * downstream. Only a direct comparison separates them.
+     *
+     * Recomputed here on the host with the SAME expressions and the SAME KOKKOS_INLINE_FUNCTION
+     * helpers the kernel used, reading the device's own pt[]/keys[] with no copy (the arena is
+     * UVM-canonical, so P_dev aliases P). A mismatch is arithmetic divergence across the two
+     * compilers; zero mismatches alongside a nonzero deficit puts the fault after the encode.
+     *
+     * Diagnostic builds only: this is a serial O(npart) host pass per tree build. */
+    {
+        long long n_mismatch = 0; int n_printed = 0;
+        long long n_foreign = 0; int n_fprinted = 0;
+        for(int i = 0; i < npart; i++)
+        {
+            int real = stp ? stp[i] : i;
+            double hx = (P_dev[real].Pos[0] - dc0) / dlen;
+            double hy = (P_dev[real].Pos[1] - dc1) / dlen;
+            double hz = (P_dev[real].Pos[2] - dc2) / dlen;
+            if(hx < 0.0) {hx = 0.0;} if(hx >= 1.0) {hx = 0.99999999999999988897;}
+            if(hy < 0.0) {hy = 0.0;} if(hy >= 1.0) {hy = 0.99999999999999988897;}
+            if(hz < 0.0) {hz = 0.0;} if(hz >= 1.0) {hz = 0.99999999999999988897;}
+            uint64_t hix = gpu_morton_double_to_int42(hx + 1.0);
+            uint64_t hiy = gpu_morton_double_to_int42(hy + 1.0);
+            uint64_t hiz = gpu_morton_double_to_int42(hz + 1.0);
+            Morton128 hm; peanokey hpk = gpu_peano_and_morton_key(hix, hiy, hiz, bits, &hm);
+            int hleaf = gpu_topleaf_for_key(tn, hpk);
+            int key_differs  = (hm.hi != keys[i].hi) || (hm.lo != keys[i].lo);
+            int leaf_differs = (hleaf != pt[i]);
+            if(key_differs || leaf_differs)
+            {
+                n_mismatch++;
+                if(n_printed < 8)
+                {
+                    printf("GPUKEYAUDIT-MISS task=%d slot=%d ID=%llu pos=(%.17g|%.17g|%.17g)\n"
+                           "  host: leaf=%d key=%016llx%016llx    device: leaf=%d key=%016llx%016llx  (%s%s)\n",
+                           ThisTask, i, (unsigned long long) P_dev[real].ID,
+                           P_dev[real].Pos[0], P_dev[real].Pos[1], P_dev[real].Pos[2],
+                           hleaf, (unsigned long long) hm.hi, (unsigned long long) hm.lo,
+                           pt[i], (unsigned long long) keys[i].hi, (unsigned long long) keys[i].lo,
+                           key_differs ? "key" : "", leaf_differs ? " leaf" : "");
+                    n_printed++;
+                }
+            }
+            /* Ownership, the mechanism the integrity warning names: a particle whose topleaf
+             * belongs to another task is detached and counts toward no rank's moments. The
+             * encode agreeing host-vs-device does not make it agree with what the exchange
+             * decided, since both sides here run the build's own formula. If n_foreign tracks
+             * the reported deficit, the build and the domain disagree about ownership; if it
+             * is zero, the particles are owned correctly and are lost after this point. */
+            if(DomainTask[hleaf] != ThisTask)
+            {
+                n_foreign++;
+                if(n_fprinted < 8)
+                {
+                    printf("GPUKEYAUDIT-FOREIGN task=%d slot=%d ID=%llu leaf=%d owner=%d pos=(%.17g|%.17g|%.17g)\n",
+                           ThisTask, i, (unsigned long long) P_dev[real].ID, hleaf, DomainTask[hleaf],
+                           P_dev[real].Pos[0], P_dev[real].Pos[1], P_dev[real].Pos[2]);
+                    n_fprinted++;
+                }
+            }
+        }
+        printf("GPUKEYAUDIT task=%d npart=%d mismatches=%lld foreign=%lld\n",
+               ThisTask, npart, n_mismatch, n_foreign);
+        fflush(stdout);
+    }
+#endif
 
     /* Kernel 2: exclusive prefix scan to compute topleaf_start[]. */
     Kokkos::parallel_scan("topo_scan", ntl,
@@ -216,6 +296,67 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
             if(rc2) {return rc2;}
         }
     }
+
+#ifdef GIZMO_GPU_KEY_AUDIT
+    /* Stage-conservation audit for everything between the encode (covered by the key audit
+     * above) and the node build. Before handing sidx[] to the BFS emission, check every
+     * invariant that stage relies on:
+     *   - counts:   sum(tcnt) == npart, sentinel tsta[ntl] == npart, tcur[t] == tcnt[t]
+     *   - scatter:  sidx[] is a true permutation of 0..npart-1 (no dup / hole / out-of-range)
+     *   - sort:     every topleaf range is non-decreasing in Morton key. The BFS partitions a
+     *               SORTED range by split bits; an unsorted range breaks the partition invariant
+     *               and quietly strands particles outside every child. The sort is also the one
+     *               stage with a device-specific implementation, so it gets the direct check.
+     *   - dupkeys:  adjacent equal 126-bit keys (free to count here, sorted order): particles
+     *               closer than box/2^42 are indistinguishable to the splitter, which caps the
+     *               depth the BFS can separate them at.
+     * Serial O(npart) host pass over UVM buffers; diagnostic builds only. */
+    {
+        long long sum_tcnt = 0; int cursor_bad = 0;
+        for(int t = 0; t < ntl; t++) {
+            sum_tcnt += g_topleaf_count[t];
+            if(g_topleaf_cursor[t] != g_topleaf_count[t]) {cursor_bad++;}
+        }
+        int sentinel = g_topleaf_start[ntl];
+        long long dup = 0, oob = 0, holes = 0;
+        unsigned char *seen = (unsigned char *) calloc((size_t) npart, 1);
+        if(seen) {
+            for(int i = 0; i < npart; i++) {
+                int v = sidx[i];
+                if(v < 0 || v >= npart) {oob++; continue;}
+                if(seen[v]) {dup++;} else {seen[v] = 1;}
+            }
+            for(int i = 0; i < npart; i++) {if(!seen[i]) {holes++;}}
+            free(seen);
+        }
+        else {oob = -1;}   /* calloc failed: flag the columns as unmeasured */
+        long long unsorted_pairs = 0, dupkey_pairs = 0; int bad_leaves = 0, n_printed = 0;
+        for(int t = 0; t < ntl; t++) {
+            int s = g_topleaf_start[t], c = g_topleaf_count[t], leaf_bad = 0;
+            for(int j = 1; j < c; j++) {
+                const Morton128 &a = keys[sidx[s + j - 1]];
+                const Morton128 &b = keys[sidx[s + j]];
+                if(b < a) {
+                    unsorted_pairs++; leaf_bad = 1;
+                    if(n_printed < 4) {
+                        printf("GPUSCATAUDIT-UNSORTED task=%d leaf=%d j=%d/%d keys %016llx%016llx > %016llx%016llx\n",
+                               ThisTask, t, j, c,
+                               (unsigned long long) a.hi, (unsigned long long) a.lo,
+                               (unsigned long long) b.hi, (unsigned long long) b.lo);
+                        n_printed++;
+                    }
+                }
+                else if(a.hi == b.hi && a.lo == b.lo) {dupkey_pairs++;}
+            }
+            bad_leaves += leaf_bad;
+        }
+        printf("GPUSCATAUDIT task=%d npart=%d sum_tcnt=%lld sentinel=%d cursor_bad=%d dup=%lld oob=%lld holes=%lld "
+               "unsorted_pairs=%lld bad_leaves=%d dupkey_pairs=%lld\n",
+               ThisTask, npart, sum_tcnt, sentinel, cursor_bad, dup, oob, holes,
+               unsorted_pairs, bad_leaves, dupkey_pairs);
+        fflush(stdout);
+    }
+#endif
 
     return 0;
 }

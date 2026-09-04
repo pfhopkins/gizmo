@@ -13,6 +13,9 @@
 //#undef GPU_MIN_PARTICLES_FOR_OFFLOAD
 //#define GPU_MIN_PARTICLES_FOR_OFFLOAD 999999999
 
+#ifndef WAKEUP /* may be set in Config.sh, e.g. WAKEUP=2.1 for a stricter limiter: this is Saitoh &
+                  Makino (2009) f=2, which their Table 1 shows conserves energy slightly better than
+                  f=4 (7.6e-4 vs 5.9e-3 on Sedov) at roughly twice the cost. */
 /* Minimum number of particles needing a drift for the batched drift to run on the
  * device. The drift needs its own threshold rather than the shared one above: its
  * per-element work is far smaller than cooling's, while it stages the same whole
@@ -50,6 +53,7 @@
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
+#endif
 #endif
 
 #define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */

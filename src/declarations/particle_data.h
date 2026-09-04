@@ -52,7 +52,6 @@ extern ALIGN(32) struct particle_data
     Vec3<MyFloat> OldPos;
     Vec3<MyFloat> OldVel;
     Vec3<MyFloat> OldJerk;
-    short int AccretedThisTimestep;     /*!< flag to decide whether to stick with the KDK step for stability reasons, e.g. when actively accreting */
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat TreeMass;  /*!< Mass seen by the particle as it sums up the gravitational force from the tree - should be equal to total mass, a useful debug diagnostic  */
@@ -197,6 +196,9 @@ extern ALIGN(32) struct particle_data
     int IndexMapToTempStruc;   /*!< allows for mapping to SinkTempInfo struc */
 #ifdef SINK_WIND_SPAWN
     MyFloat unspawned_wind_mass;    /*!< tabulates the wind mass which has not yet been spawned */
+#ifdef SINGLE_STAR_FB_JETS
+    MyFloat unspawned_jet_mass;    /*!< separate reservoir for jet (accretion) mass not yet spawned; jets and MS winds bank into their own reservoirs and only whichever currently dominates (P.wind_mode) actually drains via discrete spawning, see sink.cc */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
     int Sink_CountProgs;
@@ -299,6 +301,7 @@ extern ALIGN(32) struct particle_data
 #ifdef SINGLE_STAR_FB_WINDS
     MyFloat Wind_direction[6]; // direction of wind launches, to reduce anisotropy launches go along a random axis then a random perpendicular one, then one perpendicular to both.
     int wind_mode; // tells what kind of wind model to use, 1 for particle spawning and 2 for using the FIRE wind module
+    float wind_mode_time; // time of last wind mode change, used for hysteresis (float pairs with int wind_mode for 8-byte alignment)
 #endif
 #ifdef  SINGLE_STAR_FB_SNE
     MyFloat Mass_final; //final mass of the star before going SN (Since this is not saved to snapshots, hard restarts in the middle of spawning an SN will do weird things)

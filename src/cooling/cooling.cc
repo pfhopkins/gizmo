@@ -210,7 +210,7 @@ void InitCool_dm(void) { if(dm_InitCoolMemory_impl()) { dm_MakeCoolingTable_impl
 #if defined(CHIMES)
 int ChimesEqmMode, ChimesUVBMode, ChimesInitIonState, N_chimes_full_output_freq, Chimes_incl_full_output = 1;
 double chimes_rad_field_norm_factor, shielding_length_factor, cr_rate;
-char ChimesDataPath[256], ChimesEqAbundanceTable[196], ChimesPhotoIonTable[196];
+char ChimesDataPath[DEFAULT_PATH_BUFFERSIZE_TOUSE], ChimesEqAbundanceTable[DEFAULT_PATH_BUFFERSIZE_TOUSE], ChimesPhotoIonTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 struct gasVariables *ChimesGasVars;
 struct globalVariables ChimesGlobalVars;
 #ifdef CHIMES_METAL_DEPLETION
@@ -654,6 +654,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef COOL_GRACKLE
             cell[i].HI = 0; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* fully ionized, as assumed for the ionized-energy floor above */
             cell[i].Temperature = cell[i].gas_temperature_from_u(unew);
+#ifdef GIZMO_EOS_ANCHOR_MIN
+            cell[i].u_anchor = unew;
+#endif
 #endif
 #endif
         }
@@ -964,6 +967,11 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         } else {u = All.MinEgySpec;}
     }
 
+    /* Re-evaluate at the converged u so *ne_eval and the other side effects match the answer we
+     * are about to return. The root-find leaves ne_eval at whatever its last trial u produced,
+     * which is not the same thing, and the very next line commits it to the cell. */
+    CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell);
+
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
     /* solve the chemical state once at the converged energy, outside the iteration: this is the key
        chemistry update, and it is the saved thermochemistry that the equation of state, the radiation
@@ -979,6 +987,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
         cell[target].Temperature = temp_final;
         cell[target].Gamma = cell[target].gamma_eos_value(); /* the other half, so the pair describes this solve rather than the previous equation-of-state call */
+#ifdef GIZMO_EOS_ANCHOR_MIN
+        cell[target].u_anchor = u / UNIT_SPECEGY_IN_CGS; /* exact re-anchor at the converged state */
+#endif
 #ifdef RT_CHEM_PHOTOION
         cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE
@@ -1170,7 +1181,29 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
-        
+
+#if defined(RT_CHEM_PHOTOION) && defined(METALS)
+        /* NOTE the METALS in the guard: the original (dde244c1) gated on RT_CHEM_PHOTOION alone, but both
+           pp[].Metallicity[] and All.SolarAbundances[] are #ifdef METALS, and METALS is implied only by
+           FIRE_PHYSICS_DEFAULTS / nuclear networks / stellar return -- not by RT_CHEM_PHOTOION. Without this,
+           an RT_CHEM_PHOTOION run with no METALS fails to compile. The term is metallicity-scaled anyway, so
+           it has nothing to contribute when metals are not tracked. */
+        /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
+           GIZMO's tabulated metal-line cooling below assumes collisional (CIE) ionization, which under-predicts the forbidden-line cooling of
+           -photoionized- gas; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2
+           coefficient in erg cm^3 s^-1 (= Zg * x_e * x_H+ * C(T,n_e); the volumetric rate ~ n_e*n_H+, so it is n^2 like the other channels --
+           it lowers the equilibrium T by raising Lambda(T), not by any density-independence). Valid for photoionized gas (nHp>0, free electrons). */
+        if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
+            double T4 = T * 1.0e-4, lnT4 = log(T4), ne_2 = nHcgs * n_elec / 100.; /* n_e in units of 100 cm^-3 */
+            double log10_fneb = 0.692 + lnT4*(-0.586 + lnT4*(0.816 + lnT4*(-0.505 + lnT4*(0.118 + lnT4*(0.00766 - 0.00508*lnT4)))));
+            double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
+                * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
+                / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
+            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K, hands off to the CIE metal tables so this isn't double-counted in the transition region */
+            if(LambdaNeb > 0) { Lambda += LambdaNeb; }
+        }
+#endif
+
 #ifdef COOL_METAL_LINES_BY_SPECIES
         /* can restrict to low-densities where not self-shielded, but let shieldfac (in ne) take care of this self-consistently */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)

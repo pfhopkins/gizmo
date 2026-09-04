@@ -478,6 +478,17 @@ void subfind(int num)
 
 void subfind_save_final(int num)
 {
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+  /* (sub)group positions are written outside fill_write_buffer and are never un-shifted, so a
+   * catalogue saved in a randomized frame would have wrong positions -- refuse rather than emit
+   * it silently. Group-finding for sink/BH seeding never reaches here, and postprocessing runs
+   * have RandomShift==0. */
+  if(All.RandomShift[0] != 0 || All.RandomShift[1] != 0 || All.RandomShift[2] != 0)
+    {
+      if(ThisTask == 0) {printf("FATAL: subfind_save_final() in a RANDOMIZE_GRAVTREE frame (RandomShift=%g,%g,%g): group positions are not un-shifted. Run group-finding in postprocessing on snapshots.\n", All.RandomShift[0], All.RandomShift[1], All.RandomShift[2]);}
+      endrun(561002);
+    }
+#endif
   int i, j, totsubs, primaryTask, groupTask, nprocgroup;
   char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
   double t0, t1;

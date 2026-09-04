@@ -467,9 +467,59 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
+/* Safety margin on the sink 2-body timestep, and the common factor Hermite-integrated sinks
+ * divide back out of BOTH gravity criteria below.
+ *
+ * The two applications are not symmetric, deliberately. dt_2body multiplies the 0.3 in and,
+ * for Hermite sinks, divides it out again -- net 1.0, its bare value. dt_tidal never carried
+ * the factor, so dividing it out lengthens dt_tidal to 3.33x its bare value for Hermite sinks.
+ * That is the point: omega_tidal <= omega_2body identically (m_companion <= M_total, and t_ff
+ * >= the harmonic mean), so once dt_tidal sits above dt_2body the SYMMETRIC 2-body criterion
+ * binds for both members of a bound pair. The tidal criterion keys on the COMPANION's mass and
+ * differs between unequal members by sqrt(m1/m2); left at its bare value it undercuts the
+ * 2-body criterion for the lighter member and splits the pair across timebins -- the asymmetry
+ * a production momentum-conservation violation was traced to. Relaxing dt_tidal 2x was measured
+ * to close that leak; 3.33x is what makes the ordering exact rather than empirical, and leans
+ * on the 4th-order integrator tolerating a longer step than the 2nd-order calibration these
+ * coefficients were tuned for. */
+#define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
+
+/* Coefficient on dt_tidal, calibrated so the tidal criterion delivers the same energy error as the
+ * acceleration criterion. The stated 0.5 equivalence was for an optimally-softened Plummer sphere;
+ * on a Hernquist sphere it is ~70x worse than the acceleration criterion in secular energy drift,
+ * and that gap is a timestep-selection defect, not a resolution one: over a 250x range of
+ * ErrTolForceAcc (4.3x more force work) the drift moves 0.7% and the substep count 0.8%, while
+ * over a 16x range of ErrTolIntAccuracy it falls 42x.
+ *
+ * NOT applied when the symmetrized 2-body criteria are active. There dt_tidal must stay long
+ * enough that the symmetric 2-body criterion binds for both members of a bound pair -- see the
+ * SINK_TIMESTEP_SAFETY_FACTOR note above. Tightening it here would reintroduce exactly the
+ * asymmetric splitting that factor exists to prevent, since dt_tidal keys on the COMPANION mass
+ * and differs between unequal members by sqrt(m1/m2). (Port of starforge_dev fbf9fe60.) */
+#if !defined(TIDAL_TIMESTEP_PREFAC)
+#if defined(SINGLE_STAR_TIMESTEPPING)
+#define TIDAL_TIMESTEP_PREFAC (0.5)   /* leave alone: 2-body criterion must bind for binaries */
+#else
+/* 0.10 measured on test/hernquist_convergence at ErrTolIntAccuracy = 0.01 -- the tolerance that
+ * matters: GIZMO's documented recommendation, what production runs, and what most parameter files
+ * in the suite use. At its historical 0.5 the criterion is 142x worse than the acceleration
+ * criterion in drift rate and 215x in |dE/E0|; 0.10 brings both inside parity (0.0x / 0.6x).
+ * 0.15 does not (2.9x / 4.7x) and 0.25 is far outside (20.9x / 31.5x).
+ *
+ * The price is steep and deliberate: substeps rise 2306 -> 14302, i.e. 6.2x the uncalibrated
+ * criterion and 12.4x the acceleration criterion. Hernquist is the published worst case for this
+ * criterion -- the cusp makes the tidal tensor vary sharply where |a| is already well behaved --
+ * so calibrating here guarantees it cannot degrade accuracy in easier setups, and the cost is
+ * paid in steps rather than in silent error. A finer scan between 0.10 and 0.15 could recover
+ * some of that, but the sensitivity is severe (a 1.5x change in the coefficient moves the error
+ * 8x), so a value nearer the limit would be fragile. */
+#define TIDAL_TIMESTEP_PREFAC (0.10)
+#endif
+#endif
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double dt_tidal = TIDAL_TIMESTEP_PREFAC * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);
@@ -477,6 +527,11 @@ integertime get_timestep(int p,		/*!< particle index */
     } 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     P[p].tdyn_step_for_treeforce = dt_tidal; // hang onto this to decide how frequently to update the treeforce
+#endif
+#ifdef HERMITE_INTEGRATION
+    /* divide out the 2nd-order margin, as the 2-body criterion does below. After
+     * tdyn_step_for_treeforce, so the tree-update cadence keeps the unscaled value. */
+    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -488,9 +543,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef SINGLE_STAR_TIMESTEPPING // this ensures that binaries advance in lock-step, which gives superior conservation
     if(P[p].Type == 5)
     {
-        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * 0.3 / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
+        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt_2body /= 0.3;
+        if(eligible_for_hermite(p)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary
@@ -514,8 +569,13 @@ integertime get_timestep(int p,		/*!< particle index */
         if(eligible_for_hermite(p)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
 #endif
     }
-#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF)
-    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * DMIN(P[p].Min_Sink_FeedbackTime, P[p].Min_Sink_Approach_Time));}
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    /* the feedback signal speed still bounds dt without self-gravity; only the approach-time
+       term, which needs the gravitational two-body approach, is dropped under SELFGRAVITY_OFF */
+    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].Min_Sink_FeedbackTime);}
+#ifndef SELFGRAVITY_OFF
+    if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].Min_Sink_Approach_Time);}
+#endif
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
 
@@ -1135,7 +1195,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
             double L_particle = P[p].Get_Particle_Size();
             double vsig = P[p].Sink_SurroundingGasVel;
-#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(NOGRAVITY)
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
             vsig += P[p].MaxFeedbackVel;
 #endif                        
             double dt_cour_sink = All.CourantFac * (L_particle*All.cf_atime) / vsig;
@@ -1218,6 +1278,58 @@ integertime get_timestep(int p,		/*!< particle index */
             PRINT_WARNING("Part-ID=%llu  dt_desired=%g dt_Accel=%g\n accel_tot=%g accel_gravTree=%g accel_gravPM=%g  mass=%g pos_xyz=(%g|%g|%g) vel_xyz=(%g|%g|%g) soft=%g type=%d\n",
                           (unsigned long long) P[p].ID, dt, sqrt(2*All.ErrTolIntAccuracy*All.cf_atime*ForceSoftening_KernelRadius(p) / ac)*All.cf_hubble_a,
                           ac, agrav, agrav_pm, P[p].Mass, P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0], P[p].Vel[1], P[p].Vel[2], ForceSoftening_KernelRadius(p), P[p].Type);
+#ifdef SINGLE_STAR_TIMESTEPPING
+            /* Rich failure record for the sink dt collapse: everything get_timestep read to
+             * produce this dt, at full precision, so one hit reconstructs the whole decision
+             * without a reproducible run (at OMP threads>1 these runs are not reproducible, so
+             * the record must be complete the first time). Prints only on the failure path. */
+            if(P[p].Type == 5)
+            {
+                double diag_tap = P[p].Min_Sink_Approach_Time, diag_tff = P[p].Min_Sink_Freefall_time;
+                double diag_dt2b = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR
+                                   / (1./diag_tap + 1./diag_tff);
+                PRINT_WARNING("SINKDT-DIAG ID=%llu bin=%d ti_beg=%lld ti_cur=%lld pos=(%.17g|%.17g|%.17g) vel=(%.17g|%.17g|%.17g)\n"
+                              " SINKDT-TREE Min_Sink_Approach_Time=%.17g Min_Sink_Freefall_time=%.17g dt_2body=%.17g KernelRadius=%.17g Sink_TimeBinGasNeighbor=%d\n",
+                              (unsigned long long) P[p].ID, P[p].TimeBin, (long long) P[p].Ti_begstep, (long long) P[p].Ti_current,
+                              P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0], P[p].Vel[1], P[p].Vel[2],
+                              diag_tap, diag_tff, diag_dt2b, (double) P[p].KernelRadius, (int) P[p].Sink_TimeBinGasNeighbor);
+#ifdef SINK_CALC_DISTANCES
+                PRINT_WARNING("SINKDT-PROX Min_Distance_to_Sink=%.17g Sink_dr_to_NearestGasNeighbor=%.17g\n",
+                              (double) P[p].Min_Distance_to_Sink, (double) P[p].Sink_dr_to_NearestGasNeighbor);
+#endif
+#ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
+                PRINT_WARNING("SINKDT-RAD SinkRadius=%.17g\n", (double) P[p].SinkRadius);
+#endif
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+                PRINT_WARNING("SINKDT-DENS DensityAroundParticle=%.17g\n", (double) P[p].DensityAroundParticle);
+#endif
+#ifdef HERMITE_INTEGRATION
+                PRINT_WARNING("SINKDT-HERM eligible=%d OldPos=(%.17g|%.17g|%.17g) OldVel=(%.17g|%.17g|%.17g) Hermite_OldAcc=(%.17g|%.17g|%.17g) OldJerk=(%.17g|%.17g|%.17g)\n",
+                              eligible_for_hermite(p),
+                              (double) P[p].OldPos[0], (double) P[p].OldPos[1], (double) P[p].OldPos[2],
+                              (double) P[p].OldVel[0], (double) P[p].OldVel[1], (double) P[p].OldVel[2],
+                              (double) P[p].Hermite_OldAcc[0], (double) P[p].Hermite_OldAcc[1], (double) P[p].Hermite_OldAcc[2],
+                              (double) P[p].OldJerk[0], (double) P[p].OldJerk[1], (double) P[p].OldJerk[2]);
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+                PRINT_WARNING("SINKDT-JERK GravJerk=(%.17g|%.17g|%.17g)\n",
+                              P[p].GravJerk[0], P[p].GravJerk[1], P[p].GravJerk[2]);
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                PRINT_WARNING("SINKDT-TIDE |T|=%.17g\n", (double) P[p].tidal_tensorps.frobenius_norm());
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES) || (SINGLE_STAR_TIMESTEPPING > 0)
+                PRINT_WARNING("SINKDT-BIN is_in_a_binary=%d comp_Mass=%.17g comp_dx=(%.17g|%.17g|%.17g) comp_dv=(%.17g|%.17g|%.17g)\n",
+                              P[p].is_in_a_binary, (double) P[p].comp_Mass,
+                              (double) P[p].comp_dx[0], (double) P[p].comp_dx[1], (double) P[p].comp_dx[2],
+                              (double) P[p].comp_dv[0], (double) P[p].comp_dv[1], (double) P[p].comp_dv[2]);
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+                PRINT_WARNING("SINKDT-FB MaxFeedbackVel=%.17g Min_Sink_FeedbackTime=%.17g\n",
+                              (double) P[p].MaxFeedbackVel, (double) P[p].Min_Sink_FeedbackTime);
+#endif
+            }
+#endif // SINGLE_STAR_TIMESTEPPING
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
@@ -1446,12 +1558,16 @@ void process_wake_ups(void)
     bin = 0; for(n = 0; n < TIMEBINS; n++) {if(TimeBinCount[n] > 0) {bin = n; break;}}
     n = 0;
 
-    MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
+    /* No gating flag: every rank scans its own particles every step. The scan is local and cheap,
+       while the Allreduce it replaces was a global sync on the per-step critical path. The flag was
+       also rank-local while the requests are per-particle, so it could be stale for a particle that
+       migrated after being flagged -- the case its own comment worked around -- and being process
+       memory it was silently lost across a restart, stranding woken cells in a coarse bin. */
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
 
-    if(NeedToWakeupParticles){
+    {
 	/* Floor for positive (relative) wakeup: the lowest currently-OCCUPIED
 	 * and ACTIVE bin (global across ranks). Without this floor, repeated
 	 * a-wakes-b-wakes-c shells of relative wakeup can drive bins below
@@ -1460,9 +1576,9 @@ void process_wake_ups(void)
 	 * bin already in flight, preventing the multiplicative cascade while
 	 * preserving legitimate hydro-style subcycle wakeups in [floor, max]. */
 	int local_lowest_occupied_active_bin = TIMEBINS;
-	for(n = 0; n < TIMEBINS; n++) {
-	    if(TimeBinActive[n] && TimeBinCount[n] > 0) {
-	        local_lowest_occupied_active_bin = n;
+	for(int nb = 0; nb < TIMEBINS; nb++) {   /* own index: n is the woken-particle counter, zeroed above */
+	    if(TimeBinActive[nb] && TimeBinCount[nb] > 0) {
+	        local_lowest_occupied_active_bin = nb;
 	        break;
 	    }
 	}
@@ -1563,11 +1679,32 @@ void process_wake_ups(void)
 		   (to correct it back to its new active time) */
 		if(tend < tstart)
 		{
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		    /* Do NOT reverse the kick: re-deriving the increment with reversed bounds does not cancel
+		       the original -- that would need HydroAccel and DtInternalEnergy unchanged since the
+		       original kick, and they are not -- so it injects energy. Saitoh & Makino (2009) eq (3)
+		       exists to detect exactly this case, and sets the new time consistent with the system
+		       time instead, which is what the truncation below does. */
+		    set_predicted_quantities_for_extra_physics(i);
+#else
 		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
 		    set_predicted_quantities_for_extra_physics(i);
+#endif
 		}
+#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+		/* End the step at the current system time, so the interval the applied kick already covered is
+		   not integrated twice and no reversal is needed. dt_step stays authoritative (integertime_step()
+		   returns it under WAKEUP) but is no longer a power-of-two bin length, so it deliberately
+		   disagrees with TimeBin: anything reading a step off TimeBin over-reports it, cf. density.cc. */
+		{
+		    integertime dt_trunc = All.Ti_Current - P[i].Ti_current;
+		    if(dt_trunc > 0) {P[i].Ti_begstep = P[i].Ti_current; P[i].dt_step = dt_trunc;}
+		    else {P[i].Ti_begstep = All.Ti_Current; P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);}
+		}
+#else
 		P[i].Ti_begstep = All.Ti_Current;
 		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+#endif
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
         /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
            position it now holds, as a normal timestep assignment would. This must follow the

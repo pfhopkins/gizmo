@@ -20,7 +20,7 @@ UnitMagneticField_in_gauss        1
 Box_Size_In_Code_Units            1
 TreeRebuild_ActiveFraction        1.e-2
 Initial_Metallicity               0.35
-BlackHoleMaxAccretionRadius       100
+SinkMaxAccretionRadius            100
 Effective_Kernel_NeighborNumber   32
 Output_Directory                  output
 MaxSimulationWallTime_in_Seconds  1.72e9

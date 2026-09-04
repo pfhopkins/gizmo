@@ -1,26 +1,34 @@
 """SN_singlestar test: Sedov-Taylor blast driven by an actual single-star supernova.
 
 A 10 Msun, 50 Myr-old star at the center of a 50000 Msun, n_H = 100 cm^-3 box goes
-supernova on the first timestep, depositing 1e51 erg into the surrounding gas. The
-final snapshot is compared against the analytic Sedov solution scaled to the
-problem's E_SN, ambient density, and final time.
+supernova on the first timestep, depositing 1e51 erg into the surrounding gas.
+
+Three variants are tested:
+  1. Adiabatic (no cooling): verifies the shock radius and density jump match the
+     analytic Sedov solution at early time (t ~ 0.015 code units).
+  2. With COOLING: verifies the blast still produces a recognizable shell at the
+     Sedov radius (before the radiative phase sets in).
+  3. With COOLING + SINGLE_STAR_FB_RAD: same shell check, with the star's own radiative
+     feedback also active. RAD needs COOLING to mean anything, so it is not tested alone.
 """
 
 import pytest
 import numpy as np
 from scipy.stats import binned_statistic
 from matplotlib import pyplot as plt
+from glob import glob
 import h5py
 
 from meshoid import Meshoid
-from glob import glob
 from gizmo.test import (
     build_and_run_test,
     default_mpi_ranks,
     default_omp_threads,
     flush_colorbar,
     assert_final_time,
+    get_cooling_tables,
     get_final_snapshot,
+    variant_output_dir,
 )
 from pathlib import Path
 
@@ -28,20 +36,17 @@ TEST_NAME = "SN_singlestar"
 TEST_DIR = Path(__file__).parent
 
 # Code units: pc, Msun, km/s. Energy unit = Msun*(km/s)^2 = 1.989e43 erg.
-E_SN_CGS = 1.0e51  # erg
-ENERGY_UNIT_CGS = 1.989e43  # erg
-E_SN_CODE = E_SN_CGS / ENERGY_UNIT_CGS  # ~5.028e7
+E_SN_CGS = 1.0e51
+ENERGY_UNIT_CGS = 1.989e43
+E_SN_CODE = E_SN_CGS / ENERGY_UNIT_CGS
 
-# Hydrogen mass fraction from GIZMO's default solar metallicity table (Z=0.02, He=0.28)
 X_H = 0.70
-# Mean ambient density in code units (Msun/pc^3) corresponding to n_H = 100 cm^-3
 M_PROTON_G = 1.6726e-24
 PC_IN_CM = 3.0857e18
 MSUN_IN_G = 1.989e33
-RHO_AMBIENT_CODE = (100.0 * M_PROTON_G / X_H) * (PC_IN_CM ** 3) / MSUN_IN_G  # ~3.530
+RHO_AMBIENT_CODE = (100.0 * M_PROTON_G / X_H) * (PC_IN_CM**3) / MSUN_IN_G
 
-
-T_SEDOV_CHECK = 0.015  # code time at which to compare against Sedov (before radiative phase)
+T_SEDOV_CHECK = 0.015  # code time at which to compare against Sedov
 
 
 def generate_ics():
@@ -51,48 +56,13 @@ def generate_ics():
         make_SN_singlestar_ics(str(ic_file))
 
 
-def get_snapshot_nearest_time(test_name, target_time):
-    """Return the snapshot file whose header time is closest to target_time."""
-    snaps = sorted(glob(f"test/{test_name}/output/snapshot_*.hdf5"))
-    best, best_dt = None, np.inf
-    for s in snaps:
-        with h5py.File(s, "r") as F:
-            t = float(F["Header"].attrs["Time"])
-        if abs(t - target_time) < best_dt:
-            best_dt = abs(t - target_time)
-            best = s
-    return best
+def sedov_shock_radius(E, rho, t):
+    """Self-similar Sedov-Taylor shock radius for a 3D point explosion (gamma=5/3)."""
+    return 1.1517 * (E * t * t / rho) ** 0.2
 
 
-def sedov_shock_radius(E, rho, t, gamma=5.0 / 3.0):
-    """Self-similar Sedov-Taylor shock radius for a 3D point explosion."""
-    # xi_0 ~ 1.1517 for gamma=5/3 (3D)
-    xi0 = 1.1517
-    return xi0 * (E * t * t / rho) ** 0.2
-
-
-def plot_density_slice(coords, rho, box_center, output_dir="."):
-    M = Meshoid(coords)
-    center = np.array([box_center, box_center, box_center])
-    rho_slice = M.Slice(np.log10(rho), res=512, plane="z", center=center,
-                        size=2 * box_center, order=0)
-    fig, ax = plt.subplots(figsize=(6, 6))
-    im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno",
-                   extent=[-box_center, box_center, -box_center, box_center])
-    flush_colorbar(im, ax=ax, label=r"$\log_{10}\rho$ (Msun/pc$^3$)")
-    ax.set_xlabel("x (pc)")
-    ax.set_ylabel("y (pc)")
-    ax.set_title("SN_singlestar - Density Slice")
-    fig.savefig(str(Path(output_dir) / "Density_2D.png"), dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
-@pytest.mark.parametrize(
-    "num_mpi_ranks,num_omp_threads",
-    [(default_mpi_ranks(), default_omp_threads())],
-)
 def load_snapshot_radial(snap_file):
-    """Load a snapshot and return (time, box_size, r, rho, vr)."""
+    """Load a snapshot and return (time, box_size, coords, r, rho, vr)."""
     with h5py.File(snap_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
         box_size = float(F["Header"].attrs["BoxSize"])
@@ -109,23 +79,68 @@ def load_snapshot_radial(snap_file):
     return time, box_size, coords, r, rho, vr
 
 
+def get_snapshot_nearest_time(test_name, target_time, extra_config_flags=()):
+    """Return the snapshot file whose header time is closest to target_time."""
+    outdir = variant_output_dir(test_name, extra_config_flags)
+    snaps = sorted(glob(f"{outdir}/snapshot_*.hdf5"))
+    best, best_dt = None, np.inf
+    for s in snaps:
+        with h5py.File(s, "r") as F:
+            t = float(F["Header"].attrs["Time"])
+        if abs(t - target_time) < best_dt:
+            best_dt = abs(t - target_time)
+            best = s
+    return best
+
+
+def plot_density_slice(coords, rho, box_center, output_dir=".", suffix=""):
+    M = Meshoid(coords)
+    center = np.array([box_center, box_center, box_center])
+    rho_slice = M.Slice(np.log10(rho), res=512, plane="z", center=center,
+                        size=2 * box_center, order=0)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno",
+                   extent=[-box_center, box_center, -box_center, box_center])
+    flush_colorbar(im, ax=ax, label=r"$\log_{10}\rho$ (Msun/pc$^3$)")
+    ax.set_xlabel("x (pc)")
+    ax.set_ylabel("y (pc)")
+    ax.set_title("SN_singlestar - Density Slice")
+    fig.savefig(str(Path(output_dir) / f"Density_2D{suffix}.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 @pytest.mark.parametrize(
     "num_mpi_ranks,num_omp_threads",
     [(default_mpi_ranks(), default_omp_threads())],
 )
-def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [
+        (),
+        ("COOLING",),
+        ("COOLING", "SINGLE_STAR_FB_RAD"),
+    ],
+    ids=["adiabatic", "cooling", "rad"],
+)
+def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     generate_ics()
-    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
+    if "COOLING" in extra_config_flags:
+        get_cooling_tables(str(TEST_DIR))
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
-    final_snap = get_final_snapshot(TEST_NAME)
+    final_snap = get_final_snapshot(TEST_NAME, extra_config_flags)
     assert_final_time(final_snap, TEST_NAME)
 
-    # --- Plot final snapshot density slice ---
-    time_final, box_size, coords_final, _, rho_final, _ = load_snapshot_radial(final_snap)
-    plot_density_slice(coords_final, rho_final, box_size / 2.0, output_dir=str(TEST_DIR))
+    suffix = ""
+    if extra_config_flags:
+        suffix = "_" + "_".join(extra_config_flags)
 
-    # --- Sedov check at early time (before radiative phase) ---
-    sedov_snap = get_snapshot_nearest_time(TEST_NAME, T_SEDOV_CHECK)
+    # Plot final snapshot density slice
+    time_final, box_size, coords_final, _, rho_final, _ = load_snapshot_radial(final_snap)
+    plot_density_slice(coords_final, rho_final, box_size / 2.0, output_dir=str(TEST_DIR), suffix=suffix)
+
+    # Sedov check at early time (before radiative phase)
+    sedov_snap = get_snapshot_nearest_time(TEST_NAME, T_SEDOV_CHECK, extra_config_flags)
     assert sedov_snap is not None, "No snapshots found"
     time, box_size, coords, r_sim, rho_sim, vr_sim = load_snapshot_radial(sedov_snap)
 
@@ -138,7 +153,6 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
     rho_binned = binned_statistic(r_sim, rho_sim, "median", r_bins)[0]
     vr_binned = binned_statistic(r_sim, vr_sim, "median", r_bins)[0]
 
-    # Plots: density and radial velocity vs r, with the analytic shock location
     for label, binned in [("Density", rho_binned), ("RadialVelocity", vr_binned)]:
         plt.figure()
         plt.plot(r_centers, binned, "o", markersize=3, label="GIZMO")
@@ -151,13 +165,12 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
         plt.ylabel(label)
         plt.legend()
         plt.title(f"t = {time:.4f} (Sedov check)")
-        plt.savefig(str(TEST_DIR / f"{label}.png"))
+        plt.savefig(str(TEST_DIR / f"{label}{suffix}.png"))
         plt.close()
 
-    # --- Sanity checks against the analytic Sedov solution ---
+    # --- Assertions ---
 
-    # The shock should be located near the analytic Sedov radius. Find the radial bin
-    # with maximum (binned) density and check it lies within ~30% of R_shock.
+    # Shock radius should be near the analytic Sedov radius
     valid = np.isfinite(rho_binned)
     assert valid.any(), "No valid density bins"
     i_peak = np.nanargmax(rho_binned)
@@ -168,12 +181,89 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
         f"(relative error {rel_err:.3f})"
     )
 
-    # Strong-shock jump for gamma=5/3 should give post-shock density ~ 4 * rho_amb.
-    # Allow a generous lower bound (kernel-smoothing reduces the peak).
-    assert rho_binned[i_peak] > 2.0 * RHO_AMBIENT_CODE, (
-        f"Post-shock density {rho_binned[i_peak]:.3f} too low; "
-        f"expected > {2.0 * RHO_AMBIENT_CODE:.3f}"
-    )
+    # Only the 'adiabatic' variant has no COOLING, so these hold only for it -- and checking it rather
+    # than just the bare run is what catches a regression on whichever wakeup path is not the default.
+    if "COOLING" not in extra_config_flags:
+        # Adiabatic: strong-shock density jump should be ~ 4x ambient
+        assert rho_binned[i_peak] > 2.0 * RHO_AMBIENT_CODE, (
+            f"Post-shock density {rho_binned[i_peak]:.3f} too low; "
+            f"expected > {2.0 * RHO_AMBIENT_CODE:.3f}"
+        )
 
-    # Outflow: radial velocity at the shock should be clearly positive
+        # Adiabatic: verify energy conservation (total gas KE+TE should equal E_SN)
+        with h5py.File(sedov_snap, "r") as F:
+            masses = F["PartType0/Masses"][:]
+            vel = F["PartType0/Velocities"][:]
+            u = F["PartType0/InternalEnergy"][:]
+        with h5py.File(get_snapshot_nearest_time(TEST_NAME, 0.0, extra_config_flags), "r") as F0:
+            masses0 = F0["PartType0/Masses"][:]
+            vel0 = F0["PartType0/Velocities"][:]
+            u0 = F0["PartType0/InternalEnergy"][:]
+        E_kin = 0.5 * np.sum(masses * np.sum(vel**2, axis=1))
+        E_therm = np.sum(masses * u)
+        E_kin_0 = 0.5 * np.sum(masses0 * np.sum(vel0**2, axis=1))
+        E_therm_0 = np.sum(masses0 * u0)
+        dE = (E_kin + E_therm) - (E_kin_0 + E_therm_0)
+        energy_ratio = dE / E_SN_CODE
+        assert abs(energy_ratio - 1.0) < 0.1, (
+            f"Energy not conserved: dE/E_SN = {energy_ratio:.3f}"
+        )
+
+    # Outflow at the shock
     assert vr_binned[i_peak] > 0, f"No outflow at shock: vr = {vr_binned[i_peak]}"
+
+
+def test_SN_thermo_fidelity():
+    """Guard the u->T conversion in the regimes the SN remnant actually exercises.
+
+    The suite's dynamics assertions (density profile, outflow, injected energy) are
+    insensitive to the cached-EOS defect that retained +64% remnant thermal energy
+    (see COOLING_UTOT_REPORT.md): the cooling loop solved correctly while consumers
+    read T from a chord through the origin with the differential Gamma. These checks
+    are the sensitive ones, calibrated on inversion-correct runs (reference
+    starforge_dev, pre-merge, restored-inversion and anchored-cache arms agree to
+    <=2.5% on every quantity; the defective build fails all three by wide margins).
+
+    Reads the COOLING variant's existing output; skips if that variant has not run.
+    """
+    outdir = Path(variant_output_dir(TEST_NAME, ("COOLING",)))
+    snaps = sorted(outdir.glob("snapshot_*.hdf5"))
+    if not snaps:
+        pytest.skip("COOLING variant output not present")
+    with h5py.File(snaps[-1], "r") as F:
+        T = F["PartType0/Temperature"][:].astype(float)
+        u = F["PartType0/InternalEnergy"][:].astype(float)
+        m = F["PartType0/Masses"][:].astype(float)
+        fmol = F["PartType0/MolecularMassFraction"][:].astype(float)
+
+    # (A hot-band T/u dispersion assert was tried and dropped: the He-ionization spread
+    #  lives in too few particles here for a robust statistic -- good/defective separation
+    #  was ~1%. The Eth budget below guards that regime's integrated consequence instead.)
+
+    # 1. Warm molecular shell T(u). The shell-formed H2 layer (fH2>0.3, ~100-600 K) is
+    #    where the H2 rotational dof make u(T) most nonlinear; the defective conversion
+    #    read 6.7-8.5% cold at matched u. Expected medians from the reference run at the
+    #    final snapshot; inversion-correct arms deviate <=2.5% (aggregate), decomposition
+    #    scatter <=2%.
+    u_edges = [0.5, 0.794, 1.26, 2.0, 3.175, 5.04]
+    T_expected = [90.97, 132.38, 199.34, 294.97, 417.79]
+    devs = []
+    for lo, hi, Texp in zip(u_edges[:-1], u_edges[1:], T_expected):
+        sel = (u >= lo) & (u < hi) & (fmol > 0.3)
+        if sel.sum() >= 20:
+            devs.append(abs(np.median(T[sel]) / Texp - 1))
+    if len(devs) >= 3:
+        agg = float(np.mean(devs))
+        assert agg < 0.045, (
+            f"warm-molecular T(u) off by {100*agg:.1f}% aggregate (>{4.5}%): the shell's "
+            f"H2-bearing gas is mislabeled at matched u (defective conversion measured 7-9%)"
+        )
+
+    # 2. Remnant thermal energy. Inversion-correct arms: 4.96-5.21e5 across machines and
+    #    decompositions (+-5%); the cached-chord defect retained 8.39e5 (+64%). The band is
+    #    wide enough for decomposition scatter and narrow enough to catch percent-tens errors.
+    E_therm = float((m * u).sum())
+    assert 3.8e5 < E_therm < 6.4e5, (
+        f"remnant thermal energy {E_therm:.3e} outside [3.8e5, 6.4e5]: cooling through the "
+        f"1e5-1e6 K band is off (inversion-correct ~5.1e5; the u->T chord defect gave 8.4e5)"
+    )

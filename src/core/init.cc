@@ -115,6 +115,7 @@ void init(void)
     set_softenings();
 
     All.NumCurrentTiStep = 0;	/* setup some counters */
+    All.DomainFacWork = 0.5; All.DomainFacLoad = 0.5; All.DomainFacWorkGas = 0.0; /* seed adaptive load-balance weights (restarts restore them from All) */
     All.SnapshotFileCount = 0;
     if(RestartFlag == 2)
     {
@@ -277,12 +278,23 @@ void init(void)
             P[i].GradRho[1]=0;
             P[i].GradRho[2]=1;
 #endif
+#ifdef SINK_WIND_SPAWN
+            /* spawn reservoirs for sinks read from an IC/snapshot rather than formed in-run, which pass
+               through neither sfr_eff.cc nor fof.cc. read_ic() has already run, so only zero what it
+               cannot have assigned. */
+#ifndef OUTPUT_UNSPAWNED_SINKMASS
+            P[i].unspawned_wind_mass = 0; // IO_UNSPMASS is only read back when that flag is set, so this cannot clobber a restored value
+#endif
+#ifdef SINGLE_STAR_FB_JETS
+            P[i].unspawned_jet_mass = 0; // never written to snapshots, so always safe to zero
+#endif
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_SNE)
             P[i].Mass_final = P[i].Mass; // best guess, only matters if we restart in the middle of spawning an SN
 #endif
 #if defined(SINGLE_STAR_FB_WINDS)
-            P[i].wind_mode = 0; // this will make single_star_wind_mdot reset it
+            P[i].wind_mode = 0; P[i].wind_mode_time = All.Time; // wind_mode=0 triggers reset on first call; time initialised for hysteresis
             Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(P[i].ID,nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
@@ -644,6 +656,9 @@ void init(void)
             CellP[i].Temperature = (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
 #endif
             CellP[i].Gamma = GAMMA_DEFAULT;
+#if defined(GIZMO_EOS_ANCHOR_MIN) && defined(COOLING) && !defined(CHIMES)
+            CellP[i].u_anchor = CellP[i].InternalEnergy; /* pair with the Temperature guess above (or the one read from file) */
+#endif
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
@@ -1079,10 +1094,25 @@ void init(void)
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        All.MeanGasParticleMass = mpi_mass_tot/( (double)mpi_Ngas );
+        /* A run with no gas at all (pure-sink test problems) makes this 0/0. The NaN
+         * propagates into Sink_Formation_Mass and hence into max_mmerge in the sink-sink
+         * merger test, where every comparison against NaN is false -- silently disabling
+         * the ceiling that stops anything heavier than a few gas cells being merged away,
+         * so arbitrarily massive stars become mergeable. Do not rely on the NaN comparison
+         * to catch this: under -ffast-math (-ffinite-math-only) the compiler may fold it
+         * either way, so the same source blocks or admits depending on the build. */
+        All.MeanGasParticleMass = (mpi_Ngas > 0) ? (mpi_mass_tot / ((double)mpi_Ngas)) : 0;
         if(RestartFlag==0){
             for(i=0; i<NumPart; i++){
-                if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass
+                if(P[i].Type==5){
+                    P[i].Sink_Formation_Mass = All.MeanGasParticleMass; // will behave as if this sink formed from a gas cell with the average mass
+                    /* No gas in the run, so there is no gas-cell mass to inherit. Use a small
+                     * fraction of the sink's own mass: finite and nonzero, so the several places
+                     * that divide by Sink_Formation_Mass stay well-defined, while keeping
+                     * max_mmerge = 10*Sink_Formation_Mass far below the sink mass, which is what
+                     * makes the merger ceiling reject these sinks. */
+                    if(!(P[i].Sink_Formation_Mass > 0)) {P[i].Sink_Formation_Mass = P[i].Mass / 1000.;}
+                }
             }
         }
 #endif
@@ -1235,6 +1265,10 @@ void setup_smoothinglengths(void)
 #endif
         {
                 no = Father[i];
+                /* Negative means the topology build never reached this particle: gpu_topology_finalize_father()
+                 * seeds Father[] to -1 and only the BFS writes real parents. Start from the root rather than
+                 * indexing Nodes with -1; the guess is crude but finite, and gets refined iteratively. */
+                if(no < 0) {no = All.MaxPart;}
                 while(2 * All.DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1339,6 +1373,7 @@ void ags_setup_smoothinglengths(void)
                 if(P[i].Type > 0)
                 {
                     no = Father[i];
+                    if(no < 0) {no = All.MaxPart;} /* orphaned by the topology build; see setup_smoothinglengths note */
                     while(10 * All.AGS_DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                     {
                         p = Nodes[no].u.d.father;
@@ -1378,6 +1413,7 @@ void disp_setup_smoothinglengths(void)
             if(P[i].Type == 0)
             {
                 no = Father[i];
+                if(no < 0) {no = All.MaxPart;} /* orphaned by the topology build; see setup_smoothinglengths note */
                 while(10 * 2.0 * 64 * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;

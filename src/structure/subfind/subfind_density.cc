@@ -71,6 +71,9 @@ void subfind_setup_smoothinglengths(int j)
 #endif
 	{
 	  no = Father[i];
+	  /* Father[] is seeded to -1 per topology build; negative means the build never reached this
+	     particle, so start from the root rather than indexing Nodes with -1. */
+	  if(no < 0) {no = All.MaxPart;}
 
 	  /* Not a good guess for gas/stars component, need more thought ! */
 	  while(10 * All.DesLinkNgb * P[i].Mass > Nodes[no].u.d.mass)

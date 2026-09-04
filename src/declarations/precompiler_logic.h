@@ -480,11 +480,16 @@
 #define IO_SINKS_ONLY_SNAPSHOT_FREQUENCY 0 /* Determines the number of snapshots with reduced data (stars only) per full snapshots (gas+stars), e.g., setting it to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting it to 0 disables it.  */
 #endif
 #define SINGLE_STAR_SINK_DYNAMICS
-#if !defined(PMGRID) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+#if !defined(PMGRID) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && !defined(DISABLE_HERMITE_INTEGRATION)
 #define HERMITE_INTEGRATION 32 // bitflag for which particles to do 4th-order Hermite integration
 #endif
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
+/* RANDOMIZE_GRAVTREE is deliberately NOT a default here. It was made one by 4a868f62 and
+   un-made by 25043743; measured on plummer_binaries it made the energy error 6-20x worse and
+   the run 1.7x slower, because randomisation trades systematic force error for stochastic
+   error -- a win for COM drift (18-63x better on hernquist/plummer) but a loss for a
+   collisional Hermite integrator. Enable it per-Config where the decorrelation is wanted. */
 #define SINGLE_STAR_TIMESTEPPING 0
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
@@ -495,10 +500,13 @@
 #define ADAPTIVE_TREEFORCE_UPDATE (0.0625) // optimization
 #endif
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
+#ifndef IO_SUPPRESS_TIMEBIN_STDOUT
 #define IO_SUPPRESS_TIMEBIN_STDOUT 16 // only prints outputs to log file if the highest active timebin index is within n of the highest timebin (dt_bin=2^(-N)*dt_bin,max)
+#endif
 #endif
 #define OUTPUT_SINK_ACCRETION_HIST // save accretion histories
 #define OUTPUT_SINK_FORMATION_PROPS // save at-formation properties of sink particles
+#define INPUT_READ_SINKPROPS // read sink properties (ProtoStellarStage, ZAMS_Mass, ...) back from the IC. Without this a star written as main-sequence restarts as a protostar and has to re-evolve, so anything gated on ProtoStellarStage==5 (winds, wind_mode selection) is silently dead for the first part of the run
 #if ( defined(STARFORGE_GMC_TURBINIT) || defined(STARFORGE_FILAMENT_TURBINIT) ) // these flags should be given numerical values equal to the desired virial parameter
 #define TURB_DRIVING
 #define GRAVITY_ANALYTIC
@@ -514,12 +522,45 @@
 #if ( defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_RT_HEATING) || defined(SINGLE_STAR_FB_SNE) || defined(SINGLE_STAR_FB_RAD) || defined(SINGLE_STAR_FB_LOCAL_RP))
 #define SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION 2 //we are using the protostellar evolution model from ORION
 #endif
+
+/* Which pairs may merge at all, which is what preserves the structure a sustained outflow builds.
+   Keyed on the jet/wind modules rather than on SINK_WIND_SPAWN, because the concern is a long-lived
+   contact discontinuity between outflow and ambient gas: SINGLE_STAR_FB_SNE also spawns cells but is
+   a single impulsive event with no such interface to maintain. */
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(SINK_SPAWN_MERGE_ANY_NEIGHBOR) && !defined(SINK_SPAWN_NO_MERGE) && !defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+#define SINK_SPAWN_MERGE_WHEN_AMBIENT // retire a spawned cell only once its own state has equilibrated with its kernel, kinematically and thermally, rather than as soon as it is subsonic wrt whichever neighbour is picked as target. A contact discontinuity is in pressure equilibrium with no velocity jump, so outflow material sitting at the contact passes every kinematic test while remaining a distinct phase. SINK_SPAWN_MERGE_ANY_NEIGHBOR opts back out; SINK_SPAWN_NO_MERGE supersedes it
+#endif
+
+#if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
+#endif
 #if ( defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) ) //enable diffusion for metals and enable tracers for different feedback channels
 #define STARFORGE_FEEDBACK_TRACERS 3 // 0 for jets, 1 for winds, 2 for SNe
 #define TURB_DIFF_METALS
 #define TURB_DIFF_METALS_LOWORDER
 #endif
 #ifdef SINGLE_STAR_FB_RAD
+#define SINGLE_STAR_RT_DEFAULTS
+#define RT_OPTICAL_NIR
+#define RT_NUV
+#define RT_PHOTOELECTRIC
+#ifndef RT_CHEM_PHOTOION
+#define RT_CHEM_PHOTOION 1
+#endif
+#define RT_INFRARED
+#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#define RT_ISRF_BACKGROUND
+#endif
+#if defined(RT_INFRARED)
+#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
+#endif
+#endif
+
+/* RT transport settings shared by the STARFORGE radiative modules, split out of
+   SINGLE_STAR_FB_RAD so a problem can request just the solver defaults without pulling in the
+   full radiative-feedback band set (the HII_region tests do exactly this). SINGLE_STAR_FB_RAD
+   implies it, so behaviour there is unchanged. */
+#ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
 #define RT_COMOVING
 #ifndef OUTPUT_RT_RAD_FLUX
@@ -536,20 +577,7 @@
 #endif
 #define RT_REPROCESS_INJECTED_PHOTONS
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-#define RT_OPTICAL_NIR
-#define RT_NUV
-#define RT_PHOTOELECTRIC
-#ifndef RT_CHEM_PHOTOION
-#define RT_CHEM_PHOTOION 1
-#endif
-#define RT_INFRARED
-#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
-#define RT_ISRF_BACKGROUND
-#endif
-#if defined(RT_INFRARED)
-#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
-#endif
-#endif
+#endif // closes SINGLE_STAR_RT_DEFAULTS settings
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
@@ -558,6 +586,15 @@
 #define COOL_MOLECFRAC_NONEQM
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
+/* Anchor the cached u->T conversion at the last cooling solve (T = Temperature +
+   (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor)) instead of extrapolating the same slope through the
+   origin. The chord form under-cools shocked gas through the He-ionization band (SN remnant
+   thermal energy +64%) and mislabels warm molecular shell gas by 7-11% at matched u, because
+   u is the integral of cv while Gamma carries the differential. Default-on wherever this EOS
+   is active, pending upstream integration; GIZMO_EOS_ANCHOR_MIN_OFF restores the chord for A/B. */
+#if defined(COOLING) && !defined(CHIMES) && !defined(GIZMO_EOS_ANCHOR_MIN_OFF)
+#define GIZMO_EOS_ANCHOR_MIN
+#endif
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
 #define CONDUCTION           /* enable conduction */
 #define CONDUCTION_SPITZER   /* compute proper coefficients and anisotropy for conduction */
@@ -830,6 +867,30 @@
 #endif
 #endif
 #endif
+#endif
+
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
+#if !defined(SINK_CALC_DISTANCES)
+#define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES)
+/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
+   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
+   Silently losing binary detection would change the integration, so refuse the combination. */
+#error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
+#endif
+#endif
+
+
+/* Drift and kick the sink node moments between rebuilds, as the main moments already are. Requires
+   sink_vel to exist to drift with, hence the condition below -- which must be tested here, after every
+   site that can turn SINK_CALC_DISTANCES on (the last is the GRAVITY_ANALYTIC block just above).
+   SINGLE_STAR_DIRECT_GRAVITY is in the list because it subtracts the sink monopole from mixed nodes and
+   so needs sink_pos on the same clock as u.d.s; it can be set without SINGLE_STAR_TIMESTEPPING, and
+   where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#define SINK_NODE_MOTION_TRACKED
 #endif
 
 
@@ -1605,4 +1666,51 @@
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
  && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
+#endif
+
+
+/* Two errors of opposite sign in spawned-cell feedback that were nearly cancelling: the merge
+   discarding the pair's COM-frame kinetic energy (-23% of L*t) and the WAKEUP kick reversal on
+   mid-step demotion (+18%). Fixing either alone unmasks the other, so both are enabled together.
+   Placed at the end of this file deliberately: it must come after every SINK_WIND_SPAWN derivation
+   above, several of which are themselves conditional. */
+#if defined(SINK_WIND_SPAWN) && !defined(WAKEUP_REVERSE_KICK_ON_DEMOTION) && !defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION)
+#define WAKEUP_TRUNCATE_STEP_ON_DEMOTION // the WAKEUP kick reversal injects energy and only fires with spawned cells present, so truncate the step instead whenever we are spawning. WAKEUP_REVERSE_KICK_ON_DEMOTION opts back out
+#endif
+
+#if defined(SINK_WIND_SPAWN) && !defined(MERGE_SPLIT_DISCARD_ENERGY) && !defined(MERGE_SPLIT_CONSERVE_ENERGY)
+#define MERGE_SPLIT_CONSERVE_ENERGY // merging sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy leaves the budget; discarding it costs ~23% of the injected wind energy in the adiabatic wind_singlestar test, so return it as heat whenever we are spawning. MERGE_SPLIT_DISCARD_ENERGY opts back out
+#endif
+
+
+#ifdef RANDOMIZE_GRAVTREE
+/* the periodic path shifts all coordinates by a random vector mod box, which is only valid
+ * where every periodic dimension is a pure translation symmetry */
+#if defined(BOX_SHEARING)
+#error "RANDOMIZE_GRAVTREE is incompatible with BOX_SHEARING: an x-translation couples into the shear velocity offset (see do_box_wrapping) and corrupts velocities."
+#endif
+#if defined(BOX_PERIODIC) && (defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z))
+#error "RANDOMIZE_GRAVTREE + BOX_PERIODIC is incompatible with reflecting/outflow boundaries: those dimensions are not translation-invariant."
+#endif
+/* Which randomization method applies is decided by whether GRAVITY is periodic, NOT by whether
+ * the box is. Under GRAVITY_NOT_PERIODIC the tree uses bare |dx|, so translating coordinates mod
+ * box is NOT a symmetry: wrapping a particle across the boundary moves it a full box away
+ * gravitationally, which would corrupt the forces. Those runs (STARFORGE-style setups) must
+ * therefore use the non-periodic method -- moving and enlarging the root node -- even though the
+ * box is periodic. The cost is the root-node doubling and the bit of Peano resolution it spends. */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#define RANDOMIZE_GRAVTREE_PERIODIC /* use the coordinate-translation method */
+#endif
+#endif
+
+
+/* starforge_dev names this INPUT_READ_TEMPERATURE (2c517b56); kokkos already had the same
+   capability as INPUT_READ_EOSTEMP, plus a second use in init.cc that skips the temperature
+   guess when the value came from the ICs. Alias them rather than renaming, so tests and
+   Config.sh files written against either name work and neither existing use changes. */
+#if defined(INPUT_READ_TEMPERATURE) && !defined(INPUT_READ_EOSTEMP)
+#define INPUT_READ_EOSTEMP
+#endif
+#if defined(INPUT_READ_EOSTEMP) && !defined(INPUT_READ_TEMPERATURE)
+#define INPUT_READ_TEMPERATURE
 #endif

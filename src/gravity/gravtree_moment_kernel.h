@@ -129,7 +129,7 @@ struct moment_node_accum {
 #ifdef SINK_CALC_DISTANCES
     AccT       sink_mass;
     Vec3<AccT> sink_pos;       /* Σ sm x */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     int        N_SINK;
     Vec3<AccT> sink_vel;       /* Σ sm v */
 #endif
@@ -185,7 +185,7 @@ struct moment_node_ref {
 #ifdef SINK_CALC_DISTANCES
     AccT          *sink_mass;
     Vec3<AccT>    *sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     int           *N_SINK;
     Vec3<AccT>    *sink_vel;
 #endif
@@ -366,7 +366,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
     if(p.type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
         a.sink_mass = (AccT) p.mass;
         a.sink_pos  = moment_weighted_vec3<AccT>(p.mass, p.pos[0], p.pos[1], p.pos[2]);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         a.N_SINK   = 1;
         a.sink_vel = moment_weighted_vec3<AccT>(p.mass, p.vel[0], p.vel[1], p.vel[2]);
 #endif
@@ -445,7 +445,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_child_n
 #ifdef SINK_CALC_DISTANCES
     a.sink_mass = c.sink_mass;
     a.sink_pos  = c.sink_mass * c.sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     a.N_SINK   = c.N_SINK;
     a.sink_vel = c.sink_mass * c.sink_vel;
 #endif
@@ -511,7 +511,7 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_zero(const moment_node_ref<AccT>
 #ifdef SINK_CALC_DISTANCES
     *r.sink_mass = (AccT) 0;
     *r.sink_pos  = Vec3<AccT>{};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     *r.N_SINK   = 0;
     *r.sink_vel = Vec3<AccT>{};
 #endif
@@ -572,7 +572,7 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_apply(const moment_node_ref<AccT
 #ifdef SINK_CALC_DISTANCES
     Ops::add(r.sink_mass, a.sink_mass);
     Ops::add_vec3(r.sink_pos, a.sink_pos);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Ops::add_int(r.N_SINK, a.N_SINK);
     Ops::add_vec3(r.sink_vel, a.sink_vel);
 #endif
@@ -660,7 +660,7 @@ KOKKOS_INLINE_FUNCTION static void moment_finalize(const moment_node_ref<AccT>& 
 #ifdef SINK_CALC_DISTANCES
     if(*r.sink_mass > 0) {
         *r.sink_pos = *r.sink_pos / *r.sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         *r.sink_vel = *r.sink_vel / *r.sink_mass;
 #endif
 #if defined(SPECIAL_POINT_MOTION)

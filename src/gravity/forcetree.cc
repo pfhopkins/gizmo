@@ -470,6 +470,53 @@ let_build_attempt:
         let_finalize_unredirected_foreign_topleaves();
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     }
+    /* Tree-integrity invariant. N_part is exchanged with the pseudo-particle data and re-accumulated
+     * across foreign domains above, so the root node now counts every particle globally and must agree
+     * with All.TotNumPart. A particle inserted under a top node owned by another task gets detached and
+     * then appears in NO rank's tree: absent from every multipole moment, and otherwise completely
+     * silent. Integer, not mass -- node masses are MyFloat, so one lost particle in ~1e6 sits below the
+     * accumulated summation error and a mass check would miss it. Zero-mass particles (swallowed sinks
+     * awaiting cleanup) are legitimately uncounted when they occupy a subtree alone, since internal
+     * nodes only propagate N_part when mass > 0, so they are allowed for. Warn rather than abort: a
+     * false positive must not kill a long run, and a warning is enough to stop this being silent.
+     * Root N_part is live on both paths -- gpu_moment_refresh mirrors it for NTask==1,
+     * gpu_topnode_moment_resum for NTask>1.
+     *
+     * The check applies to whole-tree builds only; FOF/SUBFIND build over subsets, and comparing a
+     * group-sized tree against the global TotNumPart reports a spurious deficit (216 vs 264 in
+     * test/fof_subfind). But that test must NOT gate the reduction: mp == NULL && npart == NumPart is
+     * rank-local, and SUBFIND's collective path calls force_treebuild(NumPartGroup, NULL) after a
+     * domain exchange that leaves NumPart unequal across ranks -- 108 vs 156 in test/fof_subfind on
+     * two ranks, with NumPartGroup 108 on both. Gating it meant the rank where the two happened to
+     * match posted an Allreduce its peer skipped, offsetting every subsequent collective by one and
+     * deadlocking SUBFIND's neighbour search: the peer's next Allreduce matched this stray one, so it
+     * ran on and blocked in the following Allgather while this rank waited for a partner that had
+     * already moved past. So reduce unconditionally and carry the whole-tree test along as a veto. */
+    {
+        long long chk_loc[2], chk_tot[2];
+        chk_loc[0] = (mp == NULL && npart == NumPart) ? 0 : 1;   /* nonzero from any rank vetoes */
+        chk_loc[1] = 0;
+        for(int i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {chk_loc[1]++;}}
+        MPI_Allreduce(chk_loc, chk_tot, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(chk_tot[0] == 0)   /* uniform: every rank agrees this is a whole-tree build */
+        {
+            long long n_zero_tot = chk_tot[1];
+            long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;   /* root; node ids start at TreeNodeIndexBase */
+            long long deficit = (long long) All.TotNumPart - in_tree;
+            if(deficit > n_zero_tot || deficit < 0)
+            {
+                if(ThisTask == 0)
+                {
+                    printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
+                           "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
+                           "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
+                           in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
+                    fflush(stdout);
+                }
+            }
+        }
+    }
+
     TimeOfLastTreeConstruction = All.Time;
     g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
     return Numnodestree;
@@ -762,7 +809,7 @@ struct DomainNODE
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
         Vec3<MyFloat> sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         int N_SINK;
         Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -852,7 +899,7 @@ void force_exchange_pseudodata_issue(void)
 #ifdef SINK_CALC_DISTANCES
             DomainMoment[i].sink_mass = Nodes[no].sink_mass;
             DomainMoment[i].sink_pos = Nodes[no].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             DomainMoment[i].sink_vel = Nodes[no].sink_vel;
             DomainMoment[i].N_SINK = Nodes[no].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -973,7 +1020,7 @@ int force_exchange_pseudodata_complete(void)
 #ifdef SINK_CALC_DISTANCES
                     Nodes[no].sink_mass = DomainMoment[i].sink_mass;
                     Nodes[no].sink_pos = DomainMoment[i].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
                     Nodes[no].sink_vel = DomainMoment[i].sink_vel;
                     Nodes[no].N_SINK = DomainMoment[i].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -1052,7 +1099,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
     Vec3<MyFloat> sink_pos_times_mass = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Vec3<MyFloat> sink_mom = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
@@ -1117,7 +1164,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
             sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
             N_SINK += Nodes[p].N_SINK;
             sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -1234,13 +1281,13 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_CALC_DISTANCES
     Nodes[no].sink_mass = sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
     Nodes[no].N_SINK = N_SINK;
 #endif
     if(sink_mass > 0)
     {
         Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#ifdef SINK_NODE_MOTION_TRACKED
         Nodes[no].sink_vel = sink_mom / sink_mass;
 #if defined(SPECIAL_POINT_MOTION)
         Nodes[no].sink_acc = sink_force / sink_mass;
@@ -1372,6 +1419,13 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
+    /* gpu_topology_finalize_father() seeds Father[] to -1 for every particle slot before the BFS
+     * writes real parents, so a negative entry means the topology build never reached this particle
+     * and there is no node whose opening criteria we could update. Indexing Extnodes with -1 would
+     * be a wild WRITE two lines below. Leave those fields alone; the child has already inherited the
+     * same -1 above and is skipped by the other Father[] consumers too. This bounds the damage, it
+     * does not fix the orphaning: the particle is still absent from the tree moments. */
+    if(father < 0) {return;}
     // update parent node properties [maximum softening, speed] for opening criteria
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
@@ -1699,16 +1753,56 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         }
                     }
                 }
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+                   here as well would double every such force */
+                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#endif
                 dr = P[no].Pos - pos;
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 mass = P[no].Mass;
-                
+
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                 r_source = grav_spherical_symmetry_r_from_center(P[no].Pos[0],P[no].Pos[1],P[no].Pos[2],center[0],center[1],center[2]);
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+                /* Hermite-only passes: an inactive Hermite-integrated source sits at its
+                 * KDK-drifted position -- and its stored Vel is whole-step-kicked (see
+                 * do_the_kick) -- so the drifted position is O(dt^2) wrong mid-step.
+                 * Re-predict the source from its own Old* state, exactly as
+                 * do_hermite_prediction does for the target. This covers the single-particle
+                 * branch only: a source absorbed into a node multipole still contributes at
+                 * its drifted position. Under SINGLE_STAR_DIRECT_GRAVITY_RADIUS (1000 AU,
+                 * STARFORGE default) star-bearing nodes inside that radius are force-opened
+                 * to singles, so close sink pairs -- where the O(dt^2) error matters -- take
+                 * this branch; more distant sinks arrive via drifted nodes uncorrected.
+                 *
+                 * Nothing is written back: the predicted state exists only in this force
+                 * evaluation. Active sources are
+                 * skipped: at HermiteOnlyFlag==1 their Old* are stale (find_timesteps has
+                 * already advanced Ti_begstep, so D=0 would return the previous step's start
+                 * position) and their live Pos is already correct -- corrected at flag==1,
+                 * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
+                 * leapfrog's cancellation structure assumes the plain drifted positions.
+                 *
+                 * PERFORMANCE: this gate costs ~16% per particle-step, almost all of it in
+                 * eligible_for_hermite() -- it depends only on the SOURCE but is evaluated per
+                 * (target, source) pair, and it is cross-TU, so it blocks optimization here.
+                 * Hoisting it into a per-pass array would recover most of that. Not done. */
+                if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
+                {
+                    double hD = get_gravkick_factor(P[no].Ti_begstep, ti_Current, no, 0);
+                    dr = P[no].OldPos + (P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/3)) * (hD/2)) * hD - pos;
+                    GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                    r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                    dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
+#endif
+                }
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
@@ -1853,6 +1947,9 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
                 int    fl_tag = 0, fl_type = -1;
                 double fl_zeta = 0.0, fl_soft = 0.0;
+#ifdef HERMITE_INTEGRATION
+                MyIDType fl_id = 0;
+#endif
                 if(in_foreign && ForeignLeafTag) {
                     int fs = no - (treeBase + maxNodes);
                     if(fs >= 0 && fs < AllocatedForeignNodes) {
@@ -1860,6 +1957,9 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         fl_type = ForeignLeafType[fs];
                         fl_zeta = (double) ForeignLeafZeta[fs];
                         fl_soft = (double) ForeignLeafSoft[fs];
+#ifdef HERMITE_INTEGRATION
+                        if(ForeignLeafID) {fl_id = ForeignLeafID[fs];}
+#endif
                     }
                 }
 
@@ -1874,6 +1974,12 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * below and the acceptance predicate further down consult this one answer, so no
                  * path can follow nextnode on a node whose children the sender never sent. */
                 grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
+                   supplies every star-star pair exactly. Nodes made entirely of stars therefore have
+                   nothing left for us; skip them here, before the drift and the opening criteria below. */
+                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
+#endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
@@ -1901,7 +2007,28 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     }
                 }
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* Remove the sinks from this node for a star target: star-star pairs come exactly from
+                   star_direct_gravity_compute(), so taking them here too would double them. This tree
+                   carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
+                   so the subtraction is exact rather than approximate: drop the sink mass and move the
+                   center of mass to that of what remains. Both terms are on the same clock, since
+                   SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
+                   with vs -- which is also why this sits after force_drift_node above. Doing it this way
+                   means a star target keeps the ordinary O(log N) walk; the alternative, opening every
+                   node containing a star, costs an extra O(N_star log N) node visits per star target.
+                   mass is reduced before the opening criteria below, so they judge the node on the mass
+                   actually being used. Pure-star nodes were already skipped above. */
+                if((ptype == 5) && (nop->sink_mass > 0))
+                {
+                    double mass_nosink = mass - nop->sink_mass;
+                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                    mass = mass_nosink;
+                }
+                else {dr = nop->u.d.s - pos;}
+#else
                 dr = nop->u.d.s - pos;
+#endif
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
@@ -1972,6 +2099,27 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = Extnodes[no].vs - vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+                /* Hermite-only passes: a foreign Hermite-type leaf is seen through a build-time
+                 * LET moment -- drifted position, mass-weighted vs for velocity, no Old* state to
+                 * re-predict from. Override (dr, dv) with the owner-side state from this pass's
+                 * ghost table (see gravtree_force_kernel.h). Local sources take the inline
+                 * prediction in the particle-leaf branch above; multipole-absorbed foreign
+                 * sources stay drifted, exactly as local node-absorbed sources do. */
+                if(HermiteOnlyFlag && fl_tag == 1 && ((1 << fl_type) & HERMITE_INTEGRATION) && NHermiteGhost > 0)
+                {
+                    int gi = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, fl_id);
+                    if(gi >= 0)
+                    {
+                        dr = HermiteGhostTab[gi].pos - pos;
+                        GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                        r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                        dv = HermiteGhostTab[gi].vel - vel;
+#endif
+                    }
+                }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                 cr_injection = nop->cr_injection;
@@ -2915,6 +3063,9 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * import count is known.  Until then the pointers are NULL, which every reader of them
      * already tests for. */
     ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL;
+#ifdef HERMITE_INTEGRATION
+    ForeignLeafID = NULL;
+#endif
 
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
     if(first_flag == 0)
@@ -3023,6 +3174,9 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
     int     *new_type = NULL;
     MyFloat *new_zeta = NULL;
     MyFloat *new_soft = NULL;
+#ifdef HERMITE_INTEGRATION
+    MyIDType *new_id = NULL;
+#endif
 
     /* Carry across everything the old arrays held -- the local tree, and any foreign nodes a
      * previous call already made room for.  Today the exchange sizes once per build so the
@@ -3041,11 +3195,18 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
     new_type = (int *)     gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_type");
     new_zeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_zeta");
     new_soft = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_soft");
+#ifdef HERMITE_INTEGRATION
+    new_id   = (MyIDType *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyIDType), "tree_foreign_id");
+#endif
 
     /* The mirror sizes its own copy of the sidecar from AllocatedForeignNodes, so that has to
      * read as the new count while it allocates -- and go back if it cannot. */
+    int sidecar_id_ok = 1;
+#ifdef HERMITE_INTEGRATION
+    sidecar_id_ok = (new_id != NULL);
+#endif
     int mirror_grown = 0;
-    if(new_nodes && new_extnodes && new_tag && new_type && new_zeta && new_soft)
+    if(new_nodes && new_extnodes && new_tag && new_type && new_zeta && new_soft && sidecar_id_ok)
     {
         AllocatedForeignNodes = n_foreign;
         mirror_grown = gpu_gravity_tree_grow_foreign((int) new_slots);
@@ -3061,6 +3222,9 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
                ThisTask, n_foreign,
                (double)((size_t) n_foreign * (sizeof(struct NODE) + sizeof(struct extNODE))) / (1024.0 * 1024.0));
         fflush(stdout);
+#ifdef HERMITE_INTEGRATION
+        if(new_id)       {gpu_tree_free_bytes(new_id);}
+#endif
         if(new_soft)     {gpu_tree_free_bytes(new_soft);}
         if(new_zeta)     {gpu_tree_free_bytes(new_zeta);}
         if(new_type)     {gpu_tree_free_bytes(new_type);}
@@ -3073,6 +3237,9 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
     memset(new_type, 0, (size_t) n_foreign * sizeof(int));
     memset(new_zeta, 0, (size_t) n_foreign * sizeof(MyFloat));
     memset(new_soft, 0, (size_t) n_foreign * sizeof(MyFloat));
+#ifdef HERMITE_INTEGRATION
+    memset(new_id,   0, (size_t) n_foreign * sizeof(MyIDType));
+#endif
 
     /* Everything is in hand: swap, then release what was superseded. */
     gpu_tree_free_bytes(Nodes_base);
@@ -3087,6 +3254,12 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
     Extnodes = Extnodes_base - All.TreeNodeIndexBase;
     ForeignLeafTag = new_tag; ForeignLeafType = new_type;
     ForeignLeafZeta = new_zeta; ForeignLeafSoft = new_soft;
+#ifdef HERMITE_INTEGRATION
+    if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
+    ForeignLeafID = new_id;
+    gizmo_mem_account_add(GIZMO_MEM_TREE_NODES,
+                          (long long)(n_foreign - old_foreign) * (long long) sizeof(MyIDType));
+#endif
 
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES,
                           (long long)((long long)(n_foreign - old_foreign)
@@ -3162,8 +3335,12 @@ void force_treefree(void)
         if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
         if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
         if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
+#ifdef HERMITE_INTEGRATION
+        if(ForeignLeafID)   {gpu_tree_free_bytes(ForeignLeafID);   ForeignLeafID   = NULL;}
+#endif
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
+        let_refresh_invalidate();   /* imported-slot retention dies with the slots */
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
         AllocatedForeignNodes = 0;   /* the foreign storage went with the arrays above */
         tree_allocated_flag = 0;
@@ -3434,6 +3611,9 @@ void force_refresh_node_moments(void)
             Extnodes[no].Flag = GlobFlag;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
             Extnodes[no].rt_source_lum_dp = {};
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+            Extnodes[no].sink_dp = {}; /* sink_pos/sink_vel are set fresh by the moment pass, so there is no pending kick to carry */
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
             Extnodes[no].dp_dm = {};

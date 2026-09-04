@@ -17,6 +17,71 @@
 #include "../solids/grain_promotion.h"
 
 
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/*! Total gas energy, reported ONLY at full synchronization (HighestActiveTimeBin ==
+    HighestOccupiedTimeBin) -- the only point where Vel and InternalEnergy share a clock and the sum is
+    conserved. Snapshots never satisfy this, since io.cc writes Velocities from Vel (kick-time) but
+    InternalEnergy from InternalEnergyPred (drift-time). Compare successive lines against energy injected. */
+void energy_budget_sync_report(void)
+{
+    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
+    double loc[3] = {0,0,0}, glob[3]; int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type == 0 && P[i].Mass > 0)
+        {
+            loc[0] += P[i].Mass * CellP[i].InternalEnergy;
+            loc[1] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
+            loc[2] += P[i].Mass;
+        }
+    }
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0)
+    {
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+    }
+}
+
+#ifdef EVALPOTENTIAL
+/*! Kinetic + gravitational energy over ALL particle types, again only at full synchronization.
+ *
+ *  The report above is gas thermal+kinetic and carries no potential term, so it is blind to a
+ *  collisionless self-gravitating run -- a pure N-body problem has no gas at all and would report
+ *  zeros. This is the conserved quantity for that case.
+ *
+ *  Why this cannot be done from snapshots: io.cc writes Velocities from P[].Vel, which is at
+ *  kick-time, while positions (and hence the potential) are at drift-time. The resulting error is
+ *  of order dt/(2 t_dyn) per particle -- percent-level under a typical accuracy criterion. Across
+ *  a large-N system those per-particle errors are random and average away, which is why the
+ *  snapshot estimate is adequate for a 512-star cluster; across a 3-10 body system, where one star
+ *  can hold a third of the binding energy, they do not, and the snapshot sum cannot resolve a 1%
+ *  budget however carefully the potential is recomputed.
+ *
+ *  Called at the end of the step, after the Hermite correction, so Vel is the final velocity of
+ *  the step and Potential comes from the gravity solve at the (predicted) end-of-step positions. */
+void energy_budget_gravity_report(void)
+{
+    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
+    double loc[3] = {0,0,0}, glob[3]; int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Mass <= 0) {continue;}
+        loc[0] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
+        loc[1] += 0.5 * P[i].Mass * P[i].Potential; /* 1/2 removes the double counting of each pair */
+        loc[2] += P[i].Mass;
+    }
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0)
+    {
+        printf("Energy (synced,grav) t=%.10g E_kin=%.10e E_pot=%.10e E_tot=%.10e M_tot=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+    }
+}
+#endif
+#endif
+
+
 /*! \file run.c
  *  \brief  iterates over timesteps, main loop
  */
@@ -341,6 +406,47 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#ifdef GIZMO_STALE_FORCE_DUMP
+        /* Diagnostic, off unless GIZMO_STALE_FORCE_DUMP=N is set in Config.sh: dump the force state
+         * on the first N steps that did NOT rebuild the tree.
+         *
+         * Why it has to be here and not in a snapshot. Snapshots are written at full-sync points,
+         * where every particle is active AND GlobNumForceUpdate peaks so a decomposition has just
+         * run. Any force diagnostic taken from a snapshot therefore scores a FRESH tree whatever
+         * the rebuild cadence, and is blind to stale-tree error by construction. Several
+         * hypotheses about the tree tested clean against snapshots for exactly this reason.
+         *
+         * Score offline against a direct sum (pytreegrav) on the positions written here: those are
+         * the ones the walk actually used, so the comparison isolates tree error from drift error.
+         * Look at the ACTIVE subset and at the TAIL (fraction over a threshold) -- the defect this
+         * was built for is invisible in a median over all particles. */
+        {
+            static int n_dumped = 0;
+            if(!reconstructed_tree && n_dumped < GIZMO_STALE_FORCE_DUMP && All.NumCurrentTiStep > 32)
+            {
+                char fn[512];
+                snprintf(fn, sizeof(fn), "%sstaleforce_%03d.%d", All.OutputDir, n_dumped, ThisTask);
+                FILE *fp = fopen(fn, "w");
+                if(fp)
+                {
+                    fprintf(fp, "# step %lld  Time %.17g  NumPart %d\n",
+                            (long long) All.NumCurrentTiStep, All.Time, NumPart);
+                    fprintf(fp, "# id active mass x y z ax ay az\n");
+                    for(int i = 0; i < NumPart; i++)
+                    {
+                        fprintf(fp, "%llu %d %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                                (unsigned long long) P[i].ID, (TimeBinActive[P[i].TimeBin] ? 1 : 0),
+                                (double) P[i].Mass, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2],
+                                (double) P[i].GravAccel[0], (double) P[i].GravAccel[1], (double) P[i].GravAccel[2]);
+                    }
+                    fclose(fp);
+                }
+                n_dumped++;
+                if(ThisTask == 0) {printf("STALE_FORCE_DUMP %d at step %lld\n", n_dumped, (long long) All.NumCurrentTiStep); fflush(stdout);}
+            }
+        }
+#endif
+
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
 #ifdef PMGRID
@@ -374,6 +480,7 @@ void run(void)
         CPU_Step[CPU_KICKS] += measure_time();
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
+        EB_SYNC_REPORT();
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
@@ -384,6 +491,7 @@ void run(void)
         do_hermite_correction();
         CPU_Step[CPU_KICKS] += measure_time();
 #endif
+        EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
         if(ThisTask == 0)
