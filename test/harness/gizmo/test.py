@@ -51,6 +51,33 @@ def clean_test_outputs(test_name: str, extra_config_flags=()):
         remove(f)
 
 
+def physical_cores():
+    """Physical cores, which is what `--bind-to core` allocates -- not cpu_count(), which counts
+    hardware threads and so doubles the answer wherever SMT is on. Falls back to cpu_count()."""
+    try:
+        cores = set()
+        pkg = core = None
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if ":" not in line:
+                    if core is not None:
+                        cores.add((pkg, core))
+                    pkg = core = None
+                    continue
+                key, val = (s.strip() for s in line.split(":", 1))
+                if key == "physical id":
+                    pkg = val
+                elif key == "core id":
+                    core = val
+        if core is not None:
+            cores.add((pkg, core))
+        if cores:
+            return len(cores)
+    except OSError:
+        pass
+    return cpu_count() or 1
+
+
 def default_omp_threads():
     """Return the default number of OpenMP threads for tests."""
     return 2
@@ -283,15 +310,16 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
         # a Genoa node, same binary back to back, that costs 34% (0.1260 vs 0.0832 s/step). It is
         # also why mri missed the sweep's 5400s cap at 5807s -- bound it projects to ~3830s.
         #
-        # PE=n needs ranks*threads <= cores, which the defaults satisfy exactly
-        # (default_mpi_ranks() is cpu_count()/2 and default_omp_threads() is 2). A test asking
-        # for more than the machine has would fail to LAUNCH rather than merely run slowly, so
-        # fall back to the unbound flags there.
+        # PE=n needs ranks*threads <= PHYSICAL cores. A test asking for more than the machine
+        # has fails to LAUNCH rather than merely running slowly, so fall back to the unbound
+        # flags there. The count must be cores, not cpu_count(): with SMT on, the defaults
+        # (cpu_count()/2 ranks x 2 threads) ask for exactly cpu_count() cores while only half
+        # that many exist, and mpirun refuses to bind two processes to one core.
         #
         # OMP_PROC_BIND is assigned, not setdefault: callers export it (the sweep runner sets
         # `false` to avoid rank stacking under --bind-to none), and that value would otherwise
         # win and undo the placement this branch is buying.
-        if num_mpi_ranks * num_openmp_threads <= (cpu_count() or 1):
+        if num_mpi_ranks * num_openmp_threads <= physical_cores():
             # No --use-hwthread-cpus here: OpenMPI refuses PE=n together with it ("a request
             # for multiple cpus-per-proc was given, but a conflicting binding policy was
             # specified ... type of cpus: use-hwthreads-as-cpus ... binding policy given:
