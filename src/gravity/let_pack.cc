@@ -2297,8 +2297,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             printf("LET finalize FATAL: foreign topleaf t=%d owner_rank=%d node=%d still "
                    "unredirected (nextnode=%d in pseudo range) and NOT provably empty: "
                    "mass=%g N_part=%ld len=%g sibling=%d. The Locally Essential Tree failed "
-                   "to ship this subtree; Phase 9.4 retired the CPU gravity export path, so "
-                   "the LET must be complete. (rank=%d)\n",
+                   "to ship this subtree (rank=%d)\n",
                    t, DomainTask[t], no, (int)nn, mass, npart, (double)Nodes[no].len,
                    Nodes[no].u.d.sibling, ThisTask);
             fflush(stdout); endrun(90000064); continue; /* soft bad-stop: incomplete LET state drains at gravtree:after_treebuild before the GPU walk reads it */

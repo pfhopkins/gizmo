@@ -2576,7 +2576,7 @@ static int cbe_apply_basis_outflow_budget(
             }
         }
 
-        /* Commit at f=f_lo. The (1-f_lo)*excess REMAINDER stays on basis a's
+        /* set at f=f_lo. The (1-f_lo)*excess REMAINDER stays on basis a's
          * net rate uncapped -- explicitly NOT a hidden full cap. */
         for(int k = 0; k < CBE_INTEGRATOR_NMOMENTS; k++) {
             pi.CBE_basis_moments_dt[a][k] += f_lo * excess[k];

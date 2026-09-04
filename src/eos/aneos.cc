@@ -15,7 +15,7 @@
      optionally cs [cm/s] and phase (int).
 
    Interpolation is bilinear in log-log space for P, u, S, cs.
-   Phase uses nearest-neighbor lookup (no interpolation on integers).
+   Uses nearest-neighbor lookup (no interpolation on integers).
 
    Temperature inversion (rho, u) -> T uses Newton-Raphson with
    bisection fallback.

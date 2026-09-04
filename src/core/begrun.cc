@@ -88,7 +88,7 @@ void begrun(void)
     (!defined(TURB_DIFF_METALS) || !defined(TURB_DIFF_METALS_LOWORDER))
   /* Bad-stop poll for the CHIMES_TURB_DIFF_IONS config checks above, which run
    * BEFORE read_parameter_file() (so the post-read poll below cannot catch
-   * them). After the Stage-1d macro flip those all-rank endrun()s become
+   * them). After the macro flip those all-rank endrun()s become
    * bad-stop requests; this drains them to main()'s post-begrun finalize
    * before any parameter is consumed. No-op until the flip. Gated on exactly
    * the invalid compile combinations where those early bad-stops can fire, so
@@ -99,7 +99,7 @@ void begrun(void)
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
 
   /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
-   * uses all-rank endrun -> bad-stop request after the Stage-1d macro flip.
+   * uses all-rank endrun -> bad-stop request after the macro flip.
    * Catch it here, before any setup consumes invalid parameters; the return
    * drains to main()'s post-begrun finalize. No-op until the flip activates
    * those bad-stops. */
@@ -147,7 +147,7 @@ void begrun(void)
 #endif
 
     /* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] are macros into
-       All.BoxSize — no per-startup sync needed (Step 5 Phase E0). */
+       All.BoxSize — no per-startup sync needed. */
 
 #ifdef BOX_SHEARING
     double L_box_towrap = All.BoxSize;
@@ -157,8 +157,7 @@ void begrun(void)
     /* Shearing_Box_Vel_Offset is a macro (allvars.h:118) expanding to
        (All.Shearing_Box_Vel_Offset); use the bare macro name — `All.`
        prefix double-resolves and errors with "expected a member name"
-       under nvc++. Phase D fix 2026-05-21, same root cause as
-       timestep.cc:1414. */
+       under nvc++. same root cause as timestep.cc:1414. */
     Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
     calc_shearing_box_pos_offset();
 #endif
@@ -881,9 +880,7 @@ void open_outputfiles(void)
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "energy.txt");
     if(!(FdEnergy = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 #if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
-    /* CBE per-output-interval diagnostic counters log (Wave-CBE Commit 2,
-     * 2026-05-24). Counters populated by Wave-CBE Commits 3 (root-found
-     * v_F), 4 (gradient/reconstruction), 5 (SPD repair); columns
+    /* CBE per-output-interval diagnostic counters log. Counters populated by Wave-CBE ; columns
      * documented in the header line written below. Separate file rather
      * than tagged lines in energy.txt to keep energy.txt fixed-column. */
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "cbe_diagnostics.txt");
@@ -891,18 +888,18 @@ void open_outputfiles(void)
     else if(RestartFlag == 0 && ThisTask == 0) {
         fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations (Commit 3 populates; 0 otherwise)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations (Commit 3); note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4 Phase 1 populates)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 5 SPD repair populates; 0 in Commits 3/4)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations \n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations; note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair\n", prefix_char);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing\n", prefix_char);
 #else
-        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing\n", prefix_char);
 #endif
     }
 #endif

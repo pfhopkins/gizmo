@@ -141,7 +141,7 @@ void   force_update_size_of_parent_node(int no);
 
 void   dump_particles(void);
 
-/* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead on the Kokkos path.
+/* mesh/ngb.cc retired: ngb_treebuild/ngb_treefind_* all dead on the Kokkos path.
    ngb_treebuild() callers replaced with force_treebuild(NumPart, NULL) directly. */
 
 #ifdef BOX_PERIODIC

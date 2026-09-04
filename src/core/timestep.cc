@@ -1595,8 +1595,7 @@ void calc_shearing_box_pos_offset(void) /* function that calculates the shear-of
     /* Shearing_Box_*_Offset are macros (allvars.h:118-119) that already
        expand to (All.Shearing_Box_*_Offset). Use the bare macro names — the
        `All.` prefix was double-resolving via the macro and yielding
-       "expected a member name" under nvc++. Phase D fix 2026-05-21
-       (config 82 BOX_SHEARING=1). */
+       "expected a member name" under nvc++. */
     Shearing_Box_Pos_Offset = Shearing_Box_Vel_Offset * All.Time;
     while(Shearing_Box_Pos_Offset > boxSize_Y) {Shearing_Box_Pos_Offset -= boxSize_Y;}
 }
