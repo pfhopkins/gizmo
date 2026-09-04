@@ -276,18 +276,26 @@ void run(void)
         CPU_Step[CPU_SNAPSHOT] += measure_time();   /* dominated by external table reads */
 
         int reconstructed_tree = 0;
-        int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
 #if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(HERMITE_INTEGRATION)
-        if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
+        if(All.NumForcesSinceLastTreeBuild > All.TreeRebuild_ActiveFraction * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
+        /* Rebuild the tree once this much of the system is active. GlobNumForceUpdate is already
+           global, so folding this in here rather than testing it below costs nothing and keeps one
+           flag, reduced once, as the single statement of whether a tree is wanted this step. */
+        if(GlobNumForceUpdate > All.TreeRebuild_ActiveFraction * All.TotNumPart) {TreeReconstructFlag_local = 1;}
         /* Pick up a rebuild raised since the local copy was taken above. The drift/output in between
            can discard the tree (group finding on a snapshot does), and the reduce below overwrites
            the flag with that older copy, which would leave the reuse branch updating a tree that is
            no longer there. */
         if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
         MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
-        MPI_Allreduce(MPI_IN_PLACE, &NeedFullDomainDecomp, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
+        MPI_Allreduce(MPI_IN_PLACE, &DomainReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        /* A decomposition always brings a new tree with it, but a new tree does not need a
+         * decomposition: redistributing particles between tasks is a cost and balance question,
+         * while how long a tree may be reused is an accuracy one.  The tree the rebuild below
+         * produces stands on the decomposition already in place -- its extent, keys and top tree
+         * are exactly the ones the reused tree was standing on, only the tree itself is fresher. */
+        if(GlobNumForceUpdate > All.DomainBuild_ActiveFraction * All.TotNumPart || DomainReconstructFlag)
         {
             /* Under lazy-drift mode, move_particles only drifted ActiveParticleList;
              * non-active particles are still at their previous Ti_current. Domain
@@ -298,13 +306,32 @@ void run(void)
              * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
             gizmo_full_drift_to(All.Ti_Current);
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
-            if(!NeedFullDomainDecomp) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
+            /* Which of the two the step gets is a domain question.  This once keyed on
+             * TreeReconstructFlag, so anything that merely wanted a fresh tree also suppressed the
+             * lightweight repartition and bought the full decomposition; a tree request says
+             * nothing about whether the top tree and the keys still describe the particles. */
+            if(!DomainReconstructFlag) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
             {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
+            /* Cleared here rather than inside the decomposition, because the request is made to
+               this loop: group finding raises it and then runs decompositions of its own, which
+               would otherwise consume it and leave the tree storage it later frees unclaimed. */
+            DomainReconstructFlag = 0;
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag)
+        {
+            /* Rebuild the tree, keeping the decomposition in place.  The build itself is left to
+             * gravity_tree() below, which is where every build happens and which readies the
+             * softenings the build reads.  The full drift is not required for the tree: it lets the
+             * rebuilt tree be marked current for device-side gravity consumers, which otherwise
+             * fall back to the host.  Domain steps do their own full drift before decomposing, and
+             * get their active list from reconstruct_timebins(), so neither call belongs above. */
+            gizmo_full_drift_to(All.Ti_Current);
+            make_list_of_active_particles();
+            reconstructed_tree = 1;
+        }
         else
         {
             /* update tree dynamically with kicks of last step so that it can be
@@ -819,7 +846,7 @@ void find_next_sync_point_and_drift(void)
   NumForceUpdateAtSyncPoint = NumForceUpdate;
 
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
-  All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;
+  All.NumForcesSinceLastTreeBuild += GlobNumForceUpdate;
   MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
   MPI_Allreduce(&highest_occupied_bin, &All.HighestOccupiedTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 
@@ -1081,11 +1108,11 @@ void output_log_messages(void)
             {
                 printf(" %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n", TimeBinActive[i] ? 'X' : ' ', i, tot_count[i] - tot_count_gas[i], tot_count_gas[i],
                        GET_INTEGERTIME_FROM_TIMEBIN(i) * All.Timebase_interval, tot_cumulative[i], (i == All.HighestActiveTimeBin) ? '<' : ' ',
-                       (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ', avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
+                       (tot_cumulative[i] > All.DomainBuild_ActiveFraction * All.TotNumPart) ? '*' : ' ', avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
                 fprintf(FdTimebin," %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n", TimeBinActive[i] ? 'X' : ' ', i, tot_count[i] - tot_count_gas[i], tot_count_gas[i],
                         GET_INTEGERTIME_FROM_TIMEBIN(i) * All.Timebase_interval, tot_cumulative[i], (i == All.HighestActiveTimeBin) ? '<' : ' ',
-                        (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ', avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
+                        (tot_cumulative[i] > All.DomainBuild_ActiveFraction * All.TotNumPart) ? '*' : ' ', avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
 #endif
                 if(TimeBinActive[i])
                 {

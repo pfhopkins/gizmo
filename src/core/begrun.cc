@@ -374,7 +374,8 @@ void begrun(void)
         All.ErrTolForceAcc = all.ErrTolForceAcc;
         All.NumFilesPerSnapshot = all.NumFilesPerSnapshot;
         All.NumFilesWrittenInParallel = all.NumFilesWrittenInParallel;
-        All.TreeDomainUpdateFrequency = all.TreeDomainUpdateFrequency;
+        All.TreeRebuild_ActiveFraction = all.TreeRebuild_ActiveFraction;
+        All.DomainBuild_ActiveFraction = all.DomainBuild_ActiveFraction;
 #ifdef MHD_MODIFIED_GRADIENT
         All.ActiveFractionForMGSweep = all.ActiveFractionForMGSweep;
         All.Flag_SkipMGSolve = 0; /* first timestep always runs the MG global solve */
@@ -1341,9 +1342,17 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-      strcpy(tag[nt], "TreeDomainUpdateFrequency");
-      strcpy(alternate_tag[nt], "TreeRebuild_ActiveFraction");
-      addr[nt] = &All.TreeDomainUpdateFrequency;
+      /* Registered before the tree fraction below, because the tree fraction defaults to whatever
+         this one ends up being and the not-set-in-file loop resolves the tags in this order. */
+      strcpy(tag[nt], "DomainBuild_ActiveFraction");
+      strcpy(alternate_tag[nt], "TreeDomainUpdateFrequency");   /* the one parameter these two were split out of: a file
+                                                                    carrying only the old name keeps its old behaviour, since
+                                                                    the tree fraction below then inherits this value */
+      addr[nt] = &All.DomainBuild_ActiveFraction;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TreeRebuild_ActiveFraction");
+      addr[nt] = &All.TreeRebuild_ActiveFraction;
       id[nt++] = REAL;
 
 #ifdef MHD_MODIFIED_GRADIENT
@@ -2794,7 +2803,8 @@ void read_parameter_file(char *fname)
 #else
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
-                if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
+                if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+                if(strcmp("TreeRebuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=All.DomainBuild_ActiveFraction; printf("Tag %s (%s) not set in parameter file: defaulting to rebuild the gravity tree on the same active fraction the domain is decomposed on (=%g). A decomposition always brings a new tree with it, so a larger value here has no effect; a smaller one rebuilds the tree on steps that keep the existing decomposition. \n",tag[i],alternate_tag[i],All.TreeRebuild_ActiveFraction); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif

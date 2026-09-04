@@ -216,6 +216,7 @@ extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperi
 extern size_t HighMark_turbpower;
 #endif
 extern int TreeReconstructFlag;
+extern int DomainReconstructFlag;   /*!< set when the domain decomposition itself must be redone, not merely the tree rebuilt */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern long long ForceAddElementToTree_CallsSinceBuild; /*!< diagnostic: force_add_element_to_tree calls accumulated since last full tree build.  Insertions stale the LET / pseudo-particle moments; auto-rebuild when this exceeds 1% of TotNumPart. */
 extern int GlobFlag;

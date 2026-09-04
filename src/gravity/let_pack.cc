@@ -73,7 +73,7 @@ static void let_compute_tree_lifetime(void)
     for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
     MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
-    double rebuild_threshold = All.TreeDomainUpdateFrequency * (double) All.TotNumPart;
+    double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
     long long cumulative = 0, occupied_total = 0;
     int trigger_bin = -1, highest_occupied = -1;
     for(int bin = 0; bin < TIMEBINS; bin++)

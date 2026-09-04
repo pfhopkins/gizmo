@@ -63,7 +63,7 @@ HubbleParam             1.     % little 'h'; =1 for non-cosmological runs
 %----- Memory allocation
 
 %---- Rebuild domains when >this fraction of particles active
-TreeDomainUpdateFrequency   0.005    % 0.0005-0.05, dept on core+particle number
+DomainBuild_ActiveFraction   0.005    % 0.0005-0.05, dept on core+particle number
 
 
 %---- (Optional) Initial hydro temperature & temperature floor (in Kelvin)

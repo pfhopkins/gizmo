@@ -33,7 +33,7 @@ UnitVelocity_in_cm_per_s           1.0e5
 GravityConstantInternal            1.0
 
 TreeAllocFactor                    2.0
-TreeDomainUpdateFrequency          0.005
+DomainBuild_ActiveFraction          0.005
 
 DesNumNgb                          32
 DesLinkNgb                         16

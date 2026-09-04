@@ -36,7 +36,7 @@ ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
 ResubmitOn                         0
 ResubmitCommand                    none
-TreeRebuild_ActiveFraction         0.005
+DomainBuild_ActiveFraction         0.005
 CoolingTablePath                   ../isodisk_thermalfb/TREECOOL
 SpeciesAbundPath                   ../isodisk_thermalfb/spcool_tables/spcool_
 

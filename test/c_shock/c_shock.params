@@ -10,7 +10,7 @@ OutputListOn                       0
 TimeOfFirstSnapshot                0
 TimeBetSnapshot                    1.e5
 MaxSizeTimestep                    1.e3
-TreeDomainUpdateFrequency          0.5
+DomainBuild_ActiveFraction          0.5
 DesNumNgb                          4
 UnitMagneticField_in_gauss         3.5449077018110318
 UnitLength_in_cm                   1

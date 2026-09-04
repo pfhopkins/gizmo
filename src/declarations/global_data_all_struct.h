@@ -143,7 +143,7 @@ struct global_data_all_processes
 
   /* some force counters  */
   long long TotNumOfForces;	/*!< counts total number of force computations  */
-  long long NumForcesSinceLastDomainDecomp;	/*!< count particle updates since last domain decomposition */
+  long long NumForcesSinceLastTreeBuild;	/*!< count particle updates since the last gravity tree build */
 
   /* various cosmological factors that are only a function of the current scale factor, and in Newtonian runs are set to 1 */
   double cf_atime, cf_a2inv, cf_a3inv, cf_hubble_a, cf_hubble_a2;
@@ -247,8 +247,12 @@ struct global_data_all_processes
   double CBECollisionCrossSection;	/*!< sigma/mu_p (cross-section per unit physical particle mass) in code units, for the intra-cell CBE collision operator + collisional Riemann term. 0 disables (no-op). */
 #endif
 
-  /* frequency of tree reconstruction/domain decomposition */
-  double TreeDomainUpdateFrequency;	/*!< controls frequency of domain decompositions  */
+  /* how much of the system has to be active before the tree is rebuilt, and before the particles
+     are redistributed between tasks. A decomposition always brings a new tree with it, so setting
+     the tree fraction above the domain fraction has no effect; setting it below rebuilds the tree
+     on steps that keep the existing decomposition. */
+  double TreeRebuild_ActiveFraction;	/*!< rebuild the gravity tree once this fraction of the system is active */
+  double DomainBuild_ActiveFraction;	/*!< redo the domain decomposition once this fraction of the system is active */
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
