@@ -22,6 +22,35 @@ TRUNCATED_MARKER = "RUN_TRUNCATED"
 # GIZMO prints this on the one path that exits the main loop having reached TimeMax (core/run.cc).
 _GIZMO_FINISHED = "Final time="
 
+# Repo root, from python_src/gizmo/test.py.
+_REPO_ROOT = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
+
+
+def skip_if_not_implemented(symbol, feature, source_branch="gpu_kokkos_unified"):
+    """Skip the calling module if `symbol` appears nowhere in the C++ sources.
+
+    Some test problems were merged ahead of the code they exercise. GIZMO ignores unrecognised
+    Config.sh macros, so such a test builds, runs, and then fails on absent physics -- reporting
+    e.g. "Bz=0" rather than "no battery term compiled in". Skipping on the source, rather than
+    hard-coding it, means the test re-enables itself the moment the feature lands.
+
+    Only the top two directory levels are searched, which covers every module directory and
+    excludes worktree copies nested deeper.
+    """
+    srcs = (glob(f"{_REPO_ROOT}/*.h") + glob(f"{_REPO_ROOT}/*/*.cc") + glob(f"{_REPO_ROOT}/*/*.h"))
+    for f in srcs:
+        try:
+            with open(f, errors="ignore") as fh:
+                if symbol in fh.read():
+                    return
+        except OSError:
+            continue
+    pytest.skip(
+        f"{feature} is not implemented in this tree: '{symbol}' appears in no C++ source. "
+        f"Port it from {source_branch} to enable this test.",
+        allow_module_level=True,
+    )
+
 
 def _resolve_test_timeout(timeout):
     """Resolve effective subprocess timeout. Explicit arg wins; otherwise read

@@ -26,7 +26,12 @@ from gizmo.test import (
     default_omp_threads,
     get_final_snapshot,
     assert_final_time,
+    skip_if_not_implemented,
 )
+
+# Without the module there is no battery source term, so B_z stays identically zero and the sign
+# check reports a mismatch rather than an absent feature.
+skip_if_not_implemented("MHD_BATTERY_MECHANISMS", "The MHD battery (Biermann) source term")
 
 # Constants/unit conversions (must match make_biermann_growth_ics.py).
 C_LIGHT_CGS = 2.99792458e10

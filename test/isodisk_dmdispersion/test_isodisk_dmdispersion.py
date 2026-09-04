@@ -62,11 +62,12 @@ def test_isodisk_dmdispersion(num_mpi_ranks, num_omp_threads):
     build_gizmo_for_test(TEST_NAME, num_omp_threads)
     stash_baseline_output(TEST_NAME)
 
-    log_path = f"test/{TEST_NAME}/gizmo_stdout.txt"
+    # run_test always redirects GIZMO's stdout here; it has no stdout_file argument.
+    log_path = f"test/{TEST_NAME}/test_{TEST_NAME}.out"
     try:
         chdir(f"test/{TEST_NAME}/")
         _get_ics()
-        run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, stdout_file="gizmo_stdout.txt")
+        run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
         chdir("../../")
     finally:
         finalize_variant_output(TEST_NAME)

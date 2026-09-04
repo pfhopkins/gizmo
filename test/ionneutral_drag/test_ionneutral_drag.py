@@ -23,7 +23,12 @@ from gizmo.test import (
     build_gizmo_for_test, run_test, clean_test_outputs,
     assert_final_time, get_final_snapshot,
     default_mpi_ranks, default_omp_threads,
+    skip_if_not_implemented,
 )
+
+# Without the module GIZMO ignores the two HYDRO_MULTIFLUID macros, runs an ordinary single-fluid
+# MHD box, and never writes the FluidType field the IC carries.
+skip_if_not_implemented("HYDRO_MULTIFLUID", "The multifluid (ion-neutral) hydro module")
 
 # FluidID values must match declarations/multifluid_helpers.h
 FLUID_DEFAULT = 0
