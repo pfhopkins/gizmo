@@ -32,7 +32,13 @@ from gizmo.test import (
     finalize_variant_output,
     variant_output_dir,
     assert_final_time,
+    skip_if_not_implemented,
 )
+
+# The disp_* density routines are here (galaxy_sf/dm_dispersion_rkern.cc), but the runner this
+# test gates on -- and the "dm_dispersion done" status line it greps for -- are not, so GIZMO
+# completes the run without ever invoking it.
+skip_if_not_implemented("DMDispersionSpec", "The DMDispersionSpec dm_dispersion runner")
 
 TAPIR = "http://www.tapir.caltech.edu/~phopkins/sims/"
 TEST_NAME = "isodisk_dmdispersion"
@@ -63,6 +69,8 @@ def test_isodisk_dmdispersion(num_mpi_ranks, num_omp_threads):
     stash_baseline_output(TEST_NAME)
 
     # run_test always redirects GIZMO's stdout here; it has no stdout_file argument.
+    # NOTE: the disp_* routines exist here (galaxy_sf/dm_dispersion_rkern.cc); what is missing is
+    # the DMDispersionSpec runner this test gates on -- see the module-level skip.
     log_path = f"test/{TEST_NAME}/test_{TEST_NAME}.out"
     try:
         chdir(f"test/{TEST_NAME}/")

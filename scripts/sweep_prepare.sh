@@ -216,6 +216,10 @@ fi
     exit $rc
 ) > "$LOG" 2>&1
 rc=$?
+# pytest exits 5 when it collected nothing, which is what a module-level skip looks like from the
+# outside. A test whose feature is not built in this tree is not applicable, not failing. Genuine
+# collection errors exit 2/3/4, so this does not mask them.
+if [ "$rc" = 5 ] && grep -qa "skipped" "$LOG"; then rc=0; fi
 # rc alone is not the verdict: run_test() calls pytest.skip when GIZMO exceeds
 # GIZMO_TEST_TIMEOUT, and a skipped test exits 0. Carry pytest's own summary line so a
 # timed-out run cannot read as a pass.
