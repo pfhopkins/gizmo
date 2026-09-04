@@ -654,6 +654,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef COOL_GRACKLE
             cell[i].HI = 0; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* fully ionized, as assumed for the ionized-energy floor above */
             cell[i].Temperature = cell[i].gas_temperature_from_u(unew);
+#ifdef GIZMO_EOS_ANCHOR_MIN
+            cell[i].u_anchor = unew;
+#endif
 #endif
 #endif
         }
@@ -984,6 +987,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
         cell[target].Temperature = temp_final;
         cell[target].Gamma = cell[target].gamma_eos_value(); /* the other half, so the pair describes this solve rather than the previous equation-of-state call */
+#ifdef GIZMO_EOS_ANCHOR_MIN
+        cell[target].u_anchor = u / UNIT_SPECEGY_IN_CGS; /* exact re-anchor at the converged state */
+#endif
 #ifdef RT_CHEM_PHOTOION
         cell[target].HII = nHII;
 #ifdef RT_CHEM_PHOTOION_HE

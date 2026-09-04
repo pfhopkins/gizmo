@@ -476,3 +476,58 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
             f"Shell-radius mismatch: peak at {r_peak:.3f} pc vs Weaver {R_weaver:.3f} pc "
             f"(relative error {rel_err:.4f})"
         )
+
+
+def test_wind_thermo_fidelity():
+    """Guard the u->T conversion in the wind bubble's two sensitive regimes.
+
+    The Weaver-radius assertion tolerates the cached-EOS defect that mislabeled the
+    swept shell's warm molecular gas by 7-11% at matched u and pinned the hot bubble's
+    T/u at the frozen fully-ionized slope (see COOLING_UTOT_REPORT.md). These checks
+    are calibrated on inversion-correct runs (reference starforge_dev and the
+    anchored-cache arm agree to <~1%; the defective build fails both).
+
+    Reads the mode-1 (spawn) COOLING variant's existing output; skips if absent.
+    """
+    Mdot, v_w = 1e-4, 3000.0
+    flags = make_wind_config_flags(Mdot, v_w, wind_mode=1) + ("WIND_TEST_NRES=64", "COOLING")
+    outdir = Path(variant_output_dir(TEST_NAME, flags))
+    snaps = sorted(outdir.glob("snapshot_*.hdf5"))
+    if not snaps:
+        pytest.skip("mode-1 COOLING variant output not present")
+    with h5py.File(snaps[-1], "r") as F:
+        T = F["PartType0/Temperature"][:].astype(float)
+        u = F["PartType0/InternalEnergy"][:].astype(float)
+        fmol = F["PartType0/MolecularMassFraction"][:].astype(float)
+
+    # Regime guard: the shell-formed H2 layer only exists once the shell has swept and
+    # shielded enough mass (t >~ 0.05 here). If the run ended early there is nothing to test.
+    shell = (fmol > 0.3) & (T > 100) & (T < 800)
+    if shell.sum() < 5000:
+        pytest.skip(f"warm molecular shell not developed (N={shell.sum()})")
+
+    # 1. Warm molecular shell T/u at matched u (reference medians at the final snapshot;
+    #    the defective conversion read 7-11% low here, inversion arms within ~1%).
+    u_edges = [0.2731, 1.266, 5.869]
+    Tu_expected = [164.18, 131.63]   # reference medians WITH the fH2>0.3 cut (defective build: 137.7, 117.2 -> 13.5% aggregate)
+    devs = []
+    for lo, hi, Tue in zip(u_edges[:-1], u_edges[1:], Tu_expected):
+        sel = (u >= lo) & (u < hi) & (fmol > 0.3)
+        if sel.sum() >= 100:
+            devs.append(abs(np.median((T / u)[sel]) / Tue - 1))
+    assert devs, "warm-molecular u bins unexpectedly empty despite developed shell"
+    agg = float(np.mean(devs))
+    assert agg < 0.05, (
+        f"warm-molecular shell T/u off by {100*agg:.1f}% aggregate (>5%): H2-bearing shell "
+        f"gas is mislabeled at matched u (defective conversion measured 7-11%)"
+    )
+
+    # 2. Hot shocked-wind bubble: T/u must sit at the He-ionized inversion value
+    #    (49.50 +- decomposition scatter), not the frozen fully-ionized slope (47.93).
+    bub = u > 2.7e5
+    if bub.sum() >= 100:
+        tu_hot = float(np.median((T / u)[bub]))
+        assert 48.7 < tu_hot < 50.3, (
+            f"hot-bubble median T/u = {tu_hot:.3f} outside [48.7, 50.3]: the u->T map is "
+            f"reading the frozen ionized slope (defect gives 47.93; inversion gives 49.50)"
+        )

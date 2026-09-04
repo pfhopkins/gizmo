@@ -586,6 +586,15 @@
 #define COOL_MOLECFRAC_NONEQM
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
+/* Anchor the cached u->T conversion at the last cooling solve (T = Temperature +
+   (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor)) instead of extrapolating the same slope through the
+   origin. The chord form under-cools shocked gas through the He-ionization band (SN remnant
+   thermal energy +64%) and mislabels warm molecular shell gas by 7-11% at matched u, because
+   u is the integral of cv while Gamma carries the differential. Default-on wherever this EOS
+   is active, pending upstream integration; GIZMO_EOS_ANCHOR_MIN_OFF restores the chord for A/B. */
+#if defined(COOLING) && !defined(CHIMES) && !defined(GIZMO_EOS_ANCHOR_MIN_OFF)
+#define GIZMO_EOS_ANCHOR_MIN
+#endif
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
 #define CONDUCTION           /* enable conduction */
 #define CONDUCTION_SPITZER   /* compute proper coefficients and anisotropy for conduction */

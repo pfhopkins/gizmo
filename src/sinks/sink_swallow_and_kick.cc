@@ -915,6 +915,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         CellP[j].InternalEnergyPred = CellP[j].InternalEnergy;
         CellP[j].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; CellP[j].Gamma = GAMMA_DEFAULT; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
         CellP[j].Temperature = CellP[j].gas_temperature_from_u(CellP[j].InternalEnergy);
+#ifdef GIZMO_EOS_ANCHOR_MIN
+        CellP[j].u_anchor = CellP[j].InternalEnergy;
+#endif
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);

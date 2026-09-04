@@ -423,7 +423,11 @@ KOKKOS_INLINE_FUNCTION
 double convert_u_to_temp_impl(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell, const struct PhysicsTablesView *tables) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,tables->cooling->Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,tables->cooling->Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
+#ifdef GIZMO_EOS_ANCHOR_MIN
+    if(target >= 0) { temp = cell[target].Temperature + cell[target].gas_temperature_from_u(u / UNIT_SPECEGY_IN_CGS - cell[target].u_anchor); if(!(temp > 0)) {temp = cell[target].gas_temperature_from_u(u / UNIT_SPECEGY_IN_CGS);} } /* anchored seed */
+#else
     if(target >= 0) { temp = cell[target].gas_temperature_from_u(u / UNIT_SPECEGY_IN_CGS); } /* same relation, taken from the cache that owns it */
+#endif
     else            { temp = u * PROTONMASS_CGS / BOLTZMANN_CGS; }
     temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;

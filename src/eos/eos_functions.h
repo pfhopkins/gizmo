@@ -424,7 +424,14 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     double temp = ChimesGasVars[target].temperature;
 #else
     *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+#ifdef GIZMO_EOS_ANCHOR_MIN
+    /* anchored read: same cached slope (Gamma-1)*mu, but measured from the (Temperature, u_anchor)
+       pair instead of the origin -- exact at the anchor, tangent for the excursion since. */
+    double temp = cell[target].Temperature + cell[target].gas_temperature_from_u(u - cell[target].u_anchor);
+    if(!(temp > 0)) {temp = cell[target].gas_temperature_from_u(u);}
+#else
     double temp = cell[target].gas_temperature_from_u(u);
+#endif
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
     /* gas inside an HII region is held ionized by the local source, which the saved state
        only picks up once the cell next cools */
@@ -804,6 +811,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the
        cell holds right now. anything wanting another energy derives it with gas_temperature_from_u */
     cell[i].Temperature = temp;
+#if defined(GIZMO_EOS_ANCHOR_MIN) && defined(COOLING) && !defined(CHIMES)
+    cell[i].u_anchor = cell[i].InternalEnergyPred; /* re-anchor along the tangent: the pair stays coherent */
+#endif
 
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     /* electron number density cache; consumed by the Biermann battery (grad n_e)

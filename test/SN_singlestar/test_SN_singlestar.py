@@ -211,3 +211,59 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     # Outflow at the shock
     assert vr_binned[i_peak] > 0, f"No outflow at shock: vr = {vr_binned[i_peak]}"
+
+
+def test_SN_thermo_fidelity():
+    """Guard the u->T conversion in the regimes the SN remnant actually exercises.
+
+    The suite's dynamics assertions (density profile, outflow, injected energy) are
+    insensitive to the cached-EOS defect that retained +64% remnant thermal energy
+    (see COOLING_UTOT_REPORT.md): the cooling loop solved correctly while consumers
+    read T from a chord through the origin with the differential Gamma. These checks
+    are the sensitive ones, calibrated on inversion-correct runs (reference
+    starforge_dev, pre-merge, restored-inversion and anchored-cache arms agree to
+    <=2.5% on every quantity; the defective build fails all three by wide margins).
+
+    Reads the COOLING variant's existing output; skips if that variant has not run.
+    """
+    outdir = Path(variant_output_dir(TEST_NAME, ("COOLING",)))
+    snaps = sorted(outdir.glob("snapshot_*.hdf5"))
+    if not snaps:
+        pytest.skip("COOLING variant output not present")
+    with h5py.File(snaps[-1], "r") as F:
+        T = F["PartType0/Temperature"][:].astype(float)
+        u = F["PartType0/InternalEnergy"][:].astype(float)
+        m = F["PartType0/Masses"][:].astype(float)
+        fmol = F["PartType0/MolecularMassFraction"][:].astype(float)
+
+    # (A hot-band T/u dispersion assert was tried and dropped: the He-ionization spread
+    #  lives in too few particles here for a robust statistic -- good/defective separation
+    #  was ~1%. The Eth budget below guards that regime's integrated consequence instead.)
+
+    # 1. Warm molecular shell T(u). The shell-formed H2 layer (fH2>0.3, ~100-600 K) is
+    #    where the H2 rotational dof make u(T) most nonlinear; the defective conversion
+    #    read 6.7-8.5% cold at matched u. Expected medians from the reference run at the
+    #    final snapshot; inversion-correct arms deviate <=2.5% (aggregate), decomposition
+    #    scatter <=2%.
+    u_edges = [0.5, 0.794, 1.26, 2.0, 3.175, 5.04]
+    T_expected = [90.97, 132.38, 199.34, 294.97, 417.79]
+    devs = []
+    for lo, hi, Texp in zip(u_edges[:-1], u_edges[1:], T_expected):
+        sel = (u >= lo) & (u < hi) & (fmol > 0.3)
+        if sel.sum() >= 20:
+            devs.append(abs(np.median(T[sel]) / Texp - 1))
+    if len(devs) >= 3:
+        agg = float(np.mean(devs))
+        assert agg < 0.045, (
+            f"warm-molecular T(u) off by {100*agg:.1f}% aggregate (>{4.5}%): the shell's "
+            f"H2-bearing gas is mislabeled at matched u (defective conversion measured 7-9%)"
+        )
+
+    # 2. Remnant thermal energy. Inversion-correct arms: 4.96-5.21e5 across machines and
+    #    decompositions (+-5%); the cached-chord defect retained 8.39e5 (+64%). The band is
+    #    wide enough for decomposition scatter and narrow enough to catch percent-tens errors.
+    E_therm = float((m * u).sum())
+    assert 3.8e5 < E_therm < 6.4e5, (
+        f"remnant thermal energy {E_therm:.3e} outside [3.8e5, 6.4e5]: cooling through the "
+        f"1e5-1e6 K band is off (inversion-correct ~5.1e5; the u->T chord defect gave 8.4e5)"
+    )

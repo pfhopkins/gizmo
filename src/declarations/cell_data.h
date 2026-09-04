@@ -238,6 +238,12 @@ extern struct gas_cell_data
 #ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
     MyFloat HI;  /*!< neutral hydrogen fraction (neutral H nuclei per H nucleus), saved by the cooling solver so other modules can read it instead of re-solving the chemistry */
+#ifdef GIZMO_EOS_ANCHOR_MIN
+    MyFloat u_anchor;  /*!< the u Temperature was last computed at. The u->T read is anchored:
+                            T(u) = Temperature + (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor), so the
+                            cached pair is exact at the anchor and tangent for the excursion.
+                            Every writer of Temperature writes this beside it. */
+#endif
 #endif
 #endif
 #ifdef GALSF
@@ -575,6 +581,15 @@ extern struct gas_cell_data
         double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
 #ifdef EOS_SUBSTELLAR_ISM
         gamma_di = hydrogen_molecule_gamma(Temperature); // declared in proto.h, defined in eos/hydrogen_molecule.cc
+#endif
+#ifdef GIZMO_EOS_ANCHOR_MIN
+        /* Metals (monatomic, and any per-particle X/Y drift from the constants above) are missing
+           from the number sums, though convert_temp_to_u and the cached MeanMolecularWeight both
+           carry them -- percent-level in Gamma for Z ~ 0.25 ejecta. The cached mu implies the full
+           particle number, so attribute the residual to monatomic species; this also makes
+           (Gamma-1)*mu*U_TO_TEMP the full mixture's dT/du exactly, which the anchored u->T read
+           relies on. Correct regardless of anchoring; gated with it to keep one switch vs upstream. */
+        if(MeanMolecularWeight > 0) {double n_res = 1./MeanMolecularWeight - (f_mono + f_di); if(n_res > 0) {f_mono += n_res;}}
 #endif
         return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.));
 #endif
