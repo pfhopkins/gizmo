@@ -34,6 +34,7 @@ Energy is E = KE + 0.5*sum(m*phi); the 0.5 avoids double-counting the pair poten
 """
 
 import glob
+import os
 from os import path
 
 import numpy as np
@@ -99,7 +100,38 @@ VARIANTS = (
     + [pytest.param(("TIDAL_TIMESTEP_CRITERION",), e, id=f"tidal_eta{e:g}") for e in ETAS]
 )
 
-_results = {}
+# Results are persisted to disk, not held in a module-level dict, because the sweep harness runs
+# each variant as its own pytest process on its own node -- an in-process cache is empty when the
+# tidal variant looks for its baseline. test/hernquist does the same thing with summary_*.npz.
+_RESULTS_DIR = f"{TEST_DIR}/convergence_results"
+
+
+def _result_path(criterion, eta):
+    return f"{_RESULTS_DIR}/{criterion}_eta{eta:g}.npz"
+
+
+def _store(criterion, eta, **kw):
+    os.makedirs(_RESULTS_DIR, exist_ok=True)
+    np.savez(_result_path(criterion, eta), **kw)
+
+
+def _load(criterion, eta):
+    p = _result_path(criterion, eta)
+    if not path.isfile(p):
+        return None
+    d = np.load(p)
+    return {k: float(d[k]) for k in d.files}
+
+
+def _all_results():
+    """Everything on disk so far, as {(criterion, eta): dict}."""
+    out = {}
+    for c in ("baseline", "tidal"):
+        for e in ETAS:
+            r = _load(c, e)
+            if r is not None:
+                out[(c, e)] = r
+    return out
 
 
 def _ensure_ic():
@@ -139,7 +171,8 @@ def _fit_drift(t, e):
 
 def _plot():
     """Error vs eta for both criteria. Calibrated, the two curves should overlie each other."""
-    have = {c: sorted((e, _results[(c, e)]) for e in ETAS if (c, e) in _results)
+    _res = _all_results()
+    have = {c: sorted((e, _res[(c, e)]) for e in ETAS if (c, e) in _res)
             for c in ("baseline", "tidal")}
     if not all(len(v) >= 2 for v in have.values()):
         return
@@ -189,7 +222,7 @@ def test_hernquist_convergence(num_mpi_ranks, num_omp_threads, extra_config_flag
 
     t, e = _energy_trajectory(outputdir)
     rate, se, accum = _fit_drift(t, e)
-    _results[(criterion, eta)] = dict(rate=rate, se=se, accum=accum)
+    _store(criterion, eta, rate=rate, se=se, accum=accum)
     _plot()
 
     print(f"\n[{variant_id}] eta={eta:g}  drift rate={rate:.3e} +/- {se:.1e}  |dE/E0|={accum:.3e}")
@@ -203,7 +236,7 @@ def test_hernquist_convergence(num_mpi_ranks, num_omp_threads, extra_config_flag
         )
         return
 
-    base = _results.get(("baseline", eta))
+    base = _load("baseline", eta)
     assert base is not None, f"baseline at eta={eta:g} must run before the tidal variant"
     ratio = accum / base["accum"]
     print(f"[{variant_id}] |dE/E0| is {ratio:.2f}x the acceleration criterion at this eta")
@@ -226,7 +259,7 @@ def test_hernquist_convergence(num_mpi_ranks, num_omp_threads, extra_config_flag
     # A criterion that is merely under-resolved converges; one selecting wrong timesteps does not,
     # and could still be coefficient-tuned to pass parity at a single tolerance.
     if eta == min(ETAS):
-        loose = _results.get(("tidal", max(ETAS)))
+        loose = _load("tidal", max(ETAS))
         assert loose is not None, "the loosest tidal run must precede the tightest"
         drop = loose["accum"] / accum
         span = max(ETAS) / min(ETAS)

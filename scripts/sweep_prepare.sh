@@ -85,17 +85,24 @@ fi
 # ONE collect for the whole suite, not one per directory: each pytest start re-imports h5py,
 # matplotlib and astropy, so 69 of them cost ~7 minutes against 18 seconds for a single pass.
 # --continue-on-collection-errors so one unimportable test file does not blank the sweep.
+#
+# NOSPLIT lists directories that must NOT be split: their variants compare against each other,
+# so they need pytest's in-process ordering. Engines work in private trees and disBatch gives no
+# ordering barrier, so a split would put a variant on a node where its reference never ran.
+NOSPLIT="hernquist_convergence"
 PY="${GIZMO_TEST_PYTHON:-/mnt/home/mgrudic/python_work/bin/python}"
 echo "=== collecting variants ..."
 ( cd "$TREE" && "$PY" -m pytest test/ --collect-only -q --continue-on-collection-errors 2>/dev/null ) \
   | "$PY" -c '
 import sys, re
 want = set(open(sys.argv[1]).read().split())
+nosplit = set(sys.argv[2].split())
 seen, out = set(), []
 for line in sys.stdin:
     m = re.match(r"^test/([^/]+)/.*?(?:\[(.*)\])?$", line.strip())
     if not m or m.group(1) not in want: continue
     d, br = m.group(1), m.group(2)
+    if d in nosplit: br = None
     # The id is [<variant>-<omp>-<ranks>]; the last two come from cpu_count() on whatever
     # machine collects, so keep only the variant. No brackets = unparametrised.
     v = "-".join(br.split("-")[:-2]) if br and len(br.split("-")) > 2 else ""
@@ -105,7 +112,7 @@ for line in sys.stdin:
 for d in sorted(want - {k[0] for k in seen}):   # collection failed: whole-directory fallback
     out.append(d)
 print("\n".join(sorted(out)))
-' "$SWEEP/testdirs.txt" > "$SWEEP/tasks.txt"
+' "$SWEEP/testdirs.txt" "$NOSPLIT" > "$SWEEP/tasks.txt"
 NTASK=$(wc -l < "$SWEEP/tasks.txt")
 NVAR=$(awk 'NF>1' "$SWEEP/tasks.txt" | wc -l)
 echo "=== $NTASK tasks from $(wc -l < "$SWEEP/testdirs.txt") directories ($NVAR are per-variant)"

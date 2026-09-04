@@ -157,11 +157,29 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
         print(f"  {name} (Type {pt}): initial={mi:.6g}, final={mf:.6g}, "
               f"delta={mf - mi:.6g}")
 
-    # Dark matter mass must be exactly conserved
-    assert m_init[1] == pytest.approx(m_final[1], rel=1e-10), \
+    # Dark matter mass must be conserved. Collisionless particles neither gain nor lose mass, so
+    # the only tolerance needed is for summation: masses are stored as float32, and the total is
+    # a sum over ~1e6 of them whose order follows the domain decomposition.
+    #
+    # rel=1e-10 was not satisfiable. At the low-res DM total of 1.7e6 one float32 ULP is 0.125,
+    # i.e. 7.3e-8 relative -- 735x larger than that tolerance -- so the assertion demanded a
+    # bit-exact float32 sum and any change to the timestep ladder or domain decomposition flipped
+    # it by one representable step. Calibrating TIDAL_TIMESTEP_PREFAC was what surfaced it, but
+    # the gate was never expressible.
+    #
+    # 1e-7 sits between the two scales that matter, measured on this IC's Type-2 population
+    # (324853 particles, total 1.718e6, essentially all at the uniform 8.204 mass):
+    #
+    #   float32 ULP on the total        7.3e-08   the noise floor -- unavoidable
+    #   losing one 8.204-mass particle  4.8e-06   what the gate must catch
+    #
+    # so 1e-7 is ~1.4x above the floor and ~48x below a single lost particle. Not 1e-6: that
+    # would sit only 4.8x below the signal, which is thin for a conservation check.
+    MASS_CONSERVATION_TOL = 1e-7
+    assert m_init[1] == pytest.approx(m_final[1], rel=MASS_CONSERVATION_TOL), \
         f"DM mass changed: {m_init[1]} -> {m_final[1]}"
     if 2 in m_init and 2 in m_final:
-        assert m_init[2] == pytest.approx(m_final[2], rel=1e-10), \
+        assert m_init[2] == pytest.approx(m_final[2], rel=MASS_CONSERVATION_TOL), \
             f"Low-res DM mass changed: {m_init[2]} -> {m_final[2]}"
 
     # Generate diagnostic plots
