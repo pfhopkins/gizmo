@@ -86,10 +86,14 @@ fi
 # matplotlib and astropy, so 69 of them cost ~7 minutes against 18 seconds for a single pass.
 # --continue-on-collection-errors so one unimportable test file does not blank the sweep.
 #
-# NOSPLIT lists directories that must NOT be split: their variants compare against each other,
-# so they need pytest's in-process ordering. Engines work in private trees and disBatch gives no
-# ordering barrier, so a split would put a variant on a node where its reference never ran.
-NOSPLIT="hernquist_convergence"
+# NOSPLIT lists directories that must NOT be split.
+#   hernquist_convergence -- its variants compare against each other, so they need pytest's
+#     in-process ordering. Engines work in private trees and disBatch gives no ordering barrier,
+#     so a split would put a variant on a node where its reference never ran.
+#   compile_suite -- its 163 variants share build state. Run as one directory, make rebuilds only
+#     what each Config change touches and the whole suite costs ~8 min; split, every task starts
+#     from a clean tree and pays a FULL build, turning 163 incremental builds into 163 full ones.
+NOSPLIT="hernquist_convergence compile_suite"
 PY="${GIZMO_TEST_PYTHON:-/mnt/home/mgrudic/python_work/bin/python}"
 echo "=== collecting variants ..."
 ( cd "$TREE" && "$PY" -m pytest test/ --collect-only -q --continue-on-collection-errors 2>/dev/null ) \
