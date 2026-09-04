@@ -1452,7 +1452,7 @@ void rearrange_particle_sequence(void)
      * point independently, so a collective here would be both wrong and a
      * deadlock risk. The consumer decides what to rebuild; nothing is freed from
      * here. */
-    if(identity_changed) ghost_exchange_supply_identity_changed("rearrange_particle_sequence");
+    if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_pool_changed();}
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
