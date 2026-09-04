@@ -476,6 +476,7 @@
 #OPENMP                         # top-level switch for explicit OpenMP implementation (can turn on here, or enable in Makefile for your machine)
 #MULTIPLEDOMAINS=16             # Multi-Domain option for the top-tree level (alters load-balancing)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
+#DOMAIN_NO_LIGHTWEIGHT_REPARTITION # force a full domain decomposition every time one is triggered. By default the code instead rebalances the load while reusing the existing top-level tree whenever a full decomposition was not actually required, which is much cheaper. Only set this if a run needs the top tree rebuilt every time.
 ####################################################################################################
 
 
