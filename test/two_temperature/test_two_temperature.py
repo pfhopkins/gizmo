@@ -18,7 +18,11 @@ prediction collapses to "fully relaxed in one cooling step", which is
 exactly what we test.
 """
 
-from gizmo.test import build_and_run_test, get_cooling_tables, default_omp_threads
+from gizmo.test import (build_and_run_test, get_cooling_tables, default_omp_threads,
+                        skip_if_not_implemented)
+
+# Without the module GIZMO runs a single-temperature gas and never writes ElectronTemperature.
+skip_if_not_implemented("TWO_TEMPERATURE_PLASMA", "The two-temperature plasma module")
 from glob import glob
 from pathlib import Path
 import os

@@ -103,9 +103,15 @@ for line in sys.stdin:
     if not m or m.group(1) not in want: continue
     d, br = m.group(1), m.group(2)
     if d in nosplit: br = None
-    # The id is [<variant>-<omp>-<ranks>]; the last two come from cpu_count() on whatever
-    # machine collects, so keep only the variant. No brackets = unparametrised.
-    v = "-".join(br.split("-")[:-2]) if br and len(br.split("-")) > 2 else ""
+    # The id carries the omp/rank counts from cpu_count() on whatever machine collects (16 here,
+    # 48 on a Genoa node), so strip them and keep only the variant. Which END they sit on depends
+    # on parametrize decorator order -- shu_jets has [2-16-cooling-jets_merge], most tests have
+    # [baseline-0-16] -- so strip purely-numeric components from BOTH ends rather than assuming.
+    # An all-numeric id means the test is not variant-parametrised at all.
+    parts = br.split("-") if br else []
+    while parts and parts[0].isdigit(): parts.pop(0)
+    while parts and parts[-1].isdigit(): parts.pop()
+    v = "-".join(parts)
     key = (d, v)
     if key in seen: continue
     seen.add(key); out.append(f"{d} {v}".rstrip())
@@ -183,13 +189,14 @@ t0=$SECONDS
 
 # Resolve the pytest node id HERE rather than carrying it from prepare time. The id embeds
 # omp/rank counts from cpu_count(), which differ between the machine that staged the sweep and
-# this one (16 vs 48), so a pre-computed id would select nothing. Matching on "[<variant>-"
-# is exact: variant names use underscores, so subcycle_rt- cannot also match
-# subcycle_rt_cooling-.
+# this one (16 vs 48), so a pre-computed id would select nothing. Match the variant with the
+# numeric components allowed on either side, mirroring how sweep_prepare stripped them; anchoring
+# both ends keeps it exact, so subcycle_rt cannot also match subcycle_rt_cooling.
 TARGET="test/$TESTDIR"
 if [ -n "$VARIANT" ]; then
+    VRE=$(printf '%s' "$VARIANT" | sed 's/[][\.*^$+?(){}|\\]/\\&/g')
     TARGET=$("$PY" -m pytest "test/$TESTDIR" --collect-only -q 2>/dev/null \
-               | grep -F "[${VARIANT}-" | head -1)
+               | grep -E "\[([0-9]+-)*${VRE}(-[0-9]+)*\]\$" | head -1)
     if [ -z "$TARGET" ]; then
         echo "FATAL: variant '$VARIANT' did not resolve to a pytest id in test/$TESTDIR" | tee "$LOG"
         printf '%-40s rc=%-3s %6ss  %-14s %s\n' "$TAG" 90 0 "$(hostname)" "UNRESOLVED VARIANT" \

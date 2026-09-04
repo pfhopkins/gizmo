@@ -70,7 +70,8 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     axes[0].loglog(rc, rho_prof, "o-")
     axes[0].set_xlim(0.01, 9.)
     axes[0].set_xlabel("r [Mpc]")
-    axes[0].set_ylabel("Density [Msun/Mpc^3]")
+    # Math mode: a bare ^ is a LaTeX error under the usetex path some environments select.
+    axes[0].set_ylabel(r"Density [$M_\odot/\mathrm{Mpc}^3$]")
     axes[0].set_title("Gas Density Profile")
     u_to_K = 8.738e7 # convert to K for plotting
     u_prof *= u_to_K
