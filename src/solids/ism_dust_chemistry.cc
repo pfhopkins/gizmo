@@ -273,7 +273,7 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i, struct particle_data *p
 
 /* Lambda_Dust_HighTemperature_Gas_ISM migrated to
  * solids/ism_dust_chemistry_functions.h as KOKKOS_INLINE_FUNCTION
- * (Phase D 2026-05-21 #20011-D fix — called from CoolingRate which is
+ * (called from CoolingRate which is
  * KOKKOS_INLINE_FUNCTION). */
 
 
@@ -667,7 +667,7 @@ double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, in
 
 /* ISMDustChem_Return_Mass_Where_Dust_Shocked migrated to
  * solids/ism_dust_chemistry_functions.h as KOKKOS_INLINE_FUNCTION
- * (Phase D 2026-05-21 #20011-D fix — called from mechanical_fb_pair_kernel
+ * (called from mechanical_fb_pair_kernel
  * which is KOKKOS_INLINE_FUNCTION). */
 
 

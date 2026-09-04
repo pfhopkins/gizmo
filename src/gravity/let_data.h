@@ -410,8 +410,8 @@ extern long long RuntimeMinLETForeignNodes;
  *  would read a misleading 0. Updated at the let_pack install site. */
 extern long long Numforeignnodes_highwater;
 
-/*! Two-phase MPI exchange + local install in one scope.  Phase 1 Alltoalls
- *  per-rank node-counts and header-counts; Phase 2 Alltoallvs the
+/*! MPI exchange + local install in one scope, in two passes.  The first
+ *  Alltoalls per-rank node-counts and header-counts; the second Alltoallvs the
  *  LETNodeWire and LETSubtreeHeader bytes; then directly calls
  *  let_unpack_and_install on the received buffers before freeing all
  *  scratch in strict LIFO order.  Inlining the install keeps mymalloc
@@ -419,7 +419,7 @@ extern long long Numforeignnodes_highwater;
  *  flat_hdr_recv to the caller, leaving them mid-stack and triggering
  *  "not the last allocated block" aborts when intermediates were freed.
  *
- *  Phase 2 runs in windows over the peer offsets rather than as one exchange of
+ *  the second pass runs in windows over the peer offsets rather than as one exchange of
  *  everything, because the flattened send and receive buffers live in the Base
  *  arena, which is a fixed reservation and on a large run cannot hold a whole
  *  exchange at once.  Each window is sized from the arena's own remaining space,

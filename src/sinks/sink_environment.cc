@@ -220,7 +220,7 @@ void sink_environment_second_loop(void)
         mymalloc("sinkenv2_host_inputs", alloc_n * sizeof(SinkEnv2PerActiveIn));
 
     /* Fill per-active Jgas / Jstar from SinkTempInfo (populated by
-     * Stage E1's first pass). populate_device_context will copy this
+     * first pass). populate_device_context will copy this
      * into the UVM array attached to the runner's DeviceContext. */
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];

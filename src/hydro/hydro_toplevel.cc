@@ -111,7 +111,7 @@ static double fac_magnetic_pressure;
 
 /* GPU dispatcher consumes hydro_data_in/out directly from hydro_structs.h.
    The legacy export-buffer scaffolding (particle2in_hydra, hydro_force_evaluate,
-   and the old code_block_xchange headers) was retired in Step 5 Phase D1. */
+   and the old code_block_xchange headers) was retired. */
 
 /* --------------------------------------------------------------------------------- */
 /* out2particle_hydra retired in hydro corridor commit 8 (HydroForceSpec).

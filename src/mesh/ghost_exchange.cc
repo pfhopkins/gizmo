@@ -499,7 +499,7 @@ static void glt_cache_refit_from_particles(void)
         unsigned char *tile_dirty = (unsigned char *) calloc((size_t)(ntiles > 0 ? ntiles : 1), 1);
         unsigned char *node_dirty = (unsigned char *) calloc((size_t)(bvh_nnodes > 0 ? bvh_nnodes : 1), 1);
 
-        /* Phase 1: refresh compact_xyzh + pool_types for each dirty j; mark its tile dirty. */
+        /* refresh compact_xyzh + pool_types for each dirty j; mark its tile dirty. */
         for(int k = 0; k < n_dirty; k++) {
             int j = g_glt_dirty_list[k];
             if(j < 0 || j >= NumPart_b) continue;
@@ -510,13 +510,13 @@ static void glt_cache_refit_from_particles(void)
             tile_dirty[t] = 1;
         }
 
-        /* Phase 2: re-scan each touched tile fully (cheaper than tracking which
+        /* re-scan each touched tile fully (cheaper than tracking which
          * member exactly; tile_size ~64, dirty_count typically ~few-hundred). */
         for(int t = 0; t < ntiles; t++) {
             if(tile_dirty[t]) glt_recompute_tile_(t);
         }
 
-        /* Phase 3: BVH bottom-up single pass.  At each leaf, propagate
+        /* BVH bottom-up single pass.  At each leaf, propagate
          * tile_dirty[tile] -> node_dirty[n].  At each internal node, OR its
          * children's flags; if dirty, recompute lo/hi/hmax/hmax_by_type from
          * children.  Children-first ordering is guaranteed by build_bvh_recursive. */
@@ -1226,7 +1226,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
 
 
     /* Frees the pre-materialisation tile scratch ONLY (mymalloc LIFO, then
-     * malloc). ONE free list, shared by the Stage-0A fallback bail and the
+     * malloc). ONE free list, shared by the fallback bail and the
      * normal-completion cleanup; captures only scratch allocated up to here (the
      * later packing allocs are freed explicitly by the normal path). It does NOT
      * touch NumGhostParticles: on normal completion that field already holds the

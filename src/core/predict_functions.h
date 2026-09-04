@@ -30,8 +30,7 @@ double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, do
 /* calculate_face_area_for_cartesian_mesh — migrated from predict.cc to fix
  * #20011-D (host-only fn called from KOKKOS_INLINE_FUNCTION
  * compute_finitevol_faces template under HYDRO_REGULAR_GRID). Body uses only
- * All.cf_atime (mirror-safe), std::max, fabs — all device-callable.
- * Phase D 2026-05-21. */
+ * All.cf_atime (mirror-safe), std::max, fabs — all device-callable. */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
 KOKKOS_INLINE_FUNCTION
 double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec)
@@ -54,7 +53,7 @@ double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rin
 
 /* Get_Particle_Expected_Area — migrated from predict.cc to fix #20011-D
  * (host-only fn called from KOKKOS_INLINE_FUNCTION compute_finitevol_faces
- * under SLOPE_LIMITER_TOLERANCE==0 — surfaced 2026-05-21 Phase D config 152).
+ * under SLOPE_LIMITER_TOLERANCE==0.
  * Pure-compute function of `h`, dimension-dependent. */
 KOKKOS_INLINE_FUNCTION
 double Get_Particle_Expected_Area(double h)

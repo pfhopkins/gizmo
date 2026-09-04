@@ -930,7 +930,7 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
    Nuclear Statistical Equilibrium (NSE) for high-temperature regime.
    ========================================================================= */
 
-/* Aliases retired with the Phase C accessor refactor — call
+/* Aliases retired — call
  * nuclear_aprox13_BE_per_A(k) / A_sp(k) / Z_sp(k) directly. */
 
 KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,

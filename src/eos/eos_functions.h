@@ -22,7 +22,7 @@
 #define KOKKOS_FUNCTION
 #endif
 
-/* NOTE (Phase D 2026-05-21 config 118): the EOS_TRUELOVE_PRESSURE branch in
+/* NOTE: the EOS_TRUELOVE_PRESSURE branch in
  * set_eos_pressure_impl below uses KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER from
  * mesh/kernel.h. We do NOT include mesh/kernel.h here: kernel.h lacks
  * header guards and re-defining its inline-static helpers in the same TU
@@ -1060,7 +1060,7 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
      * BEFORE proto.h for nvcc execution-space precedence — see
      * cooling.cc:15-20 comment). KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER macro
      * comes from mesh/kernel.h, included at top of this file under the same
-     * gate. Phase D fix 2026-05-21 config 118 EOS_TRUELOVE_PRESSURE. */
+     * gate. */
     double h_eff = DMAX(pp[i].Get_Particle_Size(), KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*pp[i].ForceSoftening);
     double NJeans = 4;
     double xJeans = (NJeans * NJeans / gamma_eos_index) * All.G * h_eff*h_eff * cell[i].Density * cell[i].Density /All.cf_atime;

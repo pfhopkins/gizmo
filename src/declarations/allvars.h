@@ -123,7 +123,9 @@ extern struct global_data_all_processes All;
 /* These live in All so device code can read them: the boundary check runs inside
    the drift, which is moving to the GPU, and a free-standing global is not visible
    there. Aliased so every existing reader and the begrun initialization are
-   unchanged -- same treatment as Shearing_Box_*_Offset above. */
+   unchanged -- same treatment as Shearing_Box_*_Offset above. Use the bare name:
+   spelling out All.special_boundary_condition_xyz_def_reflect double-expands and
+   will not compile, exactly as for Shearing_Box_*_Offset. */
 #define special_boundary_condition_xyz_def_reflect (All.special_boundary_condition_xyz_def_reflect)
 #define special_boundary_condition_xyz_def_outflow (All.special_boundary_condition_xyz_def_outflow)
 #endif

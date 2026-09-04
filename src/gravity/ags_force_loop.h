@@ -169,7 +169,7 @@ struct AgsForceOut {
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double CBE_basis_out_rate_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];   /* outgoing-only piece (commit 1 infra; SUM-reduced) */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    /* Wave-CBE Commit 3 root-found v_F diagnostic counters. Per-pair
+    /* root-found v_F diagnostic counters. Per-pair
      * updates in sidm/cbe_integrator_flux_functions.h; merged in
      * AgsForceSpec::merge_accum; ingested into the host-side CbeStepAccum
      * via cbe_step_diagnostics_observe() from apply_active_writeback. */
@@ -182,7 +182,7 @@ struct AgsForceOut {
      * nearest SPD tensor with eigenvalue floor when NMOMENTS >= 10. */
     long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
     long long cbe_recon_S_clamp_count;     /* SUM over faces+sides of S SPD repairs */
-    /* Wave-CBE Commit 6c: SUM over directional basis rows for which the
+    /* SUM over directional basis rows for which the
      * free-slot fallback transformed a cost-matrix row during flux
      * pairing. Each flux face evaluation builds TWO cost matrices (a->b
      * and b->a); each can fire on up to NBASIS rows, so per-face
@@ -692,7 +692,7 @@ struct AgsForceSpec {
         ACCUM_ADD(cbe_bracket_fail_count)
         ACCUM_ADD(cbe_recon_rho_clamp_count)
         ACCUM_ADD(cbe_recon_S_clamp_count)
-        ACCUM_ADD(cbe_pairing_free_slot_count)   /* Wave-CBE Commit 6c */
+        ACCUM_ADD(cbe_pairing_free_slot_count)   
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
         ACCUM_ADD(cbe_grad_nonfinite_count)
 #endif

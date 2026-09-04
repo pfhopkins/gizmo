@@ -692,7 +692,7 @@ void compute_statistics(void)
         gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
 #if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
-        /* Wave-CBE Commit 3: emit per-output-interval CBE diagnostic line and
+        /*  emit per-output-interval CBE diagnostic line and
          * reset the per-rank accumulators. Co-located with energy_statistics
          * cadence so the cbe_diagnostics.txt line number matches energy.txt. */
         cbe_step_diagnostics_emit();

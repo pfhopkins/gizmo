@@ -56,7 +56,7 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
  * pressure branch. Cannot be included from inside eos_functions.h itself —
  * kernel.h has no header guards and would trigger same-TU
  * redefinition/reinclude errors if pulled in by both eos_functions.h and
- * any other consumer in the same TU. Phase D fix 2026-05-21 config 118. */
+ * any other consumer in the same TU. */
 #include "../mesh/kernel.h"
 #endif
 #include "../eos/eos_functions.h"
@@ -454,8 +454,8 @@ void cooling_parent_routine(void)
          *     byte-for-byte so the GPU path and the CPU OMP fallback (below)
          *     compute the same physics for every supported Config (multi-path
          *     principle).
-         * The scatter loop below therefore runs neither the dust tail nor
-         * set_eos_pressure: the kernel above has done both.
+         * The scatter loop below therefore calls neither the host dust-update
+         * finaliser nor set_eos_pressure: the kernel above has done both.
          * Separate kernel from the cooling loop above to keep per-launch
          * device stack depth bounded -- set_eos_pressure_impl and
          * update_dust_processes each call ThermalProperties (->

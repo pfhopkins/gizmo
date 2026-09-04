@@ -376,7 +376,7 @@
  * disable-able at runtime via the All.PhotonMomentum_Coupled_Fraction
  * parameter, so a Compton-only physics setup is still expressible. Placed
  * OUTSIDE the FIRE_PHYSICS_DEFAULTS clauses block so it fires for any Config
- * that explicitly enables SINK_COMPTON_HEATING. Phase D 2026-05-21. */
+ * that explicitly enables SINK_COMPTON_HEATING. */
 #if defined(SINK_COMPTON_HEATING) && !defined(SINK_PHOTONMOMENTUM)
 #define SINK_PHOTONMOMENTUM
 #endif
