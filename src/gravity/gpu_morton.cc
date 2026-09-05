@@ -85,13 +85,12 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
-    const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
 
     Morton128 *keys = g_morton_keys;
     Kokkos::parallel_for("morton_encode_global", npart, KOKKOS_LAMBDA(int i) {
-        double fx = (P_dev[i].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[i].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[i].Pos[2] - dc2) * inv_dlen;
+        double fx = (P_dev[i].Pos[0] - dc0) / dlen;
+        double fy = (P_dev[i].Pos[1] - dc1) / dlen;
+        double fz = (P_dev[i].Pos[2] - dc2) / dlen;
         /* Clamp into [0, 1) so that (frac + 1.0) lies in [1.0, 2.0).
          * Domain decomp pre-wraps periodic cases; this clamp protects
          * against rare boundary FP drift. */

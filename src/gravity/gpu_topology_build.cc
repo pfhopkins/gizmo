@@ -137,7 +137,6 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
-    const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
     const int    bits = BITS_PER_DIMENSION;
 
     /* Zero topleaf bucket counters. */
@@ -155,9 +154,9 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
         int real = stp ? stp[i] : i;
-        double fx = (P_dev[real].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[real].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[real].Pos[2] - dc2) * inv_dlen;
+        double fx = (P_dev[real].Pos[0] - dc0) / dlen;
+        double fy = (P_dev[real].Pos[1] - dc1) / dlen;
+        double fz = (P_dev[real].Pos[2] - dc2) / dlen;
         if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
         if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
         if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
